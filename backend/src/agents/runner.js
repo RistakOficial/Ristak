@@ -128,15 +128,23 @@ function attachmentToContentParts(attachment) {
   return parts
 }
 
-export function buildInputItems(messages) {
-  const recent = (Array.isArray(messages) ? messages : [])
+export function buildInputItems(messages, options = {}) {
+  const requestedLimit = typeof options === 'number' ? options : options?.limit
+  const preserveAll = typeof options === 'object' && options?.preserveAll === true
+  const historyLimit = Number.isFinite(Number(requestedLimit))
+    ? Math.max(1, Math.min(200, Math.trunc(Number(requestedLimit))))
+    : MESSAGE_HISTORY_LIMIT
+  const eligible = (Array.isArray(messages) ? messages : [])
     .filter((message) => {
       if (!message) return false
       const hasText = typeof message.content === 'string' && message.content.trim()
       const hasAttachments = Array.isArray(message.attachments) && message.attachments.length
       return hasText || hasAttachments
     })
-    .slice(-MESSAGE_HISTORY_LIMIT)
+  // El runtime conversacional v2 entrega aquí un sobre ya acotado por bytes.
+  // `preserveAll` evita aplicarle después otro corte por cantidad de mensajes;
+  // el límite legacy de 12 permanece intacto para todos los demás callers.
+  const recent = preserveAll ? eligible : eligible.slice(-historyLimit)
 
   return recent.map((message) => {
     let text = typeof message.content === 'string' ? message.content.trim() : ''

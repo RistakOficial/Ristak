@@ -16,7 +16,23 @@ import {
   normalizeConversationalAIProvider
 } from './conversationalAIProviderService.js'
 import { getConversationalAgentMaxAgents } from './licenseService.js'
+import {
+  conversationalPaymentRequestHash,
+  recoverProcessingConversationalPaymentRequest
+} from './paymentFlowService.js'
 import { normalizeConversationIntelligenceState } from '../agents/conversational/intelligence/contracts.js'
+import {
+  buildConversationalCapabilityManifest,
+  deriveLegacyCapabilitiesConfig,
+  getConversationalCapabilitiesConfig,
+  getEnabledConversationalCapabilities,
+  getConversationalNativeRuntimeValidationErrors,
+  getConversationalPromptConfig,
+  isToolCallingV2,
+  normalizeConversationalCapabilitiesConfig,
+  normalizeConversationalPromptConfig,
+  normalizeConversationalRuntimeMode
+} from '../agents/conversational/nativeRuntimeConfig.js'
 
 /**
  * Servicio del agente conversacional: runtime interno, estado por
@@ -1228,8 +1244,14 @@ function hashConversationGoalCompletionEffectPlan(payload) {
 
 async function buildConversationGoalCompletionEffectPlan(agent) {
   const workflow = normalizeAgentGoalWorkflow(agent?.goalWorkflow)
-  const completion = workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion
-  const extras = normalizeSuccessExtras(agent?.successExtras)
+  // V2 sólo puede mutar lo que aparece como capacidad blindada. Los campos
+  // legacy quedan almacenados para rollback, pero jamás se congelan dentro de
+  // una meta nueva ni reaparecen cuando llega su webhook.
+  const nativeRuntime = isToolCallingV2(agent)
+  const completion = nativeRuntime
+    ? DEFAULT_GOAL_WORKFLOW_CONFIG.completion
+    : (workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion)
+  const extras = nativeRuntime ? [] : normalizeSuccessExtras(agent?.successExtras)
   const canonicalExtras = []
   for (const extra of extras) {
     if (extra.type !== 'add_tag' && extra.type !== 'remove_tag') {
@@ -1515,11 +1537,13 @@ async function resolveGoalLinkMetadata({ agentId, objective, metadata }) {
   const source = metadata && typeof metadata === 'object' ? metadata : {}
   const suppliedExpected = compactExpectedGoalReference(source.expected)
   let configuredExpected = {}
+  let configuredRuntimeMode = 'legacy_v1'
 
   if (agentId) {
     // Una falla de DB no puede degradar silenciosamente la validación de la
     // evidencia. Si la lectura falla, crear el enlace también falla cerrado.
     const agent = await getConversationalAgent(String(agentId))
+    configuredRuntimeMode = normalizeConversationalRuntimeMode(agent?.runtimeMode, 'legacy_v1')
     if (agent?.goalWorkflow) {
       if (objective === 'citas') {
         configuredExpected = {
@@ -1550,6 +1574,9 @@ async function resolveGoalLinkMetadata({ agentId, objective, metadata }) {
 
   return {
     ...source,
+    // Fuente de verdad del servidor: el cliente/modelo no puede etiquetar una
+    // meta legacy como v2 para saltarse sus efectos, ni al revés.
+    runtimeMode: configuredRuntimeMode,
     expected
   }
 }
@@ -2186,6 +2213,7 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
     // Recovery nunca vuelve a leer la configuración viva del agente: editarlo
     // después no puede cambiar los efectos de una meta ya confirmada.
     const effectAgent = conversationGoalEffectAgentFromMetadata(storedMetadata)
+    const nativeRuntime = normalizeConversationalRuntimeMode(storedMetadata.runtimeMode, 'legacy_v1') === 'tool_calling_v2'
     const technicalSummary = row.external_object_id
       ? `ID de ${mapped.objectLabel}: ${row.external_object_id}`
       : `Confirmación recibida para ${mapped.objectLabel}`
@@ -2201,7 +2229,8 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
         status: 'completed',
         agentId: row.agent_id || '',
         eventId: goalEffectEventId(cleanGoalId, 'signal'),
-        strictEvent: true
+        strictEvent: true,
+        ...(nativeRuntime ? { allowInternalSummary: false } : {})
       })
       row.completion_signal_applied_at = await markConversationGoalEffectApplied(
         cleanGoalId,
@@ -2212,10 +2241,12 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
 
     if (!row.completion_action_applied_at) {
       await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
-      await applyAgentCompletionAction(effectAgent, row.contact_id, {
-        eventId: goalEffectEventId(cleanGoalId, 'assignment'),
-        strict: true
-      })
+      if (!nativeRuntime) {
+        await applyAgentCompletionAction(effectAgent, row.contact_id, {
+          eventId: goalEffectEventId(cleanGoalId, 'assignment'),
+          strict: true
+        })
+      }
       row.completion_action_applied_at = await markConversationGoalEffectApplied(
         cleanGoalId,
         claimToken,
@@ -2225,10 +2256,12 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
 
     if (!row.completion_extras_applied_at) {
       await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
-      await applyAgentSuccessExtras(effectAgent, row.contact_id, {
-        eventId: goalEffectEventId(cleanGoalId, 'extras'),
-        strict: true
-      })
+      if (!nativeRuntime) {
+        await applyAgentSuccessExtras(effectAgent, row.contact_id, {
+          eventId: goalEffectEventId(cleanGoalId, 'extras'),
+          strict: true
+        })
+      }
       row.completion_extras_applied_at = await markConversationGoalEffectApplied(
         cleanGoalId,
         claimToken,
@@ -2765,6 +2798,991 @@ export async function completeConversationGoalLinkFromWebhook(payload = {}, { co
   }, authorization)
 }
 
+const VERIFIED_CONVERSATIONAL_PAYMENT_STATUSES = new Set([
+  'paid',
+  'succeeded',
+  'completed',
+  'complete',
+  'fulfilled',
+  'success',
+  'captured',
+  'approved',
+  'accredited',
+  'settled'
+])
+const CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT = 'payment_reconciliation_v2'
+const CONVERSATIONAL_PAYMENT_RECONCILIATION_LEASE_MS = 10 * 60 * 1000
+const CONVERSATIONAL_APPOINTMENT_DEPOSIT_RESERVATION_LEASE_MS = 10 * 60 * 1000
+let conversationalPaymentResumeHandlerForTest = null
+
+export function setConversationalPaymentResumeHandlerForTest(handler) {
+  conversationalPaymentResumeHandlerForTest = typeof handler === 'function' ? handler : null
+}
+
+function normalizeVerifiedPaymentStatus(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+function normalizeVerifiedPaymentEnvironment(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (['live', 'production', 'prod'].includes(normalized)) return 'live'
+  if (['test', 'testing', 'sandbox', 'demo'].includes(normalized)) return 'test'
+  return ''
+}
+
+function normalizeVerifiedCurrency(value) {
+  const currency = String(value || '').trim().toUpperCase()
+  return /^[A-Z]{3}$/.test(currency) ? currency : ''
+}
+
+function currencyFractionDigits(currency) {
+  try {
+    return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits
+  } catch {
+    return null
+  }
+}
+
+function amountInCurrencyMinorUnits(value, currency) {
+  const amount = Number(value)
+  const digits = currencyFractionDigits(currency)
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(digits) || digits < 0 || digits > 6) return null
+  const minorUnits = Math.round(amount * (10 ** digits))
+  return Number.isSafeInteger(minorUnits) ? minorUnits : null
+}
+
+export async function bindConversationalPaymentSourceEvent({
+  eventId = '',
+  contactId = '',
+  eventType = 'payment_link_created',
+  detail = {}
+} = {}) {
+  const cleanEventId = String(eventId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(detail.agentId || '').trim()
+  const ledgerPaymentId = String(detail.ledgerPaymentId || '').trim()
+  const paymentPurpose = String(detail.paymentPurpose || '').trim().toLowerCase()
+  const paymentMode = String(detail.paymentMode || '').trim().toLowerCase()
+  const purposeConsistent = (
+    paymentPurpose === 'appointment_deposit'
+      ? paymentMode === 'deposit' && detail.appointmentDeposit === true
+      : paymentPurpose === 'deposit'
+        ? paymentMode === 'deposit' && detail.appointmentDeposit === false
+        : paymentPurpose === 'purchase'
+          ? paymentMode === 'full_payment' && detail.appointmentDeposit === false
+          : false
+  )
+  const allowedEventTypes = new Set(['payment_link_created', 'payment_link_reused'])
+  if (!cleanEventId || !cleanContactId || !cleanAgentId || !ledgerPaymentId || !allowedEventTypes.has(eventType) || !purposeConsistent) {
+    throw new Error('Falta la identidad durable del cobro conversacional')
+  }
+
+  return db.transaction(async () => {
+    const ledger = await db.get(
+      `SELECT id, contact_id, amount, currency, payment_mode, ghl_invoice_id
+       FROM payments WHERE id = ? AND contact_id = ?`,
+      [ledgerPaymentId, cleanContactId]
+    )
+    const expectedCurrency = normalizeVerifiedCurrency(detail.currency)
+    const ledgerCurrency = normalizeVerifiedCurrency(ledger?.currency)
+    if (
+      !ledger ||
+      String(ledger.ghl_invoice_id || '') !== String(detail.invoiceId || '') ||
+      amountInCurrencyMinorUnits(ledger.amount, ledgerCurrency) !== amountInCurrencyMinorUnits(detail.amount, expectedCurrency) ||
+      ledgerCurrency !== expectedCurrency ||
+      normalizeVerifiedPaymentEnvironment(ledger.payment_mode) !== normalizeVerifiedPaymentEnvironment(detail.paymentEnvironment)
+    ) {
+      throw new Error('El ledger del cobro no coincide con el vínculo conversacional')
+    }
+
+    const storedDetailJson = JSON.stringify(detail).slice(0, 4000)
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO NOTHING`,
+      [cleanEventId, cleanContactId, cleanAgentId, eventType, storedDetailJson]
+    )
+    const stored = await db.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [cleanEventId]
+    )
+    const storedDetail = parseJsonField(stored?.detail_json, {})
+    const comparableKeys = [
+      'agentId',
+      'invoiceId',
+      'ledgerPaymentId',
+      'amount',
+      'currency',
+      'channel',
+      'paymentMode',
+      'runtimeMode',
+      'paymentEnvironment',
+      'paymentPurpose',
+      'appointmentDeposit',
+      'executionId',
+      'productId',
+      'priceId'
+    ]
+    const mismatch = comparableKeys.some((key) => {
+      if (key === 'amount') return Number(storedDetail[key]) !== Number(detail[key])
+      if (key === 'currency') return normalizeVerifiedCurrency(storedDetail[key]) !== normalizeVerifiedCurrency(detail[key])
+      if (key === 'paymentEnvironment') {
+        return normalizeVerifiedPaymentEnvironment(storedDetail[key]) !== normalizeVerifiedPaymentEnvironment(detail[key])
+      }
+      return String(storedDetail[key] ?? '') !== String(detail[key] ?? '')
+    })
+    const storedPurpose = String(storedDetail.paymentPurpose || '').trim().toLowerCase()
+    const storedPaymentMode = String(storedDetail.paymentMode || '').trim().toLowerCase()
+    const storedPurposeConsistent = storedPurpose === 'appointment_deposit'
+      ? storedPaymentMode === 'deposit' && storedDetail.appointmentDeposit === true
+      : storedPurpose === 'deposit'
+        ? storedPaymentMode === 'deposit' && storedDetail.appointmentDeposit === false
+        : storedPurpose === 'purchase'
+          ? storedPaymentMode === 'full_payment' && storedDetail.appointmentDeposit === false
+          : false
+    if (
+      !stored ||
+      String(stored.contact_id || '') !== cleanContactId ||
+      String(stored.agent_id || '') !== cleanAgentId ||
+      !allowedEventTypes.has(stored.event_type) ||
+      !storedPurposeConsistent ||
+      mismatch
+    ) {
+      throw Object.assign(new Error('El mensaje ya está ligado a otro cobro'), { statusCode: 409 })
+    }
+    const request = await db.get(
+      `SELECT idempotency_key, request_json, status, binding_status
+       FROM conversational_payment_link_requests
+       WHERE binding_event_id = ?`,
+      [cleanEventId]
+    )
+    const requestDetail = parseJsonField(request?.request_json, {})
+    if (
+      !request ||
+      request.status !== 'completed' ||
+      String(requestDetail.agentId || '') !== cleanAgentId ||
+      String(requestDetail.contactId || '') !== cleanContactId ||
+      String(requestDetail.executionId || '') !== String(detail.executionId || '') ||
+      String(requestDetail.paymentPurpose || '') !== String(detail.paymentPurpose || '') ||
+      Number(requestDetail.amount) !== Number(detail.amount) ||
+      normalizeVerifiedCurrency(requestDetail.currency) !== normalizeVerifiedCurrency(detail.currency)
+    ) {
+      throw new Error('El ledger durable del link no coincide con su vínculo conversacional')
+    }
+    const boundAt = new Date().toISOString()
+    await db.run(
+      `UPDATE conversational_payment_link_requests
+       SET binding_status = 'bound', binding_error = NULL, bound_at = COALESCE(bound_at, ?), updated_at = ?
+       WHERE binding_event_id = ? AND status = 'completed'`,
+      [boundAt, boundAt, cleanEventId]
+    )
+    return { bound: true, eventType: stored.event_type, detail: storedDetail }
+  })
+}
+
+export async function recoverPendingConversationalPaymentSourceBindings({
+  limit = 80,
+  contactId = '',
+  invoiceId = '',
+  reconcilePaid = true
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanInvoiceId = String(invoiceId || '').trim()
+  const rows = await db.all(
+    `SELECT * FROM conversational_payment_link_requests
+     WHERE status IN ('completed', 'processing') AND COALESCE(binding_status, 'pending') != 'bound'
+       AND (? = '' OR contact_id = ?)
+       AND (? = '' OR invoice_id = ? OR idempotency_key IN (
+         SELECT payment_link_request_key FROM payments WHERE ghl_invoice_id = ?
+       ))
+     ORDER BY updated_at ASC
+     LIMIT ?`,
+    [
+      cleanContactId,
+      cleanContactId,
+      cleanInvoiceId,
+      cleanInvoiceId,
+      cleanInvoiceId,
+      Math.min(Math.max(Number(limit) || 80, 1), 500)
+    ]
+  ).catch(() => [])
+  let bound = 0
+  let reconciled = 0
+  let failed = 0
+
+  for (const candidate of rows) {
+    let row = candidate
+    let request = parseJsonField(row.request_json, {})
+    if (!request || conversationalPaymentRequestHash(request) !== row.request_hash) {
+      const message = 'El payload durable del cobro no coincide con su hash original; el vínculo quedó bloqueado para revisión humana.'
+      await db.run(
+        `UPDATE conversational_payment_link_requests
+         SET status = 'failed', binding_status = 'failed', error_status = 409,
+             error_message = ?, binding_error = ?, updated_at = ?
+         WHERE idempotency_key = ? AND COALESCE(binding_status, 'pending') != 'bound'`,
+        [message, message, new Date().toISOString(), row.idempotency_key]
+      ).catch(() => {})
+      failed += 1
+      continue
+    }
+    if (row.status === 'processing') {
+      try {
+        const recovered = await recoverProcessingConversationalPaymentRequest(db, row, row.request_hash)
+        if (!recovered) {
+          const rawUpdatedAt = String(row.updated_at || row.created_at || '').trim()
+          const normalizedUpdatedAt = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(rawUpdatedAt)
+            ? `${rawUpdatedAt.replace(' ', 'T')}Z`
+            : rawUpdatedAt
+          const updatedAtMs = Date.parse(normalizedUpdatedAt)
+          const stale = !Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs >= 5 * 60 * 1000
+          if (stale) {
+            const message = 'El proceso no conserva un invoice canónico; quedó bloqueado para revisión humana y no se volverá a llamar al proveedor.'
+            await db.run(
+              `UPDATE conversational_payment_link_requests
+               SET status = 'failed', binding_status = 'failed', error_status = 503,
+                   error_message = ?, binding_error = ?, updated_at = ?
+               WHERE idempotency_key = ? AND status = 'processing'`,
+              [message, message, new Date().toISOString(), row.idempotency_key]
+            )
+            failed += 1
+          }
+          continue
+        }
+        row = await db.get(
+          'SELECT * FROM conversational_payment_link_requests WHERE idempotency_key = ?',
+          [row.idempotency_key]
+        )
+        request = parseJsonField(row?.request_json, {})
+      } catch (error) {
+        const message = String(error.message || error).slice(0, 1200)
+        await db.run(
+          `UPDATE conversational_payment_link_requests
+           SET status = 'failed', binding_status = 'failed', error_status = 503,
+               error_message = ?, binding_error = ?, updated_at = ?
+           WHERE idempotency_key = ? AND status = 'processing'`,
+          [message, message, new Date().toISOString(), row.idempotency_key]
+        ).catch(() => {})
+        failed += 1
+        continue
+      }
+    }
+    const response = parseJsonField(row?.response_json, {})
+    const requestContactId = String(request.contactId || '').trim()
+    const responseInvoiceId = String(response.invoiceId || '').trim()
+    if (cleanContactId && requestContactId !== cleanContactId) continue
+    if (cleanInvoiceId && responseInvoiceId !== cleanInvoiceId) continue
+
+    try {
+      const paymentPurpose = String(request.paymentPurpose || '').trim().toLowerCase()
+      const appointmentDeposit = paymentPurpose === 'appointment_deposit'
+      const paymentMode = appointmentDeposit || paymentPurpose === 'deposit' ? 'deposit' : 'full_payment'
+      if (!requestContactId || !request.agentId || !request.executionId || !responseInvoiceId || !response.paymentLink) {
+        throw new Error('El ledger pendiente no conserva todos los datos para reparar su vínculo')
+      }
+      const ledgers = await db.all(
+        `SELECT id, contact_id, amount, currency, status, payment_mode, ghl_invoice_id
+         FROM payments
+         WHERE contact_id = ? AND (id = ? OR ghl_invoice_id = ?)
+         ORDER BY CASE WHEN ghl_invoice_id = ? THEN 0 ELSE 1 END
+         LIMIT 2`,
+        [requestContactId, responseInvoiceId, responseInvoiceId, responseInvoiceId]
+      )
+      if (ledgers.length !== 1) throw new Error('El invoice pendiente no tiene un único ledger canónico')
+      const ledger = ledgers[0]
+      const eventId = String(row.binding_event_id || '').trim() ||
+        `cae_payment_${createHash('sha256').update(String(row.idempotency_key || '')).digest('hex').slice(0, 48)}`
+      if (!String(row.binding_event_id || '').trim()) {
+        await db.run(
+          `UPDATE conversational_payment_link_requests
+           SET binding_event_id = ?, binding_status = COALESCE(binding_status, 'pending'), updated_at = ?
+           WHERE idempotency_key = ? AND (binding_event_id IS NULL OR binding_event_id = '')`,
+          [eventId, new Date().toISOString(), row.idempotency_key]
+        )
+      }
+      const detail = {
+        agentId: String(request.agentId),
+        invoiceId: responseInvoiceId,
+        amount: Number(response.amount ?? request.amount),
+        currency: String(response.currency || request.currency || '').trim().toUpperCase(),
+        channel: String(request.channel || '').trim().toLowerCase(),
+        paymentMode,
+        runtimeMode: 'tool_calling_v2',
+        ledgerPaymentId: ledger.id,
+        paymentEnvironment: normalizeVerifiedPaymentEnvironment(ledger.payment_mode),
+        productId: request.productId || null,
+        priceId: request.priceId || null,
+        paymentPurpose,
+        appointmentDeposit,
+        executionId: String(request.executionId),
+        status: response.status || null,
+        recoveredBinding: true
+      }
+      await bindConversationalPaymentSourceEvent({
+        eventId,
+        contactId: requestContactId,
+        eventType: 'payment_link_created',
+        detail
+      })
+      bound += 1
+
+      if (
+        reconcilePaid &&
+        VERIFIED_CONVERSATIONAL_PAYMENT_STATUSES.has(normalizeVerifiedPaymentStatus(ledger.status)) &&
+        normalizeVerifiedPaymentEnvironment(ledger.payment_mode) === 'live'
+      ) {
+        const result = await completeConversationalAgentSalePaymentFromInvoice({
+          contactId: requestContactId,
+          invoiceId: responseInvoiceId,
+          paymentId: ledger.id,
+          amount: ledger.amount,
+          currency: ledger.currency,
+          status: ledger.status,
+          paymentMode: ledger.payment_mode
+        })
+        if (result?.matched) reconciled += 1
+      }
+    } catch (error) {
+      failed += 1
+      await db.run(
+        `UPDATE conversational_payment_link_requests
+         SET binding_status = 'failed', binding_error = ?, updated_at = ?
+         WHERE idempotency_key = ? AND COALESCE(binding_status, 'pending') != 'bound'`,
+        [String(error.message || error).slice(0, 1200), new Date().toISOString(), row.idempotency_key]
+      ).catch(() => {})
+    }
+  }
+  return { scanned: rows.length, bound, reconciled, failed }
+}
+
+function paymentReconciliationEventId({ contactId, agentId, sourceEventId, ledgerPaymentId }) {
+  const digest = createHash('sha256')
+    .update([contactId, agentId, sourceEventId, ledgerPaymentId].map((value) => String(value || '').trim()).join('|'))
+    .digest('hex')
+  return `carec_${digest.slice(0, 48)}`
+}
+
+async function rejectConversationalPaymentReconciliation({ contactId, agentId, sourceEventId, reason, detail = {} }) {
+  const digest = createHash('sha256')
+    .update([contactId, agentId, sourceEventId, reason].map((value) => String(value || '')).join('|'))
+    .digest('hex')
+  await recordConversationalAgentEvent({
+    eventId: `carej_${digest.slice(0, 48)}`,
+    contactId,
+    eventType: 'payment_reconciliation_rejected',
+    detail: { agentId: agentId || null, sourceEventId: sourceEventId || null, reason, ...detail }
+  }).catch(() => {})
+  return { matched: false, reason }
+}
+
+async function claimConversationalPaymentReconciliation({ eventId, contactId, agentId, detail }) {
+  await recordConversationalAgentEvent({
+    eventId,
+    contactId,
+    eventType: CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT,
+    detail: {
+      ...detail,
+      agentId,
+      status: 'pending',
+      attempts: 0,
+      claimToken: null,
+      leaseUntilAt: null,
+      lastError: null
+    },
+    throwOnError: true
+  })
+
+  const row = await db.get(
+    'SELECT id, detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?',
+    [eventId, CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT]
+  )
+  if (!row) throw new Error('No se pudo crear el ledger de reconciliación del pago')
+  const stored = parseJsonField(row.detail_json, {})
+  if (
+    stored.sourceEventId !== detail.sourceEventId ||
+    stored.ledgerPaymentId !== detail.ledgerPaymentId ||
+    Number(stored.amount) !== Number(detail.amount) ||
+    normalizeVerifiedCurrency(stored.currency) !== normalizeVerifiedCurrency(detail.currency) ||
+    normalizeVerifiedPaymentEnvironment(stored.paymentEnvironment) !== normalizeVerifiedPaymentEnvironment(detail.paymentEnvironment) ||
+    String(stored.paymentPurpose || '').trim() !== String(detail.paymentPurpose || '').trim() ||
+    stored.appointmentDeposit !== detail.appointmentDeposit
+  ) {
+    throw Object.assign(new Error('El ledger de reconciliación ya existe con otra evidencia'), { statusCode: 409 })
+  }
+  if (stored.status === 'completed') {
+    return { claimed: false, completed: true, result: stored.result || null }
+  }
+
+  const nowMs = Date.now()
+  const leaseUntilMs = Date.parse(stored.leaseUntilAt || '')
+  if (stored.status === 'processing' && Number.isFinite(leaseUntilMs) && leaseUntilMs > nowMs) {
+    return { claimed: false, completed: false, processing: true }
+  }
+
+  const claimToken = `capr_${randomUUID()}`
+  const next = {
+    ...stored,
+    status: 'processing',
+    attempts: Math.max(0, Number(stored.attempts) || 0) + 1,
+    claimToken,
+    leaseUntilAt: new Date(nowMs + CONVERSATIONAL_PAYMENT_RECONCILIATION_LEASE_MS).toISOString(),
+    lastError: null
+  }
+  const update = await db.run(
+    `UPDATE conversational_agent_events
+     SET detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [JSON.stringify(next), eventId, CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT, row.detail_json]
+  )
+  return dbMutationCount(update) === 1
+    ? { claimed: true, claimToken, detail: next }
+    : { claimed: false, completed: false, processing: true }
+}
+
+async function settleConversationalPaymentReconciliation(eventId, claimToken, { result = null, error = null } = {}) {
+  const row = await db.get(
+    'SELECT detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?',
+    [eventId, CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT]
+  )
+  if (!row) return false
+  const stored = parseJsonField(row.detail_json, {})
+  if (stored.status !== 'processing' || stored.claimToken !== claimToken) return false
+  const next = error
+    ? {
+        ...stored,
+        status: 'pending',
+        claimToken: null,
+        leaseUntilAt: null,
+        lastError: String(error?.message || error || 'reconciliation_failed').slice(0, 1200)
+      }
+    : {
+        ...stored,
+        status: 'completed',
+        claimToken: null,
+        leaseUntilAt: null,
+        lastError: null,
+        completedAt: new Date().toISOString(),
+        result
+      }
+  const update = await db.run(
+    `UPDATE conversational_agent_events
+     SET detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [JSON.stringify(next), eventId, CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT, row.detail_json]
+  )
+  return dbMutationCount(update) === 1
+}
+
+async function checkpointConversationalPaymentReconciliation(eventId, claimToken, patch = {}) {
+  const row = await db.get(
+    'SELECT detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?',
+    [eventId, CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT]
+  )
+  if (!row) throw new Error('Se perdió el ledger de reconciliación durante el pago')
+  const stored = parseJsonField(row.detail_json, {})
+  if (stored.status !== 'processing' || stored.claimToken !== claimToken) {
+    throw new Error('Otro proceso tomó la reconciliación del pago')
+  }
+  const next = { ...stored, ...patch }
+  const update = await db.run(
+    `UPDATE conversational_agent_events
+     SET detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [JSON.stringify(next), eventId, CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT, row.detail_json]
+  )
+  if (dbMutationCount(update) !== 1) throw new Error('No se pudo guardar el avance durable de la reconciliación')
+  return next
+}
+
+function resolveConversationalPaymentPurpose(matchedDetail = {}) {
+  const paymentPurpose = String(matchedDetail.paymentPurpose || '').trim().toLowerCase()
+  if (paymentPurpose === 'appointment_deposit') {
+    return { paymentPurpose, paymentMode: 'deposit', appointmentDeposit: true }
+  }
+  if (paymentPurpose === 'deposit') {
+    return { paymentPurpose, paymentMode: 'deposit', appointmentDeposit: false }
+  }
+  if (paymentPurpose === 'purchase') {
+    return { paymentPurpose, paymentMode: 'full_payment', appointmentDeposit: false }
+  }
+  return null
+}
+
+async function resumeConversationalAppointmentAfterVerifiedPayment(payload) {
+  if (conversationalPaymentResumeHandlerForTest) {
+    return conversationalPaymentResumeHandlerForTest(payload)
+  }
+  const { resumeToolCallingV2AfterVerifiedPayment } = await import('../agents/conversational/runner.js')
+  return resumeToolCallingV2AfterVerifiedPayment(payload)
+}
+
+async function assertConversationalAppointmentDepositEvidence({
+  reconciliationId = '',
+  contactId = '',
+  agentId = '',
+  paymentId = '',
+  database = db,
+  lockRows = false
+} = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanPaymentId = String(paymentId || '').trim()
+  if (!cleanReconciliationId || !cleanContactId || !cleanAgentId || !cleanPaymentId) {
+    throw new Error('Falta la identidad durable del anticipo de la cita')
+  }
+
+  const rowLock = lockRows && process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  // El orden es intencional y debe conservarse en reserve/consume: primero la
+  // reconciliacion y luego el ledger. En PostgreSQL ambos quedan bloqueados
+  // hasta el commit para que un refund/void concurrente no invalide el pago
+  // entre la comprobacion y la reserva/consumo del anticipo. SQLite ya toma el
+  // writer lock con BEGIN IMMEDIATE y no acepta FOR UPDATE.
+  const reconciliation = await database.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [cleanReconciliationId]
+  )
+  const ledger = await database.get(
+    `SELECT id, contact_id, amount, currency, status, payment_mode
+     FROM payments WHERE id = ? AND contact_id = ?${rowLock}`,
+    [cleanPaymentId, cleanContactId]
+  )
+  const reconciliationDetail = parseJsonField(reconciliation?.detail_json, {})
+  const validStatus = reconciliationDetail.status === 'completed' || (
+    reconciliationDetail.status === 'processing' &&
+    reconciliationDetail.verifiedEventAppliedAt &&
+    reconciliationDetail.claimToken &&
+    Date.parse(reconciliationDetail.leaseUntilAt || '') > Date.now()
+  )
+  if (
+    reconciliation?.event_type !== CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT ||
+    String(reconciliation?.contact_id || '') !== cleanContactId ||
+    String(reconciliation?.agent_id || '') !== cleanAgentId ||
+    reconciliationDetail.paymentPurpose !== 'appointment_deposit' ||
+    reconciliationDetail.appointmentDeposit !== true ||
+    String(reconciliationDetail.ledgerPaymentId || '') !== cleanPaymentId ||
+    !ledger ||
+    !VERIFIED_CONVERSATIONAL_PAYMENT_STATUSES.has(normalizeVerifiedPaymentStatus(ledger.status)) ||
+    normalizeVerifiedPaymentEnvironment(ledger.payment_mode) !== 'live' ||
+    normalizeVerifiedCurrency(ledger.currency) !== normalizeVerifiedCurrency(reconciliationDetail.currency) ||
+    amountInCurrencyMinorUnits(ledger.amount, ledger.currency) !== amountInCurrencyMinorUnits(reconciliationDetail.amount, reconciliationDetail.currency) ||
+    !validStatus
+  ) {
+    throw new Error('El anticipo ya no coincide con la cita que intenta consumirlo')
+  }
+  return { reconciliationDetail, ledger }
+}
+
+async function inspectRecoverableDepositReservationAttempt(database, appointmentRequestId, { lockRows = false } = {}) {
+  const cleanRequestId = String(appointmentRequestId || '').trim()
+  if (!cleanRequestId) return { recoverable: false, reason: 'appointment_request_id_missing' }
+  const rowLock = lockRows && process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const request = await database.get(
+    `SELECT status, appointment_id
+     FROM appointment_creation_requests
+     WHERE client_request_id = ?${rowLock}`,
+    [cleanRequestId]
+  )
+  // Este es el único crash inequívocamente anterior a la cita: la reserva del
+  // anticipo existe, pero el ledger idempotente de creación nunca nació.
+  if (!request) return { recoverable: true, reason: 'appointment_request_missing' }
+
+  const appointmentId = String(request.appointment_id || '').trim()
+  if (request.status !== 'completed' || !appointmentId) {
+    return { recoverable: false, reason: `appointment_request_${String(request.status || 'unknown')}` }
+  }
+  const appointment = await database.get(
+    `SELECT id, appointment_status, status, deleted_at
+     FROM appointments WHERE id = ?${rowLock}`,
+    [appointmentId]
+  )
+  if (!appointment) return { recoverable: false, reason: 'canonical_appointment_missing' }
+  const status = normalizeVerifiedPaymentStatus(appointment.appointment_status || appointment.status)
+  const inactive = Boolean(appointment.deleted_at) || ['cancelled', 'canceled', 'deleted'].includes(status)
+  return inactive
+    ? { recoverable: true, reason: 'canonical_appointment_inactive', appointmentId }
+    : { recoverable: false, reason: 'canonical_appointment_active', appointmentId }
+}
+
+export async function canRecoverConversationalAppointmentDepositReservation({
+  reconciliationId = '',
+  contactId = '',
+  agentId = '',
+  appointmentRequestId = ''
+} = {}) {
+  const eventId = `${String(reconciliationId || '').trim()}_consumed`
+  const row = await db.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [eventId]
+  ).catch(() => null)
+  const detail = parseJsonField(row?.detail_json, {})
+  const leaseUntilMs = Date.parse(detail.leaseUntilAt || '')
+  if (
+    row?.event_type !== 'deposit_payment_consumed' ||
+    String(row?.contact_id || '') !== String(contactId || '').trim() ||
+    String(row?.agent_id || '') !== String(agentId || '').trim() ||
+    detail.status !== 'reserved' ||
+    detail.reconciliationId !== String(reconciliationId || '').trim() ||
+    detail.appointmentRequestId === String(appointmentRequestId || '').trim() ||
+    !Number.isFinite(leaseUntilMs) ||
+    leaseUntilMs > Date.now()
+  ) return false
+  const recovery = await inspectRecoverableDepositReservationAttempt(db, detail.appointmentRequestId)
+  return recovery.recoverable === true
+}
+
+export async function assertConversationalAppointmentDepositReservationFence({
+  eventId = '',
+  claimToken = '',
+  appointmentRequestId = '',
+  contactId = '',
+  agentId = '',
+  database = db
+} = {}) {
+  const cleanEventId = String(eventId || '').trim()
+  const cleanClaimToken = String(claimToken || '').trim()
+  const cleanAppointmentRequestId = String(appointmentRequestId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  if (!cleanEventId || !cleanClaimToken || !cleanAppointmentRequestId || !cleanContactId || !cleanAgentId) {
+    throw Object.assign(new Error('Falta el fencing token del anticipo'), { status: 409, code: 'deposit_fence_missing' })
+  }
+
+  // Lectura sin lock para descubrir la evidencia; luego bloqueamos siempre en
+  // el mismo orden que reserve/consume: reconciliación, payment y reservation.
+  const preliminary = await database.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [cleanEventId]
+  )
+  const preliminaryDetail = parseJsonField(preliminary?.detail_json, {})
+  await assertConversationalAppointmentDepositEvidence({
+    reconciliationId: preliminaryDetail.reconciliationId,
+    contactId: cleanContactId,
+    agentId: cleanAgentId,
+    paymentId: preliminaryDetail.ledgerPaymentId,
+    database,
+    lockRows: true
+  })
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const stored = await database.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [cleanEventId]
+  )
+  const detail = parseJsonField(stored?.detail_json, {})
+  if (
+    stored?.event_type !== 'deposit_payment_consumed' ||
+    String(stored?.contact_id || '') !== cleanContactId ||
+    String(stored?.agent_id || '') !== cleanAgentId ||
+    detail.status !== 'reserved' ||
+    detail.appointmentRequestId !== cleanAppointmentRequestId ||
+    detail.claimToken !== cleanClaimToken ||
+    Date.parse(detail.leaseUntilAt || '') <= Date.now()
+  ) {
+    throw Object.assign(new Error('La reserva del anticipo perdió su lease o fue tomada por otro intento'), {
+      status: 409,
+      code: 'deposit_fence_lost'
+    })
+  }
+  return { ok: true, reconciliationId: detail.reconciliationId, paymentId: detail.ledgerPaymentId }
+}
+
+export async function reserveConversationalAppointmentDepositEvidence({
+  reconciliationId = '',
+  contactId = '',
+  agentId = '',
+  paymentId = '',
+  appointmentRequestId = ''
+} = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanPaymentId = String(paymentId || '').trim()
+  const cleanAppointmentRequestId = String(appointmentRequestId || '').trim()
+  if (!cleanAppointmentRequestId.startsWith('conv-v2-attempt:')) {
+    throw new Error('Falta la llave durable del intento de cita')
+  }
+
+  const eventId = `${cleanReconciliationId}_consumed`
+  return db.transaction(async (tx) => {
+    await assertConversationalAppointmentDepositEvidence({
+      reconciliationId: cleanReconciliationId,
+      contactId: cleanContactId,
+      agentId: cleanAgentId,
+      paymentId: cleanPaymentId,
+      database: tx,
+      lockRows: true
+    })
+    const nowMs = Date.now()
+    const nowIso = new Date(nowMs).toISOString()
+    const claimToken = `cadr_${randomUUID()}`
+    const detail = {
+      status: 'reserved',
+      agentId: cleanAgentId,
+      reconciliationId: cleanReconciliationId,
+      ledgerPaymentId: cleanPaymentId,
+      appointmentRequestId: cleanAppointmentRequestId,
+      appointmentId: null,
+      paymentPurpose: 'appointment_deposit',
+      claimToken,
+      leaseUntilAt: new Date(nowMs + CONVERSATIONAL_APPOINTMENT_DEPOSIT_RESERVATION_LEASE_MS).toISOString(),
+      reservedAt: nowIso,
+      attempts: 1
+    }
+    const inserted = await tx.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, 'deposit_payment_consumed', ?)
+       ON CONFLICT(id) DO NOTHING`,
+      [eventId, cleanContactId, cleanAgentId, JSON.stringify(detail)]
+    )
+    if (dbMutationCount(inserted) === 1) {
+      return {
+        reserved: true,
+        replayed: false,
+        eventId,
+        claimToken,
+        leaseUntilAt: detail.leaseUntilAt
+      }
+    }
+
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const stored = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [eventId]
+    )
+    const storedDetail = parseJsonField(stored?.detail_json, {})
+    const sameEvidence = stored?.event_type === 'deposit_payment_consumed' &&
+      String(stored?.contact_id || '') === cleanContactId &&
+      String(stored?.agent_id || '') === cleanAgentId &&
+      storedDetail.reconciliationId === cleanReconciliationId &&
+      storedDetail.ledgerPaymentId === cleanPaymentId
+    if (!sameEvidence) throw Object.assign(new Error('El anticipo ya está ligado a otra operación'), { statusCode: 409 })
+    if (storedDetail.status === 'consumed' && storedDetail.appointmentRequestId === cleanAppointmentRequestId) {
+      return {
+        reserved: false,
+        consumed: true,
+        replayed: true,
+        appointmentId: storedDetail.appointmentId || null,
+        eventId
+      }
+    }
+    if (storedDetail.status === 'reserved' && storedDetail.appointmentRequestId === cleanAppointmentRequestId) {
+      const renewed = {
+        ...storedDetail,
+        claimToken: storedDetail.claimToken || claimToken,
+        leaseUntilAt: detail.leaseUntilAt,
+        lastRenewedAt: nowIso
+      }
+      const update = await tx.run(
+        `UPDATE conversational_agent_events SET detail_json = ?
+         WHERE id = ? AND event_type = 'deposit_payment_consumed' AND detail_json = ?`,
+        [JSON.stringify(renewed), eventId, stored.detail_json]
+      )
+      if (dbMutationCount(update) !== 1) {
+        throw Object.assign(new Error('Otro intento tomó el anticipo para una cita'), { statusCode: 409 })
+      }
+      return {
+        reserved: true,
+        consumed: false,
+        replayed: true,
+        eventId,
+        claimToken: renewed.claimToken,
+        leaseUntilAt: renewed.leaseUntilAt
+      }
+    }
+
+    let recovery = null
+    if (storedDetail.status === 'reserved') {
+      const leaseUntilMs = Date.parse(storedDetail.leaseUntilAt || '')
+      if (Number.isFinite(leaseUntilMs) && leaseUntilMs > nowMs) {
+        throw Object.assign(new Error('El anticipo ya está reservado para otra cita'), { statusCode: 409 })
+      }
+      recovery = await inspectRecoverableDepositReservationAttempt(
+        tx,
+        storedDetail.appointmentRequestId,
+        { lockRows: true }
+      )
+      if (!recovery.recoverable) {
+        throw Object.assign(
+          new Error('La reserva anterior del anticipo tiene una cita activa o un estado incierto; requiere revisión humana'),
+          { statusCode: 409, code: recovery.reason }
+        )
+      }
+    } else if (storedDetail.status !== 'released') {
+      throw Object.assign(new Error('El anticipo ya está reservado para otra cita'), { statusCode: 409 })
+    }
+
+    const next = {
+      ...detail,
+      attempts: Math.max(0, Number(storedDetail.attempts) || 0) + 1,
+      ...(recovery
+        ? {
+            recoveredAt: nowIso,
+            recoveryReason: recovery.reason,
+            previousAppointmentRequestId: storedDetail.appointmentRequestId || null,
+            previousAppointmentId: recovery.appointmentId || storedDetail.appointmentId || null
+          }
+        : {})
+    }
+    const updated = await tx.run(
+      `UPDATE conversational_agent_events SET detail_json = ?
+       WHERE id = ? AND event_type = 'deposit_payment_consumed' AND detail_json = ?`,
+      [JSON.stringify(next), eventId, stored.detail_json]
+    )
+    if (dbMutationCount(updated) !== 1) {
+      throw Object.assign(new Error('Otro intento tomó el anticipo para una cita'), { statusCode: 409 })
+    }
+    return {
+      reserved: true,
+      replayed: false,
+      recovered: Boolean(recovery),
+      eventId,
+      claimToken,
+      leaseUntilAt: next.leaseUntilAt
+    }
+  })
+}
+
+export async function consumeConversationalAppointmentDepositEvidence({
+  reconciliationId = '',
+  contactId = '',
+  agentId = '',
+  paymentId = '',
+  appointmentRequestId = '',
+  appointmentId = ''
+} = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanPaymentId = String(paymentId || '').trim()
+  const cleanAppointmentRequestId = String(appointmentRequestId || '').trim()
+  const cleanAppointmentId = String(appointmentId || '').trim()
+  if (!cleanAppointmentRequestId || !cleanAppointmentId) {
+    throw new Error('Falta la cita canónica para consumir el anticipo')
+  }
+
+  return db.transaction(async (tx) => {
+    // Revalidar el ledger dentro de la misma transaccion que consume la
+    // evidencia. La validacion inicial del Runner no basta: el pago pudo ser
+    // reembolsado o anulado mientras se creaba la cita.
+    await assertConversationalAppointmentDepositEvidence({
+      reconciliationId: cleanReconciliationId,
+      contactId: cleanContactId,
+      agentId: cleanAgentId,
+      paymentId: cleanPaymentId,
+      database: tx,
+      lockRows: true
+    })
+
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const appointmentRequest = await tx.get(
+      `SELECT status, appointment_id
+       FROM appointment_creation_requests WHERE client_request_id = ?${rowLock}`,
+      [cleanAppointmentRequestId]
+    )
+    const appointment = await tx.get(
+      `SELECT id, contact_id, appointment_status, status, deleted_at
+       FROM appointments WHERE id = ?${rowLock}`,
+      [cleanAppointmentId]
+    )
+    const appointmentStatus = normalizeVerifiedPaymentStatus(appointment?.appointment_status || appointment?.status)
+    if (
+      appointmentRequest?.status !== 'completed' ||
+      String(appointmentRequest?.appointment_id || '') !== cleanAppointmentId ||
+      !appointment ||
+      String(appointment.contact_id || '') !== cleanContactId ||
+      appointment.deleted_at ||
+      ['cancelled', 'canceled', 'deleted'].includes(appointmentStatus)
+    ) {
+      throw new Error('La cita canónica no existe o ya no está activa; el anticipo no se consumió')
+    }
+
+    const eventId = `${cleanReconciliationId}_consumed`
+    const stored = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [eventId]
+    )
+    const storedDetail = parseJsonField(stored?.detail_json, {})
+    if (
+      stored?.event_type !== 'deposit_payment_consumed' ||
+      String(stored?.contact_id || '') !== cleanContactId ||
+      String(stored?.agent_id || '') !== cleanAgentId ||
+      storedDetail.reconciliationId !== cleanReconciliationId ||
+      storedDetail.ledgerPaymentId !== cleanPaymentId ||
+      storedDetail.appointmentRequestId !== cleanAppointmentRequestId
+    ) {
+      throw Object.assign(new Error('El anticipo no está reservado para este intento de cita'), { statusCode: 409 })
+    }
+    if (storedDetail.status === 'consumed') {
+      if (storedDetail.appointmentId !== cleanAppointmentId) {
+        throw Object.assign(new Error('El anticipo ya fue consumido por otra cita'), { statusCode: 409 })
+      }
+      return { consumed: true, replayed: true, eventId }
+    }
+    if (storedDetail.status !== 'reserved') {
+      throw Object.assign(new Error('La reserva del anticipo ya no está activa'), { statusCode: 409 })
+    }
+    const next = {
+      ...storedDetail,
+      status: 'consumed',
+      appointmentId: cleanAppointmentId,
+      consumedAt: new Date().toISOString()
+    }
+    const updated = await tx.run(
+      `UPDATE conversational_agent_events SET detail_json = ?
+       WHERE id = ? AND event_type = 'deposit_payment_consumed' AND detail_json = ?`,
+      [JSON.stringify(next), eventId, stored.detail_json]
+    )
+    if (dbMutationCount(updated) !== 1) {
+      throw Object.assign(new Error('No se pudo consumir el anticipo de forma exclusiva'), { statusCode: 409 })
+    }
+    return { consumed: true, replayed: false, eventId }
+  })
+}
+
+export async function releaseConversationalAppointmentDepositEvidence({
+  reconciliationId = '',
+  contactId = '',
+  agentId = '',
+  paymentId = '',
+  appointmentRequestId = '',
+  reason = 'appointment_not_created'
+} = {}) {
+  const eventId = `${String(reconciliationId || '').trim()}_consumed`
+  const stored = await db.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [eventId]
+  )
+  if (!stored) return { released: false, missing: true }
+  const detail = parseJsonField(stored.detail_json, {})
+  const sameReservation = stored.event_type === 'deposit_payment_consumed' &&
+    String(stored.contact_id || '') === String(contactId || '').trim() &&
+    String(stored.agent_id || '') === String(agentId || '').trim() &&
+    detail.ledgerPaymentId === String(paymentId || '').trim() &&
+    detail.appointmentRequestId === String(appointmentRequestId || '').trim()
+  if (!sameReservation) throw Object.assign(new Error('No se puede liberar el anticipo de otra cita'), { statusCode: 409 })
+  if (detail.status === 'released') return { released: true, replayed: true }
+  if (detail.status !== 'reserved') return { released: false, consumed: detail.status === 'consumed' }
+  const next = {
+    ...detail,
+    status: 'released',
+    releasedAt: new Date().toISOString(),
+    releaseReason: String(reason || 'appointment_not_created').slice(0, 240)
+  }
+  const updated = await db.run(
+    `UPDATE conversational_agent_events SET detail_json = ?
+     WHERE id = ? AND event_type = 'deposit_payment_consumed' AND detail_json = ?`,
+    [JSON.stringify(next), eventId, stored.detail_json]
+  )
+  return { released: dbMutationCount(updated) === 1, replayed: false }
+}
+
 export async function completeConversationalAgentSalePaymentFromInvoice({
   contactId = '',
   invoiceId = '',
@@ -2772,6 +3790,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
   amount = null,
   currency = '',
   status = '',
+  paymentMode = '',
   reference = ''
 } = {}) {
   const cleanContactId = String(contactId || '').trim()
@@ -2784,22 +3803,63 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     return { matched: false, reason: 'missing_contact_or_invoice' }
   }
 
-  const rows = await db.all(
-    `SELECT contact_id, detail_json
+  let rows = await db.all(
+    `SELECT id, contact_id, event_type, detail_json
      FROM conversational_agent_events
-     WHERE contact_id = ? AND event_type = 'payment_link_created'
+     WHERE contact_id = ? AND event_type IN (
+       'payment_link_created',
+       'payment_link_reused',
+       'deposit_transfer_pending_review'
+     )
      ORDER BY created_at DESC
      LIMIT 80`,
     [cleanContactId]
   )
 
   let matchedDetail = null
+  let matchedSourceEvent = null
   for (const row of rows) {
     const detail = parseJsonField(row.detail_json, {})
-    const storedInvoiceId = String(detail.invoiceId || detail.invoice_id || '').trim()
-    if (storedInvoiceId && invoiceCandidates.includes(storedInvoiceId)) {
+    const storedInvoiceId = String(
+      detail.ledgerPaymentId || detail.invoiceId || detail.invoice_id || detail.paymentId || detail.payment_id || ''
+    ).trim()
+    const alternateInvoiceId = String(detail.invoiceId || detail.invoice_id || detail.paymentId || detail.payment_id || '').trim()
+    if (storedInvoiceId && (invoiceCandidates.includes(storedInvoiceId) || invoiceCandidates.includes(alternateInvoiceId))) {
       matchedDetail = detail
+      matchedSourceEvent = row
       break
+    }
+  }
+
+  if (!matchedDetail) {
+    await recoverPendingConversationalPaymentSourceBindings({
+      limit: 80,
+      contactId: cleanContactId,
+      reconcilePaid: false
+    }).catch(() => {})
+    rows = await db.all(
+      `SELECT id, contact_id, event_type, detail_json
+       FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type IN (
+         'payment_link_created',
+         'payment_link_reused',
+         'deposit_transfer_pending_review'
+       )
+       ORDER BY created_at DESC
+       LIMIT 80`,
+      [cleanContactId]
+    )
+    for (const row of rows) {
+      const detail = parseJsonField(row.detail_json, {})
+      const storedInvoiceId = String(
+        detail.ledgerPaymentId || detail.invoiceId || detail.invoice_id || detail.paymentId || detail.payment_id || ''
+      ).trim()
+      const alternateInvoiceId = String(detail.invoiceId || detail.invoice_id || detail.paymentId || detail.payment_id || '').trim()
+      if (storedInvoiceId && (invoiceCandidates.includes(storedInvoiceId) || invoiceCandidates.includes(alternateInvoiceId))) {
+        matchedDetail = detail
+        matchedSourceEvent = row
+        break
+      }
     }
   }
 
@@ -2811,25 +3871,347 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     : await getConversationState(cleanContactId)
   const agentId = matchedAgentId || state?.agentId || null
   const agent = agentId ? await getConversationalAgent(agentId).catch(() => null) : null
-  const cleanCurrency = String(currency || matchedDetail.currency || '').trim().toUpperCase()
+  const nativeRuntime = normalizeConversationalRuntimeMode(matchedDetail.runtimeMode, 'legacy_v1') === 'tool_calling_v2'
+  const cleanCurrency = normalizeVerifiedCurrency(currency || matchedDetail.currency || '')
   const paidAmount = Number(amount ?? matchedDetail.amount)
-  const cleanInvoiceId = invoiceCandidates[0]
+  const cleanInvoiceId = String(matchedDetail.invoiceId || matchedDetail.paymentId || invoiceCandidates[0]).trim()
+
+  if (nativeRuntime) {
+    if (!agent || !isToolCallingV2(agent)) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: 'native_agent_missing_or_changed'
+      })
+    }
+
+    const reportedStatus = normalizeVerifiedPaymentStatus(status)
+    if (!reportedStatus || !VERIFIED_CONVERSATIONAL_PAYMENT_STATUSES.has(reportedStatus)) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: reportedStatus ? 'payment_status_not_successful' : 'payment_status_missing'
+      })
+    }
+
+    const expectedCurrency = normalizeVerifiedCurrency(matchedDetail.currency)
+    const expectedAmountMinor = amountInCurrencyMinorUnits(matchedDetail.amount, expectedCurrency)
+    const reportedAmountMinor = amountInCurrencyMinorUnits(amount, cleanCurrency)
+    if (!expectedCurrency || expectedAmountMinor === null || !cleanCurrency || reportedAmountMinor === null) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: 'payment_amount_or_currency_missing'
+      })
+    }
+    if (cleanCurrency !== expectedCurrency || reportedAmountMinor !== expectedAmountMinor) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: cleanCurrency !== expectedCurrency ? 'payment_currency_mismatch' : 'payment_amount_mismatch'
+      })
+    }
+
+    const expectedLedgerPaymentId = String(
+      matchedDetail.ledgerPaymentId || matchedDetail.invoiceId || matchedDetail.paymentId || ''
+    ).trim()
+    const ledgerRows = expectedLedgerPaymentId
+      ? await db.all(
+          `SELECT * FROM payments
+           WHERE contact_id = ? AND (id = ? OR ghl_invoice_id = ?)
+           ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
+           LIMIT 2`,
+          [cleanContactId, expectedLedgerPaymentId, expectedLedgerPaymentId, expectedLedgerPaymentId]
+        )
+      : []
+    if (ledgerRows.length !== 1) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: ledgerRows.length ? 'payment_ledger_ambiguous' : 'payment_ledger_missing'
+      })
+    }
+    const ledger = ledgerRows[0]
+    const ledgerStatus = normalizeVerifiedPaymentStatus(ledger.status)
+    const ledgerCurrency = normalizeVerifiedCurrency(ledger.currency)
+    const ledgerAmountMinor = amountInCurrencyMinorUnits(ledger.amount, ledgerCurrency)
+    const expectedEnvironment = normalizeVerifiedPaymentEnvironment(matchedDetail.paymentEnvironment)
+    const reportedEnvironment = normalizeVerifiedPaymentEnvironment(paymentMode)
+    const ledgerEnvironment = normalizeVerifiedPaymentEnvironment(ledger.payment_mode)
+    if (!VERIFIED_CONVERSATIONAL_PAYMENT_STATUSES.has(ledgerStatus)) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: 'payment_ledger_not_paid'
+      })
+    }
+    if (
+      ledgerCurrency !== expectedCurrency ||
+      ledgerAmountMinor === null ||
+      ledgerAmountMinor !== expectedAmountMinor
+    ) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: ledgerCurrency !== expectedCurrency ? 'payment_ledger_currency_mismatch' : 'payment_ledger_amount_mismatch'
+      })
+    }
+    if (!expectedEnvironment || !reportedEnvironment || !ledgerEnvironment) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: 'payment_environment_missing'
+      })
+    }
+    if (expectedEnvironment !== reportedEnvironment || expectedEnvironment !== ledgerEnvironment) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: 'payment_environment_mismatch'
+      })
+    }
+    if (expectedEnvironment !== 'live') {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: 'payment_environment_not_live'
+      })
+    }
+
+    const purpose = resolveConversationalPaymentPurpose(matchedDetail)
+    if (!purpose) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: 'payment_purpose_missing_or_invalid'
+      })
+    }
+    const reconciliationId = paymentReconciliationEventId({
+      contactId: cleanContactId,
+      agentId,
+      sourceEventId: matchedSourceEvent.id,
+      ledgerPaymentId: ledger.id
+    })
+    const claim = await claimConversationalPaymentReconciliation({
+      eventId: reconciliationId,
+      contactId: cleanContactId,
+      agentId,
+      detail: {
+        sourceEventId: matchedSourceEvent.id,
+        ledgerPaymentId: ledger.id,
+        invoiceId: cleanInvoiceId,
+        amount: Number(ledger.amount),
+        currency: ledgerCurrency,
+        paymentEnvironment: ledgerEnvironment,
+        paymentPurpose: purpose.paymentPurpose,
+        appointmentDeposit: purpose.appointmentDeposit,
+        channel: state?.channel || 'whatsapp',
+        reportedStatus
+      }
+    })
+    if (claim.completed) {
+      return { ...(claim.result || {}), matched: true, alreadyCompleted: true }
+    }
+    if (!claim.claimed) {
+      return { matched: true, processing: true, agentId, invoiceId: cleanInvoiceId }
+    }
+
+    try {
+      let progress = claim.detail
+      if (purpose.appointmentDeposit) {
+        const [currentAppointmentState, completedResumeEvent] = await Promise.all([
+          getConversationState(cleanContactId, { agentId, channel: state?.channel || 'whatsapp' }).catch(() => null),
+          db.get(
+            `SELECT id, event_type, detail_json
+             FROM conversational_agent_events
+             WHERE id IN (?, ?)
+             ORDER BY CASE WHEN event_type = 'payment_resume_reply_sent' THEN 0 ELSE 1 END
+             LIMIT 1`,
+            [`${reconciliationId}_reply`, `${reconciliationId}_turn`]
+          ).catch(() => null)
+        ])
+        const durableAppointmentBooked = currentAppointmentState?.status === 'completed' &&
+          currentAppointmentState?.signal === 'appointment_booked'
+        const terminalAppointmentAction = durableAppointmentBooked
+        const replyAlreadySent = completedResumeEvent?.event_type === 'payment_resume_reply_sent'
+        if (!progress.resumeCompletedAt && (terminalAppointmentAction || replyAlreadySent)) {
+          progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            conversationActivatedAt: progress.conversationActivatedAt || new Date().toISOString(),
+            verifiedEventAppliedAt: progress.verifiedEventAppliedAt || new Date().toISOString(),
+            resumeCompletedAt: new Date().toISOString(),
+            resumeResult: {
+              resumed: true,
+              queued: false,
+              recoveredFromDurableEvent: true,
+              reason: terminalAppointmentAction ? 'appointment_already_booked' : 'reply_already_sent'
+            }
+          })
+        }
+        if (!progress.conversationActivatedAt) {
+          await setConversationStatus(cleanContactId, 'active', {
+            updatedBy: 'payment_reconciliation',
+            clearSignal: true,
+            agentId,
+            channel: state?.channel || 'whatsapp'
+          })
+          progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            conversationActivatedAt: new Date().toISOString()
+          })
+        }
+        if (!progress.verifiedEventAppliedAt) {
+          await recordConversationalAgentEvent({
+            eventId: `${reconciliationId}_verified`,
+            contactId: cleanContactId,
+            eventType: 'deposit_payment_verified',
+            detail: {
+              agentId,
+              amount: Number(ledger.amount),
+              currency: ledgerCurrency,
+              paymentEnvironment: ledgerEnvironment,
+              ledgerPaymentId: ledger.id,
+              sourceEventId: matchedSourceEvent.id,
+              paymentPurpose: purpose.paymentPurpose,
+              appointmentDeposit: purpose.appointmentDeposit,
+              reconciliationId
+            },
+            throwOnError: true
+          })
+          progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            verifiedEventAppliedAt: new Date().toISOString()
+          })
+        }
+        let resumed = progress.resumeResult || null
+        if (!progress.resumeCompletedAt) {
+          resumed = await resumeConversationalAppointmentAfterVerifiedPayment({
+            reconciliationId,
+            contactId: cleanContactId,
+            agentId,
+            channel: state?.channel || 'whatsapp',
+            amount: Number(ledger.amount),
+            currency: ledgerCurrency,
+            paymentEnvironment: ledgerEnvironment,
+            paymentPurpose: 'appointment_deposit'
+          })
+          if (!resumed?.resumed && !resumed?.queued) {
+            throw new Error(resumed?.reason || 'No se pudo reanudar la cita después de verificar el anticipo')
+          }
+          progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            resumeCompletedAt: new Date().toISOString(),
+            resumeResult: {
+              resumed: Boolean(resumed?.resumed),
+              queued: Boolean(resumed?.queued),
+              reason: resumed?.reason || null
+            }
+          })
+          resumed = progress.resumeResult
+        }
+        const result = {
+          matched: true,
+          signal: 'deposit_payment_verified',
+          objectiveCompleted: false,
+          resumed: Boolean(resumed?.resumed),
+          queued: Boolean(resumed?.queued),
+          agentId,
+          invoiceId: cleanInvoiceId
+        }
+        await settleConversationalPaymentReconciliation(reconciliationId, claim.claimToken, { result })
+        return result
+      }
+
+      const technicalSummary = `Invoice ${cleanInvoiceId} · ${Number(ledger.amount)} ${ledgerCurrency}`
+      const conversationSummary = cleanCompletionDisplayText(matchedDetail.resumen || matchedDetail.summary || '')
+      const reason = 'Pago confirmado del link enviado por el agente'
+      if (!progress.signalAppliedAt) {
+        await setConversationSignal(cleanContactId, 'purchase_completed', {
+          reason,
+          summary: conversationSummary,
+          actionSummarySource: technicalSummary,
+          originalSummary: technicalSummary,
+          status: 'completed',
+          agentId,
+          eventId: `${reconciliationId}_signal`,
+          strictEvent: true,
+          allowInternalSummary: false
+        })
+        progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+          signalAppliedAt: new Date().toISOString()
+        })
+      }
+      if (!progress.notificationAppliedAt) {
+        await notifyConversationalCompletion({
+          contactId: cleanContactId,
+          reason,
+          summary: conversationSummary || technicalSummary,
+          signal: 'purchase_completed',
+          eventId: `${reconciliationId}_notification`,
+          throwOnFailure: true
+        })
+        progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+          notificationAppliedAt: new Date().toISOString()
+        })
+      }
+      if (!progress.completionEventAppliedAt) {
+        await recordConversationalAgentEvent({
+          eventId: `${reconciliationId}_completed`,
+          contactId: cleanContactId,
+          eventType: 'payment_link_goal_completed',
+          detail: {
+            agentId,
+            invoiceId: cleanInvoiceId,
+            amount: Number(ledger.amount),
+            currency: ledgerCurrency,
+            status: ledgerStatus,
+            paymentEnvironment: ledgerEnvironment,
+            reference: reference || null,
+            reconciliationId
+          },
+          throwOnError: true
+        })
+        progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+          completionEventAppliedAt: new Date().toISOString()
+        })
+      }
+      const result = {
+        matched: true,
+        signal: 'purchase_completed',
+        agentId,
+        invoiceId: cleanInvoiceId
+      }
+      await settleConversationalPaymentReconciliation(reconciliationId, claim.claimToken, { result })
+      return result
+    } catch (error) {
+      await settleConversationalPaymentReconciliation(reconciliationId, claim.claimToken, { error }).catch(() => {})
+      throw error
+    }
+  }
+
   const technicalSummary = Number.isFinite(paidAmount) && paidAmount > 0
     ? `Invoice ${cleanInvoiceId} · ${paidAmount} ${cleanCurrency || ''}`.trim()
     : `Invoice ${cleanInvoiceId}`
   const conversationSummary = cleanCompletionDisplayText(matchedDetail.resumen || matchedDetail.summary || '')
   const reason = 'Pago confirmado del link enviado por el agente'
-
   await setConversationSignal(cleanContactId, 'purchase_completed', {
     reason,
     summary: conversationSummary,
     actionSummarySource: technicalSummary,
     originalSummary: technicalSummary,
     status: 'completed',
-    agentId: agentId || ''
+    agentId: agentId || '',
+    ...(nativeRuntime ? { allowInternalSummary: false } : {})
   })
 
-  if (agent) {
+  if (agent && !nativeRuntime) {
     await applyAgentCompletionAction(agent, cleanContactId)
     await applyAgentSuccessExtras(agent, cleanContactId)
   }
@@ -2861,6 +4243,41 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     agentId: agent?.id || agentId || null,
     invoiceId: cleanInvoiceId
   }
+}
+
+export async function recoverPendingConversationalPaymentReconciliations({ limit = 50 } = {}) {
+  const rows = await db.all(
+    `SELECT id, contact_id, detail_json
+     FROM conversational_agent_events
+     WHERE event_type = ?
+       AND (
+         detail_json LIKE '%"status":"pending"%'
+         OR detail_json LIKE '%"status":"processing"%'
+       )
+     ORDER BY created_at ASC
+     LIMIT ?`,
+    [CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT, Math.min(Math.max(Number(limit) || 50, 1), 200)]
+  ).catch(() => [])
+  let recovered = 0
+  for (const row of rows) {
+    const detail = parseJsonField(row.detail_json, {})
+    const leaseUntilMs = Date.parse(detail.leaseUntilAt || '')
+    const recoverable = detail.status === 'pending' || (
+      detail.status === 'processing' && (!Number.isFinite(leaseUntilMs) || leaseUntilMs <= Date.now())
+    )
+    if (!recoverable) continue
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId: row.contact_id,
+      invoiceId: detail.invoiceId,
+      paymentId: detail.ledgerPaymentId,
+      amount: detail.amount,
+      currency: detail.currency,
+      status: detail.reportedStatus || 'paid',
+      paymentMode: detail.paymentEnvironment
+    }).catch(() => null)
+    if (result?.matched && !result?.processing) recovered += 1
+  }
+  return { scanned: rows.length, recovered }
 }
 
 function clampDelayValue(value, unit, fallback) {
@@ -3037,12 +4454,23 @@ function agentDepositApplies(next = {}) {
   return next.objective === 'citas' && toBoolean(workflow.deposit?.enabled)
 }
 
-// Requisitos duros del objetivo configurado. Se validan al crear/actualizar un
-// agente PUBLICADO (enabled): un borrador apagado se puede guardar incompleto,
-// pero un agente de citas no puede operar sin calendario fijo y el anticipo por
-// transferencia no puede operar sin los datos bancarios que va a compartir.
+// Requisitos duros al crear/actualizar un agente PUBLICADO (enabled). V2 se
+// valida sólo contra sus capacidades blindadas; después de pasar esa frontera
+// no debe volver a caer en campos legacy. Los borradores apagados sí pueden
+// guardarse incompletos.
 export function assertAgentGoalRequirements(next = {}) {
   if (!next.enabled) return
+
+  if (isToolCallingV2(next)) {
+    const nativeRuntimeErrors = getConversationalNativeRuntimeValidationErrors(next)
+    if (nativeRuntimeErrors.length > 0) {
+      const first = nativeRuntimeErrors[0]
+      const error = buildAgentConfigError(first.message, first.code)
+      error.nativeRuntimeValidation = nativeRuntimeErrors
+      throw error
+    }
+    return
+  }
 
   if (next.objective === 'citas') {
     const calendarId = String(next.goalWorkflow?.appointments?.calendarId || next.defaultCalendarId || '').trim()
@@ -3072,6 +4500,253 @@ export function assertAgentGoalRequirements(next = {}) {
       )
     }
   }
+}
+
+function isStoredRecordActive(value) {
+  if (value === false || value === 0) return false
+  const clean = String(value ?? '1').trim().toLowerCase()
+  return clean !== '0' && clean !== 'false' && clean !== 'off'
+}
+
+function isStoredFlagEnabled(value) {
+  if (value === null || value === undefined || value === false || value === 0) return false
+  const clean = String(value).trim().toLowerCase()
+  return Boolean(clean) && clean !== '0' && clean !== 'false' && clean !== 'off'
+}
+
+function isSafeHttpUrl(value) {
+  try {
+    const parsed = new URL(String(value || '').trim())
+    return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
+function nativeResourceValidationItem(code, capabilityId, field, message) {
+  return { code, capabilityId, field, message }
+}
+
+export async function getConversationalNativeRuntimeResourceValidationErrors(next = {}) {
+  if (!next.enabled || !isToolCallingV2(next)) return []
+
+  const capabilities = getEnabledConversationalCapabilities(next)
+  const errors = []
+
+  const schedule = capabilities.find((item) => item.id === 'schedule_appointment')
+  if (schedule?.calendarId) {
+    const calendar = await db.get(
+      'SELECT id, ghl_calendar_id, is_active FROM calendars WHERE id = ? OR ghl_calendar_id = ? LIMIT 1',
+      [schedule.calendarId, schedule.calendarId]
+    )
+    if (!calendar) {
+      errors.push(nativeResourceValidationItem(
+        'CONVERSATIONAL_CAPABILITY_SCHEDULE_CALENDAR_NOT_FOUND',
+        'schedule_appointment',
+        'capabilitiesConfig.items.schedule_appointment.calendarId',
+        'El calendario seleccionado ya no existe. Elige un calendario activo antes de publicar.'
+      ))
+    } else if (!isStoredRecordActive(calendar.is_active)) {
+      errors.push(nativeResourceValidationItem(
+        'CONVERSATIONAL_CAPABILITY_SCHEDULE_CALENDAR_INACTIVE',
+        'schedule_appointment',
+        'capabilitiesConfig.items.schedule_appointment.calendarId',
+        'El calendario seleccionado está apagado. Actívalo o elige otro antes de publicar.'
+      ))
+    }
+  }
+
+  const payment = capabilities.find((item) => item.id === 'collect_payment')
+  if (payment) {
+    const usesDeposit = payment.paymentMode === 'deposit' || payment.deposit?.enabled
+    if (usesDeposit) {
+      const deposit = payment.deposit || {}
+      const validFixedAmount = deposit.mode !== 'range' && Number(deposit.amount) > 0
+      const validRangeAmount = deposit.mode === 'range' &&
+        Number(deposit.minAmount) > 0 &&
+        Number(deposit.maxAmount) >= Number(deposit.minAmount)
+      if (!validFixedAmount && !validRangeAmount) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_DEPOSIT_AMOUNT_INVALID',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.deposit',
+          'El monto del anticipo no es válido. Configura un importe positivo o un rango completo antes de publicar.'
+        ))
+      }
+      const accountCurrency = String(await getAccountCurrency() || '').trim().toUpperCase()
+      const depositCurrency = String(deposit.currency || payment.currency || '').trim().toUpperCase()
+      if (!depositCurrency) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_DEPOSIT_CURRENCY_REQUIRED',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.deposit.currency',
+          `Define la moneda del anticipo. Debe coincidir con la moneda de la cuenta${accountCurrency ? ` (${accountCurrency})` : ''}.`
+        ))
+      } else if (accountCurrency && depositCurrency !== accountCurrency) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_DEPOSIT_CURRENCY_MISMATCH',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.deposit.currency',
+          `La moneda del anticipo es ${depositCurrency}, pero la cuenta cobra en ${accountCurrency}. Corrígela antes de publicar.`
+        ))
+      }
+    } else if (payment.productId && payment.priceId) {
+      const product = await db.get(
+        'SELECT * FROM products WHERE id = ? OR ghl_product_id = ? LIMIT 1',
+        [payment.productId, payment.productId]
+      )
+      if (!product) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_PRODUCT_NOT_FOUND',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.productId',
+          'El producto seleccionado ya no existe. Elige un producto activo antes de publicar.'
+        ))
+      } else if (!isStoredRecordActive(product.is_active)) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_PRODUCT_INACTIVE',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.productId',
+          'El producto seleccionado está apagado. Actívalo o elige otro antes de publicar.'
+        ))
+      }
+
+      const price = await db.get(
+        'SELECT * FROM product_prices WHERE id = ? OR ghl_price_id = ? LIMIT 1',
+        [payment.priceId, payment.priceId]
+      )
+      if (!price) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_PRICE_NOT_FOUND',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.priceId',
+          'El precio seleccionado ya no existe. Elige un precio real antes de publicar.'
+        ))
+      } else if (product) {
+        const belongsByLocalId = String(price.product_id || '') === String(product.id || '')
+        const belongsByRemoteId = Boolean(price.ghl_product_id && product.ghl_product_id) &&
+          String(price.ghl_product_id) === String(product.ghl_product_id)
+        if (!belongsByLocalId && !belongsByRemoteId) {
+          errors.push(nativeResourceValidationItem(
+            'CONVERSATIONAL_CAPABILITY_PAYMENT_PRICE_PRODUCT_MISMATCH',
+            'collect_payment',
+            'capabilitiesConfig.items.collect_payment.priceId',
+            'El precio seleccionado no pertenece al producto configurado. Vuelve a elegir producto y precio.'
+          ))
+        }
+      }
+      if (
+        price &&
+        Object.prototype.hasOwnProperty.call(price, 'is_active') &&
+        !isStoredRecordActive(price.is_active)
+      ) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_PRICE_INACTIVE',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.priceId',
+          'El precio seleccionado está apagado. Actívalo o elige otro antes de publicar.'
+        ))
+      }
+      if (product && price) {
+        const unitAmount = Number(price.amount)
+        const normalizedUnitAmount = Number.isFinite(unitAmount)
+          ? Math.round(unitAmount * 100) / 100
+          : 0
+        if (normalizedUnitAmount <= 0) {
+          errors.push(nativeResourceValidationItem(
+            'CONVERSATIONAL_CAPABILITY_PAYMENT_PRICE_AMOUNT_INVALID',
+            'collect_payment',
+            'capabilitiesConfig.items.collect_payment.priceId',
+            'El precio guardado no tiene un monto cobrable mayor a cero. Corrígelo antes de publicar.'
+          ))
+        }
+
+        const accountCurrency = String(await getAccountCurrency() || '').trim().toUpperCase()
+        const effectiveCurrency = String(price.currency || product.currency || accountCurrency).trim().toUpperCase()
+        if (accountCurrency && effectiveCurrency !== accountCurrency) {
+          errors.push(nativeResourceValidationItem(
+            'CONVERSATIONAL_CAPABILITY_PAYMENT_CURRENCY_MISMATCH',
+            'collect_payment',
+            'capabilitiesConfig.items.collect_payment.priceId',
+            `El precio guardado usa ${effectiveCurrency || 'una moneda inválida'}, pero la cuenta cobra en ${accountCurrency}. Corrige el catálogo antes de publicar.`
+          ))
+        }
+      }
+    }
+  }
+
+  const sendLink = capabilities.find((item) => item.id === 'send_link')
+  if (sendLink) {
+    if (sendLink.linkKind === 'trigger' && sendLink.triggerLinkId) {
+      const triggerLink = await db.get(
+        'SELECT id, public_id, destination_url, active, archived FROM trigger_links WHERE id = ? OR public_id = ? LIMIT 1',
+        [sendLink.triggerLinkId, sendLink.triggerLinkId]
+      )
+      if (!triggerLink) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_TRIGGER_LINK_NOT_FOUND',
+          'send_link',
+          'capabilitiesConfig.items.send_link.triggerLinkId',
+          'El enlace de disparo seleccionado ya no existe. Elige uno activo antes de publicar.'
+        ))
+      } else if (!isStoredRecordActive(triggerLink.active) || isStoredFlagEnabled(triggerLink.archived)) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_TRIGGER_LINK_INACTIVE',
+          'send_link',
+          'capabilitiesConfig.items.send_link.triggerLinkId',
+          'El enlace de disparo seleccionado está apagado o archivado. Actívalo o elige otro.'
+        ))
+      } else if (!isSafeHttpUrl(triggerLink.destination_url)) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_LINK_URL_INVALID',
+          'send_link',
+          'capabilitiesConfig.items.send_link.triggerLinkId',
+          'El destino real del enlace debe comenzar con http:// o https:// antes de publicar.'
+        ))
+      }
+    } else if (sendLink.url && !isSafeHttpUrl(sendLink.url)) {
+      errors.push(nativeResourceValidationItem(
+        'CONVERSATIONAL_CAPABILITY_LINK_URL_INVALID',
+        'send_link',
+        'capabilitiesConfig.items.send_link.url',
+        'El enlace debe ser una URL web válida que comience con http:// o https://.'
+      ))
+    }
+  }
+
+  const handoff = capabilities.find((item) => item.id === 'handoff_human')
+  if (handoff?.userId) {
+    const assignedUser = await db.get(
+      'SELECT id, is_active FROM users WHERE id = ? LIMIT 1',
+      [handoff.userId]
+    )
+    if (!assignedUser) {
+      errors.push(nativeResourceValidationItem(
+        'CONVERSATIONAL_CAPABILITY_HANDOFF_USER_NOT_FOUND',
+        'handoff_human',
+        'capabilitiesConfig.items.handoff_human.userId',
+        'La persona asignada para recibir la conversación ya no existe. Elige un usuario activo.'
+      ))
+    } else if (!isStoredRecordActive(assignedUser.is_active)) {
+      errors.push(nativeResourceValidationItem(
+        'CONVERSATIONAL_CAPABILITY_HANDOFF_USER_INACTIVE',
+        'handoff_human',
+        'capabilitiesConfig.items.handoff_human.userId',
+        'La persona asignada para recibir la conversación está desactivada. Actívala o elige otra.'
+      ))
+    }
+  }
+
+  return errors
+}
+
+export async function assertConversationalNativeRuntimeResources(next = {}) {
+  const resourceErrors = await getConversationalNativeRuntimeResourceValidationErrors(next)
+  if (resourceErrors.length === 0) return
+  const first = resourceErrors[0]
+  const error = buildAgentConfigError(first.message, first.code)
+  error.nativeRuntimeResourceValidation = resourceErrors
+  throw error
 }
 
 function assertDelayRange(minValue, maxValue, message) {
@@ -3156,6 +4831,19 @@ export function getAgentReplyDeliveryPartDelayMs(agentConfig = {}) {
 function mapAgentRow(row) {
   if (!row) return null
   const aiProvider = normalizeConversationalAIProvider(row.ai_provider)
+  const runtimeMode = normalizeConversationalRuntimeMode(row.runtime_mode, 'legacy_v1')
+  const parsedPromptConfig = row.prompt_config === null || row.prompt_config === undefined
+    ? null
+    : parseJsonField(row.prompt_config, null)
+  const storedPromptConfig = parsedPromptConfig === null
+    ? null
+    : normalizeConversationalPromptConfig(parsedPromptConfig)
+  const parsedCapabilitiesConfig = row.capabilities_config === null || row.capabilities_config === undefined
+    ? null
+    : parseJsonField(row.capabilities_config, null)
+  const storedCapabilitiesConfig = parsedCapabilitiesConfig === null
+    ? null
+    : normalizeConversationalCapabilitiesConfig(parsedCapabilitiesConfig)
   const identity = normalizeAgentIdentity({
     identityMode: row.identity_mode,
     identityUserId: row.identity_user_id,
@@ -3166,12 +4854,15 @@ function mapAgentRow(row) {
   const hideAttendedNotifications = row.hide_attended_notifications === null || row.hide_attended_notifications === undefined
     ? legacyHideAttended
     : (toBoolean(row.hide_attended_notifications) || legacyHideAttended)
-  return {
+  const mapped = {
     id: row.id,
     name: row.name || 'Agente',
     enabled: toBoolean(row.enabled),
     aiProvider,
     model: normalizeConversationalAgentModel(row.model, aiProvider),
+    runtimeMode,
+    promptConfig: storedPromptConfig,
+    capabilitiesConfig: storedCapabilitiesConfig,
     ...identity,
     position: Number(row.position) || 0,
     objective: VALID_OBJECTIVES.has(row.objective) ? row.objective : 'citas',
@@ -3199,6 +4890,16 @@ function mapAgentRow(row) {
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
+  if (isToolCallingV2(mapped)) {
+    mapped.promptConfig = getConversationalPromptConfig(mapped)
+    mapped.capabilitiesConfig = getConversationalCapabilitiesConfig(mapped)
+  }
+  // Si este agente ya tuvo capacidades v2, ésas son la fuente reversible para
+  // volver a migrarlo. Sólo una fila legacy sin config almacenada se adapta a
+  // partir de goalWorkflow.
+  mapped.migrationCapabilitiesConfig = getConversationalCapabilitiesConfig(mapped)
+  mapped.capabilityManifest = buildConversationalCapabilityManifest(mapped)
+  return mapped
 }
 
 function hasText(value) {
@@ -3625,6 +5326,31 @@ function agentInputToRowValues(input, base) {
       : normalizeAgentGoalWorkflow(input.goalWorkflow),
     filters: input.filters === undefined ? base.filters : normalizeAgentFilters(input.filters)
   }
+  next.runtimeMode = input.runtimeMode === undefined
+    ? normalizeConversationalRuntimeMode(base.runtimeMode, 'legacy_v1')
+    : normalizeConversationalRuntimeMode(input.runtimeMode, base.runtimeMode)
+
+  // null no es una orden de borrado: clientes legacy solían reenviar ese valor
+  // al no entender promptConfig. El borrado intencional se representa con
+  // editableText: '' y debe sobrevivir incluso al alternar v2 -> legacy -> v2.
+  const promptSource = input.promptConfig === undefined || input.promptConfig === null
+    ? base.promptConfig
+    : input.promptConfig
+  next.promptConfig = promptSource === null || promptSource === undefined
+    ? (isToolCallingV2(next)
+        ? normalizeConversationalPromptConfig(null, { materializeDefault: true })
+        : null)
+    : normalizeConversationalPromptConfig(promptSource, { materializeDefault: isToolCallingV2(next) })
+
+  // migrationCapabilitiesConfig es exclusivamente server-derived y nunca se
+  // lee aquí. Un arreglo vacío explícito sí desactiva todas las capacidades;
+  // null conserva la configuración almacenada para roundtrips legacy.
+  const capabilitiesSource = input.capabilitiesConfig === undefined || input.capabilitiesConfig === null
+    ? base.capabilitiesConfig
+    : input.capabilitiesConfig
+  next.capabilitiesConfig = capabilitiesSource === null || capabilitiesSource === undefined
+    ? (isToolCallingV2(next) ? deriveLegacyCapabilitiesConfig(next) : null)
+    : normalizeConversationalCapabilitiesConfig(capabilitiesSource)
   return next
 }
 
@@ -3632,6 +5358,9 @@ const ACTIVE_AGENT_RUNTIME_CONFIG_KEYS = new Set([
   'enabled',
   'aiProvider',
   'model',
+  'runtimeMode',
+  'promptConfig',
+  'capabilitiesConfig',
   'identityMode',
   'identityUserId',
   'identityUserName',
@@ -3662,6 +5391,9 @@ const DEFAULT_AGENT_BASE = {
   enabled: true,
   aiProvider: DEFAULT_CONVERSATIONAL_AI_PROVIDER,
   model: DEFAULT_CONVERSATIONAL_AGENT_MODEL,
+  runtimeMode: 'tool_calling_v2',
+  promptConfig: null,
+  capabilitiesConfig: null,
   identityMode: 'business',
   identityUserId: '',
   identityUserName: '',
@@ -3998,20 +5730,25 @@ export async function createConversationalAgent(input = {}) {
   const maxPosition = await db.get('SELECT COALESCE(MAX(position), -1) AS max_pos FROM conversational_agents')
   const next = agentInputToRowValues(input, { ...DEFAULT_AGENT_BASE, position: Number(maxPosition?.max_pos ?? -1) + 1 })
   assertAgentGoalRequirements(next)
+  await assertConversationalNativeRuntimeResources(next)
   const id = `cagent_${randomUUID()}`
   await assertConversationalAgentEntryDoesNotConflict({ ...next, id })
   await db.run(`
     INSERT INTO conversational_agents (
-      id, name, enabled, ai_provider, model, identity_mode, identity_user_id, identity_user_name, identity_custom_name,
+      id, name, enabled, ai_provider, model, runtime_mode, prompt_config, capabilities_config,
+      identity_mode, identity_user_id, identity_user_name, identity_custom_name,
       position, objective, custom_objective, success_action,
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, hide_attended, hide_attended_notifications,
       default_calendar_id, closing_strategy_mode, closing_strategy_custom,
       persuasion_level, language_level, contact_scope, contact_scope_cutoff_at,
       response_delay_config, reply_delivery_config, follow_up_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, next.name, next.enabled ? 1 : 0, next.aiProvider, next.model,
+    next.runtimeMode,
+    next.promptConfig ? JSON.stringify(next.promptConfig) : null,
+    next.capabilitiesConfig ? JSON.stringify(next.capabilitiesConfig) : null,
     next.identityMode, next.identityUserId, next.identityUserName, next.identityCustomName,
     next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
@@ -4035,6 +5772,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
   }
   const next = agentInputToRowValues(input, current)
   assertAgentGoalRequirements(next)
+  await assertConversationalNativeRuntimeResources(next)
   const shouldRefreshAssignedStates = Object.keys(input || {}).some((key) => ACTIVE_AGENT_RUNTIME_CONFIG_KEYS.has(key))
   const shouldValidateEntry = next.enabled && (!current.enabled || input.enabled === true || input.filters !== undefined)
   if (shouldValidateEntry) {
@@ -4043,6 +5781,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
   await db.run(`
     UPDATE conversational_agents
     SET name = ?, enabled = ?, ai_provider = ?, model = ?,
+        runtime_mode = ?, prompt_config = ?, capabilities_config = ?,
         identity_mode = ?, identity_user_id = ?, identity_user_name = ?, identity_custom_name = ?,
         position = ?, objective = ?, custom_objective = ?,
         success_action = ?, success_extras = ?, required_data = ?, handoff_rules = ?,
@@ -4056,6 +5795,9 @@ export async function updateConversationalAgent(agentId, input = {}) {
     WHERE id = ?
   `, [
     next.name, next.enabled ? 1 : 0, next.aiProvider, next.model,
+    next.runtimeMode,
+    next.promptConfig ? JSON.stringify(next.promptConfig) : null,
+    next.capabilitiesConfig ? JSON.stringify(next.capabilitiesConfig) : null,
     next.identityMode, next.identityUserId, next.identityUserName, next.identityCustomName,
     next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
@@ -4080,7 +5822,8 @@ export async function updateConversationalAgent(agentId, input = {}) {
           refreshedCount,
           hideAttendedNotifications: next.hideAttendedNotifications,
           aiProvider: next.aiProvider,
-          model: next.model
+          model: next.model,
+          runtimeMode: next.runtimeMode
         }
       })
     }
@@ -5750,7 +7493,8 @@ export async function setConversationSignal(contactId, signal, {
   agentId = '',
   channel = null,
   eventId = '',
-  strictEvent = false
+  strictEvent = false,
+  allowInternalSummary = undefined
 } = {}) {
   const cleanChannel = normalizeOptionalConversationStateChannel(channel)
   const state = await ensureConversationState(contactId, { agentId, channel: cleanChannel })
@@ -5771,7 +7515,9 @@ export async function setConversationSignal(contactId, signal, {
     closingContext,
     timezone,
     channel: currentState?.channel || 'whatsapp',
-    allowInternalSummary: objectiveCompleted
+    allowInternalSummary: allowInternalSummary === undefined
+      ? objectiveCompleted
+      : (objectiveCompleted && allowInternalSummary === true)
   })
   const cleanReason = cleanCompletionDisplayText(reason)
   const cleanActionSummary = cleanCompletionDisplayText(completionSummary.actionSummary)

@@ -2024,6 +2024,209 @@
   color: var(--color-text-tertiary);
 }
 
+/* Constructor nativo: configuración editable y capacidades protegidas. */
+.nativeMigrationNotice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.nativeMigrationIcon,
+.nativeCapabilityIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-ctl);
+}
+
+.nativeMigrationIcon {
+  width: 40px;
+  height: 40px;
+}
+
+.nativeMigrationCopy,
+.nativeCapabilityHeading > div,
+.nativeManifestItem > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nativeMigrationCopy strong,
+.nativeCapabilityHeading strong,
+.nativeManifestItem strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nativeMigrationCopy span,
+.nativeCapabilityHeading span,
+.nativeManifestItem span {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.nativeRuntimeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 10px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.nativeRuntimeHeader > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.nativePromptTextarea {
+  min-height: 260px;
+  line-height: 1.55;
+}
+
+.nativeCapabilityList,
+.nativeManifestList {
+  display: grid;
+}
+
+.nativeCapabilityRow {
+  min-width: 0;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.nativeCapabilityRow:last-child {
+  border-bottom: 0;
+}
+
+.nativeCapabilityHeading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.nativeCapabilityIcon {
+  width: 36px;
+  height: 36px;
+}
+
+.nativeCapabilitySettings {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 14px 0 0 48px;
+}
+
+.nativeInlineFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.nativePaymentMethods {
+  display: flex;
+  align-items: center;
+  align-content: flex-start;
+  flex-wrap: wrap;
+  gap: 14px;
+  min-width: 0;
+  padding-top: 20px;
+}
+
+.nativePaymentMethods label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.nativeLockedZone {
+  padding-left: 16px;
+  border-left: 3px solid var(--accent);
+}
+
+.nativeLockedTitle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--accent);
+}
+
+.nativeLockedTitle > div {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nativeManifestItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.nativeManifestItem > svg {
+  color: var(--pos);
+}
+
+.nativeManifestItem small {
+  color: var(--warn);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .nativeMigrationNotice {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .nativeMigrationNotice > button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .nativeRuntimeHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .nativeCapabilitySettings {
+    margin-left: 0;
+  }
+
+  .nativeManifestItem {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .nativeManifestItem > :last-child {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
 .agentNestedSection {
   display: flex;
   flex-direction: column;

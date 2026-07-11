@@ -57,6 +57,7 @@ const destructiveConfirmTextSignals = [
   'revocar',
   'anular',
   'reembolsar',
+  'rechazar',
   'salir sin guardar',
   'cancelar cuenta',
   'cancelar plan',

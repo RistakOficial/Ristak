@@ -11,7 +11,7 @@ export interface Transaction {
   amount: number
   currency?: string
   method: 'card' | 'transfer' | 'cash' | 'paypal' | 'other' | 'bank_transfer' | 'check' | 'payment_link' | 'direct_card' | 'saved_card' | 'stripe' | 'stripe_saved_card' | 'stripe_link' | 'stripe_payment_link' | 'conekta' | 'conekta_saved_card' | 'conekta_subscription' | 'mercadopago' | 'mercadopago_checkout' | 'mercadopago_subscription' | 'clip' | 'clip_card' | 'clip_link' | 'clip_payment_link' | 'rebill' | 'rebill_checkout'
-  status: 'draft' | 'sent' | 'paid' | 'pending' | 'overdue' | 'partial' | 'void' | 'refunded' | 'failed' | 'deleted'
+  status: 'draft' | 'sent' | 'paid' | 'pending' | 'pending_review' | 'rejected' | 'overdue' | 'partial' | 'void' | 'refunded' | 'failed' | 'deleted'
   paymentMode?: 'live' | 'test'
   paymentProvider?: 'manual' | 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill' | 'gigstack' | string
   paymentMethodCategory?: string
@@ -33,6 +33,12 @@ export interface Transaction {
   stripePaymentIntentId?: string
   paidAt?: string
   metadata?: Record<string, unknown>
+  transferProof?: {
+    mediaUrl?: string | null
+    receivedAt?: string | null
+    bank?: string | null
+    reference?: string | null
+  } | null
 }
 
 export interface TransactionSummary {
@@ -295,6 +301,18 @@ export const transactionsService = {
 
   async recordPayment(id: string, data: { amount: number; paymentDate: string; paymentMethod: string }): Promise<void> {
     await apiClient.post(`/transactions/${id}/record-payment`, data)
+  },
+
+  async approveTransferProof(id: string, reference?: string): Promise<Transaction> {
+    return await apiClient.post<Transaction>(`/transactions/${id}/approve-transfer-proof`, {
+      ...(reference?.trim() ? { reference: reference.trim() } : {})
+    })
+  },
+
+  async rejectTransferProof(id: string, reason: string): Promise<Transaction> {
+    return await apiClient.post<Transaction>(`/transactions/${id}/reject-transfer-proof`, {
+      reason: reason.trim()
+    })
   },
 
   async sendTransaction(id: string): Promise<void> {

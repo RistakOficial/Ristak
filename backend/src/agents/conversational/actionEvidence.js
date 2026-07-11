@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon'
+import { canRecoverConversationalAppointmentDepositReservation } from '../../services/conversationalAgentService.js'
 
 export const SUCCESS_PAYMENT_STATUSES = new Set([
   'paid',
@@ -12,7 +13,18 @@ export const SUCCESS_PAYMENT_STATUSES = new Set([
   'accredited'
 ])
 
-export const NON_LIVE_PAYMENT_MODES = new Set(['test', 'sandbox', 'demo', 'preview', 'simulation', 'simulated'])
+export const NON_LIVE_PAYMENT_MODES = new Set([
+  'test',
+  'sandbox',
+  'demo',
+  'preview',
+  'simulation',
+  'simulated',
+  // Una foto recibida sólo prueba que hay algo que revisar, no que los fondos
+  // hayan llegado. Incluso un cambio accidental de status no debe desbloquearla.
+  'manual_review',
+  'manual review'
+])
 
 // Una confirmacion puede llegar de forma asincrona en WhatsApp/correo, pero no
 // puede convertirse en una autorizacion permanente. Siete dias conserva chats
@@ -108,6 +120,16 @@ function timestampToMs(value) {
     : raw
   const parsed = Date.parse(normalized)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function parseJsonObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value
+  try {
+    const parsed = value ? JSON.parse(value) : null
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
 }
 
 async function readMessageRows(database, sql, params, source) {
@@ -578,11 +600,15 @@ export async function findVerifiedPaymentEvidence({
   contactId,
   requirement = {},
   accountCurrency,
-  agentId = null
+  agentId = null,
+  nativeRuntime = false,
+  requiredPurpose = '',
+  reconciliationId = '',
+  appointmentRequestId = ''
 }) {
   if (!database || !contactId) return { ok: false, reason: 'missing_contact' }
   const requiredCurrency = normalizeCurrency(requirement.currency || accountCurrency)
-  if (!requiredCurrency) return { ok: false, reason: 'missing_currency' }
+  if (!nativeRuntime && !requiredCurrency) return { ok: false, reason: 'missing_currency' }
 
   const stateParams = [contactId]
   let stateSql = `
@@ -597,7 +623,7 @@ export async function findVerifiedPaymentEvidence({
     ORDER BY COALESCE(activated_at, created_at) DESC
     LIMIT 1`
 
-  const [state, payments] = await Promise.all([
+  const [state, payments, nativeEvents] = await Promise.all([
     database.get(stateSql, stateParams).catch(() => null),
     database.all(`
       SELECT id, amount, currency, status, payment_mode, payment_provider,
@@ -606,7 +632,17 @@ export async function findVerifiedPaymentEvidence({
       WHERE contact_id = ?
       ORDER BY COALESCE(paid_at, date, created_at) DESC
       LIMIT 100
-    `, [contactId]).catch(() => [])
+    `, [contactId]).catch(() => []),
+    nativeRuntime
+      ? database.all(`
+          SELECT id, agent_id, event_type, detail_json, created_at
+          FROM conversational_agent_events
+          WHERE contact_id = ?
+            AND event_type IN ('payment_reconciliation_v2', 'deposit_payment_consumed')
+          ORDER BY created_at DESC
+          LIMIT 120
+        `, [contactId]).catch(() => [])
+      : Promise.resolve([])
   ])
 
   const stateStartMs = timestampToMs(state?.activated_at || state?.created_at)
@@ -617,6 +653,98 @@ export async function findVerifiedPaymentEvidence({
   const maxAmount = normalizeAmount(requirement.maxAmount)
   const fixedAmount = normalizeAmount(requirement.amount)
   const labels = (requirement.labels || []).filter(Boolean)
+
+  if (nativeRuntime) {
+    const cleanAgentId = String(agentId || '').trim()
+    const cleanRequiredPurpose = String(requiredPurpose || '').trim().toLowerCase()
+    const cleanReconciliationId = String(reconciliationId || '').trim()
+    const cleanAppointmentRequestId = String(appointmentRequestId || '').trim()
+    if (!cleanAgentId || !cleanRequiredPurpose) {
+      return { ok: false, reason: 'native_payment_binding_missing' }
+    }
+
+    const reservationByReconciliation = new Map()
+    for (const event of nativeEvents || []) {
+      if (event.event_type !== 'deposit_payment_consumed') continue
+      const detail = parseJsonObject(event.detail_json)
+      const linkedReconciliationId = String(detail.reconciliationId || '').trim()
+      if (linkedReconciliationId) reservationByReconciliation.set(linkedReconciliationId, detail)
+    }
+    const paymentById = new Map((payments || []).map((payment) => [String(payment.id || '').trim(), payment]))
+    const nowMs = Date.now()
+
+    for (const event of nativeEvents || []) {
+      if (event.event_type !== 'payment_reconciliation_v2') continue
+      if (String(event.agent_id || '').trim() !== cleanAgentId) continue
+      if (cleanReconciliationId && event.id !== cleanReconciliationId) continue
+      const reservation = reservationByReconciliation.get(event.id)
+      const reservationStatus = String(reservation?.status || (reservation ? 'consumed' : '')).trim().toLowerCase()
+      if (reservationStatus === 'consumed') continue
+      if (
+        reservationStatus === 'reserved' &&
+        (!cleanAppointmentRequestId || reservation.appointmentRequestId !== cleanAppointmentRequestId)
+      ) {
+        const recoverable = cleanAppointmentRequestId
+          ? await canRecoverConversationalAppointmentDepositReservation({
+              reconciliationId: event.id,
+              contactId,
+              agentId: cleanAgentId,
+              appointmentRequestId: cleanAppointmentRequestId
+            })
+          : false
+        if (!recoverable) continue
+      }
+
+      const detail = parseJsonObject(event.detail_json)
+      const status = String(detail.status || '').trim().toLowerCase()
+      const purpose = String(detail.paymentPurpose || '').trim().toLowerCase()
+      const eventTimestamp = timestampToMs(event.created_at)
+      const exactProcessingResume = Boolean(
+        cleanReconciliationId &&
+        event.id === cleanReconciliationId &&
+        status === 'processing' &&
+        detail.verifiedEventAppliedAt &&
+        detail.claimToken &&
+        timestampToMs(detail.leaseUntilAt) > nowMs
+      )
+      const completed = status === 'completed' && detail.result?.matched === true
+      if (!completed && !exactProcessingResume) continue
+      if (purpose !== cleanRequiredPurpose) continue
+      if (cleanRequiredPurpose === 'appointment_deposit' && detail.appointmentDeposit !== true) continue
+      if (String(detail.paymentEnvironment || '').trim().toLowerCase() !== 'live') continue
+      if (!cleanReconciliationId && eventTimestamp < evidenceStartMs) continue
+
+      const ledgerPaymentId = String(detail.ledgerPaymentId || '').trim()
+      const payment = paymentById.get(ledgerPaymentId)
+      if (!payment) continue
+      const paymentStatus = normalizeText(payment.status)
+      const paymentMode = normalizeText(payment.payment_mode)
+      const frozenCurrency = normalizeCurrency(detail.currency)
+      const frozenAmount = normalizeAmount(detail.amount)
+      const paymentCurrency = normalizeCurrency(payment.currency)
+      const paymentAmount = normalizeAmount(payment.amount)
+      if (!SUCCESS_PAYMENT_STATUSES.has(paymentStatus)) continue
+      if (paymentMode !== 'live') continue
+      if (!frozenCurrency || !frozenAmount) continue
+      if (paymentCurrency !== frozenCurrency || !amountsMatch(paymentAmount, frozenAmount)) continue
+
+      return {
+        ok: true,
+        evidence: {
+          paymentId: payment.id,
+          reconciliationId: event.id,
+          paymentPurpose: purpose,
+          amount: paymentAmount,
+          currency: paymentCurrency,
+          status: paymentStatus,
+          provider: payment.payment_provider || null,
+          paidAt: payment.paid_at || payment.date || payment.created_at || null
+        }
+      }
+    }
+
+    return { ok: false, reason: 'no_bound_verified_payment' }
+  }
 
   const match = (payments || []).find((payment) => {
     const status = normalizeText(payment.status)

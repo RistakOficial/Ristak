@@ -38,6 +38,7 @@ import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
+import { completeConversationalAgentSalePaymentFromInvoice } from '../services/conversationalAgentService.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
@@ -94,6 +95,8 @@ const normalizeAmount = (amount) => {
 }
 
 const cleanString = (value) => String(value || '').trim()
+
+const TRANSFER_PROOF_PENDING_SOURCE = 'conversational_agent_transfer_proof_pending_review'
 
 const createLocalId = (prefix) => createRistakPaymentEntityId(prefix)
 
@@ -452,6 +455,27 @@ const resolvePaymentUpdateDate = (rawDate, currentDate, timezone = DEFAULT_TIMEZ
   return resolvePaymentTimestamp(value, timezone)
 }
 
+const mapSafeTransferProof = (transaction = {}) => {
+  const metadata = parseJson(transaction.metadata_json, {})
+  if (cleanString(metadata.source) !== TRANSFER_PROOF_PENDING_SOURCE) return null
+  const extracted = metadata.extracted && typeof metadata.extracted === 'object' && !Array.isArray(metadata.extracted)
+    ? metadata.extracted
+    : {}
+  const rawMediaUrl = cleanString(metadata.mediaUrl)
+  const mediaUrl = /^https?:\/\//i.test(rawMediaUrl) || /^\/(?!\/)/.test(rawMediaUrl) ? rawMediaUrl : ''
+  return {
+    mediaUrl: mediaUrl || null,
+    receivedAt: cleanString(metadata.receivedAt || transaction.created_at || transaction.date) || null,
+    bank: cleanString(extracted.bank) || null,
+    reference: cleanString(transaction.reference || extracted.reference) || null,
+    reviewDecision: ['approved', 'rejected'].includes(cleanString(metadata.reviewDecision))
+      ? cleanString(metadata.reviewDecision)
+      : 'pending',
+    reviewReason: cleanString(metadata.reviewReason) || null,
+    reviewedAt: cleanString(metadata.reviewedAt) || null
+  }
+}
+
 const mapTransactionRow = (t, baseUrl = '') => ({
   id: t.id,
   date: t.date,
@@ -490,7 +514,8 @@ const mapTransactionRow = (t, baseUrl = '') => ({
   rebillSubscriptionId: t.rebill_subscription_id,
   rebillCustomerId: t.rebill_customer_id,
   rebillCardId: t.rebill_card_id,
-  paidAt: t.paid_at
+  paidAt: t.paid_at,
+  ...(mapSafeTransferProof(t) ? { transferProof: mapSafeTransferProof(t) } : {})
 })
 
 const getInvoiceFromResponse = (response) => response?.invoice || response?.data || response || {}
@@ -1101,6 +1126,7 @@ export const getTransactionById = async (req, res) => {
       rebillCustomerId: transaction.rebill_customer_id,
       rebillCardId: transaction.rebill_card_id,
       paidAt: transaction.paid_at,
+      ...(mapSafeTransferProof(transaction) ? { transferProof: mapSafeTransferProof(transaction) } : {}),
       contactSource: transaction.contact_source,
       attributionAdName: transaction.attribution_ad_name,
       attributionAdId: transaction.attribution_ad_id
@@ -1220,6 +1246,13 @@ export const updateTransaction = async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'Transacción no encontrada'
+      })
+    }
+
+    if (getTransferProofReviewState(transaction).valid) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este comprobante usa un flujo de revisión protegido. Usa Aprobar o Rechazar; no se puede editar como un pago normal.'
       })
     }
 
@@ -1394,6 +1427,20 @@ export const updateTransaction = async (req, res) => {
         logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
       })
     }
+    if (statusChanged && SUCCESS_PAYMENT_STATUSES.has(finalStatus) && finalContactId) {
+      await completeConversationalAgentSalePaymentFromInvoice({
+        contactId: finalContactId,
+        invoiceId: transaction.ghl_invoice_id || '',
+        paymentId: id,
+        amount: finalAmount,
+        currency: finalCurrency,
+        status: finalStatus,
+        paymentMode: finalPaymentMode,
+        reference: finalReference || ''
+      }).catch((error) => {
+        logger.warn(`Pago ${id} actualizado; la reconciliación conversacional no se completó: ${error.message}`)
+      })
+    }
 
     logger.success(`Transacción actualizada: ${id}`)
 
@@ -1428,6 +1475,20 @@ export const deleteTransaction = async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'Transacción no encontrada'
+      })
+    }
+
+    const transferProofReview = getTransferProofReviewState(transaction)
+    const isCanonicalPendingTransferProof = Boolean(
+      normalizeStatus(transaction.status) === 'pending_review' &&
+      cleanString(transaction.payment_mode).toLowerCase() === 'manual_review' &&
+      cleanString(transaction.payment_method).toLowerCase() === 'bank_transfer' &&
+      cleanString(transaction.payment_provider).toLowerCase() === 'manual'
+    )
+    if (transferProofReview.valid || isCanonicalPendingTransferProof) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este comprobante usa un flujo de revisión protegido y forma parte del historial de auditoría. No se puede eliminar.'
       })
     }
 
@@ -1584,6 +1645,13 @@ export const voidTransaction = async (req, res) => {
       })
     }
 
+    if (getTransferProofReviewState(transaction).valid) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este comprobante usa un flujo de revisión protegido. Usa Aprobar o Rechazar; no se puede anular como un pago normal.'
+      })
+    }
+
     const deletionGuard = await getPaymentDeletionGuard(transaction)
     if (deletionGuard.hasPlanLink || deletionGuard.hasSubscriptionLink) {
       return sendPaymentDeletionGuardError(res, deletionGuard)
@@ -1642,6 +1710,182 @@ export const voidTransaction = async (req, res) => {
   }
 }
 
+function getTransferProofReviewState(transaction = {}) {
+  const metadata = parseJson(transaction.metadata_json, {})
+  const valid = Boolean(
+    cleanString(metadata.source) === TRANSFER_PROOF_PENDING_SOURCE &&
+    metadata.requiresHumanVerification === true &&
+    cleanString(transaction.payment_method).toLowerCase() === 'bank_transfer' &&
+    cleanString(transaction.payment_provider).toLowerCase() === 'manual'
+  )
+  return {
+    valid,
+    metadata,
+    decision: cleanString(metadata.reviewDecision).toLowerCase()
+  }
+}
+
+function getPaymentReviewerId(req = {}) {
+  return cleanString(req.user?.id || req.user?.userId || req.userId || req.auth?.userId) || 'authenticated_user'
+}
+
+/**
+ * Aprueba un comprobante v2 con un contrato separado del editor genérico.
+ * Monto, moneda, contacto y ambiente salen del registro pendiente; el cliente
+ * HTTP no puede sustituirlos.
+ */
+export const approveTransferProof = async (req, res) => {
+  const { id } = req.params
+  try {
+    const transaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+    if (!transaction) return res.status(404).json({ success: false, error: 'Comprobante no encontrado' })
+
+    const review = getTransferProofReviewState(transaction)
+    if (!review.valid) {
+      return res.status(422).json({ success: false, error: 'Este pago no es un comprobante de transferencia revisable.' })
+    }
+    if (review.decision === 'rejected' || normalizeStatus(transaction.status) === 'rejected') {
+      return res.status(409).json({ success: false, error: 'Este comprobante ya fue rechazado y no se puede aprobar.' })
+    }
+
+    const alreadyApproved = review.decision === 'approved' && normalizeStatus(transaction.status) === 'paid'
+    const reviewedAt = cleanString(review.metadata.reviewedAt) || new Date().toISOString()
+    if (!alreadyApproved) {
+      if (normalizeStatus(transaction.status) !== 'pending_review' || cleanString(transaction.payment_mode) !== 'manual_review') {
+        return res.status(409).json({ success: false, error: 'El comprobante ya no está pendiente de revisión.' })
+      }
+      const nextMetadata = {
+        ...review.metadata,
+        reviewDecision: 'approved',
+        reviewedAt,
+        reviewedBy: getPaymentReviewerId(req),
+        reviewReason: null
+      }
+      const reference = cleanString(req.body?.reference)
+      const update = await db.run(
+        `UPDATE payments
+         SET status = 'paid', payment_mode = 'live', paid_at = ?, date = ?,
+             reference = COALESCE(NULLIF(?, ''), reference), metadata_json = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'pending_review' AND payment_mode = 'manual_review'`,
+        [reviewedAt, reviewedAt, reference, JSON.stringify(nextMetadata), id]
+      )
+      if (Number(update?.changes ?? update?.rowCount) !== 1) {
+        return res.status(409).json({ success: false, error: 'Otro proceso ya decidió este comprobante.' })
+      }
+    }
+
+    const approved = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+    await updateSingleContactStats(approved.contact_id).catch(() => {})
+    if (!alreadyApproved) {
+      await triggerMetaPaymentPurchaseEvent(approved.contact_id, {
+        id: approved.id,
+        amount: approved.amount,
+        currency: approved.currency,
+        paymentMode: approved.payment_mode
+      }).catch(() => {})
+      dispatchProductPostWebhooksForPaymentInBackground(id, {
+        status: 'paid',
+        previousStatus: 'pending_review'
+      })
+      const notificationPayment = await getTransactionByIdForResponse(id, getRequestBaseUrl(req)).catch(() => null)
+      if (notificationPayment) {
+        sendPaymentNotification({ ...notificationPayment, status: 'paid', previousStatus: 'pending_review' }).catch(() => {})
+      }
+    }
+
+    let conversationResume = null
+    let conversationResumePending = false
+    try {
+      conversationResume = await completeConversationalAgentSalePaymentFromInvoice({
+        contactId: approved.contact_id,
+        paymentId: approved.id,
+        invoiceId: approved.ghl_invoice_id || '',
+        amount: approved.amount,
+        currency: approved.currency,
+        status: 'paid',
+        paymentMode: approved.payment_mode,
+        reference: approved.reference || ''
+      })
+      conversationResumePending = Boolean(conversationResume?.processing || (
+        conversationResume?.matched && !conversationResume?.resumed && !conversationResume?.alreadyCompleted &&
+        conversationResume?.signal !== 'purchase_completed'
+      ))
+    } catch (error) {
+      conversationResumePending = true
+      logger.warn(`Pago ${id} aprobado; la reanudación conversacional quedó pendiente: ${error.message}`)
+    }
+
+    const mapped = await getTransactionByIdForResponse(id, getRequestBaseUrl(req))
+    return res.json({
+      success: true,
+      data: mapped,
+      alreadyApproved,
+      conversationResume,
+      conversationResumePending
+    })
+  } catch (error) {
+    logger.error(`Error aprobando comprobante ${id}: ${error.message}`)
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'No se pudo aprobar el comprobante' })
+  }
+}
+
+export const rejectTransferProof = async (req, res) => {
+  const { id } = req.params
+  try {
+    const reason = cleanString(req.body?.reason).slice(0, 500)
+    if (!reason) return res.status(400).json({ success: false, error: 'Explica por qué se rechaza el comprobante.' })
+    const transaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+    if (!transaction) return res.status(404).json({ success: false, error: 'Comprobante no encontrado' })
+
+    const review = getTransferProofReviewState(transaction)
+    if (!review.valid) {
+      return res.status(422).json({ success: false, error: 'Este pago no es un comprobante de transferencia revisable.' })
+    }
+    if (review.decision === 'approved' || normalizeStatus(transaction.status) === 'paid') {
+      return res.status(409).json({ success: false, error: 'Este comprobante ya fue aprobado y no se puede rechazar.' })
+    }
+    if (review.decision === 'rejected' && normalizeStatus(transaction.status) === 'rejected') {
+      return res.json({
+        success: true,
+        data: await getTransactionByIdForResponse(id, getRequestBaseUrl(req)),
+        alreadyRejected: true
+      })
+    }
+    if (normalizeStatus(transaction.status) !== 'pending_review' || cleanString(transaction.payment_mode) !== 'manual_review') {
+      return res.status(409).json({ success: false, error: 'El comprobante ya no está pendiente de revisión.' })
+    }
+
+    const reviewedAt = new Date().toISOString()
+    const nextMetadata = {
+      ...review.metadata,
+      reviewDecision: 'rejected',
+      reviewReason: reason,
+      reviewedAt,
+      reviewedBy: getPaymentReviewerId(req)
+    }
+    const update = await db.run(
+      `UPDATE payments
+       SET status = 'rejected', paid_at = NULL, metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND status = 'pending_review' AND payment_mode = 'manual_review'`,
+      [JSON.stringify(nextMetadata), id]
+    )
+    if (Number(update?.changes ?? update?.rowCount) !== 1) {
+      return res.status(409).json({ success: false, error: 'Otro proceso ya decidió este comprobante.' })
+    }
+    dispatchProductPostWebhooksForPaymentInBackground(id, {
+      status: 'rejected',
+      previousStatus: 'pending_review'
+    })
+    const mapped = await getTransactionByIdForResponse(id, getRequestBaseUrl(req))
+    sendPaymentNotification({ ...mapped, status: 'rejected', previousStatus: 'pending_review' }).catch(() => {})
+    return res.json({ success: true, data: mapped, alreadyRejected: false })
+  } catch (error) {
+    logger.error(`Error rechazando comprobante ${id}: ${error.message}`)
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'No se pudo rechazar el comprobante' })
+  }
+}
+
 /**
  * Registra un pago manual/marca como pagado
  */
@@ -1659,6 +1903,14 @@ export const recordPayment = async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'Transacción no encontrada'
+      })
+    }
+
+
+    if (getTransferProofReviewState(transaction).valid) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este comprobante requiere una decisión explícita. Usa Aprobar comprobante; record-payment no puede saltarse la revisión.'
       })
     }
 
@@ -1733,6 +1985,21 @@ export const recordPayment = async (req, res) => {
       queuePaymentAutomationMessage('receipt', id)
       sendPaymentNotification(paidTransaction).catch((pushError) => {
         logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
+      })
+    }
+
+    if (transaction.contact_id) {
+      await completeConversationalAgentSalePaymentFromInvoice({
+        contactId: transaction.contact_id,
+        invoiceId: transaction.ghl_invoice_id || '',
+        paymentId: id,
+        amount: amount || transaction.amount,
+        currency: transaction.currency,
+        status: 'paid',
+        paymentMode,
+        reference: transaction.reference || ''
+      }).catch((error) => {
+        logger.warn(`Pago ${id} registrado; la reconciliación conversacional no se completó: ${error.message}`)
       })
     }
 

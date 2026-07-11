@@ -16,6 +16,7 @@ import {
 } from '@/constants/conversationalAIProviders'
 import { useAccountCurrency } from '@/hooks'
 import { calendarsService, type Calendar as CalendarRecord } from '@/services/calendarsService'
+import apiClient from '@/services/apiClient'
 import { userAccessService, type TeamUser } from '@/services/userAccessService'
 import { formatCurrency } from '@/utils/format'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
@@ -48,6 +49,37 @@ interface Choice<T extends string> {
   label: string
   example: string
   Icon: LucideIcon
+}
+
+interface WizardProductPrice {
+  id?: string
+  _id?: string
+  localId?: string
+  name?: string
+  amount?: number
+  price?: number
+  currency?: string
+}
+
+interface WizardProduct {
+  id?: string
+  _id?: string
+  localId?: string
+  name: string
+  currency?: string
+  prices?: WizardProductPrice[]
+}
+
+const getWizardProductId = (product?: WizardProduct | null) => product?.id || product?._id || product?.localId || ''
+const getWizardPriceId = (price?: WizardProductPrice | null) => price?.id || price?._id || price?.localId || ''
+const getWizardPriceAmount = (price?: WizardProductPrice | null) => Number(price?.amount ?? price?.price ?? 0) || 0
+const isSafeWizardUrl = (value: string) => {
+  try {
+    const parsed = new URL(String(value || '').trim())
+    return Boolean(parsed.hostname) && (parsed.protocol === 'https:' || parsed.protocol === 'http:')
+  } catch {
+    return false
+  }
 }
 
 // Lenguaje muy sencillo, coloquial, con ejemplos y comparaciones: el wizard también enseña.
@@ -97,7 +129,7 @@ const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<Con
   ],
   custom: [
     { value: 'ready_for_human', label: 'Un humano', example: 'Cuando la meta está lista, detiene el bot y avisa a tu gente.', Icon: UserCheck },
-    { value: 'send_trigger_link', label: 'La IA mandando un enlace', example: 'Manda un enlace y se detiene cuando la persona lo abre.', Icon: Link2 }
+    { value: 'send_trigger_link', label: 'La IA mandando un enlace', example: 'Manda el enlace; el resultado sólo se confirma cuando una integración conectada reporta que sí ocurrió.', Icon: Link2 }
   ]
 }
 
@@ -139,6 +171,8 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   const [stepIndex, setStepIndex] = useState(0)
   const [draft, setDraft] = useState<AgentWizardDraft>(() => buildInitialDraft(defaultName, { aiProvider, model }))
   const [calendars, setCalendars] = useState<CalendarRecord[]>([])
+  const [products, setProducts] = useState<WizardProduct[]>([])
+  const [productsLoading, setProductsLoading] = useState(false)
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([])
   const [teamUsersLoading, setTeamUsersLoading] = useState(false)
   const [testResetKey, setTestResetKey] = useState(0)
@@ -173,6 +207,18 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     calendarsService.getCalendars()
       .then((list) => { if (alive) setCalendars((list || []).filter((c) => c.isActive)) })
       .catch(() => { if (alive) setCalendars([]) })
+    setProductsLoading(true)
+    apiClient.get<{ products?: WizardProduct[] }>('/products', {
+      params: { limit: '100', includePrices: 'true' }
+    })
+      .then((response) => {
+        if (!alive) return
+        setProducts(Array.isArray(response?.products)
+          ? response.products.filter((product) => getWizardProductId(product))
+          : [])
+      })
+      .catch(() => { if (alive) setProducts([]) })
+      .finally(() => { if (alive) setProductsLoading(false) })
     return () => { alive = false }
   }, [isOpen, defaultName, aiProvider, model])
 
@@ -208,16 +254,16 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   // Pasos ACTIVOS según las respuestas (if/if-not). El calendario y el cobro solo
   // aparecen cuando aplican; si no, ni se ven.
   const activeSteps = useMemo<StepId[]>(() => {
-    // El calendario es obligatorio para citas sin importar quién agenda (humano, IA o enlace).
-    const showCalendar = draft.objective === 'citas'
+    // V2 sólo pide calendario cuando la capacidad nativa realmente va a agendar.
+    const showCalendar = isCitasBooking(draft)
     const showPayment = isCitasBooking(draft) || isVentasCharging(draft)
-    const showGoalUrl = draft.successAction === 'send_goal_url' && (draft.objective === 'citas' || draft.objective === 'ventas')
+    const showGoalUrl = draft.successAction === 'send_goal_url' || draft.successAction === 'send_trigger_link'
     const showCompletion = ['book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link'].includes(draft.successAction)
     const needsAISetup = aiProviders.length > 0 && !aiProviders.some((provider) => provider.connected)
     return [
       'welcome', 'name',
       ...(needsAISetup ? ['ai'] as StepId[] : []),
-      'objective', 'identity', 'action',
+      'objective', 'action',
       ...(showCalendar ? ['calendar'] as StepId[] : []),
       ...(showPayment ? ['payment'] as StepId[] : []),
       ...(showGoalUrl ? ['goalUrl'] as StepId[] : []),
@@ -249,6 +295,18 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     label: group.label,
     options: group.options.map((option) => ({ value: option.value, label: option.label }))
   }))
+  const selectedProduct = products.find((product) => getWizardProductId(product) === draft.productId) || null
+  const productOptions = [
+    { value: '', label: productsLoading ? 'Cargando productos...' : 'Elegir producto real' },
+    ...products.map((product) => ({ value: getWizardProductId(product), label: product.name }))
+  ]
+  const priceOptions = [
+    { value: '', label: selectedProduct ? 'Elegir precio real' : 'Selecciona producto primero' },
+    ...(selectedProduct?.prices || []).map((price) => ({
+      value: getWizardPriceId(price),
+      label: `${price.name || 'Precio'} · ${formatCurrency(getWizardPriceAmount(price), price.currency || selectedProduct?.currency || accountCurrency)}`
+    }))
+  ]
   const responseDelay = draft.responseDelay
   const replyDelivery = draft.replyDelivery
   const humanMessagesEnabled = replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'
@@ -310,9 +368,10 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     if (step === 'identity' && draft.identityMode === 'custom') return draft.identityCustomName.trim().length > 0
     if (step === 'identity' && draft.identityMode === 'user') return draft.identityUserId.trim().length > 0
     if (step === 'objective' && draft.objective === 'custom') return draft.customObjective.trim().length > 0
+    if (step === 'data' && (draft.objective === 'datos' || draft.objective === 'filtrar')) return draft.requiredData.trim().length > 0
     if (step === 'delay' && draft.responseDelay.mode === 'random') return Number(draft.responseDelay.minValue) <= Number(draft.responseDelay.maxValue)
     if (step === 'delivery' && humanMessagesEnabled) return Number(draft.replyDelivery.minDelaySeconds) <= Number(draft.replyDelivery.maxDelaySeconds)
-    // El calendario es obligatorio: sin él el backend rechaza publicar el agente de citas.
+    // La capacidad nativa de agenda no se publica sin su calendario blindado.
     if (step === 'calendar') return Boolean(draft.calendarId)
     // Si pide anticipo/pago, exige monto y al menos un método de cobro completo.
     if (step === 'payment' && needsDepositAmount) {
@@ -321,7 +380,10 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
       if (draft.depositBankTransfer && !draft.depositBankTransferDetails.trim()) return false
       return true
     }
-    if (step === 'goalUrl') return draft.goalUrl.trim().length > 0
+    if (step === 'payment' && isVentasCharging(draft)) {
+      return Boolean(draft.productId && draft.priceId && Number(draft.priceAmount) > 0)
+    }
+    if (step === 'goalUrl') return isSafeWizardUrl(draft.goalUrl)
     if (step === 'completion' && draft.completionMode === 'assign_user') return draft.completionUserId.trim().length > 0
     return true
   }, [step, draft, needsDepositAmount, humanMessagesEnabled, selectedModelValue, selectedProviderConnected])
@@ -759,10 +821,10 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'payment' && draft.objective === 'citas' && (
             <>
               <h2 className={styles.title}>¿Pides anticipo para apartar la cita?</h2>
-              <p className={styles.help}>Si cobras algo por adelantado para reservar el lugar, la IA lo pide y espera el comprobante antes de agendar.</p>
+              <p className={styles.help}>Si cobras algo por adelantado, la IA manda el cobro y sólo agenda cuando Ristak confirma el pago real.</p>
               <div className={styles.options}>
                 <OptionCard active={!draft.askDeposit} Icon={CalendarCheck} label="No, agenda directo" example="Aparta la cita sin cobrar nada antes." onClick={() => patch({ askDeposit: false })} />
-                <OptionCard active={draft.askDeposit} Icon={Wallet} label="Sí, pido anticipo" example="Pide el anticipo, valida el comprobante y luego aparta." onClick={() => patch({ askDeposit: true })} />
+                <OptionCard active={draft.askDeposit} Icon={Wallet} label="Sí, pido anticipo" example="Manda el cobro y espera la confirmación real antes de apartar." onClick={() => patch({ askDeposit: true })} />
               </div>
               {draft.askDeposit && (
                 <>
@@ -776,11 +838,59 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'payment' && draft.objective === 'ventas' && (
             <>
               <h2 className={styles.title}>¿Cómo cobras?</h2>
-              <p className={styles.help}>Define si la persona paga todo de una o solo deja un anticipo para apartar.</p>
+              <p className={styles.help}>{draft.paymentMode === 'full_payment'
+                ? 'Amarra el cobro a un producto y precio reales. Así la IA no puede inventar el monto ni la moneda.'
+                : 'Define el anticipo exacto y cómo puede cobrarlo. Ristak comprobará el pago antes de avanzar.'}</p>
               <div className={styles.options}>
                 <OptionCard active={draft.paymentMode === 'full_payment'} Icon={CreditCard} label="Pago completo" example="Cobra el total. La venta se cierra cuando entra el pago entero." onClick={() => patch({ paymentMode: 'full_payment' })} />
                 <OptionCard active={draft.paymentMode === 'deposit'} Icon={Wallet} label="Solo anticipo" example="Cobra una parte para apartar. El resto se ve después." onClick={() => patch({ paymentMode: 'deposit' })} />
               </div>
+              {draft.paymentMode === 'full_payment' && (
+                <>
+                  <div className={styles.field}>
+                    <label>Producto</label>
+                    <CustomSelect
+                      value={draft.productId}
+                      onChange={(event) => {
+                        const product = products.find((item) => getWizardProductId(item) === event.target.value) || null
+                        patch({
+                          productId: getWizardProductId(product),
+                          productName: product?.name || '',
+                          priceId: '',
+                          priceName: '',
+                          priceAmount: null
+                        })
+                      }}
+                      portal
+                      disabled={productsLoading || products.length === 0}
+                    >
+                      {productOptions.map((option) => (
+                        <option key={option.value || 'wizard-product-empty'} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                  </div>
+                  <div className={styles.field}>
+                    <label>Precio</label>
+                    <CustomSelect
+                      value={draft.priceId}
+                      onChange={(event) => {
+                        const price = (selectedProduct?.prices || []).find((item) => getWizardPriceId(item) === event.target.value) || null
+                        patch({
+                          priceId: getWizardPriceId(price),
+                          priceName: price?.name || '',
+                          priceAmount: price ? getWizardPriceAmount(price) : null
+                        })
+                      }}
+                      portal
+                      disabled={!selectedProduct || (selectedProduct.prices || []).length === 0}
+                    >
+                      {priceOptions.map((option) => (
+                        <option key={option.value || 'wizard-price-empty'} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                  </div>
+                </>
+              )}
               {draft.paymentMode === 'deposit' && (
                 <>
                   <MoneyField label="¿De cuánto es el anticipo?" amount={draft.depositAmount} currency={accountCurrency} onChange={(v) => patch({ depositAmount: v })} />
@@ -792,7 +902,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
 
           {step === 'goalUrl' && (
             <>
-              <h2 className={styles.title}>{draft.objective === 'ventas' ? '¿Qué enlace de compra va a mandar?' : '¿Qué enlace de agenda va a mandar?'}</h2>
+              <h2 className={styles.title}>{draft.objective === 'ventas' ? '¿Qué enlace de compra va a mandar?' : draft.objective === 'citas' ? '¿Qué enlace de agenda va a mandar?' : '¿Qué enlace va a mandar?'}</h2>
               <p className={styles.help}>
                 Pega el link que la IA debe mandar cuando la persona ya está lista. Ristak agrega automáticamente el seguimiento necesario.
               </p>
@@ -802,6 +912,9 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 placeholder={draft.objective === 'ventas' ? 'https://tu-sitio.com/comprar' : 'https://tu-sitio.com/agendar'}
                 onChange={(e) => patch({ goalUrl: e.target.value })}
               />
+              {draft.goalUrl.trim() && !isSafeWizardUrl(draft.goalUrl) && (
+                <p className={styles.fieldHint}>Pega una dirección completa que empiece con http:// o https://.</p>
+              )}
             </>
           )}
 
@@ -860,15 +973,20 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
 
           {step === 'data' && (
             <>
-              <h2 className={styles.title}>¿Qué datos debe pedir?</h2>
-              <p className={styles.help}>Lo mínimo que necesitas de cada persona. Los pide de a uno, sin que se sienta formulario. <strong>Puedes dejarlo en blanco</strong> y agregarlo luego.</p>
+              <h2 className={styles.title}>{draft.objective === 'filtrar' ? '¿Qué criterios debe confirmar?' : '¿Qué datos debe pedir?'}</h2>
+              <p className={styles.help}>{draft.objective === 'filtrar'
+                ? 'Escribe criterios concretos y comprobables. Los revisará conversando, no adivinando por palabras sueltas.'
+                : <>Lo mínimo que necesitas de cada persona. Los pide de a uno, sin que se sienta formulario. {draft.objective !== 'datos' && <strong>Puedes dejarlo en blanco</strong>}.</>}</p>
               <textarea
                 className={styles.textarea}
                 value={draft.requiredData}
                 rows={4}
-                placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
+                placeholder={draft.objective === 'filtrar'
+                  ? 'Ejemplo:\n- Necesita el servicio este mes\n- Tiene autorización para decidir'
+                  : 'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
                 onChange={(e) => patch({ requiredData: e.target.value })}
               />
+              {!canAdvance && <p className={styles.fieldHint}>Escribe al menos un {draft.objective === 'filtrar' ? 'criterio' : 'dato'} para que la misión no quede vacía.</p>}
             </>
           )}
 
@@ -893,7 +1011,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                   />
                   <span>Clientes existentes van con tu equipo</span>
                 </div>
-                <p className={styles.fieldHint}>Si la IA detecta que ya es cliente (tiene pagos o citas previas, o dice serlo aunque escriba de otro número), pasa el chat directo a un humano.</p>
+                <p className={styles.fieldHint}>Ristak lo comprueba únicamente con pagos exitosos o citas anteriores no canceladas guardadas en esta cuenta.</p>
               </div>
             </>
           )}
@@ -930,8 +1048,8 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
 
           {step === 'instructions' && (
             <>
-              <h2 className={styles.title}>¿Qué reglas especiales debe respetar?</h2>
-              <p className={styles.help}>Escríbelas como se las explicarías a una persona nueva de tu equipo. Ristak las convierte en reglas operativas y mantiene por encima la seguridad, los datos reales y las acciones confirmadas.</p>
+              <h2 className={styles.title}>Estas son las instrucciones de tu agente</h2>
+              <p className={styles.help}>Ya vienen listas para atender, vender y avanzar. Déjalas así, edítalas o bórralas y escribe las tuyas; las capacidades reales permanecen protegidas aparte.</p>
               <textarea
                 className={styles.textarea}
                 value={draft.extraInstructions}
@@ -957,7 +1075,6 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
               <div className={styles.recapList}>
                 <RecapRow label="Se llama" value={draft.name.trim() || '—'} />
                 <RecapRow label="Su misión" value={draft.objective === 'custom' ? (draft.customObjective.trim() || 'Meta propia') : labelOf(objectiveChoices, draft.objective)} />
-                <RecapRow label="Habla como" value={draft.identityMode === 'user' ? (draft.identityUserName || 'Persona del equipo') : draft.identityMode === 'custom' ? (draft.identityCustomName.trim() || 'Nombre propio') : labelOf(identityChoices, draft.identityMode)} />
                 <RecapRow label="Al estar listo" value={labelOf(actionChoices, draft.successAction)} />
                 {draft.objective === 'citas' && (
                   <RecapRow label="Calendario" value={calendars.find((c) => c.id === draft.calendarId)?.name || 'Sin elegir'} />

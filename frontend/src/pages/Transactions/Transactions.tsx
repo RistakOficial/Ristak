@@ -71,6 +71,11 @@ interface ModalData {
   selectedContact?: Contact | null
 }
 
+interface TransferProofDecision {
+  transaction: Transaction
+  decision: 'approve' | 'reject'
+}
+
 type PaymentsTableTab = 'transactions' | 'payment-plans'
 type TransactionsViewMode = 'all' | 'by-date'
 type StatusFilters = Record<string, string[]>
@@ -124,6 +129,14 @@ interface TransactionsRouteState {
 
 const transactionViewModes: TransactionsViewMode[] = ['all', 'by-date']
 const isTransactionsViewMode = (value?: string): value is TransactionsViewMode => transactionViewModes.includes(value as TransactionsViewMode)
+const isProtectedTransferProofTransaction = (transaction: Transaction) => Boolean(
+  transaction.transferProof || (
+    transaction.status === 'pending_review' &&
+    String(transaction.paymentMode || '').toLowerCase() === 'manual_review' &&
+    transaction.method === 'bank_transfer' &&
+    transaction.paymentProvider === 'manual'
+  )
+)
 
 const parseTransactionsRoute = (pathname: string): TransactionsRouteState => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -449,12 +462,14 @@ const TRANSACTION_STATUS_ORDER = [
   'draft',
   'sent',
   'pending',
+  'pending_review',
   'paid',
   'partial',
   'overdue',
   'void',
   'refunded',
   'failed',
+  'rejected',
   'deleted'
 ]
 const TRANSACTIONS_PAGE_SIZE = 20
@@ -729,6 +744,8 @@ export const Transactions: React.FC = () => {
   const [bulkPaymentPlanAction, setBulkPaymentPlanAction] = useState<PaymentPlanBulkAction | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [modal, setModal] = useState<ModalData>({ type: null, selectedContact: null })
+  const [transferProofDecision, setTransferProofDecision] = useState<TransferProofDecision | null>(null)
+  const [transferProofRejectionReason, setTransferProofRejectionReason] = useState('')
   const [paymentPlanModal, setPaymentPlanModal] = useState<PaymentPlanModalData>({
     plan: null,
     loading: false,
@@ -990,7 +1007,11 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     if (selectedTransactionIds.length === 0) return
 
-    const availableIds = new Set(transactions.map(transaction => transaction.id))
+    const availableIds = new Set(
+      transactions
+        .filter(transaction => !isProtectedTransferProofTransaction(transaction))
+        .map(transaction => transaction.id)
+    )
     const nextSelectedIds = selectedTransactionIds.filter(id => availableIds.has(id))
 
     if (nextSelectedIds.length !== selectedTransactionIds.length) {
@@ -1254,6 +1275,67 @@ export const Transactions: React.FC = () => {
     }
     setModal({ type: 'edit', transaction, selectedContact: mockContact })
     navigateTransactionsPath(buildTransactionDetailPath(viewMode, transaction.id))
+  }
+
+  const openTransferProofDecision = (transaction: Transaction, decision: 'approve' | 'reject') => {
+    setTransferProofRejectionReason('')
+    setTransferProofDecision({ transaction, decision })
+  }
+
+  const handleViewTransferProof = (transaction: Transaction) => {
+    const rawUrl = String(transaction.transferProof?.mediaUrl || '').trim()
+    if (!rawUrl) {
+      showToast('error', 'Comprobante no disponible', 'El registro existe, pero no trae una imagen o archivo que se pueda abrir.')
+      return
+    }
+    try {
+      const parsed = new URL(rawUrl, window.location.origin)
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported_protocol')
+      window.open(parsed.toString(), '_blank', 'noopener,noreferrer')
+    } catch {
+      showToast('error', 'Enlace no válido', 'No se abrió el archivo porque su dirección no es segura.')
+    }
+  }
+
+  const handleApproveTransferProof = async (): Promise<boolean> => {
+    const transaction = transferProofDecision?.transaction
+    if (!transaction) return false
+    try {
+      const updated = await transactionsService.approveTransferProof(transaction.id, transaction.reference)
+      setTransactions(previous => previous.map(item => item.id === updated.id ? updated : item))
+      showToast(
+        'success',
+        'Comprobante aprobado',
+        `El pago de ${formatCurrency(updated.amount, updated.currency || accountCurrency)} quedó confirmado y el agente retomará el siguiente paso.`
+      )
+      closeTransactionModal()
+      void fetchData()
+      return true
+    } catch (error: any) {
+      showToast('error', 'No se pudo aprobar', error?.message || 'El comprobante no cambió. Actualiza la lista y vuelve a revisarlo.')
+      return false
+    }
+  }
+
+  const handleRejectTransferProof = async (): Promise<boolean> => {
+    const transaction = transferProofDecision?.transaction
+    const reason = transferProofRejectionReason.trim()
+    if (!transaction) return false
+    if (reason.length < 3) {
+      showToast('error', 'Escribe el motivo', 'Explica brevemente por qué se rechaza el comprobante.')
+      return false
+    }
+    try {
+      const updated = await transactionsService.rejectTransferProof(transaction.id, reason)
+      setTransactions(previous => previous.map(item => item.id === updated.id ? updated : item))
+      showToast('success', 'Comprobante rechazado', 'El pago sigue sin confirmarse y el agente no avanzará como si hubiera cobrado.')
+      closeTransactionModal()
+      void fetchData()
+      return true
+    } catch (error: any) {
+      showToast('error', 'No se pudo rechazar', error?.message || 'El comprobante no cambió. Actualiza la lista y vuelve a revisarlo.')
+      return false
+    }
   }
 
   const closeTransactionModal = () => {
@@ -2037,6 +2119,15 @@ export const Transactions: React.FC = () => {
   const openTransactionDeleteModal = (targetTransactions: Transaction[]) => {
     if (targetTransactions.length === 0) return
 
+    if (targetTransactions.some(isProtectedTransferProofTransaction)) {
+      showToast(
+        'info',
+        'Comprobante protegido',
+        'Los comprobantes revisados por una persona forman parte del historial de auditoría y no se pueden eliminar.'
+      )
+      return
+    }
+
     setTransactionsPendingDeletion(targetTransactions)
   }
 
@@ -2559,6 +2650,15 @@ export const Transactions: React.FC = () => {
         const isGatewayTransaction = isStripeTransaction || isMercadoPagoTransaction
         const canVoidPayment = canVoidHighLevelTransaction(item)
         const hasPaymentLink = Boolean(item.paymentUrl || item.publicPaymentId || item.invoiceId)
+        const isTransferProofPending = item.status === 'pending_review'
+        const isTransferProofRecord = isProtectedTransferProofTransaction(item)
+
+        if (isTransferProofPending) {
+          if (item.transferProof?.mediaUrl) actions.push('view-proof')
+          actions.push('approve-proof', 'reject-proof')
+        } else if (isTransferProofRecord && item.transferProof?.mediaUrl) {
+          actions.push('view-proof')
+        }
 
         // Copiar enlace - disponible para draft, sent, pending, overdue
         if (hasPaymentLink && ['draft', 'sent', 'pending', 'overdue', 'partial'].includes(item.status)) {
@@ -2576,7 +2676,7 @@ export const Transactions: React.FC = () => {
         }
 
         // Editar - disponible para pagos visibles; backend valida qué puede sincronizar cada pasarela.
-        if (item.status !== 'deleted') {
+        if (item.status !== 'deleted' && !isTransferProofRecord) {
           actions.push('edit')
         }
 
@@ -2595,9 +2695,11 @@ export const Transactions: React.FC = () => {
           actions.push('void')
         }
 
-        if (!canVoidPayment) {
+        if (!canVoidPayment && !isTransferProofRecord) {
           actions.push('delete')
         }
+
+        if (actions.length === 0) return <span aria-label="Sin acciones disponibles">—</span>
 
         // Si solo hay una acción (eliminar), mostrar botón directo
         if (actions.length === 1 && actions[0] === 'delete') {
@@ -2624,6 +2726,27 @@ export const Transactions: React.FC = () => {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {actions.includes('view-proof') && (
+                  <DropdownMenuItem onClick={() => handleViewTransferProof(item)}>
+                    <ExternalLink size={16} />
+                    <span style={{ marginLeft: '8px' }}>Abrir comprobante</span>
+                  </DropdownMenuItem>
+                )}
+
+                {actions.includes('approve-proof') && (
+                  <DropdownMenuItem onClick={() => openTransferProofDecision(item, 'approve')}>
+                    <CheckCircle size={16} />
+                    <span style={{ marginLeft: '8px' }}>Aprobar comprobante</span>
+                  </DropdownMenuItem>
+                )}
+
+                {actions.includes('reject-proof') && (
+                  <DropdownMenuItem onClick={() => openTransferProofDecision(item, 'reject')}>
+                    <Ban size={16} />
+                    <span style={{ marginLeft: '8px' }}>Rechazar comprobante</span>
+                  </DropdownMenuItem>
+                )}
+
                 {/* Copiar enlace de pago */}
                 {actions.includes('copy') && (
                   <DropdownMenuItem onClick={() => handleCopyPaymentLink(item)}>
@@ -2702,13 +2825,15 @@ export const Transactions: React.FC = () => {
                 )}
 
                 {/* Eliminar pago */}
-                <DropdownMenuItem
-                  onClick={() => handleDelete(item.id)}
-                  className={styles.destructive}
-                >
-                  <Trash2 size={16} />
-                  <span style={{ marginLeft: '8px' }}>Eliminar pago</span>
-                </DropdownMenuItem>
+                {actions.includes('delete') && (
+                  <DropdownMenuItem
+                    onClick={() => handleDelete(item.id)}
+                    className={styles.destructive}
+                  >
+                    <Trash2 size={16} />
+                    <span style={{ marginLeft: '8px' }}>Eliminar pago</span>
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -3339,6 +3464,9 @@ export const Transactions: React.FC = () => {
 
   const lockedContactName = modal.transaction?.contactName || modal.selectedContact?.name || 'Sin nombre'
   const lockedContactDetail = modal.transaction?.email || modal.selectedContact?.email || modal.transaction?.phone || modal.selectedContact?.phone
+  const isReviewingTransferProof = modal.type === 'edit' && modal.transaction?.status === 'pending_review'
+  const isRejectedTransferProofRecord = modal.type === 'edit' && modal.transaction?.status === 'rejected' && Boolean(modal.transaction.transferProof)
+  const isTransferProofAuditRecord = isReviewingTransferProof || isRejectedTransferProofRecord
   const isPaymentPlansPage = paymentTableTab === 'payment-plans'
   const selectedPaymentPlanIsStripe = paymentPlanModal.plan ? isStripePaymentPlan(paymentPlanModal.plan) : false
   const selectedPaymentPlanIsLocalCheckout = paymentPlanModal.plan ? isLocalCheckoutPaymentPlan(paymentPlanModal.plan) : false
@@ -3559,6 +3687,7 @@ export const Transactions: React.FC = () => {
             rowSelection={{
               selectedKeys: selectedTransactionIds,
               onChange: setSelectedTransactionIds,
+              isRowDisabled: isProtectedTransferProofTransaction,
               getRowLabel: (item) => item.title || item.contactName || 'pago',
               selectAllLabel: 'Seleccionar pagos de esta página'
             }}
@@ -3621,6 +3750,49 @@ export const Transactions: React.FC = () => {
         onConfirm={handleConfirmDeletePaymentPlans}
       />
 
+      <Modal
+        isOpen={transferProofDecision?.decision === 'approve'}
+        onClose={() => setTransferProofDecision(null)}
+        type="confirm"
+        size="sm"
+        title="Aprobar comprobante"
+        message={transferProofDecision
+          ? `Confirma que verificaste los fondos reales de ${formatCurrency(transferProofDecision.transaction.amount, transferProofDecision.transaction.currency || accountCurrency)}. Al aprobar, el agente podrá retomar el siguiente paso pendiente.`
+          : ''}
+        confirmText="Aprobar pago"
+        cancelText="Volver"
+        closeOnBackdropClick={false}
+        onConfirm={handleApproveTransferProof}
+      />
+
+      <Modal
+        isOpen={transferProofDecision?.decision === 'reject'}
+        onClose={() => {
+          setTransferProofDecision(null)
+          setTransferProofRejectionReason('')
+        }}
+        type="confirm"
+        size="sm"
+        title="Rechazar comprobante"
+        message="El pago seguirá sin confirmarse y el agente no avanzará. Deja un motivo breve para que el equipo tenga trazabilidad."
+        confirmText="Rechazar comprobante"
+        cancelText="Volver"
+        closeOnBackdropClick={false}
+        onConfirm={handleRejectTransferProof}
+      >
+        <div className={styles.formGroup}>
+          <label htmlFor="transfer-proof-rejection-reason">Motivo</label>
+          <textarea
+            id="transfer-proof-rejection-reason"
+            value={transferProofRejectionReason}
+            onChange={(event) => setTransferProofRejectionReason(event.target.value)}
+            placeholder="Ej. El movimiento no aparece en la cuenta bancaria."
+            rows={3}
+            maxLength={500}
+          />
+        </div>
+      </Modal>
+
       {isClient && modal.type && createPortal(
         <div
           className={styles.modalOverlay}
@@ -3637,7 +3809,7 @@ export const Transactions: React.FC = () => {
           >
             <div className={styles.modalHeader} data-modal-header="">
               <div>
-                <h2>{modal.type === 'create' ? 'Nuevo Pago' : 'Editar Pago'}</h2>
+                <h2>{isReviewingTransferProof ? 'Revisar comprobante' : isRejectedTransferProofRecord ? 'Comprobante rechazado' : modal.type === 'create' ? 'Nuevo Pago' : 'Editar Pago'}</h2>
               </div>
               <button
                 className={styles.closeButton}
@@ -3651,6 +3823,7 @@ export const Transactions: React.FC = () => {
             </div>
             <form className={styles.form} data-modal-form="" onSubmit={(e) => {
               e.preventDefault()
+              if (isTransferProofAuditRecord) return
               const formData = new FormData(e.currentTarget)
               handleSaveTransaction(formData)
             }}>
@@ -3675,6 +3848,19 @@ export const Transactions: React.FC = () => {
                   />
                 </div>
               )}
+              {isTransferProofAuditRecord && modal.transaction?.transferProof?.mediaUrl && (
+                <div className={styles.formGroup}>
+                  <label>Archivo recibido</label>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    leftIcon={<ExternalLink size={16} />}
+                    onClick={() => handleViewTransferProof(modal.transaction as Transaction)}
+                  >
+                    Abrir comprobante
+                  </Button>
+                </div>
+              )}
               <div className={styles.formGroup}>
                 <label>Monto ({accountCurrency})</label>
                 <div className={styles.inputWithIcon}>
@@ -3687,13 +3873,14 @@ export const Transactions: React.FC = () => {
                     placeholder="0.00"
                     defaultValue={modal.transaction?.amount}
                     required
+                    disabled={isTransferProofAuditRecord}
                     className={styles.amountInput}
                   />
                 </div>
               </div>
               <div className={styles.formGroup}>
                 <label>Método de pago</label>
-                <CustomSelect name="method" defaultValue={modal.transaction?.method || 'card'}>
+                <CustomSelect name="method" defaultValue={modal.transaction?.method || 'card'} disabled={isTransferProofAuditRecord}>
                   <option value="card">Tarjeta</option>
                   <option value="transfer">Transferencia</option>
                   <option value="cash">Efectivo</option>
@@ -3703,16 +3890,18 @@ export const Transactions: React.FC = () => {
               </div>
               <div className={styles.formGroup}>
                 <label>Estado</label>
-                <CustomSelect name="status" defaultValue={modal.transaction?.status || 'draft'}>
+                <CustomSelect name="status" defaultValue={modal.transaction?.status || 'draft'} disabled={isTransferProofAuditRecord}>
                   <option value="draft">Borrador</option>
                   <option value="sent">Enviado</option>
                   <option value="pending">Pendiente</option>
+                  <option value="pending_review" disabled>Pendiente de revisión</option>
                   <option value="paid">Pagado</option>
                   <option value="partial">Pago parcial</option>
                   <option value="overdue">Vencido</option>
                   <option value="void">Anulado</option>
                   <option value="refunded">Reembolsado</option>
                   <option value="failed">Fallido</option>
+                  <option value="rejected" disabled>Comprobante rechazado</option>
                 </CustomSelect>
               </div>
               <div className={styles.formGroup}>
@@ -3722,6 +3911,7 @@ export const Transactions: React.FC = () => {
                   type="date"
                   defaultValue={toDateInputValue(modal.transaction?.date, timezone)}
                   required
+                  disabled={isTransferProofAuditRecord}
                 />
               </div>
               <div className={styles.formGroup}>
@@ -3730,6 +3920,7 @@ export const Transactions: React.FC = () => {
                   name="dueDate"
                   type="date"
                   defaultValue={modal.transaction?.dueDate ? toDateInputValue(modal.transaction.dueDate, timezone) : ''}
+                  disabled={isTransferProofAuditRecord}
                 />
               </div>
               <div className={styles.formGroup}>
@@ -3738,6 +3929,7 @@ export const Transactions: React.FC = () => {
                   name="reference"
                   type="text"
                   defaultValue={modal.transaction?.reference}
+                  disabled={isTransferProofAuditRecord}
                 />
               </div>
               <div className={styles.formGroup}>
@@ -3747,6 +3939,7 @@ export const Transactions: React.FC = () => {
                   type="text"
                   placeholder="Pago"
                   defaultValue={modal.transaction?.title || modal.transaction?.description || ''}
+                  disabled={isTransferProofAuditRecord}
                 />
               </div>
               <div className={styles.formGroup}>
@@ -3755,15 +3948,43 @@ export const Transactions: React.FC = () => {
                   name="description"
                   type="text"
                   defaultValue={modal.transaction?.description}
+                  disabled={isTransferProofAuditRecord}
                 />
               </div>
               <div className={styles.formActions} data-modal-footer="">
-                <Button type="button" variant="ghost" onClick={closeTransactionModal}>
-                  Cancelar
-                </Button>
-                <Button type="submit">
-                  {modal.type === 'create' ? 'Crear' : 'Guardar'}
-                </Button>
+                {isReviewingTransferProof ? (
+                  <>
+                    <Button type="button" variant="ghost" onClick={closeTransactionModal}>
+                      Cerrar
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      onClick={() => openTransferProofDecision(modal.transaction as Transaction, 'reject')}
+                    >
+                      Rechazar
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => openTransferProofDecision(modal.transaction as Transaction, 'approve')}
+                    >
+                      Aprobar pago
+                    </Button>
+                  </>
+                ) : isRejectedTransferProofRecord ? (
+                  <Button type="button" variant="ghost" onClick={closeTransactionModal}>
+                    Cerrar
+                  </Button>
+                ) : (
+                  <>
+                    <Button type="button" variant="ghost" onClick={closeTransactionModal}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit">
+                      {modal.type === 'create' ? 'Crear' : 'Guardar'}
+                    </Button>
+                  </>
+                )}
               </div>
             </form>
           </div>

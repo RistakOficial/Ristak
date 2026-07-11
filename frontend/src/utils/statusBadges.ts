@@ -27,6 +27,8 @@ export const TRANSACTION_STATUS_BADGES: Record<string, StatusBadgeDescriptor> = 
   paid: { label: 'Pagado', variant: 'success' },
   succeeded: { label: 'Pagado', variant: 'success' },
   pending: { label: 'Pendiente', variant: 'warning' },
+  pending_review: { label: 'Comprobante por revisar', variant: 'warning' },
+  rejected: { label: 'Rechazado', variant: 'error' },
   partial: { label: 'Pago parcial', variant: 'warning' },
   overdue: { label: 'Vencido', variant: 'error' },
   void: { label: 'Anulado', variant: 'error' },

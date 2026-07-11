@@ -1101,9 +1101,15 @@ export const handlePaymentWebhook = async (req, res) => {
       || title
       || null;
 
-    const amount = normalizePaymentAmount(payment.total_amount || payment.totalAmount || payment.amount || 0); // HighLevel envía el monto directo, NO en centavos
-    const currency = payment.currency_code || payment.currencyCode || payment.currency || 'MXN';
-    const status = payment.payment_status || payment.paymentStatus || payment.status || 'succeeded';
+    const reportedAmountValue = firstValue(payment.total_amount, payment.totalAmount, payment.amount);
+    const reportedAmount = reportedAmountValue === undefined ? null : normalizePaymentAmount(reportedAmountValue);
+    const amount = reportedAmount ?? 0; // HighLevel envía el monto directo, NO en centavos
+    const reportedCurrency = firstValue(payment.currency_code, payment.currencyCode, payment.currency) || '';
+    const currency = reportedCurrency || 'MXN';
+    const reportedStatus = firstValue(payment.payment_status, payment.paymentStatus, payment.status) || '';
+    // Compatibilidad de persistencia legacy. La reconciliación v2 recibe el
+    // status crudo y falla cerrado cuando el proveedor no lo mandó.
+    const status = reportedStatus || 'succeeded';
     const paymentDate = payment.fulfilledAt || payment.fulfilled_at || payment.paymentDate || payment.payment_date || payment.date || payment.transactionDate || payment.created_at || payment.createdAt || new Date().toISOString();
     const createdAt = payment.created_at || payment.createdAt || new Date().toISOString();
     const existingInvoicePayment = await findExistingInvoicePayment({
@@ -1140,7 +1146,36 @@ export const handlePaymentWebhook = async (req, res) => {
     }
 
     const configuredPaymentMode = await getConfiguredPaymentModeFallback();
+    const explicitPaymentModeSignal = firstValue(
+      payment.liveMode,
+      payment.live_mode,
+      payment.livemode,
+      payment.testMode,
+      payment.test_mode,
+      payment.environment,
+      payment.mode,
+      data.liveMode,
+      data.live_mode,
+      data.livemode,
+      data.testMode,
+      data.test_mode,
+      data.environment,
+      data.mode,
+      payment.invoice?.liveMode,
+      payment.invoice?.live_mode,
+      payment.invoice?.testMode,
+      payment.invoice?.test_mode,
+      payment.invoice?.environment,
+      sourceMeta.liveMode,
+      sourceMeta.live_mode,
+      sourceMeta.testMode,
+      sourceMeta.test_mode,
+      sourceMeta.environment
+    );
     const paymentMode = getWebhookPaymentMode(data, payment, dedupedInvoicePayment?.payment_mode || configuredPaymentMode);
+    const reportedPaymentMode = explicitPaymentModeSignal === undefined
+      ? ''
+      : getWebhookPaymentMode(data, payment, configuredPaymentMode);
     let processedPaymentId = '';
     const previousPaymentStatus = dedupedInvoicePayment?.status || '';
 
@@ -1316,9 +1351,10 @@ export const handlePaymentWebhook = async (req, res) => {
         contactId,
         invoiceId: effectiveInvoiceId || invoiceId || '',
         paymentId,
-        amount,
-        currency,
-        status,
+        amount: reportedAmount,
+        currency: reportedCurrency,
+        status: reportedStatus,
+        paymentMode: reportedPaymentMode,
         reference
       }).catch(error => {
         logger.warn(`No se pudo completar venta del agente conversacional para invoice ${effectiveInvoiceId || invoiceId || paymentId}: ${error.message}`);
@@ -2133,6 +2169,21 @@ export const handleInvoiceWebhook = async (req, res) => {
         }
 
         await markPaymentFlowInvoicePaid(invoiceId);
+
+        if (payment?.contact_id) {
+          await completeConversationalAgentSalePaymentFromInvoice({
+            contactId: payment.contact_id,
+            invoiceId,
+            paymentId: payment.id,
+            amount: payment.amount,
+            currency: payment.currency,
+            status: 'paid',
+            paymentMode: payment.payment_mode,
+            reference: payment.reference || payment.invoice_number || ''
+          }).catch((error) => {
+            logger.warn(`No se pudo reconciliar el pago conversacional del invoice ${invoiceId}: ${error.message}`);
+          });
+        }
       }
 
       // Si fue reembolsado o anulado, recalcular estadísticas para que el pago

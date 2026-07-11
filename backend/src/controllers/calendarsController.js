@@ -41,6 +41,7 @@ import {
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js';
 import { runIdempotentAppointmentCreation } from '../services/appointmentCreationSafetyService.js';
+import { assertConversationalAppointmentDepositReservationFence } from '../services/conversationalAgentService.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -51,6 +52,17 @@ const CALENDAR_EVENTS_MAX_RANGE_DAYS = 370;
 const CALENDAR_AVAILABILITY_MAX_RANGE_DAYS = 45;
 const CALENDAR_BLOCKED_SLOTS_MAX_RANGE_DAYS = 45;
 const APPOINTMENT_BOOKING_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'messenger', 'instagram', 'email']);
+
+async function lockCalendarAppointmentCreation(calendarId) {
+  // SQLite ya entra con BEGIN IMMEDIATE en db.transaction. En PostgreSQL este
+  // candado transaccional serializa el bloque check+insert por calendario, aun
+  // cuando una petición viene del agente v2 y la otra del admin/API legacy.
+  if (!process.env.DATABASE_URL || !calendarId) return;
+  await db.get(
+    'SELECT pg_advisory_xact_lock(hashtext(?)) AS appointment_creation_locked',
+    [String(calendarId)]
+  );
+}
 
 function normalizeAppointmentBookingChannel(value) {
   const channel = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_');
@@ -2033,17 +2045,39 @@ export async function createAppointment(req, res) {
       locationId,
       clientRequestId,
       client_request_id: legacyClientRequestId,
+      depositReservationEventId,
+      depositReservationClaimToken,
+      depositReservationAgentId,
       ...appointmentData
     } = req.body;
+    const strictAvailabilityCheck = appointmentData.strictAvailabilityCheck === true
+      || appointmentData.source === 'conversational_agent_v2';
+    const depositFenceProvided = Boolean(
+      depositReservationEventId || depositReservationClaimToken || depositReservationAgentId
+    );
     const context = await getHighLevelContext(req, { locationId, accessToken });
     const createdAppointment = await runIdempotentAppointmentCreation({
       clientRequestId: clientRequestId || legacyClientRequestId,
-      payload: {
-        ...appointmentData,
-        locationId: context.locationId || null
-      },
+      payload: strictAvailabilityCheck
+        ? {
+            calendarId: appointmentData.calendarId || appointmentData.calendar_id || null,
+            contactId: appointmentData.contactId || appointmentData.contact_id || null,
+            startTime: appointmentData.startTime || appointmentData.start_time || null,
+            endTime: appointmentData.endTime || appointmentData.end_time || null,
+            source: 'conversational_agent_v2'
+          }
+        : {
+            ...appointmentData,
+            locationId: context.locationId || null
+          },
       create: async () => {
     const localCalendar = await localCalendarService.getLocalCalendar(appointmentData.calendarId || appointmentData.calendar_id);
+    if (strictAvailabilityCheck && !localCalendar) {
+      const calendarError = new Error('El calendario configurado no existe o ya no está disponible. No se creó la cita.');
+      calendarError.status = 404;
+      calendarError.code = 'calendar_not_found';
+      throw calendarError;
+    }
     // El render de variables de plantilla (título/notas) es cosmético y NUNCA debe
     // impedir crear la cita: si falla, degradamos a valores planos.
     let renderedTemplates;
@@ -2072,37 +2106,61 @@ export async function createAppointment(req, res) {
     // salvo que venga una bandera explícita para forzar (ignoreAppointmentConflicts).
     const forceDoubleBooking = appointmentData.ignoreAppointmentConflicts === true
       || appointmentData.confirmDoubleBooking === true;
-    if (!forceDoubleBooking && (localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id)) {
-      // El chequeo de cupo solo debe BLOQUEAR ante un conflicto real (409). Si la propia
-      // verificación falla por un error inesperado, NO impedimos crear la cita (fail-open):
-      // el límite anti-doble-reserva es una salvaguarda, no una puerta que tumbe el agendado.
-      let availability = { available: true };
-      try {
-        availability = await localCalendarService.checkSlotAvailability(
-          localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id,
-          localAppointmentData.startTime || localAppointmentData.start_time,
-          localAppointmentData.endTime || localAppointmentData.end_time
-        );
-      } catch (error) {
-        logger.warn(`[Calendars Controller] No se pudo verificar disponibilidad del slot, permito crear: ${error.message}`);
+    const localCalendarId = localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id;
+    const createLocalWithAvailability = async () => {
+      if (depositFenceProvided) {
+        await assertConversationalAppointmentDepositReservationFence({
+          eventId: depositReservationEventId,
+          claimToken: depositReservationClaimToken,
+          appointmentRequestId: clientRequestId || legacyClientRequestId,
+          contactId: appointmentData.contactId || appointmentData.contact_id,
+          agentId: depositReservationAgentId,
+          database: db
+        });
       }
-      if (!availability.available) {
-        const conflictError = new Error('Ese horario ya alcanzó el límite de citas. Elige otro horario o confirma el sobreagendamiento.');
-        conflictError.status = 409;
-        conflictError.code = 'slot_unavailable';
-        conflictError.data = { limit: availability.limit, overlapping: availability.overlapping };
-        throw conflictError;
+      if (!forceDoubleBooking && localCalendarId) {
+        await lockCalendarAppointmentCreation(localCalendarId);
+        // Legacy conserva el contrato fail-open del modal. El runtime conversacional v2
+        // falla cerrado: si no podemos comprobar el horario real, no inventamos una cita.
+        let availability = { available: true };
+        try {
+          availability = await localCalendarService.checkSlotAvailability(
+            localCalendarId,
+            localAppointmentData.startTime || localAppointmentData.start_time,
+            localAppointmentData.endTime || localAppointmentData.end_time
+          );
+        } catch (error) {
+          if (strictAvailabilityCheck) {
+            const availabilityError = new Error('No se pudo comprobar que el horario siga disponible. No se creó la cita.');
+            availabilityError.status = 503;
+            availabilityError.code = 'availability_check_failed';
+            availabilityError.cause = error;
+            throw availabilityError;
+          }
+          logger.warn(`[Calendars Controller] No se pudo verificar disponibilidad del slot, permito crear: ${error.message}`);
+        }
+        if (!availability.available) {
+          const conflictError = new Error('Ese horario ya alcanzó el límite de citas. Elige otro horario o confirma el sobreagendamiento.');
+          conflictError.status = 409;
+          conflictError.code = 'slot_unavailable';
+          conflictError.data = { limit: availability.limit, overlapping: availability.overlapping };
+          throw conflictError;
+        }
       }
-    }
 
-    let appointment = await localCalendarService.createLocalAppointment({
-      ...localAppointmentData,
-      calendarId: localCalendar?.id || appointmentData.calendarId,
-      locationId: context.locationId
-    }, {
-      locationId: context.locationId,
-      syncStatus: 'pending'
-    });
+      return localCalendarService.createLocalAppointment({
+        ...localAppointmentData,
+        calendarId: localCalendar?.id || appointmentData.calendarId,
+        locationId: context.locationId
+      }, {
+        locationId: context.locationId,
+        syncStatus: 'pending'
+      });
+    };
+
+    let appointment = localCalendarId && (!forceDoubleBooking || depositFenceProvided)
+      ? await db.transaction(createLocalWithAvailability)
+      : await createLocalWithAvailability();
 
     if (context.locationId && context.accessToken && (localCalendar?.ghlCalendarId || !localCalendar)) {
       try {

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldCheck, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, LockKeyhole, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldCheck, Target, Trash2, UserCheck, Users, Video, Wand2, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, Switch, TabList, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
@@ -30,6 +30,7 @@ import {
   isConversationalAgentEntryConflictError,
   DEFAULT_AGENT_ATTENTION,
   DEFAULT_AGENT_DEPOSIT_METHODS,
+  DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
   type AgentAttentionConfig,
   type AgentFilterOptions,
   type AgentCompletionMode,
@@ -53,6 +54,10 @@ import {
   type ConversationalAgentDef,
   type ConversationalAgentDefInput,
   type ConversationalAgentEntryConflict,
+  type ConversationalCapabilitiesConfig,
+  type ConversationalCapabilityId,
+  type ConversationalCapabilityItem,
+  type ConversationalCapabilityManifestItem,
   type ConversationalAgentMetrics,
   type ConversationalContactScope,
   type ConversationalLanguageLevel,
@@ -74,6 +79,7 @@ import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
 import { AgentCreationWizard } from './AgentCreationWizard'
 import styles from './AIAgentSettings.module.css'
+import { describeConversationalPreviewAction } from './conversationalPreviewAction'
 
 const AUTOSAVE_DELAY_MS = 900
 const DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE = '/ai-agent/conversational'
@@ -925,6 +931,8 @@ function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInpu
     systemClosingStrategy: _s,
     closingStrategyMode: _m,
     closingStrategyCustom: _custom,
+    capabilityManifest: _capabilityManifest,
+    migrationCapabilitiesConfig: _migrationCapabilitiesConfig,
     ...rest
   } = agent as ConversationalAgentDef & { systemClosingStrategy?: string }
   return rest
@@ -1074,10 +1082,66 @@ function getAgentDepositError(agent: ConversationalAgentDef) {
   return ''
 }
 
+function isSafeConversationalUrl(value: string) {
+  try {
+    const parsed = new URL(String(value || '').trim())
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+function getNativeCapabilityItemError(
+  item: ConversationalCapabilityItem,
+  allItems: ConversationalCapabilityItem[]
+) {
+  if (!item.enabled) return ''
+  if (item.id === 'schedule_appointment' && !item.calendarId) return 'Selecciona el calendario de la capacidad para agendar.'
+  if (item.id === 'collect_payment') {
+    if (item.paymentMode === 'deposit' || item.deposit?.enabled) {
+      const deposit = item.deposit || defaultGoalWorkflow.deposit
+      const validFixed = deposit.mode !== 'range' && Number(deposit.amount) > 0
+      const validRange = deposit.mode === 'range' && Number(deposit.minAmount) > 0 && Number(deposit.maxAmount) >= Number(deposit.minAmount)
+      if (!validFixed && !validRange) return 'Configura el monto verificable del anticipo.'
+      if (!deposit.methods?.paymentLink && !deposit.methods?.bankTransfer) return 'Activa un método para cobrar el anticipo.'
+      if (deposit.methods?.bankTransfer && !String(deposit.bankTransferDetails || '').trim()) return 'Escribe los datos de transferencia.'
+    } else if (!item.productId || !item.priceId) {
+      return 'Selecciona el producto y precio reales de la capacidad para cobrar.'
+    }
+  }
+  if (item.id === 'send_link') {
+    const hasConfiguredLink = item.linkKind === 'trigger'
+      ? Boolean(String(item.triggerLinkId || item.url || '').trim())
+      : isSafeConversationalUrl(item.url)
+    if (!hasConfiguredLink) return 'Escribe un enlace http o https válido.'
+  }
+  if (item.id === 'custom_goal') {
+    if (!String(item.description || '').trim()) return 'Describe el objetivo propio.'
+    if (item.completion === 'send_link') {
+      const link = allItems.find((candidate) => candidate.id === 'send_link' && candidate.enabled)
+      if (!link || getNativeCapabilityItemError(link, allItems)) {
+        return 'Activa y configura Mandar enlace para completar este objetivo.'
+      }
+    }
+  }
+  return ''
+}
+
+function getNativeCapabilityError(agent: ConversationalAgentDef) {
+  if (agent.runtimeMode !== 'tool_calling_v2') return ''
+  const items = agent.capabilitiesConfig?.items || []
+  for (const item of items) {
+    const error = getNativeCapabilityItemError(item, items)
+    if (error) return error
+  }
+  return ''
+}
+
 function getAgentValidationError(agent: ConversationalAgentDef) {
   return getAgentIdentityError(agent) ||
-    getAgentCalendarError(agent) ||
-    getAgentDepositError(agent) ||
+    (agent.runtimeMode === 'tool_calling_v2'
+      ? (agent.enabled ? getNativeCapabilityError(agent) : '')
+      : (getAgentCalendarError(agent) || getAgentDepositError(agent))) ||
     getResponseDelayError(getAgentResponseDelay(agent)) ||
     getReplyDeliveryError(getAgentReplyDelivery(agent)) ||
     getFollowUpError(getAgentFollowUp(agent))
@@ -1366,6 +1430,600 @@ interface AgentCardProps {
   onDelete: () => void
 }
 
+const nativeCapabilityMeta: Record<ConversationalCapabilityId, {
+  label: string
+  description: string
+  Icon: React.ComponentType<{ size?: number }>
+}> = {
+  schedule_appointment: {
+    label: 'Agendar cita',
+    description: 'Consulta espacios reales y crea la cita en el calendario elegido.',
+    Icon: CalendarCheck
+  },
+  collect_payment: {
+    label: 'Cobrar',
+    description: 'Manda un cobro amarrado a un precio real. El link no cuenta como pago.',
+    Icon: CreditCard
+  },
+  send_link: {
+    label: 'Mandar enlace',
+    description: 'Entrega el enlace configurado sin exponer seguimiento ni códigos internos.',
+    Icon: Link2
+  },
+  handoff_human: {
+    label: 'Pasar a un humano',
+    description: 'Entrega el chat y su contexto cuando debe continuar una persona.',
+    Icon: Users
+  },
+  custom_goal: {
+    label: 'Objetivo propio',
+    description: 'Persigue la meta que escribas y la cierra por una salida segura.',
+    Icon: Wand2
+  }
+}
+
+function getNativeCapability<T extends ConversationalCapabilityItem['id']>(
+  config: ConversationalCapabilitiesConfig,
+  id: T
+): Extract<ConversationalCapabilityItem, { id: T }> | null {
+  return (config.items.find((item) => item.id === id) || null) as Extract<ConversationalCapabilityItem, { id: T }> | null
+}
+
+function buildNativeCapabilityFromAgent(
+  agent: ConversationalAgentDef,
+  id: ConversationalCapabilityId,
+  calendars: Calendar[],
+  accountCurrency: string
+): ConversationalCapabilityItem {
+  const workflow = getAgentGoalWorkflow(agent)
+  const existing = getNativeCapability(agent.capabilitiesConfig, id)
+  if (existing) return { ...existing, enabled: true } as ConversationalCapabilityItem
+
+  if (id === 'schedule_appointment') {
+    return {
+      id,
+      enabled: true,
+      calendarId: workflow.appointments.calendarId || agent.defaultCalendarId || (calendars.length === 1 ? calendars[0].id : ''),
+      allowOverlaps: false
+    }
+  }
+  if (id === 'collect_payment') {
+    return {
+      id,
+      enabled: true,
+      productId: workflow.sales.productId || '',
+      priceId: workflow.sales.priceId || '',
+      paymentMode: agent.objective === 'citas' && workflow.deposit.enabled
+        ? 'deposit'
+        : getWorkflowSalesPaymentMode(workflow),
+      amount: workflow.sales.amount,
+      currency: accountCurrency,
+      deposit: {
+        ...workflow.deposit,
+        currency: accountCurrency,
+        methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS, ...(workflow.deposit.methods || {}) }
+      }
+    }
+  }
+  if (id === 'send_link') {
+    const target = agent.objective === 'ventas' ? workflow.sales : workflow.appointments
+    return {
+      id,
+      enabled: true,
+      linkKind: 'verified_goal',
+      triggerLinkId: '',
+      url: target.url || workflow.triggerLink.triggerLinkUrl || '',
+      trackingParam: target.trackingParam || 'ristak_goal_id'
+    }
+  }
+  if (id === 'handoff_human') {
+    return {
+      id,
+      enabled: true,
+      rules: agent.handoffRules || '',
+      userId: workflow.completion.userId || '',
+      userName: workflow.completion.userName || '',
+      pastClientsToHuman: Boolean(workflow.attention?.pastClientsToHuman)
+    }
+  }
+  return {
+    id: 'custom_goal',
+    enabled: true,
+    description: agent.customObjective || '',
+    completion: 'handoff'
+  }
+}
+
+interface NativeConversationBuilderProps {
+  agent: ConversationalAgentDef
+  calendars: Calendar[]
+  products: ProductItem[]
+  productsLoading: boolean
+  teamUsers: TeamUser[]
+  teamUsersLoading: boolean
+  accountCurrency: string
+  onChange: (patch: ConversationalAgentDefInput) => void
+}
+
+const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
+  agent,
+  calendars,
+  products,
+  productsLoading,
+  teamUsers,
+  teamUsersLoading,
+  accountCurrency,
+  onChange
+}) => {
+  const { showToast } = useNotification()
+  const capabilities = agent.capabilitiesConfig || { schemaVersion: 1, items: [] }
+
+  const updateCapability = (next: ConversationalCapabilityItem, { pause = true } = {}) => {
+    const exists = capabilities.items.some((item) => item.id === next.id)
+    const items = exists
+      ? capabilities.items.map((item) => (item.id === next.id ? next : item))
+      : [...capabilities.items, next]
+    onChange({
+      capabilitiesConfig: { schemaVersion: 1, items },
+      ...(pause && agent.enabled ? { enabled: false } : {})
+    })
+    if (pause && agent.enabled) {
+      showToast('info', 'Agente en pausa', 'Configura y prueba la nueva capacidad antes de volver a publicarlo.')
+    }
+  }
+
+  const toggleCapability = (id: ConversationalCapabilityId, enabled: boolean) => {
+    const current = getNativeCapability(capabilities, id)
+    const next = enabled
+      ? buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency)
+      : ({ ...(current || buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency)), enabled: false } as ConversationalCapabilityItem)
+    updateCapability(next, { pause: true })
+  }
+
+  const migrateToV2 = () => {
+    onChange({
+      runtimeMode: 'tool_calling_v2',
+      enabled: false,
+      promptConfig: agent.promptConfig || {
+        ...DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
+        editableText: String(agent.extraInstructions || '').trim() || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.editableText
+      },
+      capabilitiesConfig: agent.migrationCapabilitiesConfig || capabilities
+    })
+    showToast('info', 'Motor nuevo preparado', 'El agente quedó en pausa. Pruébalo abajo y publícalo cuando te guste cómo responde.')
+  }
+
+  if (agent.runtimeMode !== 'tool_calling_v2') {
+    return (
+      <div className={styles.nativeMigrationNotice}>
+        <div className={styles.nativeMigrationIcon}><LockKeyhole size={20} /></div>
+        <div className={styles.nativeMigrationCopy}>
+          <strong>Este agente sigue usando el motor anterior</strong>
+          <span>Prepáralo con conversación directa y herramientas nativas. Se pausará para que lo pruebes antes de reemplazar lo que hoy está atendiendo.</span>
+        </div>
+        <Button variant="secondary" onClick={migrateToV2}>Preparar motor nuevo</Button>
+      </div>
+    )
+  }
+
+  const scheduleCapability = getNativeCapability(capabilities, 'schedule_appointment')
+  const paymentCapability = getNativeCapability(capabilities, 'collect_payment')
+  const linkCapability = getNativeCapability(capabilities, 'send_link')
+  const handoffCapability = getNativeCapability(capabilities, 'handoff_human')
+  const customCapability = getNativeCapability(capabilities, 'custom_goal')
+  const selectedProduct = products.find((product) => getProductId(product) === paymentCapability?.productId) || null
+  const productPrices = selectedProduct?.prices || []
+  const manifestById = new Map<ConversationalCapabilityId, ConversationalCapabilityManifestItem>(
+    (agent.capabilityManifest || []).map((item) => [item.id, item])
+  )
+
+  const capabilityRows: Array<{
+    id: ConversationalCapabilityId
+    item: ConversationalCapabilityItem | null
+    settings: React.ReactNode
+  }> = [
+    {
+      id: 'schedule_appointment',
+      item: scheduleCapability,
+      settings: scheduleCapability?.enabled ? (
+        <div className={styles.nativeCapabilitySettings}>
+          <label className={styles.label}>Calendario</label>
+          <CustomSelect
+            value={scheduleCapability.calendarId}
+            onChange={(event) => updateCapability({ ...scheduleCapability, calendarId: event.target.value, allowOverlaps: false })}
+            portal
+          >
+            <option value="">Elegir calendario activo</option>
+            {calendars.map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}</option>)}
+          </CustomSelect>
+          <p className={styles.helper}>El modelo no puede cambiar este calendario ni sobreagendar. Cada espacio se vuelve a comprobar al confirmar.</p>
+        </div>
+      ) : null
+    },
+    {
+      id: 'collect_payment',
+      item: paymentCapability,
+      settings: paymentCapability?.enabled ? (
+        <div className={styles.nativeCapabilitySettings}>
+          <label className={styles.label}>Tipo de cobro</label>
+          <CustomSelect
+            value={paymentCapability.paymentMode}
+            onChange={(event) => updateCapability({
+              ...paymentCapability,
+              paymentMode: event.target.value === 'deposit' ? 'deposit' : 'full_payment',
+              deposit: { ...paymentCapability.deposit, enabled: event.target.value === 'deposit', currency: accountCurrency }
+            })}
+            portal
+          >
+            <option value="full_payment">Pago completo de un producto</option>
+            <option value="deposit">Anticipo</option>
+          </CustomSelect>
+          {paymentCapability.paymentMode === 'full_payment' ? (
+            <div className={styles.nativeInlineFields}>
+              <div className={styles.field}>
+                <label className={styles.label}>Producto</label>
+                <CustomSelect
+                  value={paymentCapability.productId}
+                  onChange={(event) => updateCapability({
+                    ...paymentCapability,
+                    productId: event.target.value,
+                    priceId: '',
+                    amount: null,
+                    currency: accountCurrency
+                  })}
+                  disabled={productsLoading}
+                  portal
+                >
+                  <option value="">{productsLoading ? 'Cargando productos...' : 'Elegir producto real'}</option>
+                  {products.map((product) => <option key={getProductId(product)} value={getProductId(product)}>{product.name}</option>)}
+                </CustomSelect>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Precio</label>
+                <CustomSelect
+                  value={paymentCapability.priceId}
+                  onChange={(event) => {
+                    const price = productPrices.find((item) => getPriceId(item) === event.target.value) || null
+                    updateCapability({
+                      ...paymentCapability,
+                      priceId: getPriceId(price),
+                      amount: price ? getPriceAmount(price) : null,
+                      currency: normalizeCurrencyCode(price?.currency || selectedProduct?.currency || accountCurrency)
+                    })
+                  }}
+                  disabled={!selectedProduct}
+                  portal
+                >
+                  <option value="">Elegir precio real</option>
+                  {productPrices.map((price) => (
+                    <option key={getPriceId(price)} value={getPriceId(price)}>
+                      {price.name || 'Precio'} · {formatCurrency(getPriceAmount(price), normalizeCurrencyCode(price.currency || selectedProduct?.currency || accountCurrency))}
+                    </option>
+                  ))}
+                </CustomSelect>
+              </div>
+            </div>
+          ) : (
+            <>
+              <label className={styles.label}>Cómo se define el anticipo</label>
+              <CustomSelect
+                value={paymentCapability.deposit.mode || 'fixed'}
+                onChange={(event) => updateCapability({
+                  ...paymentCapability,
+                  deposit: {
+                    ...paymentCapability.deposit,
+                    enabled: true,
+                    mode: event.target.value === 'range' ? 'range' : 'fixed',
+                    currency: accountCurrency
+                  }
+                })}
+                portal
+              >
+                <option value="fixed">Monto exacto</option>
+                <option value="range">Rango acordado con la persona</option>
+              </CustomSelect>
+              <div className={styles.nativeInlineFields}>
+                {paymentCapability.deposit.mode === 'range' ? (
+                  <>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Mínimo</label>
+                      <NumberInput
+                        value={paymentCapability.deposit.minAmount || ''}
+                        min={0}
+                        step={0.01}
+                        onValueChange={(minAmount) => updateCapability({
+                          ...paymentCapability,
+                          deposit: { ...paymentCapability.deposit, enabled: true, mode: 'range', minAmount, currency: accountCurrency }
+                        })}
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Máximo</label>
+                      <NumberInput
+                        value={paymentCapability.deposit.maxAmount || ''}
+                        min={0}
+                        step={0.01}
+                        onValueChange={(maxAmount) => updateCapability({
+                          ...paymentCapability,
+                          deposit: { ...paymentCapability.deposit, enabled: true, mode: 'range', maxAmount, currency: accountCurrency }
+                        })}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className={styles.field}>
+                    <label className={styles.label}>Monto del anticipo</label>
+                    <NumberInput
+                      value={paymentCapability.deposit.amount || ''}
+                      min={0}
+                      step={0.01}
+                      onValueChange={(amount) => updateCapability({
+                        ...paymentCapability,
+                        deposit: { ...paymentCapability.deposit, enabled: true, mode: 'fixed', amount, currency: accountCurrency }
+                      })}
+                    />
+                  </div>
+                )}
+                <div className={styles.nativePaymentMethods}>
+                  <label>
+                    <Switch
+                      checked={Boolean(paymentCapability.deposit.methods?.paymentLink)}
+                      onChange={(paymentLink) => updateCapability({
+                        ...paymentCapability,
+                        deposit: {
+                          ...paymentCapability.deposit,
+                          methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS, ...paymentCapability.deposit.methods, paymentLink }
+                        }
+                      })}
+                      aria-label="Cobrar anticipo con link"
+                    />
+                    Link de pago
+                  </label>
+                  <label>
+                    <Switch
+                      checked={Boolean(paymentCapability.deposit.methods?.bankTransfer)}
+                      onChange={(bankTransfer) => updateCapability({
+                        ...paymentCapability,
+                        deposit: {
+                          ...paymentCapability.deposit,
+                          methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS, ...paymentCapability.deposit.methods, bankTransfer }
+                        }
+                      })}
+                      aria-label="Aceptar comprobante para revisión"
+                    />
+                    Transferencia con revisión
+                  </label>
+                </div>
+              </div>
+              {paymentCapability.deposit.methods?.bankTransfer && (
+                <textarea
+                  className={styles.textarea}
+                  value={paymentCapability.deposit.bankTransferDetails || ''}
+                  rows={3}
+                  placeholder="Banco, titular y datos para transferir"
+                  onChange={(event) => updateCapability({
+                    ...paymentCapability,
+                    deposit: { ...paymentCapability.deposit, bankTransferDetails: event.target.value }
+                  })}
+                />
+              )}
+              <p className={styles.helper}>Una foto de comprobante queda pendiente de revisión; jamás se toma como dinero confirmado por sí sola.</p>
+            </>
+          )}
+        </div>
+      ) : null
+    },
+    {
+      id: 'send_link',
+      item: linkCapability,
+      settings: linkCapability?.enabled ? (
+        <div className={styles.nativeCapabilitySettings}>
+          <label className={styles.label}>Enlace que puede mandar</label>
+          <input
+            className={styles.input}
+            value={linkCapability.url}
+            placeholder="https://tu-negocio.com/siguiente-paso"
+            onChange={(event) => updateCapability({ ...linkCapability, linkKind: 'verified_goal', triggerLinkId: '', url: event.target.value })}
+          />
+          <p className={styles.helper}>Abrir el enlace no confirma una cita ni un pago. Esos resultados necesitan evidencia real aparte.</p>
+        </div>
+      ) : null
+    },
+    {
+      id: 'handoff_human',
+      item: handoffCapability,
+      settings: handoffCapability?.enabled ? (
+        <div className={styles.nativeCapabilitySettings}>
+          <label className={styles.label}>Cuándo debe pasarlo</label>
+          <textarea
+            className={styles.textarea}
+            value={handoffCapability.rules}
+            rows={3}
+            placeholder="Ejemplo: facturación, quejas, excepciones o cuando pida hablar con alguien"
+            onChange={(event) => updateCapability({ ...handoffCapability, rules: event.target.value })}
+          />
+          <label className={styles.label}>Persona asignada (opcional)</label>
+          <CustomSelect
+            value={handoffCapability.userId}
+            onChange={(event) => {
+              const user = teamUsers.find((item) => item.id === event.target.value) || null
+              updateCapability({
+                ...handoffCapability,
+                userId: user?.id || '',
+                userName: getTeamUserDisplayName(user)
+              })
+            }}
+            disabled={teamUsersLoading}
+            portal
+          >
+            <option value="">Sólo avisar al equipo</option>
+            {teamUsers.map((user) => <option key={user.id} value={user.id}>{getTeamUserDisplayName(user)}</option>)}
+          </CustomSelect>
+          <div className={styles.nativePaymentMethods}>
+            <label>
+              <Switch
+                checked={Boolean(handoffCapability.pastClientsToHuman)}
+                onChange={(pastClientsToHuman) => updateCapability({
+                  ...handoffCapability,
+                  pastClientsToHuman
+                })}
+                aria-label="Pasar clientes existentes al equipo"
+              />
+              Clientes existentes van con tu equipo
+            </label>
+          </div>
+          <p className={styles.helper}>Ristak comprueba pagos o citas anteriores antes de aplicar esta regla; no se decide por una palabra suelta.</p>
+        </div>
+      ) : null
+    },
+    {
+      id: 'custom_goal',
+      item: customCapability,
+      settings: customCapability?.enabled ? (
+        <div className={styles.nativeCapabilitySettings}>
+          <label className={styles.label}>Resultado que debe conseguir</label>
+          <textarea
+            className={styles.textarea}
+            value={customCapability.description}
+            rows={3}
+            placeholder="Ejemplo: reunir los datos para preparar una cotización formal"
+            onChange={(event) => updateCapability({ ...customCapability, description: event.target.value })}
+          />
+          <label className={styles.label}>Qué pasa cuando se cumple</label>
+          <CustomSelect
+            value={customCapability.completion}
+            onChange={(event) => updateCapability({
+              ...customCapability,
+              completion: event.target.value === 'send_link' ? 'send_link' : 'handoff'
+            })}
+            portal
+          >
+            <option value="handoff">Entregar al equipo</option>
+            <option value="send_link">Mandar el enlace configurado</option>
+          </CustomSelect>
+          <p className={styles.helper}>{customCapability.completion === 'send_link'
+            ? 'También debes activar Mandar enlace. Enviar o abrir el link no confirma una cita ni un pago por sí solo.'
+            : 'Al completarlo, el chat pasa al equipo con el contexto reunido.'}</p>
+        </div>
+      ) : null
+    }
+  ]
+
+  const enabledManifest = capabilityRows
+    .filter((row) => row.item?.enabled)
+    .map((row) => {
+      const item = row.item as ConversationalCapabilityItem
+      const localError = getNativeCapabilityItemError(item, capabilities.items)
+      const persisted = manifestById.get(row.id)
+      return {
+        id: row.id,
+        label: persisted?.label || nativeCapabilityMeta[row.id].label,
+        locked: true as const,
+        enabled: true,
+        ready: !localError,
+        summary: persisted?.summary || nativeCapabilityMeta[row.id].description,
+        missingConfiguration: localError ? [localError] : []
+      }
+    })
+
+  return (
+    <>
+      <div className={styles.nativeRuntimeHeader}>
+        <div>
+          <Badge variant="info">Flujo directo</Badge>
+          <span>Una sola IA conversa y usa herramientas nativas.</span>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onChange({
+            runtimeMode: 'legacy_v1',
+            enabled: false,
+            extraInstructions: agent.promptConfig?.editableText ?? agent.extraInstructions
+          })}
+        >
+          Volver al motor anterior
+        </Button>
+      </div>
+
+      <div className={styles.agentSection}>
+        <h3 className={styles.sectionTitle}>1. Instrucciones de tu agente</h3>
+        <p className={styles.agentSectionHint}>Esta zona es tuya. La plantilla ya funciona; puedes dejarla, editarla o borrarla completa.</p>
+        <textarea
+          className={`${styles.textarea} ${styles.nativePromptTextarea}`}
+          value={agent.promptConfig?.editableText ?? ''}
+          rows={12}
+          placeholder="Escribe aquí cómo debe atender, qué debe saber y cómo quieres que hable."
+          onChange={(event) => onChange({
+            promptConfig: {
+              ...(agent.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG),
+              editableText: event.target.value
+            }
+          })}
+        />
+        <p className={styles.helper}>Aunque borres todo, las herramientas, validaciones y datos reales siguen protegidos por Ristak.</p>
+      </div>
+
+      <div className={styles.agentSection}>
+        <h3 className={styles.sectionTitle}>2. Capacidades</h3>
+        <p className={styles.agentSectionHint}>Activa varias si las necesitas. Cada una pide sólo la configuración que hace falta para operar.</p>
+        <div className={styles.nativeCapabilityList}>
+          {capabilityRows.map(({ id, item, settings }) => {
+            const meta = nativeCapabilityMeta[id]
+            const Icon = meta.Icon
+            return (
+              <div key={id} className={styles.nativeCapabilityRow} data-enabled={item?.enabled ? 'true' : undefined}>
+                <div className={styles.nativeCapabilityHeading}>
+                  <span className={styles.nativeCapabilityIcon}><Icon size={18} /></span>
+                  <div>
+                    <strong>{meta.label}</strong>
+                    <span>{meta.description}</span>
+                  </div>
+                  <Switch
+                    checked={Boolean(item?.enabled)}
+                    onChange={(enabled) => toggleCapability(id, enabled)}
+                    aria-label={`${enabledManifest.some((entry) => entry.id === id) ? 'Desactivar' : 'Activar'} ${meta.label}`}
+                  />
+                </div>
+                {settings}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className={`${styles.agentSection} ${styles.nativeLockedZone}`}>
+        <div className={styles.nativeLockedTitle}>
+          <LockKeyhole size={18} />
+          <div>
+            <h3 className={styles.sectionTitle}>Protección de Ristak</h3>
+            <p className={styles.agentSectionHint}>Zona blindada · visible, pero no editable.</p>
+          </div>
+        </div>
+        <div className={styles.nativeManifestList}>
+          {enabledManifest.length ? enabledManifest.map((item) => (
+            <div key={item.id} className={styles.nativeManifestItem}>
+              <CheckCircle2 size={16} />
+              <div>
+                <strong>{item.label}</strong>
+                <span>{item.summary}</span>
+                {item.missingConfiguration.map((message) => <small key={message}>{message}</small>)}
+              </div>
+              <Badge variant={!item.ready ? 'warning' : (agent.enabled ? 'success' : 'info')}>
+                {!item.ready
+                  ? 'Falta configurar'
+                  : (agent.enabled ? 'Validada al publicar' : 'Lista para validar')}
+              </Badge>
+            </div>
+          )) : (
+            <p className={styles.helper}>Activa una capacidad para ver aquí sus protecciones operativas.</p>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
 function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], providerId: ConversationalAIProviderId) {
   return aiProviders.find((provider) => provider.id === providerId) || null
 }
@@ -1503,6 +2161,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
   const promptStatusText = getBusinessPromptStatusText(businessPromptStatus)
   const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)
+  const legacyBusinessPromptBlocked = agent.runtimeMode !== 'tool_calling_v2' && !businessPromptReady
+  const publishValidationError = getAgentValidationError({ ...agent, enabled: true })
   const entryCount = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
   const exitCount = agent.filters.exit.groups.reduce((total, group) => total + group.conditions.length, 0)
   const customFieldOptions = filterOptions?.customFields || []
@@ -2024,11 +2684,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
       for (const action of result.actions || []) {
         if (testPracticeExpiredRef.current) return
-        const effectText = typeof action.effect?.liveEffect === 'string' ? action.effect.liveEffect : ''
-        const line = effectText
-          ? `⚙︎ Acción interna: ${action.type} — en vivo esto ${effectText}`
-          : `⚙︎ Acción interna: ${action.type}`
-        setTestMessages((current) => [...current, { role: 'assistant', content: line, internal: true }])
+        setTestMessages((current) => [
+          ...current,
+          { role: 'assistant', content: describeConversationalPreviewAction(action), internal: true }
+        ])
       }
 
       const visibleReplies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])
@@ -2674,8 +3333,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             <Button
               variant={agent.enabled ? 'secondary' : 'primary'}
               onClick={() => onChange({ enabled: !agent.enabled })}
-              disabled={!agent.enabled && !businessPromptReady}
-              title={!agent.enabled && !businessPromptReady ? promptBlockerText : undefined}
+              disabled={!agent.enabled && (legacyBusinessPromptBlocked || Boolean(publishValidationError))}
+              title={!agent.enabled ? (publishValidationError || (legacyBusinessPromptBlocked ? promptBlockerText : undefined)) : undefined}
             >
               {agent.enabled ? <Pause size={16} /> : <Play size={16} />}
               {agent.enabled ? 'Pausar' : 'Publicar'}
@@ -2703,7 +3362,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <p className={styles.agentCardSummary}>
-            {selectedObjective.label} · {selectedGoalExecutionInfo.label}
+            {agent.runtimeMode === 'tool_calling_v2'
+              ? `${(agent.capabilitiesConfig?.items || []).filter((item) => item.enabled).length} capacidades activas · herramientas protegidas`
+              : `${selectedObjective.label} · ${selectedGoalExecutionInfo.label}`}
             {entryCount > 0
               ? ` · entra con ${entryCount} ${entryCount === 1 ? 'regla' : 'reglas'}`
               : ' · entra con cualquier chat'}
@@ -2712,13 +3373,25 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
             {followUpSummary ? ` · ${followUpSummary}` : ''}
           </p>
-          {!businessPromptReady && (
+          {legacyBusinessPromptBlocked && (
             <div className={styles.promptReadinessNotice}>
               <strong>{promptStatusText}</strong>
               <span>{promptBlockerText}</span>
             </div>
           )}
 
+          <NativeConversationBuilder
+            agent={agent}
+            calendars={calendars}
+            products={products}
+            productsLoading={productsLoading}
+            teamUsers={teamUsers}
+            teamUsersLoading={teamUsersLoading}
+            accountCurrency={accountCurrency}
+            onChange={onChange}
+          />
+
+          {agent.runtimeMode !== 'tool_calling_v2' && (
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>1. Personalidad e instrucciones</h3>
             <p className={styles.agentSectionHint}>
@@ -2828,9 +3501,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </div>
             </div>
           </div>
+          )}
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>2. Operación técnica del chat</h3>
+            <h3 className={styles.sectionTitle}>{agent.runtimeMode === 'tool_calling_v2' ? '3' : '2'}. Operación técnica del chat</h3>
             <p className={styles.agentSectionHint}>
               Configura el motor de IA, tiempos, formato de mensajes, notificaciones y recordatorios.
             </p>
@@ -3093,6 +3767,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             </div>
           </div>
 
+          {agent.runtimeMode !== 'tool_calling_v2' && (
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>3. Objetivo y cierre</h3>
             <p className={styles.agentSectionHint}>
@@ -3265,7 +3940,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </div>
             </details>
           </div>
+          )}
 
+          {agent.runtimeMode !== 'tool_calling_v2' && (
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>4. Reglas de atención</h3>
             <p className={styles.agentSectionHint}>
@@ -3338,9 +4015,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
             </div>
           </div>
+          )}
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>5. Entrada y salida</h3>
+            <h3 className={styles.sectionTitle}>{agent.runtimeMode === 'tool_calling_v2' ? '4' : '5'}. Entrada y salida</h3>
             <p className={styles.agentSectionHint}>
               Define a qué contactos puede tomar, con qué reglas entra y cuándo debe soltar la conversación.
             </p>
@@ -3715,6 +4393,10 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         await refreshAgentData().catch(() => undefined)
         throw error
       }
+      // El servidor es la fuente de verdad. Si un autosave fue rechazado,
+      // recuperamos la versión persistida para que la pantalla no siga
+      // mostrando como aplicado algo que nunca se guardó.
+      await refreshAgentData().catch(() => undefined)
       if (options.notify !== false) {
         showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
       }
@@ -3751,10 +4433,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     : `Tu plan actual permite máximo ${conversationalAgentMaxAgents} chatbot${conversationalAgentMaxAgents === 1 ? '' : 's'}. Elimina uno existente o actualiza tu plan para crear otro.`
 
   const canStartAgentCreation = () => {
-    if (!businessPromptReady) {
-      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
-      return false
-    }
     if (conversationalAgentLimitReached) {
       showToast('warning', 'Límite del plan alcanzado', conversationalAgentLimitMessage)
       return false
@@ -3763,27 +4441,84 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   }
 
   const handleAgentChange = (agentId: string, patch: ConversationalAgentDefInput) => {
-    if (patch.enabled === true && !businessPromptReady) {
+    const currentAgent = agentsRef.current.find((agent) => agent.id === agentId)
+    const effectiveRuntimeMode = patch.runtimeMode || currentAgent?.runtimeMode || 'legacy_v1'
+    if (patch.enabled === true && effectiveRuntimeMode !== 'tool_calling_v2' && !businessPromptReady) {
       showToast('warning', 'Prompt interno pendiente', promptBlockerText)
       return
     }
+
+    // Publicar, pausar o cambiar de motor nunca se refleja de forma optimista:
+    // primero debe confirmarlo backend. Así el badge y el runtime no mienten si
+    // falla una validación factual de calendario, producto, precio o enlace.
+    if (currentAgent && (patch.enabled !== undefined || patch.runtimeMode !== undefined)) {
+      const timers = saveTimersRef.current
+      const existingTimer = timers.get(agentId)
+      if (existingTimer) {
+        window.clearTimeout(existingTimer)
+        timers.delete(agentId)
+      }
+      const candidate = { ...currentAgent, ...patch } as ConversationalAgentDef
+      const validationError = getAgentValidationError(candidate)
+      if (validationError) {
+        showToast('warning', 'Revisa el agente', validationError)
+        return
+      }
+
+      void (async () => {
+        try {
+          const persisted = await conversationalAgentService.updateAgent(agentId, agentToInput(candidate))
+          if (persisted.enabled && config && !config.enabled) {
+            const runtimeEnabled = await handleRuntimeChange({ enabled: true }, {
+              agentId,
+              runtimeMode: persisted.runtimeMode
+            })
+            if (!runtimeEnabled) {
+              await conversationalAgentService.updateAgent(agentId, agentToInput({ ...persisted, enabled: false }))
+                .catch(() => undefined)
+              await refreshAgentData().catch(() => undefined)
+              return
+            }
+          }
+          setAgents((current) => current.map((agent) => (agent.id === agentId ? persisted : agent)))
+        } catch (error: any) {
+          if (isConversationalAgentEntryConflictError(error)) {
+            setActivationConflict({
+              message: error.message,
+              conflicts: error.conflicts || []
+            })
+          } else {
+            showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
+          }
+          await refreshAgentData().catch(() => undefined)
+        }
+      })()
+      return
+    }
+
     setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent)))
     scheduleAgentSave(agentId)
-    if (patch.enabled === true && config && !config.enabled) {
-      void handleRuntimeChange({ enabled: true })
-    }
   }
 
-  const handleRuntimeChange = async (patch: { enabled?: boolean }) => {
-    if (patch.enabled === true && !businessPromptReady) {
+  const handleRuntimeChange = async (
+    patch: { enabled?: boolean },
+    publishingAgent?: { agentId: string; runtimeMode: ConversationalAgentDef['runtimeMode'] }
+  ): Promise<boolean> => {
+    const publishingV2 = publishingAgent?.runtimeMode === 'tool_calling_v2'
+    if (patch.enabled === true && !publishingV2 && !businessPromptReady) {
       showToast('warning', 'Prompt interno pendiente', promptBlockerText)
-      return
+      return false
     }
     try {
-      const next = await conversationalAgentService.saveConfig(patch)
+      const runtimeRequest = publishingAgent
+        ? { ...patch, agentId: publishingAgent.agentId }
+        : patch
+      const next = await conversationalAgentService.saveConfig(runtimeRequest)
       setConfig(next)
+      return true
     } catch (error: any) {
       showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración')
+      return false
     }
   }
 
@@ -3871,8 +4606,12 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     }
     try {
       const agent = await conversationalAgentService.createAgent(draftInput)
-      if (config && !config.enabled) {
-        const nextConfig = await conversationalAgentService.saveConfig({ enabled: true })
+      if (config && !config.enabled && agent.enabled) {
+        const runtimeEnableRequest = {
+          enabled: true,
+          agentId: agent.id
+        }
+        const nextConfig = await conversationalAgentService.saveConfig(runtimeEnableRequest)
         setConfig(nextConfig)
       }
       setAgents((current) => [...current, agent])
@@ -3905,7 +4644,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   // Atajo: crea un agente (casi en blanco) y salta directo al editor (sin wizard).
   const handleCreateAgent = async (overrides: ConversationalAgentDefInput = {}) => {
     if (!canStartAgentCreation()) return
-    await runCreateAgent(overrides)
+    await runCreateAgent({ ...overrides, enabled: false })
   }
 
   // Modo avanzado: antes del formulario largo preguntamos SOLO el alcance de contactos.
@@ -4202,8 +4941,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             <Button
               onClick={openCreateWizard}
               loading={creating}
-              disabled={loading || creating || !businessPromptReady || conversationalAgentLimitReached}
-              title={conversationalAgentLimitReached ? conversationalAgentLimitMessage : (!businessPromptReady ? promptBlockerText : undefined)}
+              disabled={loading || creating || conversationalAgentLimitReached}
+              title={conversationalAgentLimitReached ? conversationalAgentLimitMessage : undefined}
             >
               <Plus size={16} />
               Nuevo agente
@@ -4304,6 +5043,11 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             const agentMetrics = metricsByAgentId.get(agent.id)
             const skippedCount = agentMetrics?.skippedConversations ?? 0
             const resettingSkips = resettingAgentSkipsId === agent.id
+            const publishValidationError = getAgentValidationError({ ...agent, enabled: true })
+            const legacyBusinessPromptBlocked = agent.runtimeMode !== 'tool_calling_v2' && !businessPromptReady
+            const directoryPurpose = agent.runtimeMode === 'tool_calling_v2'
+              ? `${(agent.capabilitiesConfig?.items || []).filter((item) => item.enabled).length} capacidades · flujo directo`
+              : `${objectiveLabel} · ${actionLabel}`
 
             return (
               <div
@@ -4328,7 +5072,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                   </div>
                   <div className={styles.agentDirectoryCardCopy}>
                     <h3>{agent.name || 'Agente sin nombre'}</h3>
-                    <p>{objectiveLabel} · {actionLabel}</p>
+                    <p>{directoryPurpose}</p>
                   </div>
                   <div className={styles.agentDirectoryMeta}>
                     <span>{provider.label} · {modelLabel}</span>
@@ -4342,8 +5086,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                   <Button
                     variant={agent.enabled ? 'secondary' : 'primary'}
                     onClick={() => handleAgentChange(agent.id, { enabled: !agent.enabled })}
-                    disabled={!agent.enabled && !businessPromptReady}
-                    title={!agent.enabled && !businessPromptReady ? promptBlockerText : undefined}
+                    disabled={!agent.enabled && (legacyBusinessPromptBlocked || Boolean(publishValidationError))}
+                    title={!agent.enabled ? (publishValidationError || (legacyBusinessPromptBlocked ? promptBlockerText : undefined)) : undefined}
                   >
                     {agent.enabled ? <Pause size={15} /> : <Play size={15} />}
                     {agent.enabled ? 'Pausar' : 'Publicar'}

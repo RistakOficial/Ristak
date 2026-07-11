@@ -18,6 +18,7 @@ import {
   type ConversationalAgentTestMessage,
   type ConversationalAgentTestResult
 } from '@/services/conversationalAgentService'
+import { describeConversationalPreviewAction } from './conversationalPreviewAction'
 
 const MAX_ATTACHMENTS = 6
 const MAX_BYTES = 18 * 1024 * 1024
@@ -220,11 +221,10 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
         if (message) setMessages((current) => [...current, { role: 'assistant', content: `⚠︎ Configuración: ${message}`, internal: true }])
       }
       for (const action of result.actions || []) {
-        const effectText = typeof action.effect?.liveEffect === 'string' ? action.effect.liveEffect : ''
-        const line = effectText
-          ? `⚙︎ Acción interna: ${action.type} — en vivo esto ${effectText}`
-          : `⚙︎ Acción interna: ${action.type}`
-        setMessages((current) => [...current, { role: 'assistant', content: line, internal: true }])
+        setMessages((current) => [
+          ...current,
+          { role: 'assistant', content: describeConversationalPreviewAction(action), internal: true }
+        ])
       }
       const replies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])
       if (replies.length) {

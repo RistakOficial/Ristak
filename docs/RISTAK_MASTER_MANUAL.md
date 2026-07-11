@@ -2675,26 +2675,60 @@ La API conserva endpoints separados:
 
 ### Configuracion y experiencia del usuario
 
-El wizard de un agente nuevo pide primero decisiones de producto: mision,
-identidad, forma de cumplir la meta, datos indispensables, reglas de pase a una
-persona, condiciones de entrada/salida, alcance y prueba. Si ya existe un
-proveedor de IA conectado, no vuelve a preguntarle al usuario por proveedor,
-modelo, retrasos, division de mensajes ni otros detalles tecnicos. Esos ajustes
-siguen disponibles en el editor avanzado, pero no son requisito para publicar un
-agente util. `extraInstructions` contiene reglas y limites del negocio, no un
-prompt tecnico que el usuario tenga que programar.
+Los agentes nuevos nacen en `tool_calling_v2`. El wizard deja una plantilla de
+instrucciones util por defecto y el editor separa dos zonas:
 
-El formulario se compila en una politica tipada con jerarquia fija: seguridad y
-licencia, resultados reales de herramientas, objetivo verificable, reglas del
-negocio y, al final, tono e hipotesis. La compilacion detecta configuraciones
-incompletas, contradicciones, intentos de fingir humanidad o de inventar datos.
-Una politica invalida no puede publicarse. Cada alta, cambio o rollback guarda
-una version en `conversational_agent_policy_versions`; las rutas autenticadas de
-gobernanza permiten listar versiones y revertir una configuracion anterior.
+- Zona editable: tono, guion, conocimiento y reglas del negocio. El dueño puede
+  conservar la plantilla, modificarla o dejarla vacia.
+- Zona blindada: manifiesto derivado por el servidor para las capacidades
+  `schedule_appointment`, `collect_payment`, `send_link`, `handoff_human` y
+  `custom_goal`. Se muestra en la interfaz, pero nunca se acepta desde el cliente
+  como fuente de permisos ni se mezcla con el texto editable.
+
+Cada capacidad se configura por separado y un agente puede tener varias. Agenda
+queda amarrada a un calendario; cobro a un producto/precio real o a un anticipo
+configurado; enlace a una URL segura; traspaso a sus reglas y usuario; objetivo
+propio a una descripcion concreta. Al editar una capacidad activa el agente se
+pausa para probarlo antes de volver a publicar. Un borrador apagado puede quedar
+incompleto; al publicar, el backend valida el manifiesto otra vez y consulta la
+realidad operativa antes de persistir el cambio: calendario y usuario activos,
+producto/precio relacionados y cobrables, moneda de la cuenta, monto de
+anticipo y destino HTTP(S) de enlaces directos o triggers.
+
+La plantilla y las tools reales hacen util a v2 aunque todavia no exista el
+perfil interno legacy del negocio. Crear, probar, publicar, activar una
+conversacion o revertir un agente `tool_calling_v2` no queda bloqueado por ese
+perfil: si falta contexto, el prompt obliga a reconocerlo y consultar productos,
+calendarios o datos reales. `legacy_v1` conserva su compuerta anterior.
+
+Las filas existentes conservan `legacy_v1`. No hay backfill que cambie el motor
+de una conversacion ya publicada: el usuario prepara la migracion desde el
+editor, el agente se pausa, se prueba con tools en `dryRun` y despues se publica.
+Cada alta, cambio o rollback sigue guardando una version en
+`conversational_agent_policy_versions`; las rutas autenticadas permiten listar
+versiones y volver a una configuracion anterior. El prompt y las capacidades v2
+quedan guardados aun durante un rollback temporal a legacy, incluido un prompt
+vacio intencional. La API entrega `migrationCapabilitiesConfig` como una vista de
+solo lectura derivada en servidor: reutiliza las capacidades v2 dormidas cuando
+existen y, para filas antiguas, traduce su workflow legacy sin confiar en un
+manifiesto enviado por el navegador.
+
+En `legacy_v1`, el formulario tambien se compila en la politica tipada anterior
+con jerarquia fija. Esa validacion no bloquea `tool_calling_v2`: el motor nuevo
+se valida exclusivamente contra sus capacidades blindadas y sus precondiciones
+operativas.
 
 Requisitos duros al publicar (`enabled=true`, validados en
 `assertAgentGoalRequirements` de `conversationalAgentService.js` y espejados en
 wizard/editor web):
+
+- `tool_calling_v2`: toda capacidad activa debe estar completa. Agenda exige
+  calendario; pago completo exige producto y precio; anticipo exige monto/rango
+  y metodo verificable; transferencia exige datos bancarios; enlace exige URL;
+  objetivo propio exige descripcion. Ademas, publicar cruza esos IDs contra las
+  tablas reales y rechaza recursos inexistentes, inactivos, mal relacionados,
+  precios no positivos o monedas distintas a `account_currency`.
+Para `legacy_v1` se conservan los requisitos siguientes durante la migracion:
 
 - Objetivo de citas: es obligatorio elegir un calendario
   (`goalWorkflow.appointments.calendarId` o `defaultCalendarId`), sin importar si
@@ -2733,10 +2767,46 @@ bloqueos de un agente nuevo, pero una pausa, omision o asignacion manual real
 conserva su procedencia. Las superficies de control manejan agentes
 individuales, nunca un pseudoagente global "Todos".
 
-### Runtime modular de inteligencia
+### Runtime conversacional por modos
 
-El runtime no depende de una sola "biblia" de cierre. Cada turno recorre modulos
-separados en `backend/src/agents/conversational/intelligence/`:
+`tool_calling_v2` es la ruta principal para agentes nuevos. Cada inbound,
+preview y seguimiento entra a un solo `Agent`/`Runner`. El modelo conversa y
+decide llamadas estructuradas a las tools
+que corresponden exactamente a las capacidades activadas. No ejecuta
+`assessment`, `strategyPlanner`, `turnPolicy`, `closingPhaseGate`,
+`complianceGuard`, guardias regex de respuesta, otra IA para dividir mensajes,
+`stay_silent`, `discard_conversation` ni `update_closing_context`. La separacion
+en globos, si esta activa, es determinista. `parallelToolCalls=false` impide
+mutaciones paralelas en una misma vuelta del modelo y las acciones conservan
+idempotencia en servidor. Agendar, completar un objetivo o transferir reutiliza
+el resumen estructurado de la tool (`allowInternalSummary=false`): no levanta
+otra instancia de IA para releer el chat.
+
+La base de Ristak sigue siendo la fuente canonica del hilo para todos los
+proveedores. V2 carga el historial por paginas y construye un unico sobre
+continuo medido por bytes, no por un numero arbitrario de mensajes: incluye todo
+el hilo cuando cabe, nunca corta un mensaje y conserva siempre el ultimo turno
+integro. Si el limite fisico del modelo deja mensajes anteriores fuera, expone a
+esa misma instancia la tool de solo lectura `get_conversation_history`, ligada en
+servidor al mismo contacto y canal. La tool pagina texto, rol, fecha y una
+descripcion segura de adjuntos sin IDs, URLs, nombres de archivo ni payloads
+internos. Para hilos largos permite leer la pagina anterior, saltar a una
+posicion contada desde el inicio, abrir los mensajes mas antiguos o buscar una
+frase literal unicamente dentro del tramo omitido. Los cursores avanzan por las
+filas realmente devueltas, incluso cuando el presupuesto por bytes recorta una
+pagina, por lo que no repiten ni brincan mensajes. Preview,
+seguimientos y runtime vivo comparten el constructor; la telemetria registra
+mensajes totales, incluidos, omitidos, bytes y paginas cargadas. No existe una IA
+de resumen o compactacion escondida.
+
+El prompt v2 se arma en servidor con el texto editable, contexto real recuperado
+y la zona blindada al final. El texto del dueño puede cambiar personalidad y
+conocimiento, pero no agregar tools, cambiar calendario/producto/monto/moneda ni
+convertir un resultado pendiente o fallido en exito.
+
+`legacy_v1` permanece disponible para las filas existentes durante la migracion.
+Ese runtime no depende de una sola "biblia" de cierre y cada turno recorre los
+modulos separados en `backend/src/agents/conversational/intelligence/`:
 
 1. `configCompiler`: valida y compila objetivo, reglas, permisos y evidencia de
    exito.
@@ -2783,29 +2853,28 @@ Una conversacion `completed` solo se reabre con un inbound nuevo cuando el mismo
 agente sigue publicado y todavia cumple entrada, salida y alcance. Los handoffs,
 pausas, omisiones y asignaciones manuales no se borran con heuristicas de edad.
 
-Los seguimientos usan el mismo assessment y planner del chat en vivo. Antes de
-enviar revisan el ultimo punto abierto, opt-out, estado, ventana del canal,
-mensajes nuevos y numero de intento. Si la inteligencia decide `wait` o detecta
-que debe detenerse, registra `follow_up_suppressed`; no manda un "solo paso por
-aqui" generico ni ejecuta herramientas de cierre desde el modo seguimiento.
+En v2, los seguimientos usan el mismo agente principal y el mismo transcript; no
+inventan un mensaje nuevo del contacto ni llaman un analizador aparte. Las tools
+de mutacion quedan fuera en modo seguimiento. Estado, opt-out, ventana del canal,
+mensajes nuevos y numero de intento se comprueban como hechos externos antes de
+enviar. Legacy conserva su assessment/planner y puede registrar
+`follow_up_suppressed` cuando decide esperar.
 
 ### Generacion, preview y entrega
 
 OpenAI, Claude, Gemini y DeepSeek pueden ejecutar el agente si su conexion esta
-configurada; las rutas conversacionales no exigen OpenAI globalmente. El
-generador recibe la politica, conocimiento relevante, assessment y estrategia,
-pero no puede convertir una intencion del modelo en un efecto real.
+configurada; las rutas conversacionales no exigen OpenAI globalmente. En v2, la
+prueba del wizard/editor llama la misma ruta nativa, con las mismas tools en
+`dryRun`, el mismo prompt blindado y el mismo limite de historial. Devuelve el
+manifiesto de capacidades y las acciones simuladas, pero no expone assessment o
+estrategia porque esas capas no existen en ese carril. `responseDelayMs` es cero
+en preview; el chat publicado conserva su espera. Si entran mensajes durante esa
+espera o entre globos, el runtime recarga contexto, detiene partes obsoletas y
+vuelve a ejecutar el turno mas reciente.
 
-La prueba del wizard/editor usa el mismo compilador, assessment, planner,
-generador, tools en `dryRun`, politica previa al modelo y guardianes del runtime. Devuelve tambien el estado
-interno (etapa, temperatura y siguiente movimiento) para mostrarlo solo al
-usuario que configura el agente. `responseDelayMs` es cero en preview; el chat
-publicado conserva su espera. Si entran mensajes durante esa espera o entre
-globos, el runtime recarga contexto, detiene partes obsoletas y vuelve a ejecutar
-el turno mas reciente.
-
-Antes de ejecutar el modelo, `turnPolicy` resuelve los contratos que no admiten
-interpretacion probabilistica. Una peticion explicita de hablar con una persona
+En legacy, el generador conserva politica, conocimiento, assessment, estrategia
+y guardianes. Antes de ejecutar el modelo, `turnPolicy` resuelve los contratos
+que no admiten interpretacion probabilistica. Una peticion explicita de hablar con una persona
 fuerza `send_to_human`; si `pastClientsToHuman` esta activo, tambien lo hacen la
 evidencia CRM o una declaracion inequivoca en primera persona de que ya es
 cliente. El modelo no alcanza a ejecutar agenda, pago ni cierre en esos turnos.
@@ -2815,31 +2884,112 @@ siguen sin poder forzar un estado terminal.
 
 ### Herramientas y verdad operativa
 
-El agente solo recibe la tool de cierre correspondiente a su `successAction`.
-Cada tool valida sus propias precondiciones y sella en `ctx.actions[].outcome` si
-el resultado fue `ok`, `error` o `simulated`. El estado final usa ese outcome y
-la base de datos, nunca un booleano escrito por el modelo.
+En v2, la lista de tools se construye desde las capacidades activadas; una
+capacidad apagada no se puede recuperar escribiendo su nombre en el prompt. Las
+tools de lectura consultan negocio, contacto y catalogo real. Legacy conserva la
+tool de cierre correspondiente a su `successAction`. En ambos modos, cada tool
+valida sus precondiciones y sella en `ctx.actions[].outcome` si el resultado fue
+`ok`, `error` o `simulated`. El estado final usa ese outcome y la base de datos,
+nunca un booleano escrito por el modelo.
 
-- Citas: requieren un horario real ofrecido y confirmado explicitamente; el slot
-  se revalida y un fallo de calendario cierra en seguro.
+- Citas: v2 fija el calendario en servidor, consulta slots reales y vuelve a
+  comprobar que el horario exista y siga libre. La llamada nativa reemplaza el
+  detector textual de confirmacion. `get_free_slots` entrega el instante UTC que
+  debe copiarse sin cambios a `book_appointment` y, por separado, fecha, hora y
+  etiqueta visibles ya calculadas con la zona horaria del negocio; el modelo no
+  convierte UTC ni adivina el horario que debe decirle a la persona. La
+  idempotencia de cada intento se deriva de
+  mensaje, canal, contacto, calendario y slot; un retry reproduce la cita
+  canonica. La exclusion fisica del slot vive en el candado
+  transaccional del calendario, que serializa altas v2 contra citas manuales o
+  legacy. El ledger de creacion usa token y lease: una caida recupera la cita
+  real o libera el intento sin dejar el horario bloqueado para siempre. Si la
+  cita fue reprogramada, la tool relee fecha, hora y calendario canonicos y nunca
+  confirma el snapshot viejo. Ademas, antes de crear una cita v2 se busca cualquier
+  cita futura activa unida al mismo agente, contacto y calendario por su request
+  durable. Si un crash creo la cita pero no alcanzo a sellar el cierre, incluso un
+  inbound posterior que proponga otro slot repara la cita ya existente en lugar de
+  duplicarla. Una cita ajena o de otro calendario nunca se adopta como exito del
+  agente. El ID local/GHL se canonicaliza al calendario local activo. Un fallo de
+  calendario o disponibilidad cierra en seguro. Legacy conserva su evidencia
+  textual mientras siga migrando.
 - Pago: producto, precio, monto, concepto y moneda deben coincidir con workflow o
-  catalogo real. Crear/enviar link deja la compra `pending`; solo un pago real la
-  completa. Un supuesto comprobante del modelo no sirve como evidencia.
+  catalogo real. Antes de hablar con el proveedor, v2 reserva una llave durable
+  por agente, contacto, producto/precio, monto, moneda, canal y mensaje entrante;
+  concurrencia o replay del mismo mensaje reproducen el resultado, mientras un
+  mensaje posterior permite una compra nueva legitima. Si la reserva no se puede
+  guardar, falla cerrado. La reserva guarda tambien el request canonico y el
+  evento determinista que vincula el cobro con agente, contacto, proposito y
+  ejecucion. Crear/enviar link deja la compra `pending`; solo un pago real la
+  completa. Si el proveedor alcanzo a crear el link pero el proceso cayo antes de
+  sellar ese vinculo, el recovery de arranque o webhook reconstruye primero la
+  fila `processing` desde el invoice/ledger exactos y despues sella el source event.
+  `request_json` debe conservar su hash original; una mutacion de proposito, monto
+  o identidad bloquea el cobro. Los filtros persistidos de contacto e invoice
+  permiten reparar el webhook objetivo sin quedar detras de otros pendientes.
+  La reconciliacion exige status exitoso
+  explicito y cruza el invoice contra su fila exacta, monto en unidades menores,
+  moneda, proposito inmutable y ambiente.
+  Los tres ambientes deben ser `live`: pagos `test`/sandbox, datos ausentes o
+  cualquier diferencia quedan rechazados sin marcar compra. Un claim durable y
+  checkpoints por señal, aviso y evento hacen idempotentes los webhooks repetidos
+  y el recovery tras reinicio. V2 no reutiliza invoices recientes solo porque
+  contacto, monto y concepto se parezcan; su dedupe fuerte queda ligado a agente,
+  capacidad, producto/precio y mensaje. Un supuesto comprobante del modelo no
+  sirve como evidencia.
 - Anticipos: se cobran por los metodos configurados. Con `paymentLink`, el agente
   puede mandar `create_payment_link` aunque su cierre sea una cita. Con
   `bankTransfer`, comparte los datos configurados y, al recibir la foto o PDF del
   comprobante, ejecuta `register_deposit_payment_proof`: la tool lee el
   comprobante con vision (monto, moneda, fecha, banco, referencia), lo compara
-  contra el anticipo configurado (fijo exacto o rango, moneda de la cuenta) y, si
-  cuadra, inserta el pago real (`payments`, `bank_transfer`/`manual`, metadata
-  con lo extraido) via `registerAgentTransferDepositPayment`. El candado
-  `findVerifiedPaymentEvidence` se satisface con ese registro; el equipo recibe
-  push para auditar el comprobante (`deposit_transfer_registered`). Un
+  contra el anticipo configurado (fijo exacto o rango, moneda de la cuenta). En
+  v2, si cuadra, lo registra como `pending_review`/`manual_review`, sin `paid_at`,
+  sin estadisticas de venta y sin satisfacer `findVerifiedPaymentEvidence`; el
+  equipo debe confirmar los fondos por la via real antes de que agenda o cobro
+  avancen. En `Transacciones` el registro se muestra como `Comprobante por
+  revisar`, con el archivo y los importes bloqueados. Las unicas decisiones son
+  `POST /api/transactions/:id/approve-transfer-proof` y
+  `POST /api/transactions/:id/reject-transfer-proof`: aprobar exige que un
+  usuario autenticado haya verificado fondos, hace CAS a `paid/live`, sella
+  revisor/fecha y reanuda el mismo Agent/Runner; rechazar guarda el motivo y nunca
+  reanuda. La edicion generica, `record-payment` y el borrado no pueden brincar ni
+  eliminar esta revision ya auditada.
+  Si el anticipo aprobado pertenecia a una cita, el runner recibe el pago como
+  contexto factual interno, recupera el hilo completo y vuelve a comprobar el
+  slot antes de agendar; antes de crearla reserva esa evidencia para un request de
+  cita concreto con `claimToken` y lease. El controller vuelve a bloquear y validar
+  ese fencing token, el pago y la reconciliacion dentro de la misma transaccion que
+  inserta la cita; un proceso viejo no puede despertar y crear otra cita despues de
+  perder la lease. Una lease vencida solo se recupera si el request anterior nunca
+  alcanzo a crear cita o su cita canonica ya esta inactiva. Al confirmar la cita se
+  consume el contrato de anticipo congelado en el intento, aunque luego cambie la
+  configuracion. Otro request no puede gastar de nuevo el mismo anticipo. No fabrica
+  un mensaje del cliente ni espera otro inbound.
+  Legacy conserva temporalmente el registro manual anterior. El equipo recibe
+  push para auditar el comprobante. Un
   comprobante ilegible, con monto distinto u otra moneda se rechaza y el agente
-  pide una foto clara o transfiere. La tool es idempotente por evidencia previa y
-  por monto/ventana de 48h.
-- Handoff: `send_to_human` registra transferencia, pero no infla la meta como
-  conversion. El resumen estructurado evita que la persona repita su historia.
+  pide una foto clara o transfiere. En v2, pago y evento se guardan en una sola
+  transaccion y quedan ligados al contacto, canal y mensaje/media exactos, no al
+  agente que alcanzo a procesarlo. Repetir el mismo comprobante incluso desde otro
+  agente devuelve el mismo ledger, mientras cambiar importe, proposito o archivo
+  falla cerrado.
+- Handoff: `send_to_human` valida y asigna de forma idempotente al usuario activo
+  configurado. Asignacion del contacto, estado terminal del chat y evento de
+  auditoria confirman dentro de una sola transaccion o se revierten juntos; un
+  retry no deja un contacto asignado mientras la tool reporta fracaso. Registra
+  transferencia y no infla la meta como conversion. Un objetivo propio que
+  termina en handoff usa la misma operacion atomica. La opcion de
+  enviar clientes anteriores al equipo se basa en pagos exitosos reales o citas
+  previas no canceladas recuperadas por `get_contact_profile`, nunca en una frase
+  del contacto. El resumen estructurado evita que la persona repita su historia.
+- Entrega visible: si una tool de pago o enlace tuvo exito y el texto generado
+  omitio su URL, el servidor la agrega completa y una sola vez despues de
+  sanitizar el mensaje. Los nombres de tools, IDs, payloads y codigos internos no
+  se entregan al contacto; v2 tampoco dispone de una tool capaz de quedarse mudo.
+- Confirmaciones posteriores: webhooks reales de pago o integraciones externas
+  pueden cerrar una meta pendiente, pero respetan el runtime capturado al crear
+  el enlace. En v2 reutilizan el resumen factual, no levantan otra IA y no
+  reviven asignaciones, tags ni campos legacy ocultos en el constructor nuevo.
 - Meta por URL: el enlace visible contiene solo un ID de seguimiento y se puede
   entregar aunque apunte a una pagina externa generica. La meta queda `pending`:
   abrir el enlace no prueba una cita ni un pago. El sistema externo debe estar
@@ -2870,7 +3020,7 @@ la base de datos, nunca un booleano escrito por el modelo.
   se aceptan unicamente por header y nunca se generan ni se agregan a enlaces
   nuevos.
 
-Manejo de precio. El guion de fabrica ("Agente conversacional de cierre, version
+En `legacy_v1`, el guion de fabrica ("Agente conversacional de cierre, version
 con criterio", `backend/src/agents/conversational/strategies/agenteCierreCriterio.md`)
 abre las preguntas de precio construyendo valor primero (pull). Esa apertura no
 depende solo del prompt: el compilador marca `communication.openingStrategy`, el
@@ -2896,7 +3046,7 @@ perfil/formulario (`renderClosingStrategyTemplate`). La base directa
 registro Ejecutivo se calibra dentro del guion con la directiva de registro, ya
 no cambiando de base.
 
-Intencion de agenda (misma filosofia anti-toreo, solo objetivo citas):
+Intencion de agenda en `legacy_v1` (misma filosofia anti-toreo, solo objetivo citas):
 `countSchedulingInsistence` cuenta mensajes entrantes que piden cita/horarios.
 A la 1a peticion el prompt baja el descubrimiento a segundo plano y prioriza
 ofrecer horarios reales (maximo una pregunta operativa indispensable); a la 2a+
@@ -2907,7 +3057,7 @@ unico freno permitido es un requisito operativo configurado (p. ej. anticipo),
 que se resuelve en el mismo movimiento. Los candados de evidencia
 (confirmacion de slot real, closingPhaseGate) siguen intactos.
 
-Clientes existentes (opcional por agente): el toggle
+Clientes existentes en `legacy_v1` (opcional por agente): el toggle
 `goalWorkflow.attention.pastClientsToHuman` hace que los clientes previos pasen
 directo con el equipo. Dos senales: (1) evidencia CRM determinista
 (`detectPastClientEvidence` en runner.js: pagos exitosos live o citas pasadas no
@@ -2933,8 +3083,9 @@ contexto asesor y nunca sustituye politica, permisos, precios, seguridad ni
 resultados de tools. Se puede marcar `reverted` sin borrar el historial.
 
 Las metricas separan metas completadas, handoffs, citas, links de pago,
-seguimientos enviados/suprimidos, errores de herramientas, tasa de respuesta y
-assessments. Un estado `human` con señal `ready_for_human` cuenta como traspaso,
+seguimientos enviados/suprimidos, errores de herramientas, tasa de respuesta,
+modo de runtime y numero real de vueltas del modelo. Los assessments aplican a
+legacy; v2 registra `native_single_agent` y las capas desactivadas. Un estado `human` con señal `ready_for_human` cuenta como traspaso,
 no como exito. Las evaluaciones deterministas cubren mensajes frios, interes sin
 compromiso, preguntas directas, objeciones, desconfianza, ambiguedad,
 contradicciones, descalificacion, riesgo de cancelacion, opt-out, fallos de tools,

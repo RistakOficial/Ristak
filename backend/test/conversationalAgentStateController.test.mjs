@@ -1187,6 +1187,7 @@ test('bloquea activar una conversación con agente cuando el prompt interno no e
       defaultCalendarId: 'cal_state_test',
       name: 'Agente test bloqueado',
       enabled: true,
+      runtimeMode: 'legacy_v1',
       objective: 'citas'
     })
     agentId = agent.id
@@ -1200,6 +1201,42 @@ test('bloquea activar una conversación con agente cuando el prompt interno no e
     assert.equal(res.statusCode, 409)
     assert.equal(res.body?.success, false)
     assert.equal(res.body?.code, 'CONVERSATIONAL_BUSINESS_PROMPT_NOT_READY')
+  } finally {
+    await cleanup(contactId, agentId)
+    await restoreBusinessProfileRow(previousBusinessProfile)
+  }
+})
+
+test('activar manualmente una conversación v2 no depende del prompt legacy', async () => {
+  const contactId = `conversation_agent_state_v2_${randomUUID()}`
+  const previousBusinessProfile = await getStoredBusinessProfileRow()
+  let agentId = ''
+
+  try {
+    await db.run('DELETE FROM ai_business_profile WHERE id = 1')
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto activación v2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    const agent = await createConversationalAgent({
+      name: 'Agente v2 activación manual',
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: { schemaVersion: 1, items: [] }
+    })
+    agentId = agent.id
+    await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agentId])
+
+    const res = createMockResponse()
+    await updateState({
+      params: { contactId },
+      body: { action: 'activate', agentId }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.body?.success, true)
+    assert.equal(res.body?.data?.agentId, agentId)
   } finally {
     await cleanup(contactId, agentId)
     await restoreBusinessProfileRow(previousBusinessProfile)

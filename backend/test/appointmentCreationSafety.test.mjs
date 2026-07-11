@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import { createAppointment as createAppointmentController } from '../src/controllers/calendarsController.js'
 import { runIdempotentAppointmentCreation } from '../src/services/appointmentCreationSafetyService.js'
+import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
 
 function uniqueKey(label) {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}_123456`
@@ -110,6 +111,416 @@ test('dos requests simultáneos con la misma llave no crean dos citas', async ()
   }
 })
 
+test('dos contactos que compiten por la misma llave v2 de slot dejan una sola creación', async () => {
+  const key = `conv-v2-slot:${uniqueKey('shared_resource')}`
+  let executions = 0
+  const create = async () => {
+    executions += 1
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    return { id: `appointment_slot_winner_${executions}`, status: 'confirmed' }
+  }
+  const basePayload = {
+    calendarId: 'calendar_shared_v2',
+    startTime: '2026-07-14T17:00:00.000Z',
+    endTime: '2026-07-14T18:00:00.000Z',
+    source: 'conversational_agent_v2'
+  }
+
+  try {
+    const results = await Promise.allSettled([
+      runIdempotentAppointmentCreation({
+        clientRequestId: key,
+        payload: { ...basePayload, contactId: 'contact_v2_a' },
+        create
+      }),
+      runIdempotentAppointmentCreation({
+        clientRequestId: key,
+        payload: { ...basePayload, contactId: 'contact_v2_b' },
+        create
+      })
+    ])
+
+    assert.equal(executions, 1)
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+    const rejected = results.find((result) => result.status === 'rejected')
+    assert.equal(rejected?.reason?.status, 409)
+  } finally {
+    await cleanup(key)
+  }
+})
+
+test('un fallo transitorio v2 libera el slot para un solo reintento concurrente', async () => {
+  const key = `conv-v2-slot:${uniqueKey('retryable_resource')}`
+  const payload = {
+    calendarId: 'calendar_retry_v2',
+    contactId: 'contact_retry_v2',
+    startTime: '2026-07-15T17:00:00.000Z',
+    endTime: '2026-07-15T18:00:00.000Z',
+    source: 'conversational_agent_v2'
+  }
+  let executions = 0
+  let failFirst = true
+  const create = async () => {
+    executions += 1
+    if (failFirst) {
+      failFirst = false
+      throw Object.assign(new Error('storage transitorio'), { status: 503 })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 35))
+    return { id: 'appointment_retry_v2_ok', status: 'confirmed' }
+  }
+
+  try {
+    await assert.rejects(
+      () => runIdempotentAppointmentCreation({ clientRequestId: key, payload, create }),
+      (error) => error?.status === 503
+    )
+    const retries = await Promise.allSettled([
+      runIdempotentAppointmentCreation({ clientRequestId: key, payload, create }),
+      runIdempotentAppointmentCreation({ clientRequestId: key, payload, create })
+    ])
+
+    assert.equal(executions, 2)
+    assert.equal(retries.filter((result) => result.status === 'fulfilled').length, 1)
+    assert.equal(retries.filter((result) => result.status === 'rejected').length, 1)
+    const stored = await db.get(
+      'SELECT status, appointment_id FROM appointment_creation_requests WHERE client_request_id = ?',
+      [key]
+    )
+    assert.equal(stored.status, 'completed')
+    assert.equal(stored.appointment_id, 'appointment_retry_v2_ok')
+  } finally {
+    await cleanup(key)
+  }
+})
+
+test('una cita v2 cancelada libera su llave de slot para una creación nueva', async () => {
+  const key = `conv-v2-slot:${uniqueKey('cancelled_resource')}`
+  const firstAppointmentId = `appointment_cancelled_v2_${Date.now()}`
+  const secondAppointmentId = `appointment_rebooked_v2_${Date.now()}`
+  const basePayload = {
+    calendarId: 'calendar_cancelled_v2',
+    startTime: '2026-07-16T17:00:00.000Z',
+    endTime: '2026-07-16T18:00:00.000Z',
+    source: 'conversational_agent_v2'
+  }
+  let executions = 0
+
+  try {
+    await runIdempotentAppointmentCreation({
+      clientRequestId: key,
+      payload: { ...basePayload, contactId: 'contact_cancelled_v2_a' },
+      create: async () => {
+        executions += 1
+        await db.run(
+          `INSERT INTO appointments (
+            id, calendar_id, title, status, appointment_status, start_time, end_time
+          ) VALUES (?, ?, ?, 'confirmed', 'confirmed', ?, ?)`,
+          [firstAppointmentId, basePayload.calendarId, 'Primera cita v2', basePayload.startTime, basePayload.endTime]
+        )
+        return { id: firstAppointmentId, status: 'confirmed' }
+      }
+    })
+    await db.run(
+      `UPDATE appointments
+       SET status = 'cancelled', appointment_status = 'cancelled'
+       WHERE id = ?`,
+      [firstAppointmentId]
+    )
+
+    const rebooked = await runIdempotentAppointmentCreation({
+      clientRequestId: key,
+      payload: { ...basePayload, contactId: 'contact_cancelled_v2_b' },
+      create: async () => {
+        executions += 1
+        return { id: secondAppointmentId, status: 'confirmed' }
+      }
+    })
+
+    assert.equal(rebooked.id, secondAppointmentId)
+    assert.equal(executions, 2)
+    const stored = await db.get(
+      'SELECT status, appointment_id FROM appointment_creation_requests WHERE client_request_id = ?',
+      [key]
+    )
+    assert.equal(stored.status, 'completed')
+    assert.equal(stored.appointment_id, secondAppointmentId)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id IN (?, ?)', [firstAppointmentId, secondAppointmentId]).catch(() => {})
+    await cleanup(key)
+  }
+})
+
+test('un retry del mismo intento v2 devuelve la cita canónica reprogramada y no recrea el slot anterior', async () => {
+  const key = `conv-v2-attempt:${uniqueKey('rescheduled_replay')}`
+  const appointmentId = `appointment_rescheduled_v2_${Date.now()}`
+  const payload = {
+    calendarId: 'calendar_rescheduled_v2_original',
+    contactId: 'contact_rescheduled_v2',
+    startTime: '2099-07-16T17:00:00.000Z',
+    endTime: '2099-07-16T18:00:00.000Z',
+    source: 'conversational_agent_v2'
+  }
+  const moved = {
+    calendarId: 'calendar_rescheduled_v2_new',
+    startTime: '2099-07-17T19:00:00.000Z',
+    endTime: '2099-07-17T20:00:00.000Z'
+  }
+  let executions = 0
+
+  try {
+    await runIdempotentAppointmentCreation({
+      clientRequestId: key,
+      payload,
+      create: async () => {
+        executions += 1
+        await db.run(
+          `INSERT INTO appointments (
+            id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time
+          ) VALUES (?, ?, ?, 'Cita antes de mover', 'confirmed', 'confirmed', ?, ?)`,
+          [appointmentId, payload.calendarId, payload.contactId, payload.startTime, payload.endTime]
+        )
+        return {
+          id: appointmentId,
+          calendarId: payload.calendarId,
+          contactId: payload.contactId,
+          title: 'Cita antes de mover',
+          status: 'confirmed',
+          appointmentStatus: 'confirmed',
+          startTime: payload.startTime,
+          endTime: payload.endTime
+        }
+      }
+    })
+    await db.run(
+      `UPDATE appointments
+       SET calendar_id = ?, start_time = ?, end_time = ?, title = 'Cita ya movida'
+       WHERE id = ?`,
+      [moved.calendarId, moved.startTime, moved.endTime, appointmentId]
+    )
+
+    const replay = await runIdempotentAppointmentCreation({
+      clientRequestId: key,
+      payload,
+      create: async () => {
+        executions += 1
+        return { id: 'must_not_be_created' }
+      }
+    })
+
+    assert.equal(executions, 1)
+    assert.equal(replay.id, appointmentId)
+    assert.equal(replay.calendarId, moved.calendarId)
+    assert.equal(replay.startTime, moved.startTime)
+    assert.equal(replay.endTime, moved.endTime)
+    assert.equal(replay.title, 'Cita ya movida')
+    assert.equal(replay.idempotencyReplay?.state, 'appointment_rescheduled')
+    assert.equal(replay.idempotencyReplay?.canonicalChanged, true)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await cleanup(key)
+  }
+})
+
+test('una lease v2 vencida recupera la cita real y el dueño anterior no pisa el checkpoint', async () => {
+  const key = `conv-v2-attempt:${uniqueKey('stale_processing')}`
+  const appointmentId = `appointment_stale_v2_${Date.now()}`
+  const payload = {
+    calendarId: 'calendar_stale_v2',
+    contactId: 'contact_stale_v2',
+    startTime: '2099-07-18T17:00:00.000Z',
+    endTime: '2099-07-18T18:00:00.000Z',
+    source: 'conversational_agent_v2'
+  }
+  let unblockFirst
+  let markFirstStarted
+  const firstStarted = new Promise((resolve) => { markFirstStarted = resolve })
+  const firstGate = new Promise((resolve) => { unblockFirst = resolve })
+  let retryExecutions = 0
+
+  try {
+    const firstPromise = runIdempotentAppointmentCreation({
+      clientRequestId: key,
+      payload,
+      create: async () => {
+        markFirstStarted()
+        await firstGate
+        return {
+          id: appointmentId,
+          calendarId: payload.calendarId,
+          contactId: payload.contactId,
+          title: 'Cita recuperada',
+          status: 'confirmed',
+          appointmentStatus: 'confirmed',
+          startTime: payload.startTime,
+          endTime: payload.endTime
+        }
+      }
+    })
+    await firstStarted
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time
+      ) VALUES (?, ?, ?, 'Cita recuperada', 'confirmed', 'confirmed', ?, ?)`,
+      [appointmentId, payload.calendarId, payload.contactId, payload.startTime, payload.endTime]
+    )
+    await db.run(
+      `UPDATE appointment_creation_requests
+       SET updated_at = '2000-01-01T00:00:00.000Z'
+       WHERE client_request_id = ?`,
+      [key]
+    )
+
+    const recovered = await runIdempotentAppointmentCreation({
+      clientRequestId: key,
+      payload,
+      create: async () => {
+        retryExecutions += 1
+        return { id: 'must_not_be_created_after_recovery' }
+      }
+    })
+    unblockFirst()
+    const first = await firstPromise
+
+    assert.equal(retryExecutions, 0)
+    assert.equal(recovered.id, appointmentId)
+    assert.equal(first.id, appointmentId)
+    const stored = await db.get(
+      `SELECT status, processing_token, appointment_id
+       FROM appointment_creation_requests WHERE client_request_id = ?`,
+      [key]
+    )
+    assert.equal(stored.status, 'completed')
+    assert.equal(stored.processing_token, null)
+    assert.equal(stored.appointment_id, appointmentId)
+  } finally {
+    unblockFirst?.()
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await cleanup(key)
+  }
+})
+
+test('un inbound nuevo del mismo contacto reclama el slot liberado y dos inbounds se serializan por calendario', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const calendarId = `calendar_reclaim_v2_${suffix}`
+  const contactId = `contact_reclaim_v2_${suffix}`
+  const firstKey = `conv-v2-attempt:${uniqueKey('first_inbound')}`
+  const secondKey = `conv-v2-attempt:${uniqueKey('second_inbound')}`
+  const thirdKey = `conv-v2-attempt:${uniqueKey('third_inbound')}`
+  const originalStart = '2099-07-20T15:00:00.000Z'
+  const originalEnd = '2099-07-20T16:00:00.000Z'
+  const movedStart = '2099-07-21T18:00:00.000Z'
+  const movedEnd = '2099-07-21T19:00:00.000Z'
+  let firstAppointmentId = ''
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente que reprogramó', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'location_reclaim_v2',
+      name: 'Agenda reclaim v2',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: []
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    const firstResponse = createResponse()
+    await createAppointmentController({
+      body: {
+        clientRequestId: firstKey,
+        calendarId,
+        contactId,
+        title: 'Cita original',
+        startTime: originalStart,
+        endTime: originalEnd,
+        strictAvailabilityCheck: true,
+        source: 'conversational_agent_v2'
+      }
+    }, firstResponse)
+    assert.equal(firstResponse.statusCode, 201, JSON.stringify(firstResponse.body))
+    firstAppointmentId = String(firstResponse.body?.data?.id || '')
+    assert.ok(firstAppointmentId)
+
+    await db.run(
+      `UPDATE appointments SET start_time = ?, end_time = ?, title = 'Cita reprogramada'
+       WHERE id = ?`,
+      [movedStart, movedEnd, firstAppointmentId]
+    )
+
+    const exactReplay = createResponse()
+    await createAppointmentController({
+      body: {
+        clientRequestId: firstKey,
+        calendarId,
+        contactId,
+        title: 'Retry del mismo inbound',
+        startTime: originalStart,
+        endTime: originalEnd,
+        strictAvailabilityCheck: true,
+        source: 'conversational_agent_v2'
+      }
+    }, exactReplay)
+    assert.equal(exactReplay.statusCode, 201)
+    assert.equal(exactReplay.body?.data?.id, firstAppointmentId)
+    assert.equal(exactReplay.body?.data?.startTime, movedStart)
+    assert.equal(exactReplay.body?.data?.endTime, movedEnd)
+    assert.equal(exactReplay.body?.data?.idempotencyReplay?.state, 'appointment_rescheduled')
+
+    const secondResponse = createResponse()
+    const thirdResponse = createResponse()
+    await Promise.all([
+      createAppointmentController({
+        body: {
+          clientRequestId: secondKey,
+          calendarId,
+          contactId,
+          title: 'Nuevo inbound A',
+          startTime: originalStart,
+          endTime: originalEnd,
+          strictAvailabilityCheck: true,
+          source: 'conversational_agent_v2'
+        }
+      }, secondResponse),
+      createAppointmentController({
+        body: {
+          clientRequestId: thirdKey,
+          calendarId,
+          contactId,
+          title: 'Nuevo inbound B',
+          startTime: originalStart,
+          endTime: originalEnd,
+          strictAvailabilityCheck: true,
+          source: 'conversational_agent_v2'
+        }
+      }, thirdResponse)
+    ])
+
+    assert.deepEqual([secondResponse.statusCode, thirdResponse.statusCode].sort(), [201, 409])
+    const originalSlotAppointments = await db.all(
+      `SELECT id FROM appointments
+       WHERE calendar_id = ? AND start_time = ? AND deleted_at IS NULL
+         AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'noshow')`,
+      [calendarId, originalStart]
+    )
+    assert.equal(originalSlotAppointments.length, 1)
+    const allAppointments = await db.all(
+      'SELECT id FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [calendarId, contactId]
+    )
+    assert.equal(allAppointments.length, 2)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    for (const key of [firstKey, secondKey, thirdKey]) await cleanup(key)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
 test('una llave de cita reutilizada con datos distintos se rechaza', async () => {
   const key = uniqueKey('appointment_mismatch')
   let executions = 0
@@ -206,6 +617,94 @@ test('el endpoint de calendario integra la llave y no repite la cita local', asy
     assert.equal(rows.length, 1)
   } finally {
     if (appointmentId) await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await cleanup(key)
+  }
+})
+
+test('el endpoint conversacional v2 falla cerrado si el calendario configurado no existe', async () => {
+  const key = `conv-v2-slot:${uniqueKey('missing_calendar')}`
+  const response = createResponse()
+
+  try {
+    await createAppointmentController({
+      body: {
+        clientRequestId: key,
+        calendarId: `missing_calendar_${Date.now()}`,
+        contactId: 'contact_missing_calendar_v2',
+        title: 'No debe crearse',
+        startTime: '2026-07-18T15:00:00.000Z',
+        endTime: '2026-07-18T16:00:00.000Z',
+        strictAvailabilityCheck: true,
+        source: 'conversational_agent_v2'
+      }
+    }, response)
+
+    assert.equal(response.statusCode, 404)
+    assert.equal(response.body?.success, false)
+    assert.equal(response.body?.code, 'calendar_not_found')
+    const stored = await db.get(
+      'SELECT status, error_status FROM appointment_creation_requests WHERE client_request_id = ?',
+      [key]
+    )
+    assert.equal(stored.status, 'failed')
+    assert.equal(Number(stored.error_status), 404)
+  } finally {
+    await cleanup(key)
+  }
+})
+
+test('alta v2 y alta legacy concurrentes serializan check+insert y no duplican el slot', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const calendarId = `calendar_mixed_race_${suffix}`
+  const key = `conv-v2-slot:${uniqueKey('mixed_race')}`
+  const startTime = '2099-07-19T15:00:00.000Z'
+  const endTime = '2099-07-19T16:00:00.000Z'
+  const v2Response = createResponse()
+  const legacyResponse = createResponse()
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'location_mixed_race',
+      name: 'Agenda carrera mixta',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: []
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    await Promise.all([
+      createAppointmentController({
+        body: {
+          clientRequestId: key,
+          calendarId,
+          title: 'Cita v2 concurrente',
+          startTime,
+          endTime,
+          strictAvailabilityCheck: true,
+          source: 'conversational_agent_v2'
+        }
+      }, v2Response),
+      createAppointmentController({
+        body: {
+          calendarId,
+          title: 'Cita legacy concurrente',
+          startTime,
+          endTime
+        }
+      }, legacyResponse)
+    ])
+
+    assert.deepEqual([v2Response.statusCode, legacyResponse.statusCode].sort(), [201, 409])
+    const appointments = await db.all(
+      `SELECT id FROM appointments
+       WHERE calendar_id = ? AND start_time = ? AND deleted_at IS NULL`,
+      [calendarId, startTime]
+    )
+    assert.equal(appointments.length, 1)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
     await cleanup(key)
   }
 })

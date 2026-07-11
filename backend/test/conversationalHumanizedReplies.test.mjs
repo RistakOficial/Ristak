@@ -1587,6 +1587,9 @@ test('pago exitoso de link creado por agente completa la venta conversacional', 
 
     agent = await createConversationalAgent({
       name: 'Agente venta completa',
+      // Esta fixture valida la reconciliación histórica de invoices, no el builder
+      // v2 (que exige producto/precio antes de publicar un cobro nuevo).
+      runtimeMode: 'legacy_v1',
       objective: 'ventas',
       successAction: 'ready_to_buy',
       goalWorkflow: {

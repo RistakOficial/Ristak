@@ -36,6 +36,7 @@ import { runConversationalAgentPreview } from '../agents/conversational/runner.j
 import {
   buildClosingStrategyTemplateParameters
 } from '../agents/conversational/prompt.js'
+import { isToolCallingV2 } from '../agents/conversational/nativeRuntimeConfig.js'
 import {
   compileConversationalAgentPolicy,
   generateConversationalLearningVersion,
@@ -117,16 +118,29 @@ async function assertBusinessPromptReady() {
   throw error
 }
 
-async function compileAgentPolicy(input = {}, base = {}) {
+async function assertBusinessPromptReadyForConfig(effectiveConfig = {}, { enabled = true } = {}) {
+  if (!enabled || isToolCallingV2(effectiveConfig)) return
+  await assertBusinessPromptReady()
+}
+
+async function compileAgentPolicyWithConfig(input = {}, base = {}) {
   const [businessProfile, effectiveConfig] = await Promise.all([
     getBusinessProfileSnapshot().catch(() => null),
     Promise.resolve(buildConversationalAgentRuntimeConfig(input, base))
   ])
-  return compileConversationalAgentPolicy(effectiveConfig, { businessProfile })
+  return {
+    effectiveConfig,
+    policy: compileConversationalAgentPolicy(effectiveConfig, { businessProfile })
+  }
 }
 
-function assertCompiledPolicyValid(policy, { enabled = true } = {}) {
-  if (!enabled || policy?.validation?.valid !== false) return
+async function compileAgentPolicy(input = {}, base = {}) {
+  const compiled = await compileAgentPolicyWithConfig(input, base)
+  return compiled.policy
+}
+
+export function assertCompiledPolicyValid(policy, { enabled = true, effectiveConfig = {} } = {}) {
+  if (!enabled || isToolCallingV2(effectiveConfig) || policy?.validation?.valid !== false) return
   const error = new Error(policy.validation.errors[0]?.message || 'La configuración del agente tiene reglas incompletas o contradictorias.')
   error.statusCode = 400
   error.code = 'CONVERSATIONAL_AGENT_POLICY_INVALID'
@@ -278,7 +292,14 @@ export async function completeExternalConversationGoal(req, res) {
 export async function saveConfig(req, res) {
   try {
     if (req.body?.enabled === true) {
-      await assertBusinessPromptReady()
+      // El switch global se enciende como consecuencia de publicar un agente.
+      // El agentId se resuelve del lado servidor para que un cliente no pueda
+      // fingir runtimeMode=v2 y saltarse la compuerta de un agente legacy.
+      const publishingAgentId = String(req.body?.agentId || '').trim()
+      const publishingAgent = publishingAgentId
+        ? await getConversationalAgent(publishingAgentId)
+        : null
+      await assertBusinessPromptReadyForConfig(publishingAgent || {}, { enabled: true })
     }
     const config = await saveConversationalAgentConfig(req.body || {})
     const promptState = await getBusinessPromptState(config)
@@ -364,7 +385,7 @@ export async function updateState(req, res) {
       if (!agent.enabled) {
         return res.status(400).json({ success: false, error: 'Este agente está pausado' })
       }
-      await assertBusinessPromptReady()
+      await assertBusinessPromptReadyForConfig(agent, { enabled: true })
     }
 
     let state = await setConversationStatus(contactId, mapped.status, {
@@ -440,11 +461,15 @@ export async function getMetrics(req, res) {
 
 export async function createAgent(req, res) {
   try {
-    if (req.body?.enabled !== false) {
-      await assertBusinessPromptReady()
-    }
-    const candidatePolicy = await compileAgentPolicy(req.body || {})
-    assertCompiledPolicyValid(candidatePolicy, { enabled: req.body?.enabled !== false })
+    const candidate = await compileAgentPolicyWithConfig(req.body || {})
+    const effectiveEnabled = candidate.effectiveConfig.enabled !== false
+    await assertBusinessPromptReadyForConfig(candidate.effectiveConfig, {
+      enabled: effectiveEnabled
+    })
+    assertCompiledPolicyValid(candidate.policy, {
+      enabled: effectiveEnabled,
+      effectiveConfig: candidate.effectiveConfig
+    })
     const agent = await createConversationalAgent(req.body || {})
     const policy = await compileAgentPolicy(agent)
     const policyVersion = await recordConversationalPolicyVersion({
@@ -465,6 +490,8 @@ export async function createAgent(req, res) {
       code: error.code,
       businessPromptStatus: error.businessPromptStatus,
       policyValidation: error.policyValidation,
+      nativeRuntimeValidation: error.nativeRuntimeValidation,
+      nativeRuntimeResourceValidation: error.nativeRuntimeResourceValidation,
       conflicts: error.conflicts,
       limit: error.limit
     })
@@ -473,16 +500,22 @@ export async function createAgent(req, res) {
 
 export async function updateAgent(req, res) {
   try {
-    if (req.body?.enabled === true) {
-      await assertBusinessPromptReady()
-    }
     const current = await getConversationalAgent(req.params?.agentId)
     if (!current) {
       return res.status(404).json({ success: false, error: 'Agente conversacional no encontrado' })
     }
-    const policy = await compileAgentPolicy(req.body || {}, current)
-    assertCompiledPolicyValid(policy, {
-      enabled: req.body?.enabled === undefined ? current.enabled : req.body.enabled !== false
+    const candidate = await compileAgentPolicyWithConfig(req.body || {}, current)
+    const effectiveEnabled = candidate.effectiveConfig.enabled !== false
+    const publishesLegacyRuntime = effectiveEnabled && (
+      req.body?.enabled === true ||
+      (isToolCallingV2(current) && !isToolCallingV2(candidate.effectiveConfig))
+    )
+    await assertBusinessPromptReadyForConfig(candidate.effectiveConfig, {
+      enabled: publishesLegacyRuntime
+    })
+    assertCompiledPolicyValid(candidate.policy, {
+      enabled: effectiveEnabled,
+      effectiveConfig: candidate.effectiveConfig
     })
     const agent = await updateConversationalAgent(req.params?.agentId, req.body || {})
     const persistedPolicy = await compileAgentPolicy(agent)
@@ -504,6 +537,8 @@ export async function updateAgent(req, res) {
       code: error.code,
       businessPromptStatus: error.businessPromptStatus,
       policyValidation: error.policyValidation,
+      nativeRuntimeValidation: error.nativeRuntimeValidation,
+      nativeRuntimeResourceValidation: error.nativeRuntimeResourceValidation,
       conflicts: error.conflicts
     })
   }
@@ -562,10 +597,16 @@ export async function rollbackAgentPolicy(req, res) {
     if (!current) return res.status(404).json({ success: false, error: 'Agente conversacional no encontrado' })
     const target = await getConversationalPolicyVersion(agentId, req.params?.versionId)
     if (!target) return res.status(404).json({ success: false, error: 'Versión de política no encontrada' })
-    if (target.configSnapshot?.enabled) await assertBusinessPromptReady()
 
-    const candidatePolicy = await compileAgentPolicy(target.configSnapshot || {}, current)
-    assertCompiledPolicyValid(candidatePolicy, { enabled: target.configSnapshot?.enabled !== false })
+    const candidate = await compileAgentPolicyWithConfig(target.configSnapshot || {}, current)
+    const effectiveEnabled = candidate.effectiveConfig.enabled !== false
+    await assertBusinessPromptReadyForConfig(candidate.effectiveConfig, {
+      enabled: effectiveEnabled
+    })
+    assertCompiledPolicyValid(candidate.policy, {
+      enabled: effectiveEnabled,
+      effectiveConfig: candidate.effectiveConfig
+    })
     const agent = await updateConversationalAgent(agentId, target.configSnapshot || {})
     const policy = await compileAgentPolicy(agent)
     const policyVersion = await recordConversationalPolicyVersion({
@@ -584,7 +625,9 @@ export async function rollbackAgentPolicy(req, res) {
       success: false,
       error: error.message || 'Error al revertir la configuración del agente',
       code: error.code,
-      policyValidation: error.policyValidation
+      policyValidation: error.policyValidation,
+      nativeRuntimeValidation: error.nativeRuntimeValidation,
+      nativeRuntimeResourceValidation: error.nativeRuntimeResourceValidation
     })
   }
 }

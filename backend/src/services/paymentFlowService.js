@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon'
+import { createHash } from 'node:crypto'
 import { db } from '../config/database.js'
 import { getGHLClient } from './ghlClient.js'
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js'
@@ -824,7 +825,18 @@ function buildInvoicePayload({ basePayload, contact, amount, currency, concept, 
   }
 }
 
-async function insertLocalInvoicePayment({ invoice, contactId, fallbackAmount, fallbackCurrency, fallbackDescription, sentAt = null, status = 'draft', paymentMode = 'live' }) {
+async function insertLocalInvoicePayment({
+  invoice,
+  contactId,
+  fallbackAmount,
+  fallbackCurrency,
+  fallbackDescription,
+  paymentLink = null,
+  paymentLinkRequestKey = null,
+  sentAt = null,
+  status = 'draft',
+  paymentMode = 'live'
+}) {
   const ghlInvoiceId = invoice.id || invoice._id
   const items = invoice.items || invoice.invoiceItems || []
   const firstItem = items[0] || {}
@@ -837,8 +849,9 @@ async function insertLocalInvoicePayment({ invoice, contactId, fallbackAmount, f
     `INSERT INTO payments (
       id, contact_id, amount, currency, status, payment_method, payment_mode,
       payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
+      payment_url, payment_link_request_key,
       due_date, sent_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       contact_id = excluded.contact_id,
       amount = excluded.amount,
@@ -853,6 +866,8 @@ async function insertLocalInvoicePayment({ invoice, contactId, fallbackAmount, f
       sent_at = excluded.sent_at,
       ghl_invoice_id = excluded.ghl_invoice_id,
       invoice_number = excluded.invoice_number,
+      payment_url = COALESCE(excluded.payment_url, payments.payment_url),
+      payment_link_request_key = COALESCE(excluded.payment_link_request_key, payments.payment_link_request_key),
       updated_at = CURRENT_TIMESTAMP`,
     [
       ghlInvoiceId,
@@ -869,13 +884,26 @@ async function insertLocalInvoicePayment({ invoice, contactId, fallbackAmount, f
       invoice.issueDate || invoice.createdAt || new Date().toISOString(),
       ghlInvoiceId,
       invoice.invoiceNumber || null,
+      paymentLink,
+      paymentLinkRequestKey,
       invoice.dueDate || null,
       sentAt
     ]
   )
 }
 
-async function createInvoice({ ghlClient, basePayload, contact, amount, currency, concept, title, dueDate, summaryDetails }) {
+async function createInvoice({
+  ghlClient,
+  basePayload,
+  contact,
+  amount,
+  currency,
+  concept,
+  title,
+  dueDate,
+  summaryDetails,
+  paymentLinkRequestKey = null
+}) {
   const context = await getInvoiceSendContext()
   // El payload remoto necesita el ID de GHL; localmente se conserva contact.id (Ristak).
   const ghlContactId = await getGhlContactIdForLocalContact(contact.id)
@@ -924,6 +952,8 @@ async function createInvoice({ ghlClient, basePayload, contact, amount, currency
     fallbackAmount: amount,
     fallbackCurrency: currency,
     fallbackDescription: concept,
+    paymentLink: buildInvoicePaymentUrl(context.domain, invoiceId),
+    paymentLinkRequestKey,
     status: 'draft',
     paymentMode: context.liveMode ? 'live' : 'test'
   })
@@ -968,6 +998,314 @@ async function sendInvoice({ ghlClient, invoiceId, contact, channels, forceAllAv
 
 // (AI-004) Ventana de deduplicación de links de pago equivalentes (minutos).
 const PAYMENT_LINK_IDEMPOTENCY_WINDOW_MS = 10 * 60 * 1000
+const CONVERSATIONAL_PAYMENT_REQUEST_KEY_PATTERN = /^conv-v2-payment:[a-f0-9]{64}$/
+const CONVERSATIONAL_PAYMENT_WAIT_ATTEMPTS = 60
+const CONVERSATIONAL_PAYMENT_WAIT_MS = 50
+
+export function buildConversationalPaymentLinkIdempotencyKey({
+  agentId = '',
+  contactId = '',
+  productId = '',
+  priceId = '',
+  amount = '',
+  currency = '',
+  channel = '',
+  paymentPurpose = '',
+  executionId = ''
+} = {}) {
+  const cleanExecutionId = String(executionId || '').trim()
+  if (!cleanExecutionId) return ''
+  // La identidad representa el mismo mensaje/ejecución, no la configuración
+  // mutable del cobro. Producto, precio, monto, moneda y propósito viven en el
+  // request_hash del ledger; si cambian con la misma llave, el servidor falla
+  // cerrado en vez de crear un segundo link.
+  const digest = createHash('sha256').update([
+    agentId,
+    contactId,
+    String(channel || '').trim().toLowerCase(),
+    cleanExecutionId
+  ].map((value) => String(value ?? '')).join('\u0000')).digest('hex')
+  return `conv-v2-payment:${digest}`
+}
+
+function stablePaymentRequestValue(value) {
+  if (Array.isArray(value)) return value.map(stablePaymentRequestValue)
+  if (!value || typeof value !== 'object') return value
+  return Object.keys(value).sort().reduce((result, key) => {
+    if (!['idempotencyKey', 'idempotencyPayload'].includes(key)) {
+      result[key] = stablePaymentRequestValue(value[key])
+    }
+    return result
+  }, {})
+}
+
+export function conversationalPaymentRequestHash(payload) {
+  return createHash('sha256')
+    .update(JSON.stringify(stablePaymentRequestValue(payload || {})))
+    .digest('hex')
+}
+
+function paymentSafetyError(message, status = 409, code = 'payment_link_request_conflict') {
+  const error = new Error(message)
+  error.status = status
+  error.statusCode = status
+  error.code = code
+  return error
+}
+
+function parsePaymentRequestResponse(value) {
+  try {
+    return value ? JSON.parse(value) : null
+  } catch {
+    return null
+  }
+}
+
+async function ensureConversationalPaymentRequestLedger(database = db) {
+  await database.run(`
+    CREATE TABLE IF NOT EXISTS conversational_payment_link_requests (
+      idempotency_key TEXT PRIMARY KEY,
+      request_hash TEXT NOT NULL,
+      request_json TEXT,
+      contact_id TEXT,
+      invoice_id TEXT,
+      status TEXT NOT NULL,
+      response_json TEXT,
+      binding_event_id TEXT,
+      binding_status TEXT DEFAULT 'pending',
+      binding_error TEXT,
+      bound_at DATETIME,
+      error_status INTEGER,
+      error_message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await database.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN request_json TEXT').catch(() => {})
+  await database.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN contact_id TEXT').catch(() => {})
+  await database.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN invoice_id TEXT').catch(() => {})
+  await database.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN binding_event_id TEXT').catch(() => {})
+  await database.run("ALTER TABLE conversational_payment_link_requests ADD COLUMN binding_status TEXT DEFAULT 'pending'").catch(() => {})
+  await database.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN binding_error TEXT').catch(() => {})
+  await database.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN bound_at DATETIME').catch(() => {})
+}
+
+function replayConversationalPaymentRequest(row, expectedHash) {
+  if (!row || row.request_hash !== expectedHash) {
+    throw paymentSafetyError(
+      'La llave segura del cobro ya se utilizó con datos distintos. No se creó otro link.',
+      409,
+      'payment_link_idempotency_mismatch'
+    )
+  }
+  if (row.status === 'completed') {
+    const response = parsePaymentRequestResponse(row.response_json)
+    if (!response) {
+      throw paymentSafetyError(
+        'El link ya fue creado, pero su respuesta guardada no se pudo leer. Requiere revisión humana.',
+        500,
+        'payment_link_replay_unreadable'
+      )
+    }
+    return { ...response, reused: true, durableReplay: true }
+  }
+  if (row.status === 'failed') {
+    throw paymentSafetyError(
+      row.error_message || 'El intento de cobro quedó bloqueado para evitar crear dos links. Requiere revisión humana.',
+      Number(row.error_status || 409),
+      'payment_link_previous_attempt_failed'
+    )
+  }
+  return null
+}
+
+async function waitForConversationalPaymentRequest(database, idempotencyKey, expectedHash) {
+  for (let attempt = 0; attempt < CONVERSATIONAL_PAYMENT_WAIT_ATTEMPTS; attempt += 1) {
+    const row = await database.get(
+      'SELECT * FROM conversational_payment_link_requests WHERE idempotency_key = ?',
+      [idempotencyKey]
+    )
+    const replay = replayConversationalPaymentRequest(row, expectedHash)
+    if (replay) return replay
+    const recovered = await recoverProcessingConversationalPaymentRequest(database, row, expectedHash)
+    if (recovered) return recovered
+    await new Promise((resolve) => setTimeout(resolve, CONVERSATIONAL_PAYMENT_WAIT_MS))
+  }
+  throw paymentSafetyError(
+    'Este link de pago ya está en proceso. Espera un momento antes de volver a intentarlo.',
+    409,
+    'payment_link_request_in_progress'
+  )
+}
+
+export async function recoverProcessingConversationalPaymentRequest(database, row, expectedHash) {
+  if (!row || row.status !== 'processing') return null
+  if (row.request_hash !== expectedHash) {
+    throw paymentSafetyError(
+      'La llave segura del cobro ya se utilizó con datos distintos. No se creó otro link.',
+      409,
+      'payment_link_idempotency_mismatch'
+    )
+  }
+
+  const request = parsePaymentRequestResponse(row.request_json)
+  if (!request || conversationalPaymentRequestHash(request) !== row.request_hash) {
+    throw paymentSafetyError(
+      'El cobro en proceso no conserva una solicitud verificable. No se llamará otra vez al proveedor.',
+      503,
+      'payment_link_recovery_request_unreadable'
+    )
+  }
+
+  const ledger = await database.get(
+    `SELECT id, contact_id, amount, currency, status, payment_mode, payment_provider,
+            ghl_invoice_id, invoice_number, payment_url, payment_link_request_key, sent_at
+     FROM payments
+     WHERE payment_link_request_key = ?`,
+    [row.idempotency_key]
+  )
+  if (!ledger) return null
+
+  const expectedContactId = String(request.contactId || '').trim()
+  const expectedAmount = normalizeAmount(request.amount)
+  const expectedCurrency = String(request.currency || '').trim().toUpperCase()
+  const ledgerAmount = normalizeAmount(ledger.amount)
+  const ledgerCurrency = String(ledger.currency || '').trim().toUpperCase()
+  const invoiceId = String(ledger.ghl_invoice_id || '').trim()
+  const paymentLink = String(ledger.payment_url || '').trim()
+  const exactLedger = Boolean(
+    expectedContactId &&
+    expectedAmount > 0 &&
+    expectedCurrency &&
+    String(ledger.payment_link_request_key || '') === String(row.idempotency_key || '') &&
+    String(ledger.contact_id || '') === expectedContactId &&
+    ledgerAmount === expectedAmount &&
+    ledgerCurrency === expectedCurrency &&
+    String(ledger.payment_provider || '').trim().toLowerCase() === 'highlevel' &&
+    invoiceId &&
+    paymentLink
+  )
+  if (!exactLedger) {
+    throw paymentSafetyError(
+      'El invoice encontrado no coincide exactamente con la solicitud en proceso. No se llamará otra vez al proveedor.',
+      503,
+      'payment_link_recovery_ledger_mismatch'
+    )
+  }
+
+  const storedStatus = String(ledger.status || '').trim().toLowerCase()
+  const deliveryCommitted = Boolean(ledger.sent_at) && storedStatus !== 'draft'
+  const recoveredResponse = {
+    invoiceId,
+    invoiceNumber: ledger.invoice_number || null,
+    paymentLink,
+    sendMethod: deliveryCommitted ? 'recovered' : 'none',
+    amount: ledgerAmount,
+    currency: ledgerCurrency,
+    status: deliveryCommitted ? (storedStatus || 'sent') : 'draft',
+    recovered: true
+  }
+  const completedAt = new Date().toISOString()
+  const completed = await database.run(
+    `UPDATE conversational_payment_link_requests
+     SET status = 'completed', response_json = ?, invoice_id = ?, error_status = NULL,
+         error_message = NULL, updated_at = ?
+     WHERE idempotency_key = ? AND request_hash = ? AND status = 'processing'`,
+    [JSON.stringify(recoveredResponse), invoiceId, completedAt, row.idempotency_key, expectedHash]
+  )
+  if (Number(completed?.changes || 0) === 1) {
+    return { ...recoveredResponse, reused: true, durableReplay: true }
+  }
+
+  const current = await database.get(
+    'SELECT * FROM conversational_payment_link_requests WHERE idempotency_key = ?',
+    [row.idempotency_key]
+  )
+  return replayConversationalPaymentRequest(current, expectedHash)
+}
+
+/**
+ * Reserva durable antes de hablar con un proveedor que no ofrece idempotencia.
+ * Si el ledger no se puede escribir, create jamás se ejecuta (fail-closed).
+ */
+export async function runIdempotentConversationalPaymentLinkCreation({
+  idempotencyKey,
+  payload,
+  create,
+  database = db
+} = {}) {
+  const cleanKey = String(idempotencyKey || '').trim()
+  if (!CONVERSATIONAL_PAYMENT_REQUEST_KEY_PATTERN.test(cleanKey)) {
+    throw paymentSafetyError('La llave segura del link de pago no es válida.', 400, 'payment_link_idempotency_key_invalid')
+  }
+  if (typeof create !== 'function') {
+    throw paymentSafetyError('Falta la operación para crear el link de pago.', 500, 'payment_link_create_missing')
+  }
+
+  await ensureConversationalPaymentRequestLedger(database)
+  const hash = conversationalPaymentRequestHash(payload)
+  const nowIso = new Date().toISOString()
+  const bindingEventId = `cae_payment_${createHash('sha256').update(cleanKey).digest('hex').slice(0, 48)}`
+  const reserved = await database.run(
+    `INSERT INTO conversational_payment_link_requests (
+      idempotency_key, request_hash, request_json, contact_id, status,
+      binding_event_id, binding_status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'processing', ?, 'pending', ?, ?)
+    ON CONFLICT(idempotency_key) DO NOTHING`,
+    [cleanKey, hash, JSON.stringify(stablePaymentRequestValue(payload || {})), String(payload?.contactId || '').trim() || null, bindingEventId, nowIso, nowIso]
+  )
+
+  if (Number(reserved?.changes || 0) !== 1) {
+    const existing = await database.get(
+      'SELECT * FROM conversational_payment_link_requests WHERE idempotency_key = ?',
+      [cleanKey]
+    )
+    const replay = replayConversationalPaymentRequest(existing, hash)
+    if (replay) return replay
+    return waitForConversationalPaymentRequest(database, cleanKey, hash)
+  }
+
+  let result
+  try {
+    result = await create()
+  } catch (error) {
+    const status = Number(error?.status || error?.statusCode || 502)
+    await database.run(
+      `UPDATE conversational_payment_link_requests
+       SET status = 'failed', error_status = ?, error_message = ?, updated_at = ?
+       WHERE idempotency_key = ? AND status = 'processing'`,
+      [
+        Number.isInteger(status) && status >= 400 && status <= 599 ? status : 502,
+        String(error?.message || 'No se pudo crear el link de pago.').slice(0, 2000),
+        new Date().toISOString(),
+        cleanKey
+      ]
+    ).catch(() => {})
+    throw error
+  }
+
+  const completed = await database.run(
+    `UPDATE conversational_payment_link_requests
+     SET status = 'completed', response_json = ?, invoice_id = ?, error_status = NULL,
+         error_message = NULL, updated_at = ?
+     WHERE idempotency_key = ? AND request_hash = ? AND status = 'processing'`,
+    [JSON.stringify(result ?? null), String(result?.invoiceId || '').trim() || null, new Date().toISOString(), cleanKey, hash]
+  )
+  if (Number(completed?.changes || 0) !== 1) {
+    const current = await database.get(
+      'SELECT * FROM conversational_payment_link_requests WHERE idempotency_key = ?',
+      [cleanKey]
+    )
+    const replay = replayConversationalPaymentRequest(current, hash)
+    if (replay) return replay
+    throw paymentSafetyError(
+      'El proveedor creó el link, pero no se pudo cerrar su registro seguro. No vuelvas a generarlo; requiere revisión humana.',
+      503,
+      'payment_link_ledger_commit_failed'
+    )
+  }
+  return result
+}
 
 // (AI-004) Busca un link de pago pendiente reciente del mismo contacto con el
 // mismo monto y concepto. Devuelve la fila reutilizable o null. No considera
@@ -998,7 +1336,15 @@ async function findRecentEquivalentPaymentLink({ contactId, amount, concept }) {
   }
 }
 
-export async function createSinglePaymentLink(payload) {
+function shouldUseRecentEquivalentPaymentLink(payload = {}) {
+  return String(payload.source || '').trim() !== 'conversational_agent_v2'
+}
+
+export const __paymentFlowServiceTestHooks = Object.freeze({
+  shouldUseRecentEquivalentPaymentLink
+})
+
+async function createSinglePaymentLinkOnce(payload) {
   const contact = payload.contact || {}
   const amount = normalizeAmount(payload.amount || payload.totalAmount)
   const currency = await getAccountCurrency()
@@ -1018,7 +1364,14 @@ export async function createSinglePaymentLink(payload) {
   // (AI-004) Idempotencia: antes de crear un invoice nuevo, reutiliza un link
   // pendiente reciente del mismo contacto con monto+concepto equivalentes para
   // evitar links/cobros duplicados ante reejecuciones del agente o del modelo.
-  const existingLink = await findRecentEquivalentPaymentLink({ contactId: contact.id, amount, concept })
+  // El runtime v2 ya trae una llave durable ligada a agente, contacto,
+  // capacidad, producto/precio y mensaje entrante. Reusar aquí sólo por
+  // contacto+monto+concepto podría secuestrar un invoice creado por otro
+  // agente o por otro flujo del negocio. Legacy conserva su dedupe histórico;
+  // v2 depende exclusivamente de su ledger fuerte de idempotencia.
+  const existingLink = shouldUseRecentEquivalentPaymentLink(payload)
+    ? await findRecentEquivalentPaymentLink({ contactId: contact.id, amount, concept })
+    : null
   if (existingLink) {
     logger.info(`(AI-004) Reutilizando link de pago reciente ${existingLink.ghl_invoice_id} para contacto ${contact.id} (${amount} ${currency}); no se crea uno nuevo`)
     const context = await getInvoiceSendContext()
@@ -1043,7 +1396,8 @@ export async function createSinglePaymentLink(payload) {
     currency,
     concept,
     title,
-    dueDate: payload.dueDate
+    dueDate: payload.dueDate,
+    paymentLinkRequestKey: payload.idempotencyKey || null
   })
   const invoiceId = invoice.id || invoice._id
   const sent = await sendInvoice({
@@ -1065,6 +1419,24 @@ export async function createSinglePaymentLink(payload) {
     currency,
     status: sent.sendMethod === 'none' ? 'draft' : 'sent'
   }
+}
+
+export async function createSinglePaymentLink(payload = {}) {
+  const idempotencyKey = String(payload.idempotencyKey || '').trim()
+  if (!idempotencyKey) return createSinglePaymentLinkOnce(payload)
+
+  return runIdempotentConversationalPaymentLinkCreation({
+    idempotencyKey,
+    payload: payload.idempotencyPayload || {
+      contactId: payload.contact?.id || null,
+      amount: normalizeAmount(payload.amount || payload.totalAmount),
+      currency: String(payload.currency || '').trim().toUpperCase(),
+      concept: payload.description || payload.concept || payload.title || 'Pago',
+      dueDate: payload.dueDate || null,
+      channels: payload.channels || {}
+    },
+    create: () => createSinglePaymentLinkOnce(payload)
+  })
 }
 
 function normalizeOfflineRecordMethod(value) {
@@ -1237,6 +1609,215 @@ export async function registerAgentTransferDepositPayment({
     paymentMethod: 'bank_transfer',
     paidAt: paidAtIso
   }
+}
+
+/**
+ * Registra únicamente la existencia de un comprobante para revisión humana.
+ * Ver una imagen no equivale a confirmar fondos: este registro nunca usa estado
+ * paid, nunca tiene paid_at y nunca actualiza las estadísticas de venta.
+ */
+export async function registerAgentTransferPaymentProofForReview({
+  contactId,
+  amount,
+  currency = '',
+  concept = 'Comprobante de transferencia pendiente de revisión',
+  reference = null,
+  agentId = null,
+  mediaUrl = null,
+  mediaMessageId = null,
+  extracted = null,
+  receivedAt = null,
+  conversationalBinding = null
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const normalizedAmount = normalizeAmount(amount)
+  if (!cleanContactId) throw new Error('Falta el contacto para registrar el comprobante')
+  if (!(normalizedAmount > 0)) throw new Error('El monto detectado debe ser mayor a 0')
+
+  const accountCurrency = await getAccountCurrency()
+  const paymentCurrency = String(currency || accountCurrency || '').trim().toUpperCase() || accountCurrency
+  const paymentId = createRistakPaymentEntityId('transfer_review')
+  const recordedAtIso = receivedAt || new Date().toISOString()
+  const binding = conversationalBinding && typeof conversationalBinding === 'object'
+    ? conversationalBinding
+    : null
+  const cleanBindingKey = String(binding?.bindingKey || mediaMessageId || '').trim()
+  const cleanBindingChannel = String(binding?.channel || 'whatsapp').trim().toLowerCase()
+  const paymentPurpose = String(binding?.paymentPurpose || '').trim().toLowerCase()
+  const appointmentDeposit = binding?.appointmentDeposit === true
+  const bindingEventId = binding
+    ? `cae_transfer_proof_${createHash('sha256').update([
+        cleanContactId,
+        cleanBindingChannel,
+        cleanBindingKey
+      ].join('\u0000')).digest('hex').slice(0, 48)}`
+    : ''
+
+  const purposeConsistent = paymentPurpose === 'appointment_deposit'
+    ? appointmentDeposit
+    : paymentPurpose === 'deposit'
+      ? !appointmentDeposit
+      : false
+  if (
+    binding && (
+      !cleanAgentId ||
+      !cleanBindingKey ||
+      !/^[a-z][a-z0-9_-]{0,39}$/.test(cleanBindingChannel) ||
+      !purposeConsistent
+    )
+  ) {
+    throw new Error('Falta la identidad durable del comprobante conversacional')
+  }
+
+  const toResult = (row, { alreadyRegistered = false } = {}) => ({
+    paymentId: row.id,
+    amount: Number(row.amount),
+    currency: String(row.currency || paymentCurrency).trim().toUpperCase(),
+    status: row.status || 'pending_review',
+    paymentMethod: row.payment_method || 'bank_transfer',
+    paymentMode: row.payment_mode || 'manual_review',
+    paidAt: row.paid_at || null,
+    alreadyRegistered,
+    ...(bindingEventId ? { bindingEventId } : {})
+  })
+
+  const insertPayment = async () => {
+    const metadata = {
+      source: 'conversational_agent_transfer_proof_pending_review',
+      agentId: cleanAgentId || null,
+      mediaUrl: mediaUrl || null,
+      mediaMessageId: mediaMessageId || null,
+      receivedAt: recordedAtIso,
+      extracted: extracted || null,
+      requiresHumanVerification: true,
+      ...(binding
+        ? {
+            bindingEventId,
+            channel: cleanBindingChannel,
+            paymentPurpose,
+            appointmentDeposit,
+            executionId: String(binding.executionId || '').trim() || null
+          }
+        : {})
+    }
+
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, reference, title, description, paid_at, metadata_json, date,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'pending_review', 'bank_transfer', 'manual_review', 'manual', ?, ?, ?, NULL, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        paymentId,
+        cleanContactId,
+        normalizedAmount,
+        paymentCurrency,
+        reference || null,
+        String(concept || 'Comprobante de transferencia pendiente de revisión').slice(0, 240),
+        [
+          'Comprobante recibido por el agente conversacional; fondos todavía no confirmados.',
+          extracted?.bank ? `Banco detectado: ${extracted.bank}` : '',
+          reference ? `Referencia: ${reference}` : ''
+        ].filter(Boolean).join(' '),
+        JSON.stringify(metadata),
+        recordedAtIso
+      ]
+    )
+    return db.get('SELECT * FROM payments WHERE id = ?', [paymentId])
+  }
+
+  const payment = binding
+    ? await db.transaction(async () => {
+        const reservationDetail = {
+          status: 'binding',
+          agentId: cleanAgentId,
+          channel: cleanBindingChannel,
+          runtimeMode: 'tool_calling_v2',
+          paymentMode: 'deposit',
+          paymentPurpose,
+          appointmentDeposit,
+          executionId: String(binding.executionId || '').trim() || null,
+          mediaMessageId: String(mediaMessageId || '').trim() || null
+        }
+        const reserved = await db.run(
+          `INSERT INTO conversational_agent_events (
+             id, contact_id, agent_id, event_type, detail_json
+           ) VALUES (?, ?, ?, 'deposit_transfer_pending_review', ?)
+           ON CONFLICT(id) DO NOTHING`,
+          [bindingEventId, cleanContactId, cleanAgentId, JSON.stringify(reservationDetail)]
+        )
+
+        if (Number(reserved?.changes || 0) === 0) {
+          const existingBinding = await db.get(
+            `SELECT contact_id, agent_id, event_type, detail_json
+             FROM conversational_agent_events WHERE id = ?`,
+            [bindingEventId]
+          )
+          const existingDetail = safeJsonParse(existingBinding?.detail_json, {})
+          const existingPaymentId = String(existingDetail.ledgerPaymentId || '').trim()
+          const expectedExecutionId = String(binding.executionId || '').trim()
+          const expectedMediaMessageId = String(mediaMessageId || '').trim()
+          if (
+            existingBinding?.event_type !== 'deposit_transfer_pending_review' ||
+            String(existingBinding?.contact_id || '') !== cleanContactId ||
+            String(existingDetail.channel || 'whatsapp').trim().toLowerCase() !== cleanBindingChannel ||
+            existingDetail.paymentPurpose !== paymentPurpose ||
+            existingDetail.appointmentDeposit !== appointmentDeposit ||
+            String(existingDetail.executionId || '').trim() !== expectedExecutionId ||
+            String(existingDetail.mediaMessageId || '').trim() !== expectedMediaMessageId ||
+            Math.abs(Number(existingDetail.amount) - normalizedAmount) >= 0.005 ||
+            String(existingDetail.currency || '').trim().toUpperCase() !== paymentCurrency ||
+            !existingPaymentId
+          ) {
+            throw new Error('El comprobante ya tiene un vínculo incompatible; requiere revisión humana')
+          }
+          const existingPayment = await db.get(
+            'SELECT * FROM payments WHERE id = ? AND contact_id = ?',
+            [existingPaymentId, cleanContactId]
+          )
+          if (!existingPayment) throw new Error('El vínculo del comprobante perdió su ledger de pago')
+          const existingMetadata = safeJsonParse(existingPayment.metadata_json, {})
+          if (
+            existingPayment.status !== 'pending_review' ||
+            existingPayment.payment_mode !== 'manual_review' ||
+            existingPayment.payment_method !== 'bank_transfer' ||
+            existingPayment.payment_provider !== 'manual' ||
+            existingMetadata.bindingEventId !== bindingEventId ||
+            existingMetadata.mediaMessageId !== expectedMediaMessageId ||
+            Math.abs(Number(existingPayment.amount) - normalizedAmount) >= 0.005 ||
+            String(existingPayment.currency || '').trim().toUpperCase() !== paymentCurrency
+          ) {
+            throw new Error('El comprobante ya fue revisado o su ledger no coincide; requiere revisión humana')
+          }
+          return { row: existingPayment, alreadyRegistered: true }
+        }
+
+        const insertedPayment = await insertPayment()
+        const finalDetail = {
+          ...reservationDetail,
+          status: 'pending_review',
+          ledgerPaymentId: insertedPayment.id,
+          amount: Number(insertedPayment.amount),
+          currency: String(insertedPayment.currency || '').trim().toUpperCase(),
+          paymentEnvironment: 'live',
+          confidence: binding.confidence ?? null
+        }
+        const finalized = await db.run(
+          `UPDATE conversational_agent_events
+           SET detail_json = ?
+           WHERE id = ? AND event_type = 'deposit_transfer_pending_review' AND detail_json = ?`,
+          [JSON.stringify(finalDetail), bindingEventId, JSON.stringify(reservationDetail)]
+        )
+        if (Number(finalized?.changes || 0) !== 1) {
+          throw new Error('No se pudo sellar el vínculo durable del comprobante')
+        }
+        return { row: insertedPayment, alreadyRegistered: false }
+      })
+    : { row: await insertPayment(), alreadyRegistered: false }
+
+  logger.info(`Comprobante de transferencia pendiente de revisión para contacto ${cleanContactId}: ${normalizedAmount} ${paymentCurrency}`)
+  return toResult(payment.row, { alreadyRegistered: payment.alreadyRegistered })
 }
 
 /**

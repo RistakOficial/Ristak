@@ -10,6 +10,8 @@ import {
   refundTransaction,
   voidTransaction,
   recordPayment,
+  approveTransferProof,
+  rejectTransferProof,
   sendTransaction,
   getPaymentLink
 } from '../controllers/transactionsController.js'
@@ -54,6 +56,8 @@ router.delete('/:id', deleteTransaction)
 router.post('/:id/refund', refundTransaction)
 router.post('/:id/void', voidTransaction)
 router.post('/:id/record-payment', recordPayment)
+router.post('/:id/approve-transfer-proof', approveTransferProof)
+router.post('/:id/reject-transfer-proof', rejectTransferProof)
 router.post('/:id/send', sendTransaction)
 router.get('/:id/payment-link', getPaymentLink)
 

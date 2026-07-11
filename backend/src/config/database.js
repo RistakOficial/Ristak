@@ -3086,6 +3086,7 @@ async function initTables() {
         description TEXT,
         public_payment_id TEXT,
         payment_url TEXT,
+        payment_link_request_key TEXT,
         stripe_payment_intent_id TEXT,
         stripe_charge_id TEXT,
         mercadopago_payment_id TEXT,
@@ -3111,6 +3112,40 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_contact ON payments(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(date)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)')
+    await db.run('ALTER TABLE payments ADD COLUMN payment_link_request_key TEXT').catch(() => {})
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_payment_link_request_key ON payments(payment_link_request_key)')
+
+    // Reserva durable de links creados por el agente conversacional v2. La fila
+    // nace antes de llamar al proveedor para cerrar reintentos y carreras sin
+    // depender de memoria local ni de que el proveedor soporte idempotencia.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_payment_link_requests (
+        idempotency_key TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        request_json TEXT,
+        contact_id TEXT,
+        invoice_id TEXT,
+        status TEXT NOT NULL,
+        response_json TEXT,
+        binding_event_id TEXT,
+        binding_status TEXT DEFAULT 'pending',
+        binding_error TEXT,
+        bound_at DATETIME,
+        error_status INTEGER,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN request_json TEXT').catch(() => {})
+    await db.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN contact_id TEXT').catch(() => {})
+    await db.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN invoice_id TEXT').catch(() => {})
+    await db.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN binding_event_id TEXT').catch(() => {})
+    await db.run("ALTER TABLE conversational_payment_link_requests ADD COLUMN binding_status TEXT DEFAULT 'pending'").catch(() => {})
+    await db.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN binding_error TEXT').catch(() => {})
+    await db.run('ALTER TABLE conversational_payment_link_requests ADD COLUMN bound_at DATETIME').catch(() => {})
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conversational_payment_link_requests_status ON conversational_payment_link_requests(status, updated_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conversational_payment_link_requests_target ON conversational_payment_link_requests(contact_id, invoice_id, status)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS payment_automation_dispatches (
@@ -3343,6 +3378,7 @@ async function initTables() {
         client_request_id TEXT PRIMARY KEY,
         request_hash TEXT NOT NULL,
         status TEXT NOT NULL,
+        processing_token TEXT,
         appointment_id TEXT,
         response_json TEXT,
         error_status INTEGER,
@@ -3351,6 +3387,7 @@ async function initTables() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+    await db.run('ALTER TABLE appointment_creation_requests ADD COLUMN processing_token TEXT').catch(() => {})
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_creation_request_appointment ON appointment_creation_requests(appointment_id)')
 
     // Calendarios locales de Ristak. Si un calendario viene de HighLevel,
@@ -5675,6 +5712,9 @@ async function initTables() {
         enabled INTEGER DEFAULT 1,
         ai_provider TEXT DEFAULT 'openai',
         model ${DEFAULT_OPENAI_MODEL_COLUMN},
+        runtime_mode TEXT NOT NULL DEFAULT 'legacy_v1',
+        prompt_config TEXT,
+        capabilities_config TEXT,
         identity_mode TEXT DEFAULT 'business',
         identity_user_id TEXT,
         identity_user_name TEXT,
@@ -5709,6 +5749,9 @@ async function initTables() {
     for (const [columnName, columnType] of [
       ['ai_provider', "TEXT DEFAULT 'openai'"],
       ['model', DEFAULT_OPENAI_MODEL_COLUMN],
+      ['runtime_mode', "TEXT NOT NULL DEFAULT 'legacy_v1'"],
+      ['prompt_config', 'TEXT'],
+      ['capabilities_config', 'TEXT'],
       ['identity_mode', "TEXT DEFAULT 'business'"],
       ['identity_user_id', 'TEXT'],
       ['identity_user_name', 'TEXT'],

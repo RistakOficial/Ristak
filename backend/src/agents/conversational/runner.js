@@ -40,6 +40,8 @@ import {
   claimConversationInboundMessage,
   completeConversationInboundMessage,
   failConversationInboundMessage,
+  recoverPendingConversationalPaymentSourceBindings,
+  recoverPendingConversationalPaymentReconciliations,
   runWithConversationStateChannel,
   normalizeConversationalPersuasionLevel,
   normalizeConversationalAgentModel,
@@ -105,9 +107,22 @@ import {
   evaluateTurnPolicy,
   isOpeningConversationTurn
 } from './intelligence/turnPolicy.js'
+import {
+  buildConversationalCapabilityManifest,
+  getConversationalCapabilitiesConfig,
+  getConversationalNativeRuntimeValidationErrors,
+  getConversationalPromptConfig,
+  isToolCallingV2
+} from './nativeRuntimeConfig.js'
+import { buildNativeConversationalInstructions } from './nativePrompt.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 
 const HISTORY_LIMIT = 20
+export const TOOL_CALLING_V2_HISTORY_BYTE_BUDGET = 64 * 1024
+export const TOOL_CALLING_V2_HISTORY_PAGE_SIZE = 100
+export const TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT = 30
+export const TOOL_CALLING_V2_HISTORY_TOOL_BYTE_BUDGET = 16 * 1024
+export const TOOL_CALLING_V2_STORED_MEDIA_BYTE_RESERVE = 16 * 1024
 const MAX_TURNS = 10
 const DEFAULT_MODEL = process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || DEFAULT_OPENAI_MODEL
 const MAX_REPLY_CHARS = 1000
@@ -118,6 +133,21 @@ const PENDING_RECOVERY_PAGE_SIZE = 80
 const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
 const FOLLOW_UP_WINDOW_MS = MAX_FOLLOW_UP_DELAY_MINUTES * 60 * 1000
 const MAX_TIMER_MS = 2_147_483_647
+export const TOOL_CALLING_V2_RUNTIME_MODE = 'tool_calling_v2'
+export const TOOL_CALLING_V2_MODEL_SETTINGS = Object.freeze({
+  parallelToolCalls: false
+})
+export const TOOL_CALLING_V2_DISABLED_LAYERS = Object.freeze([
+  'goal_readiness',
+  'conversation_assessment',
+  'strategy_planner',
+  'approved_learning_context',
+  'turn_policy',
+  'compliance_guard',
+  'runtime_reply_guard',
+  'ai_message_splitter'
+])
+const TOOL_CALLING_V2_FORBIDDEN_TOOLS = new Set(['stay_silent', 'discard_conversation', 'update_closing_context'])
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
 const pendingContactReruns = new Map()
@@ -184,6 +214,7 @@ export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'me
 
 // Palabras internas que jamás deben llegar al cliente final.
 const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link)\b/gi
+const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|update_closing_context|register_deposit_payment_proof)\b/gi
 const INTERNAL_REASONING_LABEL_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|objetivo|decisi[oó]n|criterio|checklist|paso\s+[a-z0-9]+)\s*[:：-]\s*(?:\*\*)?/i
 const INTERNAL_REASONING_MARKER_PATTERN = /(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|criterio|checklist)\s*[:：-]\s*(?:\*\*)?/i
 const VISIBLE_REPLY_PREFIX_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:respuesta|mensaje)\s+(?:visible|final)\s*[:：-]\s*(?:\*\*)?\s*/i
@@ -399,6 +430,26 @@ export function sanitizeAgentReply(text) {
   reply = reply.replace(INTERNAL_TOKEN_PATTERN, '').replace(/\[[^\]]*herramienta[^\]]*\]/gi, '')
   reply = removeInternalReasoningBlocks(reply)
   reply = reply.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  if ((reply.startsWith('"') && reply.endsWith('"')) || (reply.startsWith('“') && reply.endsWith('”'))) {
+    reply = reply.slice(1, -1).trim()
+  }
+  if (reply.length > MAX_REPLY_CHARS) {
+    reply = `${reply.slice(0, MAX_REPLY_CHARS - 1).trim()}…`
+  }
+  return reply
+}
+
+export function sanitizeToolCallingV2Reply(text) {
+  let reply = String(text || '').trim()
+  if (!reply) return ''
+  // Redacción literal de identificadores internos; no analiza intención, tono ni
+  // contenido natural y por eso no rompe palabras como "agendar" ni sus URLs.
+  reply = reply
+    .replace(TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN, 'la acción solicitada')
+    .replace(/\[[^\]]*(?:herramienta|tool call)[^\]]*\]/gi, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
   if ((reply.startsWith('"') && reply.endsWith('"')) || (reply.startsWith('“') && reply.endsWith('”'))) {
     reply = reply.slice(1, -1).trim()
   }
@@ -1041,8 +1092,323 @@ function rowToConversationalMessage(row, channel = 'whatsapp') {
   }
 }
 
-async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOnly = false, limit = HISTORY_LIMIT } = {}) {
+function hasToolCallingV2HistoryContent(message = {}) {
+  const hasText = typeof message.content === 'string' && message.content.trim()
+  const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0
+  const hasStoredMedia = Boolean(message.media_url || message.mediaUrl)
+  return Boolean(hasText || hasAttachments || hasStoredMedia)
+}
+
+function normalizeHistoryByteBudget(value, fallback = TOOL_CALLING_V2_HISTORY_BYTE_BUDGET) {
+  const parsed = Math.trunc(Number(value))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function byteLength(value = '') {
+  return Buffer.byteLength(String(value || ''), 'utf8')
+}
+
+/**
+ * Estimación provider-neutral del peso del mensaje que entra al contexto. No
+ * intenta adivinar tokens de un proveedor concreto: cuenta bytes UTF-8 y la
+ * representación de sus adjuntos. Un mensaje se conserva entero o no entra.
+ */
+export function estimateToolCallingV2HistoryMessageBytes(message = {}) {
+  let total = 48 + byteLength(message.role) + byteLength(message.content)
+  if (message.selectedClarificationOption?.value) {
+    total += byteLength(message.selectedClarificationOption.value) + 32
+  }
+
+  const attachments = Array.isArray(message.attachments) ? message.attachments : []
+  for (const attachment of attachments) {
+    total += 96
+    total += byteLength(attachment?.kind)
+    total += byteLength(attachment?.name)
+    total += byteLength(attachment?.mimeType)
+    total += byteLength(attachment?.text)
+    total += byteLength(attachment?.dataUrl)
+    total += byteLength(attachment?.thumbnailDataUrl)
+  }
+
+  if (message.media_url || message.mediaUrl) {
+    // El binario remoto se hidrata después de armar el sobre. Reservamos un
+    // costo conservador para que cien URLs cortas no parezcan cien mensajes
+    // baratos y después exploten el contexto al convertirse en adjuntos.
+    total += TOOL_CALLING_V2_STORED_MEDIA_BYTE_RESERVE
+    total += byteLength(message.message_type || message.messageType)
+    total += byteLength(message.media_mime_type || message.mediaMimeType)
+    total += byteLength(message.media_filename || message.mediaFilename)
+  }
+  return total
+}
+
+function selectToolCallingV2HistoryTail(messages = [], byteBudget = TOOL_CALLING_V2_HISTORY_BYTE_BUDGET) {
+  const eligible = (Array.isArray(messages) ? messages : []).filter(hasToolCallingV2HistoryContent)
+  const budget = normalizeHistoryByteBudget(byteBudget)
+  let start = eligible.length
+  let includedBytes = 0
+  let latestMessageBytes = 0
+
+  for (let index = eligible.length - 1; index >= 0; index -= 1) {
+    const messageBytes = estimateToolCallingV2HistoryMessageBytes(eligible[index])
+    if (index === eligible.length - 1) latestMessageBytes = messageBytes
+    // El mensaje más reciente nunca se trunca ni se elimina, aun si por sí solo
+    // rebasa el presupuesto. El exceso queda visible en telemetría.
+    if (start === eligible.length || includedBytes + messageBytes <= budget) {
+      start = index
+      includedBytes += messageBytes
+      continue
+    }
+    // El sobre es una cola cronológica continua. No brincamos un mensaje largo
+    // para rescatar otros más viejos y fabricar un hilo con huecos invisibles.
+    break
+  }
+
+  return {
+    allMessages: eligible,
+    messages: eligible.slice(start),
+    includedBytes,
+    latestMessageBytes,
+    byteBudget: budget
+  }
+}
+
+function selectToolCallingV2HistoryHead(messages = [], byteBudget = TOOL_CALLING_V2_HISTORY_TOOL_BYTE_BUDGET) {
+  const eligible = (Array.isArray(messages) ? messages : []).filter(hasToolCallingV2HistoryContent)
+  const budget = normalizeHistoryByteBudget(byteBudget, TOOL_CALLING_V2_HISTORY_TOOL_BYTE_BUDGET)
+  const selected = []
+  let includedBytes = 0
+  let firstMessageBytes = 0
+
+  for (const message of eligible) {
+    const messageBytes = estimateToolCallingV2HistoryMessageBytes(message)
+    if (!selected.length) firstMessageBytes = messageBytes
+    if (!selected.length || includedBytes + messageBytes <= budget) {
+      selected.push(message)
+      includedBytes += messageBytes
+      continue
+    }
+    break
+  }
+
+  return {
+    allMessages: eligible,
+    messages: selected,
+    includedBytes,
+    latestMessageBytes: firstMessageBytes,
+    byteBudget: budget
+  }
+}
+
+function safeHistoryAttachmentSummary(message = {}) {
+  const summaries = []
+  const storedKind = String(message.message_type || message.messageType || '').trim().toLowerCase()
+  if (message.media_url || message.mediaUrl) {
+    const label = {
+      audio: 'audio',
+      image: 'imagen',
+      video: 'video',
+      document: 'documento',
+      file: 'archivo'
+    }[storedKind] || 'archivo'
+    const rawMime = String(message.media_mime_type || message.mediaMimeType || '').trim().slice(0, 120)
+    const mime = /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(rawMime) ? rawMime : ''
+    summaries.push([`Adjunto: ${label}`, mime ? `tipo ${mime}` : ''].filter(Boolean).join(', '))
+  }
+
+  for (const attachment of Array.isArray(message.attachments) ? message.attachments.slice(0, 8) : []) {
+    const rawKind = String(attachment?.kind || '').trim().toLowerCase()
+    const kind = {
+      audio: 'audio',
+      image: 'imagen',
+      video: 'video',
+      pdf: 'documento PDF',
+      document: 'documento',
+      text: 'archivo de texto',
+      file: 'archivo'
+    }[rawKind] || 'archivo'
+    const rawMime = String(attachment?.mimeType || '').trim().slice(0, 120)
+    const mime = /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(rawMime) ? rawMime : ''
+    summaries.push([`Adjunto: ${kind}`, mime ? `tipo ${mime}` : ''].filter(Boolean).join(', '))
+  }
+  return summaries.length ? summaries.join('\n') : null
+}
+
+function safeHistoryToolMessage(message = {}) {
+  return {
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    text: typeof message.content === 'string' && message.content.trim() ? message.content.trim() : null,
+    sentAt: message.messageTimestamp || message.message_timestamp || message.createdAt || message.created_at || null,
+    attachmentSummary: safeHistoryAttachmentSummary(message)
+  }
+}
+
+function normalizeHistoryPageLimit(value) {
+  const parsed = Math.trunc(Number(value))
+  if (!Number.isFinite(parsed)) return TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT
+  return Math.max(1, Math.min(TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT, parsed))
+}
+
+function normalizeHistoryAccessMode(value) {
+  const mode = String(value || '').trim().toLowerCase()
+  return ['previous', 'oldest', 'offset', 'search'].includes(mode) ? mode : 'previous'
+}
+
+function buildHistoryCursor(mode, position) {
+  return `${normalizeHistoryAccessMode(mode)}:${Math.max(0, Math.trunc(Number(position) || 0))}`
+}
+
+function normalizeHistoryCursorPosition(cursor, mode, fallbackPosition = 0) {
+  const minimum = Math.max(0, Math.trunc(Number(fallbackPosition) || 0))
+  const raw = String(cursor ?? '').trim()
+  if (!raw) return minimum
+  const prefixed = raw.match(/^([a-z]+):(\d+)$/i)
+  if (prefixed) {
+    const cursorMode = String(prefixed[1]).toLowerCase()
+    if (!['previous', 'oldest', 'offset', 'search'].includes(cursorMode)) return minimum
+    if (cursorMode !== normalizeHistoryAccessMode(mode)) return minimum
+    const parsed = Number(prefixed[2])
+    return Number.isSafeInteger(parsed) && parsed >= minimum ? parsed : minimum
+  }
+  // Compatibilidad interna con cursores numéricos emitidos por la primera
+  // versión. La tool pública siempre recibe desde ahora cursores con modo.
+  const parsed = Math.trunc(Number(raw))
+  return Number.isSafeInteger(parsed) && parsed >= minimum ? parsed : minimum
+}
+
+function normalizeHistorySearchQuery(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+function buildSafeHistoryPageResult(rows = [], {
+  position,
+  totalMessages = null,
+  byteBudget = TOOL_CALLING_V2_HISTORY_TOOL_BYTE_BUDGET,
+  mode = 'previous',
+  direction = 'tail',
+  hasMore = null
+} = {}) {
+  const normalizedMode = normalizeHistoryAccessMode(mode)
+  const selected = direction === 'head'
+    ? selectToolCallingV2HistoryHead(rows, byteBudget)
+    : selectToolCallingV2HistoryTail(rows, byteBudget)
+  const returnedMessages = selected.messages
+  const nextPosition = Math.max(0, Number(position) || 0) + returnedMessages.length
+  const hasKnownTotal = totalMessages !== null && totalMessages !== undefined && Number.isFinite(Number(totalMessages))
+  const remainingMessages = hasKnownTotal
+    ? Math.max(0, Number(totalMessages) - nextPosition)
+    : null
+  const pageHasMore = typeof hasMore === 'boolean'
+    ? hasMore
+    : Boolean(remainingMessages > 0)
+  return {
+    ok: true,
+    mode: normalizedMode,
+    messages: returnedMessages.map(safeHistoryToolMessage),
+    returnedMessages: returnedMessages.length,
+    includedBytes: selected.includedBytes,
+    remainingMessages,
+    hasMore: pageHasMore,
+    nextCursor: pageHasMore ? buildHistoryCursor(normalizedMode, nextPosition) : null
+  }
+}
+
+function createInMemoryHistoryPageLoader(allMessages, includedMessages) {
+  const totalMessages = allMessages.length
+  const minimumOffset = includedMessages
+  if (minimumOffset >= totalMessages) return null
+  const omittedMessages = allMessages.slice(0, totalMessages - includedMessages)
+
+  return async ({
+    mode = 'previous',
+    cursor = null,
+    offset = null,
+    query = null,
+    limit = TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT
+  } = {}) => {
+    const accessMode = normalizeHistoryAccessMode(mode)
+    const boundedLimit = normalizeHistoryPageLimit(limit)
+    if (accessMode === 'previous') {
+      const position = normalizeHistoryCursorPosition(cursor, accessMode, minimumOffset)
+      const endExclusive = Math.max(0, totalMessages - position)
+      const start = Math.max(0, endExclusive - boundedLimit)
+      const rows = allMessages.slice(start, endExclusive)
+      return buildSafeHistoryPageResult(rows, { position, totalMessages, mode: accessMode })
+    }
+
+    if (accessMode === 'search') {
+      const cleanQuery = normalizeHistorySearchQuery(query)
+      if (!cleanQuery) return { ok: false, mode: accessMode, error: 'Escribe el texto que necesitas buscar en el historial anterior.' }
+      const needle = cleanQuery.toLowerCase()
+      const matches = omittedMessages.filter((message) => {
+        const searchable = [message.content, safeHistoryAttachmentSummary(message)].filter(Boolean).join('\n').toLowerCase()
+        return searchable.includes(needle)
+      })
+      const position = normalizeHistoryCursorPosition(cursor, accessMode, 0)
+      const endExclusive = Math.max(0, matches.length - position)
+      const start = Math.max(0, endExclusive - boundedLimit)
+      const rows = matches.slice(start, endExclusive)
+      return buildSafeHistoryPageResult(rows, {
+        position,
+        totalMessages: matches.length,
+        mode: accessMode
+      })
+    }
+
+    const requestedOffset = accessMode === 'offset'
+      ? Math.max(0, Math.trunc(Number(offset) || 0))
+      : 0
+    const position = normalizeHistoryCursorPosition(cursor, accessMode, requestedOffset)
+    const start = Math.min(omittedMessages.length, position)
+    const rows = omittedMessages.slice(start, start + boundedLimit)
+    return buildSafeHistoryPageResult(rows, {
+      position: start,
+      totalMessages: omittedMessages.length,
+      mode: accessMode,
+      direction: 'head'
+    })
+  }
+}
+
+/**
+ * Constructor único del sobre v2 para preview, pruebas y cualquier caller que
+ * ya tenga mensajes en memoria. Conserva el hilo entero cuando cabe y, cuando
+ * no, deja una pagina factual accesible a la misma instancia del agente.
+ */
+export function buildToolCallingV2HistoryEnvelope(messages = [], {
+  byteBudget = TOOL_CALLING_V2_HISTORY_BYTE_BUDGET,
+  source = 'memory'
+} = {}) {
+  const selected = selectToolCallingV2HistoryTail(messages, byteBudget)
+  const totalMessages = selected.allMessages.length
+  const includedMessages = selected.messages.length
+  const omittedMessages = Math.max(0, totalMessages - includedMessages)
+  const telemetry = {
+    source,
+    totalMessages,
+    includedMessages,
+    omittedMessages,
+    includedBytes: selected.includedBytes,
+    byteBudget: selected.byteBudget,
+    latestMessageBytes: selected.latestMessageBytes,
+    overBudget: selected.includedBytes > selected.byteBudget
+  }
+  return {
+    messages: selected.messages,
+    telemetry,
+    loadOlderPage: createInMemoryHistoryPageLoader(selected.allMessages, includedMessages)
+  }
+}
+
+async function loadConversationRows(contactId, channel = 'whatsapp', {
+  inboundOnly = false,
+  limit = HISTORY_LIMIT,
+  offset = 0,
+  contentOnly = false
+} = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel)
+  const boundedLimit = Math.max(1, Math.trunc(Number(limit) || HISTORY_LIMIT))
+  const boundedOffset = Math.max(0, Math.trunc(Number(offset) || 0))
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
     const rows = await db.all(`
@@ -1053,9 +1419,10 @@ async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOn
       WHERE contact_id = ? AND platform = ?
         AND message_type IN ('comment', 'comment_reply_public', 'comment_reply_private')
         ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
-      ORDER BY COALESCE(message_timestamp, created_at) DESC
-      LIMIT ?
-    `, [contactId, platform, limit])
+        ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
+      ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
+      LIMIT ? OFFSET ?
+    `, [contactId, platform, boundedLimit, boundedOffset])
     return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
   }
   if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
@@ -1067,9 +1434,10 @@ async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOn
       WHERE contact_id = ? AND platform = ?
         AND message_type NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
         ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
-      ORDER BY COALESCE(message_timestamp, created_at) DESC
-      LIMIT ?
-    `, [contactId, normalizedChannel, limit])
+        ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
+      ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
+      LIMIT ? OFFSET ?
+    `, [contactId, normalizedChannel, boundedLimit, boundedOffset])
     return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
   }
 
@@ -1081,9 +1449,10 @@ async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOn
       FROM email_messages
       WHERE contact_id = ?
         ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
-      ORDER BY COALESCE(message_timestamp, created_at) DESC
-      LIMIT ?
-    `, [contactId, limit])
+        ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(subject, '')) <> '')" : ''}
+      ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
+      LIMIT ? OFFSET ?
+    `, [contactId, boundedLimit, boundedOffset])
     return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
   }
 
@@ -1095,14 +1464,322 @@ async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOn
     WHERE contact_id = ?
       ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
       ${phoneMessageTransportFilter(normalizedChannel)}
-    ORDER BY COALESCE(message_timestamp, created_at) DESC
-    LIMIT ?
-  `, [contactId, limit])
+      ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
+    ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
+    LIMIT ? OFFSET ?
+  `, [contactId, boundedLimit, boundedOffset])
   return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
 }
 
-async function loadConversationHistory(contactId, channel = 'whatsapp') {
-  return loadConversationRows(contactId, channel, { limit: HISTORY_LIMIT })
+async function loadConversationHistory(contactId, channel = 'whatsapp', { limit = HISTORY_LIMIT } = {}) {
+  return loadConversationRows(contactId, channel, { limit })
+}
+
+async function countConversationRows(contactId, channel = 'whatsapp', { contentOnly = false } = {}) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
+    const platform = commentChannelToPlatform(normalizedChannel)
+    const row = await db.get(`
+      SELECT COUNT(*) AS total
+      FROM meta_social_messages
+      WHERE contact_id = ? AND platform = ?
+        AND message_type IN ('comment', 'comment_reply_public', 'comment_reply_private')
+        ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
+    `, [contactId, platform])
+    return Math.max(0, Number(row?.total) || 0)
+  }
+  if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
+    const row = await db.get(`
+      SELECT COUNT(*) AS total
+      FROM meta_social_messages
+      WHERE contact_id = ? AND platform = ?
+        AND message_type NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
+        ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
+    `, [contactId, normalizedChannel])
+    return Math.max(0, Number(row?.total) || 0)
+  }
+  if (normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL) {
+    const row = await db.get(`
+      SELECT COUNT(*) AS total
+      FROM email_messages
+      WHERE contact_id = ?
+        ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(subject, '')) <> '')" : ''}
+    `, [contactId])
+    return Math.max(0, Number(row?.total) || 0)
+  }
+
+  const row = await db.get(`
+    SELECT COUNT(*) AS total
+    FROM whatsapp_api_messages
+    WHERE contact_id = ?
+      ${phoneMessageTransportFilter(normalizedChannel)}
+      ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
+  `, [contactId])
+  return Math.max(0, Number(row?.total) || 0)
+}
+
+function escapeHistoryLikeQuery(value) {
+  return normalizeHistorySearchQuery(value).toLowerCase().replace(/[\\%_]/g, '\\$&')
+}
+
+function buildHistorySearchBoundary(beforeMessage = {}) {
+  const timestamp = String(
+    beforeMessage.messageTimestamp ||
+    beforeMessage.message_timestamp ||
+    beforeMessage.createdAt ||
+    beforeMessage.created_at ||
+    ''
+  ).trim()
+  const id = String(beforeMessage.id || '').trim()
+  return timestamp && id ? { timestamp, id } : null
+}
+
+/**
+ * Búsqueda literal server-side limitada al tramo omitido del mismo contacto y
+ * canal. El ID de frontera sólo participa dentro del closure/SQL y jamás sale
+ * en el resultado visible para el modelo.
+ */
+async function searchConversationRows(contactId, channel = 'whatsapp', {
+  query,
+  limit = TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT,
+  offset = 0,
+  beforeMessage = null
+} = {}) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const cleanQuery = escapeHistoryLikeQuery(query)
+  if (!cleanQuery) return []
+  const pattern = `%${cleanQuery}%`
+  const boundedLimit = Math.max(1, Math.min(TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT + 1, Math.trunc(Number(limit) || TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT)))
+  const boundedOffset = Math.max(0, Math.trunc(Number(offset) || 0))
+  const boundary = buildHistorySearchBoundary(beforeMessage)
+  if (!boundary) return []
+  const boundarySql = `AND (
+    COALESCE(message_timestamp, created_at) < ? OR
+    (COALESCE(message_timestamp, created_at) = ? AND id < ?)
+  )`
+  const boundaryParams = [boundary.timestamp, boundary.timestamp, boundary.id]
+
+  if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
+    const platform = commentChannelToPlatform(normalizedChannel)
+    const rows = await db.all(`
+      SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+             NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
+             platform, raw_payload_json
+      FROM meta_social_messages
+      WHERE contact_id = ? AND platform = ?
+        AND message_type IN ('comment', 'comment_reply_public', 'comment_reply_private')
+        AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')
+        ${boundarySql}
+        AND LOWER(COALESCE(message_text, '')) LIKE ? ESCAPE '\\'
+      ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
+      LIMIT ? OFFSET ?
+    `, [contactId, platform, ...boundaryParams, pattern, boundedLimit, boundedOffset])
+    return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
+  }
+
+  if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
+    const rows = await db.all(`
+      SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+             NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
+             platform, raw_payload_json
+      FROM meta_social_messages
+      WHERE contact_id = ? AND platform = ?
+        AND message_type NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
+        AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')
+        ${boundarySql}
+        AND LOWER(COALESCE(message_text, '')) LIKE ? ESCAPE '\\'
+      ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
+      LIMIT ? OFFSET ?
+    `, [contactId, normalizedChannel, ...boundaryParams, pattern, boundedLimit, boundedOffset])
+    return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
+  }
+
+  if (normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL) {
+    const rows = await db.all(`
+      SELECT id, direction, 'email' AS message_type, message_text, NULL AS media_url,
+             NULL AS media_mime_type, NULL AS media_filename, NULL AS media_duration_ms,
+             subject, from_email, to_email, reply_to, message_timestamp, created_at, raw_payload_json
+      FROM email_messages
+      WHERE contact_id = ?
+        AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(subject, '')) <> '')
+        ${boundarySql}
+        AND LOWER(COALESCE(subject, '') || ' ' || COALESCE(message_text, '')) LIKE ? ESCAPE '\\'
+      ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
+      LIMIT ? OFFSET ?
+    `, [contactId, ...boundaryParams, pattern, boundedLimit, boundedOffset])
+    return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
+  }
+
+  const rows = await db.all(`
+    SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+           media_filename, media_duration_ms, phone, business_phone, business_phone_number_id,
+           NULL AS subject, transport, message_timestamp, created_at, raw_payload_json
+    FROM whatsapp_api_messages
+    WHERE contact_id = ?
+      ${phoneMessageTransportFilter(normalizedChannel)}
+      AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')
+      ${boundarySql}
+      AND LOWER(COALESCE(message_text, '')) LIKE ? ESCAPE '\\'
+    ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
+    LIMIT ? OFFSET ?
+  `, [contactId, ...boundaryParams, pattern, boundedLimit, boundedOffset])
+  return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
+}
+
+/**
+ * Carga el historial vivo desde la fuente canónica en páginas, empezando por
+ * lo más reciente y deteniéndose al llenar el presupuesto. Un COUNT separado
+ * permite reportar cuántos mensajes quedaron fuera sin leer todo el hilo.
+ */
+export async function loadToolCallingV2ConversationEnvelope({
+  contactId,
+  channel = 'whatsapp',
+  byteBudget = TOOL_CALLING_V2_HISTORY_BYTE_BUDGET,
+  pageSize = TOOL_CALLING_V2_HISTORY_PAGE_SIZE
+} = {}, dependencies = {}) {
+  const loadRows = dependencies.loadRows || loadConversationRows
+  const countRows = dependencies.countRows || countConversationRows
+  const searchRows = dependencies.searchRows || searchConversationRows
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const budget = normalizeHistoryByteBudget(byteBudget)
+  const boundedPageSize = Math.max(1, Math.trunc(Number(pageSize) || TOOL_CALLING_V2_HISTORY_PAGE_SIZE))
+  const totalMessages = await countRows(contactId, normalizedChannel, { contentOnly: true })
+  const newestFirst = []
+  let includedBytes = 0
+  let latestMessageBytes = 0
+  let offset = 0
+  let pagesLoaded = 0
+  let full = totalMessages === 0
+
+  while (offset < totalMessages) {
+    const page = await loadRows(contactId, normalizedChannel, {
+      limit: boundedPageSize,
+      offset,
+      contentOnly: true
+    })
+    pagesLoaded += 1
+    if (!page.length) {
+      full = true
+      break
+    }
+
+    let budgetReached = false
+    for (let index = page.length - 1; index >= 0; index -= 1) {
+      const message = page[index]
+      if (!hasToolCallingV2HistoryContent(message)) continue
+      const messageBytes = estimateToolCallingV2HistoryMessageBytes(message)
+      if (!newestFirst.length) latestMessageBytes = messageBytes
+      if (!newestFirst.length || includedBytes + messageBytes <= budget) {
+        newestFirst.push(message)
+        includedBytes += messageBytes
+        continue
+      }
+      budgetReached = true
+      break
+    }
+
+    offset += page.length
+    if (budgetReached) break
+    if (page.length < boundedPageSize || offset >= totalMessages) {
+      full = true
+      break
+    }
+  }
+
+  const messages = newestFirst.reverse()
+  const includedMessages = messages.length
+  const omittedMessages = Math.max(0, totalMessages - includedMessages)
+  const telemetry = {
+    source: 'database',
+    totalMessages,
+    includedMessages,
+    omittedMessages,
+    includedBytes,
+    byteBudget: budget,
+    latestMessageBytes,
+    overBudget: includedBytes > budget,
+    pagesLoaded,
+    historyComplete: omittedMessages === 0 && full
+  }
+
+  const loadOlderPage = omittedMessages > 0
+    ? async ({
+        mode = 'previous',
+        cursor = null,
+        offset: requestedOffset = null,
+        query = null,
+        limit = TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT
+      } = {}) => {
+        const accessMode = normalizeHistoryAccessMode(mode)
+        const boundedLimit = normalizeHistoryPageLimit(limit)
+        if (accessMode === 'previous') {
+          const position = normalizeHistoryCursorPosition(cursor, accessMode, includedMessages)
+          const rows = await loadRows(contactId, normalizedChannel, {
+            limit: boundedLimit,
+            offset: position,
+            contentOnly: true
+          })
+          return buildSafeHistoryPageResult(rows, {
+            position,
+            totalMessages,
+            mode: accessMode
+          })
+        }
+
+        if (accessMode === 'search') {
+          const cleanQuery = normalizeHistorySearchQuery(query)
+          if (!cleanQuery) return { ok: false, mode: accessMode, error: 'Escribe el texto que necesitas buscar en el historial anterior.' }
+          const position = normalizeHistoryCursorPosition(cursor, accessMode, 0)
+          const fetchedRows = await searchRows(contactId, normalizedChannel, {
+            query: cleanQuery,
+            limit: boundedLimit + 1,
+            offset: position,
+            beforeMessage: messages[0]
+          })
+          const rows = fetchedRows.length > boundedLimit ? fetchedRows.slice(-boundedLimit) : fetchedRows
+          const result = buildSafeHistoryPageResult(rows, {
+            position,
+            totalMessages: null,
+            mode: accessMode
+          })
+          const pageHasMore = fetchedRows.length > result.returnedMessages
+          return {
+            ...result,
+            hasMore: pageHasMore,
+            nextCursor: pageHasMore
+              ? buildHistoryCursor(accessMode, position + result.returnedMessages)
+              : null
+          }
+        }
+
+        const omittedTotal = omittedMessages
+        const initialPosition = accessMode === 'offset'
+          ? Math.max(0, Math.trunc(Number(requestedOffset) || 0))
+          : 0
+        const position = Math.min(
+          omittedTotal,
+          normalizeHistoryCursorPosition(cursor, accessMode, initialPosition)
+        )
+        const endExclusive = Math.min(omittedTotal, position + boundedLimit)
+        const rowCount = Math.max(0, endExclusive - position)
+        const newestOffset = Math.max(includedMessages, totalMessages - endExclusive)
+        const rows = rowCount > 0
+          ? await loadRows(contactId, normalizedChannel, {
+              limit: rowCount,
+              offset: newestOffset,
+              contentOnly: true
+            })
+          : []
+        return buildSafeHistoryPageResult(rows, {
+          position,
+          totalMessages: omittedTotal,
+          mode: accessMode,
+          direction: 'head'
+        })
+      }
+    : null
+
+  return { messages, telemetry, loadOlderPage }
 }
 
 async function loadPendingInboundMessages(contactId, state = {}, channel = 'whatsapp') {
@@ -1340,6 +2017,259 @@ async function buildPastClientRuntimeContext({ config, contactId, agentState = n
   return { enabled: true, evidence: evidence.isPastClient ? evidence : null }
 }
 
+function nativeActionSucceeded(action = {}) {
+  const outcome = action?.outcome || {}
+  if (outcome.simulated === true || outcome.status === 'simulated') return false
+  return outcome.ok === true || outcome.status === 'ok' || action?.ok === true
+}
+
+function nativeActionFailed(action = {}) {
+  const outcome = action?.outcome || {}
+  return outcome.status === 'error' || outcome.ok === false || action?.ok === false || Boolean(action?.error || outcome?.error)
+}
+
+function nativeActionVisibleUrl(action = {}) {
+  const candidates = [
+    action?.outcome?.sentUrl,
+    action?.outcome?.paymentLink,
+    action?.sentUrl,
+    action?.paymentLink
+  ]
+  for (const value of candidates) {
+    const clean = String(value || '').trim()
+    if (/^https?:\/\/\S+$/i.test(clean)) return clean
+  }
+  return ''
+}
+
+export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
+  let visible = sanitizeToolCallingV2Reply(reply)
+  const confirmed = (Array.isArray(actions) ? actions : []).find(nativeActionSucceeded)
+  if (!visible) {
+    if (confirmed?.type === 'book_appointment') visible = 'listo, la cita quedó confirmada'
+    else if (confirmed?.type === 'create_payment_link') visible = 'listo, ya preparé el enlace de pago. el pago seguirá pendiente hasta que el sistema lo confirme'
+    else if (confirmed?.type === 'send_goal_url' || confirmed?.type === 'send_trigger_link') {
+      const sentUrl = nativeActionVisibleUrl(confirmed)
+      visible = sentUrl ? `listo, aquí tienes el enlace para continuar: ${sentUrl}` : 'listo, ya preparé el enlace para continuar'
+    } else if (confirmed?.type === 'send_to_human' || confirmed?.type === 'mark_ready_to_advance') {
+      visible = 'claro, el equipo continuará contigo desde aquí'
+    } else if ((Array.isArray(actions) ? actions : []).some(nativeActionFailed)) {
+      visible = 'no pude completar ese paso todavía. puedo intentarlo de nuevo o ayudarte con otra opción'
+    } else {
+      visible = 'claro, aquí sigo contigo. qué te gustaría resolver?'
+    }
+  }
+
+  const requiredLinks = []
+  for (const action of Array.isArray(actions) ? actions : []) {
+    if (!nativeActionSucceeded(action)) continue
+    if (!['create_payment_link', 'send_goal_url', 'send_trigger_link'].includes(action?.type)) continue
+    const url = nativeActionVisibleUrl(action)
+    if (!url || requiredLinks.some((item) => item.url === url)) continue
+    requiredLinks.push({ type: action.type, url })
+  }
+  for (const link of requiredLinks) {
+    if (visible.includes(link.url)) continue
+    const label = link.type === 'create_payment_link' ? 'enlace de pago' : 'enlace para continuar'
+    visible = `${visible}\n\n${label}: ${link.url}`
+  }
+  return visible
+}
+
+export function createToolCallingV2Agent({ model, instructions, tools = [] } = {}) {
+  return new Agent({
+    name: 'Ristak · Agente conversacional nativo',
+    model,
+    modelSettings: { ...TOOL_CALLING_V2_MODEL_SETTINGS },
+    instructions,
+    tools
+  })
+}
+
+async function buildToolCallingV2AgentForRun({
+  config,
+  conversationModel,
+  contactId,
+  contactName,
+  dryRun,
+  channel = 'whatsapp',
+  knowledgeQuery = '',
+  executionId = '',
+  followUpContext = null,
+  historyContext = null,
+  runtimeEventContext = ''
+}) {
+  const [aiConfig, timezone, businessProfile, accountLocale] = await Promise.all([
+    getAIAgentConfig({}),
+    getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
+    getBusinessProfileSnapshot().catch(() => null),
+    getAccountLocaleSettings().catch(() => ({}))
+  ])
+
+  const aiProvider = normalizeConversationalAIProvider(config?.aiProvider)
+  const model = normalizeConversationalAgentModel(conversationModel || config?.model || DEFAULT_MODEL, aiProvider)
+  const nowIso = new Date().toLocaleString(getAccountRegionalLocaleTag(accountLocale), {
+    timeZone: timezone,
+    dateStyle: 'full',
+    timeStyle: 'short'
+  })
+
+  let businessName = null
+  try {
+    const hlRow = await db.get('SELECT location_data FROM highlevel_config LIMIT 1')
+    businessName = hlRow?.location_data ? JSON.parse(hlRow.location_data)?.name || null : null
+  } catch { /* sin HighLevel */ }
+  if (!businessName) {
+    const userRow = await db.get('SELECT business_name FROM users ORDER BY id ASC LIMIT 1').catch(() => null)
+    businessName = userRow?.business_name || null
+  }
+
+  const promptConfig = getConversationalPromptConfig(config)
+  const capabilitiesConfig = getConversationalCapabilitiesConfig(config)
+  const capabilityManifest = buildConversationalCapabilityManifest(config)
+  const ctx = {
+    contactId,
+    config,
+    dryRun,
+    channel: normalizeConversationalChannel(channel),
+    followUpMode: Boolean(followUpContext),
+    executionId: String(executionId || '').trim(),
+    accountLocale,
+    runtimeMode: TOOL_CALLING_V2_RUNTIME_MODE,
+    promptConfig,
+    capabilitiesConfig,
+    capabilityManifest,
+    historyContext,
+    loadConversationHistoryPage: historyContext?.loadOlderPage || null,
+    actions: [],
+    suppressReply: false
+  }
+  // Defensa adicional del runner: aunque una factory vieja exponga tools que
+  // silencian o vuelven a analizar intención, el carril v2 nunca las entrega al modelo.
+  const tools = createConversationalTools(ctx).filter((candidate) => (
+    !TOOL_CALLING_V2_FORBIDDEN_TOOLS.has(String(candidate?.name || '').trim())
+  ))
+  const knowledge = retrieveRelevantBusinessKnowledge({
+    businessProfile,
+    fallbackContext: buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile),
+    query: knowledgeQuery,
+    maxChars: 10000
+  })
+  const baseInstructions = buildNativeConversationalInstructions({
+    promptConfig,
+    capabilityManifest,
+    capabilitiesConfig,
+    businessContext: knowledge.context,
+    brandVoice: String(aiConfig?.brand_voice || '').trim(),
+    businessName,
+    timezone,
+    nowIso,
+    contactName,
+    channel: getChannelLabel(channel),
+    followUpContext,
+    historyContext: historyContext?.telemetry || null
+  })
+  const cleanRuntimeEventContext = String(runtimeEventContext || '').trim().slice(0, 2000)
+  const instructions = cleanRuntimeEventContext
+    ? `${baseInstructions}\n\n## Estado factual verificado por Ristak\n${cleanRuntimeEventContext}\n- Este bloque es contexto interno del sistema, no un mensaje del cliente. No lo cites, no muestres IDs ni expliques la maquinaria interna.`
+    : baseInstructions
+
+  const agent = createToolCallingV2Agent({ model, instructions, tools })
+
+  return {
+    agent,
+    ctx,
+    model,
+    aiProvider,
+    capabilityManifest,
+    validationErrors: getConversationalNativeRuntimeValidationErrors(config),
+    knowledge
+  }
+}
+
+/**
+ * Única ruta de razonamiento para tool_calling_v2. La usan tanto el runtime vivo
+ * como el preview; no recibe ni invoca assessment, planners, learning o guards.
+ */
+export async function runToolCallingV2Turn({
+  config,
+  runtime,
+  messages = [],
+  contactId = null,
+  contactName = null,
+  dryRun = false,
+  channel = 'whatsapp',
+  traceMessage = '',
+  executionId = '',
+  conversationModel = null,
+  followUpContext = null,
+  historyEnvelope = null,
+  runtimeEventContext = ''
+} = {}, dependencies = {}) {
+  const buildAgent = dependencies.buildAgentForRun || buildToolCallingV2AgentForRun
+  const runMainAgent = dependencies.executeAgent || executeAgent
+  const runInChannel = dependencies.runInChannel || runWithConversationStateChannel
+  const preparedHistory = historyEnvelope && Array.isArray(historyEnvelope.messages)
+    ? historyEnvelope
+    : buildToolCallingV2HistoryEnvelope(messages, { source: dryRun ? 'preview' : 'memory' })
+  const selectedMessages = preparedHistory.messages
+  const historyContext = {
+    telemetry: preparedHistory.telemetry,
+    loadOlderPage: typeof preparedHistory.loadOlderPage === 'function' ? preparedHistory.loadOlderPage : null
+  }
+  const built = await buildAgent({
+    config,
+    conversationModel,
+    contactId,
+    contactName,
+    dryRun,
+    channel,
+    knowledgeQuery: traceMessage,
+    executionId,
+    followUpContext,
+    historyContext,
+    runtimeEventContext
+  })
+
+  const { agent, ctx, model, aiProvider } = built
+  ctx.runtimeMode = TOOL_CALLING_V2_RUNTIME_MODE
+  ctx.aiRuntime = runtime
+  ctx.model = model
+  ctx.conversationMessages = selectedMessages
+  ctx.historyContext = historyContext
+  ctx.loadConversationHistoryPage = historyContext.loadOlderPage
+  ctx.suppressReply = false
+
+  const runTelemetry = { history: preparedHistory.telemetry }
+  const generatedReply = await runInChannel(normalizeConversationalChannel(channel), () => runMainAgent({
+    agent,
+    modelProvider: runtime.modelProvider,
+    messages: selectedMessages,
+    contactId,
+    model,
+    aiProvider,
+    channel,
+    traceMessage,
+    runtimeMode: TOOL_CALLING_V2_RUNTIME_MODE,
+    preserveAllMessages: true,
+    historyTelemetry: preparedHistory.telemetry,
+    runTelemetry
+  }))
+  const reply = ensureToolCallingV2VisibleReply(generatedReply, ctx.actions)
+  // Las tools de silencio/descarte no están expuestas. Esta asignación evita que
+  // una implementación vieja de la factory arrastre suppression al carril v2.
+  ctx.suppressReply = false
+
+  return {
+    ...built,
+    reply,
+    runtimeMode: TOOL_CALLING_V2_RUNTIME_MODE,
+    modelCallCount: Math.max(1, Number(runTelemetry.modelCallCount) || 0),
+    historyTelemetry: preparedHistory.telemetry,
+    disabledLayers: TOOL_CALLING_V2_DISABLED_LAYERS
+  }
+}
+
 async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '', executionId = '', priceInsistenceCount = 0, schedulingInsistenceCount = 0, pastClientContext = null }) {
   const [aiConfig, timezone, businessProfile, accountLocale, approvedLearning] = await Promise.all([
     getAIAgentConfig({}),
@@ -1413,7 +2343,22 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
   return { agent, ctx, model, aiProvider, compiledPolicy, approvedLearning, knowledge }
 }
 
-async function executeAgent({ agent, modelProvider, messages, contactId, model, aiProvider = 'openai', channel = 'whatsapp', traceMessage = '', intelligenceTrace = null }) {
+async function executeAgent({
+  agent,
+  modelProvider,
+  messages,
+  contactId,
+  model,
+  aiProvider = 'openai',
+  channel = 'whatsapp',
+  traceMessage = '',
+  intelligenceTrace = null,
+  runtimeMode = 'legacy_v1',
+  inputLimit = null,
+  preserveAllMessages = false,
+  historyTelemetry = null,
+  runTelemetry = null
+}) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   let agentRun = null
   try {
@@ -1426,7 +2371,13 @@ async function executeAgent({ agent, modelProvider, messages, contactId, model, 
       domain: 'conversacional',
       action: normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL ? 'email_reply' : 'chat_reply',
       model,
-      route: { engine: aiProvider === 'openai' ? 'openai-agents-sdk' : `${aiProvider}-openai-compatible`, category: 'conversacional', contactId, channel: normalizedChannel }
+      route: {
+        engine: aiProvider === 'openai' ? 'openai-agents-sdk' : `${aiProvider}-openai-compatible`,
+        category: 'conversacional',
+        contactId,
+        channel: normalizedChannel,
+        runtimeMode
+      }
     })
     if (intelligenceTrace) {
       await recordAgentStep(agentRun, {
@@ -1444,18 +2395,30 @@ async function executeAgent({ agent, modelProvider, messages, contactId, model, 
       modelProvider,
       tracingDisabled: true
     })
-    const result = await runner.run(agent, buildInputItems(messages), {
-      maxTurns: MAX_TURNS,
-      context: { category: 'conversacional', contactId }
-    })
+    const result = await runner.run(
+      agent,
+      buildInputItems(messages, preserveAllMessages
+        ? { preserveAll: true }
+        : (inputLimit ? { limit: inputLimit } : undefined)),
+      {
+        maxTurns: MAX_TURNS,
+        context: { category: 'conversacional', contactId, runtimeMode }
+      }
+    )
 
-    const reply = sanitizeAgentReply(result.finalOutput)
+    const reply = runtimeMode === TOOL_CALLING_V2_RUNTIME_MODE
+      ? sanitizeToolCallingV2Reply(result.finalOutput)
+      : sanitizeAgentReply(result.finalOutput)
+    const modelCallCount = Math.max(1, Array.isArray(result.rawResponses) ? result.rawResponses.length : 0)
+    if (runTelemetry && typeof runTelemetry === 'object') {
+      runTelemetry.modelCallCount = modelCallCount
+    }
     await recordAgentStep(agentRun, {
       stepType: 'final_response',
       status: 'completed',
-      output: { reply: reply.slice(0, 1600), model, aiProvider }
+      output: { reply: reply.slice(0, 1600), model, aiProvider, runtimeMode, modelCallCount, history: historyTelemetry }
     })
-    await completeAgentRun(agentRun, { status: 'completed', reply, model, aiProvider, usage: null })
+    await completeAgentRun(agentRun, { status: 'completed', reply, model, aiProvider, runtimeMode, modelCallCount, history: historyTelemetry, usage: null })
 
     return reply
   } catch (error) {
@@ -1758,8 +2721,14 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
   const runtime = await resolveConversationalAIRuntime(aiProvider)
   agentConfig = { ...agentConfig, aiProvider }
+  const toolCallingV2 = isToolCallingV2(agentConfig)
   const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-  const rawMessages = await loadConversationHistory(contactId, normalizedChannel)
+  const historyEnvelope = toolCallingV2
+    ? await loadToolCallingV2ConversationEnvelope({ contactId, channel: normalizedChannel })
+    : null
+  const rawMessages = toolCallingV2
+    ? historyEnvelope.messages
+    : await loadConversationHistory(contactId, normalizedChannel, { limit: HISTORY_LIMIT })
   const openAIFallbackApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
@@ -1774,6 +2743,164 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   if (!hydratedMessages.length) return
 
   const followUp = normalizeAgentFollowUp(agentConfig.followUp)
+  if (toolCallingV2) {
+    const turn = await runToolCallingV2Turn({
+      config: agentConfig,
+      runtime,
+      messages: hydratedMessages,
+      contactId,
+      contactName: contact?.full_name || null,
+      dryRun: false,
+      channel: normalizedChannel,
+      traceMessage: `seguimiento ${followUpIndex}: ${cleanMessageText(latest)}`,
+      executionId: `followup:${baseMessageId}:${followUpIndex}`,
+      conversationModel: agentConfig.model || config.model,
+      followUpContext: { index: followUpIndex, strategy: followUp.strategy },
+      historyEnvelope: { ...historyEnvelope, messages: hydratedMessages }
+    })
+    const { ctx, model, reply } = turn
+
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'native_runtime_follow_up_completed',
+      detail: {
+        agentId: agentConfig.id,
+        baseMessageId,
+        followUpIndex,
+        channel: normalizedChannel,
+        runtimeMode: turn.runtimeMode,
+        modelCallCount: turn.modelCallCount,
+        history: turn.historyTelemetry,
+        disabledLayers: turn.disabledLayers,
+        actionTypes: ctx.actions.map((action) => action?.type).filter(Boolean)
+      }
+    }).catch(() => {})
+
+    // Estado, ventana y llegada de mensajes nuevos son hechos externos. Son las
+    // unicas razones para frenar un seguimiento que ya produjo texto visible.
+    const postState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel })
+    if (postState?.status !== 'active' || postState?.signal) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'follow_up_suppressed',
+        detail: {
+          agentId: agentConfig.id,
+          baseMessageId,
+          followUpIndex,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: 'external_conversation_state',
+          status: postState?.status || null,
+          signal: postState?.signal || null
+        }
+      }).catch(() => {})
+      return
+    }
+
+    const latestBeforeSend = await loadNewerInboundMessage(contactId, baseMessageId, normalizedChannel)
+    if (latestBeforeSend) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'follow_up_suppressed',
+        detail: {
+          agentId: agentConfig.id,
+          baseMessageId,
+          followUpIndex,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: 'newer_inbound_before_follow_up',
+          newerMessageId: latestBeforeSend.id
+        }
+      }).catch(() => {})
+      return
+    }
+
+    const delivery = await sendReplyParts({
+      contactId,
+      phone,
+      latest,
+      agentConfig,
+      reply,
+      apiKey: runtime.apiKey,
+      model,
+      channel: normalizedChannel,
+      externalIdPrefix: `convagent_followup${followUpIndex}`,
+      dependencies: {
+        splitter: splitMessageIntoBubblesFallback,
+        markReplyComplete: async ({ contactId: doneContactId, latest: doneLatest }) => {
+          await db.run(`
+            UPDATE conversational_agent_state
+            SET last_reply_at = CURRENT_TIMESTAMP,
+                last_answered_inbound_message_id = ?,
+                follow_up_sent_count = ?,
+                follow_up_last_sent_at = CURRENT_TIMESTAMP,
+                activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
+                activation_source = COALESCE(activation_source, 'automatic'),
+                activated_by = COALESCE(activated_by, 'agent'),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE contact_id = ?
+              AND agent_id = ?
+              AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+          `, [doneLatest.id, followUpIndex, doneContactId, agentConfig.id, normalizedChannel])
+        }
+      }
+    })
+
+    if (delivery.interruptedBy) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'follow_up_suppressed',
+        detail: {
+          agentId: agentConfig.id,
+          baseMessageId,
+          followUpIndex,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: 'newer_inbound_during_follow_up',
+          newerMessageId: delivery.interruptedBy.id,
+          sentParts: delivery.sentParts
+        }
+      }).catch(() => {})
+      return
+    }
+
+    if (!delivery.parts.length) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'follow_up_suppressed',
+        detail: {
+          agentId: agentConfig.id,
+          baseMessageId,
+          followUpIndex,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: 'empty_follow_up_delivery'
+        }
+      }).catch(() => {})
+      return
+    }
+
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'follow_up_sent',
+      detail: {
+        agentId: agentConfig.id,
+        baseMessageId,
+        followUpIndex,
+        channel: normalizedChannel,
+        partCount: delivery.parts.length,
+        replyPreview: reply.slice(0, 280),
+        aiProvider,
+        runtimeMode: turn.runtimeMode,
+        modelCallCount: turn.modelCallCount
+      }
+    }).catch(() => {})
+
+    const nextState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel }).catch(() => null)
+    scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado', channel: normalizedChannel })
+    return
+  }
+
   const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
     config: agentConfig,
     conversationModel: agentConfig.model || config.model,
@@ -2094,6 +3221,407 @@ export async function sendReplyParts({
   }
 
   return { parts, sentParts: parts.length, interruptedBy: null, delaySchedule }
+}
+
+function toolCallingV2OwnsTerminalState(actions = []) {
+  const stateChangingTools = new Set([
+    'book_appointment',
+    'mark_ready_to_advance',
+    'send_to_human'
+  ])
+  return (Array.isArray(actions) ? actions : []).some((action) => (
+    stateChangingTools.has(String(action?.type || '')) && nativeActionSucceeded(action)
+  ))
+}
+
+async function handleToolCallingV2InboundTurn({
+  contactId,
+  contact,
+  phone,
+  latest,
+  messages,
+  historyEnvelope,
+  pendingMessages = [],
+  agentConfig,
+  runtime,
+  aiProvider,
+  channel,
+  traceMessage,
+  settleActiveClaim
+}) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const turn = await runToolCallingV2Turn({
+    config: agentConfig,
+    runtime,
+    messages,
+    contactId,
+    contactName: contact?.full_name || null,
+    dryRun: false,
+    channel: normalizedChannel,
+    traceMessage,
+    executionId: latest.id,
+    conversationModel: agentConfig.model,
+    historyEnvelope: { ...historyEnvelope, messages }
+  })
+  const { ctx, model, reply } = turn
+
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'native_runtime_turn_completed',
+    detail: {
+      agentId: agentConfig.id || null,
+      messageId: latest.id,
+      channel: normalizedChannel,
+      runtimeMode: turn.runtimeMode,
+      modelCallCount: turn.modelCallCount,
+      history: turn.historyTelemetry,
+      disabledLayers: turn.disabledLayers,
+      actionTypes: ctx.actions.map((action) => action?.type).filter(Boolean),
+      capabilityIds: turn.capabilityManifest.filter((item) => item.enabled).map((item) => item.id)
+    }
+  }).catch(() => {})
+
+  // Un estado que cambió fuera de las tools de esta misma corrida manda sobre el
+  // borrador: takeover humano, pausa o cierre externo son hechos reales.
+  const postState = await getConversationState(contactId, {
+    agentId: agentConfig.id,
+    channel: normalizedChannel
+  })
+  const ownTerminalState = toolCallingV2OwnsTerminalState(ctx.actions)
+  const externallyBlocked = !postState || (
+    (postState.status !== 'active' || Boolean(postState.signal)) && !ownTerminalState
+  )
+  if (externallyBlocked) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'reply_suppressed',
+      detail: {
+        messageId: latest.id,
+        agentId: agentConfig.id || null,
+        channel: normalizedChannel,
+        runtimeMode: turn.runtimeMode,
+        reason: 'external_conversation_state',
+        status: postState.status || null,
+        signal: postState.signal || null
+      }
+    })
+    await settleActiveClaim({ status: 'completed', answered: false })
+    return { sent: false, reason: 'external_conversation_state', turn }
+  }
+
+  const latestBeforeSend = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
+  if (latestBeforeSend) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'reply_suppressed',
+      detail: {
+        messageId: latest.id,
+        agentId: agentConfig.id || null,
+        channel: normalizedChannel,
+        runtimeMode: turn.runtimeMode,
+        reason: 'newer_inbound_before_reply',
+        newerMessageId: latestBeforeSend.id
+      }
+    })
+    scheduleConversationalAgentRerun({
+      contactId,
+      phone,
+      latestMessage: latestBeforeSend,
+      channel: normalizedChannel,
+      reason: 'mensaje nuevo antes de enviar'
+    })
+    await settleActiveClaim({ status: 'completed', answered: false })
+    return { sent: false, reason: 'newer_inbound_before_reply', turn }
+  }
+
+  const delivery = await sendReplyParts({
+    contactId,
+    phone,
+    latest,
+    agentConfig,
+    reply,
+    apiKey: runtime.apiKey,
+    model,
+    channel: normalizedChannel,
+    dependencies: {
+      // El runtime v2 nunca dispara una segunda IA sólo para partir globos.
+      splitter: splitMessageIntoBubblesFallback,
+      markReplyComplete: async () => {
+        await settleActiveClaim({ status: 'completed', answered: true })
+      }
+    }
+  })
+
+  if (delivery.interruptedBy) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'reply_suppressed',
+      detail: {
+        messageId: latest.id,
+        agentId: agentConfig.id || null,
+        channel: normalizedChannel,
+        runtimeMode: turn.runtimeMode,
+        reason: 'newer_inbound_during_split_reply',
+        newerMessageId: delivery.interruptedBy.id,
+        sentParts: delivery.sentParts,
+        partCount: delivery.parts.length
+      }
+    })
+    scheduleConversationalAgentRerun({
+      contactId,
+      phone,
+      latestMessage: delivery.interruptedBy,
+      channel: normalizedChannel,
+      reason: 'envío en partes'
+    })
+    await settleActiveClaim({ status: 'completed', answered: false })
+    return { sent: false, reason: 'newer_inbound_during_split_reply', turn }
+  }
+
+  if (!delivery.parts.length) {
+    await settleActiveClaim({ status: 'failed', error: 'empty_reply_delivery' })
+    throw new Error('El runtime tool_calling_v2 produjo una entrega vacía')
+  }
+  if (typeof settleActiveClaim === 'function') {
+    // Defensa compatible con implementaciones de envío que no invoquen callback.
+    await settleActiveClaim({ status: 'completed', answered: true })
+  }
+
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'reply_sent',
+    detail: {
+      messageId: latest.id,
+      agentId: agentConfig.id || null,
+      channel: normalizedChannel,
+      replyPreview: reply.slice(0, 280),
+      partCount: delivery.parts.length,
+      pendingInboundCount: pendingMessages.length,
+      aiProvider,
+      runtimeMode: turn.runtimeMode,
+      modelCallCount: turn.modelCallCount,
+      actions: ctx.actions
+    }
+  })
+  await resetFollowUpStateAfterReply({
+    contactId,
+    latest,
+    agentConfig,
+    phone,
+    channel: normalizedChannel
+  })
+  return { sent: true, delivery, turn }
+}
+
+/**
+ * Reanuda un único turno del runtime principal v2 después de que el ledger de
+ * pagos confirmó un anticipo. No fabrica un inbound ni invoca capas legacy: el
+ * mismo Agent/Runner recibe el hilo completo y un contexto interno factual.
+ * La disponibilidad y el anticipo vuelven a validarse dentro de las tools antes
+ * de crear una cita.
+ */
+export async function resumeToolCallingV2AfterVerifiedPayment({
+  reconciliationId = '',
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  amount = null,
+  currency = '',
+  paymentEnvironment = '',
+  paymentPurpose = 'appointment_deposit'
+} = {}, dependencies = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  if (!cleanReconciliationId || !cleanContactId || !cleanAgentId) {
+    return { resumed: false, reason: 'payment_resume_identity_missing' }
+  }
+
+  const runKey = getRunKey(cleanContactId, normalizedChannel)
+  if (runningContacts.has(runKey)) {
+    return { resumed: false, reason: 'conversation_already_running' }
+  }
+  runningContacts.add(runKey)
+
+  const getRuntimeConfig = dependencies.getRuntimeConfig || getConversationalAgentConfig
+  const ensureRuntimeEnabled = dependencies.ensureRuntimeEnabled || ensureConversationalAgentRuntimeEnabledForPublishedAgents
+  const featureEnabled = dependencies.hasFeature || hasFeature
+  const getAgent = dependencies.getAgent || getConversationalAgent
+  const getState = dependencies.getState || getConversationState
+  const getLatestInbound = dependencies.getLatestInbound || loadLatestInboundMessage
+  const getHistoryEnvelope = dependencies.getHistoryEnvelope || loadToolCallingV2ConversationEnvelope
+  const hydrateMessages = dependencies.hydrateMessages || hydrateConversationalMessagesMedia
+  const resolveRuntime = dependencies.resolveRuntime || resolveConversationalAIRuntime
+  const runNativeTurn = dependencies.runNativeTurn || runToolCallingV2Turn
+  const deliverReply = dependencies.deliverReply || sendReplyParts
+  const recordEvent = dependencies.recordEvent || recordConversationalAgentEvent
+
+  try {
+    let runtimeDefaults = await getRuntimeConfig()
+    if (!runtimeDefaults.enabled) {
+      runtimeDefaults = await ensureRuntimeEnabled({ reason: 'verified_payment_resume' })
+    }
+    if (!runtimeDefaults.enabled) return { resumed: false, reason: 'runtime_disabled' }
+    if (!(await featureEnabled('conversational_ai'))) return { resumed: false, reason: 'feature_disabled' }
+
+    let agentConfig = await getAgent(cleanAgentId).catch(() => null)
+    if (!agentConfig?.enabled || !isToolCallingV2(agentConfig)) {
+      return { resumed: false, reason: 'native_agent_unavailable' }
+    }
+    const state = await getState(cleanContactId, { agentId: cleanAgentId, channel: normalizedChannel })
+    if (!state || state.status !== 'active' || state.signal) {
+      return { resumed: false, reason: 'conversation_state_not_runnable' }
+    }
+
+    const latest = await getLatestInbound(cleanContactId, normalizedChannel)
+    if (!latest?.id) return { resumed: false, reason: 'conversation_history_missing' }
+    const contact = await db.get(
+      'SELECT id, full_name, phone, email FROM contacts WHERE id = ?',
+      [cleanContactId]
+    ).catch(() => null)
+    const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || runtimeDefaults.aiProvider)
+    const runtime = await resolveRuntime(aiProvider)
+    agentConfig = { ...agentConfig, aiProvider }
+    const historyEnvelope = await getHistoryEnvelope({ contactId: cleanContactId, channel: normalizedChannel })
+    const openAIFallbackApiKey = aiProvider === 'openai'
+      ? runtime.apiKey
+      : await getOpenAIApiKey().catch(() => null)
+    const hydrated = await hydrateMessages(historyEnvelope.messages, {
+      aiProvider,
+      apiKey: runtime.apiKey,
+      audioTranscriptionApiKey: openAIFallbackApiKey,
+      visualAnalysisApiKey: openAIFallbackApiKey,
+      includeBinary: shouldIncludeConversationalBinaryMedia({ runtime })
+    })
+    if (!hydrated.length) return { resumed: false, reason: 'conversation_history_empty' }
+
+    const messages = hydrated
+    const runtimeEventContext = [
+      `El ${paymentPurpose === 'appointment_deposit' ? 'anticipo requerido para la cita' : 'pago pendiente'} fue confirmado contra el ledger real por ${Number(amount)} ${String(currency || '').trim().toUpperCase()} en ambiente ${paymentEnvironment}.`,
+      'Continúa ahora desde el paso pendiente sin volver a cobrar ni pedir comprobante.',
+      'Si la persona ya eligió día y hora, vuelve a consultar disponibilidad real y usa book_appointment; la tool debe revalidar el slot antes de reservar.',
+      'Si ese horario ya no está libre, avisa con naturalidad y ofrece opciones reales.'
+    ].join(' ')
+    const turn = await runNativeTurn({
+      config: agentConfig,
+      runtime,
+      messages,
+      contactId: cleanContactId,
+      contactName: contact?.full_name || null,
+      dryRun: false,
+      channel: normalizedChannel,
+      traceMessage: 'Pago verificado: retomar el paso conversacional pendiente',
+      executionId: `payment-resume:${cleanReconciliationId}`,
+      conversationModel: agentConfig.model,
+      historyEnvelope: { ...historyEnvelope, messages },
+      runtimeEventContext
+    })
+    const { ctx, model, reply } = turn
+
+    await recordEvent({
+      eventId: `${cleanReconciliationId}_turn`,
+      contactId: cleanContactId,
+      eventType: 'payment_resume_turn_completed',
+      detail: {
+        agentId: cleanAgentId,
+        channel: normalizedChannel,
+        runtimeMode: turn.runtimeMode,
+        modelCallCount: turn.modelCallCount,
+        actionTypes: ctx.actions.map((action) => action?.type).filter(Boolean),
+        reconciliationId: cleanReconciliationId
+      },
+      throwOnError: true
+    })
+
+    const latestAfterRun = await getLatestInbound(cleanContactId, normalizedChannel)
+    if (latestAfterRun?.id && latestAfterRun.id !== latest.id) {
+      scheduleConversationalAgentRerun({
+        contactId: cleanContactId,
+        phone: latestAfterRun.phone || contact?.phone,
+        latestMessage: latestAfterRun,
+        channel: normalizedChannel,
+        reason: 'mensaje nuevo durante reanudación de pago'
+      })
+      return { resumed: false, queued: true, reason: 'newer_inbound_queued', turn }
+    }
+
+    const postState = await getState(cleanContactId, { agentId: cleanAgentId, channel: normalizedChannel })
+    const ownsTerminalState = toolCallingV2OwnsTerminalState(ctx.actions)
+    if (!postState || ((postState.status !== 'active' || Boolean(postState.signal)) && !ownsTerminalState)) {
+      return { resumed: false, reason: 'conversation_state_changed_during_resume', turn }
+    }
+
+    const syntheticLatest = {
+      ...latest,
+      id: cleanReconciliationId,
+      phone: latest.phone || contact?.phone || ''
+    }
+    const delivery = await deliverReply({
+      contactId: cleanContactId,
+      phone: contact?.phone || latest.phone,
+      latest: syntheticLatest,
+      agentConfig,
+      reply,
+      apiKey: runtime.apiKey,
+      model,
+      channel: normalizedChannel,
+      externalIdPrefix: 'convagent_payment_resume',
+      dependencies: {
+        splitter: splitMessageIntoBubblesFallback,
+        loadNewerInbound: () => loadNewerInboundMessage(cleanContactId, latest.id, normalizedChannel),
+        recordEvent: (event) => recordEvent({
+          ...event,
+          eventId: `${cleanReconciliationId}_${event.eventType}_${event.detail?.partIndex || 0}`
+        }),
+        markReplyComplete: async () => {
+          await db.run(
+            `UPDATE conversational_agent_state
+             SET last_reply_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+             WHERE contact_id = ? AND agent_id = ?
+               AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?`,
+            [cleanContactId, cleanAgentId, normalizedChannel]
+          )
+        }
+      }
+    })
+    if (delivery.interruptedBy) {
+      scheduleConversationalAgentRerun({
+        contactId: cleanContactId,
+        phone: delivery.interruptedBy.phone || contact?.phone,
+        latestMessage: delivery.interruptedBy,
+        channel: normalizedChannel,
+        reason: 'mensaje nuevo durante respuesta de pago verificado'
+      })
+      return { resumed: false, queued: true, reason: 'newer_inbound_during_delivery', turn }
+    }
+    if (!delivery.parts.length) throw new Error('La reanudación v2 produjo una respuesta vacía')
+
+    await recordEvent({
+      eventId: `${cleanReconciliationId}_reply`,
+      contactId: cleanContactId,
+      eventType: 'payment_resume_reply_sent',
+      detail: {
+        agentId: cleanAgentId,
+        channel: normalizedChannel,
+        reconciliationId: cleanReconciliationId,
+        partCount: delivery.parts.length,
+        actionTypes: ctx.actions.map((action) => action?.type).filter(Boolean)
+      },
+      throwOnError: true
+    })
+    return { resumed: true, sent: true, delivery, turn }
+  } catch (error) {
+    await recordEvent({
+      eventId: `${cleanReconciliationId}_failed_${Date.now()}`,
+      contactId: cleanContactId,
+      eventType: 'payment_resume_failed',
+      detail: { agentId: cleanAgentId, reconciliationId: cleanReconciliationId, error: error.message }
+    }).catch(() => {})
+    throw error
+  } finally {
+    runningContacts.delete(runKey)
+  }
 }
 
 function isRunnableConversationState(state) {
@@ -2461,9 +3989,15 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
       const runtime = await resolveConversationalAIRuntime(aiProvider)
       agentConfig = { ...agentConfig, aiProvider }
+      const toolCallingV2 = isToolCallingV2(agentConfig)
 
       const contact = await db.get('SELECT id, full_name, phone, email FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-      const rawMessages = await loadConversationHistory(contactId, normalizedChannel)
+      const historyEnvelope = toolCallingV2
+        ? await loadToolCallingV2ConversationEnvelope({ contactId, channel: normalizedChannel })
+        : null
+      const rawMessages = toolCallingV2
+        ? historyEnvelope.messages
+        : await loadConversationHistory(contactId, normalizedChannel, { limit: HISTORY_LIMIT })
       const openAIFallbackApiKey = aiProvider === 'openai'
         ? runtime.apiKey
         : await getOpenAIApiKey().catch(() => null)
@@ -2480,6 +4014,25 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         return
       }
 	      const pendingMessages = await loadPendingInboundMessages(contactId, agentState, normalizedChannel)
+      const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
+      if (toolCallingV2) {
+        await handleToolCallingV2InboundTurn({
+          contactId,
+          contact,
+          phone,
+          latest,
+          messages,
+          historyEnvelope,
+          pendingMessages,
+          agentConfig,
+          runtime,
+          aiProvider,
+          channel: normalizedChannel,
+          traceMessage,
+          settleActiveClaim
+        })
+        return
+      }
       const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
       const baseMessagesForAgent = pendingContextMessage ? [...messages, pendingContextMessage] : messages
       const conversationDecision = evaluateConversationalGoalReadiness({
@@ -2488,7 +4041,6 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         contactName: contact?.full_name || ''
       })
       const decisionContextMessage = buildConversationDecisionContextMessage(conversationDecision)
-      const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
       const priceInsistenceCount = countPriceInsistence(baseMessagesForAgent)
       const schedulingInsistenceCount = countSchedulingInsistence(baseMessagesForAgent)
       const pastClientContext = await buildPastClientRuntimeContext({
@@ -3104,7 +4656,17 @@ export async function recoverPendingConversationalAgentConversations({
     return { scanned: 0, scheduled: 0 }
   })
 
-  return { scanned: latestByContact.size, scheduled, followUps, reruns }
+  const paymentSourceBindings = await recoverPendingConversationalPaymentSourceBindings().catch((error) => {
+    logger.warn(`[Agente conversacional] No se pudieron reparar vínculos pendientes de cobro: ${error.message}`)
+    return { scanned: 0, bound: 0, reconciled: 0, failed: 0 }
+  })
+
+  const paymentReconciliations = await recoverPendingConversationalPaymentReconciliations().catch((error) => {
+    logger.warn(`[Agente conversacional] No se pudieron recuperar pagos verificados pendientes: ${error.message}`)
+    return { scanned: 0, recovered: 0 }
+  })
+
+  return { scanned: latestByContact.size, scheduled, followUps, reruns, paymentSourceBindings, paymentReconciliations }
 }
 
 export async function resolveConversationalAgentPreviewRuntimeConfig({ configOverride = null, agentId = null } = {}) {
@@ -3137,14 +4699,19 @@ export function getConversationalAgentPreviewResponseDelayMs() {
  * No envía mensajes reales, no toca estados ni crea citas: las acciones internas
  * se devuelven como lista para mostrarlas en la prueba.
  */
-export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }) {
-  const { config, runtimeDefaults } = await resolveConversationalAgentPreviewRuntimeConfig({ configOverride, agentId })
+export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }, dependencies = {}) {
+  const resolvePreviewConfig = dependencies.resolvePreviewRuntimeConfig || resolveConversationalAgentPreviewRuntimeConfig
+  const resolveAIRuntime = dependencies.resolveAIRuntime || resolveConversationalAIRuntime
+  const hydratePreviewMessages = dependencies.hydratePreviewMessages || hydrateConversationalPreviewMessagesMedia
+  const runNativeTurn = dependencies.runNativeTurn || runToolCallingV2Turn
+  const { config, runtimeDefaults } = await resolvePreviewConfig({ configOverride, agentId })
   const aiProvider = normalizeConversationalAIProvider(config.aiProvider || runtimeDefaults.aiProvider)
-  const runtime = await resolveConversationalAIRuntime(aiProvider)
+  const runtime = await resolveAIRuntime(aiProvider)
   const runtimeConfig = { ...config, aiProvider }
   const previewChannel = normalizeConversationalChannel(configOverride?.channel || configOverride?.testChannel || 'whatsapp')
+  const toolCallingV2 = isToolCallingV2(runtimeConfig)
 
-  const cleanMessages = (Array.isArray(messages) ? messages : [])
+  const normalizedPreviewMessages = (Array.isArray(messages) ? messages : [])
     .filter((m) => {
       if (!m) return false
       const hasText = typeof m.content === 'string' && m.content.trim()
@@ -3156,12 +4723,73 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
       content: typeof m.content === 'string' ? m.content.trim() : '',
       attachments: Array.isArray(m.attachments) ? m.attachments : []
     }))
-    .slice(-HISTORY_LIMIT)
+  const cleanMessages = toolCallingV2
+    ? normalizedPreviewMessages
+    : normalizedPreviewMessages.slice(-HISTORY_LIMIT)
 
   if (!cleanMessages.length) {
     const error = new Error('Envía al menos un mensaje para simular la conversación')
     error.statusCode = 400
     throw error
+  }
+
+  if (toolCallingV2) {
+    const previewHistoryEnvelope = buildToolCallingV2HistoryEnvelope(cleanMessages, { source: 'preview' })
+    const openAIFallbackApiKey = aiProvider === 'openai'
+      ? runtime.apiKey
+      : await getOpenAIApiKey().catch(() => null)
+    const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
+    const hydratedMessages = await hydratePreviewMessages(previewHistoryEnvelope.messages, {
+      aiProvider,
+      apiKey: runtime.apiKey,
+      audioTranscriptionApiKey: openAIFallbackApiKey,
+      visualAnalysisApiKey: openAIFallbackApiKey,
+      includeBinary: includeBinaryMedia
+    })
+    const latestPreviewText = [...cleanMessages].reverse().find((message) => message.role === 'user')?.content || ''
+    const turn = await runNativeTurn({
+      config: runtimeConfig,
+      runtime,
+      messages: hydratedMessages,
+      contactId: null,
+      contactName: null,
+      dryRun: true,
+      channel: previewChannel,
+      traceMessage: latestPreviewText,
+      conversationModel: runtimeConfig.model || runtimeDefaults.model,
+      historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages }
+    })
+    const splitResult = isEmailConversationalChannel(previewChannel)
+      ? { messages: [turn.reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
+      : splitMessageIntoBubblesFallback({
+          text: turn.reply,
+          settings: runtimeConfig.replyDelivery
+        })
+    const replyParts = splitResult.messages
+
+    return {
+      reply: turn.reply,
+      replyParts,
+      replyPartDelaysMs: buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery }),
+      responseDelayMs: getConversationalAgentPreviewResponseDelayMs(),
+      suppressed: false,
+      actions: turn.ctx.actions,
+      intelligence: null,
+      policyValidation: {
+        valid: turn.validationErrors.length === 0,
+        errors: turn.validationErrors,
+        warnings: []
+      },
+      policyHash: null,
+      assessmentSource: 'native_single_agent',
+      runtimeMode: turn.runtimeMode,
+      modelCallCount: turn.modelCallCount,
+      historyTelemetry: turn.historyTelemetry,
+      disabledLayers: turn.disabledLayers,
+      capabilityManifest: turn.capabilityManifest,
+      aiProvider,
+      model: turn.model
+    }
   }
 
   const previewPriceInsistenceCount = countPriceInsistence(cleanMessages)

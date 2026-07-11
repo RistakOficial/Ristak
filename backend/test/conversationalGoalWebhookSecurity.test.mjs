@@ -14,6 +14,7 @@ import {
   createConversationGoalLink,
   getConversationGoalLink,
   recoverPendingConversationGoalCompletionEffects,
+  setConversationalCompletionSummaryGeneratorForTest,
   updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
 
@@ -145,6 +146,90 @@ test('una URL genérica se entrega sin fetch, sin token y con meta pendiente', a
   assert.match(row.idempotency_key, /^[a-f0-9]{64}$/)
   const count = await db.get('SELECT COUNT(*) AS count FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId])
   assert.equal(Number(count.count), 1)
+})
+
+test('confirmación externa v2 conserva una sola IA y no revive efectos legacy ocultos', async (t) => {
+  const suffix = `native_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const contactId = await createContact(suffix)
+  let agent = null
+  let internalSummaryCalls = 0
+  t.after(async () => {
+    setConversationalCompletionSummaryGeneratorForTest(null)
+    await removeContact(contactId)
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => undefined)
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    }
+  })
+
+  agent = await createConversationalAgent({
+    name: `Meta externa v2 ${suffix}`,
+    enabled: false,
+    runtimeMode: 'tool_calling_v2',
+    objective: 'custom',
+    customObjective: 'Confirmar registro externo',
+    capabilitiesConfig: {
+      schemaVersion: 1,
+      items: [{
+        id: 'send_link',
+        enabled: true,
+        linkKind: 'verified_goal',
+        url: 'https://example.test/native-goal'
+      }]
+    },
+    goalWorkflow: {
+      completion: { mode: 'assign_user', userId: 'legacy_hidden_user', userName: 'Legacy oculto' }
+    },
+    successExtras: [{ type: 'add_tag', tag: 'legacy-hidden-goal-extra' }]
+  })
+  await db.run(
+    `INSERT OR REPLACE INTO conversational_agent_state (
+      contact_id, agent_id, channel, status, updated_at
+    ) VALUES (?, ?, 'whatsapp', 'active', CURRENT_TIMESTAMP)`,
+    [contactId, agent.id]
+  )
+  const link = await createConversationGoalLink({
+    contactId,
+    agentId: agent.id,
+    objective: 'custom',
+    targetUrl: 'https://example.test/native-goal',
+    metadata: { resumen: 'La persona completó el registro externo.' }
+  })
+  const storedBefore = await db.get(
+    'SELECT metadata_json FROM conversational_agent_goal_links WHERE id = ?',
+    [link.id]
+  )
+  assert.equal(JSON.parse(storedBefore.metadata_json).runtimeMode, 'tool_calling_v2')
+  setConversationalCompletionSummaryGeneratorForTest(async () => {
+    internalSummaryCalls += 1
+    return 'No debe ejecutarse'
+  })
+
+  const completed = await completeConversationGoalLinkFromWebhook({
+    goalId: link.id,
+    externalSource: 'custom:test',
+    externalObjectId: `external_${suffix}`,
+    status: 'completed'
+  }, { authorization: externalAuthorization(`request_${suffix}`) })
+
+  assert.equal(completed.status, 'completed')
+  assert.equal(internalSummaryCalls, 0)
+  const storedAfter = await db.get(
+    'SELECT metadata_json FROM conversational_agent_goal_links WHERE id = ?',
+    [link.id]
+  )
+  const frozenPlan = JSON.parse(storedAfter.metadata_json).completionEffectPlan
+  assert.equal(frozenPlan.completion.mode, 'notify_only')
+  assert.deepEqual(frozenPlan.successExtras, [])
+  const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+  const customFields = JSON.parse(contact.custom_fields || '{}')
+  assert.equal(customFields.assignedUser, undefined)
+  const hiddenEffects = await db.get(
+    `SELECT COUNT(*) AS total FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type IN ('completion_user_assigned', 'success_extras_applied')`,
+    [contactId]
+  )
+  assert.equal(Number(hiddenEffects.total), 0)
 })
 
 test('una integración autenticada completa cita y exige evidencia exacta', async (t) => {
@@ -513,6 +598,7 @@ test('recovery aplica el plan de efectos confirmado aunque después editen el ag
 
   agent = await createConversationalAgent({
     name: 'Agente snapshot A',
+    runtimeMode: 'legacy_v1',
     objective: 'custom',
     successAction: 'send_goal_url',
     goalWorkflow: {

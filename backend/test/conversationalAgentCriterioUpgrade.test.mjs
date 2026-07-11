@@ -210,6 +210,10 @@ test('crear un agente de citas publicado sin calendario se rechaza de raíz', as
     createConversationalAgent({
       name: 'Agente sin calendario',
       enabled: true,
+      // Esta prueba cubre la compuerta histórica basada en objective. Los
+      // agentes nuevos v2 se validan por capacidades activadas, no por este
+      // campo legacy.
+      runtimeMode: 'legacy_v1',
       objective: 'citas'
     }),
     (error) => error.code === 'CONVERSATIONAL_AGENT_CALENDAR_REQUIRED'
