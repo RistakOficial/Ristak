@@ -1,7 +1,6 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { handleAutomationEvent } from './automationEngine.js'
-import { handleConversationalAgentTriggerLinkClick } from './conversationalAgentService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 
 const PUBLIC_ID_LENGTH = 12
@@ -344,10 +343,6 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
   handleAutomationEvent('trigger-link-clicked', automationPayload).catch(error => {
     logger.warn(`No se pudo disparar automatización de enlace ${row.public_id}: ${error.message}`)
   })
-  handleConversationalAgentTriggerLinkClick(automationPayload).catch(error => {
-    logger.warn(`No se pudo cerrar objetivo conversacional por enlace ${row.public_id}: ${error.message}`)
-  })
-
   return {
     link: mapTriggerLink({ ...row, click_count: Number(row.click_count || 0) + 1, last_clicked_at: event?.created_at }),
     event: mapTriggerLinkEvent(event),

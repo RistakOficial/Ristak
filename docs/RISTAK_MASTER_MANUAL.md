@@ -2720,8 +2720,9 @@ La API conserva endpoints separados:
 
 ### Configuracion y experiencia del usuario
 
-Los agentes nuevos nacen en `tool_calling_v2`. El wizard deja una plantilla de
-instrucciones util por defecto y el editor separa dos zonas:
+Todos los agentes conversacionales usan un solo runtime nativo de tool calling.
+No existe selector, fallback ni ruta de ejecucion del motor anterior. El wizard
+deja una plantilla de instrucciones util por defecto y el editor separa dos zonas:
 
 - Zona editable: tono, guion, conocimiento y reglas del negocio. El dueño puede
   conservar la plantilla, modificarla o dejarla vacia.
@@ -2740,50 +2741,27 @@ realidad operativa antes de persistir el cambio: calendario y usuario activos,
 producto/precio relacionados y cobrables, moneda de la cuenta, monto de
 anticipo y destino HTTP(S) de enlaces directos o triggers.
 
-La plantilla y las tools reales hacen util a v2 aunque todavia no exista el
-perfil interno legacy del negocio. Crear, probar, publicar, activar una
-conversacion o revertir un agente `tool_calling_v2` no queda bloqueado por ese
-perfil: si falta contexto, el prompt obliga a reconocerlo y consultar productos,
-calendarios o datos reales. `legacy_v1` conserva su compuerta anterior.
-
-Las filas existentes conservan `legacy_v1`. No hay backfill que cambie el motor
-de una conversacion ya publicada: el usuario prepara la migracion desde el
-editor, el agente se pausa, se prueba con tools en `dryRun` y despues se publica.
-Cada alta, cambio o rollback sigue guardando una version en
-`conversational_agent_policy_versions`; las rutas autenticadas permiten listar
-versiones y volver a una configuracion anterior. El prompt y las capacidades v2
-quedan guardados aun durante un rollback temporal a legacy, incluido un prompt
-vacio intencional. La API entrega `migrationCapabilitiesConfig` como una vista de
-solo lectura derivada en servidor: reutiliza las capacidades v2 dormidas cuando
-existen y, para filas antiguas, traduce su workflow legacy sin confiar en un
-manifiesto enviado por el navegador.
-
-En `legacy_v1`, el formulario tambien se compila en la politica tipada anterior
-con jerarquia fija. Esa validacion no bloquea `tool_calling_v2`: el motor nuevo
-se valida exclusivamente contra sus capacidades blindadas y sus precondiciones
-operativas.
+El boton `Nuevo agente` crea directamente un borrador con la plantilla y abre
+este mismo editor; ya no existe un wizard paralelo basado en objetivo, intención
+o "quien completa". La plantilla y las tools reales hacen util al agente aunque todavia no exista un
+perfil estructurado completo del negocio. Crear, probar, publicar o activar una
+conversacion no queda bloqueado por ese perfil: si falta contexto, el prompt
+obliga a reconocerlo y consultar productos, calendarios o datos reales. Cualquier
+valor viejo de `runtime_mode` se normaliza a `tool_calling_v2` y nunca selecciona
+otra implementacion. Una fila sin `capabilities_config` queda sin capacidades;
+`success_action`, `goal_workflow_config` y otros campos anteriores no se
+convierten ni pueden habilitar tools por debajo.
 
 Requisitos duros al publicar (`enabled=true`, validados en
 `assertAgentGoalRequirements` de `conversationalAgentService.js` y espejados en
 wizard/editor web):
 
-- `tool_calling_v2`: toda capacidad activa debe estar completa. Agenda exige
+- Toda capacidad activa debe estar completa. Agenda exige
   calendario; pago completo exige producto y precio; anticipo exige monto/rango
   y metodo verificable; transferencia exige datos bancarios; enlace exige URL;
   objetivo propio exige descripcion. Ademas, publicar cruza esos IDs contra las
   tablas reales y rechaza recursos inexistentes, inactivos, mal relacionados,
   precios no positivos o monedas distintas a `account_currency`.
-Para `legacy_v1` se conservan los requisitos siguientes durante la migracion:
-
-- Objetivo de citas: es obligatorio elegir un calendario
-  (`goalWorkflow.appointments.calendarId` o `defaultCalendarId`), sin importar si
-  agenda la IA, un humano o un enlace. De ese calendario salen los espacios que
-  el agente ofrece; `get_free_slots`/`book_appointment` fuerzan ese calendario en
-  codigo aunque el modelo mande otro id.
-- Anticipo activo: al menos un metodo de cobro habilitado en
-  `goalWorkflow.deposit.methods` (`paymentLink` y/o `bankTransfer`); si la
-  transferencia esta activa, `deposit.bankTransferDetails` (banco, cuenta/CLABE,
-  titular) no puede quedar vacio.
 
 Un borrador apagado puede guardarse incompleto; publicarlo exige lo anterior.
 
@@ -2804,28 +2782,32 @@ de alcance re-sella y volver a `all` lo limpia. Un par `new_only` +
 `existing_only` con cortes compatibles (corte de existentes <= corte de nuevos)
 son universos disjuntos y NO generan conflicto de entrada entre si
 (`contactScopesAreDisjoint`); el mismo alcance catch-all duplicado si conflictua.
-El alcance se evalua JUNTO con los filtros de condiciones de entrada/salida
+El alcance se evalua JUNTO con los filtros factuales de entrada/salida
 (`entryRulesMatch`/`exitRulesMatch`: OR de grupos, AND por grupo; categorias
-canal, mensaje, tags, contacto, citas, pagos, anuncios y horario): ambos deben
-cumplirse para que el agente tome el chat. Los estados legacy no se heredan como
-bloqueos de un agente nuevo, pero una pausa, omision o asignacion manual real
-conserva su procedencia. Las superficies de control manejan agentes
-individuales, nunca un pseudoagente global "Todos".
+canal o numero receptor, tags, contacto, citas, pagos, anuncios y horario):
+ambos deben cumplirse para que el agente tome el chat. No existe filtro por
+palabras, frases o texto del mensaje; el lenguaje natural siempre lo interpreta
+el modelo principal. Una pausa, omision o asignacion manual real conserva su
+procedencia. Las superficies de control manejan agentes individuales, nunca un
+pseudoagente global "Todos".
 
-### Runtime conversacional por modos
+### Runtime conversacional unico
 
-`tool_calling_v2` es la ruta principal para agentes nuevos. Cada inbound,
+Cada inbound,
 preview y seguimiento entra a un solo `Agent`/`Runner`. El modelo conversa y
 decide llamadas estructuradas a las tools
 que corresponden exactamente a las capacidades activadas. No ejecuta
 `assessment`, `strategyPlanner`, `turnPolicy`, `closingPhaseGate`,
-`complianceGuard`, guardias regex de respuesta, otra IA para dividir mensajes,
+`complianceGuard`, reglas regex que decidan intención, bloqueen acciones o
+supriman respuestas, otra IA para dividir mensajes,
 `stay_silent`, `discard_conversation` ni `update_closing_context`. La separacion
 en globos, si esta activa, es determinista. `parallelToolCalls=false` impide
 mutaciones paralelas en una misma vuelta del modelo y las acciones conservan
 idempotencia en servidor. Agendar, completar un objetivo o transferir reutiliza
-el resumen estructurado de la tool (`allowInternalSummary=false`): no levanta
-otra instancia de IA para releer el chat.
+directamente el resumen factual estructurado de la tool: no levanta otra
+instancia de IA para releer el chat. El unico saneamiento textual final redacta
+identificadores internos para que no lleguen al cliente; no decide intención ni
+puede impedir que una tool se ejecute.
 
 La base de Ristak sigue siendo la fuente canonica del hilo para todos los
 proveedores. V2 carga el historial por paginas y construye un unico sobre
@@ -2844,45 +2826,15 @@ seguimientos y runtime vivo comparten el constructor; la telemetria registra
 mensajes totales, incluidos, omitidos, bytes y paginas cargadas. No existe una IA
 de resumen o compactacion escondida.
 
-El prompt v2 se arma en servidor con el texto editable, contexto real recuperado
+El prompt se arma en servidor con el texto editable, contexto real recuperado
 y la zona blindada al final. El texto del dueño puede cambiar personalidad y
 conocimiento, pero no agregar tools, cambiar calendario/producto/monto/moneda ni
 convertir un resultado pendiente o fallido en exito.
 
-`legacy_v1` permanece disponible para las filas existentes durante la migracion.
-Ese runtime no depende de una sola "biblia" de cierre y cada turno recorre los
-modulos separados en `backend/src/agents/conversational/intelligence/`:
-
-1. `configCompiler`: valida y compila objetivo, reglas, permisos y evidencia de
-   exito.
-2. `knowledge`: recupera del perfil estructurado y contexto de capacitacion solo
-   los fragmentos relacionados con la pregunta. Si no hay coincidencia, devuelve
-   `found=false`; el generador debe consultar tools reales, pedir aclaracion o
-   transferir, nunca rellenar el hueco.
-3. `assessment`: actualiza intencion, hechos, hipotesis, contradicciones,
-   calificacion, objeciones, riesgos y probabilidades. Usa salida estructurada del
-   proveedor y un fallback determinista reproducible.
-4. `strategyPlanner`: elige una sola accion siguiente: responder, aclarar,
-   profundizar, recopilar un dato, resolver objecion, proponer, ejecutar tool,
-   esperar, dar seguimiento, descartar o transferir.
-5. `context` y `handoff`: construyen contexto interno y un resumen de traspaso
-   separado entre hechos, hipotesis, acciones y pendientes.
-6. `stateRepository`: persiste el estado tipado en la conversacion.
-7. `learning`, `governance` y `evaluation`: agregan resultados por agente,
-   proponen mejoras versionadas y ejecutan escenarios reproducibles.
-
-Las probabilidades y etiquetas frio/tibio/caliente son orientativas y nunca se
-envian al contacto. Una hipotesis no se convierte en hecho. Los atributos
-sensibles no se infieren; si aparecen explicitamente en el turno pueden ayudar a
-responder el mensaje actual, pero se eliminan o redactan antes de persistir la
-memoria estructurada. Datos autorizados del contacto (por ejemplo nombre, correo
-o telefono) siguen viviendo en su perfil CRM y se consultan con tools, sin
-copiar memoria entre cuentas.
-
 El conocimiento base de la cuenta proviene de `ai_business_profile` y su
 `source_context`; productos, precios, calendarios y slots se consultan en sus
-servicios reales. El recuperador conserva hash/version de la fuente y no incluye
-campos con nombres de secrets, tokens o llaves.
+servicios reales. El recuperador de conocimiento es determinista, no otra IA, y
+no incluye campos con nombres de secrets, tokens o llaves.
 
 ### Estado, concurrencia y seguimiento
 
@@ -2898,41 +2850,29 @@ Una conversacion `completed` solo se reabre con un inbound nuevo cuando el mismo
 agente sigue publicado y todavia cumple entrada, salida y alcance. Los handoffs,
 pausas, omisiones y asignaciones manuales no se borran con heuristicas de edad.
 
-En v2, los seguimientos usan el mismo agente principal y el mismo transcript; no
+Los seguimientos usan el mismo agente principal y el mismo transcript; no
 inventan un mensaje nuevo del contacto ni llaman un analizador aparte. Las tools
 de mutacion quedan fuera en modo seguimiento. Estado, opt-out, ventana del canal,
 mensajes nuevos y numero de intento se comprueban como hechos externos antes de
-enviar. Legacy conserva su assessment/planner y puede registrar
-`follow_up_suppressed` cuando decide esperar.
+enviar.
 
 ### Generacion, preview y entrega
 
 OpenAI, Claude, Gemini y DeepSeek pueden ejecutar el agente si su conexion esta
-configurada; las rutas conversacionales no exigen OpenAI globalmente. En v2, la
-prueba del wizard/editor llama la misma ruta nativa, con las mismas tools en
+configurada; las rutas conversacionales no exigen OpenAI globalmente. La
+  prueba del editor llama la misma ruta nativa, con las mismas tools en
 `dryRun`, el mismo prompt blindado y el mismo limite de historial. Devuelve el
-manifiesto de capacidades y las acciones simuladas, pero no expone assessment o
-estrategia porque esas capas no existen en ese carril. `responseDelayMs` es cero
+manifiesto de capacidades y las acciones simuladas; no produce assessment,
+estrategia ni una decision de silencio. `responseDelayMs` es cero
 en preview; el chat publicado conserva su espera. Si entran mensajes durante esa
 espera o entre globos, el runtime recarga contexto, detiene partes obsoletas y
 vuelve a ejecutar el turno mas reciente.
 
-En legacy, el generador conserva politica, conocimiento, assessment, estrategia
-y guardianes. Antes de ejecutar el modelo, `turnPolicy` resuelve los contratos
-que no admiten interpretacion probabilistica. Una peticion explicita de hablar con una persona
-fuerza `send_to_human`; si `pastClientsToHuman` esta activo, tambien lo hacen la
-evidencia CRM o una declaracion inequivoca en primera persona de que ya es
-cliente. El modelo no alcanza a ejecutar agenda, pago ni cierre en esos turnos.
-Las negaciones, preguntas generales y frases sobre terceros no activan ese pase.
-Las heuristicas amplias de readiness o frases redactadas por el propio agente
-siguen sin poder forzar un estado terminal.
-
 ### Herramientas y verdad operativa
 
-En v2, la lista de tools se construye desde las capacidades activadas; una
+La lista de tools se construye desde las capacidades activadas; una
 capacidad apagada no se puede recuperar escribiendo su nombre en el prompt. Las
-tools de lectura consultan negocio, contacto y catalogo real. Legacy conserva la
-tool de cierre correspondiente a su `successAction`. En ambos modos, cada tool
+tools de lectura consultan negocio, contacto y catalogo real. Cada tool
 valida sus precondiciones y sella en `ctx.actions[].outcome` si el resultado fue
 `ok`, `error` o `simulated`. El estado final usa ese outcome y la base de datos,
 nunca un booleano escrito por el modelo.
@@ -2946,8 +2886,8 @@ nunca un booleano escrito por el modelo.
   idempotencia de cada intento se deriva de
   mensaje, canal, contacto, calendario y slot; un retry reproduce la cita
   canonica. La exclusion fisica del slot vive en el candado
-  transaccional del calendario, que serializa altas v2 contra citas manuales o
-  legacy. El ledger de creacion usa token y lease: una caida recupera la cita
+  transaccional del calendario, que serializa altas del agente contra citas
+  manuales. El ledger de creacion usa token y lease: una caida recupera la cita
   real o libera el intento sin dejar el horario bloqueado para siempre. Si la
   cita fue reprogramada, la tool relee fecha, hora y calendario canonicos y nunca
   confirma el snapshot viejo. Ademas, antes de crear una cita v2 se busca cualquier
@@ -2956,10 +2896,10 @@ nunca un booleano escrito por el modelo.
   inbound posterior que proponga otro slot repara la cita ya existente en lugar de
   duplicarla. Una cita ajena o de otro calendario nunca se adopta como exito del
   agente. El ID local/GHL se canonicaliza al calendario local activo. Un fallo de
-  calendario o disponibilidad cierra en seguro. Legacy conserva su evidencia
-  textual mientras siga migrando.
-- Pago: producto, precio, monto, concepto y moneda deben coincidir con workflow o
-  catalogo real. Antes de hablar con el proveedor, v2 reserva una llave durable
+  calendario o disponibilidad cierra en seguro.
+- Pago: producto, precio, monto, concepto y moneda deben coincidir con la
+  capacidad blindada o el catalogo real. Antes de hablar con el proveedor, v2
+  reserva una llave durable
   por agente, contacto, producto/precio, monto, moneda, canal y mensaje entrante;
   concurrencia o replay del mismo mensaje reproducen el resultado, mientras un
   mensaje posterior permite una compra nueva legitima. Si la reserva no se puede
@@ -3010,8 +2950,7 @@ nunca un booleano escrito por el modelo.
   consume el contrato de anticipo congelado en el intento, aunque luego cambie la
   configuracion. Otro request no puede gastar de nuevo el mismo anticipo. No fabrica
   un mensaje del cliente ni espera otro inbound.
-  Legacy conserva temporalmente el registro manual anterior. El equipo recibe
-  push para auditar el comprobante. Un
+  El equipo recibe push para auditar el comprobante. Un
   comprobante ilegible, con monto distinto u otra moneda se rechaza y el agente
   pide una foto clara o transfiere. En v2, pago y evento se guardan en una sola
   transaccion y quedan ligados al contacto, canal y mensaje/media exactos, no al
@@ -3032,9 +2971,9 @@ nunca un booleano escrito por el modelo.
   sanitizar el mensaje. Los nombres de tools, IDs, payloads y codigos internos no
   se entregan al contacto; v2 tampoco dispone de una tool capaz de quedarse mudo.
 - Confirmaciones posteriores: webhooks reales de pago o integraciones externas
-  pueden cerrar una meta pendiente, pero respetan el runtime capturado al crear
-  el enlace. En v2 reutilizan el resumen factual, no levantan otra IA y no
-  reviven asignaciones, tags ni campos legacy ocultos en el constructor nuevo.
+  pueden cerrar una meta pendiente. Reutilizan el resumen factual, no levantan
+  otra IA y no aplican asignaciones, etiquetas ni campos ajenos a las capacidades
+  blindadas.
 - Meta por URL: el enlace visible contiene solo un ID de seguimiento y se puede
   entregar aunque apunte a una pagina externa generica. La meta queda `pending`:
   abrir el enlace no prueba una cita ni un pago. El sistema externo debe estar
@@ -3049,92 +2988,31 @@ nunca un booleano escrito por el modelo.
   Evidencia y `Idempotency-Key` quedan reclamados en una tombstone sin cascade,
   dentro de la misma transaccion que completa la meta; borrar contacto o link no
   permite reutilizarlos. Un trigger instalado junto con el backfill bloquea a
-  binarios legacy durante un rolling deploy si intentan completar sin claim.
-  Señal, asignacion, extras, notificacion y evento final tienen checkpoints
-  separados, fencing por lease y recovery al arrancar y periodico. La asignacion
-  y los extras se congelan en un plan versionado con hash al aceptar la
-  confirmacion, así que editar el agente despues no cambia el resultado del
-  recovery. El push usa
+  binarios anteriores durante un rolling deploy si intentan completar sin claim.
+  Señal, notificacion y evento final tienen checkpoints separados, fencing por
+  lease y recovery al arrancar y periodico. El push usa
   entrega `at-most-once`: un ACK incierto queda como `unknown` y no se duplica.
   Los ledgers de metas y claims quedan bloqueados en CRUD generico, MCP y SQL del
   agente; solo la ruta dedicada puede confirmar metas. El resto de las tablas del
   agente son de solo lectura
   para el CRUD externo, de modo que una integracion no pueda falsificar estados,
-  eventos, aprendizaje ni metricas.
-  Los tokens de callback por URL se conservan solo para compatibilidad legacy,
-  se aceptan unicamente por header y nunca se generan ni se agregan a enlaces
-  nuevos.
+  eventos ni metricas.
+  Los tokens de callback por URL de versiones anteriores se aceptan unicamente
+  por header y nunca se generan ni se agregan a enlaces nuevos.
 
-En `legacy_v1`, el guion de fabrica ("Agente conversacional de cierre, version
-con criterio", `backend/src/agents/conversational/strategies/agenteCierreCriterio.md`)
-abre las preguntas de precio construyendo valor primero (pull). Esa apertura no
-depende solo del prompt: el compilador marca `communication.openingStrategy`, el
-planner evita sugerir `list_products` en el primer turno y el guard compartido
-de preview/runtime elimina importes, menus o pitch si el borrador rompe la
-apertura. El modo Anfitrion y las estrategias custom conservan apertura directa.
-La regla convive con una escalera dura anti-toreo contada por mensaje entrante
-(`countPriceInsistence`): a la 2a peticion el prompt prohibe un tercer rebote y a
-la 3a (`PRICE_INSISTENCE_HARD_THRESHOLD`) se inyecta la REGLA DURA de soltar el
-precio real de inmediato, y los guardianes de precio (complianceGuard y el
-guard de apertura/runtime) dejan pasar el dato aunque exista una condicion literal del
-negocio. `complianceGuard` conserva el bloqueo condicionado solo cuando el negocio escribio
-la condicion en sus reglas y aplica hasta la 2a peticion. El nivel de iniciativa
-no crea por si solo un bloqueo de precio. Tampoco se transforma un silencio
-transitorio en una transferencia permanente: las tools y los contratos
-inequivocos de `turnPolicy` mandan.
-
-Bases de estrategia: la base adaptable de fabrica es el guion con criterio
-(pull, estatus con calidez, textura humana de chat, cierre etico, giros
-sensibles con empatia primero); se renderiza con los placeholders del
-perfil/formulario (`renderClosingStrategyTemplate`). La base directa
-(`LIGHT_DIRECT_CLOSING_STRATEGY`) solo acompaña iniciativa baja (Anfitrion); el
-registro Ejecutivo se calibra dentro del guion con la directiva de registro, ya
-no cambiando de base.
-
-Intencion de agenda en `legacy_v1` (misma filosofia anti-toreo, solo objetivo citas):
-`countSchedulingInsistence` cuenta mensajes entrantes que piden cita/horarios.
-A la 1a peticion el prompt baja el descubrimiento a segundo plano y prioriza
-ofrecer horarios reales (maximo una pregunta operativa indispensable); a la 2a+
-inyecta REGLA DURA de ofrecer horarios o concretar la cita en esa misma
-respuesta, adaptada a quien agenda (IA -> get_free_slots + book_appointment;
-humano -> ofrecer horarios + mark_ready_to_advance; URL -> send_goal_url). El
-unico freno permitido es un requisito operativo configurado (p. ej. anticipo),
-que se resuelve en el mismo movimiento. Los candados de evidencia
-(confirmacion de slot real, closingPhaseGate) siguen intactos.
-
-Clientes existentes en `legacy_v1` (opcional por agente): el toggle
-`goalWorkflow.attention.pastClientsToHuman` hace que los clientes previos pasen
-directo con el equipo. Dos senales: (1) evidencia CRM determinista
-(`detectPastClientEvidence` en runner.js: pagos exitosos live o citas pasadas no
-canceladas ANTERIORES al arranque de la conversacion, para no confundir un
-anticipo pagado en el mismo chat) — con evidencia, el prompt exige
-send_to_human en el primer turno con resumen; (2) senales conversacionales (la
-persona dice ser cliente, menciona su ultima visita/pedido) — aplica aunque
-escriba desde un numero o canal nuevo; ante ambiguedad, una pregunta ligera de
-confirmacion y al confirmar, traspaso. El traspaso usa la via normal de
-`send_to_human` (estado `human` + push prioritaria). Las senales inequivocas se
-resuelven en `turnPolicy` antes del modelo para impedir que una respuesta
-equivocada reagende, cobre o marque la meta. No se usan coincidencias amplias:
-debe existir evidencia CRM, declaracion afirmativa en primera persona o peticion
-explicita de humano.
-
-### Aprendizaje, metricas y seguridad
-
-Los eventos nuevos guardan `agent_id`, de modo que un snapshot de aprendizaje no
-mezcla agentes ni toma eventos legacy sin propietario. Las propuestas se guardan
-en `conversational_agent_learning_versions` como `proposed`; un usuario
-autenticado debe aprobarlas o rechazarlas. Solo una version `approved` entra como
-contexto asesor y nunca sustituye politica, permisos, precios, seguridad ni
-resultados de tools. Se puede marcar `reverted` sin borrar el historial.
+### Metricas y seguridad
 
 Las metricas separan metas completadas, handoffs, citas, links de pago,
 seguimientos enviados/suprimidos, errores de herramientas, tasa de respuesta,
-modo de runtime y numero real de vueltas del modelo. Los assessments aplican a
-legacy; v2 registra `native_single_agent` y las capas desactivadas. Un estado `human` con señal `ready_for_human` cuenta como traspaso,
-no como exito. Las evaluaciones deterministas cubren mensajes frios, interes sin
-compromiso, preguntas directas, objeciones, desconfianza, ambiguedad,
-contradicciones, descalificacion, riesgo de cancelacion, opt-out, fallos de tools,
-aislamiento, conocimiento ausente y memoria sensible.
+acciones ejecutadas y numero real de vueltas del modelo. Un estado `human` con
+señal `ready_for_human` cuenta como traspaso, no como exito. No existen versiones
+de assessment, estrategia o aprendizaje que puedan modificar el prompt o las
+capacidades por fuera del editor del dueño.
+La migracion del runtime unico elimina las tablas anteriores de politicas y
+aprendizaje, elimina el antiguo interruptor global redundante, limpia estados
+`discarded` y no conserva adaptadores ejecutables de keywords o configuraciones
+antiguas. Publicar o pausar un agente individual es la unica llave operativa;
+ninguna segunda configuracion puede revertir o bloquear esa accion.
 
 Reglas:
 
@@ -3218,8 +3096,9 @@ esquina superior izquierda, con control individual para encender/pausar,
 reiniciar omisiones y editar la configuracion principal. Dentro de un chat con
 agente asignado, el robot vive a la izquierda del calendario en la capsula del
 header y abre los controles por contacto (`pause`, `take_over`, `skip`,
-`resume`/`activate` y `clear_signal`). El runtime global es un detalle interno:
-la app no presenta `Apagar todos`.
+`resume`/`activate` y `clear_signal`). No existe un runtime global que pueda
+bloquear al agente: la app controla directamente cada agente individual y no
+presenta `Apagar todos`.
 
 La pantalla de analiticas nativa debe mantenerse alineada con
 `PhoneAnalytics`: periodos `30d`/`60d`/`180d`/`year`/`custom`, 8 KPIs, grafica

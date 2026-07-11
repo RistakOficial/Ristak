@@ -1,11 +1,9 @@
 import { Agent, Runner } from '@openai/agents'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
-import { enforceComplianceGuard } from './complianceGuard.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../../utils/dateUtils.js'
 import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
-  buildBusinessProfilePromptParameters,
   getAIAgentConfig,
   getOpenAIApiKey,
   getBusinessProfileSnapshot
@@ -21,17 +19,13 @@ import {
   getConversationState,
   listConversationStatesForContact,
   buildConversationalAgentRuntimeConfig,
-  ensureConversationalAgentRuntimeEnabledForPublishedAgents,
   recordConversationalAgentEvent,
   getConversationalAgent,
   listConversationalAgents,
   matchAgentForMessage,
   assignAgentToConversation,
   releaseAgentFromConversation,
-  setConversationSignal,
   setConversationStatus,
-  applyAgentCompletionAction,
-  applyAgentSuccessExtras,
   buildRuleContext,
   entryRulesMatch,
   exitRulesMatch,
@@ -43,7 +37,6 @@ import {
   recoverPendingConversationalPaymentSourceBindings,
   recoverPendingConversationalPaymentReconciliations,
   runWithConversationStateChannel,
-  normalizeConversationalPersuasionLevel,
   normalizeConversationalAgentModel,
   getAgentResponseDelayMs,
   getAgentFollowUpSteps,
@@ -51,33 +44,19 @@ import {
   normalizeAgentFollowUp,
   MAX_FOLLOW_UP_DELAY_MINUTES,
   getAgentReplyDeliveryPartDelayMs,
-  normalizeAgentReplyDelivery,
-  ADVANCED_CLOSING_CONTEXT_FIELDS
+  normalizeAgentReplyDelivery
 } from '../../services/conversationalAgentService.js'
 import {
   normalizeConversationalAIProvider,
   resolveConversationalAIRuntime
 } from '../../services/conversationalAIProviderService.js'
 import { DEFAULT_OPENAI_MODEL } from '../../config/openAIModels.js'
-import { tagNamesForIds } from '../../services/contactTagsService.js'
 // (AI-002) Gate de licencia: el runtime del agente conversacional debe respetar
 // la feature premium incluso cuando se dispara desde los servicios de mensajería.
 import { hasFeature } from '../../services/licenseService.js'
-import {
-  buildClosingStrategyTemplateParameters,
-  buildConversationalInstructions,
-  countPriceInsistence,
-  countSchedulingInsistence,
-  getAccountRegionalLocaleTag,
-  getClosingChannelLabel,
-  hasConfiguredPriceDisclosureGate,
-  PRICE_INSISTENCE_HARD_THRESHOLD
-} from './prompt.js'
 import { createConversationalTools } from './tools.js'
-import { NON_LIVE_PAYMENT_MODES, SUCCESS_PAYMENT_STATUSES } from './actionEvidence.js'
 import { buildInputItems } from '../runner.js'
 import {
-  splitMessageIntoBubbles,
   splitMessageIntoBubblesFallback
 } from './messageSplitter.js'
 import {
@@ -85,37 +64,14 @@ import {
   hydrateConversationalMessagesMedia,
   hydrateConversationalPreviewMessagesMedia
 } from './mediaContext.js'
-import {
-  buildConversationDecisionContextMessage,
-  evaluateConversationalGoalReadiness
-} from './decisionState.js'
-import {
-  analyzeConversationIntelligence,
-  applyStrategyPlan,
-  buildApprovedLearningContextMessage,
-  buildConversationIntelligenceContextMessage,
-  compileConversationalAgentPolicy,
-  finalizeConversationIntelligenceTurn,
-  getApprovedConversationalLearning,
-  loadConversationIntelligenceState,
-  planConversationStrategy,
-  retrieveRelevantBusinessKnowledge,
-  saveConversationIntelligenceState
-} from './intelligence/index.js'
-import {
-  enforceOpeningConversationPolicy,
-  evaluateTurnPolicy,
-  isOpeningConversationTurn
-} from './intelligence/turnPolicy.js'
+import { retrieveRelevantBusinessKnowledge } from './intelligence/knowledge.js'
 import {
   buildConversationalCapabilityManifest,
   getConversationalCapabilitiesConfig,
   getConversationalNativeRuntimeValidationErrors,
-  getConversationalPromptConfig,
-  isToolCallingV2
+  getConversationalPromptConfig
 } from './nativeRuntimeConfig.js'
 import { buildNativeConversationalInstructions } from './nativePrompt.js'
-import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 
 const HISTORY_LIMIT = 20
 export const TOOL_CALLING_V2_HISTORY_BYTE_BUDGET = 64 * 1024
@@ -137,17 +93,6 @@ export const TOOL_CALLING_V2_RUNTIME_MODE = 'tool_calling_v2'
 export const TOOL_CALLING_V2_MODEL_SETTINGS = Object.freeze({
   parallelToolCalls: false
 })
-export const TOOL_CALLING_V2_DISABLED_LAYERS = Object.freeze([
-  'goal_readiness',
-  'conversation_assessment',
-  'strategy_planner',
-  'approved_learning_context',
-  'turn_policy',
-  'compliance_guard',
-  'runtime_reply_guard',
-  'ai_message_splitter'
-])
-const TOOL_CALLING_V2_FORBIDDEN_TOOLS = new Set(['stay_silent', 'discard_conversation', 'update_closing_context'])
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
 const pendingContactReruns = new Map()
@@ -212,47 +157,8 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
 ])
 export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email']
 
-// Palabras internas que jamás deben llegar al cliente final.
-const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link)\b/gi
+// Identificadores internos que jamás deben llegar al cliente final.
 const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|update_closing_context|register_deposit_payment_proof)\b/gi
-const INTERNAL_REASONING_LABEL_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|objetivo|decisi[oó]n|criterio|checklist|paso\s+[a-z0-9]+)\s*[:：-]\s*(?:\*\*)?/i
-const INTERNAL_REASONING_MARKER_PATTERN = /(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|criterio|checklist)\s*[:：-]\s*(?:\*\*)?/i
-const VISIBLE_REPLY_PREFIX_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:respuesta|mensaje)\s+(?:visible|final)\s*[:：-]\s*(?:\*\*)?\s*/i
-const HARD_INTERNAL_META_PHRASES = [
-  /\b(?:tengo|ya tengo|cuento con)\s+(?:el\s+)?contexto\s+del\s+negocio\b/i,
-  /\bel contacto es (?:nuevo|fr[ií]o|tibio|caliente|neutral)\b/i,
-  /\bahora voy a responder\b/i,
-  /\bno voy a\b.*\b(?:soltar|dar|explicar|responder|valores|pitch)\b/i
-]
-const SOFT_INTERNAL_META_PHRASES = [
-  /\bvoy a (?:regresar|devolver|soltar|aplicar|usar|espejear|mantener)\b/i,
-  /\b(?:primer|siguiente) mensaje\b/i,
-  /\b(?:la persona|el contacto) (?:est[aá]|viene|llega|dijo|no dijo|trae|se siente|pregunt[oó]|pidi[oó])\b/i,
-  /\b(?:prospecto|interlocutor|estatus|pitch|pull|push|rebote|desarmad[oa]|sin ser mam[oó]n|registro profesional|registro alto|registro medio|registro bajo)\b/i,
-  /\b(?:espejeo|espejear|espeja)\b/i,
-  /\bsu sequedad\b/i,
-  /\bvalores (?:de golpe|concretos)\b/i,
-  /\bpregunta espec[ií]fica\b/i
-]
-const HUMAN_HANDOFF_ACTION_TYPES = new Set(['mark_ready_to_advance', 'send_to_human'])
-const PRICE_DISCLOSURE_PATTERN = /(?:[$€£]\s*\d|\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s*(?:mxn|usd|d[oó]lares?|pesos?|euros?)\b|\b(?:cuesta|vale|valor|precio|costo|sale)\s+(?:es\s+)?(?:de\s+)?[$€£]?\s*\d)/i
-const PRICE_QUALIFICATION_PATTERN = /\b(?:cu[eé]ntame|dime|comp[aá]rteme|para\s+(?:ubicar|darte|no\s+darte|cotizar|pasarte)|antes\s+de\s+(?:darte|pasarte)|qu[eé]\s+(?:buscas|necesitas|te\s+pasa|situaci[oó]n|quieres\s+resolver)|desde\s+cu[aá]ndo|c[oó]mo\s+te\s+(?:afecta|molesta|urge))\b/i
-const HUMAN_HANDOFF_PROMISE_PATTERNS = [
-  /\bte\s+paso\s+(?:con|al|a\s+un|a\s+una|para\s+(?:que|la\s+valoraci[oó]n|la\s+cita|agendar|confirmar|seguir))/i,
-  /\b(?:pasarte|canalizarte|derivarte)\s+(?:con|al|a\s+un|a\s+una|para\s+(?:que|agendar|confirmar|seguir))/i,
-  /\bte\s+(?:ayudan|apoyan|atienden|contactan|llaman|confirman|revisan)\b/i,
-  /\b(?:el|nuestro|mi)\s+equipo\s+(?:te\s+)?(?:ayuda|apoya|atiende|contacta|llama|confirma|revisa|sigue|seguir[aá])\b/i,
-  /\b(?:un|una)\s+(?:asesor|humano|persona|especialista|ejecutivo)\b.{0,80}\b(?:te\s+)?(?:ayuda|contacta|atiende|llama|confirma|revisa|sigue|seguir[aá])\b/i,
-  /\b(?:queda|lo\s+dejo|lo\s+dejamos)\s+(?:pendiente\s+)?(?:con|para)\s+(?:el\s+)?(?:equipo|humano|asesor|persona)\b/i,
-  /\b(?:seguir|continuar)\s+el\s+(?:agendado|proceso|tr[aá]mite)\b/i
-]
-const SCHEDULING_OR_PROCESS_QUESTION_PATTERNS = [
-  /\b(?:queda|qued[oó]|est[aá])\s+(?:ya\s+)?(?:agendada|agendado|confirmada|confirmado)\b/i,
-  /\b(?:cita|agenda|agendar|horario|hora|disponibilidad|turno|valoraci[oó]n)\b[^.!?]{0,120}\?/i,
-  /\b(?:hoy|mañana|lunes|martes|mi[eé]rcoles|miercoles|jueves|viernes|s[aá]bado|sabado|domingo)\b[^.!?]{0,80}\b(?:\d{1,2}|am|pm|a\s+la|a\s+las|cita|hora)\b/i,
-  /\b(?:a\s+la|a\s+las)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i,
-  /\b(?:c[oó]mo\s+(?:la\s+)?solicito|d[oó]nde\s+me\s+recomienda|no\s+entiendo|me\s+revisar[aá]n\s+primero|primero\s+la\s+revisi[oó]n)\b/i
-]
 
 export function normalizeConversationalChannel(value = 'whatsapp') {
   const raw = String(value || '').trim().toLowerCase()
@@ -424,21 +330,6 @@ export function shouldRecoverPendingInbound(latestMessage, state, {
   return !lastReplyMs || messageMs > lastReplyMs
 }
 
-export function sanitizeAgentReply(text) {
-  let reply = String(text || '').trim()
-  if (!reply) return ''
-  reply = reply.replace(INTERNAL_TOKEN_PATTERN, '').replace(/\[[^\]]*herramienta[^\]]*\]/gi, '')
-  reply = removeInternalReasoningBlocks(reply)
-  reply = reply.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
-  if ((reply.startsWith('"') && reply.endsWith('"')) || (reply.startsWith('“') && reply.endsWith('”'))) {
-    reply = reply.slice(1, -1).trim()
-  }
-  if (reply.length > MAX_REPLY_CHARS) {
-    reply = `${reply.slice(0, MAX_REPLY_CHARS - 1).trim()}…`
-  }
-  return reply
-}
-
 export function sanitizeToolCallingV2Reply(text) {
   let reply = String(text || '').trim()
   if (!reply) return ''
@@ -458,197 +349,6 @@ export function sanitizeToolCallingV2Reply(text) {
   }
   return reply
 }
-
-function normalizeActionType(action = {}) {
-  return String(action?.type || action?.name || '').trim()
-}
-
-function hasActionType(actions = [], types = HUMAN_HANDOFF_ACTION_TYPES) {
-  return Array.isArray(actions) && actions.some((action) => types.has(normalizeActionType(action)))
-}
-
-export function replySuggestsHumanHandoff(reply = '') {
-  const text = String(reply || '').trim()
-  if (!text) return false
-  return HUMAN_HANDOFF_PROMISE_PATTERNS.some((pattern) => pattern.test(text))
-}
-
-function runtimePriceGuardApplies(config = {}) {
-  return hasConfiguredPriceDisclosureGate(
-    config?.extraInstructions,
-    config?.closingStrategyMode === 'custom' ? config?.closingStrategyCustom : ''
-  )
-}
-
-export function rewritePrematurePriceDisclosure(reply = '', config = {}, { priceInsistenceCount = 0 } = {}) {
-  const text = String(reply || '').trim()
-  if (!text || !runtimePriceGuardApplies(config)) return text
-  // Regla de la casa: a la tercera petición de precio ya no se torea al contacto;
-  // soltar el dato deja de ser "prematuro" y este guard no debe borrarlo.
-  if (Number(priceInsistenceCount) >= PRICE_INSISTENCE_HARD_THRESHOLD) return text
-  if (!PRICE_DISCLOSURE_PATTERN.test(text) || !PRICE_QUALIFICATION_PATTERN.test(text)) return text
-  return 'Claro, para darte un valor que sí aplique, cuéntame tantito qué estás buscando resolver?'
-}
-
-export function shouldEscalateSilentSchedulingQuestion(latestText = '', actions = []) {
-  if (!hasActionType(actions, new Set(['stay_silent']))) return false
-  const text = String(latestText || '').trim()
-  if (!text) return false
-  return SCHEDULING_OR_PROCESS_QUESTION_PATTERNS.some((pattern) => pattern.test(text))
-}
-
-export function applyConversationalRuntimeReplyGuard({
-  reply = '',
-  latestText = '',
-  messages = [],
-  actions = [],
-  config = {},
-  channel = 'whatsapp',
-  pastClientContext = null,
-  preflightDecision = null,
-  readiness = null,
-  suppressReply = false,
-  priceInsistenceCount = 0
-} = {}) {
-  let nextReply = String(reply || '').trim()
-  let nextSuppressReply = Boolean(suppressReply)
-  const events = []
-  // Las señales amplias de readiness y las promesas redactadas por el modelo siguen
-  // siendo sólo contexto. Aquí se fuerzan únicamente dos contratos inequívocos:
-  // petición explícita de humano y cliente previo cuando el negocio activó esa regla.
-  const turnDecision = preflightDecision || evaluateTurnPolicy({ latestText, config, pastClientContext })
-  const alreadyHandedOff = hasActionType(actions, new Set(['send_to_human']))
-  const forceHumanHandoff = alreadyHandedOff ? null : turnDecision.forceHumanHandoff
-  if (forceHumanHandoff) {
-    nextReply = turnDecision.reply || nextReply
-    nextSuppressReply = false
-    events.push({ type: 'runtime_policy_handoff', source: forceHumanHandoff.source })
-  }
-
-  const openingGuard = enforceOpeningConversationPolicy({
-    reply: nextReply,
-    messages,
-    latestText,
-    config,
-    priceInsistenceCount,
-    channel
-  })
-  if (openingGuard.changed) {
-    nextReply = openingGuard.reply
-    if (openingGuard.reason) events.push({ type: 'runtime_opening_guard_rewrite', reason: openingGuard.reason })
-  }
-
-  const priceGuardReply = rewritePrematurePriceDisclosure(nextReply, config, { priceInsistenceCount })
-  if (priceGuardReply !== nextReply) {
-    nextReply = priceGuardReply
-    events.push({ type: 'runtime_price_guard_rewrite' })
-  }
-
-  return {
-    reply: nextReply,
-    suppressReply: nextSuppressReply,
-    forceHumanHandoff: forceHumanHandoff || null,
-    events
-  }
-}
-
-async function recordRuntimeReplyGuardEvents({ contactId, latest, agentConfig, channel, events = [], forceHumanHandoff = null } = {}) {
-  if (!contactId || !events.length) return
-  await recordConversationalAgentEvent({
-    contactId,
-    eventType: 'runtime_reply_guard',
-    detail: {
-      messageId: latest?.id || null,
-      agentId: agentConfig?.id || null,
-      channel: normalizeConversationalChannel(channel || latest?.channel),
-      events: events.map((event) => event.type),
-      forcedHuman: Boolean(forceHumanHandoff),
-      source: forceHumanHandoff?.source || null
-    }
-  }).catch((error) => {
-    logger.warn(`[Agente conversacional] No se pudo registrar runtime_reply_guard: ${error.message}`)
-  })
-}
-
-async function forceRuntimeHumanHandoff({ contactId, agentConfig, latest, channel, ctx, handoff } = {}) {
-  if (!contactId || !handoff) return null
-  const reason = String(handoff.reason || 'El runtime detecto que el caso requiere humano.').trim()
-  const summary = String(handoff.summary || '').trim()
-  const signal = 'ready_for_human'
-  const completeObjective = handoff.completeObjective === true
-  const action = {
-    type: completeObjective ? 'runtime_mark_ready_to_advance' : 'runtime_send_to_human',
-    motivo: reason,
-    source: handoff.source || 'runtime_guard',
-    effect: {
-      liveEffect: completeObjective
-        ? 'MARCA el objetivo como cumplido por suficiencia de contexto y pasa el chat a humano.'
-        : 'Pasa el chat a humano por candado de runtime. NO marca el objetivo como cumplido.',
-      marksObjectiveCompleted: completeObjective
-    }
-  }
-  if (Array.isArray(ctx?.actions)) ctx.actions.push(action)
-
-  await setConversationSignal(contactId, signal, {
-    reason,
-    summary,
-    status: completeObjective ? 'completed' : 'human',
-    agentId: agentConfig?.id || '',
-    channel: normalizeConversationalChannel(channel || latest?.channel)
-  })
-  if (completeObjective) {
-    await applyAgentCompletionAction(agentConfig || {}, contactId)
-  }
-
-  try {
-    const result = await sendConversationalAgentPriorityNotification({ contactId, reason, summary, signal })
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'priority_push_notification',
-      detail: { signal, sent: result?.sent || 0, skipped: Boolean(result?.skipped), reason: result?.reason || null, source: 'runtime_guard' }
-    })
-  } catch (error) {
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'priority_push_notification_failed',
-      detail: { signal, error: error.message, source: 'runtime_guard' }
-    })
-  }
-
-  await recordConversationalAgentEvent({
-    contactId,
-    eventType: 'runtime_human_handoff_forced',
-    detail: {
-      messageId: latest?.id || null,
-      agentId: agentConfig?.id || null,
-      channel: normalizeConversationalChannel(channel || latest?.channel),
-      reason,
-      source: handoff.source || 'runtime_guard'
-    }
-  })
-  if (completeObjective) {
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'objective_completed',
-      detail: {
-        agentId: agentConfig?.id || null,
-        signal,
-        kind: 'ready_for_human',
-        intencionDetectada: reason,
-        urgencia: null,
-        siguientePaso: null,
-        source: handoff.source || 'runtime_guard'
-      }
-    })
-    await applyAgentSuccessExtras(agentConfig || {}, contactId)
-  }
-  return action
-}
-
-function buildRuntimeReadyToAdvanceReply() {
-  return 'Perfecto, ya con eso te paso con el equipo para que te confirmen el siguiente paso.'
-}
-
 export async function waitForConversationalResponseWindow({
   contactId,
   latest,
@@ -702,37 +402,6 @@ export async function waitForConversationalResponseWindow({
   return { latest: nextLatest, delayed: true, absorbedNewerInbound: true }
 }
 
-function isInternalReasoningBlock(value) {
-  const block = String(value || '').trim()
-  if (!block) return false
-  if (INTERNAL_REASONING_LABEL_PATTERN.test(block) || INTERNAL_REASONING_MARKER_PATTERN.test(block)) return true
-  if (HARD_INTERNAL_META_PHRASES.some((pattern) => pattern.test(block))) return true
-  let score = 0
-  for (const pattern of SOFT_INTERNAL_META_PHRASES) {
-    if (pattern.test(block)) score += 1
-  }
-  return score >= 2
-}
-
-function cleanVisibleReplyBlock(value) {
-  const block = String(value || '').trim()
-  if (!block) return ''
-  const visibleMatch = block.match(VISIBLE_REPLY_PREFIX_PATTERN)
-  if (visibleMatch) return block.slice(visibleMatch[0].length).trim()
-  if (isInternalReasoningBlock(block)) return ''
-  return block
-}
-
-function removeInternalReasoningBlocks(text) {
-  const blocks = String(text || '')
-    .replace(/\r\n/g, '\n')
-    .split(/\n{1,}/)
-    .map((block) => cleanVisibleReplyBlock(block))
-    .filter(Boolean)
-
-  return blocks.join('\n').trim()
-}
-
 function cleanMessageText(row) {
   const text = String(row?.message_text || row?.content || '').trim()
   const mediaSummary = buildConversationalMediaSummary(row)
@@ -758,65 +427,24 @@ function compactText(value, maxLength = 600) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength)
 }
 
-function formatMoney(amount, currency = 'MXN') {
-  const numeric = Number(amount)
-  if (!Number.isFinite(numeric)) return ''
-  try {
-    return new Intl.NumberFormat('es-MX', {
-      style: 'currency',
-      currency: String(currency || 'MXN').toUpperCase(),
-      maximumFractionDigits: 2
-    }).format(numeric)
-  } catch {
-    return `${numeric} ${currency || 'MXN'}`
-  }
-}
-
-function firstText(...values) {
-  return values.map((value) => compactText(value)).find(Boolean) || ''
+function getAccountRegionalLocaleTag(accountLocale = {}) {
+  const countryCode = String(accountLocale?.countryCode || accountLocale?.country || '').trim().toUpperCase()
+  return /^[A-Z]{2}$/.test(countryCode) ? `es-${countryCode}` : 'es-419'
 }
 
 function getChannelLabel(channel = 'whatsapp') {
-  return getClosingChannelLabel(channel)
+  const normalized = normalizeConversationalChannel(channel)
+  return {
+    whatsapp: 'WhatsApp',
+    instagram: 'Instagram',
+    messenger: 'Messenger',
+    webchat: 'Chat web',
+    sms: 'SMS',
+    email: 'Correo',
+    facebook_comment: 'Comentario de Facebook',
+    instagram_comment: 'Comentario de Instagram'
+  }[normalized] || 'chat'
 }
-
-function summarizeProducts(rows = []) {
-  const products = []
-  const seen = new Set()
-  for (const row of rows) {
-    const name = compactText(row.name, 80)
-    if (!name || seen.has(row.id || name)) continue
-    seen.add(row.id || name)
-    const value = row.amount !== null && row.amount !== undefined
-      ? ` (${formatMoney(row.amount, row.currency)})`
-      : ''
-    products.push(`${name}${value}`)
-  }
-  return products.slice(0, 6).join(', ')
-}
-
-function summarizeLocation(location = {}) {
-  const parts = [
-    location?.address,
-    location?.city,
-    location?.state,
-    location?.country
-  ].map((item) => compactText(item, 80)).filter(Boolean)
-  return parts.join(', ')
-}
-
-function summarizeBusinessInfo({ businessContext, businessName, location, productSummary, businessProfile = null }) {
-  const profileSummary = compactText(businessProfile?.summary, 1800)
-  const parts = [
-    businessName ? `Negocio: ${businessName}` : '',
-    profileSummary ? `Perfil estructurado: ${profileSummary}` : '',
-    productSummary ? `Servicios/productos: ${productSummary}` : '',
-    summarizeLocation(location) ? `Ubicación: ${summarizeLocation(location)}` : '',
-    compactText(businessContext, 1000)
-  ].filter(Boolean)
-  return parts.join(' · ')
-}
-
 // [Fase 2 — base de conocimiento] La info del negocio es UN solo texto libre que el dueño
 // llena en configuración (el campo "información del negocio" del chatbot). Esa es la única
 // fuente de verdad; NO dependemos de extraer campos estructurados ni de un formulario aparte.
@@ -842,173 +470,6 @@ export function buildRuntimeBusinessContext(rawContext = '', businessProfile = n
   return `${buildBusinessInfoGroundingRule()}\n\n${infoText}`
 }
 
-async function loadAdvancedClosingRuntimeContext({
-  contactId,
-  config,
-  businessName,
-  businessContext,
-  businessProfile = null,
-  timezone,
-  nowIso,
-  accountLocale = {},
-  channel = 'whatsapp',
-  ruleContext = null
-} = {}) {
-  if (config?.closingStrategyMode === 'custom') return { enabled: false }
-
-  const [contact, state, products, calendars, hlRow] = await Promise.all([
-    contactId ? db.get(`
-      SELECT id, full_name, first_name, last_name, phone, email, source, tags,
-             purchases_count, total_paid, created_at, updated_at,
-             attribution_session_source, attribution_medium, attribution_ad_name,
-             attribution_ad_id, visitor_id, ghl_contact_id, preferred_whatsapp_phone_number_id
-      FROM contacts WHERE id = ?
-    `, [contactId]).catch(() => null) : null,
-	    contactId ? db.get(
-	      `SELECT closing_context_json
-	       FROM conversational_agent_state
-	       WHERE contact_id = ? AND agent_id = ?
-	         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
-	       LIMIT 1`,
-	      [contactId, config?.id || null, normalizeConversationalChannel(channel)]
-	    ).catch(() => null) : null,
-    db.all(`
-      SELECT p.id, p.name, pp.amount, pp.currency
-      FROM products p
-      LEFT JOIN product_prices pp ON pp.product_id = p.id
-      WHERE p.is_active = 1
-      ORDER BY p.name ASC
-      LIMIT 40
-    `).catch(() => []),
-    db.all('SELECT id, name FROM calendars WHERE is_active = 1 ORDER BY name ASC LIMIT 10').catch(() => []),
-    db.get('SELECT location_data FROM highlevel_config LIMIT 1').catch(() => null)
-  ])
-
-  let location = null
-  try {
-    location = hlRow?.location_data ? JSON.parse(hlRow.location_data) : null
-  } catch { /* sin perfil */ }
-
-  const storedTags = safeJsonParse(contact?.tags, [])
-  const tagNames = Array.isArray(storedTags) && storedTags.length
-    ? await tagNamesForIds(storedTags).catch(() => storedTags)
-    : []
-  const learned = safeJsonParse(state?.closing_context_json, {})
-  const productSummary = summarizeProducts(products)
-  const locationSummary = summarizeLocation(location)
-  const profileParameters = businessProfile?.configured
-    ? buildBusinessProfilePromptParameters(businessProfile.profile, businessProfile.promptParameters)
-    : {}
-  const profileBusinessName = firstText(profileParameters.NOMBRE_DEL_NEGOCIO, businessProfile?.businessName)
-  const profileIndustry = firstText(profileParameters.INDUSTRIA, businessProfile?.industry)
-  const profileOffering = firstText(profileParameters.PRODUCTO_O_SERVICIO, businessProfile?.offeringsSummary)
-  const profileValue = firstText(profileParameters.VALOR, businessProfile?.pricingSummary)
-  const profileLocation = firstText(profileParameters.UBICACION_O_MODALIDAD, businessProfile?.locationSummary)
-  const profileAvailability = firstText(profileParameters.DISPONIBILIDAD)
-  const profileConditions = firstText(profileParameters.CONDICIONES_IMPORTANTES, businessProfile?.paymentSummary, businessProfile?.contactSummary)
-  const channelLabel = getChannelLabel(channel)
-  const cameFromAd = ruleContext?.cameFromAd || Boolean(contact?.attribution_ad_name || contact?.attribution_ad_id)
-  const arrivalSource = firstText(
-    learned.arrivalSource,
-    contact?.source,
-    contact?.attribution_session_source,
-    cameFromAd ? 'anuncio de Meta/WhatsApp' : '',
-    channelLabel
-  )
-  const personType = Number(contact?.purchases_count || 0) > 0 || Number(contact?.total_paid || 0) > 0
-    ? 'cliente'
-    : 'prospecto'
-  const conditions = [
-    config?.requiredData ? `Datos minimos: ${config.requiredData}` : '',
-    config?.handoffRules ? `Reglas de humano: ${config.handoffRules}` : '',
-    config?.extraInstructions ? `Instrucciones extra: ${config.extraInstructions}` : ''
-  ].map((item) => compactText(item, 700)).filter(Boolean).join(' · ')
-  const availability = calendars.length
-    ? `consulta disponibilidad real con list_calendars/get_free_slots; calendarios activos: ${calendars.map((calendar) => calendar.name || calendar.id).filter(Boolean).slice(0, 5).join(', ')}`
-    : 'consulta disponibilidad real con list_calendars/get_free_slots antes de proponer horarios'
-
-  const businessInfoSummary = summarizeBusinessInfo({
-    businessContext,
-    businessName: firstText(profileBusinessName, businessName),
-    location,
-    productSummary: firstText(profileOffering, productSummary),
-    businessProfile
-  })
-  const adaptationPromptParameters = businessProfile?.configured
-    ? profileParameters
-    : buildBusinessProfilePromptParameters({
-      businessName: firstText(profileBusinessName, businessName),
-      industry: profileIndustry,
-      description: businessInfoSummary || businessContext,
-      offerings: firstText(profileOffering, productSummary) ? [{ name: firstText(profileOffering, productSummary) }] : [],
-      locations: firstText(profileLocation, locationSummary) ? [{ modality: firstText(profileLocation, locationSummary) }] : [],
-      hours: profileAvailability ? { summary: profileAvailability } : {},
-      payments: profileConditions ? { summary: profileConditions } : {},
-      importantConditions: profileConditions
-    })
-  const businessConditions = [
-    profileConditions,
-    conditions
-  ].map((item) => compactText(item, 900)).filter(Boolean).join(' · ')
-  const fullAvailability = [
-    profileAvailability,
-    availability
-  ].map((item) => compactText(item, 700)).filter(Boolean).join(' · ')
-
-  const parameters = buildClosingStrategyTemplateParameters({
-    profileParameters,
-    adaptationParameters: adaptationPromptParameters,
-    config,
-    businessName: firstText(profileBusinessName, businessName, 'este negocio'),
-    industry: firstText(profileIndustry, businessContext ? 'la industria descrita en el perfil estructurado del negocio' : 'no especificada'),
-    offering: firstText(learned.productInterest, profileOffering, productSummary, 'los servicios del negocio'),
-    personType,
-    channelLabel,
-    businessInfo: businessInfoSummary || 'consulta get_business_profile y list_products para información real del negocio',
-    value: firstText(profileValue, productSummary, 'consulta list_products antes de hablar de valor'),
-    location: firstText(profileLocation, locationSummary, 'modalidad no especificada; consulta get_business_profile si hace falta'),
-    availability: fullAvailability || availability,
-    conditions: businessConditions || 'sin condiciones adicionales configuradas',
-    learned,
-    contact,
-    tagNames,
-    arrivalSource,
-    accountLocale
-  })
-
-  const systemFacts = [
-    `Canal detectado: ${channelLabel}`,
-    contact?.created_at ? `Contacto registrado: ${contact.created_at}` : '',
-    contact?.full_name ? `Nombre registrado: ${contact.full_name}` : '',
-    contact?.phone ? `Teléfono registrado: ${contact.phone}` : '',
-    contact?.email ? `Email registrado: ${contact.email}` : '',
-    tagNames.length ? `Etiquetas: ${tagNames.join(', ')}` : '',
-    contact?.source ? `Fuente del contacto: ${contact.source}` : '',
-    contact?.attribution_session_source ? `Atribucion/source: ${contact.attribution_session_source}` : '',
-    contact?.attribution_medium ? `Atribucion/medium: ${contact.attribution_medium}` : '',
-    contact?.attribution_ad_name || contact?.attribution_ad_id ? `Anuncio detectado: ${[contact.attribution_ad_name, contact.attribution_ad_id].filter(Boolean).join(' / ')}` : '',
-    ruleContext?.businessPhoneNumberId ? `Número de WhatsApp del negocio: ${ruleContext.businessPhoneNumberId}` : '',
-    productSummary ? `Productos/servicios activos: ${productSummary}` : '',
-    businessProfile?.summary ? `Perfil estructurado del negocio: ${businessProfile.summary}` : '',
-    locationSummary ? `Ubicación registrada: ${locationSummary}` : '',
-    parameters.PAIS_CUENTA ? `País/región textual de la cuenta: ${parameters.PAIS_CUENTA}` : '',
-    `Zona horaria: ${timezone}`,
-    `Fecha/hora para interpretar relativos: ${nowIso}`
-  ].map((item) => compactText(item, 700)).filter(Boolean)
-
-  const missingFields = ADVANCED_CLOSING_CONTEXT_FIELDS
-    .map((field) => field.key)
-    .filter((key) => !compactText(learned?.[key]))
-
-  return {
-    enabled: true,
-    parameters,
-    systemFacts,
-    learned,
-    missingFields
-  }
-}
-
 export function splitReplyIntoParts(reply, deliveryInput = {}) {
   return splitMessageIntoBubblesFallback({
     text: reply,
@@ -1021,29 +482,6 @@ export function buildReplyPartDelaySchedule(parts = [], agentConfig = {}) {
   return Array.from({ length: count }, (_, index) => {
     return index === 0 ? 0 : getAgentReplyDeliveryPartDelayMs(agentConfig)
   })
-}
-
-export function buildPendingReplyContextMessage(pendingMessages = []) {
-  const lines = (Array.isArray(pendingMessages) ? pendingMessages : [])
-    .map((message, index) => {
-      const text = cleanMessageText(message).slice(0, 700)
-      return `${index + 1}. ${text}`
-    })
-    .filter(Boolean)
-
-  if (!lines.length) return null
-
-  return {
-    role: 'user',
-    content: [
-      '[Contexto interno de Ristak: mensajes entrantes pendientes sin respuesta completa]',
-      'Estos mensajes todavía deben tomarse en cuenta como parte de la siguiente respuesta visible del agente.',
-      'Responde considerando TODOS, no sólo el último. Si el último mensaje corrige o agrega información, prioriza lo más reciente.',
-      'Si ya existe una respuesta parcial del agente en el historial, continúa de forma natural sin repetirla literal.',
-      'No menciones este contexto interno.',
-      ...lines
-    ].join('\n')
-  }
 }
 
 function rowToConversationalMessage(row, channel = 'whatsapp') {
@@ -1469,10 +907,6 @@ async function loadConversationRows(contactId, channel = 'whatsapp', {
     LIMIT ? OFFSET ?
   `, [contactId, boundedLimit, boundedOffset])
   return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
-}
-
-async function loadConversationHistory(contactId, channel = 'whatsapp', { limit = HISTORY_LIMIT } = {}) {
-  return loadConversationRows(contactId, channel, { limit })
 }
 
 async function countConversationRows(contactId, channel = 'whatsapp', { contentOnly = false } = {}) {
@@ -1955,68 +1389,6 @@ async function loadInboundMessagesForRecoveryWindow(channel, {
 // equipo: pagos exitosos reales o citas pasadas no canceladas ANTERIORES al
 // arranque de esta conversación (para no confundir un anticipo pagado en este
 // mismo chat con un cliente previo).
-export async function detectPastClientEvidence(contactId, { beforeIso = null } = {}) {
-  const cleanContactId = String(contactId || '').trim()
-  if (!cleanContactId) return { isPastClient: false, facts: [] }
-  const cutoffMs = (() => {
-    const parsed = new Date(beforeIso || '')
-    return Number.isNaN(parsed.getTime()) ? Date.now() : parsed.getTime()
-  })()
-
-  const [payments, appointments] = await Promise.all([
-    db.all(`
-      SELECT amount, currency, status, payment_mode, COALESCE(paid_at, date, created_at) AS paid_ts
-      FROM payments
-      WHERE contact_id = ?
-      ORDER BY COALESCE(paid_at, date, created_at) DESC
-      LIMIT 50
-    `, [cleanContactId]).catch(() => []),
-    db.all(`
-      SELECT start_time, COALESCE(appointment_status, status, '') AS appointment_state
-      FROM appointments
-      WHERE contact_id = ? AND deleted_at IS NULL AND start_time < ?
-      ORDER BY start_time DESC
-      LIMIT 20
-    `, [cleanContactId, new Date().toISOString()]).catch(() => [])
-  ])
-
-  const facts = []
-  for (const payment of payments || []) {
-    const status = String(payment.status || '').trim().toLowerCase()
-    const mode = String(payment.payment_mode || '').trim().toLowerCase()
-    const paidMs = new Date(payment.paid_ts || '').getTime()
-    if (!SUCCESS_PAYMENT_STATUSES.has(status) || NON_LIVE_PAYMENT_MODES.has(mode)) continue
-    if (!Number.isFinite(paidMs) || paidMs >= cutoffMs) continue
-    facts.push(`Pago registrado de ${payment.amount} ${String(payment.currency || '').toUpperCase()} el ${String(payment.paid_ts).slice(0, 10)}`)
-    if (facts.length >= 2) break
-  }
-  for (const appointment of appointments || []) {
-    const state = String(appointment.appointment_state || '').trim().toLowerCase()
-    const startMs = new Date(appointment.start_time || '').getTime()
-    if (['cancelled', 'noshow'].includes(state)) continue
-    if (!Number.isFinite(startMs) || startMs >= cutoffMs) continue
-    facts.push(`Cita previa el ${String(appointment.start_time).slice(0, 10)}${state ? ` (${state})` : ''}`)
-    if (facts.length >= 4) break
-  }
-
-  return { isPastClient: facts.length > 0, facts }
-}
-
-function pastClientHandoffEnabled(config = {}) {
-  return Boolean(config?.goalWorkflow?.attention?.pastClientsToHuman)
-}
-
-async function buildPastClientRuntimeContext({ config, contactId, agentState = null, dryRun = false }) {
-  if (!pastClientHandoffEnabled(config)) return null
-  if (dryRun || !contactId) {
-    // El tester no tiene contacto real: la regla conversacional sigue activa.
-    return { enabled: true, evidence: null }
-  }
-  const beforeIso = agentState?.activated_at || agentState?.created_at || null
-  const evidence = await detectPastClientEvidence(contactId, { beforeIso }).catch(() => ({ isPastClient: false, facts: [] }))
-  return { enabled: true, evidence: evidence.isPastClient ? evidence : null }
-}
-
 function nativeActionSucceeded(action = {}) {
   const outcome = action?.outcome || {}
   if (outcome.simulated === true || outcome.status === 'simulated') return false
@@ -2142,13 +1514,8 @@ async function buildToolCallingV2AgentForRun({
     historyContext,
     loadConversationHistoryPage: historyContext?.loadOlderPage || null,
     actions: [],
-    suppressReply: false
   }
-  // Defensa adicional del runner: aunque una factory vieja exponga tools que
-  // silencian o vuelven a analizar intención, el carril v2 nunca las entrega al modelo.
-  const tools = createConversationalTools(ctx).filter((candidate) => (
-    !TOOL_CALLING_V2_FORBIDDEN_TOOLS.has(String(candidate?.name || '').trim())
-  ))
+  const tools = createConversationalTools(ctx)
   const knowledge = retrieveRelevantBusinessKnowledge({
     businessProfile,
     fallbackContext: buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile),
@@ -2238,7 +1605,6 @@ export async function runToolCallingV2Turn({
   ctx.conversationMessages = selectedMessages
   ctx.historyContext = historyContext
   ctx.loadConversationHistoryPage = historyContext.loadOlderPage
-  ctx.suppressReply = false
 
   const runTelemetry = { history: preparedHistory.telemetry }
   const generatedReply = await runInChannel(normalizeConversationalChannel(channel), () => runMainAgent({
@@ -2256,91 +1622,13 @@ export async function runToolCallingV2Turn({
     runTelemetry
   }))
   const reply = ensureToolCallingV2VisibleReply(generatedReply, ctx.actions)
-  // Las tools de silencio/descarte no están expuestas. Esta asignación evita que
-  // una implementación vieja de la factory arrastre suppression al carril v2.
-  ctx.suppressReply = false
-
   return {
     ...built,
     reply,
     runtimeMode: TOOL_CALLING_V2_RUNTIME_MODE,
     modelCallCount: Math.max(1, Number(runTelemetry.modelCallCount) || 0),
-    historyTelemetry: preparedHistory.telemetry,
-    disabledLayers: TOOL_CALLING_V2_DISABLED_LAYERS
+    historyTelemetry: preparedHistory.telemetry
   }
-}
-
-async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '', executionId = '', priceInsistenceCount = 0, schedulingInsistenceCount = 0, pastClientContext = null }) {
-  const [aiConfig, timezone, businessProfile, accountLocale, approvedLearning] = await Promise.all([
-    getAIAgentConfig({}),
-    getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
-    getBusinessProfileSnapshot().catch(() => null),
-    getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })),
-    config?.id ? getApprovedConversationalLearning(config.id).catch(() => null) : Promise.resolve(null)
-  ])
-
-  const aiProvider = normalizeConversationalAIProvider(config?.aiProvider)
-  const model = normalizeConversationalAgentModel(conversationModel || config?.model || DEFAULT_MODEL, aiProvider)
-  const nowIso = new Date().toLocaleString(getAccountRegionalLocaleTag(accountLocale), { timeZone: timezone, dateStyle: 'full', timeStyle: 'short' })
-
-  let businessName = null
-  try {
-    const hlRow = await db.get('SELECT location_data FROM highlevel_config LIMIT 1')
-    businessName = hlRow?.location_data ? JSON.parse(hlRow.location_data)?.name || null : null
-  } catch { /* sin HighLevel */ }
-  if (!businessName) {
-    const userRow = await db.get('SELECT business_name FROM users ORDER BY id ASC LIMIT 1').catch(() => null)
-    businessName = userRow?.business_name || null
-  }
-
-  const ctx = { contactId, config, dryRun, channel: normalizeConversationalChannel(channel), followUpMode: Boolean(followUpContext), executionId: String(executionId || '').trim(), accountLocale, actions: [], suppressReply: false }
-  const tools = createConversationalTools(ctx)
-  const knowledge = retrieveRelevantBusinessKnowledge({
-    businessProfile,
-    fallbackContext: buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile),
-    query: knowledgeQuery,
-    maxChars: 6000
-  })
-  const runtimeBusinessContext = knowledge.context
-  const compiledPolicy = compileConversationalAgentPolicy(config, { businessProfile })
-  const advancedClosingContext = await loadAdvancedClosingRuntimeContext({
-    contactId,
-    config,
-    businessName,
-    businessContext: runtimeBusinessContext.slice(0, 6000),
-    businessProfile,
-    timezone,
-    nowIso,
-    accountLocale,
-    channel,
-    ruleContext
-  })
-
-  const instructions = buildConversationalInstructions({
-    config,
-    businessContext: runtimeBusinessContext.slice(0, 6000),
-    brandVoice: String(aiConfig?.brand_voice || '').trim().slice(0, 2000),
-    businessName,
-    timezone,
-    nowIso,
-    contactName,
-    channel,
-    advancedClosingContext,
-    accountLocale,
-    followUpContext,
-    priceInsistenceCount,
-    schedulingInsistenceCount,
-    pastClientContext
-  })
-
-  const agent = new Agent({
-    name: 'Ristak · Agente conversacional',
-    model,
-    instructions,
-    tools
-  })
-
-  return { agent, ctx, model, aiProvider, compiledPolicy, approvedLearning, knowledge }
 }
 
 async function executeAgent({
@@ -2352,10 +1640,7 @@ async function executeAgent({
   aiProvider = 'openai',
   channel = 'whatsapp',
   traceMessage = '',
-  intelligenceTrace = null,
-  runtimeMode = 'legacy_v1',
-  inputLimit = null,
-  preserveAllMessages = false,
+  runtimeMode = TOOL_CALLING_V2_RUNTIME_MODE,
   historyTelemetry = null,
   runTelemetry = null
 }) {
@@ -2379,13 +1664,6 @@ async function executeAgent({
         runtimeMode
       }
     })
-    if (intelligenceTrace) {
-      await recordAgentStep(agentRun, {
-        stepType: 'conversation_assessment',
-        status: 'completed',
-        output: intelligenceTrace
-      })
-    }
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo iniciar rastro: ${error.message}`)
   }
@@ -2397,18 +1675,14 @@ async function executeAgent({
     })
     const result = await runner.run(
       agent,
-      buildInputItems(messages, preserveAllMessages
-        ? { preserveAll: true }
-        : (inputLimit ? { limit: inputLimit } : undefined)),
+      buildInputItems(messages, { preserveAll: true }),
       {
         maxTurns: MAX_TURNS,
         context: { category: 'conversacional', contactId, runtimeMode }
       }
     )
 
-    const reply = runtimeMode === TOOL_CALLING_V2_RUNTIME_MODE
-      ? sanitizeToolCallingV2Reply(result.finalOutput)
-      : sanitizeAgentReply(result.finalOutput)
+    const reply = sanitizeToolCallingV2Reply(result.finalOutput)
     const modelCallCount = Math.max(1, Array.isArray(result.rawResponses) ? result.rawResponses.length : 0)
     if (runTelemetry && typeof runTelemetry === 'object') {
       runTelemetry.modelCallCount = modelCallCount
@@ -2589,19 +1863,6 @@ function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, re
   return true
 }
 
-function buildFollowUpContextMessage({ followUpIndex, strategy }) {
-  return {
-    role: 'user',
-    content: [
-      `[Contexto interno de Ristak: disparo de seguimiento ${followUpIndex}]`,
-      'El contacto no respondió después del último mensaje visible.',
-      'Escribe sólo el mensaje que reabrirá la conversación.',
-      'No menciones este contexto interno.',
-      strategy ? `Estrategia de seguimiento: ${strategy}` : ''
-    ].filter(Boolean).join('\n')
-  }
-}
-
 async function sendConversationalChannelTextMessage({
   channel = 'whatsapp',
   contactId,
@@ -2683,15 +1944,6 @@ async function sendConversationalChannelTextMessage({
 
 async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp', agentId = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
-  // El runtime base es compatibilidad interna: si quedó apagado por legado,
-  // se repara cuando existe un agente publicado que pueda atender.
-  let config = await getConversationalAgentConfig()
-  if (!config.enabled) {
-    config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
-      reason: 'follow_up_with_published_agent'
-    })
-  }
-  if (!config.enabled) return
 
   // (AI-002) Los seguimientos también ejecutan el responder (consume tokens):
   // sin entitlement de 'conversational_ai' no deben dispararse.
@@ -2721,14 +1973,9 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
   const runtime = await resolveConversationalAIRuntime(aiProvider)
   agentConfig = { ...agentConfig, aiProvider }
-  const toolCallingV2 = isToolCallingV2(agentConfig)
   const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-  const historyEnvelope = toolCallingV2
-    ? await loadToolCallingV2ConversationEnvelope({ contactId, channel: normalizedChannel })
-    : null
-  const rawMessages = toolCallingV2
-    ? historyEnvelope.messages
-    : await loadConversationHistory(contactId, normalizedChannel, { limit: HISTORY_LIMIT })
+  const historyEnvelope = await loadToolCallingV2ConversationEnvelope({ contactId, channel: normalizedChannel })
+  const rawMessages = historyEnvelope.messages
   const openAIFallbackApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
@@ -2743,8 +1990,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   if (!hydratedMessages.length) return
 
   const followUp = normalizeAgentFollowUp(agentConfig.followUp)
-  if (toolCallingV2) {
-    const turn = await runToolCallingV2Turn({
+  const turn = await runToolCallingV2Turn({
       config: agentConfig,
       runtime,
       messages: hydratedMessages,
@@ -2758,7 +2004,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       followUpContext: { index: followUpIndex, strategy: followUp.strategy },
       historyEnvelope: { ...historyEnvelope, messages: hydratedMessages }
     })
-    const { ctx, model, reply } = turn
+  const { ctx, model, reply } = turn
 
     await recordConversationalAgentEvent({
       contactId,
@@ -2771,7 +2017,6 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
         runtimeMode: turn.runtimeMode,
         modelCallCount: turn.modelCallCount,
         history: turn.historyTelemetry,
-        disabledLayers: turn.disabledLayers,
         actionTypes: ctx.actions.map((action) => action?.type).filter(Boolean)
       }
     }).catch(() => {})
@@ -2898,207 +2143,6 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
 
     const nextState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel }).catch(() => null)
     scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado', channel: normalizedChannel })
-    return
-  }
-
-  const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
-    config: agentConfig,
-    conversationModel: agentConfig.model || config.model,
-    contactId,
-    contactName: contact?.full_name || null,
-    dryRun: false,
-    channel: normalizedChannel,
-    ruleContext: null,
-    followUpContext: { index: followUpIndex, strategy: followUp.strategy },
-    knowledgeQuery: cleanMessageText(latest)
-  })
-
-  const previousIntelligence = await loadConversationIntelligenceState({
-    stateId: state.id,
-    objective: compiledPolicy.objective.type,
-    channel: normalizedChannel
-  })
-  const assessed = await analyzeConversationIntelligence({
-    messages: hydratedMessages,
-    policy: compiledPolicy,
-    previousState: previousIntelligence,
-    runtime,
-    model,
-    channel: normalizedChannel,
-    followUpMode: true
-  })
-  const strategy = planConversationStrategy({
-    intelligenceState: assessed.state,
-    policy: compiledPolicy,
-    latestMessage: cleanMessageText(latest),
-    followUpMode: true
-  })
-  let intelligenceState = applyStrategyPlan(assessed.state, strategy)
-  await saveConversationIntelligenceState({
-    stateId: state.id,
-    intelligenceState,
-    policyHash: compiledPolicy.hash,
-    source: assessed.source
-  })
-
-  if (intelligenceState.followUp.stop || strategy.action === 'wait' || strategy.shouldReply === false) {
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'follow_up_suppressed',
-      detail: {
-        agentId: agentConfig.id,
-        baseMessageId,
-        followUpIndex,
-        channel: normalizedChannel,
-        reason: 'intelligence_stop',
-        policyHash: compiledPolicy.hash,
-        stateRevision: intelligenceState.revision,
-        strategy: strategy.action
-      }
-    }).catch(() => {})
-    return
-  }
-
-  const intelligenceContextMessage = buildConversationIntelligenceContextMessage(intelligenceState, compiledPolicy)
-  const learningContextMessage = buildApprovedLearningContextMessage(approvedLearning)
-  const messagesForAgent = [
-    ...hydratedMessages,
-    buildFollowUpContextMessage({ followUpIndex, strategy: followUp.strategy }),
-    ...(learningContextMessage ? [learningContextMessage] : []),
-    intelligenceContextMessage
-  ]
-  ctx.conversationMessages = messagesForAgent
-  ctx.aiRuntime = runtime
-  ctx.model = model
-  ctx.intelligenceState = intelligenceState
-  ctx.compiledPolicy = compiledPolicy
-
-  const reply = await runWithConversationStateChannel(normalizedChannel, () => executeAgent({
-    agent,
-    modelProvider: runtime.modelProvider,
-    messages: messagesForAgent,
-    contactId,
-    model,
-    aiProvider,
-    channel: normalizedChannel,
-    traceMessage: `seguimiento ${followUpIndex}`,
-    intelligenceTrace: {
-      policyHash: compiledPolicy.hash,
-      policyVersion: compiledPolicy.version,
-      stateRevision: intelligenceState.revision,
-      source: assessed.source,
-      stage: intelligenceState.stage,
-      temperature: intelligenceState.temperature,
-      strategy: intelligenceState.strategy,
-      intent: intelligenceState.intent,
-      signalSummary: intelligenceState.signals,
-      followUpIndex
-    }
-  }))
-
-  const postState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel })
-  intelligenceState = finalizeConversationIntelligenceTurn({
-    intelligenceState,
-    actions: ctx.actions,
-    reply,
-    suppressed: ctx.suppressReply || postState?.status !== 'active' || Boolean(postState?.signal)
-  }).state
-  await saveConversationIntelligenceState({
-    stateId: state.id,
-    intelligenceState,
-    policyHash: compiledPolicy.hash,
-    source: assessed.source
-  })
-  if (ctx.suppressReply || !reply || postState?.status !== 'active' || postState?.signal) {
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'follow_up_suppressed',
-      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, actions: ctx.actions, status: postState?.status || null }
-    }).catch(() => {})
-    return
-  }
-
-  const latestBeforeSend = await loadNewerInboundMessage(contactId, baseMessageId, normalizedChannel)
-  if (latestBeforeSend) {
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'follow_up_suppressed',
-      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, reason: 'newer_inbound_before_follow_up', newerMessageId: latestBeforeSend.id }
-    }).catch(() => {})
-    return
-  }
-
-  const delivery = await sendReplyParts({
-    contactId,
-    phone,
-    latest,
-    agentConfig,
-    reply,
-    apiKey: runtime.apiKey,
-    model,
-    channel: normalizedChannel,
-    externalIdPrefix: `convagent_followup${followUpIndex}`,
-    dependencies: {
-      splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback,
-      markReplyComplete: async ({ contactId: doneContactId, latest: doneLatest }) => {
-        await db.run(`
-          UPDATE conversational_agent_state
-          SET last_reply_at = CURRENT_TIMESTAMP,
-              last_answered_inbound_message_id = ?,
-              follow_up_sent_count = ?,
-              follow_up_last_sent_at = CURRENT_TIMESTAMP,
-              activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
-              activation_source = COALESCE(activation_source, 'automatic'),
-              activated_by = COALESCE(activated_by, 'agent'),
-              updated_at = CURRENT_TIMESTAMP
-          WHERE contact_id = ?
-            AND agent_id = ?
-            AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
-        `, [doneLatest.id, followUpIndex, doneContactId, agentConfig.id, normalizedChannel])
-      }
-    }
-  })
-
-  if (delivery.interruptedBy) {
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'follow_up_suppressed',
-      detail: {
-        agentId: agentConfig.id,
-        baseMessageId,
-        followUpIndex,
-        reason: 'newer_inbound_during_follow_up',
-        newerMessageId: delivery.interruptedBy.id,
-        sentParts: delivery.sentParts
-      }
-    }).catch(() => {})
-    return
-  }
-
-  if (!delivery.parts.length) {
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'follow_up_suppressed',
-      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, reason: 'empty_follow_up_reply' }
-    }).catch(() => {})
-    return
-  }
-
-  await recordConversationalAgentEvent({
-    contactId,
-    eventType: 'follow_up_sent',
-    detail: {
-      agentId: agentConfig.id,
-      baseMessageId,
-      followUpIndex,
-      partCount: delivery.parts.length,
-      replyPreview: reply.slice(0, 280),
-      aiProvider
-    }
-  }).catch(() => {})
-
-  const nextState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel }).catch(() => null)
-  scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado', channel: normalizedChannel })
 }
 
 export async function sendReplyParts({
@@ -3114,7 +2158,7 @@ export async function sendReplyParts({
   dependencies = {}
 }) {
   const {
-    splitter = splitMessageIntoBubbles,
+    splitter = splitMessageIntoBubblesFallback,
     sendTextMessage = null,
     wait = sleep,
     loadNewerInbound = null,
@@ -3275,7 +2319,6 @@ async function handleToolCallingV2InboundTurn({
       runtimeMode: turn.runtimeMode,
       modelCallCount: turn.modelCallCount,
       history: turn.historyTelemetry,
-      disabledLayers: turn.disabledLayers,
       actionTypes: ctx.actions.map((action) => action?.type).filter(Boolean),
       capabilityIds: turn.capabilityManifest.filter((item) => item.enabled).map((item) => item.id)
     }
@@ -3445,7 +2488,6 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
   runningContacts.add(runKey)
 
   const getRuntimeConfig = dependencies.getRuntimeConfig || getConversationalAgentConfig
-  const ensureRuntimeEnabled = dependencies.ensureRuntimeEnabled || ensureConversationalAgentRuntimeEnabledForPublishedAgents
   const featureEnabled = dependencies.hasFeature || hasFeature
   const getAgent = dependencies.getAgent || getConversationalAgent
   const getState = dependencies.getState || getConversationState
@@ -3458,15 +2500,11 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
   const recordEvent = dependencies.recordEvent || recordConversationalAgentEvent
 
   try {
-    let runtimeDefaults = await getRuntimeConfig()
-    if (!runtimeDefaults.enabled) {
-      runtimeDefaults = await ensureRuntimeEnabled({ reason: 'verified_payment_resume' })
-    }
-    if (!runtimeDefaults.enabled) return { resumed: false, reason: 'runtime_disabled' }
+    const runtimeDefaults = await getRuntimeConfig()
     if (!(await featureEnabled('conversational_ai'))) return { resumed: false, reason: 'feature_disabled' }
 
     let agentConfig = await getAgent(cleanAgentId).catch(() => null)
-    if (!agentConfig?.enabled || !isToolCallingV2(agentConfig)) {
+    if (!agentConfig?.enabled) {
       return { resumed: false, reason: 'native_agent_unavailable' }
     }
     const state = await getState(cleanContactId, { agentId: cleanAgentId, channel: normalizedChannel })
@@ -3639,7 +2677,7 @@ function shouldReopenCompletedConversationState(state, latestMessageId) {
   return getStateLastAnsweredInboundMessageId(state) !== cleanLatestMessageId
 }
 
-export async function resolveInboundAgentForContact({ contactId, messageText, channel, ruleContext, latestMessageId = '' }) {
+export async function resolveInboundAgentForContact({ contactId, channel, ruleContext, latestMessageId = '' }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   const states = await listConversationStatesForContact(contactId, { channel: normalizedChannel }).catch(() => [])
   const blockedAgentIds = new Set()
@@ -3650,9 +2688,7 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
 
     // Un handoff sigue pendiente hasta que el humano lo resuelva. Un inbound
     // nuevo no debe borrar su señal ni permitir que otro agente se cuele.
-    const pendingHumanHandoff = state.status === 'human' || (
-      state.signal === 'ready_for_human' && agentConfig?.successAction === 'ready_for_human'
-    )
+    const pendingHumanHandoff = state.status === 'human'
     if (pendingHumanHandoff) {
       return { agentConfig: null, state, assigned: false }
     }
@@ -3741,7 +2777,7 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'agent_released',
-        detail: { agentId: state.agentId, name: agentConfig?.name || null, channel: normalizedChannel, reason: 'legacy_assignment_not_applicable' }
+        detail: { agentId: state.agentId, name: agentConfig?.name || null, channel: normalizedChannel, reason: 'assignment_not_applicable' }
       })
       continue
     }
@@ -3777,7 +2813,6 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
 
   const agentConfig = await matchAgentForMessage({
     contactId,
-    messageText,
     channel: normalizedChannel,
     excludeAgentIds: [...blockedAgentIds, ...releasedAgentIds],
     ruleContext
@@ -3832,22 +2867,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
   try {
     if (!contactId || !messageId) return
 
-    // El runtime base es compatibilidad interna: si quedó apagado por legado,
-    // se repara cuando existe un agente publicado que pueda atender.
-    let config = await getConversationalAgentConfig()
-    if (!config.enabled) {
-      config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
-        reason: 'incoming_message_with_published_agent'
-      })
-    }
-    if (!config.enabled) {
-      await recordConversationalAgentEvent({
-        contactId,
-        eventType: 'run_skipped_runtime_disabled',
-        detail: { messageId, channel: normalizedChannel }
-      }).catch(() => {})
-      return
-    }
+    const runtimeDefaults = await getConversationalAgentConfig()
 
     // (AI-002) Sin entitlement de 'conversational_ai' (downgrade/impago) el
     // agente no debe responder ni consumir tokens. hasFeature es fail-closed.
@@ -3884,18 +2904,15 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       if (!latest) return
 
 	      // Resolver qué agente atiende esta conversación: el ya asignado o el
-	      // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
-	      let latestMessageText = cleanMessageText(latest)
+	      // primero cuyas reglas factuales de entrada coincidan con el contacto/canal.
       let ruleContext = await buildRuleContext({
         contactId,
-        messageText: latestMessageText,
         post: postContext,
 	        channel: normalizedChannel
 	      })
 
       const resolved = await resolveInboundAgentForContact({
         contactId,
-        messageText: latestMessageText,
         channel: normalizedChannel,
         ruleContext,
         latestMessageId: latest.id
@@ -3934,10 +2951,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       if (!waitResult.latest) return
       if (waitResult.latest.id !== latest.id) {
         latest = waitResult.latest
-        latestMessageText = cleanMessageText(latest)
         ruleContext = await buildRuleContext({
           contactId,
-          messageText: latestMessageText,
           post: postContext,
           channel: normalizedChannel
         })
@@ -3986,18 +3001,12 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
 	      }
 	      agentState = claim.state || agentState
 
-      const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
+      const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || runtimeDefaults.aiProvider)
       const runtime = await resolveConversationalAIRuntime(aiProvider)
       agentConfig = { ...agentConfig, aiProvider }
-      const toolCallingV2 = isToolCallingV2(agentConfig)
-
       const contact = await db.get('SELECT id, full_name, phone, email FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-      const historyEnvelope = toolCallingV2
-        ? await loadToolCallingV2ConversationEnvelope({ contactId, channel: normalizedChannel })
-        : null
-      const rawMessages = toolCallingV2
-        ? historyEnvelope.messages
-        : await loadConversationHistory(contactId, normalizedChannel, { limit: HISTORY_LIMIT })
+      const historyEnvelope = await loadToolCallingV2ConversationEnvelope({ contactId, channel: normalizedChannel })
+      const rawMessages = historyEnvelope.messages
       const openAIFallbackApiKey = aiProvider === 'openai'
         ? runtime.apiKey
         : await getOpenAIApiKey().catch(() => null)
@@ -4015,8 +3024,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       }
 	      const pendingMessages = await loadPendingInboundMessages(contactId, agentState, normalizedChannel)
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
-      if (toolCallingV2) {
-        await handleToolCallingV2InboundTurn({
+      await handleToolCallingV2InboundTurn({
           contactId,
           contact,
           phone,
@@ -4030,342 +3038,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           channel: normalizedChannel,
           traceMessage,
           settleActiveClaim
-        })
-        return
-      }
-      const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
-      const baseMessagesForAgent = pendingContextMessage ? [...messages, pendingContextMessage] : messages
-      const conversationDecision = evaluateConversationalGoalReadiness({
-        messages: baseMessagesForAgent,
-        config: agentConfig,
-        contactName: contact?.full_name || ''
       })
-      const decisionContextMessage = buildConversationDecisionContextMessage(conversationDecision)
-      const priceInsistenceCount = countPriceInsistence(baseMessagesForAgent)
-      const schedulingInsistenceCount = countSchedulingInsistence(baseMessagesForAgent)
-      const pastClientContext = await buildPastClientRuntimeContext({
-        config: agentConfig,
-        contactId,
-        agentState,
-        dryRun: false
-      })
-      const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
-        config: agentConfig,
-        conversationModel: agentConfig.model || config.model,
-        contactId,
-        contactName: contact?.full_name || null,
-        dryRun: false,
-      channel: normalizedChannel,
-      ruleContext,
-      executionId: latest.id,
-      knowledgeQuery: traceMessage,
-      priceInsistenceCount,
-      schedulingInsistenceCount,
-      pastClientContext
-      })
-      const previousIntelligence = await loadConversationIntelligenceState({
-        stateId: agentState.id,
-        objective: compiledPolicy.objective.type,
-        channel: normalizedChannel
-      })
-      const assessed = await analyzeConversationIntelligence({
-        messages: baseMessagesForAgent,
-        policy: compiledPolicy,
-        previousState: previousIntelligence,
-        runtime,
-        model,
-        channel: normalizedChannel
-      })
-      const turnPolicyDecision = evaluateTurnPolicy({
-        latestText: traceMessage,
-        config: agentConfig,
-        pastClientContext,
-        intelligenceState: assessed.state
-      })
-      const strategy = turnPolicyDecision.forceHumanHandoff
-        ? {
-            action: 'handoff',
-            reason: turnPolicyDecision.forceHumanHandoff.reason,
-            primaryQuestion: '',
-            tool: 'send_to_human',
-            shouldReply: true,
-            candidates: ['handoff']
-          }
-        : planConversationStrategy({
-            intelligenceState: assessed.state,
-            policy: compiledPolicy,
-            latestMessage: traceMessage,
-            isOpeningTurn: isOpeningConversationTurn(baseMessagesForAgent),
-            priceInsistenceCount
-          })
-      let intelligenceState = applyStrategyPlan(assessed.state, strategy)
-      await saveConversationIntelligenceState({
-        stateId: agentState.id,
-        intelligenceState,
-        policyHash: compiledPolicy.hash,
-        source: assessed.source
-      })
-      await recordConversationalAgentEvent({
-        contactId,
-        eventType: 'conversation_intelligence_updated',
-        detail: {
-          agentId: agentConfig.id,
-          stateId: agentState.id,
-          channel: normalizedChannel,
-          messageId: latest.id,
-          policyHash: compiledPolicy.hash,
-          revision: intelligenceState.revision,
-          stage: intelligenceState.stage,
-          temperature: intelligenceState.temperature,
-          strategy: intelligenceState.strategy.action,
-          tool: intelligenceState.strategy.tool,
-          source: assessed.source,
-          confirmedFacts: intelligenceState.story.confirmedFacts.length,
-          hypotheses: intelligenceState.story.hypotheses.length
-        }
-      })
-      const intelligenceContextMessage = buildConversationIntelligenceContextMessage(intelligenceState, compiledPolicy)
-      const learningContextMessage = buildApprovedLearningContextMessage(approvedLearning)
-      const messagesForAgent = [
-        ...baseMessagesForAgent,
-        ...(decisionContextMessage ? [decisionContextMessage] : []),
-        ...(learningContextMessage ? [learningContextMessage] : []),
-        intelligenceContextMessage
-      ]
-
-      // El generador recibe estado y estrategia tipados; sigue siendo la tool la que
-      // valida y confirma cualquier efecto real.
-      ctx.conversationMessages = messagesForAgent
-      ctx.aiRuntime = runtime
-      ctx.model = model
-      ctx.intelligenceState = intelligenceState
-      ctx.compiledPolicy = compiledPolicy
-
-      let reply = turnPolicyDecision.forceHumanHandoff
-        ? turnPolicyDecision.reply
-        : await runWithConversationStateChannel(normalizedChannel, () => executeAgent({
-            agent,
-            modelProvider: runtime.modelProvider,
-            messages: messagesForAgent,
-            contactId,
-            model,
-            aiProvider,
-            channel: normalizedChannel,
-            traceMessage,
-            intelligenceTrace: {
-              policyHash: compiledPolicy.hash,
-              policyVersion: compiledPolicy.version,
-              stateRevision: intelligenceState.revision,
-              source: assessed.source,
-              stage: intelligenceState.stage,
-              temperature: intelligenceState.temperature,
-              strategy: intelligenceState.strategy,
-              intent: intelligenceState.intent,
-              signalSummary: intelligenceState.signals
-            }
-          }))
-      // Guardián de cumplimiento: revisa las reglas de apertura de la biblia sobre la
-      // respuesta visible y la reescribe si las rompe (precio/pitch antes de calificar).
-      if (reply && !ctx.suppressReply && !turnPolicyDecision.forceHumanHandoff) {
-        const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: agentConfig, runtime, model, priceInsistenceCount })
-        if (guarded.changed) {
-          reply = guarded.reply
-          ctx.actions.push({ type: 'compliance_rewrite', rules: guarded.violation?.rules || [], reason: guarded.violation?.reason || '', effect: { liveEffect: 'REESCRIBIÓ el mensaje para cumplir la biblia (no soltar precio/pitch antes de calificar)', marksObjectiveCompleted: false } })
-        }
-      }
-
-      let allowReplyAfterRuntimeHandoff = false
-      const runtimeGuard = applyConversationalRuntimeReplyGuard({
-        reply,
-        latestText: traceMessage,
-        messages: messagesForAgent,
-        actions: ctx.actions,
-        config: agentConfig,
-        channel: normalizedChannel,
-        pastClientContext,
-        preflightDecision: turnPolicyDecision,
-        readiness: conversationDecision,
-        suppressReply: ctx.suppressReply,
-        priceInsistenceCount
-      })
-      reply = runtimeGuard.reply
-      ctx.suppressReply = runtimeGuard.suppressReply
-      await recordRuntimeReplyGuardEvents({
-        contactId,
-        latest,
-        agentConfig,
-        channel: normalizedChannel,
-        events: runtimeGuard.events,
-        forceHumanHandoff: runtimeGuard.forceHumanHandoff
-      })
-      if (runtimeGuard.forceHumanHandoff) {
-        await forceRuntimeHumanHandoff({
-          contactId,
-          agentConfig,
-          latest,
-          channel: normalizedChannel,
-          ctx,
-          handoff: runtimeGuard.forceHumanHandoff
-        })
-        allowReplyAfterRuntimeHandoff = Boolean(reply)
-      }
-
-      // El estado posterior es evidencia más fuerte que cualquier intención del modelo.
-      const postState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel })
-      const stateConfirmedAction = postState?.signal === 'appointment_booked'
-        ? 'book_appointment'
-        : postState?.signal === 'purchase_completed'
-          ? 'purchase_completed'
-          : postState?.signal === 'discarded'
-            ? 'discard_conversation'
-            : postState?.status === 'human'
-              ? 'send_to_human'
-              : postState?.status === 'completed' && postState?.signal
-                ? 'mark_ready_to_advance'
-                : ''
-      const intelligenceActions = stateConfirmedAction
-        ? [...ctx.actions, { type: stateConfirmedAction, ok: true, source: 'persisted_conversation_state' }]
-        : ctx.actions
-      const finalizedIntelligence = finalizeConversationIntelligenceTurn({
-        intelligenceState,
-        actions: intelligenceActions,
-        reply,
-        suppressed: ctx.suppressReply,
-        contact,
-        now: new Date()
-      })
-      intelligenceState = finalizedIntelligence.state
-      ctx.intelligenceState = intelligenceState
-      await saveConversationIntelligenceState({
-        stateId: agentState.id,
-        intelligenceState,
-        policyHash: compiledPolicy.hash,
-        source: assessed.source
-      })
-      await recordConversationalAgentEvent({
-        contactId,
-        eventType: 'conversation_strategy_executed',
-        detail: {
-          agentId: agentConfig.id,
-          stateId: agentState.id,
-          channel: normalizedChannel,
-          messageId: latest.id,
-          policyHash: compiledPolicy.hash,
-          revision: intelligenceState.revision,
-          strategy: intelligenceState.strategy.action,
-          outcome: intelligenceState.outcome,
-          actionResults: finalizedIntelligence.actionResults
-        }
-      })
-
-      // El estado pudo cambiar durante la ejecución o la espera (descartada, humano, etc.)
-      const blockedStatuses = new Set(['discarded', 'paused', 'skipped', 'human'])
-      const blockedByStatus = blockedStatuses.has(postState?.status)
-      const allowedRuntimeHumanReply = allowReplyAfterRuntimeHandoff && postState?.status === 'human'
-      if (ctx.suppressReply || !reply || (blockedByStatus && !allowedRuntimeHumanReply)) {
-        await recordConversationalAgentEvent({
-          contactId,
-          eventType: 'reply_suppressed',
-          detail: { messageId: latest.id, channel: normalizedChannel, actions: ctx.actions, status: postState?.status || null }
-        })
-        await settleActiveClaim({ status: 'completed', answered: false })
-        return
-      }
-
-      const latestBeforeSend = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
-      if (latestBeforeSend) {
-        await recordConversationalAgentEvent({
-          contactId,
-          eventType: 'reply_suppressed',
-          detail: {
-            messageId: latest.id,
-            agentId: agentConfig.id || null,
-            channel: normalizedChannel,
-            reason: 'newer_inbound_before_reply',
-            newerMessageId: latestBeforeSend.id
-          }
-        })
-        scheduleConversationalAgentRerun({
-          contactId,
-          phone,
-          latestMessage: latestBeforeSend,
-          channel: normalizedChannel,
-          reason: 'mensaje nuevo antes de enviar'
-        })
-        await settleActiveClaim({ status: 'completed', answered: false })
-        return
-      }
-
-      const delivery = await sendReplyParts({
-        contactId,
-        phone,
-        latest,
-        agentConfig,
-        reply,
-        apiKey: runtime.apiKey,
-        model,
-        channel: normalizedChannel,
-        dependencies: {
-          splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback,
-          markReplyComplete: async () => {
-            await settleActiveClaim({ status: 'completed', answered: true })
-          }
-        }
-      })
-      if (delivery.interruptedBy) {
-        await recordConversationalAgentEvent({
-          contactId,
-          eventType: 'reply_suppressed',
-          detail: {
-            messageId: latest.id,
-            agentId: agentConfig.id || null,
-            channel: normalizedChannel,
-            reason: 'newer_inbound_during_split_reply',
-            newerMessageId: delivery.interruptedBy.id,
-            sentParts: delivery.sentParts,
-            partCount: delivery.parts.length
-          }
-        })
-        scheduleConversationalAgentRerun({
-          contactId,
-          phone,
-          latestMessage: delivery.interruptedBy,
-          channel: normalizedChannel,
-          reason: 'envío en partes'
-        })
-        await settleActiveClaim({ status: 'completed', answered: false })
-        return
-      }
-
-      if (!delivery.parts.length) {
-        await settleActiveClaim({ status: 'failed', error: 'empty_reply_delivery' })
-        await recordConversationalAgentEvent({
-          contactId,
-          eventType: 'reply_suppressed',
-          detail: { messageId: latest.id, agentId: agentConfig.id || null, channel: normalizedChannel, reason: 'empty_reply_delivery' }
-        }).catch(() => {})
-        return
-      }
-
-      // Defensa por compatibilidad si una implementación de envío no invocó el
-      // callback de confirmación aunque sí reportó partes enviadas.
-      if (activeClaim) await settleActiveClaim({ status: 'completed', answered: true })
-
-      await recordConversationalAgentEvent({
-        contactId,
-        eventType: 'reply_sent',
-        detail: {
-          messageId: latest.id,
-          agentId: agentConfig.id || null,
-          channel: normalizedChannel,
-          replyPreview: reply.slice(0, 280),
-          partCount: delivery.parts.length,
-          pendingInboundCount: pendingMessages.length,
-          aiProvider,
-          actions: ctx.actions
-        }
-      })
-      await resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone, channel: normalizedChannel })
+      return
     } finally {
       runningContacts.delete(runKey)
       const pending = pendingContactReruns.get(runKey)
@@ -4565,16 +3239,6 @@ export async function recoverPendingConversationalAgentConversations({
   nowMs = Date.now(),
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
 } = {}) {
-  // El runtime base es compatibilidad interna: si quedó apagado por legado,
-  // se repara antes de recuperar conversaciones de agentes publicados.
-  let config = await getConversationalAgentConfig()
-  if (!config.enabled) {
-    config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
-      reason: 'pending_recovery_with_published_agent'
-    })
-  }
-  if (!config.enabled) return { scanned: 0, scheduled: 0 }
-
   // (AI-002) No recuperar pendientes si la feature premium está revocada.
   if (!(await hasFeature('conversational_ai'))) return { scanned: 0, scheduled: 0 }
 
@@ -4709,23 +3373,19 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   const runtime = await resolveAIRuntime(aiProvider)
   const runtimeConfig = { ...config, aiProvider }
   const previewChannel = normalizeConversationalChannel(configOverride?.channel || configOverride?.testChannel || 'whatsapp')
-  const toolCallingV2 = isToolCallingV2(runtimeConfig)
 
-  const normalizedPreviewMessages = (Array.isArray(messages) ? messages : [])
-    .filter((m) => {
-      if (!m) return false
-      const hasText = typeof m.content === 'string' && m.content.trim()
-      const hasAttachments = Array.isArray(m.attachments) && m.attachments.length
+  const cleanMessages = (Array.isArray(messages) ? messages : [])
+    .filter((message) => {
+      if (!message) return false
+      const hasText = typeof message.content === 'string' && message.content.trim()
+      const hasAttachments = Array.isArray(message.attachments) && message.attachments.length
       return hasText || hasAttachments
     })
-    .map((m) => ({
-      role: m.role === 'assistant' ? 'assistant' : 'user',
-      content: typeof m.content === 'string' ? m.content.trim() : '',
-      attachments: Array.isArray(m.attachments) ? m.attachments : []
+    .map((message) => ({
+      role: message.role === 'assistant' ? 'assistant' : 'user',
+      content: typeof message.content === 'string' ? message.content.trim() : '',
+      attachments: Array.isArray(message.attachments) ? message.attachments : []
     }))
-  const cleanMessages = toolCallingV2
-    ? normalizedPreviewMessages
-    : normalizedPreviewMessages.slice(-HISTORY_LIMIT)
 
   if (!cleanMessages.length) {
     const error = new Error('Envía al menos un mensaje para simular la conversación')
@@ -4733,243 +3393,50 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     throw error
   }
 
-  if (toolCallingV2) {
-    const previewHistoryEnvelope = buildToolCallingV2HistoryEnvelope(cleanMessages, { source: 'preview' })
-    const openAIFallbackApiKey = aiProvider === 'openai'
-      ? runtime.apiKey
-      : await getOpenAIApiKey().catch(() => null)
-    const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
-    const hydratedMessages = await hydratePreviewMessages(previewHistoryEnvelope.messages, {
-      aiProvider,
-      apiKey: runtime.apiKey,
-      audioTranscriptionApiKey: openAIFallbackApiKey,
-      visualAnalysisApiKey: openAIFallbackApiKey,
-      includeBinary: includeBinaryMedia
-    })
-    const latestPreviewText = [...cleanMessages].reverse().find((message) => message.role === 'user')?.content || ''
-    const turn = await runNativeTurn({
-      config: runtimeConfig,
-      runtime,
-      messages: hydratedMessages,
-      contactId: null,
-      contactName: null,
-      dryRun: true,
-      channel: previewChannel,
-      traceMessage: latestPreviewText,
-      conversationModel: runtimeConfig.model || runtimeDefaults.model,
-      historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages }
-    })
-    const splitResult = isEmailConversationalChannel(previewChannel)
-      ? { messages: [turn.reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
-      : splitMessageIntoBubblesFallback({
-          text: turn.reply,
-          settings: runtimeConfig.replyDelivery
-        })
-    const replyParts = splitResult.messages
-
-    return {
-      reply: turn.reply,
-      replyParts,
-      replyPartDelaysMs: buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery }),
-      responseDelayMs: getConversationalAgentPreviewResponseDelayMs(),
-      suppressed: false,
-      actions: turn.ctx.actions,
-      intelligence: null,
-      policyValidation: {
-        valid: turn.validationErrors.length === 0,
-        errors: turn.validationErrors,
-        warnings: []
-      },
-      policyHash: null,
-      assessmentSource: 'native_single_agent',
-      runtimeMode: turn.runtimeMode,
-      modelCallCount: turn.modelCallCount,
-      historyTelemetry: turn.historyTelemetry,
-      disabledLayers: turn.disabledLayers,
-      capabilityManifest: turn.capabilityManifest,
-      aiProvider,
-      model: turn.model
-    }
-  }
-
-  const previewPriceInsistenceCount = countPriceInsistence(cleanMessages)
-  const previewSchedulingInsistenceCount = countSchedulingInsistence(cleanMessages)
-  const previewPastClientContext = await buildPastClientRuntimeContext({
-    config: runtimeConfig,
-    contactId: null,
-    agentState: null,
-    dryRun: true
-  })
-  const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
-    config: runtimeConfig,
-    conversationModel: runtimeConfig.model || runtimeDefaults.model,
-    contactId: null,
-    contactName: null,
-    dryRun: true,
-    channel: previewChannel,
-    ruleContext: null,
-    knowledgeQuery: cleanMessages.map((message) => message.content).join(' ').slice(-4000),
-    priceInsistenceCount: previewPriceInsistenceCount,
-    schedulingInsistenceCount: previewSchedulingInsistenceCount,
-    pastClientContext: previewPastClientContext
-  })
-
+  const previewHistoryEnvelope = buildToolCallingV2HistoryEnvelope(cleanMessages, { source: 'preview' })
   const openAIFallbackApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
-  const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
-  const hydratedMessages = await hydrateConversationalPreviewMessagesMedia(cleanMessages, {
+  const hydratedMessages = await hydratePreviewMessages(previewHistoryEnvelope.messages, {
     aiProvider,
     apiKey: runtime.apiKey,
     audioTranscriptionApiKey: openAIFallbackApiKey,
     visualAnalysisApiKey: openAIFallbackApiKey,
-    includeBinary: includeBinaryMedia
-  })
-  const assessed = await analyzeConversationIntelligence({
-    messages: hydratedMessages,
-    policy: compiledPolicy,
-    previousState: null,
-    runtime,
-    model,
-    channel: previewChannel
+    includeBinary: shouldIncludeConversationalBinaryMedia({ runtime })
   })
   const latestPreviewText = [...cleanMessages].reverse().find((message) => message.role === 'user')?.content || ''
-  const turnPolicyDecision = evaluateTurnPolicy({
-    latestText: latestPreviewText,
+  const turn = await runNativeTurn({
     config: runtimeConfig,
-    pastClientContext: previewPastClientContext,
-    intelligenceState: assessed.state
-  })
-  const strategy = turnPolicyDecision.forceHumanHandoff
-    ? {
-        action: 'handoff',
-        reason: turnPolicyDecision.forceHumanHandoff.reason,
-        primaryQuestion: '',
-        tool: 'send_to_human',
-        shouldReply: true,
-        candidates: ['handoff']
-      }
-    : planConversationStrategy({
-        intelligenceState: assessed.state,
-        policy: compiledPolicy,
-        latestMessage: latestPreviewText,
-        isOpeningTurn: isOpeningConversationTurn(cleanMessages),
-        priceInsistenceCount: previewPriceInsistenceCount
-      })
-  let intelligenceState = applyStrategyPlan(assessed.state, strategy)
-  const intelligenceContextMessage = buildConversationIntelligenceContextMessage(intelligenceState, compiledPolicy)
-  const learningContextMessage = buildApprovedLearningContextMessage(approvedLearning)
-  const messagesForAgent = [
-    ...hydratedMessages,
-    ...(learningContextMessage ? [learningContextMessage] : []),
-    intelligenceContextMessage
-  ]
-
-  // Preview y runtime vivo comparten exactamente assessment, estrategia, prompt y tools.
-  ctx.conversationMessages = messagesForAgent
-  ctx.aiRuntime = runtime
-  ctx.model = model
-  ctx.intelligenceState = intelligenceState
-  ctx.compiledPolicy = compiledPolicy
-
-  let reply = turnPolicyDecision.forceHumanHandoff
-    ? turnPolicyDecision.reply
-    : await executeAgent({
-        agent,
-        modelProvider: runtime.modelProvider,
-        messages: messagesForAgent,
-        contactId: null,
-        model,
-        aiProvider,
-        channel: previewChannel,
-        intelligenceTrace: {
-          policyHash: compiledPolicy.hash,
-          policyVersion: compiledPolicy.version,
-          stateRevision: intelligenceState.revision,
-          source: assessed.source,
-          stage: intelligenceState.stage,
-          temperature: intelligenceState.temperature,
-          strategy: intelligenceState.strategy,
-          intent: intelligenceState.intent,
-          signalSummary: intelligenceState.signals
-        }
-      })
-
-  // Guardián de cumplimiento (mismo que en vivo, para que el tester lo refleje 1:1).
-  if (reply && !ctx.suppressReply && !turnPolicyDecision.forceHumanHandoff) {
-    const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: runtimeConfig, runtime, model, priceInsistenceCount: previewPriceInsistenceCount })
-    if (guarded.changed) {
-      reply = guarded.reply
-      ctx.actions.push({ type: 'compliance_rewrite', rules: guarded.violation?.rules || [], reason: guarded.violation?.reason || '', effect: { liveEffect: 'REESCRIBIÓ el mensaje para cumplir la biblia (no soltar precio/pitch antes de calificar)', marksObjectiveCompleted: false } })
-    }
-  }
-
-  const runtimeGuard = applyConversationalRuntimeReplyGuard({
-    reply,
-    latestText: latestPreviewText,
-    messages: messagesForAgent,
-    actions: ctx.actions,
-    config: runtimeConfig,
+    runtime,
+    messages: hydratedMessages,
+    contactId: null,
+    contactName: null,
+    dryRun: true,
     channel: previewChannel,
-    pastClientContext: previewPastClientContext,
-    preflightDecision: turnPolicyDecision,
-    suppressReply: ctx.suppressReply,
-    priceInsistenceCount: previewPriceInsistenceCount
+    traceMessage: latestPreviewText,
+    conversationModel: runtimeConfig.model || runtimeDefaults.model,
+    historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages }
   })
-  reply = runtimeGuard.reply
-  ctx.suppressReply = runtimeGuard.suppressReply
-  if (runtimeGuard.forceHumanHandoff && !hasActionType(ctx.actions, new Set(['send_to_human']))) {
-    ctx.actions.push({
-      type: 'send_to_human',
-      motivo: runtimeGuard.forceHumanHandoff.reason,
-      resumen: runtimeGuard.forceHumanHandoff.summary,
-      simulated: true,
-      outcome: { ok: true, simulated: true, actionCompleted: false },
-      effect: {
-        liveEffect: 'PASARÍA el chat a un humano (el bot deja de responder). NO marca el objetivo como cumplido.',
-        marksObjectiveCompleted: false
-      }
-    })
-  }
-
-  intelligenceState = finalizeConversationIntelligenceTurn({
-    intelligenceState,
-    actions: ctx.actions,
-    reply,
-    suppressed: ctx.suppressReply
-  }).state
-
-  const splitResult = ctx.suppressReply
-    ? { messages: [] }
-    : isEmailConversationalChannel(previewChannel)
-      ? { messages: [reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
-      : runtime.supportsAISplitting
-      ? await splitMessageIntoBubbles({
-        text: reply,
-        settings: runtimeConfig.replyDelivery,
-        apiKey: runtime.apiKey,
-        model
-      })
-      : splitMessageIntoBubblesFallback({
-        text: reply,
+  const splitResult = isEmailConversationalChannel(previewChannel)
+    ? { messages: [turn.reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
+    : splitMessageIntoBubblesFallback({
+        text: turn.reply,
         settings: runtimeConfig.replyDelivery
       })
   const replyParts = splitResult.messages
-  const replyPartDelaysMs = buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery })
-  const responseDelayMs = getConversationalAgentPreviewResponseDelayMs()
 
   return {
-    reply: ctx.suppressReply ? '' : reply,
+    reply: turn.reply,
     replyParts,
-    replyPartDelaysMs,
-    responseDelayMs,
-    suppressed: ctx.suppressReply,
-    actions: ctx.actions,
-    intelligence: intelligenceState,
-    policyValidation: compiledPolicy.validation,
-    policyHash: compiledPolicy.hash,
-    assessmentSource: assessed.source,
+    replyPartDelaysMs: buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery }),
+    responseDelayMs: getConversationalAgentPreviewResponseDelayMs(),
+    suppressed: false,
+    actions: turn.ctx.actions,
+    validationErrors: turn.validationErrors,
+    modelCallCount: turn.modelCallCount,
+    historyTelemetry: turn.historyTelemetry,
+    capabilityManifest: turn.capabilityManifest,
     aiProvider,
-    model
+    model: turn.model
   }
 }

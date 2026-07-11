@@ -1758,11 +1758,6 @@ const CONVERSATIONAL_AGENT_STATE_COLUMNS = [
   'assigned_by',
   'updated_by',
   'agent_id',
-  'closing_context_json',
-  'intelligence_state_json',
-  'intelligence_policy_hash',
-  'intelligence_source',
-  'intelligence_updated_at',
   'created_at',
   'updated_at'
 ]
@@ -1857,11 +1852,6 @@ async function ensureConversationalAgentStateIdentity() {
             assigned_by TEXT,
             updated_by TEXT,
             agent_id TEXT,
-            closing_context_json TEXT,
-            intelligence_state_json TEXT,
-            intelligence_policy_hash TEXT,
-            intelligence_source TEXT,
-            intelligence_updated_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
@@ -5655,56 +5645,8 @@ async function initTables() {
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_ai_agent_memories_category ON ai_agent_memories(category, updated_at)')
 
-    // Agente conversacional (atiende chats de WhatsApp): configuración global,
-    // estado por conversación/contacto y bitácora de eventos auditables.
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS conversational_agent_config (
-        id INTEGER PRIMARY KEY,
-        enabled INTEGER DEFAULT 0,
-        ai_provider TEXT DEFAULT 'openai',
-        model ${DEFAULT_OPENAI_MODEL_COLUMN},
-        objective TEXT DEFAULT 'citas',
-        custom_objective TEXT,
-        success_action TEXT DEFAULT 'ready_for_human',
-        required_data TEXT,
-        handoff_rules TEXT,
-        extra_instructions TEXT,
-        allow_emojis INTEGER DEFAULT 0,
-        hide_attended INTEGER DEFAULT 0,
-        hide_attended_notifications INTEGER DEFAULT 0,
-        default_calendar_id TEXT,
-        closing_strategy_mode TEXT DEFAULT 'system',
-        closing_strategy_custom TEXT,
-        persuasion_level TEXT DEFAULT 'medium',
-        language_level TEXT DEFAULT 'intermediate',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    // Columnas agregadas después del despliegue inicial del agente conversacional
-    for (const [columnName, columnType] of [
-      ['ai_provider', "TEXT DEFAULT 'openai'"],
-      ['model', DEFAULT_OPENAI_MODEL_COLUMN],
-      ['hide_attended_notifications', 'INTEGER'],
-      ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
-      ['closing_strategy_custom', 'TEXT'],
-      ['persuasion_level', "TEXT DEFAULT 'medium'"],
-      ['language_level', "TEXT DEFAULT 'intermediate'"]
-    ]) {
-      try {
-        if (usePostgres) {
-          await db.run(`ALTER TABLE conversational_agent_config ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
-        } else {
-          await db.run(`ALTER TABLE conversational_agent_config ADD COLUMN ${columnName} ${columnType}`)
-        }
-      } catch (err) {
-        // La columna ya existe.
-      }
-    }
-
-    // Varios agentes conversacionales: cada uno con su objetivo, estrategia,
-    // acciones al cumplir y filtros de entrada (etiquetas, frases, canal, calendario).
+    // Agentes conversacionales nativos: cada agente guarda su prompt editable,
+    // capacidades blindadas y filtros factuales de entrada.
     await db.run(`
       CREATE TABLE IF NOT EXISTS conversational_agents (
         id TEXT PRIMARY KEY,
@@ -5712,7 +5654,7 @@ async function initTables() {
         enabled INTEGER DEFAULT 1,
         ai_provider TEXT DEFAULT 'openai',
         model ${DEFAULT_OPENAI_MODEL_COLUMN},
-        runtime_mode TEXT NOT NULL DEFAULT 'legacy_v1',
+        runtime_mode TEXT NOT NULL DEFAULT 'tool_calling_v2',
         prompt_config TEXT,
         capabilities_config TEXT,
         identity_mode TEXT DEFAULT 'business',
@@ -5749,7 +5691,7 @@ async function initTables() {
     for (const [columnName, columnType] of [
       ['ai_provider', "TEXT DEFAULT 'openai'"],
       ['model', DEFAULT_OPENAI_MODEL_COLUMN],
-      ['runtime_mode', "TEXT NOT NULL DEFAULT 'legacy_v1'"],
+      ['runtime_mode', "TEXT NOT NULL DEFAULT 'tool_calling_v2'"],
       ['prompt_config', 'TEXT'],
       ['capabilities_config', 'TEXT'],
       ['identity_mode', "TEXT DEFAULT 'business'"],
@@ -5777,6 +5719,11 @@ async function initTables() {
         // La columna ya existe.
       }
     }
+    await db.run(`
+      UPDATE conversational_agents
+      SET runtime_mode = 'tool_calling_v2'
+      WHERE runtime_mode IS NULL OR runtime_mode <> 'tool_calling_v2'
+    `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_conversational_agents_enabled ON conversational_agents(enabled, position)')
 
 	    await db.run(`
@@ -5811,11 +5758,6 @@ async function initTables() {
         assigned_by TEXT,
         updated_by TEXT,
         agent_id TEXT,
-        closing_context_json TEXT,
-        intelligence_state_json TEXT,
-        intelligence_policy_hash TEXT,
-        intelligence_source TEXT,
-        intelligence_updated_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
@@ -5838,11 +5780,6 @@ async function initTables() {
       ['inbound_processing_started_at', 'DATETIME'],
       ['inbound_processing_attempt_count', 'INTEGER DEFAULT 0'],
       ['inbound_processing_last_error', 'TEXT'],
-      ['closing_context_json', 'TEXT'],
-      ['intelligence_state_json', 'TEXT'],
-      ['intelligence_policy_hash', 'TEXT'],
-      ['intelligence_source', 'TEXT'],
-      ['intelligence_updated_at', 'DATETIME'],
       ['follow_up_base_message_id', 'TEXT'],
       ['follow_up_sent_count', 'INTEGER DEFAULT 0'],
       ['follow_up_last_sent_at', 'DATETIME'],
@@ -6148,47 +6085,6 @@ async function initTables() {
         `)
       }
     })
-
-    // Gobernanza de la inteligencia: cada cambio del formulario produce una política
-    // compilada, auditable y reversible. Nunca guarda credenciales ni prompts privados
-    // de otros negocios; esta base pertenece a una sola instalación/cuenta.
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS conversational_agent_policy_versions (
-        id TEXT PRIMARY KEY,
-        agent_id TEXT NOT NULL,
-        version INTEGER NOT NULL,
-        policy_hash TEXT NOT NULL,
-        config_snapshot_json TEXT NOT NULL,
-        compiled_policy_json TEXT NOT NULL,
-        source TEXT NOT NULL DEFAULT 'form',
-        is_active INTEGER NOT NULL DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(agent_id, version),
-        FOREIGN KEY (agent_id) REFERENCES conversational_agents(id) ON DELETE CASCADE
-      )
-    `)
-    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_policy_versions_active ON conversational_agent_policy_versions(agent_id, is_active, version)')
-    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_policy_versions_hash ON conversational_agent_policy_versions(agent_id, policy_hash)')
-
-    // El aprendizaje es una PROPUESTA versionada. Sólo un usuario autenticado puede
-    // aprobarla; reglas críticas, precios, permisos y secretos jamás se autoaplican.
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS conversational_agent_learning_versions (
-        id TEXT PRIMARY KEY,
-        agent_id TEXT NOT NULL,
-        version INTEGER NOT NULL,
-        snapshot_hash TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'proposed',
-        snapshot_json TEXT NOT NULL,
-        base_policy_hash TEXT,
-        reviewed_by TEXT,
-        reviewed_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(agent_id, version),
-        FOREIGN KEY (agent_id) REFERENCES conversational_agents(id) ON DELETE CASCADE
-      )
-    `)
-    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_learning_versions_status ON conversational_agent_learning_versions(agent_id, status, version)')
 
     const userOptionalColumns = [
       ['first_name', 'TEXT'],
@@ -6955,8 +6851,7 @@ async function migrateTagIdsToSlugs() {
   // agentes conversacionales (los uuid son únicos: el replace textual es seguro)
   const jsonTargets = [
     { table: 'automations', key: 'id', columns: ['flow'] },
-    { table: 'conversational_agents', key: 'id', columns: ['entry_filters', 'success_extras', 'handoff_rules', 'required_data'] },
-    { table: 'conversational_agent_config', key: 'id', columns: ['handoff_rules', 'required_data'] }
+    { table: 'conversational_agents', key: 'id', columns: ['entry_filters', 'success_extras', 'handoff_rules', 'required_data'] }
   ]
   for (const target of jsonTargets) {
     const tableRows = await db.all(`SELECT * FROM ${target.table}`).catch(() => [])

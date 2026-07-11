@@ -1,15 +1,12 @@
 import { createHash, randomUUID, timingSafeEqual } from 'crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
-import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { coalescedTimestampSortExpression } from '../utils/sqlTimestampSort.js'
-import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
-import { getOpenAIApiKey } from './aiAgentService.js'
+import { buildTagMatchKeys } from './contactTagsService.js'
 import {
   DEFAULT_CONVERSATIONAL_AI_PROVIDER,
   getDefaultConversationalModelForProvider,
@@ -20,18 +17,14 @@ import {
   conversationalPaymentRequestHash,
   recoverProcessingConversationalPaymentRequest
 } from './paymentFlowService.js'
-import { normalizeConversationIntelligenceState } from '../agents/conversational/intelligence/contracts.js'
 import {
   buildConversationalCapabilityManifest,
-  deriveLegacyCapabilitiesConfig,
   getConversationalCapabilitiesConfig,
   getEnabledConversationalCapabilities,
   getConversationalNativeRuntimeValidationErrors,
   getConversationalPromptConfig,
-  isToolCallingV2,
   normalizeConversationalCapabilitiesConfig,
-  normalizeConversationalPromptConfig,
-  normalizeConversationalRuntimeMode
+  normalizeConversationalPromptConfig
 } from '../agents/conversational/nativeRuntimeConfig.js'
 
 /**
@@ -44,10 +37,9 @@ import {
  * - human:     un humano tomó la conversación (el agente no responde)
  * - skipped:   chatbot omitido para ese contacto
  * - completed: el agente cumplió el objetivo (dejó señal interna)
- * - discarded: conversación descartada (spam, acoso, fuera de contexto)
  *
  * Señales internas (signal): ready_for_human | ready_to_schedule |
- * ready_to_buy | appointment_booked | purchase_completed | discarded
+ * ready_to_buy | appointment_booked | purchase_completed
  */
 
 export const CONVERSATIONAL_OBJECTIVES = [
@@ -108,7 +100,7 @@ export function buildNewContactScopeCutoffAt({ referenceDate = new Date() } = {}
 }
 
 const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
-const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed', 'discarded'])
+const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed'])
 const CONVERSATION_PAUSE_DURATION_MS = 24 * 60 * 60 * 1000
 export const CONVERSATIONAL_INBOUND_PROCESSING_LEASE_MS = 10 * 60 * 1000
 const EXPLICIT_ASSIGNMENT_SOURCES = new Set(['automatic', 'manual'])
@@ -122,7 +114,6 @@ const CONVERSATION_STATE_CHANNEL_ALIASES = new Map([
 const conversationStateChannelContext = new AsyncLocalStorage()
 const DEFAULT_CONVERSATIONAL_AGENT_MODEL = getDefaultConversationalModelForProvider(DEFAULT_CONVERSATIONAL_AI_PROVIDER)
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
-const COMPLETION_SUMMARY_MODEL = CHEAPEST_OPENAI_MODEL
 export const CONVERSATIONAL_AGENT_ENTRY_CONFLICT_CODE = 'CONVERSATIONAL_AGENT_ENTRY_CONFLICT'
 export const CONVERSATIONAL_AGENT_LIMIT_REACHED_CODE = 'CONVERSATIONAL_AGENT_LIMIT_REACHED'
 const RESPONSE_DELAY_MODES = new Set(['none', 'fixed', 'random'])
@@ -173,40 +164,6 @@ const DEFAULT_FOLLOW_UP_CONFIG = {
   },
   strategy: DEFAULT_FOLLOW_UP_STRATEGY
 }
-export const ADVANCED_CLOSING_CONTEXT_FIELDS = [
-  { key: 'arrivalSource', label: 'De donde llego' },
-  { key: 'contactReason', label: 'Por que contacto' },
-  { key: 'whyNow', label: 'Por que ahora' },
-  { key: 'surfaceProblem', label: 'Problema superficial' },
-  { key: 'realProblem', label: 'Problema real' },
-  { key: 'problemMagnitudeAwareness', label: 'Conciencia de magnitud del problema' },
-  { key: 'attemptedBefore', label: 'Que intento antes' },
-  { key: 'impact', label: 'Como le afecta' },
-  { key: 'consequenceIfNoAction', label: 'Consecuencia si no hace nada' },
-  { key: 'desiredOutcome', label: 'Resultado deseado' },
-  { key: 'scenarioToAvoid', label: 'Escenario que quiere evitar' },
-  { key: 'urgencyLevel', label: 'Urgencia detectada' },
-  { key: 'objection', label: 'Objecion principal' },
-  { key: 'decisionSignal', label: 'Senal de decision' },
-  { key: 'goalIntentQuality', label: 'Calidad de intencion de meta' },
-  { key: 'goalMotivation', label: 'Motivacion real de meta' },
-  { key: 'appointmentIntentQuality', label: 'Calidad de intencion de agenda' },
-  { key: 'priceShoppingRisk', label: 'Riesgo de solo comparar precio' },
-  { key: 'productInterest', label: 'Producto o servicio de interes' },
-  { key: 'valueQuestion', label: 'Pregunta sobre valor' },
-  { key: 'timingPreference', label: 'Tiempo o disponibilidad deseada' },
-  { key: 'nextUsefulQuestion', label: 'Siguiente pregunta util' },
-  { key: 'notes', label: 'Notas internas' }
-]
-const ADVANCED_CLOSING_CONTEXT_KEYS = new Set(ADVANCED_CLOSING_CONTEXT_FIELDS.map((field) => field.key))
-const ADVANCED_CLOSING_URGENCY_LEVELS = new Set(['baja', 'media', 'alta', 'desconocida'])
-
-let completionSummaryGeneratorForTest = null
-
-export function setConversationalCompletionSummaryGeneratorForTest(generator) {
-  completionSummaryGeneratorForTest = typeof generator === 'function' ? generator : null
-}
-
 function toBoolean(value) {
   return [true, 1, '1', 'true'].includes(value)
 }
@@ -221,138 +178,12 @@ export function normalizeConversationalSuccessAction(value = DEFAULT_SUCCESS_ACT
   return VALID_SUCCESS_ACTIONS.has(action) ? action : DEFAULT_SUCCESS_ACTION
 }
 
-function mapConfigRow(row) {
-  if (!row) {
-    return {
-      enabled: false,
-      aiProvider: DEFAULT_CONVERSATIONAL_AI_PROVIDER,
-      model: DEFAULT_CONVERSATIONAL_AGENT_MODEL,
-      objective: 'citas',
-      customObjective: '',
-      successAction: DEFAULT_SUCCESS_ACTION,
-      requiredData: '',
-      handoffRules: '',
-      extraInstructions: '',
-      allowEmojis: false,
-      hideAttended: false,
-      hideAttendedNotifications: false,
-      defaultCalendarId: null,
-      closingStrategyMode: 'system',
-      closingStrategyCustom: '',
-      persuasionLevel: DEFAULT_PERSUASION_LEVEL,
-      languageLevel: DEFAULT_LANGUAGE_LEVEL,
-      updatedAt: null
-    }
-  }
-
-  const legacyHideAttended = toBoolean(row.hide_attended)
-  const hideAttendedNotifications = row.hide_attended_notifications === null || row.hide_attended_notifications === undefined
-    ? legacyHideAttended
-    : (toBoolean(row.hide_attended_notifications) || legacyHideAttended)
-
-  return {
-    enabled: toBoolean(row.enabled),
-    aiProvider: normalizeConversationalAIProvider(row.ai_provider),
-    model: normalizeConversationalAgentModel(row.model, row.ai_provider),
-    objective: VALID_OBJECTIVES.has(row.objective) ? row.objective : 'citas',
-    customObjective: row.custom_objective || '',
-    successAction: VALID_SUCCESS_ACTIONS.has(row.success_action) ? row.success_action : DEFAULT_SUCCESS_ACTION,
-    requiredData: row.required_data || '',
-    handoffRules: row.handoff_rules || '',
-    extraInstructions: row.extra_instructions || '',
-    allowEmojis: toBoolean(row.allow_emojis),
-    hideAttended: false,
-    hideAttendedNotifications,
-    defaultCalendarId: row.default_calendar_id || null,
-    closingStrategyMode: 'system',
-    closingStrategyCustom: '',
-    persuasionLevel: normalizeConversationalPersuasionLevel(row.persuasion_level),
-    languageLevel: normalizeConversationalLanguageLevel(row.language_level),
-    updatedAt: row.updated_at || null
-  }
-}
-
 export async function getConversationalAgentConfig() {
-  const row = await db.get('SELECT * FROM conversational_agent_config WHERE id = 1')
-  return mapConfigRow(row)
-}
-
-export async function saveConversationalAgentConfig(input = {}) {
-  const current = await getConversationalAgentConfig()
-
-  const next = {
-    enabled: input.enabled === undefined ? current.enabled : toBoolean(input.enabled),
-    aiProvider: input.aiProvider === undefined ? current.aiProvider : normalizeConversationalAIProvider(input.aiProvider),
-    model: input.model === undefined
-      ? (input.aiProvider === undefined
-        ? normalizeConversationalAgentModel(current.model, current.aiProvider)
-        : getDefaultConversationalModelForProvider(input.aiProvider))
-      : normalizeConversationalAgentModel(input.model, input.aiProvider === undefined ? current.aiProvider : input.aiProvider),
-    objective: VALID_OBJECTIVES.has(input.objective) ? input.objective : current.objective,
-    customObjective: input.customObjective === undefined ? current.customObjective : String(input.customObjective || '').slice(0, 2000),
-    successAction: normalizeConversationalSuccessAction(input.successAction === undefined ? current.successAction : input.successAction),
-    requiredData: input.requiredData === undefined ? current.requiredData : String(input.requiredData || '').slice(0, 2000),
-    handoffRules: input.handoffRules === undefined ? current.handoffRules : String(input.handoffRules || '').slice(0, 4000),
-    extraInstructions: input.extraInstructions === undefined ? current.extraInstructions : String(input.extraInstructions || '').slice(0, 8000),
-    allowEmojis: input.allowEmojis === undefined ? current.allowEmojis : toBoolean(input.allowEmojis),
-    hideAttended: false,
-    hideAttendedNotifications: input.hideAttendedNotifications === undefined
-      ? (current.hideAttendedNotifications || toBoolean(input.hideAttended))
-      : (toBoolean(input.hideAttendedNotifications) || toBoolean(input.hideAttended)),
-    defaultCalendarId: input.defaultCalendarId === undefined ? current.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
-    closingStrategyMode: 'system',
-    closingStrategyCustom: '',
-    persuasionLevel: input.persuasionLevel === undefined
-      ? current.persuasionLevel
-      : normalizeConversationalPersuasionLevel(input.persuasionLevel),
-    languageLevel: input.languageLevel === undefined
-      ? current.languageLevel
-      : normalizeConversationalLanguageLevel(input.languageLevel)
+  return {
+    aiProvider: DEFAULT_CONVERSATIONAL_AI_PROVIDER,
+    model: DEFAULT_CONVERSATIONAL_AGENT_MODEL,
+    updatedAt: null
   }
-
-  const existing = await db.get('SELECT id FROM conversational_agent_config WHERE id = 1')
-  if (existing) {
-    await db.run(`
-      UPDATE conversational_agent_config
-      SET enabled = ?, ai_provider = ?, model = ?, objective = ?, custom_objective = ?, success_action = ?,
-          required_data = ?, handoff_rules = ?, extra_instructions = ?,
-          allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?, default_calendar_id = ?,
-          closing_strategy_mode = ?, closing_strategy_custom = ?,
-          persuasion_level = ?, language_level = ?,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = 1
-    `, [
-      next.enabled ? 1 : 0, next.aiProvider, next.model, next.objective, next.customObjective, next.successAction,
-      next.requiredData, next.handoffRules, next.extraInstructions,
-      next.allowEmojis ? 1 : 0, 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
-      next.closingStrategyMode, next.closingStrategyCustom,
-      next.persuasionLevel, next.languageLevel
-    ])
-  } else {
-    await db.run(`
-      INSERT INTO conversational_agent_config (
-        id, enabled, ai_provider, model, objective, custom_objective, success_action,
-        required_data, handoff_rules, extra_instructions,
-        allow_emojis, hide_attended, hide_attended_notifications, default_calendar_id,
-        closing_strategy_mode, closing_strategy_custom,
-        persuasion_level, language_level
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      next.enabled ? 1 : 0, next.aiProvider, next.model, next.objective, next.customObjective, next.successAction,
-      next.requiredData, next.handoffRules, next.extraInstructions,
-      next.allowEmojis ? 1 : 0, 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
-      next.closingStrategyMode, next.closingStrategyCustom,
-      next.persuasionLevel, next.languageLevel
-    ])
-  }
-
-  await recordConversationalAgentEvent({
-    contactId: null,
-    eventType: 'config_updated',
-    detail: { enabled: next.enabled, aiProvider: next.aiProvider, model: next.model, objective: next.objective, successAction: next.successAction }
-  })
-
-  return getConversationalAgentConfig()
 }
 
 // ---------------------------------------------------------------------------
@@ -369,267 +200,10 @@ function parseJsonField(text, fallback) {
   }
 }
 
-function cleanAdvancedClosingContextValue(value, maxLength = 700) {
-  if (value === null || value === undefined) return ''
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => cleanAdvancedClosingContextValue(item, maxLength))
-      .filter(Boolean)
-      .join('; ')
-      .slice(0, maxLength)
-  }
-  const raw = typeof value === 'object' ? JSON.stringify(value) : String(value)
-  return raw.replace(/\s+/g, ' ').trim().slice(0, maxLength)
-}
-
-export function normalizeAdvancedClosingContext(input = {}) {
-  const raw = input && typeof input === 'object' ? input : {}
-  const next = {}
-
-  for (const key of ADVANCED_CLOSING_CONTEXT_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
-    const clean = cleanAdvancedClosingContextValue(raw[key])
-    if (!clean) continue
-    next[key] = key === 'urgencyLevel'
-      ? (ADVANCED_CLOSING_URGENCY_LEVELS.has(clean.toLowerCase()) ? clean.toLowerCase() : 'desconocida')
-      : clean
-  }
-
-  return next
-}
-
-function normalizeStoredAdvancedClosingContext(raw) {
-  const parsed = raw && typeof raw === 'object' ? raw : parseJsonField(raw, {})
-  const normalized = normalizeAdvancedClosingContext(parsed)
-  const updatedAt = cleanAdvancedClosingContextValue(parsed?.updatedAt, 80)
-  const updatedBy = cleanAdvancedClosingContextValue(parsed?.updatedBy, 80)
-  return {
-    ...normalized,
-    ...(updatedAt ? { updatedAt } : {}),
-    ...(updatedBy ? { updatedBy } : {})
-  }
-}
-
-function hasAdvancedClosingContext(context = {}) {
-  return ADVANCED_CLOSING_CONTEXT_FIELDS.some((field) => Boolean(context?.[field.key]))
-}
-
 function cleanCompletionDisplayText(value = '') {
   if (value === null || value === undefined) return ''
   const raw = typeof value === 'object' ? JSON.stringify(value) : String(value)
   return raw.replace(/\s+/g, ' ').trim()
-}
-
-function cleanCompletionTranscriptText(value = '') {
-  return String(value || '').replace(/\s+/g, ' ').trim()
-}
-
-function getCompletionMessageSpeaker(direction = '') {
-  const clean = String(direction || '').trim().toLowerCase()
-  if (clean === 'outbound' || clean === 'business_echo') return 'Agente'
-  if (clean === 'inbound') return 'Contacto'
-  return 'Mensaje'
-}
-
-function getCompletionMessageText(row = {}) {
-  const subject = cleanCompletionTranscriptText(row.subject)
-  const text = cleanCompletionTranscriptText(row.message_text)
-  if (subject && text) return `Asunto: ${subject}. ${text}`
-  if (subject) return `Asunto: ${subject}`
-  if (text) return text
-  const type = cleanCompletionTranscriptText(row.message_type || 'archivo')
-  return `[${type || 'archivo'} sin texto]`
-}
-
-function normalizeCompletionSummaryChannel(value = 'whatsapp') {
-  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
-  if (['email', 'mail', 'correo', 'e_mail'].includes(normalized)) return 'email'
-  if (['instagram', 'instagram_dm', 'ig'].includes(normalized)) return 'instagram'
-  if (['messenger', 'facebook', 'facebook_messenger', 'fb'].includes(normalized)) return 'messenger'
-  if (['sms', 'sms_qr', 'ghl_sms', 'mms'].includes(normalized)) return 'sms'
-  if (['webchat', 'web_chat', 'chat_web', 'website_chat', 'site_chat', 'ghl_webchat'].includes(normalized)) return 'webchat'
-  return 'whatsapp'
-}
-
-const COMPLETION_SMS_TRANSPORTS = ['ghl_sms', 'sms', 'sms_qr', 'mms']
-const COMPLETION_WEBCHAT_TRANSPORTS = ['ghl_webchat', 'webchat', 'web_chat', 'chat_web', 'website_chat', 'site_chat']
-
-function completionPhoneTransportFilter(channel = 'whatsapp') {
-  if (channel === 'sms') {
-    return `AND LOWER(COALESCE(transport, '')) IN (${COMPLETION_SMS_TRANSPORTS.map((item) => `'${item}'`).join(', ')})`
-  }
-  if (channel === 'webchat') {
-    return `AND LOWER(COALESCE(transport, '')) IN (${COMPLETION_WEBCHAT_TRANSPORTS.map((item) => `'${item}'`).join(', ')})`
-  }
-  return `AND LOWER(COALESCE(transport, '')) NOT IN (${[...COMPLETION_SMS_TRANSPORTS, ...COMPLETION_WEBCHAT_TRANSPORTS].map((item) => `'${item}'`).join(', ')})`
-}
-
-async function loadCompletionSummaryMessages(contactId, channel = 'whatsapp') {
-  const cleanContactId = String(contactId || '').trim()
-  if (!cleanContactId) return []
-  const normalizedChannel = normalizeCompletionSummaryChannel(channel)
-
-  if (normalizedChannel === 'instagram' || normalizedChannel === 'messenger') {
-    const rows = await db.all(`
-      SELECT id, direction, message_type, message_text, NULL AS subject, message_timestamp, created_at
-      FROM meta_social_messages
-      WHERE contact_id = ? AND platform = ?
-      ORDER BY COALESCE(message_timestamp, created_at) ASC
-    `, [cleanContactId, normalizedChannel]).catch(() => [])
-
-    return rows.map((row) => ({
-      id: row.id,
-      speaker: getCompletionMessageSpeaker(row.direction),
-      direction: row.direction || '',
-      text: getCompletionMessageText(row),
-      timestamp: row.message_timestamp || row.created_at || null,
-      channel: normalizedChannel
-    })).filter((message) => message.text)
-  }
-
-  if (normalizedChannel === 'email') {
-    const rows = await db.all(`
-      SELECT id, direction, 'email' AS message_type, message_text, subject, message_timestamp, created_at
-      FROM email_messages
-      WHERE contact_id = ?
-      ORDER BY COALESCE(message_timestamp, created_at) ASC
-    `, [cleanContactId]).catch(() => [])
-
-    return rows.map((row) => ({
-      id: row.id,
-      speaker: getCompletionMessageSpeaker(row.direction),
-      direction: row.direction || '',
-      text: getCompletionMessageText(row),
-      timestamp: row.message_timestamp || row.created_at || null,
-      channel: normalizedChannel
-    })).filter((message) => message.text)
-  }
-
-  const rows = await db.all(`
-    SELECT id, direction, message_type, message_text, NULL AS subject, message_timestamp, created_at
-    FROM whatsapp_api_messages
-    WHERE contact_id = ?
-      ${completionPhoneTransportFilter(normalizedChannel)}
-    ORDER BY COALESCE(message_timestamp, created_at) ASC
-  `, [cleanContactId]).catch(() => [])
-
-  return rows.map((row) => ({
-    id: row.id,
-    speaker: getCompletionMessageSpeaker(row.direction),
-    direction: row.direction || '',
-    text: getCompletionMessageText(row),
-    timestamp: row.message_timestamp || row.created_at || null,
-    channel: normalizedChannel
-  })).filter((message) => message.text)
-}
-
-function formatCompletionSummaryTranscript(messages = []) {
-  return messages.map((message, index) => {
-    const speaker = message.speaker || `Mensaje ${index + 1}`
-    const timestamp = message.timestamp ? ` (${message.timestamp})` : ''
-    return `${index + 1}. ${speaker}${timestamp}: ${message.text}`
-  }).join('\n')
-}
-
-function extractCompletionSummaryFromOutput(output = '') {
-  const text = String(output || '').trim()
-  if (!text) return ''
-
-  const jsonMatch = text.match(/\{[\s\S]*?\}/)
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0])
-      return cleanCompletionDisplayText(parsed.summary || parsed.resumen || '')
-    } catch {
-      return ''
-    }
-  }
-
-  return cleanCompletionDisplayText(text)
-}
-
-async function generateCompletionSummaryWithInternalAgent({ contactId, signal, reason = '', actionSummary = '', fallbackSummary = '', channel = 'whatsapp' } = {}) {
-  const messages = await loadCompletionSummaryMessages(contactId, channel)
-  if (!messages.length) return ''
-
-  if (completionSummaryGeneratorForTest) {
-    return cleanCompletionDisplayText(await completionSummaryGeneratorForTest({
-      contactId,
-      signal,
-      reason,
-      actionSummary,
-      fallbackSummary,
-      channel,
-      messages
-    }))
-  }
-
-  const apiKey = await getOpenAIApiKey().catch(() => null)
-  if (!apiKey) return ''
-
-  const transcript = formatCompletionSummaryTranscript(messages)
-  const instructions = `Eres el creador interno de resúmenes de Ristak. No hablas con el cliente y no continúas la conversación.
-
-Tu única tarea es leer la conversación completa y resumir por qué se concretó la meta.
-
-Reglas:
-- Máximo 35 palabras.
-- Una sola frase completa.
-- Sin listas, sin etiquetas, sin IDs técnicos y sin puntos suspensivos.
-- No repitas la cita, el pago o la acción si ya aparece en "Acción mostrada"; enfócate en situación, motivo, molestias, motivaciones, creencias, objeciones o razón de compra.
-- Si la conversación no trae contexto útil, usa una frase breve con lo poco disponible.
-
-Responde únicamente JSON válido:
-{"summary":"texto"}`
-
-  const prompt = `Señal concretada: ${signal || 'desconocida'}
-Acción mostrada por Ristak: ${actionSummary || 'sin accion'}
-Motivo técnico: ${reason || 'sin motivo'}
-Resumen de respaldo, si existe: ${fallbackSummary || 'sin respaldo'}
-
-Conversación completa:
-${transcript}`
-
-  const agent = new Agent({
-    name: 'Ristak · Creador de resumen de meta',
-    model: COMPLETION_SUMMARY_MODEL,
-    instructions
-  })
-
-  try {
-    const runner = new Runner({
-      modelProvider: new OpenAIProvider({ apiKey }),
-      tracingDisabled: true
-    })
-    const result = await runner.run(agent, [{ role: 'user', content: prompt }], {
-      maxTurns: 3,
-      context: { category: 'conversational_completion_summary', contactId, channel }
-    })
-    return extractCompletionSummaryFromOutput(result.finalOutput)
-  } catch (error) {
-    logger.warn(`[Agente conversacional] Resumidor interno de cierre falló: ${error.message}`)
-    return ''
-  }
-}
-
-function conciseCompletionPhrase(value, maxLength = 130) {
-  const clean = cleanAdvancedClosingContextValue(value, 700)
-  if (!clean || clean.length <= maxLength) return clean
-
-  const naturalBoundary = clean
-    .slice(0, maxLength + 1)
-    .split(/(?<=[.!?])\s+|[;|]\s+|\s+-\s+/)
-    .find((part) => part && part.trim().length >= 28)
-  if (naturalBoundary) return naturalBoundary.trim().replace(/[.,;:!?-]+$/g, '')
-
-  const words = clean.split(/\s+/)
-  let output = ''
-  for (const word of words) {
-    const next = output ? `${output} ${word}` : word
-    if (next.length > maxLength) break
-    output = next
-  }
-  return (output || clean.slice(0, maxLength)).trim().replace(/[.,;:!?-]+$/g, '')
 }
 
 function formatHumanDateTimeFromSummary(summary, timezone = DEFAULT_TIMEZONE) {
@@ -680,15 +254,14 @@ function parsePaymentSummary(summary = '') {
   return { amount, currency }
 }
 
-function buildCompletionActionSummary({ signal, summary = '', reason = '', closingContext = {}, timezone = DEFAULT_TIMEZONE } = {}) {
+function buildCompletionActionSummary({ signal, summary = '', reason = '', timezone = DEFAULT_TIMEZONE } = {}) {
   const cleanSignal = String(signal || '').trim()
-  const baseSummary = cleanAdvancedClosingContextValue(summary, 500)
-  const baseReason = cleanAdvancedClosingContextValue(reason, 280)
+  const baseSummary = cleanCompletionDisplayText(summary).slice(0, 500)
+  const baseReason = cleanCompletionDisplayText(reason).slice(0, 280)
 
   if (cleanSignal === 'appointment_booked') {
     const humanDate = formatHumanDateTimeFromSummary(baseSummary, timezone)
     if (humanDate) return `Agendó cita para ${humanDate}`
-    if (closingContext.timingPreference) return `Agendó cita para ${conciseCompletionPhrase(closingContext.timingPreference, 120)}`
     return 'Agendó una cita'
   }
 
@@ -705,34 +278,19 @@ function buildCompletionActionSummary({ signal, summary = '', reason = '', closi
 }
 
 async function buildCompletionSummaryFromClosingContext({
-  contactId = '',
   signal,
   summary = '',
   reason = '',
   actionSummarySource = '',
-  closingContext = {},
-  timezone = DEFAULT_TIMEZONE,
-  channel = 'whatsapp',
-  allowInternalSummary = false
+  timezone = DEFAULT_TIMEZONE
 } = {}) {
   const cleanSignal = String(signal || '').trim()
   const baseSummary = cleanCompletionDisplayText(summary)
   const baseReason = cleanCompletionDisplayText(reason)
   const actionSource = cleanCompletionDisplayText(actionSummarySource) || baseSummary
-  const normalizedContext = normalizeStoredAdvancedClosingContext(closingContext)
-  const actionSummary = buildCompletionActionSummary({ signal, summary: actionSource, reason: baseReason, closingContext: normalizedContext, timezone })
+  const actionSummary = buildCompletionActionSummary({ signal, summary: actionSource, reason: baseReason, timezone })
   const hidesMissingSummary = ['appointment_booked', 'purchase_completed'].includes(cleanSignal)
-  const generatedSummary = allowInternalSummary && CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(cleanSignal)
-    ? await generateCompletionSummaryWithInternalAgent({
-      contactId,
-      signal: cleanSignal,
-      reason: baseReason,
-      actionSummary,
-      fallbackSummary: baseSummary,
-      channel
-    })
-    : ''
-  const summaryText = generatedSummary || baseSummary || (hidesMissingSummary ? '' : baseReason)
+  const summaryText = baseSummary || (hidesMissingSummary ? '' : baseReason)
   const stateSummary = [
     actionSummary,
     summaryText && summaryText !== actionSummary ? `Resumen: ${summaryText}` : ''
@@ -741,28 +299,8 @@ async function buildCompletionSummaryFromClosingContext({
   return {
     actionSummary,
     summary: summaryText,
-    summarySource: generatedSummary ? 'internal_summary_agent' : (baseSummary ? 'tool_fallback' : (summaryText ? 'reason_fallback' : 'empty')),
+    summarySource: baseSummary ? 'tool_fallback' : (summaryText ? 'reason_fallback' : 'empty'),
     stateSummary: stateSummary || actionSummary || summaryText
-  }
-}
-
-export function mergeAdvancedClosingContext(current = {}, patch = {}, { updatedBy = 'agent', nowIso = new Date().toISOString() } = {}) {
-  const normalizedCurrent = normalizeStoredAdvancedClosingContext(current)
-  const normalizedPatch = normalizeAdvancedClosingContext(patch)
-  const changedKeys = Object.keys(normalizedPatch).filter((key) => normalizedCurrent[key] !== normalizedPatch[key])
-
-  if (!changedKeys.length) {
-    return { context: normalizedCurrent, changedKeys: [] }
-  }
-
-  return {
-    context: {
-      ...normalizedCurrent,
-      ...normalizedPatch,
-      updatedAt: nowIso,
-      updatedBy: cleanAdvancedClosingContextValue(updatedBy, 80) || 'agent'
-    },
-    changedKeys
   }
 }
 
@@ -791,7 +329,6 @@ export const CONDITION_SCHEMA = {
   },
   // base: recibió un mensaje
   message: {
-    text: ['contains', 'not_contains', 'contains_any', 'contains_all', 'starts_with', 'ends_with', 'equals'],
     business_phone: ['is', 'is_not']
   },
   // base: tiene alguna etiqueta
@@ -888,7 +425,6 @@ function normalizeParam(category, param) {
   const base = { field, operator }
 
   const wantsList = (
-    (field === 'text' && (operator === 'contains_any' || operator === 'contains_all')) ||
     (field === 'tag' && (operator === 'has_any' || operator === 'has_all' || operator === 'has_none')) ||
     (field === 'day')
   )
@@ -935,112 +471,21 @@ function normalizeParam(category, param) {
 function normalizeCondition(condition) {
   if (!condition || typeof condition !== 'object') return null
   const category = String(condition.category || '')
-  if (!CONDITION_SCHEMA[category]) {
-    // Compatibilidad: categorías retiradas del formato anterior
-    const converted = legacyConditionToParams(condition)
-    return converted ? normalizeCondition(converted) : null
-  }
+  if (!CONDITION_SCHEMA[category] || !Array.isArray(condition.params)) return null
 
-  // Formato anterior (category + operator plano) → params
-  if (condition.operator && !Array.isArray(condition.params)) {
-    const converted = legacyConditionToParams(condition)
-    return converted ? normalizeCondition(converted) : null
-  }
-
-  const params = (Array.isArray(condition.params) ? condition.params : [])
+  const sourceParams = condition.params
+  const params = sourceParams
     .map((param) => normalizeParam(category, param))
     .filter(Boolean)
     .slice(0, 10)
 
-  return { category, params }
-}
+  // Nunca conviertas una condición vieja o inválida en una regla vacía más
+  // amplia. Por ejemplo, al retirar los filtros por texto del mensaje, un
+  // antiguo `message.text contains ...` debe desaparecer completo; si quedara
+  // como `message` sin parámetros empataría cualquier mensaje.
+  if (sourceParams.length > 0 && params.length === 0) return null
 
-/** Convierte una condición del formato anterior (operator plano) a params. */
-function legacyConditionToParams(cond) {
-  const { category, operator } = cond
-  if (category === 'channel') {
-    return { category: 'channel', params: [{ field: 'channel', operator, value: cond.value }] }
-  }
-  if (category === 'message') {
-    return { category: 'message', params: [{ field: 'text', operator, value: cond.value, values: cond.values }] }
-  }
-  if (category === 'business_phone') {
-    return { category: 'message', params: [{ field: 'business_phone', operator, value: cond.value }] }
-  }
-  if (category === 'tags') {
-    return { category: 'tags', params: [{ field: 'tag', operator, value: cond.value, values: cond.values }] }
-  }
-  if (category === 'assignee') {
-    const map = { assigned_to: 'to', not_assigned_to: 'not_to', has_assignee: 'any', no_assignee: 'none' }
-    return { category: 'contact', params: [{ field: 'assigned', operator: map[operator] || 'any', value: cond.value }] }
-  }
-  if (category === 'contact') {
-    const map = {
-      is_customer: { field: 'customer', operator: 'is_customer' },
-      not_customer: { field: 'customer', operator: 'not_customer' },
-      has_email: { field: 'email', operator: 'has' },
-      no_email: { field: 'email', operator: 'no_has' },
-      source_is: { field: 'source', operator: 'is', value: cond.value },
-      source_contains: { field: 'source', operator: 'contains', value: cond.value },
-      created_within: { field: 'created', operator: 'within', offsetValue: cond.offsetValue, offsetUnit: cond.offsetUnit }
-    }
-    return map[operator] ? { category: 'contact', params: [map[operator]] } : null
-  }
-  if (category === 'appointments') {
-    const map = {
-      has_appointment: [],
-      no_appointment: [{ field: 'presence', operator: 'none' }],
-      has_upcoming: [{ field: 'timing', operator: 'upcoming' }],
-      no_upcoming: [{ field: 'presence', operator: 'none' }, { field: 'timing', operator: 'upcoming' }],
-      has_past_due: [{ field: 'timing', operator: 'past_due' }],
-      has_cancelled: [{ field: 'status', operator: 'cancelled' }],
-      has_confirmed: [{ field: 'status', operator: 'confirmed' }],
-      in_calendar: [{ field: 'calendar', operator: 'is', value: cond.calendarId }],
-      not_in_calendar: [{ field: 'presence', operator: 'none' }, { field: 'calendar', operator: 'is', value: cond.calendarId }],
-      date_is: [{ field: 'date', operator: 'is', date: cond.date }],
-      date_not: [{ field: 'date', operator: 'not', date: cond.date }],
-      date_before: [{ field: 'date', operator: 'before', date: cond.date }],
-      date_after: [{ field: 'date', operator: 'after', date: cond.date }],
-      date_between: [{ field: 'date', operator: 'between', date: cond.date, dateEnd: cond.dateEnd }],
-      time_before: [{ field: 'window', operator: 'before', offsetValue: cond.offsetValue, offsetUnit: cond.offsetUnit }],
-      time_after: [{ field: 'window', operator: 'after', offsetValue: cond.offsetValue, offsetUnit: cond.offsetUnit }]
-    }
-    return map[operator] ? { category: 'appointments', params: map[operator] } : null
-  }
-  if (category === 'payments') {
-    const statusMap = { payment_received: 'received', payment_pending: 'pending', payment_failed: 'failed', payment_refunded: 'refunded' }
-    if (statusMap[operator]) {
-      return { category: 'payments', params: [{ field: 'status', operator: statusMap[operator] }] }
-    }
-    if (operator.startsWith('product_')) {
-      const opMap = { product_is: 'is', product_not: 'is_not', product_contains: 'contains', product_not_contains: 'not_contains' }
-      return { category: 'payments', params: [{ field: 'product', operator: opMap[operator], value: cond.value }] }
-    }
-    if (operator.startsWith('amount_')) {
-      return { category: 'payments', params: [{ field: 'amount', operator: operator.replace('amount_', ''), amount: cond.amount, amountMax: cond.amountMax }] }
-    }
-    return null
-  }
-  if (category === 'ads') {
-    const map = {
-      from_ad: [{ field: 'presence', operator: 'exists' }],
-      not_from_ad: [{ field: 'presence', operator: 'not_exists' }],
-      ad_is: [{ field: 'ad', operator: 'is', value: cond.value }],
-      ad_is_not: [{ field: 'ad', operator: 'is_not', value: cond.value }],
-      ad_contains: [{ field: 'ad', operator: 'contains', value: cond.value }],
-      ad_not_contains: [{ field: 'ad', operator: 'not_contains', value: cond.value }]
-    }
-    return map[operator] ? { category: 'ads', params: map[operator] } : null
-  }
-  if (category === 'schedule') {
-    const map = {
-      time_between: [{ field: 'time', operator: 'between', timeStart: cond.timeStart, timeEnd: cond.timeEnd }],
-      time_outside: [{ field: 'time', operator: 'outside', timeStart: cond.timeStart, timeEnd: cond.timeEnd }],
-      day_is: [{ field: 'day', operator: 'is', values: cond.values }]
-    }
-    return map[operator] ? { category: 'schedule', params: map[operator] } : null
-  }
-  return null
+  return { category, params }
 }
 
 function normalizeGroups(input) {
@@ -1055,81 +500,11 @@ function normalizeGroups(input) {
     .slice(0, 10)
 }
 
-/** Convierte la regla plana del formato anterior a una condición. */
-function legacyRuleToCondition(rule) {
-  switch (rule?.type) {
-    case 'channel':
-      return { category: 'channel', operator: 'is', value: rule.channel }
-    case 'message_contains': {
-      const operator = rule.match === 'exact' ? 'equals' : rule.match === 'starts_with' ? 'starts_with' : 'contains'
-      return { category: 'message', operator, value: rule.phrase }
-    }
-    case 'has_tag':
-      return { category: 'tags', operator: 'has', value: rule.tag }
-    case 'not_has_tag':
-      return { category: 'tags', operator: 'not_has', value: rule.tag }
-    case 'has_upcoming_appointment':
-      return { category: 'appointments', operator: 'has_upcoming' }
-    case 'no_upcoming_appointment':
-      return { category: 'appointments', operator: 'no_upcoming' }
-    case 'has_appointment_in_calendar':
-      return { category: 'appointments', operator: 'in_calendar', calendarId: rule.calendarId }
-    default:
-      return null
-  }
-}
-
-function legacySideToGroups(rules) {
-  const conditions = (Array.isArray(rules) ? rules : []).map(legacyRuleToCondition).filter(Boolean)
-  return conditions.length ? [{ conditions }] : []
-}
-
-/** Convierte el formato más viejo de filtros fijos a condiciones. */
-function legacyFixedFiltersToGroups(raw) {
-  const conditions = []
-  if (raw.channel && raw.channel !== 'any') {
-    conditions.push({ category: 'channel', operator: 'is', value: raw.channel })
-  }
-  for (const keyword of Array.isArray(raw.keywords) ? raw.keywords : []) {
-    const phrase = String(keyword || '').trim()
-    if (phrase) {
-      const operator = raw.match === 'exact' ? 'equals' : raw.match === 'starts_with' ? 'starts_with' : 'contains'
-      conditions.push({ category: 'message', operator, value: phrase })
-    }
-  }
-  for (const tag of Array.isArray(raw.tags) ? raw.tags : []) {
-    const clean = String(tag || '').trim()
-    if (clean) conditions.push({ category: 'tags', operator: 'has', value: clean })
-  }
-  if (raw.calendarId) {
-    conditions.push({ category: 'appointments', operator: 'in_calendar', calendarId: String(raw.calendarId).trim() })
-  }
-  return conditions.length ? [{ conditions }] : []
-}
-
 function normalizeAgentFilters(input) {
   const raw = input && typeof input === 'object' ? input : {}
-
-  // Formato actual: { entry: { groups }, exit: { groups } }
-  if (raw.entry?.groups !== undefined || raw.exit?.groups !== undefined) {
-    return {
-      entry: { groups: normalizeGroups(raw.entry?.groups) },
-      exit: { groups: normalizeGroups(raw.exit?.groups) }
-    }
-  }
-
-  // Formato anterior: { entry: [reglas], exit: [reglas] }
-  if (Array.isArray(raw.entry) || Array.isArray(raw.exit)) {
-    return {
-      entry: { groups: normalizeGroups(legacySideToGroups(raw.entry)) },
-      exit: { groups: normalizeGroups(legacySideToGroups(raw.exit)) }
-    }
-  }
-
-  // Formato más viejo: { channel, keywords, match, tags, calendarId }
   return {
-    entry: { groups: normalizeGroups(legacyFixedFiltersToGroups(raw)) },
-    exit: { groups: [] }
+    entry: { groups: normalizeGroups(raw.entry?.groups) },
+    exit: { groups: normalizeGroups(raw.exit?.groups) }
   }
 }
 
@@ -1220,83 +595,6 @@ function normalizeSuccessExtras(input) {
     }))
     .filter((extra) => (extra.type === 'set_custom_field' ? Boolean(extra.field) : Boolean(extra.tag || extra.tagId)))
     .slice(0, 12)
-}
-
-function normalizeConversationGoalCompletionEffectPlanPayload(input = {}) {
-  const workflow = normalizeAgentGoalWorkflow({ completion: input.completion })
-  const completion = workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion
-  return {
-    version: 1,
-    agentId: String(input.agentId || '').trim().slice(0, 180),
-    agentUpdatedAt: String(input.agentUpdatedAt || '').trim().slice(0, 80),
-    completion: {
-      mode: completion.mode,
-      userId: String(completion.userId || '').trim().slice(0, 160),
-      userName: String(completion.userName || '').trim().slice(0, 160)
-    },
-    successExtras: normalizeSuccessExtras(input.successExtras)
-  }
-}
-
-function hashConversationGoalCompletionEffectPlan(payload) {
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
-}
-
-async function buildConversationGoalCompletionEffectPlan(agent) {
-  const workflow = normalizeAgentGoalWorkflow(agent?.goalWorkflow)
-  // V2 sólo puede mutar lo que aparece como capacidad blindada. Los campos
-  // legacy quedan almacenados para rollback, pero jamás se congelan dentro de
-  // una meta nueva ni reaparecen cuando llega su webhook.
-  const nativeRuntime = isToolCallingV2(agent)
-  const completion = nativeRuntime
-    ? DEFAULT_GOAL_WORKFLOW_CONFIG.completion
-    : (workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion)
-  const extras = nativeRuntime ? [] : normalizeSuccessExtras(agent?.successExtras)
-  const canonicalExtras = []
-  for (const extra of extras) {
-    if (extra.type !== 'add_tag' && extra.type !== 'remove_tag') {
-      canonicalExtras.push(extra)
-      continue
-    }
-    const [tagId] = await resolveTagIds([extra.tag], { createMissing: false })
-    const [tagName] = tagId ? await tagNamesForIds([tagId]) : [extra.tag]
-    canonicalExtras.push({
-      ...extra,
-      tag: tagId || extra.tag,
-      tagId: tagId || '',
-      tagName: tagName || extra.tag
-    })
-  }
-  const payload = normalizeConversationGoalCompletionEffectPlanPayload({
-    agentId: String(agent?.id || '').trim().slice(0, 180),
-    agentUpdatedAt: agent?.updatedAt,
-    completion: {
-      mode: completion.mode,
-      userId: String(completion.userId || '').trim().slice(0, 160),
-      userName: String(completion.userName || '').trim().slice(0, 160)
-    },
-    successExtras: canonicalExtras
-  })
-  return { ...payload, planHash: hashConversationGoalCompletionEffectPlan(payload) }
-}
-
-function conversationGoalEffectAgentFromMetadata(metadata) {
-  const plan = metadata?.completionEffectPlan
-  if (!plan || Number(plan.version) !== 1) {
-    throw new Error('La meta no tiene un plan inmutable de efectos para recuperarse de forma segura')
-  }
-  const payload = normalizeConversationGoalCompletionEffectPlanPayload(plan)
-  const expectedHash = hashConversationGoalCompletionEffectPlan(payload)
-  if (!/^[a-f0-9]{64}$/.test(String(plan.planHash || '')) || plan.planHash !== expectedHash) {
-    throw new Error('El plan inmutable de efectos de la meta no pasó su verificación de integridad')
-  }
-  return {
-    id: payload.agentId || null,
-    goalWorkflow: {
-      completion: payload.completion
-    },
-    successExtras: payload.successExtras
-  }
 }
 
 function normalizeAgentIdentityMode(value, fallback = 'business') {
@@ -1537,28 +835,22 @@ async function resolveGoalLinkMetadata({ agentId, objective, metadata }) {
   const source = metadata && typeof metadata === 'object' ? metadata : {}
   const suppliedExpected = compactExpectedGoalReference(source.expected)
   let configuredExpected = {}
-  let configuredRuntimeMode = 'legacy_v1'
 
   if (agentId) {
     // Una falla de DB no puede degradar silenciosamente la validación de la
     // evidencia. Si la lectura falla, crear el enlace también falla cerrado.
     const agent = await getConversationalAgent(String(agentId))
-    configuredRuntimeMode = normalizeConversationalRuntimeMode(agent?.runtimeMode, 'legacy_v1')
-    if (agent?.goalWorkflow) {
-      if (objective === 'citas') {
-        configuredExpected = {
-          calendarId: agent.goalWorkflow.appointments?.calendarId || agent.defaultCalendarId || ''
-        }
-      } else if (objective === 'ventas') {
-        const sales = agent.goalWorkflow.sales || {}
-        configuredExpected = {
-          productId: sales.productId,
-          priceId: sales.priceId,
-          productName: sales.productName,
-          priceName: sales.priceName,
-          amount: sales.amount,
-          currency: sales.currency || await getAccountCurrency()
-        }
+    const capabilities = getConversationalCapabilitiesConfig(agent)
+    if (objective === 'citas') {
+      const schedule = capabilities.items.find((item) => item.id === 'schedule_appointment' && item.enabled)
+      configuredExpected = { calendarId: schedule?.calendarId || '' }
+    } else if (objective === 'ventas') {
+      const payment = capabilities.items.find((item) => item.id === 'collect_payment' && item.enabled)
+      configuredExpected = {
+        productId: payment?.productId,
+        priceId: payment?.priceId,
+        amount: payment?.amount,
+        currency: payment?.currency || await getAccountCurrency()
       }
     }
   }
@@ -1574,9 +866,6 @@ async function resolveGoalLinkMetadata({ agentId, objective, metadata }) {
 
   return {
     ...source,
-    // Fuente de verdad del servidor: el cliente/modelo no puede etiquetar una
-    // meta legacy como v2 para saltarse sus efectos, ni al revés.
-    runtimeMode: configuredRuntimeMode,
     expected
   }
 }
@@ -2209,11 +1498,6 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
     const mapped = conversationSignalForGoalObjective(row.objective)
     const storedMetadata = parseJsonField(row.metadata_json, {})
     const receivedReference = storedMetadata.receivedReference || {}
-    // La asignación y los extras se fijan cuando se acepta la confirmación.
-    // Recovery nunca vuelve a leer la configuración viva del agente: editarlo
-    // después no puede cambiar los efectos de una meta ya confirmada.
-    const effectAgent = conversationGoalEffectAgentFromMetadata(storedMetadata)
-    const nativeRuntime = normalizeConversationalRuntimeMode(storedMetadata.runtimeMode, 'legacy_v1') === 'tool_calling_v2'
     const technicalSummary = row.external_object_id
       ? `ID de ${mapped.objectLabel}: ${row.external_object_id}`
       : `Confirmación recibida para ${mapped.objectLabel}`
@@ -2229,8 +1513,7 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
         status: 'completed',
         agentId: row.agent_id || '',
         eventId: goalEffectEventId(cleanGoalId, 'signal'),
-        strictEvent: true,
-        ...(nativeRuntime ? { allowInternalSummary: false } : {})
+        strictEvent: true
       })
       row.completion_signal_applied_at = await markConversationGoalEffectApplied(
         cleanGoalId,
@@ -2241,12 +1524,6 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
 
     if (!row.completion_action_applied_at) {
       await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
-      if (!nativeRuntime) {
-        await applyAgentCompletionAction(effectAgent, row.contact_id, {
-          eventId: goalEffectEventId(cleanGoalId, 'assignment'),
-          strict: true
-        })
-      }
       row.completion_action_applied_at = await markConversationGoalEffectApplied(
         cleanGoalId,
         claimToken,
@@ -2256,12 +1533,6 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
 
     if (!row.completion_extras_applied_at) {
       await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
-      if (!nativeRuntime) {
-        await applyAgentSuccessExtras(effectAgent, row.contact_id, {
-          eventId: goalEffectEventId(cleanGoalId, 'extras'),
-          strict: true
-        })
-      }
       row.completion_extras_applied_at = await markConversationGoalEffectApplied(
         cleanGoalId,
         claimToken,
@@ -2484,13 +1755,10 @@ export async function completeConversationGoalLink(goalId, {
     throw Object.assign(new Error('Esta confirmación ya no está disponible'), { statusCode: 409 })
   }
 
-  const completionAgent = row.agent_id ? await getConversationalAgent(row.agent_id) : null
-  const completionEffectPlan = await buildConversationGoalCompletionEffectPlan(completionAgent)
   const nextMetadata = {
     ...previousMetadata,
     confirmation: cleanMetadata,
-    receivedReference,
-    completionEffectPlan
+    receivedReference
   }
   const confirmationFingerprint = buildConversationGoalConfirmationFingerprint({
     externalSource: cleanExternalSource,
@@ -3871,13 +3139,10 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     : await getConversationState(cleanContactId)
   const agentId = matchedAgentId || state?.agentId || null
   const agent = agentId ? await getConversationalAgent(agentId).catch(() => null) : null
-  const nativeRuntime = normalizeConversationalRuntimeMode(matchedDetail.runtimeMode, 'legacy_v1') === 'tool_calling_v2'
   const cleanCurrency = normalizeVerifiedCurrency(currency || matchedDetail.currency || '')
-  const paidAmount = Number(amount ?? matchedDetail.amount)
   const cleanInvoiceId = String(matchedDetail.invoiceId || matchedDetail.paymentId || invoiceCandidates[0]).trim()
 
-  if (nativeRuntime) {
-    if (!agent || !isToolCallingV2(agent)) {
+    if (!agent) {
       return rejectConversationalPaymentReconciliation({
         contactId: cleanContactId,
         agentId,
@@ -4141,8 +3406,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
           status: 'completed',
           agentId,
           eventId: `${reconciliationId}_signal`,
-          strictEvent: true,
-          allowInternalSummary: false
+          strictEvent: true
         })
         progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
           signalAppliedAt: new Date().toISOString()
@@ -4194,55 +3458,6 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
       await settleConversationalPaymentReconciliation(reconciliationId, claim.claimToken, { error }).catch(() => {})
       throw error
     }
-  }
-
-  const technicalSummary = Number.isFinite(paidAmount) && paidAmount > 0
-    ? `Invoice ${cleanInvoiceId} · ${paidAmount} ${cleanCurrency || ''}`.trim()
-    : `Invoice ${cleanInvoiceId}`
-  const conversationSummary = cleanCompletionDisplayText(matchedDetail.resumen || matchedDetail.summary || '')
-  const reason = 'Pago confirmado del link enviado por el agente'
-  await setConversationSignal(cleanContactId, 'purchase_completed', {
-    reason,
-    summary: conversationSummary,
-    actionSummarySource: technicalSummary,
-    originalSummary: technicalSummary,
-    status: 'completed',
-    agentId: agentId || '',
-    ...(nativeRuntime ? { allowInternalSummary: false } : {})
-  })
-
-  if (agent && !nativeRuntime) {
-    await applyAgentCompletionAction(agent, cleanContactId)
-    await applyAgentSuccessExtras(agent, cleanContactId)
-  }
-
-  await notifyConversationalCompletion({
-    contactId: cleanContactId,
-    reason,
-    summary: conversationSummary || technicalSummary,
-    signal: 'purchase_completed'
-  })
-
-  await recordConversationalAgentEvent({
-    contactId: cleanContactId,
-    eventType: 'payment_link_goal_completed',
-    detail: {
-      agentId: agent?.id || agentId || null,
-      invoiceId: cleanInvoiceId,
-      paymentId: paymentId || null,
-      amount: Number.isFinite(paidAmount) ? paidAmount : null,
-      currency: cleanCurrency || null,
-      status: status || null,
-      reference: reference || null
-    }
-  })
-
-  return {
-    matched: true,
-    signal: 'purchase_completed',
-    agentId: agent?.id || agentId || null,
-    invoiceId: cleanInvoiceId
-  }
 }
 
 export async function recoverPendingConversationalPaymentReconciliations({ limit = 50 } = {}) {
@@ -4445,60 +3660,18 @@ function buildAgentConfigError(message, code = 'CONVERSATIONAL_AGENT_INVALID_CON
   return Object.assign(new Error(message), { statusCode: 400, code })
 }
 
-function agentDepositApplies(next = {}) {
-  const workflow = next.goalWorkflow || {}
-  if (next.objective === 'ventas') {
-    const mode = String(workflow.sales?.paymentMode || '').trim()
-    return mode === 'deposit' || (!mode && toBoolean(workflow.deposit?.enabled))
-  }
-  return next.objective === 'citas' && toBoolean(workflow.deposit?.enabled)
-}
-
-// Requisitos duros al crear/actualizar un agente PUBLICADO (enabled). V2 se
-// valida sólo contra sus capacidades blindadas; después de pasar esa frontera
-// no debe volver a caer en campos legacy. Los borradores apagados sí pueden
+// Requisitos duros al crear/actualizar un agente publicado. Las capacidades
+// blindadas son la única fuente de verdad; los borradores apagados sí pueden
 // guardarse incompletos.
 export function assertAgentGoalRequirements(next = {}) {
   if (!next.enabled) return
 
-  if (isToolCallingV2(next)) {
-    const nativeRuntimeErrors = getConversationalNativeRuntimeValidationErrors(next)
-    if (nativeRuntimeErrors.length > 0) {
-      const first = nativeRuntimeErrors[0]
-      const error = buildAgentConfigError(first.message, first.code)
-      error.nativeRuntimeValidation = nativeRuntimeErrors
-      throw error
-    }
-    return
-  }
-
-  if (next.objective === 'citas') {
-    const calendarId = String(next.goalWorkflow?.appointments?.calendarId || next.defaultCalendarId || '').trim()
-    if (!calendarId) {
-      throw buildAgentConfigError(
-        'Elige el calendario para las citas: el agente lo necesita para ofrecer los espacios disponibles.',
-        'CONVERSATIONAL_AGENT_CALENDAR_REQUIRED'
-      )
-    }
-  }
-
-  if (agentDepositApplies(next)) {
-    const deposit = next.goalWorkflow?.deposit || {}
-    const methods = deposit.methods || {}
-    const paymentLink = methods.paymentLink === undefined ? true : toBoolean(methods.paymentLink)
-    const bankTransfer = toBoolean(methods.bankTransfer)
-    if (!paymentLink && !bankTransfer) {
-      throw buildAgentConfigError(
-        'Activa al menos un método para cobrar el anticipo (link de pago o transferencia).',
-        'CONVERSATIONAL_AGENT_DEPOSIT_METHOD_REQUIRED'
-      )
-    }
-    if (bankTransfer && !String(deposit.bankTransferDetails || '').trim()) {
-      throw buildAgentConfigError(
-        'Escribe los datos de transferencia (banco, cuenta o CLABE y titular) para el anticipo.',
-        'CONVERSATIONAL_AGENT_TRANSFER_DETAILS_REQUIRED'
-      )
-    }
+  const nativeRuntimeErrors = getConversationalNativeRuntimeValidationErrors(next)
+  if (nativeRuntimeErrors.length > 0) {
+    const first = nativeRuntimeErrors[0]
+    const error = buildAgentConfigError(first.message, first.code)
+    error.nativeRuntimeValidation = nativeRuntimeErrors
+    throw error
   }
 }
 
@@ -4528,7 +3701,7 @@ function nativeResourceValidationItem(code, capabilityId, field, message) {
 }
 
 export async function getConversationalNativeRuntimeResourceValidationErrors(next = {}) {
-  if (!next.enabled || !isToolCallingV2(next)) return []
+  if (!next.enabled) return []
 
   const capabilities = getEnabledConversationalCapabilities(next)
   const errors = []
@@ -4831,7 +4004,6 @@ export function getAgentReplyDeliveryPartDelayMs(agentConfig = {}) {
 function mapAgentRow(row) {
   if (!row) return null
   const aiProvider = normalizeConversationalAIProvider(row.ai_provider)
-  const runtimeMode = normalizeConversationalRuntimeMode(row.runtime_mode, 'legacy_v1')
   const parsedPromptConfig = row.prompt_config === null || row.prompt_config === undefined
     ? null
     : parseJsonField(row.prompt_config, null)
@@ -4860,7 +4032,6 @@ function mapAgentRow(row) {
     enabled: toBoolean(row.enabled),
     aiProvider,
     model: normalizeConversationalAgentModel(row.model, aiProvider),
-    runtimeMode,
     promptConfig: storedPromptConfig,
     capabilitiesConfig: storedCapabilitiesConfig,
     ...identity,
@@ -4890,168 +4061,15 @@ function mapAgentRow(row) {
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
-  if (isToolCallingV2(mapped)) {
-    mapped.promptConfig = getConversationalPromptConfig(mapped)
-    mapped.capabilitiesConfig = getConversationalCapabilitiesConfig(mapped)
-  }
-  // Si este agente ya tuvo capacidades v2, ésas son la fuente reversible para
-  // volver a migrarlo. Sólo una fila legacy sin config almacenada se adapta a
-  // partir de goalWorkflow.
-  mapped.migrationCapabilitiesConfig = getConversationalCapabilitiesConfig(mapped)
+  mapped.promptConfig = getConversationalPromptConfig(mapped)
+  mapped.capabilitiesConfig = getConversationalCapabilitiesConfig(mapped)
   mapped.capabilityManifest = buildConversationalCapabilityManifest(mapped)
   return mapped
 }
 
-function hasText(value) {
-  return String(value || '').trim().length > 0
-}
-
-export function shouldMigrateLegacyConversationalAgentConfig(legacy) {
-  if (!legacy) return false
-
-  return (
-    (VALID_OBJECTIVES.has(legacy.objective) && legacy.objective !== 'citas') ||
-    hasText(legacy.custom_objective) ||
-    (VALID_SUCCESS_ACTIONS.has(legacy.success_action) && legacy.success_action !== DEFAULT_SUCCESS_ACTION) ||
-    hasText(legacy.required_data) ||
-    hasText(legacy.handoff_rules) ||
-    hasText(legacy.extra_instructions) ||
-    toBoolean(legacy.allow_emojis) ||
-    toBoolean(legacy.hide_attended) ||
-    toBoolean(legacy.hide_attended_notifications) ||
-    hasText(legacy.default_calendar_id) ||
-    legacy.closing_strategy_mode === 'custom' ||
-    hasText(legacy.closing_strategy_custom)
-  )
-}
-
-/**
- * Si todavía no hay agentes pero la config legacy vieja (de un solo agente)
- * tiene reglas reales, crea el "Agente principal" a partir de ella.
- * La config default vacía no se migra, así una cuenta nueva empieza sin agentes.
- */
-async function backfillLegacyConversationStatesToPrimaryAgent({ includeHistoricalStates = false } = {}) {
-  // Excluye agentes 'new_only': no deben adoptar conversaciones legacy de contactos viejos
-  // (eso saltaría el corte de seguridad, porque la adopción ocurre antes de matchAgentForMessage).
-  const primaryAgent = await db.get(`
-    SELECT id, created_at FROM conversational_agents
-    WHERE COALESCE(contact_scope, 'all') <> 'new_only'
-    ORDER BY position ASC, created_at ASC LIMIT 1
-  `).catch(() => null)
-  if (!primaryAgent?.id) return
-  await db.run(`
-    UPDATE conversational_agent_state
-    SET agent_id = ?,
-        assignment_source = COALESCE(NULLIF(assignment_source, ''), 'legacy'),
-        assigned_at = COALESCE(assigned_at, activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
-        assigned_by = COALESCE(assigned_by, updated_by, 'migration'),
-        activated_at = COALESCE(activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
-        activation_source = COALESCE(activation_source, 'automatic'),
-        activated_by = COALESCE(activated_by, updated_by, 'system'),
-        updated_at = CURRENT_TIMESTAMP
-    WHERE (agent_id IS NULL OR agent_id = '')
-      AND (assignment_source IS NULL OR assignment_source = '' OR assignment_source = 'legacy')
-      AND COALESCE(activation_source, '') <> 'manual'
-      AND COALESCE(updated_by, '') NOT IN ('user', 'human', 'manual')
-      AND (
-        signal IS NOT NULL
-        OR last_reply_at IS NOT NULL
-        OR last_answered_inbound_message_id IS NOT NULL
-        OR status IN ('paused', 'skipped', 'human', 'completed', 'discarded')
-      )
-      AND (
-        ? = 1
-        OR (
-          created_at IS NOT NULL
-          AND ? IS NOT NULL
-          AND created_at >= ?
-        )
-      )
-  `, [
-    primaryAgent.id,
-    includeHistoricalStates ? 1 : 0,
-    primaryAgent.created_at || null,
-    primaryAgent.created_at || null
-  ]).catch(() => undefined)
-}
-
-export async function ensureAgentsMigration() {
-  const existing = await db.get('SELECT COUNT(*) AS total FROM conversational_agents')
-  if (Number(existing?.total) > 0) {
-    await backfillLegacyConversationStatesToPrimaryAgent()
-    return
-  }
-  const legacy = await db.get('SELECT * FROM conversational_agent_config WHERE id = 1')
-  if (!legacy) return
-  if (!shouldMigrateLegacyConversationalAgentConfig(legacy)) return
-  await db.run(`
-    INSERT INTO conversational_agents (
-      id, name, enabled, ai_provider, model, identity_mode, identity_user_id, identity_user_name, identity_custom_name,
-      position, objective, custom_objective, success_action,
-      success_extras, required_data, handoff_rules, extra_instructions,
-      allow_emojis, hide_attended, hide_attended_notifications,
-      default_calendar_id, closing_strategy_mode, closing_strategy_custom,
-      response_delay_config, reply_delivery_config, follow_up_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, 1, ?, ?, 'business', '', '', '', 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    `cagent_${randomUUID()}`,
-    'Agente principal',
-    normalizeConversationalAIProvider(legacy.ai_provider),
-    normalizeConversationalAgentModel(legacy.model, legacy.ai_provider),
-    VALID_OBJECTIVES.has(legacy.objective) ? legacy.objective : 'citas',
-    legacy.custom_objective || '',
-    DEFAULT_SUCCESS_ACTION,
-    legacy.required_data || '',
-    legacy.handoff_rules || '',
-    legacy.extra_instructions || '',
-    toBoolean(legacy.allow_emojis) ? 1 : 0,
-    0,
-    legacy.hide_attended_notifications === null || legacy.hide_attended_notifications === undefined
-      ? (toBoolean(legacy.hide_attended) ? 1 : 0)
-      : ((toBoolean(legacy.hide_attended_notifications) || toBoolean(legacy.hide_attended)) ? 1 : 0),
-    legacy.default_calendar_id || null,
-    legacy.closing_strategy_mode === 'custom' ? 'custom' : 'system',
-    legacy.closing_strategy_custom || '',
-    JSON.stringify(DEFAULT_RESPONSE_DELAY_CONFIG),
-    JSON.stringify(DEFAULT_REPLY_DELIVERY_CONFIG),
-    JSON.stringify(DEFAULT_FOLLOW_UP_CONFIG),
-    JSON.stringify(DEFAULT_GOAL_WORKFLOW_CONFIG),
-    JSON.stringify({ entry: [], exit: [] })
-  ])
-  logger.info('[Agente conversacional] Config previa migrada al contenedor "Agente principal"')
-  await backfillLegacyConversationStatesToPrimaryAgent({ includeHistoricalStates: true })
-}
-
 export async function listConversationalAgents() {
-  await ensureAgentsMigration()
   const rows = await db.all('SELECT * FROM conversational_agents ORDER BY position ASC, created_at ASC')
   return rows.map(mapAgentRow)
-}
-
-async function enableConversationalAgentRuntime({ reason = 'agent_published', agentId = null } = {}) {
-  const config = await getConversationalAgentConfig()
-  if (config.enabled) return config
-
-  const next = await saveConversationalAgentConfig({ enabled: true })
-  await recordConversationalAgentEvent({
-    contactId: null,
-    eventType: 'runtime_enabled',
-    detail: { reason, agentId }
-  }).catch(() => {})
-  return next
-}
-
-export async function ensureConversationalAgentRuntimeEnabledForPublishedAgents({ reason = 'published_agent_present' } = {}) {
-  // El runtime base es solo compatibilidad interna: la verdad operativa es que
-  // exista al menos un agente individual publicado.
-  await ensureAgentsMigration()
-  const config = await getConversationalAgentConfig()
-  if (config.enabled) return config
-
-  const publishedAgent = await db.get('SELECT id FROM conversational_agents WHERE enabled = 1 LIMIT 1')
-  if (!publishedAgent?.id) return config
-
-  return enableConversationalAgentRuntime({ reason, agentId: publishedAgent.id })
 }
 
 function toMetricNumber(value) {
@@ -5117,7 +4135,6 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
     followUpSuppressedEvents: toMetricNumber(eventSummary.follow_up_suppressed_events),
     humanHandoffEvents: toMetricNumber(eventSummary.human_handoff_events),
     toolFailureEvents: toMetricNumber(eventSummary.tool_failure_events),
-    intelligenceAssessmentEvents: toMetricNumber(eventSummary.intelligence_assessment_events),
     responseRate: 0,
     toolFailureRate: 0,
     successRate: 0,
@@ -5194,7 +4211,6 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
 }
 
 export async function getConversationalAgentMetrics() {
-  await ensureAgentsMigration()
   await expirePausedConversationStates()
   const [agentRows, stateRows, eventSummary] = await Promise.all([
     db.all('SELECT * FROM conversational_agents ORDER BY position ASC, created_at ASC'),
@@ -5221,7 +4237,6 @@ export async function getConversationalAgentMetrics() {
             OR event_type = 'payment_link_failed'
           THEN 1 ELSE 0
         END) AS tool_failure_events,
-        SUM(CASE WHEN event_type = 'conversation_intelligence_updated' THEN 1 ELSE 0 END) AS intelligence_assessment_events,
         SUM(CASE
           WHEN event_type = 'error'
             OR LOWER(event_type) LIKE '%error%'
@@ -5326,30 +4341,23 @@ function agentInputToRowValues(input, base) {
       : normalizeAgentGoalWorkflow(input.goalWorkflow),
     filters: input.filters === undefined ? base.filters : normalizeAgentFilters(input.filters)
   }
-  next.runtimeMode = input.runtimeMode === undefined
-    ? normalizeConversationalRuntimeMode(base.runtimeMode, 'legacy_v1')
-    : normalizeConversationalRuntimeMode(input.runtimeMode, base.runtimeMode)
+  next.runtimeMode = 'tool_calling_v2'
 
-  // null no es una orden de borrado: clientes legacy solían reenviar ese valor
-  // al no entender promptConfig. El borrado intencional se representa con
-  // editableText: '' y debe sobrevivir incluso al alternar v2 -> legacy -> v2.
+  // El borrado intencional del texto editable se representa con editableText: ''.
   const promptSource = input.promptConfig === undefined || input.promptConfig === null
     ? base.promptConfig
     : input.promptConfig
   next.promptConfig = promptSource === null || promptSource === undefined
-    ? (isToolCallingV2(next)
-        ? normalizeConversationalPromptConfig(null, { materializeDefault: true })
-        : null)
-    : normalizeConversationalPromptConfig(promptSource, { materializeDefault: isToolCallingV2(next) })
+    ? normalizeConversationalPromptConfig(null, { materializeDefault: true })
+    : normalizeConversationalPromptConfig(promptSource, { materializeDefault: true })
 
-  // migrationCapabilitiesConfig es exclusivamente server-derived y nunca se
-  // lee aquí. Un arreglo vacío explícito sí desactiva todas las capacidades;
-  // null conserva la configuración almacenada para roundtrips legacy.
+  // Las capacidades sólo nacen del constructor nativo. Campos históricos como
+  // successAction o goalWorkflow nunca pueden volver a habilitar herramientas.
   const capabilitiesSource = input.capabilitiesConfig === undefined || input.capabilitiesConfig === null
     ? base.capabilitiesConfig
     : input.capabilitiesConfig
   next.capabilitiesConfig = capabilitiesSource === null || capabilitiesSource === undefined
-    ? (isToolCallingV2(next) ? deriveLegacyCapabilitiesConfig(next) : null)
+    ? normalizeConversationalCapabilitiesConfig(null)
     : normalizeConversationalCapabilitiesConfig(capabilitiesSource)
   return next
 }
@@ -5358,31 +4366,13 @@ const ACTIVE_AGENT_RUNTIME_CONFIG_KEYS = new Set([
   'enabled',
   'aiProvider',
   'model',
-  'runtimeMode',
   'promptConfig',
   'capabilitiesConfig',
-  'identityMode',
-  'identityUserId',
-  'identityUserName',
-  'identityCustomName',
-  'objective',
-  'customObjective',
-  'successAction',
-  'successExtras',
-  'requiredData',
-  'handoffRules',
-  'extraInstructions',
-  'allowEmojis',
-  'hideAttended',
   'hideAttendedNotifications',
-  'defaultCalendarId',
-  'persuasionLevel',
-  'languageLevel',
   'contactScope',
   'responseDelay',
   'replyDelivery',
   'followUp',
-  'goalWorkflow',
   'filters'
 ])
 
@@ -5393,7 +4383,7 @@ const DEFAULT_AGENT_BASE = {
   model: DEFAULT_CONVERSATIONAL_AGENT_MODEL,
   runtimeMode: 'tool_calling_v2',
   promptConfig: null,
-  capabilitiesConfig: null,
+  capabilitiesConfig: { schemaVersion: 1, items: [] },
   identityMode: 'business',
   identityUserId: '',
   identityUserName: '',
@@ -5472,7 +4462,6 @@ function addEntryAnchor(target, key, label) {
 function entryAnchorLabel(category, field, value = '') {
   const categoryLabel = ENTRY_CONFLICT_CATEGORY_LABELS[category] || category
   if (category === 'channel' && field === 'canal') return `mismo canal: ${value || 'chat'}`
-  if (category === 'message' && field === 'texto') return `mismo texto de entrada: ${value || 'cualquier texto'}`
   if (category === 'message' && field === 'numero') return `mismo número de entrada: ${value}`
   if (category === 'tags' && field === 'etiqueta') return `misma etiqueta: ${value || 'cualquier etiqueta'}`
   if (category === 'ads' && field === 'anuncio') return `mismo anuncio: ${value}`
@@ -5508,14 +4497,6 @@ function addEntryParamAnchors(category, param, anchors, blockers) {
   if (category === 'channel' && field === 'channel') {
     const value = cleanEntryAnchorValue(param.value || 'chat') || 'chat'
     addEntryAnchor(target, `channel:${value}`, entryAnchorLabel(category, 'canal', value))
-    return
-  }
-
-  if (category === 'message' && field === 'text') {
-    for (const value of entryParamValues(param)) {
-      const clean = cleanEntryAnchorValue(value)
-      if (clean) addEntryAnchor(target, `message:text:${clean}`, entryAnchorLabel(category, 'texto', clean))
-    }
     return
   }
 
@@ -5725,7 +4706,6 @@ async function assertConversationalAgentPlanLimitAllowsCreate() {
 }
 
 export async function createConversationalAgent(input = {}) {
-  await ensureAgentsMigration()
   await assertConversationalAgentPlanLimitAllowsCreate()
   const maxPosition = await db.get('SELECT COALESCE(MAX(position), -1) AS max_pos FROM conversational_agents')
   const next = agentInputToRowValues(input, { ...DEFAULT_AGENT_BASE, position: Number(maxPosition?.max_pos ?? -1) + 1 })
@@ -5759,9 +4739,6 @@ export async function createConversationalAgent(input = {}) {
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
   ])
   await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
-  if (next.enabled) {
-    await enableConversationalAgentRuntime({ reason: 'agent_created_enabled', agentId: id })
-  }
   return getConversationalAgent(id)
 }
 
@@ -5809,9 +4786,6 @@ export async function updateConversationalAgent(agentId, input = {}) {
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
     agentId
   ])
-  if (next.enabled) {
-    await enableConversationalAgentRuntime({ reason: 'agent_updated_enabled', agentId })
-  }
   if (shouldRefreshAssignedStates) {
     const refreshedCount = await refreshAssignedConversationStatesForAgent(agentId)
     if (refreshedCount > 0) {
@@ -5854,7 +4828,6 @@ export async function resetConversationalAgentSkippedContacts(agentId, { updated
     throw Object.assign(new Error('Agente conversacional inválido'), { statusCode: 400 })
   }
 
-  await ensureAgentsMigration()
   const agent = await getConversationalAgent(cleanAgentId)
   if (!agent) return null
 
@@ -5919,7 +4892,7 @@ const CONTACT_DATE_FIELDS = new Set(['created', 'updated', 'last_purchase'])
  * citas, pagos y asignados del contacto) para evaluar varios agentes sin
  * repetir consultas.
  */
-export async function buildRuleContext({ contactId = null, messageText = '', channel = 'whatsapp', post = null } = {}) {
+export async function buildRuleContext({ contactId = null, channel = 'whatsapp', post = null } = {}) {
   const nowIso = new Date().toISOString()
 
   const [contact, appointmentRows, paymentRows, adRows, latestInbound, timezone] = await Promise.all([
@@ -6041,7 +5014,6 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
     postId: String(post?.postId || '').trim(),
     mediaId: String(post?.mediaId || '').trim(),
     postPermalink: String(post?.permalink || '').trim(),
-    text: normalizeMatchText(messageText),
     tags,
     appointments,
     payments: paymentRows.map((row) => ({
@@ -6109,21 +5081,6 @@ function upcomingAppointments(ctx) {
 
 function nextAppointment(ctx) {
   return upcomingAppointments(ctx)[0] || null
-}
-
-function textMatches(operator, ctx, param) {
-  const single = normalizeMatchText(param.value)
-  const list = (param.values || []).map(normalizeMatchText).filter(Boolean)
-  switch (operator) {
-    case 'contains': return !single || ctx.text.includes(single)
-    case 'not_contains': return !single || !ctx.text.includes(single)
-    case 'contains_any': return !list.length || list.some((phrase) => ctx.text.includes(phrase))
-    case 'contains_all': return !list.length || list.every((phrase) => ctx.text.includes(phrase))
-    case 'starts_with': return !single || ctx.text.startsWith(single)
-    case 'ends_with': return !single || ctx.text.endsWith(single)
-    case 'equals': return !single || ctx.text === single
-    default: return false
-  }
 }
 
 function textValueMatches(rawValue, operator, expectedValue) {
@@ -6368,7 +5325,6 @@ function conditionMatches(condition, ctx) {
   if (category === 'message') {
     // Base: llegó un mensaje (cierto al evaluar); los parámetros lo afinan
     return params.every((param) => {
-      if (param.field === 'text') return textMatches(param.operator, ctx, param)
       if (param.field === 'business_phone') {
         const matches = Boolean(param.value) && ctx.businessPhoneNumberId === param.value
         return param.operator === 'is_not' ? (!param.value || !matches) : matches
@@ -6496,11 +5452,11 @@ export function isUnverifiedConversationAssignment(state) {
   return !EXPLICIT_ASSIGNMENT_SOURCES.has(source)
 }
 
-export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp', excludeAgentId = null, excludeAgentIds = [], ruleContext = null } = {}) {
+export async function matchAgentForMessage({ contactId, channel = 'whatsapp', excludeAgentId = null, excludeAgentIds = [], ruleContext = null } = {}) {
   const agents = (await listConversationalAgents()).filter((agent) => agent.enabled)
   if (!agents.length) return null
 
-  const ctx = ruleContext || await buildRuleContext({ contactId, messageText, channel })
+  const ctx = ruleContext || await buildRuleContext({ contactId, channel })
   const excluded = new Set([
     ...(Array.isArray(excludeAgentIds) ? excludeAgentIds : []),
     excludeAgentId
@@ -6586,139 +5542,6 @@ export async function listAgentFilterOptions() {
       label: row.label || row.field_key
     }))
   }
-}
-
-/**
- * Aplica las acciones extra configuradas al cumplir el objetivo:
- * agregar/quitar etiqueta y cambiar campos personalizados del contacto.
- */
-export async function applyAgentSuccessExtras(agent, contactId, {
-  eventId = '',
-  strict = false
-} = {}) {
-  const extras = normalizeSuccessExtras(agent?.successExtras)
-  if (!extras.length || !contactId) return []
-
-  const applied = []
-  const failures = []
-  for (const extra of extras) {
-    try {
-      if (extra.type === 'add_tag' || extra.type === 'remove_tag') {
-        // extra.tag puede ser un ID del catálogo (configs nuevas) o un nombre
-        // (configs viejas); se resuelve a ID y se guarda siempre el ID.
-        let tagId = ''
-        if (extra.tagId) {
-          const storedTag = await db.get('SELECT id FROM contact_tags WHERE id = ?', [extra.tagId])
-          if (storedTag?.id) {
-            tagId = storedTag.id
-          } else if (extra.type === 'add_tag') {
-            [tagId] = await resolveTagIds([extra.tagName || extra.tag], { createMissing: true })
-          } else {
-            // Una etiqueta borrada puede seguir en datos legacy del contacto;
-            // quitar por el ID capturado mantiene el efecto original.
-            tagId = extra.tagId
-          }
-        } else {
-          [tagId] = await resolveTagIds([extra.tag], { createMissing: extra.type === 'add_tag' })
-        }
-        const row = await db.get('SELECT tags FROM contacts WHERE id = ?', [contactId])
-        const tags = parseJsonField(row?.tags, [])
-        const list = Array.isArray(tags) ? tags : []
-        const next = extra.type === 'remove_tag'
-          ? list.filter((candidate) => candidate !== tagId && normalizeMatchText(candidate) !== normalizeMatchText(extra.tag))
-          : [...new Set([...list, tagId].filter(Boolean))]
-        await db.run('UPDATE contacts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(next), contactId])
-        const [resolvedTagName] = tagId ? await tagNamesForIds([tagId]) : [extra.tagName || extra.tag]
-        applied.push({ type: extra.type, tag: resolvedTagName || extra.tagName || extra.tag })
-      } else if (extra.type === 'set_custom_field') {
-        const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
-        const fields = parseJsonField(row?.custom_fields, {})
-        const map = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {}
-        map[extra.field] = extra.value
-        await db.run('UPDATE contacts SET custom_fields = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(map), contactId])
-        applied.push({ type: extra.type, field: extra.field, value: extra.value })
-      }
-    } catch (error) {
-      logger.warn(`[Agente conversacional] No se pudo aplicar acción extra ${extra.type}: ${error.message}`)
-      failures.push(error)
-    }
-  }
-
-  if (strict && failures.length) {
-    throw failures[0]
-  }
-
-  if (applied.length) {
-    await recordConversationalAgentEvent({
-      eventId,
-      contactId,
-      eventType: 'success_extras_applied',
-      detail: { agentId: agent?.id || null, applied },
-      throwOnError: strict
-    })
-  }
-  return applied
-}
-
-export async function applyAgentCompletionAction(agent, contactId, {
-  eventId = '',
-  strict = false
-} = {}) {
-  if (!agent || !contactId) return null
-  const workflow = normalizeAgentGoalWorkflow(agent.goalWorkflow)
-  const completion = workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion
-  if (completion.mode !== 'assign_user') return { mode: 'notify_only' }
-
-  const configuredUserId = String(completion.userId || '').trim()
-  if (!configuredUserId) return { mode: 'assign_user', skipped: true, reason: 'missing_user' }
-
-  let user = null
-  try {
-    user = await db.get(
-      `SELECT id, username, email, full_name, first_name, last_name, phone
-       FROM users
-       WHERE id = ? AND is_active = 1`,
-      [configuredUserId]
-    )
-  } catch (error) {
-    if (strict) throw error
-  }
-
-  const assignedUserId = String(user?.id || configuredUserId)
-  const assignedUserName = String(
-    user?.full_name ||
-    [user?.first_name, user?.last_name].filter(Boolean).join(' ') ||
-    user?.email ||
-    user?.phone ||
-    user?.username ||
-    completion.userName ||
-    ''
-  ).trim().slice(0, 180)
-
-  const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
-  const fields = parseJsonField(row?.custom_fields, {})
-  const customFields = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {}
-  customFields.assignedUser = assignedUserId
-  if (assignedUserName) customFields.assignedUserName = assignedUserName
-
-  await db.run(`UPDATE contacts SET custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [
-    JSON.stringify(customFields),
-    contactId
-  ])
-
-  await recordConversationalAgentEvent({
-    eventId,
-    contactId,
-    eventType: 'completion_user_assigned',
-    detail: {
-      agentId: agent.id || null,
-      assignedUserId,
-      assignedUserName: assignedUserName || null
-    },
-    throwOnError: strict
-  })
-
-  return { mode: 'assign_user', userId: assignedUserId, userName: assignedUserName || null }
 }
 
 const COMPLETION_NOTIFICATION_DEDUP_MS = 10 * 60 * 1000
@@ -6837,14 +5660,6 @@ function mapStateRow(row) {
     agentHideAttendedNotifications: hasAgentHideAttendedNotifications
       ? (toBoolean(row.agent_hide_attended_notifications) || toBoolean(row.agent_hide_attended))
       : null,
-    closingContext: normalizeStoredAdvancedClosingContext(row.closing_context_json || '{}'),
-    intelligence: normalizeConversationIntelligenceState(parseJsonField(row.intelligence_state_json, {}), {
-      objective: row.agent_objective || 'custom',
-      channel: row.channel || 'whatsapp'
-    }),
-    intelligencePolicyHash: row.intelligence_policy_hash || null,
-    intelligenceSource: row.intelligence_source || null,
-    intelligenceUpdatedAt: row.intelligence_updated_at || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
@@ -7129,45 +5944,6 @@ export async function listConversationStatesForContact(contactId, { channel = nu
     ORDER BY ${conversationStateSortSql()}
   `, [contactId, ...(cleanChannel ? [cleanChannel] : [])]).catch(() => [])
   return rows.map(mapStateRow)
-}
-
-export async function updateConversationClosingContext(contactId, patch = {}, { updatedBy = 'agent', agentId = null } = {}) {
-  if (!contactId) {
-    return { context: normalizeAdvancedClosingContext(patch), changedKeys: Object.keys(normalizeAdvancedClosingContext(patch)) }
-  }
-
-  const state = await ensureConversationState(contactId, { agentId })
-  const row = state?.id
-    ? await db.get('SELECT closing_context_json FROM conversational_agent_state WHERE id = ?', [state.id])
-    : null
-  const { context, changedKeys } = mergeAdvancedClosingContext(row?.closing_context_json || '{}', patch, { updatedBy })
-
-  if (!changedKeys.length) {
-    return { context, changedKeys }
-  }
-
-  await db.run(`
-    UPDATE conversational_agent_state
-    SET closing_context_json = ?,
-        activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
-        activation_source = COALESCE(activation_source, ?),
-        activated_by = COALESCE(activated_by, ?),
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [
-    JSON.stringify(context),
-    normalizeConversationActivationSource('', updatedBy),
-    String(updatedBy || 'agent').trim() || 'agent',
-    state.id
-  ])
-
-  await recordConversationalAgentEvent({
-    contactId,
-    eventType: 'closing_context_updated',
-    detail: { updatedBy, changedKeys, agentId: state.agentId || agentId || null }
-  })
-
-  return { context, changedKeys }
 }
 
 export async function ensureConversationState(contactId, { agentId = null, channel = null } = {}) {
@@ -7493,31 +6269,23 @@ export async function setConversationSignal(contactId, signal, {
   agentId = '',
   channel = null,
   eventId = '',
-  strictEvent = false,
-  allowInternalSummary = undefined
+  strictEvent = false
 } = {}) {
   const cleanChannel = normalizeOptionalConversationStateChannel(channel)
   const state = await ensureConversationState(contactId, { agentId, channel: cleanChannel })
   const currentState = state?.id
-    ? await db.get('SELECT id, closing_context_json, channel, agent_id FROM conversational_agent_state WHERE id = ?', [state.id]).catch(() => null)
+    ? await db.get('SELECT id, channel, agent_id FROM conversational_agent_state WHERE id = ?', [state.id]).catch(() => null)
     : null
-  const closingContext = normalizeStoredAdvancedClosingContext(currentState?.closing_context_json || '{}')
   const cleanStatus = String(status || 'completed').trim() || 'completed'
   const effectiveAgentId = String(agentId || currentState?.agent_id || '').trim() || null
   const objectiveCompleted = cleanStatus === 'completed' && Boolean(effectiveAgentId)
   const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const completionSummary = await buildCompletionSummaryFromClosingContext({
-    contactId,
     signal,
     summary,
     reason,
     actionSummarySource,
-    closingContext,
-    timezone,
-    channel: currentState?.channel || 'whatsapp',
-    allowInternalSummary: allowInternalSummary === undefined
-      ? objectiveCompleted
-      : (objectiveCompleted && allowInternalSummary === true)
+    timezone
   })
   const cleanReason = cleanCompletionDisplayText(reason)
   const cleanActionSummary = cleanCompletionDisplayText(completionSummary.actionSummary)
@@ -7569,7 +6337,7 @@ export async function clearConversationSignal(contactId, { updatedBy = 'user', a
   // la señal pero el status seguía en terminal, así que el gate de arranque
   // (status !== 'active') mantenía al bot mudo para siempre aunque el staff limpiara la señal
   // (caso oQ9XMb9R: ~10 mensajes del paciente al vacío). No tocamos estados deliberados como
-  // 'discarded', 'paused' o 'skipped'.
+  // 'paused' o 'skipped'.
   const reactivated = state.status === 'completed' || state.status === 'human'
   await db.run(`
     UPDATE conversational_agent_state
@@ -7594,12 +6362,10 @@ export async function clearConversationSignal(contactId, { updatedBy = 'user', a
 /**
  * Marca que un humano tomó la conversación (envío manual desde la app).
  * Solo cambia el estado si el agente la tenía activa, para no pisar
- * estados explícitos (skipped, discarded, etc.).
+ * estados explícitos (skipped, paused, etc.).
  */
 export async function markHumanTakeoverIfActive(contactId, { updatedBy = 'human' } = {}) {
   if (!contactId) return null
-  const config = await getConversationalAgentConfig()
-  if (!config.enabled) return null
   const states = await listConversationStatesForContact(contactId)
   const activeStates = states.filter((state) => state.status === 'active')
   if (!activeStates.length) return states[0] || null
@@ -7617,8 +6383,6 @@ export async function markHumanTakeoverIfActive(contactId, { updatedBy = 'human'
 
 export async function shouldSuppressChatNotificationForConversationalAgent(contactId) {
   if (!contactId) return false
-  const config = await getConversationalAgentConfig()
-  if (!config.enabled) return false
   const states = await listConversationStatesForContact(contactId)
   for (const state of states) {
     if (!state?.agentId || state.status !== 'active' || state.signal) continue
@@ -7630,83 +6394,6 @@ export async function shouldSuppressChatNotificationForConversationalAgent(conta
     if (agent?.enabled && agent.hideAttendedNotifications) return true
   }
   return false
-}
-
-function triggerLinkMatchesWorkflow(configured = {}, payload = {}) {
-  const expectedId = String(configured.triggerLinkId || '').trim()
-  const expectedPublicId = String(configured.triggerLinkPublicId || '').trim()
-  const expectedName = normalizeMatchText(configured.triggerLinkName)
-  const actualId = String(payload.triggerLinkId || payload.trigger_link_id || '').trim()
-  const actualPublicId = String(payload.triggerLinkPublicId || payload.publicId || payload.public_id || '').trim()
-  const actualName = normalizeMatchText(payload.triggerLinkName || payload.name)
-
-  if (expectedId) return actualId === expectedId
-  if (expectedPublicId) return actualPublicId === expectedPublicId
-  if (expectedName) return Boolean(actualName && actualName === expectedName)
-  return false
-}
-
-export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
-  const contactId = String(payload.contactId || payload.contact_id || payload.query?.contact_id || payload.query?.contactId || '').trim()
-  if (!contactId) return { matched: false, reason: 'missing_contact' }
-
-  const triggerSentEvent = await db.get(
-    "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'trigger_link_sent' ORDER BY created_at DESC LIMIT 1",
-    [contactId]
-  ).catch(() => null)
-  const triggerSentDetail = triggerSentEvent?.detail_json ? safeParse(triggerSentEvent.detail_json) : null
-  const sentAgentId = String(triggerSentDetail?.agentId || triggerSentDetail?.agent_id || '').trim()
-
-  const state = await getConversationState(contactId, { agentId: sentAgentId || null })
-  if (!state?.agentId) return { matched: false, reason: 'missing_agent' }
-  if (state.signal || !['active', 'paused'].includes(state.status)) {
-    return { matched: false, reason: 'conversation_closed' }
-  }
-
-  const agent = await getConversationalAgent(state.agentId)
-  if (!agent?.enabled || agent.successAction !== 'send_trigger_link') {
-    return { matched: false, reason: 'agent_not_waiting_for_trigger_link' }
-  }
-
-  const configured = agent.goalWorkflow?.triggerLink || {}
-  if (!triggerLinkMatchesWorkflow(configured, payload)) {
-    return { matched: false, reason: 'trigger_link_mismatch' }
-  }
-
-  const triggerLinkName = configured.triggerLinkName || payload.triggerLinkName || 'Enlace de disparo'
-  const sentTriggerId = String(triggerSentDetail?.triggerLinkId || '').trim()
-  const sentTriggerPublicId = String(triggerSentDetail?.triggerLinkPublicId || '').trim()
-  const matchesSentTrigger = (!sentTriggerId || !configured.triggerLinkId || sentTriggerId === configured.triggerLinkId)
-    && (!sentTriggerPublicId || !configured.triggerLinkPublicId || sentTriggerPublicId === configured.triggerLinkPublicId)
-  const conversationSummary = matchesSentTrigger
-    ? cleanCompletionDisplayText(triggerSentDetail?.resumen || triggerSentDetail?.summary || '')
-    : ''
-  const nextState = await setConversationSignal(contactId, 'ready_for_human', {
-    reason: `Tocó el enlace de disparo: ${triggerLinkName}`,
-    summary: conversationSummary,
-    status: 'completed',
-    agentId: state.agentId || ''
-  })
-  await applyAgentCompletionAction(agent, contactId)
-  await applyAgentSuccessExtras(agent, contactId)
-  await notifyConversationalCompletion({
-    contactId,
-    reason: `Tocó el enlace de disparo: ${triggerLinkName}`,
-    summary: conversationSummary || `Tocó el enlace de disparo: ${triggerLinkName}`,
-    signal: 'ready_for_human'
-  })
-  await recordConversationalAgentEvent({
-    contactId,
-    eventType: 'trigger_link_goal_completed',
-    detail: {
-      agentId: agent.id,
-      triggerLinkId: configured.triggerLinkId || payload.triggerLinkId || null,
-      triggerLinkPublicId: configured.triggerLinkPublicId || payload.triggerLinkPublicId || null,
-      eventId: payload.eventId || null
-    }
-  })
-
-  return { matched: true, state: nextState, agentId: agent.id }
 }
 
 /**

@@ -13,9 +13,7 @@ import {
   createConversationalAgent,
   createConversationGoalLink,
   getConversationGoalLink,
-  recoverPendingConversationGoalCompletionEffects,
-  setConversationalCompletionSummaryGeneratorForTest,
-  updateConversationalAgent
+  recoverPendingConversationGoalCompletionEffects
 } from '../src/services/conversationalAgentService.js'
 
 const CONTACT_PREFIX = 'test_goal_security_'
@@ -49,22 +47,6 @@ async function createContact(suffix) {
 
 function externalAuthorization(requestId = 'request-1', actorId = 'api-user-test') {
   return { type: 'external_api', actorId, requestId }
-}
-
-function emptyCompletionEffectPlanMetadata() {
-  const payload = {
-    version: 1,
-    agentId: '',
-    agentUpdatedAt: '',
-    completion: { mode: 'notify_only', userId: '', userName: '' },
-    successExtras: []
-  }
-  return JSON.stringify({
-    completionEffectPlan: {
-      ...payload,
-      planHash: createHash('sha256').update(JSON.stringify(payload)).digest('hex')
-    }
-  })
 }
 
 function createResponse() {
@@ -104,16 +86,16 @@ test('una URL genérica se entrega sin fetch, sin token y con meta pendiente', a
       { role: 'user', content: 'Sí, mándame el enlace' }
     ],
     config: {
-      id: 'agent-generic-link',
       objective: 'citas',
-      successAction: 'send_goal_url',
-      goalWorkflow: {
-        appointments: {
-          owner: 'url',
-          calendarId: 'cal_external_secure',
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [{
+          id: 'send_link',
+          enabled: true,
+          linkKind: 'verified_goal',
           url: 'https://calendly.example/reservar',
           trackingParam: 'booking_ref'
-        }
+        }]
       }
     }
   }
@@ -128,19 +110,19 @@ test('una URL genérica se entrega sin fetch, sin token y con meta pendiente', a
 
   assert.equal(first.ok, true)
   assert.equal(second.ok, true)
-  assert.equal(first.goalId, second.goalId)
+  assert.equal(first.sentUrl, second.sentUrl)
   assert.equal(second.idempotent, true)
   assert.equal(first.confirmationMode, 'trusted_integration')
   assert.equal(fetchCalls, 0)
-  assert.equal(new URL(first.sentUrl).searchParams.get('booking_ref'), first.goalId)
   assert.equal(new URL(first.sentUrl).searchParams.has('ristak_goal_token'), false)
   assert.doesNotMatch(JSON.stringify(first), /callbackUrl|ristak_goal_token/)
 
   const row = await db.get(
-    `SELECT status, confirmation_token_hash, idempotency_key
-     FROM conversational_agent_goal_links WHERE id = ?`,
-    [first.goalId]
+    `SELECT id, status, confirmation_token_hash, idempotency_key
+     FROM conversational_agent_goal_links WHERE contact_id = ?`,
+    [contactId]
   )
+  assert.equal(new URL(first.sentUrl).searchParams.get('booking_ref'), row.id)
   assert.equal(row.status, 'pending')
   assert.equal(row.confirmation_token_hash, null)
   assert.match(row.idempotency_key, /^[a-f0-9]{64}$/)
@@ -148,13 +130,11 @@ test('una URL genérica se entrega sin fetch, sin token y con meta pendiente', a
   assert.equal(Number(count.count), 1)
 })
 
-test('confirmación externa v2 conserva una sola IA y no revive efectos legacy ocultos', async (t) => {
+test('la confirmación externa sólo aplica hechos nativos y no revive efectos ocultos', async (t) => {
   const suffix = `native_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const contactId = await createContact(suffix)
   let agent = null
-  let internalSummaryCalls = 0
   t.after(async () => {
-    setConversationalCompletionSummaryGeneratorForTest(null)
     await removeContact(contactId)
     if (agent?.id) {
       await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => undefined)
@@ -163,9 +143,8 @@ test('confirmación externa v2 conserva una sola IA y no revive efectos legacy o
   })
 
   agent = await createConversationalAgent({
-    name: `Meta externa v2 ${suffix}`,
+    name: `Meta externa nativa ${suffix}`,
     enabled: false,
-    runtimeMode: 'tool_calling_v2',
     objective: 'custom',
     customObjective: 'Confirmar registro externo',
     capabilitiesConfig: {
@@ -199,12 +178,7 @@ test('confirmación externa v2 conserva una sola IA y no revive efectos legacy o
     'SELECT metadata_json FROM conversational_agent_goal_links WHERE id = ?',
     [link.id]
   )
-  assert.equal(JSON.parse(storedBefore.metadata_json).runtimeMode, 'tool_calling_v2')
-  setConversationalCompletionSummaryGeneratorForTest(async () => {
-    internalSummaryCalls += 1
-    return 'No debe ejecutarse'
-  })
-
+  assert.equal(Object.hasOwn(JSON.parse(storedBefore.metadata_json), 'completionEffectPlan'), false)
   const completed = await completeConversationGoalLinkFromWebhook({
     goalId: link.id,
     externalSource: 'custom:test',
@@ -213,14 +187,11 @@ test('confirmación externa v2 conserva una sola IA y no revive efectos legacy o
   }, { authorization: externalAuthorization(`request_${suffix}`) })
 
   assert.equal(completed.status, 'completed')
-  assert.equal(internalSummaryCalls, 0)
   const storedAfter = await db.get(
     'SELECT metadata_json FROM conversational_agent_goal_links WHERE id = ?',
     [link.id]
   )
-  const frozenPlan = JSON.parse(storedAfter.metadata_json).completionEffectPlan
-  assert.equal(frozenPlan.completion.mode, 'notify_only')
-  assert.deepEqual(frozenPlan.successExtras, [])
+  assert.equal(Object.hasOwn(JSON.parse(storedAfter.metadata_json), 'completionEffectPlan'), false)
   const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
   const customFields = JSON.parse(contact.custom_fields || '{}')
   assert.equal(customFields.assignedUser, undefined)
@@ -588,73 +559,6 @@ test('la recuperación durable finaliza efectos pendientes sin duplicar el event
   assert.equal(Number(signalCountAfter.count), 1)
 })
 
-test('recovery aplica el plan de efectos confirmado aunque después editen el agente', async (t) => {
-  const contactId = await createContact('effects-snapshot')
-  let agent = null
-  t.after(async () => {
-    if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
-    await removeContact(contactId)
-  })
-
-  agent = await createConversationalAgent({
-    name: 'Agente snapshot A',
-    runtimeMode: 'legacy_v1',
-    objective: 'custom',
-    successAction: 'send_goal_url',
-    goalWorkflow: {
-      completion: { mode: 'assign_user', userId: 'snapshot_user_A', userName: 'Usuario A' }
-    },
-    successExtras: [
-      { type: 'set_custom_field', field: 'snapshotVersion', value: 'A' }
-    ]
-  })
-  const link = await createConversationGoalLink({
-    contactId,
-    agentId: agent.id,
-    objective: 'custom',
-    targetUrl: 'https://example.test/effects-snapshot'
-  })
-  await completeConversationGoalLinkFromWebhook({
-    goalId: link.id,
-    externalSource: 'custom:snapshot',
-    externalObjectId: 'snapshot_external_A',
-    status: 'completed'
-  }, { authorization: externalAuthorization('snapshot-request') })
-
-  const stored = await db.get('SELECT metadata_json FROM conversational_agent_goal_links WHERE id = ?', [link.id])
-  const storedPlan = JSON.parse(stored.metadata_json).completionEffectPlan
-  assert.equal(storedPlan.agentId, agent.id)
-  assert.equal(storedPlan.completion.userId, 'snapshot_user_A')
-  assert.equal(storedPlan.successExtras[0].value, 'A')
-  assert.match(storedPlan.planHash, /^[a-f0-9]{64}$/)
-
-  await updateConversationalAgent(agent.id, {
-    goalWorkflow: {
-      completion: { mode: 'assign_user', userId: 'snapshot_user_B', userName: 'Usuario B' }
-    },
-    successExtras: [
-      { type: 'set_custom_field', field: 'snapshotVersion', value: 'B' }
-    ]
-  })
-  await db.run('UPDATE contacts SET custom_fields = ? WHERE id = ?', [JSON.stringify({}), contactId])
-  await db.run(`
-    UPDATE conversational_agent_goal_links
-    SET completion_effects_status = 'failed',
-        completion_effects_next_retry_at = NULL,
-        completion_action_applied_at = NULL,
-        completion_extras_applied_at = NULL
-    WHERE id = ?
-  `, [link.id])
-
-  const recovered = await recoverPendingConversationGoalCompletionEffects({ limit: 20 })
-  assert.ok(recovered.completed >= 1)
-  const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
-  const fields = JSON.parse(contact.custom_fields || '{}')
-  assert.equal(fields.assignedUser, 'snapshot_user_A')
-  assert.equal(fields.assignedUserName, 'Usuario A')
-  assert.equal(fields.snapshotVersion, 'A')
-})
-
 test('la evidencia y el Idempotency-Key siguen reclamados después de borrar contacto y meta', async (t) => {
   const firstContactId = await createContact('durable-claim-first')
   const secondContactId = await createContact('durable-claim-second')
@@ -920,7 +824,7 @@ test('el recovery drena más de un lote en una sola corrida', async (t) => {
         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'skipped',
         CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
       )
-    `, [goalId, contactId, emptyCompletionEffectPlanMetadata()])
+    `, [goalId, contactId, JSON.stringify({})])
   }
 
   const recovered = await recoverPendingConversationGoalCompletionEffects({ limit: 250, batchSize: 50 })

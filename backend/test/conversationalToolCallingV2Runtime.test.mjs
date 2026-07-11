@@ -6,7 +6,6 @@ import { buildInputItems } from '../src/agents/runner.js'
 import { buildNativeConversationalInstructions } from '../src/agents/conversational/nativePrompt.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
 import {
-  TOOL_CALLING_V2_DISABLED_LAYERS,
   TOOL_CALLING_V2_HISTORY_BYTE_BUDGET,
   TOOL_CALLING_V2_MODEL_SETTINGS,
   buildToolCallingV2HistoryEnvelope,
@@ -88,14 +87,14 @@ test('seguimiento v2 conserva sólo herramientas de lectura', () => {
   assert.deepEqual(names.sort(), ['get_business_profile', 'get_contact_profile', 'list_products'])
 })
 
-test('buildInputItems conserva el límite legacy y acepta completo el sobre v2 ya acotado por bytes', () => {
+test('buildInputItems conserva el límite base y acepta completo el sobre nativo ya acotado por bytes', () => {
   const messages = conversationMessages(200)
-  const legacy = buildInputItems(messages)
+  const base = buildInputItems(messages)
   const native = buildInputItems(messages, { preserveAll: true })
 
-  assert.equal(legacy.length, 12)
+  assert.equal(base.length, 12)
   assert.equal(native.length, 200)
-  assert.match(JSON.stringify(legacy[0]), /mensaje 189/)
+  assert.match(JSON.stringify(base[0]), /mensaje 189/)
   assert.match(JSON.stringify(native[0]), /mensaje 1/)
 })
 
@@ -481,7 +480,7 @@ test('runtime v2 ejecuta sólo el agente principal con el transcript real y nunc
   const messages = conversationMessages(200)
   let mainRuns = 0
   let receivedMessages = null
-  const ctx = { actions: [{ type: 'stay_silent' }], suppressReply: true }
+  const ctx = { actions: [] }
 
   const result = await runToolCallingV2Turn({
     config: { runtimeMode: 'tool_calling_v2' },
@@ -518,12 +517,7 @@ test('runtime v2 ejecuta sólo el agente principal con el transcript real y nunc
   assert.equal(result.historyTelemetry.includedMessages, 200)
   assert.equal(result.historyTelemetry.omittedMessages, 0)
   assert.equal(result.runtimeMode, 'tool_calling_v2')
-  assert.equal(result.ctx.suppressReply, false)
   assert.ok(result.reply.length > 0)
-  assert.deepEqual(result.disabledLayers, TOOL_CALLING_V2_DISABLED_LAYERS)
-  for (const layer of ['conversation_assessment', 'strategy_planner', 'turn_policy', 'compliance_guard', 'runtime_reply_guard', 'ai_message_splitter']) {
-    assert.ok(result.disabledLayers.includes(layer))
-  }
 })
 
 test('sobre e historial manual v2 son idénticos en OpenAI, Gemini, Claude y DeepSeek', async () => {
@@ -538,7 +532,7 @@ test('sobre e historial manual v2 son idénticos en OpenAI, Gemini, Claude y Dee
     }, {
       buildAgentForRun: async ({ historyContext }) => ({
         agent: { name: `fake-${provider}` },
-        ctx: { actions: [], suppressReply: false, historyContext },
+        ctx: { actions: [], historyContext },
         model: `fake-${provider}`,
         aiProvider: provider,
         capabilityManifest: [],
@@ -577,7 +571,7 @@ test('seguimiento v2 usa la misma llamada principal y conserva el transcript sin
       receivedFollowUpContext = input.followUpContext
       return {
         agent: { name: 'fake' },
-        ctx: { actions: [], suppressReply: false, followUpMode: true },
+        ctx: { actions: [], followUpMode: true },
         model: 'fake-model',
         aiProvider: 'openai',
         capabilityManifest: [],
@@ -709,12 +703,11 @@ test('preview v2 comparte el sobre por bytes, conserva 60 mensajes cortos y nunc
       assert.equal(historyEnvelope.loadOlderPage, null)
       return {
         reply: 'respuesta visible',
-        ctx: { actions: [], suppressReply: true },
+        ctx: { actions: [] },
         model: 'fake-model',
         runtimeMode: 'tool_calling_v2',
         modelCallCount: 1,
         historyTelemetry: historyEnvelope.telemetry,
-        disabledLayers: TOOL_CALLING_V2_DISABLED_LAYERS,
         capabilityManifest: [],
         validationErrors: []
       }
@@ -729,7 +722,7 @@ test('preview v2 comparte el sobre por bytes, conserva 60 mensajes cortos y nunc
   assert.equal(result.modelCallCount, 1)
   assert.equal(result.historyTelemetry.includedMessages, 60)
   assert.equal(result.historyTelemetry.omittedMessages, 0)
-  assert.equal(result.assessmentSource, 'native_single_agent')
+  assert.deepEqual(result.validationErrors, [])
 })
 
 test('preview v2 pagina sólo sus mensajes omitidos dentro de la misma ejecución principal', async () => {
@@ -772,12 +765,11 @@ test('preview v2 pagina sólo sus mensajes omitidos dentro de la misma ejecució
       assert.match(searched.messages[0].text, /preview-needle/)
       return {
         reply: 'preview con historial',
-        ctx: { actions: [], suppressReply: false },
+        ctx: { actions: [] },
         model: 'fake-model',
         runtimeMode: 'tool_calling_v2',
         modelCallCount: 1,
         historyTelemetry: historyEnvelope.telemetry,
-        disabledLayers: TOOL_CALLING_V2_DISABLED_LAYERS,
         capabilityManifest: [],
         validationErrors: []
       }

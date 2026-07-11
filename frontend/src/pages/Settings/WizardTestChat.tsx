@@ -205,21 +205,6 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
         nextMessages.map(toPayload),
         { config: getConfig() }
       )
-      if (result.intelligence) {
-        const temperature = result.intelligence.temperature === 'hot'
-          ? 'caliente'
-          : result.intelligence.temperature === 'warm' ? 'tibio' : 'frío'
-        const line = [
-          `🧠 Lectura interna: ${result.intelligence.stage} · ${temperature}`,
-          `siguiente movimiento: ${result.intelligence.strategy.action}`,
-          result.intelligence.strategy.reason
-        ].filter(Boolean).join(' — ')
-        setMessages((current) => [...current, { role: 'assistant', content: line, internal: true }])
-      }
-      for (const warning of result.policyValidation?.warnings || []) {
-        const message = typeof warning.message === 'string' ? warning.message : ''
-        if (message) setMessages((current) => [...current, { role: 'assistant', content: `⚠︎ Configuración: ${message}`, internal: true }])
-      }
       for (const action of result.actions || []) {
         setMessages((current) => [
           ...current,
@@ -231,8 +216,8 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
         for (const reply of replies) {
           setMessages((current) => [...current, { role: 'assistant', content: reply }])
         }
-      } else if (result.suppressed) {
-        setMessages((current) => [...current, { role: 'assistant', content: '⚙︎ El agente decidió no responder (acción interna o silencio).', internal: true }])
+      } else {
+        setMessages((current) => [...current, { role: 'assistant', content: '⚠︎ La prueba no devolvió una respuesta válida. Vuelve a intentarlo.', internal: true }])
       }
     } catch (error: any) {
       const status = error?.statusCode || error?.status

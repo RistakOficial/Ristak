@@ -1,9 +1,4 @@
-import { Agent, Runner, OpenAIProvider } from '@openai/agents'
-import { CHEAPEST_OPENAI_MODEL } from '../../config/openAIModels.js'
-import { logger } from '../../utils/logger.js'
 import { normalizeAgentReplyDelivery } from '../../services/conversationalAgentService.js'
-
-export const MESSAGE_SPLITTER_MODEL = CHEAPEST_OPENAI_MODEL
 
 const NATURAL_SHORT_MESSAGE_PATTERN = /^(va|ok|okay|listo|perfecto|sale|claro|sí|si|no|ya|hecho|de una)[.!?¡¿]*$/i
 const NATURAL_STANDALONE_REACTION_PATTERN = /^(?:ah+h?|ah+ ya|ah+ okaa?y|ok+a+y?|ok perfecto|va|sale|perfecto|listo|claro|órale|orale|uff|mmm(?: a ver)?|no+ manches|buen[ií]simo|déjame ver|dejame ver|ya te entend[ií]|ah ya te entend[ií])(?:[,.!?;:…]+)?$/i
@@ -14,7 +9,6 @@ const QUESTION_START_PATTERN = /^(?:hoy\s+|ahorita\s+|actualmente\s+|entonces\s+
 const DEPENDENT_SETUP_MESSAGE_PATTERN = /^(?:(?:pues|mira|ok|va)\s+)?(?:eso\s+)?(?:depende(?:\s+de|\b)|depende\s+un\s+poco\b|va\s+a\s+depender\b|puede\s+depender\b|depender[ií]a\b|var[ií]a\s+seg[uú]n\b)/i
 const VISIBLE_LABEL_PATTERN = /^(?:globo|mensaje|parte)\s*#?\s*\d+\s*[:.)-]\s*/i
 const BREAK_TOKEN_PATTERN = /\s*\[BREAK\]\s*/gi
-const MAX_AI_INPUT_CHARS = 4000
 const SIGNIFICANT_TOKEN_MIN_LENGTH = 4
 
 const PROTECTED_TOKEN_PATTERN = /https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|[\w.+-]+@[\w.-]+\.[a-z]{2,}|\+?\d[\d\s().-]{6,}\d|\$\s?\d[\d,.]*(?:\s?(?:mxn|usd|pesos|dólares|dolares))?|\b\d{1,2}:\d{2}\s?(?:am|pm)?\b|\b[A-Z0-9]{4,}(?:-[A-Z0-9]{2,})+\b/gi
@@ -528,35 +522,6 @@ function repairMessages(rawMessages, originalText, settings) {
   return { ok: true, reason: 'ok', messages: normalizeBubbleOpeningCasing(repaired) }
 }
 
-function parseSplitterJson(rawOutput) {
-  if (Array.isArray(rawOutput)) return { messages: rawOutput }
-  if (rawOutput && typeof rawOutput === 'object') return rawOutput
-
-  const text = String(rawOutput || '')
-    .trim()
-    .replace(/^```(?:json)?/i, '')
-    .replace(/```$/i, '')
-    .trim()
-
-  if (!text) throw new Error('empty_splitter_output')
-
-  try {
-    return JSON.parse(text)
-  } catch {
-    const start = text.indexOf('{')
-    const end = text.lastIndexOf('}')
-    if (start >= 0 && end > start) {
-      return JSON.parse(text.slice(start, end + 1))
-    }
-    if (BREAK_TOKEN_PATTERN.test(text)) {
-      BREAK_TOKEN_PATTERN.lastIndex = 0
-      return { messages: splitExplicitBreaks(text) }
-    }
-    BREAK_TOKEN_PATTERN.lastIndex = 0
-    throw new Error('invalid_splitter_json')
-  }
-}
-
 function fallbackResult(text, reason) {
   const clean = cleanText(text)
   return {
@@ -564,83 +529,6 @@ function fallbackResult(text, reason) {
     source: 'fallback',
     reason
   }
-}
-
-function shouldUseAiForText(text, settings, random) {
-  if (text.length >= settings.minMessageLengthToSplit) return true
-  if (!settings.randomizeSplitting) return false
-  if (text.length < Math.max(settings.minBubbleLength * 2, 70)) return false
-  return random() < 0.25
-}
-
-function buildSplitterInstructions(settings) {
-  return [
-    'Eres un procesador de mensajes para canales de chat. Tu única tarea es dividir una respuesta ya generada por otro agente en varios mensajes naturales.',
-    'Piensa en [BREAK] como el punto donde termina un globo y empieza otro, pero tu salida final debe ser un arreglo JSON de mensajes, no texto con [BREAK].',
-    '',
-    'Reglas no negociables:',
-    '- No cambies el significado del texto original.',
-    '- No inventes información.',
-    '- No elimines instrucciones, datos, precios, horarios, fechas, URLs, teléfonos, correos, códigos ni nombres propios.',
-    '- No agregues saludos ni despedidas si no venían en el texto original.',
-    '- No uses etiquetas visibles como "globo 1", "mensaje 2" o "parte 3".',
-    '- Cada mensaje debe sonar natural por si solo, sin cortar frases de forma rara.',
-    '- Si hay una pregunta importante al final, déjala preferentemente como último mensaje.',
-    '- Si el texto es técnico o formal, conserva ese tono. Si es casual, conserva el tono casual.',
-    '- Si hay bullets, pasos o instrucciones, conserva el orden lógico.',
-    '- Regla de oro: una idea o intención = un mensaje. Separa reacción, confirmación, lectura, dato, pregunta, empatía, acción y pasos cuando sean intenciones distintas.',
-    '- Regla dura: si el texto empieza con una reacción o muletilla corta ("ya..", "ok", "claro", "ahh", "mmm", "uff", "sale", "perfecto"), esa reacción va sola como primer mensaje casi siempre.',
-    '- No pegues reacción + lectura + pregunta en el mismo mensaje. Ejemplo de separación: "ya.." / "entonces sí traes ese tema encima" / "pa entenderte bien y no decirte algo al aire" / "hoy cómo te llegan los pacientes?".',
-    '- Si hay una frase puente tipo "pa entenderte", "para no marearte", "pa darte algo que sí sirva" y luego una pregunta, separa la frase puente y deja la pregunta en otro mensaje.',
-    '- No dejes frases dependientes solas antes de una pregunta. Si una parte dice "depende de lo que necesites" y la siguiente es "tú eres médico o lo ves para alguien más?", van juntas en un solo mensaje.',
-    '- Si el texto trae salto de línea o salto de párrafo dentro de una misma respuesta, normalmente eso indica otro globo: no metas dos líneas con intenciones distintas en el mismo mensaje.',
-    '- No dividas por dividir. Si el texto es una sola idea corta y limpia, devuelve un solo mensaje.',
-    '- No fuerces 2-4 mensajes siempre. Lo normal suele ser 1-4 según el texto; usa 5 o 6 sólo si el texto está largo y realmente lo amerita.',
-    '- No hagas spam de mensajes mínimos. Cada mensaje debe entenderse por sí solo.',
-    '- Varía el patrón: no cortes siempre en la misma cantidad ni después de la misma muletilla.',
-    '- No devuelvas markdown, explicaciones ni texto fuera del JSON.',
-    '',
-    `Parámetros: mínimo para dividir ${settings.minMessageLengthToSplit} caracteres; máximo ${settings.maxBubbles} mensajes; longitud sugerida por mensaje ${settings.minBubbleLength}-${settings.maxBubbleLength} caracteres.`,
-    settings.randomizeSplitting
-      ? 'Varía naturalmente si conviene devolver 1, 2, 3, 4, 5 o 6 mensajes, siempre dentro del máximo y sólo cuando el texto lo amerite.'
-      : 'Usa una división conservadora y consistente.',
-    '',
-    'Devuelve únicamente JSON válido con esta estructura:',
-    '{"messages":["primer mensaje","segundo mensaje"]}'
-  ].join('\n')
-}
-
-function buildSplitterUserPrompt(text, settings) {
-  const variationSeed = settings.randomizeSplitting ? Math.floor(Math.random() * 1000000) : 0
-  return [
-    `Semilla interna de variacion: ${variationSeed}`,
-    'Texto original:',
-    cleanText(text).slice(0, MAX_AI_INPUT_CHARS)
-  ].join('\n\n')
-}
-
-async function runAiSplitter({ text, settings, apiKey }) {
-  const agent = new Agent({
-    name: 'Ristak · Divisor de mensajes de chat',
-    model: MESSAGE_SPLITTER_MODEL,
-    instructions: buildSplitterInstructions(settings),
-    tools: []
-  })
-
-  const runner = new Runner({
-    modelProvider: new OpenAIProvider({ apiKey }),
-    tracingDisabled: true
-  })
-
-  const result = await runner.run(agent, [{
-    role: 'user',
-    content: [{ type: 'input_text', text: buildSplitterUserPrompt(text, settings) }]
-  }], {
-    maxTurns: 1,
-    context: { category: 'conversational_message_splitter' }
-  })
-
-  return result.finalOutput
 }
 
 export function splitMessageIntoBubblesFallback({ text, settings = {}, random = Math.random } = {}) {
@@ -670,55 +558,4 @@ export function splitMessageIntoBubblesFallback({ text, settings = {}, random = 
   const repaired = repairMessages(candidateParts, clean, delivery)
   if (!repaired.ok) return fallbackResult(clean, repaired.reason)
   return { messages: repaired.messages, source: 'fallback', reason: 'safe_split' }
-}
-
-export async function splitMessageIntoBubbles({
-  text,
-  settings = {},
-  apiKey = null,
-  model = null,
-  aiSplitter = null,
-  random = Math.random,
-  log = logger
-} = {}) {
-  const clean = cleanText(text)
-  if (!clean) return { messages: [], source: 'empty', reason: 'empty_text' }
-
-  const delivery = normalizeAgentReplyDelivery(settings?.replyDelivery || settings)
-  if (!delivery.splitMessagesEnabled) {
-    return { messages: [clean], source: 'disabled', reason: 'split_disabled' }
-  }
-
-  if (!shouldUseAiForText(clean, delivery, random)) {
-    return { messages: [clean], source: 'threshold', reason: 'below_min_length' }
-  }
-
-  try {
-    const raw = typeof aiSplitter === 'function'
-      ? await aiSplitter({ text: clean, settings: delivery })
-      : apiKey
-        ? await runAiSplitter({ text: clean, settings: delivery, apiKey })
-        : null
-
-    if (!raw) {
-      return splitMessageIntoBubblesFallback({
-        text: clean,
-        settings: delivery,
-        random
-      })
-    }
-
-    const parsed = parseSplitterJson(raw)
-    const repaired = repairMessages(parsed?.messages, clean, delivery)
-    if (!repaired.ok) return fallbackResult(clean, repaired.reason)
-
-    return {
-      messages: repaired.messages,
-      source: 'ai',
-      reason: repaired.reason
-    }
-  } catch (error) {
-    log.warn(`[Agente conversacional] Divisor de mensajes falló; se enviará respuesta original: ${error.message}`)
-    return fallbackResult(clean, error.message || 'splitter_error')
-  }
 }

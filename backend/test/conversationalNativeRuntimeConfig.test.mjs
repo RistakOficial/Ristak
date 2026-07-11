@@ -11,16 +11,17 @@ import {
   assertAgentGoalRequirements
 } from '../src/services/conversationalAgentService.js'
 import { getAccountCurrency } from '../src/utils/accountLocale.js'
-import { assertCompiledPolicyValid } from '../src/controllers/conversationalAgentController.js'
-import {
+import { createAgent as createAgentController } from '../src/controllers/conversationalAgentController.js'
+import * as nativeRuntimeConfig from '../src/agents/conversational/nativeRuntimeConfig.js'
+
+const {
   DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS,
   buildConversationalCapabilityManifest,
-  deriveLegacyCapabilitiesConfig,
   getConversationalCapability,
-  getConversationalPromptConfig,
+  getConversationalCapabilitiesConfig,
   normalizeConversationalCapabilitiesConfig,
   normalizeConversationalPromptConfig
-} from '../src/agents/conversational/nativeRuntimeConfig.js'
+} = nativeRuntimeConfig
 
 async function removeAgent(agentId) {
   if (!agentId) return
@@ -43,7 +44,7 @@ function uniqueTagFilters(tag) {
   }
 }
 
-test('normalizadores v2 conservan texto vacío explícito y descartan capacidades desconocidas', () => {
+test('normalizadores nativos conservan texto vacío explícito y descartan capacidades desconocidas', () => {
   const prompt = normalizeConversationalPromptConfig({
     schemaVersion: 99,
     templateVersion: 'custom-v7',
@@ -82,13 +83,13 @@ test('normalizadores v2 conservan texto vacío explícito y descartan capacidade
   ])
 })
 
-test('adaptador legacy conserva cita, anticipo por rango y pase factual de clientes anteriores', () => {
-  const capabilities = deriveLegacyCapabilitiesConfig({
+test('campos viejos nunca habilitan capacidades nativas', () => {
+  const capabilities = getConversationalCapabilitiesConfig({
     objective: 'citas',
     successAction: 'book_appointment',
-    defaultCalendarId: 'cal_legacy_deposit',
+    defaultCalendarId: 'cal_stored_deposit',
     goalWorkflow: {
-      appointments: { owner: 'ai', calendarId: 'cal_legacy_deposit' },
+      appointments: { owner: 'ai', calendarId: 'cal_stored_deposit' },
       sales: { paymentMode: 'full_payment' },
       deposit: {
         enabled: true,
@@ -101,56 +102,60 @@ test('adaptador legacy conserva cita, anticipo por rango y pase factual de clien
       attention: { pastClientsToHuman: true }
     }
   })
-  assert.equal(capabilities.items.find((item) => item.id === 'schedule_appointment')?.enabled, true)
-  const payment = capabilities.items.find((item) => item.id === 'collect_payment')
-  assert.equal(payment?.paymentMode, 'deposit')
-  assert.equal(payment?.deposit.mode, 'range')
-  assert.equal(payment?.deposit.minAmount, 300)
-  assert.equal(payment?.deposit.maxAmount, 800)
-  assert.equal(capabilities.items.find((item) => item.id === 'handoff_human')?.pastClientsToHuman, true)
+  assert.deepEqual(capabilities, { schemaVersion: 1, items: [] })
 })
 
-test('adaptador legacy conserva objetivo propio que termina por send_link', () => {
-  const capabilities = deriveLegacyCapabilitiesConfig({
-    objective: 'custom',
-    customObjective: 'Llevar a la persona al diagnóstico',
-    successAction: 'send_trigger_link',
-    goalWorkflow: {
-      triggerLink: {
-        triggerLinkId: 'trigger_custom_legacy',
-        triggerLinkUrl: 'https://example.test/diagnostico'
-      }
-    }
-  })
-
-  assert.equal(capabilities.items.find((item) => item.id === 'send_link')?.linkKind, 'trigger')
-  assert.equal(capabilities.items.find((item) => item.id === 'send_link')?.triggerLinkId, 'trigger_custom_legacy')
-  assert.equal(capabilities.items.find((item) => item.id === 'custom_goal')?.completion, 'send_link')
-})
-
-test('agente nuevo sin runtimeMode nace en v2 con plantilla materializada y capacidades legacy adaptadas', async () => {
+test('los filtros por palabras del mensaje se descartan y no pueden silenciar al agente', async () => {
   let agent = null
   try {
     agent = await createConversationalAgent({
-      name: 'Agente v2 por default',
+      name: 'Sin filtros léxicos',
+      enabled: false,
+      filters: {
+        entry: {
+          groups: [{
+            conditions: [{
+              category: 'message',
+              params: [{ field: 'text', operator: 'contains', value: 'cita' }]
+            }]
+          }]
+        },
+        exit: { groups: [] }
+      }
+    })
+    assert.deepEqual(agent.filters.entry.groups, [])
+  } finally {
+    await removeAgent(agent?.id)
+  }
+})
+
+test('agente nuevo nace con plantilla materializada, capacidades nativas y sin selector público de runtime', async () => {
+  let agent = null
+  try {
+    agent = await createConversationalAgent({
+      name: 'Agente nativo por default',
       enabled: false,
       objective: 'citas',
       successAction: 'book_appointment',
-      defaultCalendarId: 'cal_v2_default',
+      defaultCalendarId: 'cal_native_default',
       goalWorkflow: {
         appointments: {
           owner: 'ai',
-          calendarId: 'cal_v2_default',
+          calendarId: 'cal_native_default',
           allowOverlappingAppointments: true
         }
+      },
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [{ id: 'schedule_appointment', enabled: true, calendarId: 'cal_native_default' }]
       }
     })
 
-    assert.equal(agent.runtimeMode, 'tool_calling_v2')
+    assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
     assert.equal(agent.promptConfig.editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
     assert.equal(agent.promptConfig.schemaVersion, 1)
-    assert.equal(getConversationalCapability(agent, 'schedule_appointment')?.calendarId, 'cal_v2_default')
-    assert.deepEqual(agent.migrationCapabilitiesConfig, agent.capabilitiesConfig)
+    assert.equal(getConversationalCapability(agent, 'schedule_appointment')?.calendarId, 'cal_native_default')
+    assert.equal(Object.hasOwn(agent, 'migrationCapabilitiesConfig'), false)
     assert.equal(agent.capabilityManifest.find((item) => item.id === 'schedule_appointment')?.ready, true)
 
     const row = await db.get(
@@ -165,17 +170,17 @@ test('agente nuevo sin runtimeMode nace en v2 con plantilla materializada y capa
   }
 })
 
-test('migrationCapabilitiesConfig legacy es server-derived para cita, rango y custom send_link', async () => {
+test('entradas obsoletas de runtime y migración se ignoran y nunca alteran la configuración nativa', async () => {
   let agent = null
   try {
     agent = await createConversationalAgent({
-      name: 'Legacy migrable',
+      name: 'Entrada obsoleta ignorada',
       enabled: false,
       runtimeMode: 'legacy_v1',
       objective: 'citas',
       successAction: 'book_appointment',
       goalWorkflow: {
-        appointments: { owner: 'ai', calendarId: 'calendar_legacy_migration' },
+        appointments: { owner: 'ai', calendarId: 'calendar_stored_config' },
         deposit: {
           enabled: true,
           mode: 'range',
@@ -192,19 +197,26 @@ test('migrationCapabilitiesConfig legacy es server-derived para cita, rango y cu
       }
     })
 
-    assert.equal(agent.capabilitiesConfig, null)
-    assert.equal(agent.migrationCapabilitiesConfig.items.some((item) => item.id === 'forged'), false)
-    assert.equal(agent.migrationCapabilitiesConfig.items.find((item) => item.id === 'schedule_appointment')?.calendarId, 'calendar_legacy_migration')
-    assert.equal(agent.migrationCapabilitiesConfig.items.find((item) => item.id === 'collect_payment')?.deposit.mode, 'range')
-    assert.equal(agent.migrationCapabilitiesConfig.items.find((item) => item.id === 'handoff_human')?.pastClientsToHuman, true)
+    assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
+    assert.equal(Object.hasOwn(agent, 'migrationCapabilitiesConfig'), false)
+    assert.equal(agent.capabilitiesConfig.items.some((item) => item.id === 'forged'), false)
+    assert.deepEqual(agent.capabilitiesConfig, { schemaVersion: 1, items: [] })
 
+    const storedBeforeUpdate = await db.get(
+      'SELECT runtime_mode FROM conversational_agents WHERE id = ?',
+      [agent.id]
+    )
+    assert.equal(storedBeforeUpdate.runtime_mode, 'tool_calling_v2')
+
+    const capabilitiesBeforeStaleUpdate = agent.capabilitiesConfig
     agent = await updateConversationalAgent(agent.id, {
+      runtimeMode: 'another_removed_runtime',
       objective: 'custom',
       customObjective: 'Llevar al diagnóstico',
       successAction: 'send_trigger_link',
       goalWorkflow: {
         triggerLink: {
-          triggerLinkId: 'trigger_legacy_custom',
+          triggerLinkId: 'trigger_stale_custom',
           triggerLinkUrl: 'https://example.test/diagnostico'
         }
       },
@@ -213,21 +225,23 @@ test('migrationCapabilitiesConfig legacy es server-derived para cita, rango y cu
         items: [{ id: 'forged_again', enabled: true }]
       }
     })
-    assert.equal(agent.migrationCapabilitiesConfig.items.find((item) => item.id === 'send_link')?.linkKind, 'trigger')
-    assert.equal(agent.migrationCapabilitiesConfig.items.find((item) => item.id === 'custom_goal')?.completion, 'send_link')
-    assert.equal(agent.migrationCapabilitiesConfig.items.some((item) => item.id === 'forged_again'), false)
+    assert.deepEqual(agent.capabilitiesConfig, capabilitiesBeforeStaleUpdate)
+    assert.equal(agent.capabilitiesConfig.items.some((item) => item.id === 'forged_again'), false)
+    assert.equal(
+      (await db.get('SELECT runtime_mode FROM conversational_agents WHERE id = ?', [agent.id])).runtime_mode,
+      'tool_calling_v2'
+    )
   } finally {
     await removeAgent(agent?.id)
   }
 })
 
-test('round-trip v2 -> legacy -> v2 conserva prompt vacío y capacidades almacenadas', async () => {
+test('updates conservan prompt vacío y capacidades nativas aunque llegue un selector obsoleto', async () => {
   let agent = null
   try {
     agent = await createConversationalAgent({
-      name: 'Agente v2 editable',
+      name: 'Agente nativo editable',
       enabled: false,
-      runtimeMode: 'tool_calling_v2',
       promptConfig: {
         schemaVersion: 1,
         templateVersion: 'custom-empty-v1',
@@ -256,13 +270,14 @@ test('round-trip v2 -> legacy -> v2 conserva prompt vacío y capacidades almacen
 
     const beforeCapabilities = agent.capabilitiesConfig
     const updated = await updateConversationalAgent(agent.id, { name: 'Renombrado por cliente viejo' })
-    assert.equal(updated.runtimeMode, 'tool_calling_v2')
+    assert.equal(Object.hasOwn(updated, 'runtimeMode'), false)
     assert.equal(updated.promptConfig.editableText, '')
     assert.deepEqual(updated.capabilitiesConfig, beforeCapabilities)
 
-    const legacy = await updateConversationalAgent(agent.id, {
+    const afterStaleInput = await updateConversationalAgent(agent.id, {
       runtimeMode: 'legacy_v1',
-      // Clientes viejos pueden reenviar null; no debe borrar estado v2 dormido.
+      // Clientes viejos pueden reenviar campos obsoletos o null; no deben borrar
+      // la configuración nativa ni reactivar otro motor.
       promptConfig: null,
       capabilitiesConfig: null,
       migrationCapabilitiesConfig: {
@@ -270,27 +285,16 @@ test('round-trip v2 -> legacy -> v2 conserva prompt vacío y capacidades almacen
         items: [{ id: 'forged', enabled: true }]
       }
     })
-    assert.equal(legacy.runtimeMode, 'legacy_v1')
-    assert.equal(legacy.promptConfig.editableText, '')
-    assert.equal(getConversationalPromptConfig(legacy)?.editableText, '')
-    assert.deepEqual(legacy.capabilitiesConfig, beforeCapabilities)
-    assert.equal(legacy.migrationCapabilitiesConfig.items.some((item) => item.id === 'forged'), false)
-    assert.deepEqual(legacy.migrationCapabilitiesConfig, beforeCapabilities)
-
-    const restored = await updateConversationalAgent(agent.id, {
-      runtimeMode: 'tool_calling_v2',
-      promptConfig: null,
-      capabilitiesConfig: null
-    })
-    assert.equal(restored.runtimeMode, 'tool_calling_v2')
-    assert.equal(restored.promptConfig.editableText, '')
-    assert.deepEqual(restored.capabilitiesConfig, beforeCapabilities)
-    assert.deepEqual(restored.migrationCapabilitiesConfig, beforeCapabilities)
+    assert.equal(Object.hasOwn(afterStaleInput, 'runtimeMode'), false)
+    assert.equal(Object.hasOwn(afterStaleInput, 'migrationCapabilitiesConfig'), false)
+    assert.equal(afterStaleInput.promptConfig.editableText, '')
+    assert.deepEqual(afterStaleInput.capabilitiesConfig, beforeCapabilities)
 
     const stored = await db.get(
-      'SELECT prompt_config, capabilities_config FROM conversational_agents WHERE id = ?',
+      'SELECT runtime_mode, prompt_config, capabilities_config FROM conversational_agents WHERE id = ?',
       [agent.id]
     )
+    assert.equal(stored.runtime_mode, 'tool_calling_v2')
     assert.equal(JSON.parse(stored.prompt_config).editableText, '')
     assert.deepEqual(JSON.parse(stored.capabilities_config), beforeCapabilities)
   } finally {
@@ -298,31 +302,30 @@ test('round-trip v2 -> legacy -> v2 conserva prompt vacío y capacidades almacen
   }
 })
 
-test('fila existente que omite columnas v2 permanece legacy sin backfill destructivo', async () => {
-  const agentId = `cagent_legacy_${randomUUID()}`
+test('fila existente sin configuración materializada no revive capacidades anteriores', async () => {
+  const agentId = `cagent_native_${randomUUID()}`
   try {
     await db.run(
       'INSERT INTO conversational_agents (id, name, enabled) VALUES (?, ?, 0)',
-      [agentId, 'Agente legacy intacto']
+      [agentId, 'Agente anterior compatible']
     )
     const agent = await getConversationalAgent(agentId)
-    assert.equal(agent.runtimeMode, 'legacy_v1')
-    assert.equal(agent.promptConfig, null)
-    assert.equal(agent.capabilitiesConfig, null)
-    assert.equal(agent.migrationCapabilitiesConfig.items[0]?.id, 'handoff_human')
+    assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
+    assert.equal(Object.hasOwn(agent, 'migrationCapabilitiesConfig'), false)
+    assert.equal(agent.promptConfig.editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
+    assert.deepEqual(agent.capabilitiesConfig, { schemaVersion: 1, items: [] })
 
     const manifest = buildConversationalCapabilityManifest(agent)
-    assert.equal(manifest.find((item) => item.id === 'handoff_human')?.enabled, true)
+    assert.equal(manifest.every((item) => item.enabled === false), true)
     assert.equal(manifest.every((item) => item.locked === true), true)
   } finally {
     await removeAgent(agentId)
   }
 })
 
-test('validación v2 bloquea capacidades incompletas sólo al publicar', () => {
+test('validación nativa bloquea capacidades incompletas sólo al publicar', () => {
   const config = (item, enabled = true) => ({
     enabled,
-    runtimeMode: 'tool_calling_v2',
     objective: 'custom',
     goalWorkflow: {},
     capabilitiesConfig: { schemaVersion: 1, items: [item] }
@@ -386,7 +389,6 @@ test('validación v2 bloquea capacidades incompletas sólo al publicar', () => {
   })))
   assert.doesNotThrow(() => assertAgentGoalRequirements({
     enabled: true,
-    runtimeMode: 'tool_calling_v2',
     objective: 'citas',
     defaultCalendarId: '',
     goalWorkflow: { appointments: { calendarId: '' } },
@@ -395,14 +397,13 @@ test('validación v2 bloquea capacidades incompletas sólo al publicar', () => {
       items: [{
         id: 'schedule_appointment',
         enabled: true,
-        calendarId: 'cal_does_not_depend_on_legacy_fields',
+        calendarId: 'cal_from_native_capability',
         allowOverlaps: true
       }]
     }
   }))
   assert.doesNotThrow(() => assertAgentGoalRequirements({
     enabled: true,
-    runtimeMode: 'tool_calling_v2',
     capabilitiesConfig: {
       schemaVersion: 1,
       items: [
@@ -427,21 +428,19 @@ test('validación v2 bloquea capacidades incompletas sólo al publicar', () => {
   }, false)))
 })
 
-test('publicar v2 exige calendario existente y activo sin persistir un update fallido', async () => {
+test('publicar exige calendario existente y activo sin persistir un update fallido', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_publish_${suffix}`
   let agent = null
-  let legacyAgent = null
   try {
     agent = await createConversationalAgent({
       name: 'Draft calendario real',
       enabled: false,
-      runtimeMode: 'tool_calling_v2',
       capabilitiesConfig: {
         schemaVersion: 1,
         items: [{ id: 'schedule_appointment', enabled: true, calendarId }]
       },
-      filters: uniqueTagFilters(`calendar-v2-${suffix}`)
+      filters: uniqueTagFilters(`calendar-native-${suffix}`)
     })
     assert.equal(agent.enabled, false)
 
@@ -453,7 +452,7 @@ test('publicar v2 exige calendario existente y activo sin persistir un update fa
 
     await db.run(
       'INSERT INTO calendars (id, name, is_active) VALUES (?, ?, 0)',
-      [calendarId, 'Calendario publicación v2']
+      [calendarId, 'Calendario publicación nativa']
     )
     await assert.rejects(
       () => updateConversationalAgent(agent.id, { enabled: true }),
@@ -473,32 +472,18 @@ test('publicar v2 exige calendario existente y activo sin persistir un update fa
       (await db.get('SELECT name FROM conversational_agents WHERE id = ?', [agent.id])).name,
       'Draft calendario real'
     )
-
-    // Legacy conserva su comportamiento histórico: exige un ID configurado,
-    // pero no adopta la compuerta de recursos v2.
-    legacyAgent = await createConversationalAgent({
-      name: 'Legacy calendario externo',
-      enabled: true,
-      runtimeMode: 'legacy_v1',
-      objective: 'citas',
-      defaultCalendarId: `calendar_external_${suffix}`,
-      filters: uniqueTagFilters(`calendar-legacy-${suffix}`)
-    })
-    assert.equal(legacyAgent.enabled, true)
   } finally {
     await removeAgent(agent?.id)
-    await removeAgent(legacyAgent?.id)
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
   }
 })
 
-test('create v2 rechaza URL no web antes de insertar el agente', async () => {
+test('create rechaza URL no web antes de insertar el agente', async () => {
   const suffix = randomUUID()
   await assert.rejects(
     () => createConversationalAgent({
       name: `URL inválida ${suffix}`,
       enabled: true,
-      runtimeMode: 'tool_calling_v2',
       capabilitiesConfig: {
         schemaVersion: 1,
         items: [{
@@ -516,7 +501,7 @@ test('create v2 rechaza URL no web antes de insertar el agente', async () => {
   assert.equal(row, null)
 })
 
-test('validación real v2 cruza producto-precio, trigger link y moneda del anticipo', async () => {
+test('validación real cruza producto-precio, trigger link y moneda del anticipo', async () => {
   const suffix = randomUUID()
   const productId = `product_native_${suffix}`
   const otherProductId = `product_native_other_${suffix}`
@@ -529,7 +514,6 @@ test('validación real v2 cruza producto-precio, trigger link y moneda del antic
   const foreignCurrency = accountCurrency === 'USD' ? 'MXN' : 'USD'
   const config = (items) => ({
     enabled: true,
-    runtimeMode: 'tool_calling_v2',
     capabilitiesConfig: { schemaVersion: 1, items }
   })
 
@@ -538,14 +522,14 @@ test('validación real v2 cruza producto-precio, trigger link y moneda del antic
       `INSERT INTO products (id, name, currency, is_active)
        VALUES (?, ?, ?, 0), (?, ?, ?, 1)`,
       [
-        productId, 'Producto v2', accountCurrency,
-        otherProductId, 'Otro producto v2', accountCurrency
+        productId, 'Producto nativo', accountCurrency,
+        otherProductId, 'Otro producto nativo', accountCurrency
       ]
     )
     await db.run(
       `INSERT INTO product_prices (id, product_id, name, amount, currency)
        VALUES (?, ?, ?, ?, ?)`,
-      [priceId, otherProductId, 'Precio v2', 450, accountCurrency]
+      [priceId, otherProductId, 'Precio nativo', 450, accountCurrency]
     )
 
     let errors = await getConversationalNativeRuntimeResourceValidationErrors(config([{
@@ -582,7 +566,6 @@ test('validación real v2 cruza producto-precio, trigger link y moneda del antic
     paymentAgent = await createConversationalAgent({
       name: `Draft full payment ${suffix}`,
       enabled: false,
-      runtimeMode: 'tool_calling_v2',
       capabilitiesConfig: {
         schemaVersion: 1,
         items: [{
@@ -694,7 +677,7 @@ test('validación real v2 cruza producto-precio, trigger link y moneda del antic
       `INSERT INTO trigger_links (
         id, public_id, name, destination_url, active, archived
       ) VALUES (?, ?, ?, ?, 1, 0)`,
-      [triggerLinkId, `public_${suffix}`, 'Trigger v2', 'mailto:ventas@example.test']
+      [triggerLinkId, `public_${suffix}`, 'Trigger nativo', 'mailto:ventas@example.test']
     )
     errors = await getConversationalNativeRuntimeResourceValidationErrors(config([{
       id: 'send_link',
@@ -734,7 +717,7 @@ test('validación real v2 cruza producto-precio, trigger link y moneda del antic
 
     await db.run(
       'INSERT INTO users (username, password_hash, full_name, is_active) VALUES (?, ?, ?, 0)',
-      [username, '$2b$12$000000000000000000000uY8p0rVdM7dJ7jQWmZJfP1yQWJvJcZy', 'Usuario handoff v2']
+      [username, '$2b$12$000000000000000000000uY8p0rVdM7dJ7jQWmZJfP1yQWJvJcZy', 'Usuario handoff nativo']
     )
     userId = (await db.get('SELECT id FROM users WHERE username = ?', [username])).id
     errors = await getConversationalNativeRuntimeResourceValidationErrors(config([{
@@ -760,23 +743,58 @@ test('validación real v2 cruza producto-precio, trigger link y moneda del antic
   }
 })
 
-test('controller conserva política legacy como auditoría pero no deja que bloquee v2', () => {
-  const invalidLegacyPolicy = {
-    validation: {
-      valid: false,
-      errors: [{ message: 'La política legacy exige un campo que v2 no usa.' }]
+test('controller crea un agente nativo sin exponer selector ni campos de migración', async () => {
+  const suffix = randomUUID()
+  let createdAgent = null
+  let statusCode = null
+  let responseBody = null
+  const response = {
+    status(code) {
+      statusCode = code
+      return this
+    },
+    json(body) {
+      responseBody = body
+      return this
     }
   }
 
-  assert.throws(
-    () => assertCompiledPolicyValid(invalidLegacyPolicy, {
-      enabled: true,
-      effectiveConfig: { runtimeMode: 'legacy_v1' }
-    }),
-    /política legacy exige/i
-  )
-  assert.doesNotThrow(() => assertCompiledPolicyValid(invalidLegacyPolicy, {
-    enabled: true,
-    effectiveConfig: { runtimeMode: 'tool_calling_v2' }
-  }))
+  try {
+    await createAgentController({
+      body: {
+        name: `Agente controller ${suffix}`,
+        enabled: false,
+        runtimeMode: 'legacy_v1',
+        promptConfig: {
+          schemaVersion: 1,
+          templateVersion: 'controller-native-v1',
+          editableText: 'Responde claro y usa únicamente capacidades verificadas.'
+        },
+        capabilitiesConfig: {
+          schemaVersion: 1,
+          items: [{ id: 'handoff_human', enabled: true }]
+        },
+        migrationCapabilitiesConfig: {
+          schemaVersion: 1,
+          items: [{ id: 'forged', enabled: true }]
+        },
+        filters: uniqueTagFilters(`controller-native-${suffix}`)
+      }
+    }, response)
+
+    assert.equal(statusCode, 201)
+    assert.equal(responseBody?.success, true)
+    createdAgent = responseBody?.data
+    assert.ok(createdAgent?.id)
+    assert.equal(Object.hasOwn(createdAgent, 'runtimeMode'), false)
+    assert.equal(Object.hasOwn(createdAgent, 'migrationCapabilitiesConfig'), false)
+    assert.equal(createdAgent.promptConfig.editableText, 'Responde claro y usa únicamente capacidades verificadas.')
+    assert.equal(createdAgent.capabilitiesConfig.items.some((item) => item.id === 'forged'), false)
+    assert.equal(
+      (await db.get('SELECT runtime_mode FROM conversational_agents WHERE id = ?', [createdAgent.id])).runtime_mode,
+      'tool_calling_v2'
+    )
+  } finally {
+    await removeAgent(createdAgent?.id)
+  }
 })

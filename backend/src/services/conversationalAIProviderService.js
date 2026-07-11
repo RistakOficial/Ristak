@@ -225,12 +225,6 @@ export async function connectConversationalAIProvider(providerId, apiKey) {
     })
 
     await db.run(`
-      UPDATE conversational_agent_config
-      SET ai_provider = ?, model = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE ai_provider = ?
-        AND (model IS NULL OR model = '' OR model = ?)
-    `, [provider.id, provider.defaultModel, provider.id, LEGACY_DEFAULT_OPENAI_MODEL]).catch(() => {})
-    await db.run(`
       UPDATE conversational_agents
       SET ai_provider = ?, model = ?, updated_at = CURRENT_TIMESTAMP
       WHERE ai_provider = ?
@@ -255,11 +249,6 @@ export async function deleteConversationalAIProvider(providerId) {
 
   await db.run('DELETE FROM app_config WHERE config_key = ?', [provider.configKey])
   const fallbackModel = getDefaultConversationalModelForProvider(DEFAULT_CONVERSATIONAL_AI_PROVIDER)
-  await db.run(`
-    UPDATE conversational_agent_config
-    SET ai_provider = ?, model = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE ai_provider = ?
-  `, [DEFAULT_CONVERSATIONAL_AI_PROVIDER, fallbackModel, provider.id]).catch(() => {})
   await db.run(`
     UPDATE conversational_agents
     SET ai_provider = ?, model = ?, updated_at = CURRENT_TIMESTAMP

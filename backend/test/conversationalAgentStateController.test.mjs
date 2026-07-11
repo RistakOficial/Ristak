@@ -696,8 +696,8 @@ test('el alcance de contactos y los filtros de condiciones filtran JUNTOS en el 
         entry: {
           groups: [{
             conditions: [{
-              category: 'message',
-              params: [{ field: 'text', operator: 'contains', value: 'promo' }]
+              category: 'contact',
+              params: [{ field: 'source', operator: 'is', value: 'test' }]
             }]
           }]
         },
@@ -709,13 +709,14 @@ test('el alcance de contactos y los filtros de condiciones filtran JUNTOS en el 
     await seedContact(oldContactId, { createdAt: new Date(cutoffMs - 1000).toISOString() })
     await seedContact(newContactId, { createdAt: new Date(cutoffMs + 1000).toISOString() })
 
-    // Contacto existente + mensaje que cumple la condición → entra.
+    // Contacto existente + dato factual que cumple la condición → entra.
     const matching = await matchAgentForMessage({ contactId: oldContactId, messageText: 'Vi su promo de julio', channel: 'whatsapp' })
     assert.equal(matching?.id, agentId)
 
-    // Contacto existente pero el mensaje NO cumple la condición → el filtro manda.
-    const wrongMessage = await matchAgentForMessage({ contactId: oldContactId, messageText: 'Hola, info', channel: 'whatsapp' })
-    assert.equal(wrongMessage, null)
+    // Contacto existente pero su fuente real ya no cumple → el filtro manda.
+    await db.run('UPDATE contacts SET source = ? WHERE id = ?', ['otro', oldContactId])
+    const wrongSource = await matchAgentForMessage({ contactId: oldContactId, messageText: 'Hola, info', channel: 'whatsapp' })
+    assert.equal(wrongSource, null)
 
     // Mensaje cumple pero el contacto es nuevo → el alcance manda.
     const wrongScope = await matchAgentForMessage({ contactId: newContactId, messageText: 'Vi su promo de julio', channel: 'whatsapp' })
@@ -991,8 +992,8 @@ test('una conversación completada no reabre si el agente está apagado o ya no 
         entry: {
           groups: [{
             conditions: [{
-              category: 'message',
-              params: [{ field: 'text', operator: 'contains', value: 'cita' }]
+              category: 'contact',
+              params: [{ field: 'source', operator: 'is', value: 'test' }]
             }]
           }]
         },
@@ -1034,6 +1035,7 @@ test('una conversación completada no reabre si el agente está apagado o ya no 
     assert.equal(preserved?.signal, 'appointment_booked')
 
     await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agentId])
+    await db.run('UPDATE contacts SET source = ? WHERE id = ?', ['otro', contactId])
     const mismatchedRuleContext = await buildRuleContext({ contactId, messageText: 'Solo quiero precio', channel: 'whatsapp' })
     const mismatchedResult = await resolveInboundAgentForContact({
       contactId,
@@ -1071,8 +1073,7 @@ test('un handoff pendiente no se borra ni se reabre por un mensaje nuevo', async
       defaultCalendarId: 'cal_state_test',
       name: 'Agente handoff terminal test',
       enabled: true,
-      objective: 'citas',
-      successAction: 'ready_for_human'
+      objective: 'citas'
     })
     agentId = agent.id
 
@@ -1083,7 +1084,7 @@ test('un handoff pendiente no se borra ni se reabre por un mensaje nuevo', async
     await setConversationSignal(contactId, 'ready_for_human', {
       reason: 'El contacto aceptó pasar con el equipo',
       summary: 'El humano debe confirmar el siguiente paso.',
-      status: 'completed',
+      status: 'human',
       agentId
     })
     await db.run(`
@@ -1105,7 +1106,7 @@ test('un handoff pendiente no se borra ni se reabre por un mensaje nuevo', async
     assert.equal(resolved.assigned, false)
 
     const state = await getConversationState(contactId, { agentId })
-    assert.equal(state?.status, 'completed')
+    assert.equal(state?.status, 'human')
     assert.equal(state?.signal, 'ready_for_human')
 
     const events = await listConversationalAgentEvents({ contactId })
@@ -1176,38 +1177,7 @@ test('los resúmenes de cierre solo salen cuando el agente asignado completa el 
   }
 })
 
-test('bloquea activar una conversación con agente cuando el prompt interno no está listo', async () => {
-  const contactId = `conversation_agent_state_blocked_${randomUUID()}`
-  const previousBusinessProfile = await getStoredBusinessProfileRow()
-  let agentId = ''
-
-  try {
-    await db.run('DELETE FROM ai_business_profile WHERE id = 1')
-    const agent = await createConversationalAgent({
-      defaultCalendarId: 'cal_state_test',
-      name: 'Agente test bloqueado',
-      enabled: true,
-      runtimeMode: 'legacy_v1',
-      objective: 'citas'
-    })
-    agentId = agent.id
-
-    const res = createMockResponse()
-    await updateState({
-      params: { contactId },
-      body: { action: 'activate', agentId }
-    }, res)
-
-    assert.equal(res.statusCode, 409)
-    assert.equal(res.body?.success, false)
-    assert.equal(res.body?.code, 'CONVERSATIONAL_BUSINESS_PROMPT_NOT_READY')
-  } finally {
-    await cleanup(contactId, agentId)
-    await restoreBusinessProfileRow(previousBusinessProfile)
-  }
-})
-
-test('activar manualmente una conversación v2 no depende del prompt legacy', async () => {
+test('activar manualmente una conversación nativa funciona con la plantilla por defecto', async () => {
   const contactId = `conversation_agent_state_v2_${randomUUID()}`
   const previousBusinessProfile = await getStoredBusinessProfileRow()
   let agentId = ''
@@ -1220,9 +1190,8 @@ test('activar manualmente una conversación v2 no depende del prompt legacy', as
       [contactId]
     )
     const agent = await createConversationalAgent({
-      name: 'Agente v2 activación manual',
+      name: 'Agente nativo activación manual',
       enabled: false,
-      runtimeMode: 'tool_calling_v2',
       capabilitiesConfig: { schemaVersion: 1, items: [] }
     })
     agentId = agent.id

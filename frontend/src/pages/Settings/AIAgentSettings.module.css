@@ -2025,18 +2025,6 @@
 }
 
 /* Constructor nativo: configuración editable y capacidades protegidas. */
-.nativeMigrationNotice {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  margin-top: 18px;
-  padding: 16px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-
-.nativeMigrationIcon,
 .nativeCapabilityIcon {
   display: inline-flex;
   align-items: center;
@@ -2047,12 +2035,6 @@
   border-radius: var(--radius-ctl);
 }
 
-.nativeMigrationIcon {
-  width: 40px;
-  height: 40px;
-}
-
-.nativeMigrationCopy,
 .nativeCapabilityHeading > div,
 .nativeManifestItem > div {
   display: grid;
@@ -2060,7 +2042,6 @@
   min-width: 0;
 }
 
-.nativeMigrationCopy strong,
 .nativeCapabilityHeading strong,
 .nativeManifestItem strong {
   color: var(--text);
@@ -2068,7 +2049,6 @@
   font-weight: 600;
 }
 
-.nativeMigrationCopy span,
 .nativeCapabilityHeading span,
 .nativeManifestItem span {
   color: var(--text-dim);
@@ -2199,15 +2179,6 @@
 }
 
 @media (max-width: 640px) {
-  .nativeMigrationNotice {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .nativeMigrationNotice > button {
-    grid-column: 1 / -1;
-    width: 100%;
-  }
-
   .nativeRuntimeHeader {
     align-items: flex-start;
     flex-direction: column;

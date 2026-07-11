@@ -235,7 +235,7 @@ import type {
   CustomLabels,
   ConversationHistoryCursor,
   ConversationAgentState,
-  ConversationalAgentConfig,
+  ConversationalCapabilityManifestItem,
   ConversationalAgentDefinition,
   AIAgentClarificationOption,
   AIAgentAttachment,
@@ -14907,25 +14907,9 @@ type AgentEditorDraft = {
   name: string;
   aiProvider: string;
   model: string;
-  identityMode: string;
-  identityUserName: string;
-  identityCustomName: string;
-  persuasionLevel: string;
-  languageLevel: string;
-  objective: string;
-  customObjective: string;
-  successAction: string;
-  extraInstructions: string;
-  requiredData: string;
-  handoffRules: string;
+  promptText: string;
   contactScope: string;
-  allowEmojis: boolean;
   hideAttendedNotifications: boolean;
-  calendarId: string;
-  depositPaymentLink: boolean;
-  depositBankTransfer: boolean;
-  depositBankTransferDetails: string;
-  pastClientsToHuman: boolean;
 };
 
 const AGENT_PROVIDER_OPTIONS = [
@@ -14973,96 +14957,46 @@ const AGENT_PROVIDER_DEFAULT_MODEL: Record<string, string> = {
   claude: 'claude-haiku-4-5',
   deepseek: 'deepseek-v4-flash',
 };
-const AGENT_IDENTITY_OPTIONS = [
-  { id: 'business', label: 'Representante del negocio' },
-  { id: 'user', label: 'Persona del equipo' },
-  { id: 'custom', label: 'Nombre personalizado' },
-  { id: 'agent', label: 'Nombre del agente' },
-];
-const AGENT_PERSUASION_OPTIONS = [
-  { id: 'low', label: 'Anfitrión' },
-  { id: 'medium', label: 'Estratega' },
-  { id: 'high', label: 'Cerrador' },
-];
-const AGENT_LANGUAGE_OPTIONS = [
-  { id: 'professional', label: 'Ejecutivo' },
-  { id: 'intermediate', label: 'Cómplice' },
-  { id: 'colloquial', label: 'Callejero' },
-];
-const AGENT_OBJECTIVE_OPTIONS = [
-  { id: 'citas', label: 'Agendar citas' },
-  { id: 'ventas', label: 'Cerrar ventas' },
-  { id: 'datos', label: 'Pedir datos' },
-  { id: 'filtrar', label: 'Filtrar curiosos' },
-  { id: 'custom', label: 'Objetivo propio' },
-];
-const AGENT_SUCCESS_OPTIONS = [
-  { id: 'ready_for_human', label: 'Pasar a humano' },
-  { id: 'book_appointment', label: 'Agendar la cita' },
-  { id: 'ready_to_buy', label: 'Dejar listo para comprar' },
-  { id: 'send_goal_url', label: 'Enviar enlace del objetivo' },
-  { id: 'send_trigger_link', label: 'Enviar enlace disparador' },
-];
 const AGENT_SCOPE_OPTIONS = [
   { id: 'new_only', label: 'Nuevos contactos' },
   { id: 'all', label: 'Nuevos mensajes' },
   { id: 'existing_only', label: 'Contactos existentes' },
 ];
-
-function asAgentWorkflowRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-// Espejo de agentDepositApplies del backend: el anticipo aplica en ventas con
-// paymentMode 'deposit' (o legacy deposit.enabled sin modo) y en citas con
-// deposit.enabled. El agente conserva su goalWorkflow normalizado por el backend,
-// por eso comparamos booleanos estrictos.
-function agentEditorDepositApplies(objective: string, workflow: Record<string, unknown>): boolean {
-  const deposit = asAgentWorkflowRecord(workflow.deposit);
-  const depositEnabled = deposit.enabled === true;
-  if (objective === 'ventas') {
-    const sales = asAgentWorkflowRecord(workflow.sales);
-    const mode = String(sales.paymentMode || '').trim();
-    return mode === 'deposit' || (!mode && depositEnabled);
-  }
-  return objective === 'citas' && depositEnabled;
-}
+const AGENT_CAPABILITY_LABELS: Record<string, string> = {
+  schedule_appointment: 'Agendar cita',
+  collect_payment: 'Cobrar',
+  send_link: 'Mandar enlace',
+  handoff_human: 'Pasar a un humano',
+  custom_goal: 'Objetivo propio',
+};
 
 function createAgentEditorDraft(agent: ConversationalAgentDefinition): AgentEditorDraft {
   const provider = AGENT_PROVIDER_OPTIONS.some((item) => item.id === agent.aiProvider) ? String(agent.aiProvider) : 'openai';
   const model = String(agent.model || AGENT_PROVIDER_DEFAULT_MODEL[provider]);
-  const workflow = asAgentWorkflowRecord(agent.goalWorkflow);
-  const appointments = asAgentWorkflowRecord(workflow.appointments);
-  const deposit = asAgentWorkflowRecord(workflow.deposit);
-  const depositMethods = asAgentWorkflowRecord(deposit.methods);
-  const attention = asAgentWorkflowRecord(workflow.attention);
   return {
     name: String(agent.name || 'Agente'),
     aiProvider: provider,
     model,
-    identityMode: String(agent.identityMode || 'business'),
-    identityUserName: String(agent.identityUserName || ''),
-    identityCustomName: String(agent.identityCustomName || ''),
-    persuasionLevel: String(agent.persuasionLevel || 'high'),
-    languageLevel: String(agent.languageLevel || 'intermediate'),
-    objective: String(agent.objective || 'citas'),
-    customObjective: String(agent.customObjective || ''),
-    successAction: String(agent.successAction || 'ready_for_human'),
-    extraInstructions: String(agent.extraInstructions || ''),
-    requiredData: String(agent.requiredData || ''),
-    handoffRules: String(agent.handoffRules || ''),
+    promptText: String(agent.promptConfig?.editableText ?? ''),
     contactScope: String(agent.contactScope || 'all'),
-    allowEmojis: Boolean(agent.allowEmojis),
     hideAttendedNotifications: Boolean(agent.hideAttendedNotifications),
-    calendarId: String(appointments.calendarId || agent.defaultCalendarId || '').trim(),
-    // paymentLink default true: espejo de la normalización del backend para configs previas.
-    depositPaymentLink: depositMethods.paymentLink === undefined ? true : depositMethods.paymentLink === true,
-    depositBankTransfer: depositMethods.bankTransfer === true,
-    depositBankTransferDetails: String(deposit.bankTransferDetails || ''),
-    pastClientsToHuman: attention.pastClientsToHuman === true,
   };
+}
+
+function getEnabledAgentCapabilities(agent: ConversationalAgentDefinition): ConversationalCapabilityManifestItem[] {
+  const manifest = Array.isArray(agent.capabilityManifest) ? agent.capabilityManifest : [];
+  if (manifest.length) return manifest.filter((item) => item.enabled);
+  return (agent.capabilitiesConfig?.items || [])
+    .filter((item) => item.enabled)
+    .map((item) => ({
+      id: item.id,
+      label: AGENT_CAPABILITY_LABELS[item.id] || item.id,
+      locked: true,
+      enabled: true,
+      ready: true,
+      summary: 'Herramienta nativa protegida por Ristak.',
+      missingConfiguration: [],
+    }));
 }
 
 function AgentOptionGroup({
@@ -15146,30 +15080,11 @@ function NativeAgentHubSheet({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [aiStatus, setAiStatus] = useState<AIAgentConfigStatus | null>(null);
-  const [config, setConfig] = useState<ConversationalAgentConfig | null>(null);
   const [agents, setAgents] = useState<ConversationalAgentDefinition[]>([]);
   const [busyAgentIds, setBusyAgentIds] = useState<string[]>([]);
   const [editingAgent, setEditingAgent] = useState<ConversationalAgentDefinition | null>(null);
   const [draft, setDraft] = useState<AgentEditorDraft | null>(null);
   const [savingEditor, setSavingEditor] = useState(false);
-  const [calendars, setCalendars] = useState<CalendarItem[]>([]);
-  const [calendarsLoading, setCalendarsLoading] = useState(false);
-  const calendarsRequestedRef = useRef(false);
-
-  const loadCalendars = useCallback(async () => {
-    if (calendarsRequestedRef.current) return;
-    calendarsRequestedRef.current = true;
-    setCalendarsLoading(true);
-    try {
-      const response = await api.getCalendars();
-      setCalendars(unwrapCalendars(response).filter(calendarIsActive));
-    } catch {
-      // Permite reintentar al volver a abrir el editor.
-      calendarsRequestedRef.current = false;
-    } finally {
-      setCalendarsLoading(false);
-    }
-  }, [api]);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -15178,15 +15093,10 @@ function NativeAgentHubSheet({
       const nextAiStatus = await api.getAIAgentConfig();
       setAiStatus(nextAiStatus);
       if (!nextAiStatus?.configured || nextAiStatus?.needsReconnect) {
-        setConfig(null);
         setAgents([]);
         return;
       }
-      const [nextConfig, nextAgents] = await Promise.all([
-        api.getConversationalAgentConfig(),
-        api.getConversationalAgents(),
-      ]);
-      setConfig(nextConfig);
+      const nextAgents = await api.getConversationalAgents();
       setAgents((Array.isArray(nextAgents) ? nextAgents : []).slice().sort((a, b) => Number(a.position || 0) - Number(b.position || 0)));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo cargar el agente conversacional.';
@@ -15219,16 +15129,6 @@ function NativeAgentHubSheet({
     try {
       const updated = await api.updateConversationalAgent(agent.id, { enabled: nextEnabled });
       setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, ...updated } : item));
-      if (nextEnabled && config?.enabled === false) {
-        try {
-          const updatedConfig = await api.saveConversationalAgentConfig({ enabled: true });
-          setConfig(updatedConfig);
-        } catch (err) {
-          await api.updateConversationalAgent(agent.id, { enabled: false }).catch(() => undefined);
-          setAgents((current) => current.map((item) => item.id === agent.id ? previousAgent : item));
-          Alert.alert('No se pudo encender', err instanceof Error ? err.message : 'No se pudo reactivar el runtime interno del agente.');
-        }
-      }
     } catch (err) {
       setAgents((current) => current.map((item) => item.id === agent.id ? previousAgent : item));
       Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudo cambiar el estado del agente.');
@@ -15255,7 +15155,6 @@ function NativeAgentHubSheet({
     setEditingAgent(agent);
     setDraft(createAgentEditorDraft(agent));
     setNotice('');
-    void loadCalendars();
   };
 
   const saveAgent = async () => {
@@ -15265,67 +15164,19 @@ function NativeAgentHubSheet({
       Alert.alert('Falta el nombre', 'Ponle un nombre al agente antes de guardar.');
       return;
     }
-    const calendarId = draft.calendarId.trim();
-    if (draft.objective === 'citas' && !calendarId) {
-      Alert.alert('Falta el calendario', 'Elige el calendario para las citas antes de guardar.');
-      return;
-    }
-    const currentWorkflow = asAgentWorkflowRecord(editingAgent.goalWorkflow);
-    if (agentEditorDepositApplies(draft.objective, currentWorkflow)) {
-      if (!draft.depositPaymentLink && !draft.depositBankTransfer) {
-        Alert.alert('Falta el método del anticipo', 'Activa al menos un método para cobrar el anticipo (link de pago o transferencia).');
-        return;
-      }
-      if (draft.depositBankTransfer && !draft.depositBankTransferDetails.trim()) {
-        Alert.alert('Faltan los datos de transferencia', 'Escribe los datos de transferencia (banco, cuenta o CLABE y titular) para el anticipo.');
-        return;
-      }
-    }
-    // El backend reemplaza goalWorkflow completo cuando viene en el payload:
-    // siempre se parte del workflow actual del agente y se aplican solo los
-    // parches del editor para no pisar el resto de la configuración avanzada.
-    const nextGoalWorkflow: Record<string, unknown> = {
-      ...currentWorkflow,
-      appointments: {
-        ...asAgentWorkflowRecord(currentWorkflow.appointments),
-        calendarId,
-      },
-      deposit: {
-        ...asAgentWorkflowRecord(currentWorkflow.deposit),
-        methods: {
-          ...asAgentWorkflowRecord(asAgentWorkflowRecord(currentWorkflow.deposit).methods),
-          paymentLink: draft.depositPaymentLink,
-          bankTransfer: draft.depositBankTransfer,
-        },
-        bankTransferDetails: draft.depositBankTransferDetails.trim(),
-      },
-      attention: {
-        ...asAgentWorkflowRecord(currentWorkflow.attention),
-        pastClientsToHuman: draft.pastClientsToHuman,
-      },
-    };
     setSavingEditor(true);
     try {
       const updated = await api.updateConversationalAgent(editingAgent.id, {
         name,
         aiProvider: draft.aiProvider,
         model: draft.model,
-        identityMode: draft.identityMode,
-        identityUserName: draft.identityMode === 'user' ? draft.identityUserName.trim() : editingAgent.identityUserName,
-        identityCustomName: draft.identityMode === 'custom' ? draft.identityCustomName.trim() : '',
-        persuasionLevel: draft.persuasionLevel,
-        languageLevel: draft.languageLevel,
-        objective: draft.objective,
-        customObjective: draft.objective === 'custom' ? draft.customObjective.trim() : '',
-        successAction: draft.successAction,
-        extraInstructions: draft.extraInstructions.trim(),
-        requiredData: draft.requiredData.trim(),
-        handoffRules: draft.handoffRules.trim(),
+        promptConfig: {
+          schemaVersion: 1,
+          templateVersion: editingAgent.promptConfig?.templateVersion || 'ristak-conversational-v1',
+          editableText: draft.promptText,
+        },
         contactScope: draft.contactScope,
-        allowEmojis: draft.allowEmojis,
         hideAttendedNotifications: draft.hideAttendedNotifications,
-        defaultCalendarId: calendarId || null,
-        goalWorkflow: nextGoalWorkflow,
       });
       setAgents((current) => current.map((agent) => agent.id === updated.id ? { ...agent, ...updated } : agent));
       setEditingAgent(null);
@@ -15348,17 +15199,7 @@ function NativeAgentHubSheet({
   };
 
   const aiReady = Boolean(aiStatus?.configured && !aiStatus?.needsReconnect);
-  const businessPromptReady = config?.businessPromptStatus?.ready !== false;
-  const depositApplies = Boolean(editingAgent && draft
-    && agentEditorDepositApplies(draft.objective, asAgentWorkflowRecord(editingAgent.goalWorkflow)));
-  const draftCalendarId = draft?.calendarId?.trim() || '';
-  const calendarOptions = useMemo(() => {
-    const options = calendars.map((calendar) => ({ id: getCalendarKey(calendar), label: getCalendarTitle(calendar) }));
-    if (draftCalendarId && !options.some((option) => option.id === draftCalendarId)) {
-      options.unshift({ id: draftCalendarId, label: 'Calendario actual' });
-    }
-    return options;
-  }, [calendars, draftCalendarId]);
+  const enabledCapabilities = editingAgent ? getEnabledAgentCapabilities(editingAgent) : [];
 
   return (
     <BottomActionSheet
@@ -15374,22 +15215,58 @@ function NativeAgentHubSheet({
             <Text style={styles.agentEditorBackText}>Volver a agentes</Text>
           </Pressable>
           <View style={styles.agentEditorSection}>
-            <Text style={styles.agentEditorSectionTitle}>1. Personalidad e instrucciones</Text>
+            <View style={styles.agentEditorDirectHeader}>
+              <View style={styles.agentEditorDirectIcon}><Bot size={18} color={COLORS.white} strokeWidth={2.4} /></View>
+              <View style={styles.agentEditorDirectCopy}>
+                <Text style={styles.agentEditorDirectTitle}>Flujo directo</Text>
+                <Text style={styles.agentEditorDirectText}>Una sola IA conversa y usa herramientas nativas.</Text>
+              </View>
+            </View>
+            <Text style={styles.agentEditorSectionTitle}>1. Instrucciones de tu agente</Text>
             <AgentEditorTextField label="Nombre del agente" value={draft.name} placeholder="Nombre del agente" onChange={(name) => setDraft((current) => current ? { ...current, name } : current)} />
-            <AgentOptionGroup label="¿Cómo se identifica?" options={AGENT_IDENTITY_OPTIONS} selected={draft.identityMode} onChange={(identityMode) => setDraft((current) => current ? { ...current, identityMode } : current)} />
-            {draft.identityMode === 'custom' ? (
-              <AgentEditorTextField label="Nombre visible" value={draft.identityCustomName} placeholder="Ej. Marcos o Robot 34" onChange={(identityCustomName) => setDraft((current) => current ? { ...current, identityCustomName } : current)} />
-            ) : null}
-            {draft.identityMode === 'user' ? (
-              <AgentEditorTextField label="Nombre de la persona" value={draft.identityUserName} placeholder="Nombre visible del integrante del equipo" onChange={(identityUserName) => setDraft((current) => current ? { ...current, identityUserName } : current)} />
-            ) : null}
-            <AgentOptionGroup label="Qué tan persuasivo debe ser" options={AGENT_PERSUASION_OPTIONS} selected={draft.persuasionLevel} onChange={(persuasionLevel) => setDraft((current) => current ? { ...current, persuasionLevel } : current)} />
-            <AgentOptionGroup label="Cómo debe hablar" options={AGENT_LANGUAGE_OPTIONS} selected={draft.languageLevel} onChange={(languageLevel) => setDraft((current) => current ? { ...current, languageLevel } : current)} />
-            <AgentEditorTextField multiline label="Personalización y capacitación" value={draft.extraInstructions} placeholder="Reglas del negocio, límites y casos especiales." onChange={(extraInstructions) => setDraft((current) => current ? { ...current, extraInstructions } : current)} />
-            <SettingsToggleRow embedded title="Puede usar emojis" description="Apágalo si quieres un tono más serio." checked={draft.allowEmojis} onChange={(allowEmojis) => setDraft((current) => current ? { ...current, allowEmojis } : current)} />
+            <View style={styles.agentEditorFieldGroup}>
+              <Text style={styles.agentEditorFieldLabel}>Tono, guion y conocimiento del negocio</Text>
+              <TextInput
+                value={draft.promptText}
+                onChangeText={(promptText) => setDraft((current) => current ? { ...current, promptText } : current)}
+                multiline
+                textAlignVertical="top"
+                placeholder="Escribe aquí cómo debe atender, qué debe saber y cómo quieres que hable."
+                placeholderTextColor={COLORS.muted}
+                style={[styles.agentEditorInput, styles.agentEditorPromptTextarea]}
+              />
+              <Text style={styles.agentEditorHelp}>Puedes dejar la plantilla, editarla o borrarla completa. Las herramientas y validaciones siguen protegidas por Ristak.</Text>
+            </View>
           </View>
           <View style={styles.agentEditorSection}>
-            <Text style={styles.agentEditorSectionTitle}>2. Operación técnica del chat</Text>
+            <Text style={styles.agentEditorSectionTitle}>2. Capacidades protegidas</Text>
+            <Text style={styles.agentEditorHelp}>Estas son las herramientas nativas que el agente realmente puede ejecutar. Aquí se muestran con candado para no romper su configuración.</Text>
+            {enabledCapabilities.length ? (
+              <View style={styles.agentCapabilityList}>
+                {enabledCapabilities.map((capability) => (
+                  <View key={capability.id} style={styles.agentCapabilityRow}>
+                    <View style={[styles.agentCapabilityIcon, !capability.ready && styles.agentCapabilityIconWarning]}>
+                      {capability.ready
+                        ? <CheckCircle2 size={18} color={COLORS.success} strokeWidth={2.45} />
+                        : <CircleAlert size={18} color={COLORS.danger} strokeWidth={2.45} />}
+                    </View>
+                    <View style={styles.agentCapabilityCopy}>
+                      <Text style={styles.agentCapabilityTitle}>{capability.label}</Text>
+                      <Text style={styles.agentCapabilityText}>{capability.ready
+                        ? capability.summary
+                        : capability.missingConfiguration.join(' ') || 'Esta capacidad necesita configuración.'}</Text>
+                    </View>
+                    <Text style={styles.agentCapabilityLock}>Blindada</Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.agentEditorHelp}>Este agente todavía no tiene capacidades activas.</Text>
+            )}
+            <Text style={styles.agentEditorHelp}>Para agregar, quitar o configurar calendarios, cobros, enlaces y entregas al equipo, usa el constructor completo en Ristak para escritorio.</Text>
+          </View>
+          <View style={styles.agentEditorSection}>
+            <Text style={styles.agentEditorSectionTitle}>3. Operación</Text>
             <AgentOptionGroup label="¿Qué IA va a contestar?" options={AGENT_PROVIDER_OPTIONS} selected={draft.aiProvider} onChange={(aiProvider) => setDraft((current) => current ? { ...current, aiProvider, model: AGENT_PROVIDER_DEFAULT_MODEL[aiProvider] } : current)} />
             <AgentOptionGroup
               label="Modelo"
@@ -15400,50 +15277,8 @@ function NativeAgentHubSheet({
               onChange={(model) => setDraft((current) => current ? { ...current, model } : current)}
             />
             <SettingsToggleRow embedded title="Ocultar notificaciones mientras atiende" description="Evita alertas normales mientras la IA lleva la conversación." checked={draft.hideAttendedNotifications} onChange={(hideAttendedNotifications) => setDraft((current) => current ? { ...current, hideAttendedNotifications } : current)} />
-          </View>
-          <View style={styles.agentEditorSection}>
-            <Text style={styles.agentEditorSectionTitle}>3. Objetivo y cierre</Text>
-            <AgentOptionGroup label="¿Cuál es la meta?" options={AGENT_OBJECTIVE_OPTIONS} selected={draft.objective} onChange={(objective) => setDraft((current) => current ? { ...current, objective } : current)} />
-            {draft.objective === 'custom' ? (
-              <AgentEditorTextField multiline label="Objetivo propio" value={draft.customObjective} placeholder="Describe el resultado que debe conseguir." onChange={(customObjective) => setDraft((current) => current ? { ...current, customObjective } : current)} />
-            ) : null}
-            <AgentOptionGroup label="Al cumplir la meta" options={AGENT_SUCCESS_OPTIONS} selected={draft.successAction} onChange={(successAction) => setDraft((current) => current ? { ...current, successAction } : current)} />
-            {draft.objective === 'citas' ? (
-              calendarsLoading && !calendarOptions.length ? (
-                <View style={styles.agentEditorFieldGroup}>
-                  <Text style={styles.agentEditorFieldLabel}>Calendario para las citas</Text>
-                  <ActivityIndicator color={COLORS.accent} size="small" />
-                </View>
-              ) : calendarOptions.length ? (
-                <AgentOptionGroup label="Calendario para las citas" options={calendarOptions} selected={draft.calendarId} onChange={(calendarId) => setDraft((current) => current ? { ...current, calendarId } : current)} />
-              ) : (
-                <View style={styles.agentEditorFieldGroup}>
-                  <Text style={styles.agentEditorFieldLabel}>Calendario para las citas</Text>
-                  <Text style={styles.agentEditorHelp}>No hay calendarios activos. Activa uno en Calendario para que el agente pueda ofrecer espacios.</Text>
-                </View>
-              )
-            ) : null}
-            {depositApplies ? (
-              <View style={styles.agentEditorFieldGroup}>
-                <Text style={styles.agentEditorFieldLabel}>Cómo cobrar el anticipo</Text>
-                <SettingsToggleRow embedded title="Link de pago" description="Comparte un enlace de pago para cubrir el anticipo." checked={draft.depositPaymentLink} onChange={(depositPaymentLink) => setDraft((current) => current ? { ...current, depositPaymentLink } : current)} />
-                <SettingsToggleRow embedded title="Transferencia bancaria" description="Comparte tus datos bancarios para recibir el anticipo." checked={draft.depositBankTransfer} onChange={(depositBankTransfer) => setDraft((current) => current ? { ...current, depositBankTransfer } : current)} />
-              </View>
-            ) : null}
-            {depositApplies && draft.depositBankTransfer ? (
-              <AgentEditorTextField multiline label="Datos para transferencia" value={draft.depositBankTransferDetails} placeholder="Banco, cuenta o CLABE y titular." onChange={(depositBankTransferDetails) => setDraft((current) => current ? { ...current, depositBankTransferDetails } : current)} />
-            ) : null}
-          </View>
-          <View style={styles.agentEditorSection}>
-            <Text style={styles.agentEditorSectionTitle}>4. Reglas de atención</Text>
-            <AgentEditorTextField multiline label="Datos que debe pedir" value={draft.requiredData} placeholder="Nombre, servicio, presupuesto o datos obligatorios." onChange={(requiredData) => setDraft((current) => current ? { ...current, requiredData } : current)} />
-            <AgentEditorTextField multiline label="Cuándo pasar al equipo" value={draft.handoffRules} placeholder="Casos que debe revisar una persona." onChange={(handoffRules) => setDraft((current) => current ? { ...current, handoffRules } : current)} />
-            <SettingsToggleRow embedded title="Clientes existentes van con tu equipo" description="Si detecta que ya es cliente (o dice serlo), pasa el chat directo a un humano." checked={draft.pastClientsToHuman} onChange={(pastClientsToHuman) => setDraft((current) => current ? { ...current, pastClientsToHuman } : current)} />
-          </View>
-          <View style={styles.agentEditorSection}>
-            <Text style={styles.agentEditorSectionTitle}>5. Entrada y salida</Text>
             <AgentOptionGroup label="¿A quién puede atender?" options={AGENT_SCOPE_OPTIONS} selected={draft.contactScope} onChange={(contactScope) => setDraft((current) => current ? { ...current, contactScope } : current)} />
-            <Text style={styles.agentEditorHelp}>Las reglas avanzadas ya guardadas se conservan intactas. Puedes afinarlas desde el panel completo cuando necesites condiciones por etiquetas, anuncios, horarios o campos personalizados.</Text>
+            <Text style={styles.agentEditorHelp}>Las condiciones avanzadas de entrada y salida se conservan intactas y se administran desde el panel completo.</Text>
           </View>
           <PrimaryButton label="Guardar cambios" busy={savingEditor} busyLabel="Guardando..." onPress={() => void saveAgent()} />
         </ScrollView>
@@ -15464,12 +15299,6 @@ function NativeAgentHubSheet({
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.agentHubContent} showsVerticalScrollIndicator={false}>
-          {!businessPromptReady ? (
-            <View style={styles.agentHubWarning}>
-              <CircleAlert size={18} color={COLORS.danger} strokeWidth={2.4} />
-              <Text style={styles.agentHubWarningText}>Completa la descripción de tu negocio en Ajustes → Asistente Personal AI para poder encender agentes.</Text>
-            </View>
-          ) : null}
           {notice ? <Text style={styles.agentHubNotice}>{notice}</Text> : null}
           {agents.length ? agents.map((agent) => {
             const busy = busyAgentIds.includes(agent.id);
@@ -30808,24 +30637,6 @@ function createAppStyles() {
     paddingBottom: 34,
     gap: 10,
   },
-  agentHubWarning: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 9,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panelSoft,
-    padding: 12,
-  },
-  agentHubWarningText: {
-    flex: 1,
-    minWidth: 0,
-    color: COLORS.muted,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
   agentHubNotice: {
     color: COLORS.success,
     fontSize: 13,
@@ -30957,6 +30768,36 @@ function createAppStyles() {
     lineHeight: 22,
     fontWeight: '800',
   },
+  agentEditorDirectHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  agentEditorDirectIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  agentEditorDirectCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  agentEditorDirectTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '800',
+  },
+  agentEditorDirectText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
   agentEditorFieldGroup: {
     gap: 7,
   },
@@ -30981,6 +30822,9 @@ function createAppStyles() {
   },
   agentEditorTextarea: {
     minHeight: 94,
+  },
+  agentEditorPromptTextarea: {
+    minHeight: 220,
   },
   agentEditorOptions: {
     flexDirection: 'row',
@@ -31017,6 +30861,54 @@ function createAppStyles() {
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
+  },
+  agentCapabilityList: {
+    gap: 2,
+  },
+  agentCapabilityRow: {
+    minHeight: 66,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    paddingVertical: 9,
+  },
+  agentCapabilityIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panelSoft,
+  },
+  agentCapabilityIconWarning: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.danger,
+  },
+  agentCapabilityCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  agentCapabilityTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '800',
+  },
+  agentCapabilityText: {
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  agentCapabilityLock: {
+    color: COLORS.muted,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
   manualAgentPromptBody: {
     paddingHorizontal: 18,

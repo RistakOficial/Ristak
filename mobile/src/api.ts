@@ -17,7 +17,6 @@ import type {
   AIAgentMessage,
   AIAgentViewContext,
   ConversationAgentState,
-  ConversationalAgentConfig,
   ConversationalAgentDefinition,
   ConversationHistoryCursor,
   CreateTransactionInput,
@@ -724,17 +723,6 @@ export class RistakApiClient {
       params: {
         includeAll: 1,
       },
-    });
-  }
-
-  getConversationalAgentConfig() {
-    return this.request<ConversationalAgentConfig>('/conversational-agent/config');
-  }
-
-  saveConversationalAgentConfig(config: Partial<ConversationalAgentConfig>) {
-    return this.request<ConversationalAgentConfig>('/conversational-agent/config', {
-      method: 'POST',
-      body: JSON.stringify(config),
     });
   }
 

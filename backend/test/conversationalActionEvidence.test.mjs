@@ -1,177 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { DateTime } from 'luxon'
 
 import { db } from '../src/config/database.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
-import {
-  revalidateAppointmentSlot,
-  verifyAppointmentConfirmationEvidence
-} from '../src/agents/conversational/actionEvidence.js'
-import { getAccountTimezone } from '../src/utils/dateUtils.js'
-import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
-
-test('book_appointment bloquea una acción real si la confirmación sólo existe en la intención del LLM', async () => {
-  const suffix = randomUUID()
-  const calendarId = `rstk_cal_action_evidence_${suffix}`
-  const contactId = `rstk_contact_action_evidence_${suffix}`
-  const timezone = await getAccountTimezone()
-  const baseDay = DateTime.now().setZone(timezone).plus({ days: 21 }).startOf('day')
-  const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
-  const slot = nextMonday.set({ hour: 15, minute: 0, second: 0, millisecond: 0 })
-
-  try {
-    await upsertLocalCalendar({
-      id: calendarId,
-      locationId: 'loc_action_evidence',
-      name: 'Calendario evidencia de acción',
-      source: 'ristak',
-      slotDuration: 60,
-      slotInterval: 60,
-      openHours: [
-        { daysOfTheWeek: [1], hours: [{ openHour: 15, openMinute: 0, closeHour: 17, closeMinute: 0 }] }
-      ]
-    }, { source: 'ristak', syncStatus: 'synced' })
-
-    const ctx = {
-      contactId,
-      dryRun: false,
-      actions: [],
-      conversationMessages: [
-        { role: 'assistant', content: `¿Confirmas la cita del ${slot.toFormat('dd/MM/yyyy')} a las 15:00?` },
-        { role: 'user', content: 'Sí' }
-      ],
-      config: {
-        objective: 'citas',
-        successAction: 'book_appointment',
-        goalWorkflow: { appointments: { owner: 'ai', calendarId } }
-      }
-    }
-    const tool = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
-    const result = await tool.invoke(null, JSON.stringify({
-      calendarId,
-      startTime: slot.toUTC().toISO(),
-      title: 'Cita sin evidencia persistida',
-      notes: 'El modelo dice que sí, pero la conversación real no lo demuestra'
-    }))
-
-    assert.equal(result.ok, false)
-    assert.equal(result.confirmationRequired, true, JSON.stringify(result))
-    assert.equal(result.actionCompleted, false)
-    assert.match(result.error, /No se agendó nada/)
-    assert.equal(ctx.actions.length, 0)
-
-    ctx.dryRun = true
-    const simulated = await tool.invoke(null, JSON.stringify({
-      calendarId,
-      startTime: slot.toUTC().toISO(),
-      title: 'Cita simulada',
-      notes: 'Sólo previsualización'
-    }))
-    assert.equal(simulated.ok, true)
-    assert.equal(simulated.simulated, true)
-    assert.equal(ctx.actions[0]?.type, 'book_appointment')
-    assert.equal(ctx.actions[0]?.outcome?.status, 'simulated')
-    assert.equal(ctx.actions[0]?.outcome?.actionCompleted, false)
-  } finally {
-    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
-    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
-  }
-})
-
-test('una confirmación vieja por día de semana no autoriza una cita nueva', async () => {
-  const timezone = 'America/Ciudad_Juarez'
-  const now = DateTime.fromISO('2026-07-10T10:00:00', { zone: timezone })
-  const slot = DateTime.fromISO('2026-07-17T15:00:00', { zone: timezone })
-  const result = await verifyAppointmentConfirmationEvidence({
-    startTime: slot.toISO(),
-    timezone,
-    nowMs: now.toMillis(),
-    messages: [{
-      id: 'confirmation_2025',
-      direction: 'inbound',
-      text: 'Sí, el viernes a las 3 pm',
-      timestamp: '2025-01-03T21:00:00.000Z'
-    }]
-  })
-
-  assert.equal(result.ok, false)
-  assert.equal(result.confirmationRequired, true)
-  assert.equal(result.actionCompleted, false)
-})
-
-test('una respuesta breve reciente queda ligada a la oferta exacta anterior', async () => {
-  const timezone = 'America/Ciudad_Juarez'
-  const now = DateTime.fromISO('2026-07-10T10:10:00', { zone: timezone })
-  const slot = DateTime.fromISO('2026-07-17T15:00:00', { zone: timezone })
-  const result = await verifyAppointmentConfirmationEvidence({
-    startTime: slot.toISO(),
-    timezone,
-    nowMs: now.toMillis(),
-    messages: [
-      {
-        id: 'offer_recent',
-        direction: 'outbound',
-        text: '¿Confirmas la cita del 17/07/2026 a las 15:00?',
-        timestamp: now.minus({ minutes: 5 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
-      },
-      {
-        id: 'confirmation_recent',
-        direction: 'inbound',
-        text: 'Sí, perfecto',
-        timestamp: now.minus({ minutes: 2 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
-      }
-    ]
-  })
-
-  assert.equal(result.ok, true)
-  assert.equal(result.evidenceVerified, true)
-  assert.equal(result.offerMessageId, 'offer_recent')
-  assert.equal(result.confirmationMessageId, 'confirmation_recent')
-})
-
-test('una confirmación reciente que escribe fecha y hora exactas no requiere repetir la oferta', async () => {
-  const timezone = 'America/Ciudad_Juarez'
-  const now = DateTime.fromISO('2026-07-10T10:10:00', { zone: timezone })
-  const slot = DateTime.fromISO('2026-07-17T15:00:00', { zone: timezone })
-  const result = await verifyAppointmentConfirmationEvidence({
-    startTime: slot.toISO(),
-    timezone,
-    nowMs: now.toMillis(),
-    messages: [{
-      id: 'direct_exact_confirmation',
-      direction: 'inbound',
-      text: 'Sí, agéndame el 17 de julio a las 3 pm',
-      timestamp: now.minus({ minutes: 1 }).toUTC().toISO()
-    }]
-  })
-
-  assert.equal(result.ok, true)
-  assert.equal(result.evidenceVerified, true)
-  assert.equal(result.confirmationMessageId, 'direct_exact_confirmation')
-  assert.equal(result.offerMessageId, undefined)
-})
-
-test('día de semana y hora sin oferta exacta siguen siendo ambiguos aunque sean recientes', async () => {
-  const timezone = 'America/Ciudad_Juarez'
-  const now = DateTime.fromISO('2026-07-10T10:10:00', { zone: timezone })
-  const slot = DateTime.fromISO('2026-07-17T15:00:00', { zone: timezone })
-  const result = await verifyAppointmentConfirmationEvidence({
-    startTime: slot.toISO(),
-    timezone,
-    nowMs: now.toMillis(),
-    messages: [{
-      id: 'ambiguous_weekday_confirmation',
-      direction: 'inbound',
-      text: 'Sí, el viernes a las 3 pm',
-      timestamp: now.minus({ minutes: 1 }).toUTC().toISO()
-    }]
-  })
-
-  assert.equal(result.ok, false)
-  assert.equal(result.confirmationRequired, true)
-})
+import { revalidateAppointmentSlot } from '../src/agents/conversational/actionEvidence.js'
 
 test('revalidación de slots falla cerrado y pide transferencia si el calendario no responde', async () => {
   const result = await revalidateAppointmentSlot({
@@ -191,7 +24,7 @@ test('revalidación de slots falla cerrado y pide transferencia si el calendario
   assert.match(result.error, /No se agendó nada/)
 })
 
-test('create_payment_link rechaza un monto distinto al workflow aunque el LLM lo confirme', async () => {
+test('create_payment_link rechaza un monto distinto a la capacidad blindada', async () => {
   const ctx = {
     contactId: `payment_amount_mismatch_${randomUUID()}`,
     dryRun: true,
@@ -202,93 +35,57 @@ test('create_payment_link rechaza un monto distinto al workflow aunque el LLM lo
       { role: 'user', content: 'Sí, mándame el link de pago' }
     ],
     config: {
-      objective: 'ventas',
-      successAction: 'ready_to_buy',
-      goalWorkflow: {
-        sales: {
-          owner: 'ai',
-          productName: 'Curso Intensivo',
-          priceName: 'Pago único',
-          amount: 100,
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [{
+          id: 'collect_payment',
+          enabled: true,
+          paymentMode: 'deposit',
           currency: 'USD',
-          paymentMode: 'full_payment'
-        }
+          deposit: {
+            enabled: true,
+            mode: 'fixed',
+            amount: 100,
+            currency: 'USD',
+            methods: { paymentLink: true, bankTransfer: false }
+          }
+        }]
       }
     }
   }
 
   const tool = createConversationalTools(ctx).find((item) => item.name === 'create_payment_link')
   const result = await tool.invoke(null, JSON.stringify({
-    amount: 175,
-    currency: 'USD',
-    concept: 'Curso Intensivo',
-    dueDate: null,
-    channel: 'whatsapp',
-    confirm: true
+    quantity: 1,
+    agreedAmount: 175
   }))
 
   assert.equal(result.ok, false)
   assert.equal(result.amountMismatch, true)
   assert.equal(result.actionCompleted, false)
-  assert.match(result.error, /no coincide con el cobro configurado/i)
-  assert.match(result.error, /No se creó ni envió ningún link/)
+  assert.match(result.error, /no coincide/i)
+  assert.match(result.error, /No se creó ningún link/)
   assert.equal(ctx.actions.length, 0)
 })
 
-test('un comprobante inventado por boolean no sustituye un pago verificable existente', async () => {
-  const ctx = {
-    contactId: `fake_receipt_${randomUUID()}`,
-    dryRun: false,
-    actions: [],
-    accountLocale: { currency: 'USD' },
-    conversationMessages: [
-      { role: 'assistant', content: '¿Quieres que el equipo continúe con tu cita?' },
-      { role: 'user', content: 'Sí' }
-    ],
-    config: {
-      id: `agent_fake_receipt_${randomUUID()}`,
-      objective: 'citas',
-      successAction: 'ready_for_human',
-      goalWorkflow: {
-        deposit: {
-          enabled: true,
-          mode: 'fixed',
-          amount: 250,
-          currency: 'USD'
-        }
-      }
-    }
-  }
-
-  const tool = createConversationalTools(ctx).find((item) => item.name === 'mark_ready_to_advance')
-  const result = await tool.invoke(null, JSON.stringify({
-    intencionDetectada: 'Quiere continuar',
-    resumen: 'El modelo afirmó que vio un comprobante',
-    urgencia: 'alta',
-    siguientePaso: 'Validar pago',
-    confirm: true,
-    comprobanteValidado: true
-  }))
-
-  assert.equal(result.ok, false)
-  assert.equal(result.paymentEvidenceRequired, true)
-  assert.equal(result.claimedProofIgnored, true)
-  assert.equal(result.actionCompleted, false)
-  assert.match(result.error, /No existe un pago confirmado o registro verificable/)
-  assert.equal(ctx.actions.length, 0)
-})
-
-test('ctx.actions registra outcomes verificables para cierre, links, pago, handoff y descarte', async () => {
+test('ctx.actions registra outcomes verificables para objetivo, links, pago y handoff', async () => {
   const internalCtx = {
     contactId: `outcome_internal_${randomUUID()}`,
     dryRun: true,
     actions: [],
-    config: { objective: 'custom', successAction: 'none', goalWorkflow: {} }
+    config: {
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [
+          { id: 'handoff_human', enabled: true },
+          { id: 'custom_goal', enabled: true, description: 'Meta de prueba', completion: 'handoff' }
+        ]
+      }
+    }
   }
   const internalTools = createConversationalTools(internalCtx)
   const markReady = internalTools.find((item) => item.name === 'mark_ready_to_advance')
   const handoff = internalTools.find((item) => item.name === 'send_to_human')
-  const discard = internalTools.find((item) => item.name === 'discard_conversation')
 
   await markReady.invoke(null, JSON.stringify({
     intencionDetectada: 'Meta cumplida en simulación',
@@ -298,14 +95,12 @@ test('ctx.actions registra outcomes verificables para cierre, links, pago, hando
     confirm: true
   }))
   await handoff.invoke(null, JSON.stringify({ motivo: 'Revisión humana', resumen: 'Caso de prueba' }))
-  await discard.invoke(null, JSON.stringify({ motivo: 'Spam', resumen: 'Caso de prueba', nivelDeRiesgo: 'bajo' }))
 
   assert.deepEqual(
     internalCtx.actions.map((action) => [action.type, action.outcome?.status]),
     [
       ['mark_ready_to_advance', 'simulated'],
-      ['send_to_human', 'simulated'],
-      ['discard_conversation', 'simulated']
+      ['send_to_human', 'simulated']
     ]
   )
   assert.ok(internalCtx.actions.every((action) => action.outcome?.ok === true))
@@ -320,10 +115,15 @@ test('ctx.actions registra outcomes verificables para cierre, links, pago, hando
       { role: 'user', content: 'Sí' }
     ],
     config: {
-      objective: 'citas',
-      successAction: 'send_goal_url',
-      goalWorkflow: {
-        appointments: { owner: 'url', url: 'https://agenda.example/reservar', trackingParam: 'goal_id' }
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [{
+          id: 'send_link',
+          enabled: true,
+          linkKind: 'verified_goal',
+          url: 'https://agenda.example/reservar',
+          trackingParam: 'goal_id'
+        }]
       }
     }
   }
@@ -343,19 +143,16 @@ test('ctx.actions registra outcomes verificables para cierre, links, pago, hando
     actions: [],
     conversationMessages: goalCtx.conversationMessages,
     config: {
-      objective: 'custom',
-      successAction: 'send_trigger_link',
-      goalWorkflow: {
-        triggerLink: {
-          triggerLinkId: 'trigger_outcome_test',
-          triggerLinkPublicId: 'outcome-public',
-          triggerLinkName: 'Continuar',
-          triggerLinkUrl: 'https://links.example/continuar'
-        }
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [
+          { id: 'send_link', enabled: true, linkKind: 'trigger', url: 'https://links.example/continuar' },
+          { id: 'custom_goal', enabled: true, description: 'Enviar recurso', completion: 'send_link' }
+        ]
       }
     }
   }
-  const triggerTool = createConversationalTools(triggerCtx).find((item) => item.name === 'send_trigger_link')
+  const triggerTool = createConversationalTools(triggerCtx).find((item) => item.name === 'send_goal_url')
   const triggerResult = await triggerTool.invoke(null, JSON.stringify({
     intencionDetectada: 'Quiere continuar',
     resumen: 'Aceptó el enlace',
@@ -381,27 +178,28 @@ test('ctx.actions registra outcomes verificables para cierre, links, pago, hando
         { role: 'user', content: 'Sí, mándame el link de pago' }
       ],
       config: {
-        objective: 'ventas',
-        successAction: 'ready_to_buy',
-        goalWorkflow: {
-          sales: {
-            owner: 'ai',
-            productName: 'Curso Outcome',
-            amount: 100,
+        capabilitiesConfig: {
+          schemaVersion: 1,
+          items: [{
+            id: 'collect_payment',
+            enabled: true,
+            paymentMode: 'deposit',
             currency: 'USD',
-            paymentMode: 'full_payment'
-          }
+            deposit: {
+              enabled: true,
+              mode: 'fixed',
+              amount: 100,
+              currency: 'USD',
+              methods: { paymentLink: true, bankTransfer: false }
+            }
+          }]
         }
       }
     }
     const paymentTool = createConversationalTools(paymentCtx).find((item) => item.name === 'create_payment_link')
     const paymentResult = await paymentTool.invoke(null, JSON.stringify({
-      amount: 100,
-      currency: 'USD',
-      concept: 'Curso Outcome',
-      dueDate: null,
-      channel: 'whatsapp',
-      confirm: true
+      quantity: 1,
+      agreedAmount: null
     }))
     assert.equal(paymentResult.ok, true)
     assert.equal(paymentCtx.actions[0]?.outcome?.status, 'simulated')
@@ -422,7 +220,12 @@ test('ctx.actions distingue un handoff real confirmado de un handoff fallido', a
       contactId,
       dryRun: false,
       actions: [],
-      config: { objective: 'custom', successAction: 'none', goalWorkflow: {} }
+      config: {
+        capabilitiesConfig: {
+          schemaVersion: 1,
+          items: [{ id: 'handoff_human', enabled: true }]
+        }
+      }
     }
     const successTool = createConversationalTools(successCtx).find((item) => item.name === 'send_to_human')
     const success = await successTool.invoke(null, JSON.stringify({
@@ -438,7 +241,12 @@ test('ctx.actions distingue un handoff real confirmado de un handoff fallido', a
       contactId: '',
       dryRun: false,
       actions: [],
-      config: { objective: 'custom', successAction: 'none', goalWorkflow: {} }
+      config: {
+        capabilitiesConfig: {
+          schemaVersion: 1,
+          items: [{ id: 'handoff_human', enabled: true }]
+        }
+      }
     }
     const failedTool = createConversationalTools(failedCtx).find((item) => item.name === 'send_to_human')
     const failed = await failedTool.invoke(null, JSON.stringify({

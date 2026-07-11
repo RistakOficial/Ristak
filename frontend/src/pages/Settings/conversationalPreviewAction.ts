@@ -8,10 +8,8 @@ const PREVIEW_ACTION_MESSAGES: Record<string, string> = {
   register_deposit_payment_proof: 'Prueba interna: el comprobante quedaría enviado a revisión.',
   send_goal_url: 'Prueba interna: se mandaría el enlace configurado.',
   send_trigger_link: 'Prueba interna: se mandaría el enlace configurado.',
-  handoff_human: 'Prueba interna: la conversación pasaría a la persona configurada.',
   send_to_human: 'Prueba interna: la conversación pasaría a la persona configurada.',
-  custom_goal: 'Prueba interna: el objetivo propio quedaría completado.',
-  mark_custom_goal_complete: 'Prueba interna: el objetivo propio quedaría completado.'
+  mark_ready_to_advance: 'Prueba interna: el objetivo propio quedaría completado.'
 }
 
 export function describeConversationalPreviewAction(action: PreviewAction) {

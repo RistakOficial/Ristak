@@ -14,7 +14,6 @@ export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
 export type AgentReplyDeliveryMode = 'single' | 'split'
 export type AgentFollowUpUnit = 'minutes' | 'hours'
-export type ConversationalRuntimeMode = 'legacy_v1' | 'tool_calling_v2'
 export type ConversationalCapabilityId =
   | 'schedule_appointment'
   | 'collect_payment'
@@ -108,17 +107,6 @@ export interface ConversationalAIProviderStatus {
   defaultModel: string
 }
 
-export interface ConversationalBusinessPromptStatus {
-  ready: boolean
-  status: string
-  extractionStatus: string
-  extractionError: string | null
-  businessName: string | null
-  industry: string | null
-  updatedAt: string | null
-  summary: string | null
-}
-
 export interface ConversationalAgentEntryConflict {
   agentId: string
   agentName: string
@@ -132,7 +120,6 @@ export class ConversationalAgentRequestError extends Error {
   code?: string
   conflicts?: ConversationalAgentEntryConflict[]
   limit?: { maxAgents?: number | null; currentTotal?: number | null }
-  businessPromptStatus?: ConversationalBusinessPromptStatus
 
   constructor(message: string, payload: Record<string, any> | null = null) {
     super(message)
@@ -140,7 +127,6 @@ export class ConversationalAgentRequestError extends Error {
     this.code = payload?.code
     this.conflicts = Array.isArray(payload?.conflicts) ? payload.conflicts : undefined
     this.limit = payload?.limit && typeof payload.limit === 'object' ? payload.limit : undefined
-    this.businessPromptStatus = payload?.businessPromptStatus
   }
 }
 
@@ -255,46 +241,10 @@ export interface AgentGoalWorkflowConfig {
 }
 
 export interface ConversationalAgentConfig {
-  enabled: boolean
   aiProvider: ConversationalAIProviderId
   model: string
-  objective: ConversationalObjective
-  customObjective: string
-  successAction: ConversationalSuccessAction
-  requiredData: string
-  handoffRules: string
-  extraInstructions: string
-  allowEmojis: boolean
-  hideAttended: boolean
-  hideAttendedNotifications: boolean
-  defaultCalendarId: string | null
-  closingStrategyMode: ClosingStrategyMode
-  closingStrategyCustom: string
-  persuasionLevel: ConversationalPersuasionLevel
-  languageLevel: ConversationalLanguageLevel
   updatedAt: string | null
-  objectives?: Array<{ id: string; label: string }>
-  successActions?: Array<{ id: string; label: string }>
-  businessPromptStatus?: ConversationalBusinessPromptStatus
   aiProviders?: ConversationalAIProviderStatus[]
-}
-
-export interface ConversationalAgentConfigInput {
-  enabled?: boolean
-  aiProvider?: ConversationalAIProviderId
-  model?: string
-  objective?: ConversationalObjective
-  customObjective?: string
-  successAction?: ConversationalSuccessAction
-  requiredData?: string
-  handoffRules?: string
-  extraInstructions?: string
-  allowEmojis?: boolean
-  hideAttended?: boolean
-  hideAttendedNotifications?: boolean
-  defaultCalendarId?: string | null
-  persuasionLevel?: ConversationalPersuasionLevel
-  languageLevel?: ConversationalLanguageLevel
 }
 
 export type ConditionCategory =
@@ -376,10 +326,8 @@ export interface ConversationalAgentDef {
   id: string
   name: string
   enabled: boolean
-  runtimeMode: ConversationalRuntimeMode
-  promptConfig: ConversationalPromptConfig | null
+  promptConfig: ConversationalPromptConfig
   capabilitiesConfig: ConversationalCapabilitiesConfig
-  migrationCapabilitiesConfig?: ConversationalCapabilitiesConfig | null
   capabilityManifest: ConversationalCapabilityManifestItem[]
   aiProvider: ConversationalAIProviderId
   model: string
@@ -412,11 +360,9 @@ export interface ConversationalAgentDef {
   filters: AgentFilters
   createdAt: string | null
   updatedAt: string | null
-  policyVersion?: number
-  compiledPolicy?: ConversationalCompiledPolicySummary
 }
 
-export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'closingStrategyMode' | 'closingStrategyCustom' | 'policyVersion' | 'compiledPolicy'>>
+export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'closingStrategyMode' | 'closingStrategyCustom'>>
 
 export interface ConversationAgentState {
   id?: string | null
@@ -441,93 +387,9 @@ export interface ConversationAgentState {
   updatedBy: string | null
   agentEnabled?: boolean | null
   agentHideAttendedNotifications?: boolean | null
-  closingContext?: Record<string, string>
-  intelligence?: ConversationIntelligenceState
-  intelligencePolicyHash?: string | null
-  intelligenceSource?: 'model' | 'deterministic' | string | null
-  intelligenceUpdatedAt?: string | null
   updatedAt: string | null
   contactName?: string | null
   contactPhone?: string | null
-}
-
-export interface ConversationIntelligenceEvidence {
-  key: string
-  value: string
-  evidence: string
-  messageId: string | null
-  source: 'contact' | 'tool' | 'business' | 'system'
-  confidence: number
-  retention?: 'conversation' | 'contact' | 'temporary' | 'do_not_retain'
-}
-
-export interface ConversationIntelligenceState {
-  schemaVersion: number
-  revision: number
-  objective: string
-  channel: string
-  stage: 'opening' | 'discovery' | 'qualification' | 'consideration' | 'decision' | 'action' | 'follow_up' | 'handoff' | 'completed'
-  summary: string
-  intent: { explicit: string; implicit: string; confidence: number }
-  story: {
-    confirmedFacts: ConversationIntelligenceEvidence[]
-    hypotheses: ConversationIntelligenceEvidence[]
-    contradictions: Array<{ key: string; previousValue: string; currentValue: string; evidence: string }>
-  }
-  signals: Record<string, number>
-  temperature: 'cold' | 'warm' | 'hot'
-  qualification: { status: 'unknown' | 'qualified' | 'disqualified' | 'partial'; matched: string[]; missing: string[]; disqualifiers: string[] }
-  objections: Array<{ category: string; status: 'expressed' | 'possible' | 'resolved'; confidence: number; evidence: string }>
-  missingInformation: string[]
-  strategy: { action: string; reason: string; primaryQuestion: string; tool: string; shouldReply: boolean }
-  followUp: { recommended: boolean; reason: string; angle: string; stop: boolean }
-  handoff: { recommended: boolean; reason: string; urgency: 'normal' | 'high'; summary: Record<string, unknown> | null }
-  outcome: { status: 'open' | 'pending' | 'completed' | 'failed' | 'disqualified'; evidence: string[]; lastAction: string; toolConfirmed: boolean }
-  updatedAt: string | null
-}
-
-export interface ConversationalCompiledPolicySummary {
-  version: number
-  hash: string
-  objective: Record<string, unknown> | null
-  qualification: Record<string, unknown> | null
-  permissions: Record<string, unknown> | null
-  validation: { valid: boolean; errors: Array<Record<string, unknown>>; warnings: Array<Record<string, unknown>> }
-}
-
-export interface ConversationalPolicyVersion {
-  id: string
-  agentId: string
-  version: number
-  policyHash: string
-  configSnapshot: ConversationalAgentDef
-  compiledPolicy: Record<string, unknown>
-  source: 'form' | 'rollback' | 'migration' | string
-  active: boolean
-  createdAt: string | null
-}
-
-export interface ConversationalLearningVersion {
-  id: string
-  agentId: string
-  version: number
-  hash: string
-  status: 'proposed' | 'approved' | 'rejected' | 'reverted'
-  basePolicyHash: string | null
-  snapshot: {
-    metrics?: Record<string, unknown>
-    proposals?: Array<{ kind: string; title: string; rationale: string; suggestedChange: string; risk: string }>
-    [key: string]: unknown
-  }
-  reviewedBy: string | null
-  reviewedAt: string | null
-  createdAt: string | null
-}
-
-export interface ConversationalAgentGovernance {
-  agentId: string
-  policyVersions: ConversationalPolicyVersion[]
-  learningVersions: ConversationalLearningVersion[]
 }
 
 export type ConversationStateAction = 'pause' | 'resume' | 'take_over' | 'skip' | 'activate' | 'clear_signal'
@@ -537,12 +399,7 @@ export interface ConversationalAgentTestResult {
   replyParts?: string[]
   replyPartDelaysMs?: number[]
   responseDelayMs?: number
-  suppressed: boolean
   actions: Array<{ type: string; effect?: { liveEffect?: string; marksObjectiveCompleted?: boolean }; [key: string]: unknown }>
-  intelligence?: ConversationIntelligenceState
-  policyValidation?: { valid: boolean; errors: Array<Record<string, unknown>>; warnings: Array<Record<string, unknown>> }
-  policyHash?: string
-  assessmentSource?: 'model' | 'deterministic' | string
   aiProvider: ConversationalAIProviderId
   model: string
 }
@@ -628,7 +485,6 @@ export interface ConversationalAgentMetrics {
   followUpSuppressedEvents: number
   humanHandoffEvents: number
   toolFailureEvents: number
-  intelligenceAssessmentEvents: number
   responseRate: number
   toolFailureRate: number
   successRate: number
@@ -649,7 +505,7 @@ export interface ConversationalAgentLiveCache {
 
 export const CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT = 'ristak-conversational-agent-live-cache'
 
-const LIVE_CACHE_KEY = 'ristak_conversational_agent_live_cache_v1'
+const LIVE_CACHE_KEY = 'ristak_conversational_agent_live_cache_v2'
 const CONVERSATIONAL_CAPABILITY_IDS: ConversationalCapabilityId[] = [
   'schedule_appointment',
   'collect_payment',
@@ -812,13 +668,8 @@ function normalizeContactScope(value?: unknown): ConversationalContactScope {
   return scope === 'new_only' || scope === 'existing_only' ? scope : 'all'
 }
 
-function normalizeConversationalRuntimeMode(value?: unknown): ConversationalRuntimeMode {
-  return String(value || '').trim() === 'tool_calling_v2' ? 'tool_calling_v2' : 'legacy_v1'
-}
-
-function normalizePromptConfig(value: unknown, runtimeMode: ConversationalRuntimeMode): ConversationalPromptConfig | null {
+function normalizePromptConfig(value: unknown): ConversationalPromptConfig {
   const hasStoredPrompt = Boolean(value && typeof value === 'object')
-  if (runtimeMode !== 'tool_calling_v2' && !hasStoredPrompt) return null
   const raw = hasStoredPrompt ? value as Partial<ConversationalPromptConfig> : {}
   const hasEditableText = Object.prototype.hasOwnProperty.call(raw, 'editableText')
   return {
@@ -826,7 +677,7 @@ function normalizePromptConfig(value: unknown, runtimeMode: ConversationalRuntim
     templateVersion: String(raw.templateVersion || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.templateVersion).trim().slice(0, 120),
     editableText: hasEditableText
       ? String(raw.editableText ?? '').replace(/\r/g, '').slice(0, 16000)
-      : (runtimeMode === 'tool_calling_v2' ? DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS : '')
+      : DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS
   }
 }
 
@@ -909,58 +760,9 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
   }
 }
 
-function deriveCapabilitiesFromLegacy(agent: Partial<ConversationalAgentDef>): ConversationalCapabilitiesConfig {
-  const workflow = agent.goalWorkflow || DEFAULT_AGENT_GOAL_WORKFLOW
-  const items: ConversationalCapabilityItem[] = []
-  if (agent.successAction === 'book_appointment') {
-    items.push(normalizeCapabilityItem({
-      id: 'schedule_appointment',
-      calendarId: workflow.appointments?.calendarId || agent.defaultCalendarId || ''
-    }) as ScheduleAppointmentCapability)
-  }
-  if (agent.successAction === 'ready_to_buy' || workflow.deposit?.enabled) {
-    items.push(normalizeCapabilityItem({
-      id: 'collect_payment',
-      productId: workflow.sales?.productId,
-      priceId: workflow.sales?.priceId,
-      paymentMode: agent.objective === 'citas' && workflow.deposit?.enabled
-        ? 'deposit'
-        : workflow.sales?.paymentMode,
-      amount: workflow.sales?.amount,
-      currency: workflow.sales?.currency || workflow.deposit?.currency,
-      deposit: workflow.deposit
-    }) as CollectPaymentCapability)
-  }
-  if (agent.successAction === 'send_goal_url' || agent.successAction === 'send_trigger_link') {
-    const linkConfig = agent.objective === 'ventas' ? workflow.sales : workflow.appointments
-    items.push(normalizeCapabilityItem({
-      id: 'send_link',
-      linkKind: agent.successAction === 'send_trigger_link' ? 'trigger' : 'verified_goal',
-      triggerLinkId: workflow.triggerLink?.triggerLinkId,
-      url: agent.successAction === 'send_trigger_link' ? workflow.triggerLink?.triggerLinkUrl : linkConfig?.url,
-      trackingParam: linkConfig?.trackingParam
-    }) as SendLinkCapability)
-  }
-  items.push(normalizeCapabilityItem({
-    id: 'handoff_human',
-    rules: agent.handoffRules,
-    userId: workflow.completion?.userId,
-    userName: workflow.completion?.userName,
-    pastClientsToHuman: workflow.attention?.pastClientsToHuman
-  }) as HandoffHumanCapability)
-  if (agent.objective === 'custom') {
-    items.push(normalizeCapabilityItem({
-      id: 'custom_goal',
-      description: agent.customObjective,
-      completion: 'handoff'
-    }) as CustomGoalCapability)
-  }
-  return { schemaVersion: 1, items: items.filter(Boolean) }
-}
-
-function normalizeCapabilitiesConfig(value: unknown, agent: Partial<ConversationalAgentDef>): ConversationalCapabilitiesConfig {
+function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilitiesConfig {
   const raw = value && typeof value === 'object' ? value as Partial<ConversationalCapabilitiesConfig> : null
-  if (!raw || !Array.isArray(raw.items)) return deriveCapabilitiesFromLegacy(agent)
+  if (!raw || !Array.isArray(raw.items)) return { schemaVersion: 1, items: [] }
   const byId = new Map<ConversationalCapabilityId, ConversationalCapabilityItem>()
   raw.items.forEach((item) => {
     const normalized = normalizeCapabilityItem(item)
@@ -997,19 +799,14 @@ function normalizeAgentConfig<T extends ConversationalAgentConfig | null | undef
   if (!config) return config
   return {
     ...config,
-    aiProvider: normalizeConversationalAIProvider(config.aiProvider),
-    successAction: normalizeConversationalSuccessAction(config.successAction)
+    aiProvider: normalizeConversationalAIProvider(config.aiProvider)
   }
 }
 
 function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
-  const runtimeMode = normalizeConversationalRuntimeMode(agent.runtimeMode)
-  const promptConfig = normalizePromptConfig(agent.promptConfig, runtimeMode)
-  const capabilitiesConfig = normalizeCapabilitiesConfig(agent.capabilitiesConfig, agent)
+  const promptConfig = normalizePromptConfig(agent.promptConfig)
+  const capabilitiesConfig = normalizeCapabilitiesConfig(agent.capabilitiesConfig)
   const capabilityManifest = normalizeCapabilityManifest(agent.capabilityManifest)
-  const migrationCapabilitiesConfig = agent.migrationCapabilitiesConfig
-    ? normalizeCapabilitiesConfig(agent.migrationCapabilitiesConfig, agent)
-    : null
   const appointments = (agent.goalWorkflow?.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']> & {
     allow_overlapping_appointments?: unknown
     allowOverlaps?: unknown
@@ -1027,10 +824,8 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
 
   return {
     ...agent,
-    runtimeMode,
     promptConfig,
     capabilitiesConfig,
-    migrationCapabilitiesConfig,
     capabilityManifest,
     aiProvider: normalizeConversationalAIProvider(agent.aiProvider),
     identityMode: normalizeAgentIdentityMode(agent.identityMode),
@@ -1372,15 +1167,6 @@ export const conversationalAgentService = {
     return config
   },
 
-  async saveConfig(config: ConversationalAgentConfigInput): Promise<ConversationalAgentConfig> {
-    const next = normalizeAgentConfig(await request<ConversationalAgentConfig>('/config', {
-      method: 'POST',
-      body: JSON.stringify(config)
-    }))
-    writeConversationalAgentLiveCache({ config: next }, { notify: true })
-    return next
-  },
-
   listAIProviders(): Promise<ConversationalAIProviderStatus[]> {
     return request<ConversationalAIProviderStatus[]>('/ai-providers')
   },
@@ -1414,29 +1200,6 @@ export const conversationalAgentService = {
 
   getMetrics(): Promise<ConversationalAgentMetrics> {
     return request<ConversationalAgentMetrics>('/metrics')
-  },
-
-  getGovernance(agentId: string): Promise<ConversationalAgentGovernance> {
-    return request<ConversationalAgentGovernance>(`/agents/${encodeURIComponent(agentId)}/governance`)
-  },
-
-  generateLearning(agentId: string): Promise<ConversationalLearningVersion> {
-    return request<ConversationalLearningVersion>(`/agents/${encodeURIComponent(agentId)}/learning`, { method: 'POST' })
-  },
-
-  reviewLearning(agentId: string, learningId: string, decision: 'approved' | 'rejected' | 'reverted'): Promise<ConversationalLearningVersion> {
-    return request<ConversationalLearningVersion>(`/agents/${encodeURIComponent(agentId)}/learning/${encodeURIComponent(learningId)}/review`, {
-      method: 'POST',
-      body: JSON.stringify({ decision })
-    })
-  },
-
-  async rollbackPolicy(agentId: string, versionId: string): Promise<ConversationalAgentDef> {
-    const agent = normalizeAgentDef(await request<ConversationalAgentDef>(`/agents/${encodeURIComponent(agentId)}/policy-versions/${encodeURIComponent(versionId)}/rollback`, {
-      method: 'POST'
-    }))
-    applyCachedAgentUpdate(agent)
-    return agent
   },
 
   async createAgent(input: ConversationalAgentDefInput = {}): Promise<ConversationalAgentDef> {

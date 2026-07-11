@@ -1,7 +1,6 @@
 import express from 'express'
 import {
   getConfig,
-  saveConfig,
   listStates,
   getState,
   updateState,
@@ -9,10 +8,6 @@ import {
   listEvents,
   listAgents,
   getMetrics,
-  getAgentGovernance,
-  generateAgentLearning,
-  reviewAgentLearning,
-  rollbackAgentPolicy,
   createAgent,
   updateAgent,
   deleteAgent,
@@ -31,7 +26,6 @@ router.use(requireAuth)
 router.use(requireModuleAccess('ai_agent'))
 
 router.get('/config', getConfig)
-router.post('/config', saveConfig)
 router.get('/ai-providers', listAIProviders)
 router.post('/ai-providers/:providerId', connectAIProvider)
 router.delete('/ai-providers/:providerId', deleteAIProvider)
@@ -40,10 +34,6 @@ router.get('/metrics', getMetrics)
 router.get('/filter-options', getFilterOptions)
 router.post('/agents', createAgent)
 router.put('/agents/:agentId', updateAgent)
-router.get('/agents/:agentId/governance', getAgentGovernance)
-router.post('/agents/:agentId/learning', generateAgentLearning)
-router.post('/agents/:agentId/learning/:learningId/review', reviewAgentLearning)
-router.post('/agents/:agentId/policy-versions/:versionId/rollback', rollbackAgentPolicy)
 router.post('/agents/:agentId/reset-skipped', resetAgentSkippedContacts)
 router.delete('/agents/:agentId', deleteAgent)
 router.get('/states', listStates)

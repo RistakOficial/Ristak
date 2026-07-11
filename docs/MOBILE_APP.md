@@ -1274,16 +1274,15 @@ y `mobile/`, los banners y acciones de agente deben contar solo estados cuyo
 o cacheados de agentes eliminados no deben mostrarse como "agentes asignados" ni
 habilitar acciones. El hub del agente en `/movil` e `ios/app` no debe exponer un
 control "Todos"/"Apagar todos": el usuario controla solo el agente individual
-seleccionado, y el runtime interno se enciende automaticamente cuando un agente
-publicado lo requiere. El
+seleccionado. No existe una segunda llave global que pueda impedir su activacion. El
 hub global de Android también se abre desde el botón de robot en la esquina
 superior izquierda de Chats, igual que `ios/app`. Consume
-`/api/conversational-agent/config` y `/agents`, lista cada agente real y permite
+`/api/conversational-agent/agents`, lista cada agente real y permite
 encenderlo o pausarlo individualmente, reiniciar sus contactos omitidos y editar
-su configuración principal sin salir del celular. Encender un agente repara el
-runtime interno si estaba apagado; la UI nunca ofrece un apagado global. El
-editor compacto conserva intactas las configuraciones avanzadas que todavía no
-muestra. Dentro de una conversación con agente asignado, el robot vive dentro de
+su configuracion nativa sin salir del celular. Encenderlo publica directamente ese
+agente; no hay un switch oculto ni una reversa secundaria. El editor compacto
+guarda el prompt editable y muestra las capacidades blindadas activas. Dentro de
+una conversación con agente asignado, el robot vive dentro de
 la cápsula de acciones del header inmediatamente a la izquierda del calendario
 y abre el control por contacto; no debe duplicarse fuera de esa cápsula.
 

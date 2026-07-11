@@ -153,51 +153,52 @@ export type ConversationAgentState = {
   activatedAt?: string | null;
 };
 
-export type ConversationalBusinessPromptStatus = {
-  ready?: boolean;
-  status?: string | null;
-  businessName?: string | null;
-  industry?: string | null;
-  summary?: string | null;
+export type ConversationalCapabilityId =
+  | 'schedule_appointment'
+  | 'collect_payment'
+  | 'send_link'
+  | 'handoff_human'
+  | 'custom_goal';
+
+export type ConversationalPromptConfig = {
+  schemaVersion: 1;
+  templateVersion: string;
+  editableText: string;
 };
 
-export type ConversationalAgentConfig = {
-  enabled?: boolean;
-  aiProvider?: string;
-  model?: string;
-  businessPromptStatus?: ConversationalBusinessPromptStatus | null;
+export type ConversationalCapabilityConfigItem = {
+  id: ConversationalCapabilityId;
+  enabled: boolean;
+  [key: string]: unknown;
+};
+
+export type ConversationalCapabilitiesConfig = {
+  schemaVersion: 1;
+  items: ConversationalCapabilityConfigItem[];
+};
+
+export type ConversationalCapabilityManifestItem = {
+  id: ConversationalCapabilityId;
+  label: string;
+  locked: true;
+  enabled: boolean;
+  ready: boolean;
+  summary: string;
+  missingConfiguration: string[];
 };
 
 export type ConversationalAgentDefinition = {
   id: string;
   name?: string;
   enabled?: boolean;
+  promptConfig?: ConversationalPromptConfig;
+  capabilitiesConfig?: ConversationalCapabilitiesConfig;
+  capabilityManifest?: ConversationalCapabilityManifestItem[];
   aiProvider?: string;
   model?: string;
-  identityMode?: string;
-  identityUserId?: string;
-  identityUserName?: string;
-  identityCustomName?: string;
   position?: number;
-  objective?: string;
-  customObjective?: string;
-  successAction?: string;
-  requiredData?: string;
-  handoffRules?: string;
-  extraInstructions?: string;
-  allowEmojis?: boolean;
-  hideAttended?: boolean;
   hideAttendedNotifications?: boolean;
-  defaultCalendarId?: string | null;
-  persuasionLevel?: string;
-  languageLevel?: string;
   contactScope?: string;
-  responseDelay?: Record<string, unknown>;
-  replyDelivery?: Record<string, unknown>;
-  followUp?: Record<string, unknown>;
-  goalWorkflow?: Record<string, unknown>;
-  filters?: Record<string, unknown>;
-  successExtras?: Array<Record<string, unknown>>;
   createdAt?: string | null;
   updatedAt?: string | null;
 };

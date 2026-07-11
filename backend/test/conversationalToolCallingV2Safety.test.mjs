@@ -19,7 +19,6 @@ import {
   createConversationalAgent,
   recordConversationalAgentEvent,
   reserveConversationalAppointmentDepositEvidence,
-  setConversationalCompletionSummaryGeneratorForTest,
   setConversationalPaymentResumeHandlerForTest
 } from '../src/services/conversationalAgentService.js'
 import { getAccountCurrency } from '../src/utils/accountLocale.js'
@@ -224,7 +223,6 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
   const slot = nextMonday.set({ hour: 16, minute: 0, second: 0, millisecond: 0 })
   let clientRequestId = ''
   let userId = ''
-  let internalSummaryCalls = 0
 
   try {
     await db.run(
@@ -256,10 +254,6 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     ctx.config.id = `agent_v2_replay_${suffix}`
     ctx.config.goalWorkflow = { completion: { mode: 'assign_user', userId } }
     ctx.config.successExtras = [{ type: 'add_tag', tag: 'legacy-hidden-effect' }]
-    setConversationalCompletionSummaryGeneratorForTest(async () => {
-      internalSummaryCalls += 1
-      return 'No debe ejecutarse'
-    })
     const book = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
     const payload = {
       startTime: slot.toUTC().toISO(),
@@ -303,7 +297,6 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     assert.equal(ctx.actions[2]?.outcome?.appointmentRescheduled, true)
     const contact = await db.get('SELECT assigned_user_id FROM contacts WHERE id = ?', [contactId])
     assert.equal(contact.assigned_user_id, null)
-    assert.equal(internalSummaryCalls, 0)
     const signalEvent = await db.get(
       `SELECT detail_json FROM conversational_agent_events
        WHERE contact_id = ? AND event_type = 'signal_set'
@@ -312,7 +305,6 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     )
     assert.notEqual(JSON.parse(signalEvent.detail_json).summarySource, 'internal_summary_agent')
   } finally {
-    setConversationalCompletionSummaryGeneratorForTest(null)
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
     if (clientRequestId) {
       await db.run('DELETE FROM appointment_creation_requests WHERE client_request_id = ?', [clientRequestId]).catch(() => {})
@@ -741,7 +733,6 @@ test('custom_goal v2 asigna por capacidad de forma idempotente sin resumen ni ef
   const contactId = `contact_hidden_effect_v2_${suffix}`
   let capabilityUserId = ''
   let legacyUserId = ''
-  let internalSummaryCalls = 0
   try {
     await db.run(
       `INSERT INTO users (username, password_hash, full_name, is_active, created_at, updated_at)
@@ -760,10 +751,6 @@ test('custom_goal v2 asigna por capacidad de forma idempotente sin resumen ni ef
        VALUES (?, 'Cliente custom v2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [contactId]
     )
-    setConversationalCompletionSummaryGeneratorForTest(async () => {
-      internalSummaryCalls += 1
-      return 'No debe ejecutarse'
-    })
     const ctx = v2Context([{
       id: 'custom_goal', enabled: true, description: 'Recabar requisitos', completion: 'handoff'
     }, {
@@ -789,7 +776,6 @@ test('custom_goal v2 asigna por capacidad de forma idempotente sin resumen ni ef
     assert.equal(result.ok, true, JSON.stringify(result))
     assert.equal(result.assignedUserName, 'Usuario asignado por capacidad')
     assert.equal(replay.ok, true, JSON.stringify(replay))
-    assert.equal(internalSummaryCalls, 0)
     const contact = await db.get('SELECT assigned_user_id FROM contacts WHERE id = ?', [contactId])
     assert.equal(String(contact.assigned_user_id), capabilityUserId)
     assert.notEqual(String(contact.assigned_user_id), legacyUserId)
@@ -815,7 +801,6 @@ test('custom_goal v2 asigna por capacidad de forma idempotente sin resumen ni ef
     assert.equal(detail.summarySource, 'tool_fallback')
     assert.match(detail.summary, /proyecto de tres sedes/i)
   } finally {
-    setConversationalCompletionSummaryGeneratorForTest(null)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
@@ -830,7 +815,6 @@ test('confirmación real de pago v2 no levanta sub-IA ni aplica asignación o ex
   const contactId = `contact_payment_completion_v2_${suffix}`
   const invoiceId = `invoice_payment_completion_v2_${suffix}`
   let agent = null
-  let internalSummaryCalls = 0
   try {
     await db.run(
       `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
@@ -885,10 +869,6 @@ test('confirmación real de pago v2 no levanta sub-IA ni aplica asignación o ex
       ) VALUES (?, ?, 725, 'MXN', 'paid', 'live', 'highlevel', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [invoiceId, contactId, invoiceId]
     )
-    setConversationalCompletionSummaryGeneratorForTest(async () => {
-      internalSummaryCalls += 1
-      return 'No debe ejecutarse'
-    })
 
     const result = await completeConversationalAgentSalePaymentFromInvoice({
       contactId,
@@ -900,7 +880,6 @@ test('confirmación real de pago v2 no levanta sub-IA ni aplica asignación o ex
     })
 
     assert.equal(result.matched, true)
-    assert.equal(internalSummaryCalls, 0)
     const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
     const customFields = JSON.parse(contact.custom_fields || '{}')
     assert.equal(customFields.assignedUser, undefined)
@@ -930,7 +909,6 @@ test('confirmación real de pago v2 no levanta sub-IA ni aplica asignación o ex
     assert.equal(Number(idempotentEvents.signals), 1)
     assert.equal(Number(idempotentEvents.completions), 1)
   } finally {
-    setConversationalCompletionSummaryGeneratorForTest(null)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM payments WHERE id = ?', [invoiceId]).catch(() => {})

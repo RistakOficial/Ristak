@@ -198,19 +198,6 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
     baseLabel: 'llegó cualquier mensaje',
     params: [
       {
-        field: 'text',
-        menuLabel: 'Texto del mensaje',
-        operators: [
-          { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Texto a buscar', phrase: (p) => `el mensaje contiene "${p.value || '…'}"` },
-          { id: 'not_contains', label: 'no contiene', valueKind: 'text', placeholder: 'Texto a evitar', phrase: (p) => `el mensaje no contiene "${p.value || '…'}"` },
-          { id: 'contains_any', label: 'contiene alguna de estas palabras', valueKind: 'list', placeholder: 'Palabra y Enter', phrase: (p) => `el mensaje contiene alguna de: ${(p.values || []).join(', ') || '…'}` },
-          { id: 'contains_all', label: 'contiene todas estas palabras', valueKind: 'list', placeholder: 'Palabra y Enter', phrase: (p) => `el mensaje contiene todas: ${(p.values || []).join(', ') || '…'}` },
-          { id: 'starts_with', label: 'empieza con', valueKind: 'text', placeholder: 'Primeras palabras', phrase: (p) => `el mensaje empieza con "${p.value || '…'}"` },
-          { id: 'ends_with', label: 'termina con', valueKind: 'text', placeholder: 'Últimas palabras', phrase: (p) => `el mensaje termina con "${p.value || '…'}"` },
-          { id: 'equals', label: 'es exactamente', valueKind: 'text', placeholder: 'Mensaje exacto', phrase: (p) => `el mensaje es "${p.value || '…'}"` }
-        ]
-      },
-      {
         field: 'business_phone',
         menuLabel: 'Número donde llegó el mensaje',
         operators: [

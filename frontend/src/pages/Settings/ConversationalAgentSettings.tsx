@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, LockKeyhole, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldCheck, Target, Trash2, UserCheck, Users, Video, Wand2, X } from 'lucide-react'
-import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, Switch, TabList, TagPicker } from '@/components/common'
+import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, LockKeyhole, Pause, PauseCircle, Play, Plus, RotateCcw, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
+import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -28,28 +28,18 @@ import { useAIAgentAvailability, useAppConfig } from '@/hooks'
 import {
   conversationalAgentService,
   isConversationalAgentEntryConflictError,
-  DEFAULT_AGENT_ATTENTION,
   DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
-  type AgentAttentionConfig,
   type AgentFilterOptions,
-  type AgentCompletionMode,
-  type AgentDepositMethodsConfig,
-  type AgentDepositMode,
-  type AgentIdentityMode,
   type AgentFollowUpConfig,
   type AgentFollowUpStepConfig,
   type AgentFollowUpUnit,
-  type AgentGoalWorkflowConfig,
   type AgentReplyDeliveryConfig,
   type AgentReplyDeliveryMode,
   type AgentResponseDelayConfig,
   type AgentResponseDelayMode,
   type AgentResponseDelayUnit,
-  type AgentSalesPaymentMode,
-  type AgentSuccessExtra,
   type ConversationalAIProviderStatus,
-  type ConversationalBusinessPromptStatus,
   type ConversationalAgentConfig,
   type ConversationalAgentDef,
   type ConversationalAgentDefInput,
@@ -60,24 +50,17 @@ import {
   type ConversationalCapabilityManifestItem,
   type ConversationalAgentMetrics,
   type ConversationalContactScope,
-  type ConversationalLanguageLevel,
-  type ConversationalPersuasionLevel,
   type ConversationalAgentTestAttachment,
   type ConversationalAgentTestMessage,
   type ConversationalAgentTestResult,
-  type ConversationalObjective,
-  type ConversationalSuccessAction,
-  type SuccessExtraType
 } from '@/services/conversationalAgentService'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { userAccessService, type TeamUser } from '@/services/userAccessService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
-import { triggerLinksService, type TriggerLink } from '@/services/triggerLinksService'
 import apiClient from '@/services/apiClient'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
-import { AgentCreationWizard } from './AgentCreationWizard'
 import styles from './AIAgentSettings.module.css'
 import { describeConversationalPreviewAction } from './conversationalPreviewAction'
 
@@ -87,86 +70,6 @@ const DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE = '/ai-agent/conversational'
 const buildConversationalAgentPath = (agentId?: string | null, routeBase = DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE) => (
   agentId ? `${routeBase}/${encodeURIComponent(agentId)}` : routeBase
 )
-
-const objectiveOptions: Array<{ value: ConversationalObjective; label: string; description: string }> = [
-  { value: 'citas', label: 'Agendar citas', description: 'Debe llevar a la persona hasta una cita. Ejemplo: que termine pidiendo día y hora.' },
-  { value: 'ventas', label: 'Cerrar ventas', description: 'Debe llevar a la persona a comprar. Ejemplo: que pida cómo pagar.' },
-  { value: 'datos', label: 'Pedir datos', description: 'Debe pedir lo que falte. Ejemplo: nombre, teléfono o correo.' },
-  { value: 'filtrar', label: 'Filtrar curiosos', description: 'Debe ver si la persona sí va en serio. Ejemplo: separar quien pregunta nomás por ver.' },
-  { value: 'custom', label: 'Objetivo propio', description: 'Escribe tú la meta. Ejemplo: que pida una propuesta formal.' }
-]
-
-// Iniciativa: cuánto guía hacia el siguiente paso sin sacrificar claridad ni consentimiento.
-const persuasionLevelTabs: Array<{ value: ConversationalPersuasionLevel; label: string; description: string }> = [
-  { value: 'low', label: 'Atención', description: 'Resuelve y orienta; sólo propone avanzar cuando la persona lo pide claramente.' },
-  { value: 'medium', label: 'Guía', description: 'Entiende la situación y facilita el siguiente paso con tacto. Recomendado.' },
-  { value: 'high', label: 'Proactivo', description: 'Detecta oportunidades y propone avanzar cuando hay evidencia, sin presionar.' }
-]
-const persuasionLevelHelp: Record<ConversationalPersuasionLevel, string> = {
-  low: 'Prioriza responder y deja respirar. Avanza sólo cuando la persona lo pide explícitamente.',
-  medium: 'Acompaña y guía con mano ligera, siempre resolviendo antes de proponer.',
-  high: 'Propone el siguiente paso con más iniciativa, pero sólo cuando hay señales suficientes y sin presión.'
-}
-
-// Lenguaje: el registro con el que habla. Fuerza la calibración del guion.
-const languageLevelTabs: Array<{ value: ConversationalLanguageLevel; label: string; description: string }> = [
-  { value: 'professional', label: 'Ejecutivo', description: 'Pulido, formal y cuidado, pero siempre humano. Para marcas premium y tratos serios.' },
-  { value: 'intermediate', label: 'Cómplice', description: 'Natural y cercano, ni acartonado ni vulgar. El punto dulce (recomendado).' },
-  { value: 'colloquial', label: 'Casual', description: 'Relajado y de chat, adaptándose a la persona sin forzar modismos.' }
-]
-const languageLevelHelp: Record<ConversationalLanguageLevel, string> = {
-  professional: 'Sube la pulcritud: frases completas, sin abreviaciones ni modismos corrientes.',
-  intermediate: 'Deja que el agente calibre el tono al interlocutor y al giro del negocio, como hoy.',
-  colloquial: 'Usa un ritmo informal y natural; los modismos sólo aparecen si la persona ya los usa.'
-}
-
-const agentIdentityModeOptions: Array<{ value: AgentIdentityMode; label: string; description: string }> = [
-  { value: 'business', label: 'Representante del negocio', description: 'Habla como equipo: nosotros te podemos ayudar.' },
-  { value: 'user', label: 'Persona del equipo', description: 'Se presenta con el nombre de un administrador o usuario.' },
-  { value: 'custom', label: 'Nombre personalizado', description: 'Escribes exactamente cómo debe decir que se llama.' },
-  { value: 'agent', label: 'Nombre del agente', description: 'Usa el nombre configurado arriba para presentarse.' }
-]
-
-const successActionLabels: Record<ConversationalSuccessAction, { label: string; description: string }> = {
-  book_appointment: { label: 'Que la cita quede agendada', description: 'El agendamiento se confirma sólo cuando ya hay día, hora y calendario reales.' },
-  ready_for_human: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' },
-  ready_to_buy: { label: 'Que se confirme el pago', description: 'La venta se confirma cuando el pago real queda validado.' },
-  send_goal_url: { label: 'Mandar enlace verificable', description: 'Manda un enlace conectado a Ristak y espera la confirmación real de la cita o el pago.' },
-  send_trigger_link: { label: 'Mandar enlace y detenerse', description: 'Manda un enlace y se detiene cuando lo tocan. Ejemplo: link de WhatsApp, formulario o página.' },
-  internal_signal: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' },
-  none: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' }
-}
-
-type GoalExecutionOption = {
-  value: ConversationalSuccessAction
-  label: string
-  description: string
-}
-
-const goalExecutionOptionsByObjective: Record<ConversationalObjective, GoalExecutionOption[]> = {
-  citas: [
-    { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta intención real, detiene el bot y avisa para que el equipo agende.' },
-    { value: 'book_appointment', label: 'El agente IA', description: 'La IA confirma un horario real y agenda la cita en el calendario.' },
-    { value: 'send_goal_url', label: 'La IA mandando un enlace', description: 'La IA manda un enlace conectado a Ristak y la meta se completa sólo cuando la cita queda confirmada.' }
-  ],
-  ventas: [
-    { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta intención de compra, detiene el bot y avisa para que el equipo cierre.' },
-    { value: 'ready_to_buy', label: 'El agente IA', description: 'La IA guía el pago y la venta se completa cuando el pago queda confirmado.' },
-    { value: 'send_goal_url', label: 'La IA mandando un enlace', description: 'La IA manda un enlace conectado a Ristak y la meta se completa sólo cuando el pago queda confirmado.' }
-  ],
-  datos: [
-    { value: 'ready_for_human', label: 'Un humano', description: 'La IA junta los datos y avisa para que el equipo continúe.' }
-  ],
-  filtrar: [
-    { value: 'ready_for_human', label: 'Un humano', description: 'La IA filtra la conversación y avisa cuando la persona ya vale atención.' }
-  ],
-  custom: [
-    { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta que el objetivo está listo y avisa al equipo.' },
-    { value: 'send_trigger_link', label: 'La IA mandando un enlace', description: 'La IA manda un enlace y detiene el bot cuando la persona lo abre.' }
-  ]
-}
-
-const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
 
 const attendedChatActionOptions = [
   {
@@ -182,32 +85,6 @@ const attendedChatActionOptions = [
 ] as const
 
 type AttendedChatActionValue = (typeof attendedChatActionOptions)[number]['value']
-
-const depositModeOptions: Array<{ value: AgentDepositMode; label: string }> = [
-  { value: 'fixed', label: 'Valor único' },
-  { value: 'range', label: 'Rango' }
-]
-
-const salesPaymentModeOptions: Array<{ value: AgentSalesPaymentMode; label: string }> = [
-  { value: 'full_payment', label: 'Venta completa' },
-  { value: 'deposit', label: 'Solicitar anticipo' }
-]
-
-const appointmentOverlapOptions: Array<{ value: BinaryChoice; label: string }> = [
-  { value: 'no', label: 'No, cuidar horarios únicos' },
-  { value: 'yes', label: 'Sí, permitir mismo horario' }
-]
-
-const completionModeOptions: Array<{ value: AgentCompletionMode; label: string }> = [
-  { value: 'notify_only', label: 'Pasar a humano y notificar' },
-  { value: 'assign_user', label: 'Asignar usuario y notificar' }
-]
-
-const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
-  { value: 'add_tag', label: 'Agregar etiqueta' },
-  { value: 'remove_tag', label: 'Quitar etiqueta' },
-  { value: 'set_custom_field', label: 'Cambiar campo personalizado' }
-]
 
 const responseDelayModeOptions: Array<{ value: AgentResponseDelayMode; label: string }> = [
   { value: 'none', label: 'No esperar' },
@@ -279,56 +156,15 @@ const defaultFollowUp: AgentFollowUpConfig = {
   strategy: defaultFollowUpStrategy
 }
 
-const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
-  appointments: {
-    owner: 'human',
-    calendarId: null,
-    url: '',
-    trackingParam: DEFAULT_GOAL_TRACKING_PARAM,
-    allowOverlappingAppointments: false
-  },
-  sales: {
-    owner: 'human',
-    productId: '',
-    priceId: '',
-    productName: '',
-    priceName: '',
-    amount: null,
-    currency: '',
-    paymentMode: 'full_payment',
-    url: '',
-    trackingParam: DEFAULT_GOAL_TRACKING_PARAM
-  },
-  data: {
-    afterComplete: 'human'
-  },
-  qualification: {
-    questions: '',
-    qualifies: '',
-    disqualifies: ''
-  },
-  triggerLink: {
-    triggerLinkId: '',
-    triggerLinkPublicId: '',
-    triggerLinkName: '',
-    triggerLinkUrl: ''
-  },
-  deposit: {
-    enabled: false,
-    mode: 'fixed',
-    amount: null,
-    minAmount: null,
-    maxAmount: null,
-    currency: '',
-    methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS },
-    bankTransferDetails: ''
-  },
-  completion: {
-    mode: 'notify_only',
-    userId: '',
-    userName: ''
-  },
-  attention: { ...DEFAULT_AGENT_ATTENTION }
+const defaultNativeDeposit = {
+  enabled: false,
+  mode: 'fixed' as const,
+  amount: null,
+  minAmount: null,
+  maxAmount: null,
+  currency: '',
+  methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS },
+  bankTransferDetails: ''
 }
 
 interface ProductPrice {
@@ -359,105 +195,12 @@ function getPriceId(price?: ProductPrice | null) {
   return price?.id || price?._id || price?.localId || ''
 }
 
-function getPrimaryPrice(product?: ProductItem | null) {
-  return Array.isArray(product?.prices) ? product.prices[0] || null : null
-}
-
 function getPriceAmount(price?: ProductPrice | null) {
   return Number(price?.amount ?? price?.price ?? 0) || 0
 }
 
 function normalizeCurrencyCode(value?: string | null) {
   return String(value || '').trim().toUpperCase().slice(0, 12)
-}
-
-function getWorkflowSalesPaymentMode(workflow: {
-  sales?: Partial<AgentGoalWorkflowConfig['sales']>
-  deposit?: Partial<AgentGoalWorkflowConfig['deposit']>
-}): AgentSalesPaymentMode {
-  const paymentMode = workflow.sales?.paymentMode
-  if (paymentMode === 'deposit' || paymentMode === 'full_payment') return paymentMode
-  return workflow.deposit?.enabled ? 'deposit' : 'full_payment'
-}
-
-function getSuccessActionInfo(
-  action: ConversationalSuccessAction,
-  objective: ConversationalObjective,
-  workflow?: AgentGoalWorkflowConfig
-) {
-  const salesPaymentMode = workflow ? getWorkflowSalesPaymentMode(workflow) : 'full_payment'
-  const requiresAppointmentDeposit = objective === 'citas' && Boolean(workflow?.deposit?.enabled)
-
-  if (action === 'send_trigger_link') {
-    return {
-      label: 'Mandar enlace y detenerse',
-      description: 'Manda un enlace y se detiene cuando la persona lo toca. Ejemplo: link de formulario o página.'
-    }
-  }
-  if (action === 'ready_for_human') {
-    if (objective === 'citas') {
-      return {
-        label: requiresAppointmentDeposit ? 'Que un humano valide el anticipo y confirme la cita' : 'Que un humano confirme la cita',
-        description: requiresAppointmentDeposit
-          ? 'La IA pide comprobante del anticipo y pasa el chat cuando el equipo debe validar y confirmar.'
-          : 'La IA detecta que ya quiere agendar y pasa el chat al equipo para concretar.'
-      }
-    }
-    if (objective === 'ventas') {
-      return {
-        label: salesPaymentMode === 'deposit' ? 'Que un humano valide el anticipo y cierre la venta' : 'Que un humano confirme la venta',
-        description: salesPaymentMode === 'deposit'
-          ? 'La IA pide comprobante del anticipo y pasa el chat para que el equipo valide y cierre.'
-          : 'La IA detecta intención de compra y pasa el chat al equipo para confirmar el pago.'
-      }
-    }
-    if (objective === 'datos') {
-      return {
-        label: 'Que el equipo reciba los datos',
-        description: 'La IA junta los datos clave y pasa el chat al equipo.'
-      }
-    }
-    if (objective === 'filtrar') {
-      return {
-        label: 'Que el equipo reciba al contacto filtrado',
-        description: 'La IA califica la conversación y pasa al equipo sólo lo que ya vale atender.'
-      }
-    }
-  }
-  if (action === 'book_appointment') {
-    return {
-      label: requiresAppointmentDeposit ? 'Que se valide el anticipo y la cita quede agendada' : 'Que la cita quede agendada',
-      description: requiresAppointmentDeposit
-        ? 'La IA sólo agenda después de recibir comprobante del anticipo y confirmar un horario real.'
-        : 'La IA confirma horario real y agenda la cita en el calendario.'
-    }
-  }
-  if (action === 'ready_to_buy' && objective === 'ventas') {
-    return {
-      label: salesPaymentMode === 'deposit' ? 'Que se valide el comprobante del anticipo' : 'Que se confirme el pago completo',
-      description: salesPaymentMode === 'deposit'
-        ? 'La venta avanza cuando el contacto manda comprobante y el monto coincide con el anticipo configurado.'
-        : 'La venta se concreta cuando el pago real queda confirmado o el comprobante coincide con el valor del producto.'
-    }
-  }
-  if (action !== 'send_goal_url') return successActionLabels[action] || successActionLabels.ready_for_human
-  if (objective === 'citas') {
-    return {
-      label: requiresAppointmentDeposit ? 'Que se valide el anticipo y el enlace confirme la cita' : 'Que el enlace confirme la cita',
-      description: requiresAppointmentDeposit
-        ? 'La IA manda el enlace sólo después del comprobante; la meta se confirma cuando el enlace devuelve la cita real.'
-        : 'La meta se confirma cuando el enlace devuelve la cita real.'
-    }
-  }
-  if (objective === 'ventas') {
-    return {
-      label: salesPaymentMode === 'deposit' ? 'Que se valide el anticipo y el enlace confirme la compra' : 'Que el enlace confirme el pago',
-      description: salesPaymentMode === 'deposit'
-        ? 'La IA manda el enlace sólo después del comprobante; la meta se confirma cuando llega la compra o pago real.'
-        : 'La meta se confirma cuando el enlace devuelve la compra o pago real.'
-    }
-  }
-  return successActionLabels.send_goal_url
 }
 
 function toMetricNumber(value: unknown) {
@@ -496,33 +239,6 @@ function getConversationalDashboardMetrics(
     skippedConversations: metrics?.skippedConversations ?? 0,
     pausedConversations: metrics?.pausedConversations ?? 0
   }
-}
-
-function objectiveCanConfigurePaymentRequirement(objective: ConversationalObjective) {
-  return objective === 'citas' || objective === 'ventas'
-}
-
-function getGoalExecutionOptions(objective: ConversationalObjective) {
-  return goalExecutionOptionsByObjective[objective] || goalExecutionOptionsByObjective.custom
-}
-
-function getSelectedGoalExecutionInfo(
-  action: ConversationalSuccessAction,
-  objective: ConversationalObjective,
-  workflow?: AgentGoalWorkflowConfig
-) {
-  const options = getGoalExecutionOptions(objective)
-  return options.find((option) => option.value === action) ||
-    options.find((option) => option.value === getObjectiveSuccessAction(objective, workflow || defaultGoalWorkflow)) ||
-    options[0]
-}
-
-function getGoalExecutionQuestion(objective: ConversationalObjective) {
-  if (objective === 'citas') return '¿Quién debería agendar la cita?'
-  if (objective === 'ventas') return '¿Quién debería cerrar el pago?'
-  if (objective === 'datos') return '¿Quién debería recibir los datos?'
-  if (objective === 'filtrar') return '¿Quién debería atender al contacto filtrado?'
-  return '¿Quién debería completar el objetivo?'
 }
 
 const systemReplyDeliveryDefaults: Pick<
@@ -924,18 +640,22 @@ function waitForTestReplyDelay(delayMs: number) {
 }
 
 function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInput {
-  const {
-    id: _id,
-    createdAt: _c,
-    updatedAt: _u,
-    systemClosingStrategy: _s,
-    closingStrategyMode: _m,
-    closingStrategyCustom: _custom,
-    capabilityManifest: _capabilityManifest,
-    migrationCapabilitiesConfig: _migrationCapabilitiesConfig,
-    ...rest
-  } = agent as ConversationalAgentDef & { systemClosingStrategy?: string }
-  return rest
+  return {
+    name: agent.name,
+    enabled: agent.enabled,
+    aiProvider: agent.aiProvider,
+    model: agent.model,
+    position: agent.position,
+    promptConfig: agent.promptConfig,
+    capabilitiesConfig: agent.capabilitiesConfig,
+    hideAttended: agent.hideAttended,
+    hideAttendedNotifications: agent.hideAttendedNotifications,
+    contactScope: agent.contactScope,
+    responseDelay: agent.responseDelay,
+    replyDelivery: agent.replyDelivery,
+    followUp: agent.followUp,
+    filters: agent.filters
+  }
 }
 
 function getAgentResponseDelay(agent: ConversationalAgentDef): AgentResponseDelayConfig {
@@ -961,53 +681,6 @@ function getAgentFollowUp(agent: ConversationalAgentDef): AgentFollowUpConfig {
       ...((followUp.second || {}) as Partial<AgentFollowUpStepConfig>)
     },
     strategy: String(followUp.strategy || defaultFollowUp.strategy)
-  }
-}
-
-function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowConfig {
-  const workflow = (agent.goalWorkflow || {}) as Partial<AgentGoalWorkflowConfig>
-  const sales = (workflow.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>
-  const deposit = (workflow.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>
-  return {
-    ...defaultGoalWorkflow,
-    ...workflow,
-    appointments: {
-      ...defaultGoalWorkflow.appointments,
-      ...((workflow.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
-    },
-    sales: {
-      ...defaultGoalWorkflow.sales,
-      ...sales,
-      paymentMode: getWorkflowSalesPaymentMode({ sales, deposit })
-    },
-    data: {
-      ...defaultGoalWorkflow.data,
-      ...((workflow.data || {}) as Partial<AgentGoalWorkflowConfig['data']>)
-    },
-    qualification: {
-      ...defaultGoalWorkflow.qualification,
-      ...((workflow.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
-    },
-    triggerLink: {
-      ...defaultGoalWorkflow.triggerLink,
-      ...((workflow.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
-    },
-    deposit: {
-      ...defaultGoalWorkflow.deposit,
-      ...deposit,
-      methods: {
-        ...DEFAULT_AGENT_DEPOSIT_METHODS,
-        ...((deposit.methods || {}) as Partial<AgentDepositMethodsConfig>)
-      }
-    },
-    completion: {
-      ...defaultGoalWorkflow.completion,
-      ...((workflow.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
-    },
-    attention: {
-      ...DEFAULT_AGENT_ATTENTION,
-      ...((workflow.attention || {}) as Partial<AgentAttentionConfig>)
-    }
   }
 }
 
@@ -1053,35 +726,6 @@ function getReplyDeliveryError(delivery: AgentReplyDeliveryConfig) {
   return ''
 }
 
-function getAgentIdentityError(agent: ConversationalAgentDef) {
-  if (agent.identityMode === 'custom' && !String(agent.identityCustomName || '').trim()) {
-    return 'Escribe el nombre visible del agente.'
-  }
-  if (agent.identityMode === 'user' && !String(agent.identityUserName || agent.identityUserId || '').trim()) {
-    return 'Elige la persona del equipo con la que se va a identificar.'
-  }
-  return ''
-}
-
-function getAgentCalendarError(agent: ConversationalAgentDef) {
-  if (agent.objective !== 'citas') return ''
-  const calendarId = agent.goalWorkflow?.appointments?.calendarId || agent.defaultCalendarId
-  return calendarId ? '' : 'Elige el calendario para las citas antes de guardar.'
-}
-
-function getAgentDepositError(agent: ConversationalAgentDef) {
-  const workflow = getAgentGoalWorkflow(agent)
-  const depositApplies = (agent.objective === 'citas' && workflow.deposit.enabled) ||
-    (agent.objective === 'ventas' && getWorkflowSalesPaymentMode(workflow) === 'deposit')
-  if (!depositApplies) return ''
-  const methods = workflow.deposit.methods || DEFAULT_AGENT_DEPOSIT_METHODS
-  if (!methods.paymentLink && !methods.bankTransfer) return 'Activa al menos un método para cobrar el anticipo.'
-  if (methods.bankTransfer && !String(workflow.deposit.bankTransferDetails || '').trim()) {
-    return 'Escribe los datos de transferencia para el anticipo.'
-  }
-  return ''
-}
-
 function isSafeConversationalUrl(value: string) {
   try {
     const parsed = new URL(String(value || '').trim())
@@ -1099,7 +743,7 @@ function getNativeCapabilityItemError(
   if (item.id === 'schedule_appointment' && !item.calendarId) return 'Selecciona el calendario de la capacidad para agendar.'
   if (item.id === 'collect_payment') {
     if (item.paymentMode === 'deposit' || item.deposit?.enabled) {
-      const deposit = item.deposit || defaultGoalWorkflow.deposit
+      const deposit = item.deposit || defaultNativeDeposit
       const validFixed = deposit.mode !== 'range' && Number(deposit.amount) > 0
       const validRange = deposit.mode === 'range' && Number(deposit.minAmount) > 0 && Number(deposit.maxAmount) >= Number(deposit.minAmount)
       if (!validFixed && !validRange) return 'Configura el monto verificable del anticipo.'
@@ -1128,7 +772,6 @@ function getNativeCapabilityItemError(
 }
 
 function getNativeCapabilityError(agent: ConversationalAgentDef) {
-  if (agent.runtimeMode !== 'tool_calling_v2') return ''
   const items = agent.capabilitiesConfig?.items || []
   for (const item of items) {
     const error = getNativeCapabilityItemError(item, items)
@@ -1138,73 +781,10 @@ function getNativeCapabilityError(agent: ConversationalAgentDef) {
 }
 
 function getAgentValidationError(agent: ConversationalAgentDef) {
-  return getAgentIdentityError(agent) ||
-    (agent.runtimeMode === 'tool_calling_v2'
-      ? (agent.enabled ? getNativeCapabilityError(agent) : '')
-      : (getAgentCalendarError(agent) || getAgentDepositError(agent))) ||
+  return (agent.enabled ? getNativeCapabilityError(agent) : '') ||
     getResponseDelayError(getAgentResponseDelay(agent)) ||
     getReplyDeliveryError(getAgentReplyDelivery(agent)) ||
     getFollowUpError(getAgentFollowUp(agent))
-}
-
-function mergeGoalWorkflow(
-  base: AgentGoalWorkflowConfig,
-  patch: Partial<AgentGoalWorkflowConfig>
-): AgentGoalWorkflowConfig {
-  return {
-    ...base,
-    ...patch,
-    appointments: {
-      ...base.appointments,
-      ...((patch.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
-    },
-    sales: {
-      ...base.sales,
-      ...((patch.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
-    },
-    data: {
-      ...base.data,
-      ...((patch.data || {}) as Partial<AgentGoalWorkflowConfig['data']>)
-    },
-    qualification: {
-      ...base.qualification,
-      ...((patch.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
-    },
-    triggerLink: {
-      ...base.triggerLink,
-      ...((patch.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
-    },
-    deposit: {
-      ...base.deposit,
-      ...((patch.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>),
-      methods: {
-        ...DEFAULT_AGENT_DEPOSIT_METHODS,
-        ...((base.deposit.methods || {}) as Partial<AgentDepositMethodsConfig>),
-        ...((patch.deposit?.methods || {}) as Partial<AgentDepositMethodsConfig>)
-      }
-    },
-    completion: {
-      ...base.completion,
-      ...((patch.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
-    },
-    attention: {
-      ...DEFAULT_AGENT_ATTENTION,
-      ...((base.attention || {}) as Partial<AgentAttentionConfig>),
-      ...((patch.attention || {}) as Partial<AgentAttentionConfig>)
-    }
-  }
-}
-
-function getObjectiveSuccessAction(objective: ConversationalObjective, workflow: AgentGoalWorkflowConfig): ConversationalSuccessAction {
-  if (objective === 'citas') {
-    if (workflow.appointments.owner === 'ai') return 'book_appointment'
-    if (workflow.appointments.owner === 'url') return 'send_goal_url'
-  }
-  if (objective === 'ventas') {
-    if (workflow.sales.owner === 'ai') return 'ready_to_buy'
-    if (workflow.sales.owner === 'url') return 'send_goal_url'
-  }
-  return 'ready_for_human'
 }
 
 function getAttendedChatActionValue(agent: Pick<ConversationalAgentDef, 'hideAttended' | 'hideAttendedNotifications'>): AttendedChatActionValue {
@@ -1258,78 +838,9 @@ function getFollowUpSummary(followUp: AgentFollowUpConfig) {
   return parts.join(' · ')
 }
 
-function isBusinessPromptReady(status?: ConversationalBusinessPromptStatus | null) {
-  return Boolean(status?.ready)
-}
-
-function getBusinessPromptStatusText(status?: ConversationalBusinessPromptStatus | null) {
-  if (status?.ready) {
-    const business = [status.businessName, status.industry].filter(Boolean).join(' · ')
-    return business ? `Adaptada a ${business}` : 'Prompt interno listo'
-  }
-  if (!status || status.status === 'empty') return 'Falta describir el negocio'
-  if (status.status === 'needs_more_context') return 'Falta más contexto del negocio'
-  if (status.status === 'needs_openai') return 'Falta preparar el prompt con OpenAI'
-  if (status.status === 'failed') return 'No se pudo preparar el prompt'
-  return 'Preparando prompt interno'
-}
-
-function getBusinessPromptBlockerText(status?: ConversationalBusinessPromptStatus | null) {
-  if (status?.ready) return ''
-  if (status?.extractionError) return status.extractionError
-  if (!status || status.status === 'empty') {
-    return 'Antes de publicar agentes, describe el negocio en Ristak AI para que Ristak parametrice el guión de fábrica.'
-  }
-  if (status.status === 'needs_more_context') {
-    return 'Agrega más detalle del negocio: qué vende, a quién atiende, cómo opera y qué debe evitar.'
-  }
-  if (status.status === 'needs_openai') {
-    return 'Conecta OpenAI y guarda la descripción del negocio para generar el prompt interno.'
-  }
-  if (status.status === 'failed') {
-    return 'Vuelve a guardar la descripción del negocio para regenerar la estrategia interna.'
-  }
-  return 'Ristak está preparando el prompt interno. Espera a que quede listo antes de publicar.'
-}
-
 function getTeamUserDisplayName(user?: TeamUser | null) {
   if (!user) return ''
   return user.fullName || user.email || user.phone || user.username || `Usuario ${user.id}`
-}
-
-function getAgentIdentityHelper({
-  mode,
-  agentName,
-  businessName,
-  selectedUserName,
-  customName,
-  teamUsersLoading,
-  hasTeamUsers
-}: {
-  mode: AgentIdentityMode
-  agentName: string
-  businessName: string
-  selectedUserName: string
-  customName: string
-  teamUsersLoading: boolean
-  hasTeamUsers: boolean
-}) {
-  if (mode === 'business') {
-    return `Se presenta como parte de ${businessName || 'el negocio'} y habla en plural cuando corresponda: nosotros te podemos ayudar.`
-  }
-  if (mode === 'user') {
-    if (teamUsersLoading) return 'Cargando usuarios activos para elegir con qué nombre se presenta.'
-    if (!hasTeamUsers) return 'No hay usuarios activos disponibles. Usa nombre personalizado o nombre del agente.'
-    return selectedUserName
-      ? `Se presenta como ${selectedUserName} y habla en primera persona.`
-      : 'Elige la persona del equipo con la que se va a identificar.'
-  }
-  if (mode === 'custom') {
-    return customName
-      ? `Se presenta como ${customName} y responde en primera persona si le preguntan quién es.`
-      : 'Escribe el nombre visible que debe usar. Ejemplo: Marcos, Raúl o Robot 34.'
-  }
-  return `Se presenta como ${agentName || 'el nombre del agente'} y usa ese nombre si le preguntan quién es.`
 }
 
 interface QuestionSelectOption<T extends string> {
@@ -1419,10 +930,7 @@ interface AgentCardProps {
   calendars: Calendar[]
   products: ProductItem[]
   productsLoading: boolean
-  triggerLinks: TriggerLink[]
-  triggerLinksLoading: boolean
   filterOptions?: AgentFilterOptions
-  businessPromptStatus?: ConversationalBusinessPromptStatus | null
   onConnectProvider: (providerId: ConversationalAIProviderId) => void
   onBack: () => void
   onChange: (patch: ConversationalAgentDefInput) => void
@@ -1475,7 +983,6 @@ function buildNativeCapabilityFromAgent(
   calendars: Calendar[],
   accountCurrency: string
 ): ConversationalCapabilityItem {
-  const workflow = getAgentGoalWorkflow(agent)
   const existing = getNativeCapability(agent.capabilitiesConfig, id)
   if (existing) return { ...existing, enabled: true } as ConversationalCapabilityItem
 
@@ -1483,7 +990,7 @@ function buildNativeCapabilityFromAgent(
     return {
       id,
       enabled: true,
-      calendarId: workflow.appointments.calendarId || agent.defaultCalendarId || (calendars.length === 1 ? calendars[0].id : ''),
+      calendarId: calendars.length === 1 ? calendars[0].id : '',
       allowOverlaps: false
     }
   }
@@ -1491,45 +998,42 @@ function buildNativeCapabilityFromAgent(
     return {
       id,
       enabled: true,
-      productId: workflow.sales.productId || '',
-      priceId: workflow.sales.priceId || '',
-      paymentMode: agent.objective === 'citas' && workflow.deposit.enabled
-        ? 'deposit'
-        : getWorkflowSalesPaymentMode(workflow),
-      amount: workflow.sales.amount,
+      productId: '',
+      priceId: '',
+      paymentMode: 'full_payment',
+      amount: null,
       currency: accountCurrency,
       deposit: {
-        ...workflow.deposit,
+        ...defaultNativeDeposit,
         currency: accountCurrency,
-        methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS, ...(workflow.deposit.methods || {}) }
+        methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS }
       }
     }
   }
   if (id === 'send_link') {
-    const target = agent.objective === 'ventas' ? workflow.sales : workflow.appointments
     return {
       id,
       enabled: true,
       linkKind: 'verified_goal',
       triggerLinkId: '',
-      url: target.url || workflow.triggerLink.triggerLinkUrl || '',
-      trackingParam: target.trackingParam || 'ristak_goal_id'
+      url: '',
+      trackingParam: 'ristak_goal_id'
     }
   }
   if (id === 'handoff_human') {
     return {
       id,
       enabled: true,
-      rules: agent.handoffRules || '',
-      userId: workflow.completion.userId || '',
-      userName: workflow.completion.userName || '',
-      pastClientsToHuman: Boolean(workflow.attention?.pastClientsToHuman)
+      rules: '',
+      userId: '',
+      userName: '',
+      pastClientsToHuman: false
     }
   }
   return {
     id: 'custom_goal',
     enabled: true,
-    description: agent.customObjective || '',
+    description: '',
     completion: 'handoff'
   }
 }
@@ -1578,32 +1082,6 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       ? buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency)
       : ({ ...(current || buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency)), enabled: false } as ConversationalCapabilityItem)
     updateCapability(next, { pause: true })
-  }
-
-  const migrateToV2 = () => {
-    onChange({
-      runtimeMode: 'tool_calling_v2',
-      enabled: false,
-      promptConfig: agent.promptConfig || {
-        ...DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
-        editableText: String(agent.extraInstructions || '').trim() || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.editableText
-      },
-      capabilitiesConfig: agent.migrationCapabilitiesConfig || capabilities
-    })
-    showToast('info', 'Motor nuevo preparado', 'El agente quedó en pausa. Pruébalo abajo y publícalo cuando te guste cómo responde.')
-  }
-
-  if (agent.runtimeMode !== 'tool_calling_v2') {
-    return (
-      <div className={styles.nativeMigrationNotice}>
-        <div className={styles.nativeMigrationIcon}><LockKeyhole size={20} /></div>
-        <div className={styles.nativeMigrationCopy}>
-          <strong>Este agente sigue usando el motor anterior</strong>
-          <span>Prepáralo con conversación directa y herramientas nativas. Se pausará para que lo pruebes antes de reemplazar lo que hoy está atendiendo.</span>
-        </div>
-        <Button variant="secondary" onClick={migrateToV2}>Preparar motor nuevo</Button>
-      </div>
-    )
   }
 
   const scheduleCapability = getNativeCapability(capabilities, 'schedule_appointment')
@@ -1933,17 +1411,6 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
           <Badge variant="info">Flujo directo</Badge>
           <span>Una sola IA conversa y usa herramientas nativas.</span>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onChange({
-            runtimeMode: 'legacy_v1',
-            enabled: false,
-            extraInstructions: agent.promptConfig?.editableText ?? agent.extraInstructions
-          })}
-        >
-          Volver al motor anterior
-        </Button>
       </div>
 
       <div className={styles.agentSection}>
@@ -2028,7 +1495,7 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
   return aiProviders.find((provider) => provider.id === providerId) || null
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, triggerLinks, triggerLinksLoading, filterOptions, businessPromptStatus, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, filterOptions, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
   const { showToast } = useNotification()
   const { labels } = useLabels()
   const leadLowerLabel = formatCrmLabelLower(labels.lead, DEFAULT_CRM_LABELS.lead)
@@ -2049,10 +1516,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testVoiceBars, setTestVoiceBars] = useState(() => createTestVoiceBars())
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([])
   const [teamUsersLoading, setTeamUsersLoading] = useState(false)
-  const [guidanceOpen, setGuidanceOpen] = useState({
-    requiredData: false,
-    handoffRules: false
-  })
   const testComposerInputRef = useRef<HTMLInputElement | null>(null)
   const testPhotoInputRef = useRef<HTMLInputElement | null>(null)
   const testFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -2076,13 +1539,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   useEffect(() => () => {
     cleanupTestVoiceRecorder()
   }, [])
-
-  useEffect(() => {
-    setGuidanceOpen({
-      requiredData: false,
-      handoffRules: false
-    })
-  }, [agent.id])
 
   useEffect(() => {
     testPracticeExpiredRef.current = testPracticeExpired
@@ -2111,36 +1567,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     }
   }, [])
 
-  const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
-  const localizedGoalExecutionOptionsByObjective = useMemo<Record<ConversationalObjective, GoalExecutionOption[]>>(() => ({
-    ...goalExecutionOptionsByObjective,
-    filtrar: goalExecutionOptionsByObjective.filtrar.map((option) => (
-      option.value === 'ready_for_human'
-        ? {
-            ...option,
-            label: `Que el equipo reciba al ${leadLowerLabel} filtrado`,
-            description: `La IA califica la conversación y pasa al equipo sólo lo que ya vale atender.`
-          }
-        : option
-    ))
-  }), [leadLowerLabel])
-  const getLocalizedGoalExecutionOptions = useCallback((objective: ConversationalObjective) => (
-    localizedGoalExecutionOptionsByObjective[objective] || localizedGoalExecutionOptionsByObjective.custom
-  ), [localizedGoalExecutionOptionsByObjective])
-  const getLocalizedSelectedGoalExecutionInfo = useCallback((
-    action: ConversationalSuccessAction,
-    objective: ConversationalObjective,
-    workflow?: AgentGoalWorkflowConfig
-  ) => {
-    const options = getLocalizedGoalExecutionOptions(objective)
-    return options.find((option) => option.value === action) ||
-      options.find((option) => option.value === getObjectiveSuccessAction(objective, workflow || defaultGoalWorkflow)) ||
-      options[0]
-  }, [getLocalizedGoalExecutionOptions])
-  const getLocalizedGoalExecutionQuestion = useCallback((objective: ConversationalObjective) => {
-    if (objective === 'filtrar') return `¿Quién debería atender al ${leadLowerLabel} filtrado?`
-    return getGoalExecutionQuestion(objective)
-  }, [leadLowerLabel])
   const selectedProviderId = getKnownConversationalAIProvider(agent.aiProvider)
   const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
   const selectedProviderStatus = getProviderStatus(aiProviders, selectedProviderId)
@@ -2158,14 +1584,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }))
   const selectedAttendedChatActionValue = getAttendedChatActionValue(agent)
   const selectedAttendedChatAction = attendedChatActionOptions.find((option) => option.value === selectedAttendedChatActionValue) || attendedChatActionOptions[0]
-  const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
-  const promptStatusText = getBusinessPromptStatusText(businessPromptStatus)
-  const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)
-  const legacyBusinessPromptBlocked = agent.runtimeMode !== 'tool_calling_v2' && !businessPromptReady
   const publishValidationError = getAgentValidationError({ ...agent, enabled: true })
   const entryCount = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
   const exitCount = agent.filters.exit.groups.reduce((total, group) => total + group.conditions.length, 0)
-  const customFieldOptions = filterOptions?.customFields || []
   const responseDelay = getAgentResponseDelay(agent)
   const responseDelaySummary = getResponseDelaySummary(responseDelay)
   const replyDelivery = getAgentReplyDelivery(agent)
@@ -2175,80 +1596,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const responseDelayError = getResponseDelayError(responseDelay)
   const replyDeliveryError = getReplyDeliveryError(replyDelivery)
   const followUpError = getFollowUpError(followUp)
-  const identityError = getAgentIdentityError(agent)
-  const requiredDataConfigOpen = guidanceOpen.requiredData || Boolean(String(agent.requiredData || '').trim())
-  const handoffRulesConfigOpen = guidanceOpen.handoffRules || Boolean(String(agent.handoffRules || '').trim())
-  const goalWorkflow = getAgentGoalWorkflow(agent)
-  const deposit = goalWorkflow.deposit
-  const completion = goalWorkflow.completion
-  const goalExecutionOptions = getLocalizedGoalExecutionOptions(agent.objective)
-  const selectedGoalExecutionInfo = getLocalizedSelectedGoalExecutionInfo(agent.successAction, agent.objective, goalWorkflow)
-  const selectedGoalExecutionAction = selectedGoalExecutionInfo.value
-  const paymentRequirementConfigAvailable = objectiveCanConfigurePaymentRequirement(agent.objective)
-  const showAiAppointmentSettings = agent.objective === 'citas' && selectedGoalExecutionAction === 'book_appointment'
-  const showAiSalesSettings = agent.objective === 'ventas' && selectedGoalExecutionAction === 'ready_to_buy'
-  const showPaymentRequirementSettings = paymentRequirementConfigAvailable && (showAiAppointmentSettings || showAiSalesSettings)
-  const showGoalUrlSettings = selectedGoalExecutionAction === 'send_goal_url' && (agent.objective === 'citas' || agent.objective === 'ventas')
-  const showTriggerLinkSettings = selectedGoalExecutionAction === 'send_trigger_link'
-  const showCompletionSettings = selectedGoalExecutionAction === 'book_appointment' ||
-    selectedGoalExecutionAction === 'ready_to_buy' ||
-    selectedGoalExecutionAction === 'send_goal_url' ||
-    selectedGoalExecutionAction === 'send_trigger_link'
-  const completionMode = completion.mode === 'assign_user' ? 'assign_user' : 'notify_only'
-  const selectedCompletionUser = teamUsers.find((user) => user.id === completion.userId) || null
-  const teamUserOptions = [
-    { value: '', label: teamUsersLoading ? 'Cargando usuarios...' : 'Elegir usuario' },
-    ...teamUsers.map((user) => ({
-      value: user.id,
-      label: getTeamUserDisplayName(user)
-    }))
-  ]
-  const selectedIdentityMode: AgentIdentityMode = agent.identityMode || 'business'
-  const selectedIdentityUser = teamUsers.find((user) => user.id === agent.identityUserId) || null
-  const selectedIdentityUserName = getTeamUserDisplayName(selectedIdentityUser) || agent.identityUserName || ''
-  const businessIdentityName = businessPromptStatus?.businessName || 'el negocio'
-  const identityHelper = getAgentIdentityHelper({
-    mode: selectedIdentityMode,
-    agentName: agent.name,
-    businessName: businessIdentityName,
-    selectedUserName: selectedIdentityUserName,
-    customName: agent.identityCustomName || '',
-    teamUsersLoading,
-    hasTeamUsers: teamUsers.length > 0
-  })
-  const goalUrlConfig = agent.objective === 'ventas' ? goalWorkflow.sales : goalWorkflow.appointments
-  const goalUrlLabel = agent.objective === 'ventas' ? 'Enlace del pedido' : 'Enlace del calendario'
-  const goalUrlPlaceholder = agent.objective === 'ventas' ? 'https://tutienda.com/checkout' : 'https://calendly.com/tu-negocio/cita'
-  const selectedGoalCalendarId = goalWorkflow.appointments.calendarId || agent.defaultCalendarId || ''
-  const selectedSalesProduct = products.find((product) => getProductId(product) === goalWorkflow.sales.productId) || null
-  const selectedSalesPrice = selectedSalesProduct
-    ? (selectedSalesProduct.prices || []).find((price) => getPriceId(price) === goalWorkflow.sales.priceId) || getPrimaryPrice(selectedSalesProduct)
-    : null
   const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig || detectedLocaleDefaults.currency)
-  const depositCurrency = accountCurrency
-  const salesPaymentMode = getWorkflowSalesPaymentMode(goalWorkflow)
-  const depositEnabledForForm = agent.objective === 'ventas' ? salesPaymentMode === 'deposit' : deposit.enabled
-  const depositHelper = agent.objective === 'ventas'
-    ? 'El agente sólo avanzará cuando reciba comprobante y el pago solicitado coincida con este valor. Se usa la moneda configurada en la cuenta.'
-    : 'El agente sólo avanzará cuando reciba comprobante y el anticipo coincida con este valor. Se usa la moneda configurada en la cuenta.'
-  const selectedTriggerLink = triggerLinks.find((link) => link.id === goalWorkflow.triggerLink.triggerLinkId) || null
-  const triggerLinkOptions = [
-    { value: '', label: triggerLinksLoading ? 'Cargando enlaces...' : 'Elegir enlace' },
-    ...triggerLinks.map((link) => ({ value: link.id, label: link.name }))
-  ]
-  const productOptions = [
-    { value: '', label: productsLoading ? 'Cargando productos...' : 'Elegir producto del sistema' },
-    ...products.map((product) => ({ value: getProductId(product), label: product.name }))
-  ]
-  const priceOptions = selectedSalesProduct
-    ? [
-        { value: '', label: 'Precio base' },
-        ...(selectedSalesProduct.prices || []).map((price) => ({
-          value: getPriceId(price),
-          label: `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), accountCurrency)}`
-        }))
-      ]
-    : [{ value: '', label: 'Selecciona producto primero' }]
   const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
   const hasTestConversation = testPracticeExpired || testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
 
@@ -2282,10 +1630,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         internal: message.internal,
         time: message.internal ? undefined : '11:48'
       }))
-
-  const updateExtra = (index: number, patch: Partial<AgentSuccessExtra>) => {
-    onChange({ successExtras: agent.successExtras.map((extra, i) => (i === index ? { ...extra, ...patch } : extra)) })
-  }
 
   const updateResponseDelay = (patch: Partial<AgentResponseDelayConfig>) => {
     const next = { ...responseDelay, ...patch }
@@ -2331,68 +1675,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     updateFollowUp({ [stepKey]: nextStep } as Partial<AgentFollowUpConfig>)
   }
 
-  const updateGoalWorkflow = (patch: Partial<AgentGoalWorkflowConfig>) => {
-    onChange({ goalWorkflow: mergeGoalWorkflow(goalWorkflow, patch) })
-  }
-
-  const updateDeposit = (patch: Partial<AgentGoalWorkflowConfig['deposit']>) => {
-    const nextDeposit = { ...goalWorkflow.deposit, ...patch }
-    if ((nextDeposit.enabled || patch.enabled) && !normalizeCurrencyCode(nextDeposit.currency)) {
-      nextDeposit.currency = depositCurrency || accountCurrency
-    }
-    updateGoalWorkflow({ deposit: nextDeposit })
-  }
-
-  const depositMethods = deposit.methods || DEFAULT_AGENT_DEPOSIT_METHODS
-  const updateDepositMethods = (patch: Partial<AgentDepositMethodsConfig>) => {
-    updateDeposit({ methods: { ...depositMethods, ...patch } })
-  }
-
-  const updateSalesPaymentMode = (paymentMode: AgentSalesPaymentMode) => {
-    const needsDeposit = paymentMode === 'deposit'
-    updateGoalWorkflow({
-      sales: { ...goalWorkflow.sales, paymentMode },
-      deposit: {
-        ...goalWorkflow.deposit,
-        enabled: needsDeposit,
-        currency: needsDeposit
-          ? accountCurrency
-          : goalWorkflow.deposit.currency
-      }
-    })
-  }
-
-  const updateCompletion = (patch: Partial<AgentGoalWorkflowConfig['completion']>) => {
-    updateGoalWorkflow({ completion: { ...goalWorkflow.completion, ...patch } })
-  }
-
-  const updateIdentityMode = (identityMode: AgentIdentityMode) => {
-    if (identityMode === 'user') {
-      const user = selectedIdentityUser || teamUsers[0] || null
-      onChange({
-        identityMode,
-        identityUserId: user?.id || '',
-        identityUserName: getTeamUserDisplayName(user),
-        identityCustomName: ''
-      })
-      return
-    }
-
-    onChange({
-      identityMode,
-      identityUserId: '',
-      identityUserName: '',
-      identityCustomName: identityMode === 'custom' ? agent.identityCustomName || '' : ''
-    })
-  }
-
-  const getTriggerLinkWorkflow = (triggerLink?: TriggerLink | null): AgentGoalWorkflowConfig['triggerLink'] => ({
-    triggerLinkId: triggerLink?.id || '',
-    triggerLinkPublicId: triggerLink?.publicId || '',
-    triggerLinkName: triggerLink?.name || '',
-    triggerLinkUrl: triggerLink?.publicUrl || ''
-  })
-
   const handleProviderSelect = (providerId: ConversationalAIProviderId) => {
     const status = getProviderStatus(aiProviders, providerId)
     if (!status?.connected) {
@@ -2408,104 +1690,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         currentProvider === providerId ? agent.model : getDefaultConversationalModel(providerId)
       )
     })
-  }
-
-  const handleObjectiveChange = (objective: ConversationalObjective) => {
-    const options = getLocalizedGoalExecutionOptions(objective)
-    const objectiveAction = getObjectiveSuccessAction(objective, goalWorkflow)
-    const nextAction = options.some((option) => option.value === agent.successAction)
-      ? agent.successAction
-      : options.some((option) => option.value === objectiveAction)
-        ? objectiveAction
-        : options[0]?.value || 'ready_for_human'
-    onChange({
-      objective,
-      ...buildGoalExecutionPatch(nextAction, objective)
-    })
-  }
-
-  const buildGoalExecutionPatch = (
-    successAction: ConversationalSuccessAction,
-    objective: ConversationalObjective = agent.objective
-  ): ConversationalAgentDefInput => {
-    const patch: ConversationalAgentDefInput = { successAction }
-    let nextGoalWorkflow: AgentGoalWorkflowConfig | null = null
-    if (objective === 'citas') {
-      const owner = successAction === 'book_appointment' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
-      // El calendario lo elige el usuario explícitamente: aquí solo se conserva el ya elegido.
-      const calendarId = goalWorkflow.appointments.calendarId || agent.defaultCalendarId || null
-      nextGoalWorkflow = mergeGoalWorkflow(goalWorkflow, {
-        appointments: { ...goalWorkflow.appointments, owner, calendarId },
-        ...(owner === 'ai' ? {} : { deposit: { ...goalWorkflow.deposit, enabled: false } })
-      })
-      if (owner === 'ai') patch.defaultCalendarId = calendarId
-    }
-    if (objective === 'ventas') {
-      const owner = successAction === 'ready_to_buy' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
-      nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
-        sales: {
-          ...goalWorkflow.sales,
-          owner,
-          paymentMode: owner === 'ai' ? goalWorkflow.sales.paymentMode : 'full_payment'
-        },
-        ...(owner === 'ai' ? {} : { deposit: { ...goalWorkflow.deposit, enabled: false } })
-      })
-    }
-    if (successAction === 'send_trigger_link') {
-      nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
-        triggerLink: getTriggerLinkWorkflow(selectedTriggerLink || triggerLinks[0] || null)
-      })
-    }
-    if (nextGoalWorkflow) patch.goalWorkflow = nextGoalWorkflow
-    return patch
-  }
-
-  const handleGoalExecutionChange = (successAction: ConversationalSuccessAction) => {
-    const patch = buildGoalExecutionPatch(successAction)
-    onChange(patch)
-  }
-
-  const updateGoalUrl = (patch: { url?: string; trackingParam?: string }) => {
-    if (agent.objective === 'ventas') {
-      updateGoalWorkflow({ sales: { ...goalWorkflow.sales, ...patch } })
-      return
-    }
-    updateGoalWorkflow({ appointments: { ...goalWorkflow.appointments, ...patch } })
-  }
-
-  const updateSalesProduct = (productId: string) => {
-    const product = products.find((item) => getProductId(item) === productId) || null
-    const price = getPrimaryPrice(product)
-    updateGoalWorkflow({
-      sales: {
-        ...goalWorkflow.sales,
-        productId: product ? getProductId(product) : '',
-        priceId: getPriceId(price),
-        productName: product?.name || '',
-        priceName: price?.name || '',
-        amount: price ? getPriceAmount(price) : null,
-        currency: accountCurrency
-      }
-    })
-  }
-
-  const updateSalesPrice = (priceId: string) => {
-    if (!selectedSalesProduct) return
-    const price = (selectedSalesProduct.prices || []).find((item) => getPriceId(item) === priceId) || getPrimaryPrice(selectedSalesProduct)
-    updateGoalWorkflow({
-      sales: {
-        ...goalWorkflow.sales,
-        priceId: getPriceId(price),
-        priceName: price?.name || '',
-        amount: price ? getPriceAmount(price) : null,
-        currency: accountCurrency
-      }
-    })
-  }
-
-  const updateTriggerLinkGoal = (triggerLinkId: string) => {
-    const triggerLink = triggerLinks.find((link) => link.id === triggerLinkId) || null
-    updateGoalWorkflow({ triggerLink: getTriggerLinkWorkflow(triggerLink) })
   }
 
   function clearTestVoiceTimer() {
@@ -2700,9 +1884,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           if (testPracticeExpiredRef.current) return
           setTestMessages((current) => [...current, { role: 'assistant', content: visibleReplies[index] }])
         }
-      } else if (result.suppressed) {
+      } else {
         if (testPracticeExpiredRef.current) return
-        setTestMessages((current) => [...current, { role: 'assistant', content: '⚙︎ El agente decidió no responder (acción interna o silencio).', internal: true }])
+        setTestMessages((current) => [...current, { role: 'assistant', content: '⚠︎ La prueba no devolvió una respuesta válida. Vuelve a intentarlo.', internal: true }])
       }
     } catch (error: any) {
       if (!testPracticeExpiredRef.current) {
@@ -2996,328 +2180,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     void clearTestMediaCache().catch(() => undefined)
   }
 
-  const appointmentSchedulingSettings = agent.objective === 'citas' ? (
-    <>
-      <div className={styles.field}>
-        <label className={styles.label}>Calendario</label>
-        <CustomSelect
-          value={selectedGoalCalendarId}
-          onChange={(event) => {
-            const calendarId = event.target.value || null
-            onChange({
-              defaultCalendarId: calendarId,
-              goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
-                appointments: { ...goalWorkflow.appointments, calendarId }
-              })
-            })
-          }}
-          placeholder={calendars.length === 0 ? 'No hay calendarios activos' : 'Elegir calendario'}
-          portal
-          disabled={calendars.length === 0}
-        >
-          {calendars.map((calendar) => (
-            <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
-          ))}
-        </CustomSelect>
-        <p className={styles.helper}>El agente ofrecerá los espacios disponibles de este calendario.</p>
-      </div>
-
-      {showAiAppointmentSettings && (
-        <div className={styles.field}>
-          <label className={styles.label}>Empalme de citas</label>
-          <CustomSelect
-            value={goalWorkflow.appointments.allowOverlappingAppointments ? 'yes' : 'no'}
-            onChange={(event) => {
-              updateGoalWorkflow({
-                appointments: {
-                  ...goalWorkflow.appointments,
-                  owner: 'ai',
-                  allowOverlappingAppointments: event.target.value === 'yes'
-                }
-              })
-            }}
-            portal
-          >
-            {appointmentOverlapOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </CustomSelect>
-          <p className={styles.helper}>
-            Si está apagado, la IA sólo ofrece horarios sin otra cita. Si está prendido, puede agendar varias personas en el mismo horario.
-          </p>
-        </div>
-      )}
-    </>
-  ) : null
-
-  const paymentRequirementSettings = showPaymentRequirementSettings ? (
-    <div className={styles.depositConfigBlock}>
-      <div className={styles.inlineFields}>
-        {agent.objective === 'ventas' ? (
-          <div className={styles.field}>
-            <label className={styles.label}>Tipo de venta</label>
-            <CustomSelect
-              value={salesPaymentMode}
-              onChange={(event) => updateSalesPaymentMode(event.target.value as AgentSalesPaymentMode)}
-              portal
-            >
-              {salesPaymentModeOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </CustomSelect>
-          </div>
-        ) : (
-          <div className={styles.field}>
-            <label className={styles.label}>Pedir anticipo</label>
-            <CustomSelect
-              value={deposit.enabled ? 'yes' : 'no'}
-              onChange={(event) => updateDeposit({ enabled: event.target.value === 'yes' })}
-              portal
-            >
-              {binaryChoiceOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </CustomSelect>
-          </div>
-        )}
-
-        {depositEnabledForForm && (
-          <div className={styles.field}>
-            <label className={styles.label}>Tipo de valor</label>
-            <CustomSelect
-              value={deposit.mode}
-              onChange={(event) => updateDeposit({ mode: event.target.value as AgentDepositMode })}
-              portal
-            >
-              {depositModeOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </CustomSelect>
-          </div>
-        )}
-      </div>
-
-      {depositEnabledForForm && (
-        <>
-          <div className={styles.depositAmountFields}>
-            {deposit.mode === 'range' ? (
-              <>
-                <div className={styles.field}>
-                  <label className={styles.label}>Desde</label>
-                  <div className={styles.moneyInputWrap}>
-                    <span className={styles.moneyPrefix}>$</span>
-                    <NumberInput
-                      className={`${styles.input} ${styles.moneyInput}`}
-                      min={0}
-                      step={50}
-                      value={deposit.minAmount ?? ''}
-                      onValueChange={(value) => updateDeposit({ minAmount: value })}
-                    />
-                  </div>
-                </div>
-                <div className={styles.field}>
-                  <label className={styles.label}>Hasta</label>
-                  <div className={styles.moneyInputWrap}>
-                    <span className={styles.moneyPrefix}>$</span>
-                    <NumberInput
-                      className={`${styles.input} ${styles.moneyInput}`}
-                      min={0}
-                      step={50}
-                      value={deposit.maxAmount ?? ''}
-                      onValueChange={(value) => updateDeposit({ maxAmount: value })}
-                    />
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className={styles.field}>
-                <label className={styles.label}>Monto</label>
-                <div className={styles.moneyInputWrap}>
-                  <span className={styles.moneyPrefix}>$</span>
-                  <NumberInput
-                    className={`${styles.input} ${styles.moneyInput}`}
-                    min={0}
-                    step={50}
-                    value={deposit.amount ?? ''}
-                    onValueChange={(value) => updateDeposit({ amount: value })}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-          <p className={styles.helper}>
-            {depositHelper}
-          </p>
-
-          <div className={styles.field}>
-            <label className={styles.label}>Cómo puede pagar el anticipo</label>
-            <div className={styles.depositMethodList}>
-              <div className={styles.depositMethodRow}>
-                <Switch
-                  checked={depositMethods.paymentLink}
-                  onChange={(next) => updateDepositMethods({ paymentLink: next })}
-                  aria-label="Cobrar el anticipo con link de pago"
-                />
-                <span>Link de pago</span>
-              </div>
-              <div className={styles.depositMethodRow}>
-                <Switch
-                  checked={depositMethods.bankTransfer}
-                  onChange={(next) => updateDepositMethods({ bankTransfer: next })}
-                  aria-label="Cobrar el anticipo por transferencia bancaria"
-                />
-                <span>Transferencia bancaria</span>
-              </div>
-            </div>
-            {!depositMethods.paymentLink && !depositMethods.bankTransfer && (
-              <p className={`${styles.helper} ${styles.helperError}`}>
-                Activa al menos un método para cobrar el anticipo.
-              </p>
-            )}
-          </div>
-
-          {depositMethods.bankTransfer && (
-            <div className={styles.fieldWide}>
-              <label className={styles.label}>Datos para transferencia</label>
-              <textarea
-                className={styles.textarea}
-                value={deposit.bankTransferDetails || ''}
-                placeholder="Banco, CLABE o cuenta, titular…"
-                onChange={(event) => updateDeposit({ bankTransferDetails: event.target.value })}
-                rows={3}
-                maxLength={1200}
-              />
-              <p className={styles.helper}>
-                El agente compartirá estos datos y pedirá foto del comprobante; la IA valida el monto y registra el anticipo.
-              </p>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  ) : null
-
-  const goalUrlSettings = showGoalUrlSettings ? (
-    <>
-      {agent.objective === 'ventas' && (
-        <>
-          <div className={styles.field}>
-            <label className={styles.label}>Producto del pedido</label>
-            <CustomSelect
-              value={goalWorkflow.sales.productId}
-              onChange={(event) => updateSalesProduct(event.target.value)}
-              portal
-              disabled={productsLoading || products.length === 0}
-            >
-              {productOptions.map((option) => (
-                <option key={option.value || 'empty-product'} value={option.value}>{option.label}</option>
-              ))}
-            </CustomSelect>
-            <p className={styles.helper}>Ejemplo: si vendes un curso, aquí eliges ese curso.</p>
-          </div>
-
-          {selectedSalesProduct && (
-            <div className={styles.field}>
-              <label className={styles.label}>Precio del pedido</label>
-              <CustomSelect
-                value={goalWorkflow.sales.priceId}
-                onChange={(event) => updateSalesPrice(event.target.value)}
-                portal
-              >
-                {priceOptions.map((option) => (
-                  <option key={option.value || 'base-price'} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-              {selectedSalesPrice && (
-                <p className={styles.helper}>
-                  {selectedSalesProduct.name} · {formatCurrency(getPriceAmount(selectedSalesPrice), accountCurrency)}
-                </p>
-              )}
-            </div>
-          )}
-        </>
-      )}
-
-      <div className={styles.fieldWide}>
-        <label className={styles.label}>{goalUrlLabel}</label>
-        <input
-          className={styles.input}
-          value={goalUrlConfig.url}
-          placeholder={goalUrlPlaceholder}
-          onChange={(event) => updateGoalUrl({ url: event.target.value })}
-        />
-        <p className={styles.helper}>
-          {agent.objective === 'ventas'
-            ? 'Debe ser una página conectada a Ristak que confirme el pago real. Si no puede confirmarlo, el agente pasará el chat a una persona.'
-            : 'Debe ser una página conectada a Ristak que confirme la cita real. Si no puede confirmarla, el agente pasará el chat a una persona.'}
-        </p>
-      </div>
-
-      <div className={styles.field}>
-        <label className={styles.label}>Código para reconocer el enlace</label>
-        <input
-          className={styles.input}
-          value={goalUrlConfig.trackingParam ?? ''}
-          placeholder={DEFAULT_GOAL_TRACKING_PARAM}
-          onChange={(event) => updateGoalUrl({ trackingParam: event.target.value })}
-          onBlur={() => {
-            if (!goalUrlConfig.trackingParam?.trim()) updateGoalUrl({ trackingParam: DEFAULT_GOAL_TRACKING_PARAM })
-          }}
-        />
-        <p className={styles.helper}>
-          Permite relacionar el resultado real con esta conversación.
-        </p>
-      </div>
-
-      <div className={styles.fieldWide}>
-        <label className={styles.label}>Cómo sabe que ya pasó</label>
-        <p className={styles.helper}>
-          {agent.objective === 'ventas'
-            ? 'Ristak sólo marca la meta cuando la página conectada confirma el pago con su ID real.'
-            : 'Ristak sólo marca la meta cuando la página conectada confirma la cita con su ID real.'}
-        </p>
-      </div>
-    </>
-  ) : null
-
-  const triggerLinkSettings = showTriggerLinkSettings ? (
-    <>
-      <div className={styles.field}>
-        <label className={styles.label}>Enlace que va a mandar</label>
-        <CustomSelect
-          value={goalWorkflow.triggerLink.triggerLinkId}
-          onChange={(event) => updateTriggerLinkGoal(event.target.value)}
-          portal
-          disabled={triggerLinksLoading || triggerLinks.length === 0}
-        >
-          {triggerLinkOptions.map((option) => (
-            <option key={option.value || 'empty-trigger-link'} value={option.value}>{option.label}</option>
-          ))}
-        </CustomSelect>
-        <p className={styles.helper}>
-          Ejemplo: manda un link y deja de contestar cuando la persona lo abre.
-        </p>
-      </div>
-
-      <div className={styles.fieldWide}>
-        <label className={styles.label}>Qué pasa al tocarlo</label>
-        <p className={styles.helper}>
-          {selectedTriggerLink
-            ? `Ejemplo: si toca "${selectedTriggerLink.name}", el chat pasa al equipo.`
-            : 'Ejemplo: elige un link para saber cuándo la persona lo abrió.'}
-        </p>
-      </div>
-    </>
-  ) : null
-
-  const goalExecutionSettings = appointmentSchedulingSettings || goalUrlSettings || triggerLinkSettings ? (
-    <div className={styles.agentOpsGrid}>
-      {appointmentSchedulingSettings}
-      {goalUrlSettings}
-      {triggerLinkSettings}
-    </div>
-  ) : null
-
   return (
     <div className={styles.agentDetailLayout}>
       <Card padding="md" className={styles.conversationAgentCard}>
@@ -3333,8 +2195,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             <Button
               variant={agent.enabled ? 'secondary' : 'primary'}
               onClick={() => onChange({ enabled: !agent.enabled })}
-              disabled={!agent.enabled && (legacyBusinessPromptBlocked || Boolean(publishValidationError))}
-              title={!agent.enabled ? (publishValidationError || (legacyBusinessPromptBlocked ? promptBlockerText : undefined)) : undefined}
+              disabled={!agent.enabled && Boolean(publishValidationError)}
+              title={!agent.enabled ? (publishValidationError || undefined) : undefined}
             >
               {agent.enabled ? <Pause size={16} /> : <Play size={16} />}
               {agent.enabled ? 'Pausar' : 'Publicar'}
@@ -3362,9 +2224,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <p className={styles.agentCardSummary}>
-            {agent.runtimeMode === 'tool_calling_v2'
-              ? `${(agent.capabilitiesConfig?.items || []).filter((item) => item.enabled).length} capacidades activas · herramientas protegidas`
-              : `${selectedObjective.label} · ${selectedGoalExecutionInfo.label}`}
+            {(agent.capabilitiesConfig?.items || []).filter((item) => item.enabled).length} capacidades activas · herramientas protegidas
             {entryCount > 0
               ? ` · entra con ${entryCount} ${entryCount === 1 ? 'regla' : 'reglas'}`
               : ' · entra con cualquier chat'}
@@ -3373,12 +2233,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
             {followUpSummary ? ` · ${followUpSummary}` : ''}
           </p>
-          {legacyBusinessPromptBlocked && (
-            <div className={styles.promptReadinessNotice}>
-              <strong>{promptStatusText}</strong>
-              <span>{promptBlockerText}</span>
-            </div>
-          )}
 
           <NativeConversationBuilder
             agent={agent}
@@ -3391,120 +2245,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             onChange={onChange}
           />
 
-          {agent.runtimeMode !== 'tool_calling_v2' && (
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>1. Personalidad e instrucciones</h3>
-            <p className={styles.agentSectionHint}>
-              Define cómo se presenta, qué tono usa y qué reglas de negocio mandan por encima de la configuración normal.
-            </p>
-            <div className={styles.configQuestionList}>
-              <QuestionSelectRow
-                question="¿Cómo quieres que se identifique el agente?"
-                helper={identityHelper}
-                error={identityError}
-                value={selectedIdentityMode}
-                options={agentIdentityModeOptions.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                  disabled: option.value === 'user' && (teamUsersLoading || teamUsers.length === 0)
-                }))}
-                selectLabel="Identidad del agente"
-                onChange={updateIdentityMode}
-              >
-                {selectedIdentityMode === 'user' && teamUsers.length > 0 && (
-                  <div className={styles.inlineFields}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Persona visible</label>
-                      <CustomSelect
-                        value={agent.identityUserId || ''}
-                        onChange={(event) => {
-                          const user = teamUsers.find((item) => item.id === event.target.value) || null
-                          onChange({
-                            identityUserId: user?.id || '',
-                            identityUserName: getTeamUserDisplayName(user),
-                            identityCustomName: ''
-                          })
-                        }}
-                        portal
-                      >
-                        {teamUserOptions.map((option) => (
-                          <option key={option.value || 'identity-empty-user'} value={option.value}>{option.label}</option>
-                        ))}
-                      </CustomSelect>
-                    </div>
-                  </div>
-                )}
-
-                {selectedIdentityMode === 'custom' && (
-                  <div className={styles.inlineFields}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Nombre visible</label>
-                      <input
-                        className={styles.input}
-                        value={agent.identityCustomName || ''}
-                        placeholder="Ejemplo: Marcos, Raúl o Robot 34"
-                        onChange={(event) => onChange({ identityCustomName: event.target.value })}
-                      />
-                    </div>
-                  </div>
-                )}
-              </QuestionSelectRow>
-
-              <div className={styles.configQuestion}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Qué tan persuasivo debe ser</label>
-                  <TabList
-                    fullWidth
-                    tabs={persuasionLevelTabs}
-                    activeTab={agent.persuasionLevel}
-                    onTabChange={(value) => onChange({ persuasionLevel: value as ConversationalPersuasionLevel })}
-                  />
-                  <p className={styles.helper}>{persuasionLevelHelp[agent.persuasionLevel]}</p>
-                </div>
-              </div>
-
-              <div className={styles.configQuestion}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Cómo debe hablar</label>
-                  <TabList
-                    fullWidth
-                    tabs={languageLevelTabs}
-                    activeTab={agent.languageLevel}
-                    onTabChange={(value) => onChange({ languageLevel: value as ConversationalLanguageLevel })}
-                  />
-                  <p className={styles.helper}>{languageLevelHelp[agent.languageLevel]}</p>
-                </div>
-              </div>
-
-              <div className={styles.configQuestion}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Personalización y capacitación del asistente</label>
-                  <textarea
-                    className={styles.textarea}
-                    value={agent.extraInstructions}
-                    placeholder={'Ejemplo:\n- No des el valor ni rangos hasta saber qué servicio quiere, cuál es su problema y qué resultado busca\n- Si pregunta precio sin contexto, pide primero que explique su caso\n- Si preguntan por el color rosa, di que no hay\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas'}
-                    onChange={(event) => onChange({ extraInstructions: event.target.value })}
-                    rows={5}
-                  />
-                  <p className={styles.helper}>
-                    Reglas del negocio que siempre debe cumplir. Esto personaliza conducta, límites, datos que debe pedir y casos especiales; el prompt de fábrica de Ristak se usa por dentro y no se edita desde aquí.
-                  </p>
-                  <div className={styles.guidanceExamples} aria-label="Ejemplos de personalización y capacitación">
-                    <span>Ejemplos que sí van aquí:</span>
-                    <ul>
-                      <li>No des precio hasta conocer el problema o reto completo.</li>
-                      <li>No prometas resultados garantizados ni tiempos que no estén confirmados.</li>
-                      <li>Si falta nombre, servicio o teléfono, pídelo antes de pasar a humano.</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          )}
-
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>{agent.runtimeMode === 'tool_calling_v2' ? '3' : '2'}. Operación técnica del chat</h3>
+            <h3 className={styles.sectionTitle}>3. Operación técnica del chat</h3>
             <p className={styles.agentSectionHint}>
               Configura el motor de IA, tiempos, formato de mensajes, notificaciones y recordatorios.
             </p>
@@ -3767,258 +2509,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             </div>
           </div>
 
-          {agent.runtimeMode !== 'tool_calling_v2' && (
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>3. Objetivo y cierre</h3>
-            <p className={styles.agentSectionHint}>
-              Define la meta, quién la cumple y qué pasa después. Ejemplo: pedir anticipo antes de agendar.
-            </p>
-            <div className={styles.configQuestionList}>
-              <QuestionSelectRow
-                question="¿Cuál es la meta?"
-                helper={selectedObjective.description}
-                value={agent.objective}
-                options={objectiveOptions.map((option) => ({ value: option.value, label: option.label }))}
-                selectLabel="Objetivo del agente"
-                onChange={(objective) => handleObjectiveChange(objective as ConversationalObjective)}
-              />
-
-              <QuestionSelectRow
-                question={getLocalizedGoalExecutionQuestion(agent.objective)}
-                helper={selectedGoalExecutionInfo.description}
-                value={selectedGoalExecutionInfo.value}
-                options={goalExecutionOptions.map((option) => ({ value: option.value, label: option.label }))}
-                selectLabel="Quién cumple la meta"
-                onChange={(action) => handleGoalExecutionChange(action as ConversationalSuccessAction)}
-              >
-                {goalExecutionSettings}
-                {paymentRequirementSettings}
-              </QuestionSelectRow>
-
-              {showCompletionSettings && (
-                <QuestionSelectRow
-                  question="Cuando la IA cumpla el objetivo, ¿qué debe pasar?"
-                  helper={completionMode === 'assign_user'
-                    ? (selectedCompletionUser
-                        ? `Se asigna a ${selectedCompletionUser.fullName || selectedCompletionUser.email || selectedCompletionUser.phone || selectedCompletionUser.username} y manda notificación.`
-                        : 'Elige quién lo toma cuando el bot termine.')
-                    : 'El bot deja de atender ese chat y manda una notificación para que el equipo lo vea.'}
-                  value={completionMode}
-                  options={completionModeOptions.map((option) => ({
-                    value: option.value,
-                    label: option.label,
-                    disabled: option.value === 'assign_user' && (teamUsersLoading || teamUsers.length === 0)
-                  }))}
-                  selectLabel="Qué pasa al cumplir el objetivo"
-                  onChange={(mode) => {
-                    if (mode === 'assign_user' && (teamUsersLoading || teamUsers.length === 0)) return
-                    if (mode === 'assign_user') {
-                      const user = selectedCompletionUser || teamUsers[0] || null
-                      updateCompletion({
-                        mode,
-                        userId: user?.id || completion.userId || '',
-                        userName: user ? (user.fullName || user.email || user.phone || user.username || '') : completion.userName
-                      })
-                      return
-                    }
-                    updateCompletion({ mode: 'notify_only', userId: '', userName: '' })
-                  }}
-                >
-                  {completionMode === 'assign_user' && teamUsers.length > 0 && (
-                    <div className={styles.inlineFields}>
-                      <div className={styles.field}>
-                        <label className={styles.label}>Usuario asignado</label>
-                        <CustomSelect
-                          value={completion.userId}
-                          onChange={(event) => {
-                            const user = teamUsers.find((item) => item.id === event.target.value) || null
-                            updateCompletion({
-                              userId: user?.id || '',
-                              userName: user ? (user.fullName || user.email || user.phone || user.username || '') : ''
-                            })
-                          }}
-                          portal
-                        >
-                          {teamUserOptions.map((option) => (
-                            <option key={option.value || 'empty-user'} value={option.value}>{option.label}</option>
-                          ))}
-                        </CustomSelect>
-                      </div>
-                    </div>
-                  )}
-                </QuestionSelectRow>
-              )}
-            </div>
-
-            {agent.objective === 'custom' && (
-              <div className={styles.fieldWide}>
-                <label className={styles.label}>Objetivo escrito a mano</label>
-                <textarea
-                  className={styles.textarea}
-                  value={agent.customObjective}
-                  placeholder="Ejemplo: que pida una propuesta formal para su empresa."
-                  onChange={(event) => onChange({ customObjective: event.target.value })}
-                  rows={2}
-                />
-              </div>
-            )}
-
-            <details className={styles.advancedDetails} open={agent.successExtras.length > 0 || undefined}>
-              <summary>
-                <span>Cosas extra al terminar</span>
-                <small>Ejemplo: poner una etiqueta o guardar un dato.</small>
-              </summary>
-              <div className={styles.advancedContent}>
-                {agent.successExtras.map((extra, index) => (
-                  <div key={index} className={styles.extraRow}>
-                    <select
-                      className={styles.ruleSelect}
-                      value={extra.type}
-                      onChange={(event) => updateExtra(index, { type: event.target.value as SuccessExtraType })}
-                    >
-                      {extraTypeOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                    {extra.type === 'set_custom_field' ? (
-                      <>
-                        <select
-                          className={styles.ruleSelect}
-                          value={extra.field || ''}
-                          onChange={(event) => updateExtra(index, { field: event.target.value })}
-                        >
-                          <option value="">
-                            {customFieldOptions.length ? 'Elige el campo' : 'No hay campos personalizados activos'}
-                          </option>
-                          {extra.field && !customFieldOptions.some((field) => field.key === extra.field) && (
-                            <option value={extra.field}>{extra.field} · guardado</option>
-                          )}
-                          {customFieldOptions.map((field) => (
-                            <option key={field.key} value={field.key}>{field.label}</option>
-                          ))}
-                        </select>
-                        <input
-                          className={styles.ruleInput}
-                          value={extra.value || ''}
-                          placeholder="Valor"
-                          onChange={(event) => updateExtra(index, { value: event.target.value })}
-                        />
-                      </>
-                    ) : (
-                      <div className={styles.conditionTagPicker}>
-                        <TagPicker
-                          value={extra.tag || ''}
-                          onValueChange={(tagId) => updateExtra(index, { tag: tagId })}
-                          allowCreate
-                          portal
-                          placeholder="Elige una etiqueta"
-                          aria-label="Etiqueta de la acción"
-                        />
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      className={styles.ruleDelete}
-                      onClick={() => onChange({ successExtras: agent.successExtras.filter((_, i) => i !== index) })}
-                      aria-label="Quitar acción"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  className={styles.ruleAddButton}
-                  onClick={() => onChange({ successExtras: [...agent.successExtras, { type: 'add_tag', tag: '' }] })}
-                >
-                  <Plus size={14} />
-                  Añadir acción
-                </button>
-                <p className={styles.helper}>
-                  Ejemplo: cuando agenda, puede poner la etiqueta "cita lista".
-                </p>
-              </div>
-            </details>
-          </div>
-          )}
-
-          {agent.runtimeMode !== 'tool_calling_v2' && (
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>4. Reglas de atención</h3>
-            <p className={styles.agentSectionHint}>
-              Define datos obligatorios y casos donde el agente debe dejar de improvisar y pasar el chat al equipo.
-            </p>
-            <div className={styles.configQuestionList}>
-              <QuestionSelectRow
-                question="¿Debe pedir algún dato?"
-                helper="Si ya lo tiene, no lo vuelve a pedir. Ejemplo: nombre, teléfono o servicio que quiere."
-                value={requiredDataConfigOpen ? 'yes' : 'no'}
-                options={binaryChoiceOptions}
-                selectLabel="Datos que debe pedir"
-                onChange={(value) => {
-                  const enabled = value === 'yes'
-                  setGuidanceOpen((current) => ({ ...current, requiredData: enabled }))
-                  if (!enabled) onChange({ requiredData: '' })
-                }}
-              >
-                {requiredDataConfigOpen && (
-                  <textarea
-                    className={styles.textarea}
-                    value={agent.requiredData}
-                    placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
-                    onChange={(event) => onChange({ requiredData: event.target.value })}
-                    rows={3}
-                  />
-                )}
-              </QuestionSelectRow>
-
-              <QuestionSelectRow
-                question="¿Cuándo debe pasar el chat al equipo?"
-                helper="Úsalo para casos que una persona debe ver. Ejemplo: enojo, facturación o algo delicado."
-                value={handoffRulesConfigOpen ? 'yes' : 'no'}
-                options={binaryChoiceOptions}
-                selectLabel="Cuándo pasar al equipo"
-                onChange={(value) => {
-                  const enabled = value === 'yes'
-                  setGuidanceOpen((current) => ({ ...current, handoffRules: enabled }))
-                  if (!enabled) onChange({ handoffRules: '' })
-                }}
-              >
-                {handoffRulesConfigOpen && (
-                  <textarea
-                    className={styles.textarea}
-                    value={agent.handoffRules}
-                    placeholder={'Ejemplo:\n- Se enojó\n- Pregunta por facturación'}
-                    onChange={(event) => onChange({ handoffRules: event.target.value })}
-                    rows={3}
-                  />
-                )}
-              </QuestionSelectRow>
-
-              <div className={styles.configQuestion}>
-                <div className={styles.configQuestionHeader}>
-                  <div className={styles.configQuestionCopy}>
-                    <span>Clientes existentes van con tu equipo</span>
-                    <small>
-                      Si la IA detecta que ya es cliente (tiene pagos o citas previas, o dice serlo aunque escriba de otro número), pasa el chat directo a un humano.
-                    </small>
-                  </div>
-                  <div className={styles.configQuestionSwitch}>
-                    <Switch
-                      checked={Boolean(goalWorkflow.attention?.pastClientsToHuman)}
-                      onChange={(next) => updateGoalWorkflow({ attention: { pastClientsToHuman: next } })}
-                      aria-label="Clientes existentes van con tu equipo"
-                    />
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-          )}
-
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>{agent.runtimeMode === 'tool_calling_v2' ? '4' : '5'}. Entrada y salida</h3>
+            <h3 className={styles.sectionTitle}>4. Entrada y salida</h3>
             <p className={styles.agentSectionHint}>
               Define a qué contactos puede tomar, con qué reglas entra y cuándo debe soltar la conversación.
             </p>
@@ -4217,19 +2709,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const { agentId: routeAgentIdParam } = useParams<{ agentId?: string }>()
   const routeAgentId = routeAgentIdParam ? decodeURIComponent(routeAgentIdParam) : ''
   const { user } = useAuth()
-  const { labels } = useLabels()
   const { showToast, showConfirm } = useNotification()
-  const leadLowerLabel = formatCrmLabelLower(labels.lead, DEFAULT_CRM_LABELS.lead)
-  const getDirectoryGoalExecutionInfo = useCallback((
-    action: ConversationalSuccessAction,
-    objective: ConversationalObjective,
-    workflow?: AgentGoalWorkflowConfig
-  ) => {
-    const info = getSelectedGoalExecutionInfo(action, objective, workflow)
-    return objective === 'filtrar'
-      ? { ...info, label: `Que el equipo reciba al ${leadLowerLabel} filtrado` }
-      : info
-  }, [leadLowerLabel])
   const openAIAvailability = useAIAgentAvailability()
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
   const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
@@ -4238,13 +2718,9 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [products, setProducts] = useState<ProductItem[]>([])
   const [productsLoading, setProductsLoading] = useState(false)
-  const [triggerLinks, setTriggerLinks] = useState<TriggerLink[]>([])
-  const [triggerLinksLoading, setTriggerLinksLoading] = useState(false)
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
-  const [wizardOpen, setWizardOpen] = useState(false)
-  const [scopePrompt, setScopePrompt] = useState(false)
   const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => routeAgentId || null)
   const [providerModalId, setProviderModalId] = useState<ConversationalAIProviderId | null>(null)
@@ -4287,9 +2763,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     const load = async () => {
       setLoading(true)
       setProductsLoading(true)
-      setTriggerLinksLoading(true)
       try {
-        const [nextConfig, nextAgents, nextProviders, nextMetrics, calendarList, productsResponse, nextTriggerLinks, nextOptions] = await Promise.all([
+        const [nextConfig, nextAgents, nextProviders, nextMetrics, calendarList, productsResponse, nextOptions] = await Promise.all([
           conversationalAgentService.getConfig(),
           conversationalAgentService.listAgents(),
           conversationalAgentService.listAIProviders(),
@@ -4301,7 +2776,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
               includePrices: 'true'
             }
           }).catch(() => null),
-          triggerLinksService.list().catch(() => []),
           conversationalAgentService.getFilterOptions().catch(() => undefined)
         ])
         if (cancelled) return
@@ -4313,7 +2787,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         setProducts(Array.isArray(productsResponse?.products)
           ? productsResponse.products.filter((product) => getProductId(product))
           : [])
-        setTriggerLinks(nextTriggerLinks.filter((link) => link.active && !link.archived))
         setFilterOptions(nextOptions)
       } catch (error: any) {
         if (!cancelled) {
@@ -4322,7 +2795,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       } finally {
         if (!cancelled) {
           setProductsLoading(false)
-          setTriggerLinksLoading(false)
           setLoading(false)
         }
       }
@@ -4417,9 +2889,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     }, AUTOSAVE_DELAY_MS))
   }, [saveAgentNow])
 
-  const businessPromptStatus = config?.businessPromptStatus || null
-  const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
-  const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)
   const conversationalAgentMaxAgents = normalizePositivePlanLimit(
     user?.licenseLimits?.conversational_agents?.max_agents ??
     user?.licenseLimits?.conversational_agents?.maxAgents
@@ -4442,16 +2911,11 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
 
   const handleAgentChange = (agentId: string, patch: ConversationalAgentDefInput) => {
     const currentAgent = agentsRef.current.find((agent) => agent.id === agentId)
-    const effectiveRuntimeMode = patch.runtimeMode || currentAgent?.runtimeMode || 'legacy_v1'
-    if (patch.enabled === true && effectiveRuntimeMode !== 'tool_calling_v2' && !businessPromptReady) {
-      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
-      return
-    }
 
-    // Publicar, pausar o cambiar de motor nunca se refleja de forma optimista:
-    // primero debe confirmarlo backend. Así el badge y el runtime no mienten si
+    // Publicar o pausar nunca se refleja de forma optimista: primero debe
+    // confirmarlo backend. Así el badge no miente si
     // falla una validación factual de calendario, producto, precio o enlace.
-    if (currentAgent && (patch.enabled !== undefined || patch.runtimeMode !== undefined)) {
+    if (currentAgent && patch.enabled !== undefined) {
       const timers = saveTimersRef.current
       const existingTimer = timers.get(agentId)
       if (existingTimer) {
@@ -4468,18 +2932,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       void (async () => {
         try {
           const persisted = await conversationalAgentService.updateAgent(agentId, agentToInput(candidate))
-          if (persisted.enabled && config && !config.enabled) {
-            const runtimeEnabled = await handleRuntimeChange({ enabled: true }, {
-              agentId,
-              runtimeMode: persisted.runtimeMode
-            })
-            if (!runtimeEnabled) {
-              await conversationalAgentService.updateAgent(agentId, agentToInput({ ...persisted, enabled: false }))
-                .catch(() => undefined)
-              await refreshAgentData().catch(() => undefined)
-              return
-            }
-          }
           setAgents((current) => current.map((agent) => (agent.id === agentId ? persisted : agent)))
         } catch (error: any) {
           if (isConversationalAgentEntryConflictError(error)) {
@@ -4498,28 +2950,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
 
     setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent)))
     scheduleAgentSave(agentId)
-  }
-
-  const handleRuntimeChange = async (
-    patch: { enabled?: boolean },
-    publishingAgent?: { agentId: string; runtimeMode: ConversationalAgentDef['runtimeMode'] }
-  ): Promise<boolean> => {
-    const publishingV2 = publishingAgent?.runtimeMode === 'tool_calling_v2'
-    if (patch.enabled === true && !publishingV2 && !businessPromptReady) {
-      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
-      return false
-    }
-    try {
-      const runtimeRequest = publishingAgent
-        ? { ...patch, agentId: publishingAgent.agentId }
-        : patch
-      const next = await conversationalAgentService.saveConfig(runtimeRequest)
-      setConfig(next)
-      return true
-    } catch (error: any) {
-      showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración')
-      return false
-    }
   }
 
   const openProviderModal = (providerId: ConversationalAIProviderId) => {
@@ -4590,7 +3020,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     )
   }
 
-  // Núcleo de creación reutilizable: lo usan el wizard guiado y el atajo "a mano".
+  // Creación directa: el agente nace con la plantilla nativa y abre su editor.
   const runCreateAgent = async (overrides: ConversationalAgentDefInput = {}) => {
     if (conversationalAgentLimitReached) {
       showToast('warning', 'Límite del plan alcanzado', conversationalAgentLimitMessage)
@@ -4606,14 +3036,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     }
     try {
       const agent = await conversationalAgentService.createAgent(draftInput)
-      if (config && !config.enabled && agent.enabled) {
-        const runtimeEnableRequest = {
-          enabled: true,
-          agentId: agent.id
-        }
-        const nextConfig = await conversationalAgentService.saveConfig(runtimeEnableRequest)
-        setConfig(nextConfig)
-      }
       setAgents((current) => [...current, agent])
       setSelectedAgentId(agent.id)
       navigate(buildConversationalAgentPath(agent.id, routeBase))
@@ -4621,7 +3043,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       return agent
     } catch (error: any) {
       if (isConversationalAgentEntryConflictError(error)) {
-        setWizardOpen(false)
         setActivationConflict({
           message: error.message,
           conflicts: error.conflicts || [],
@@ -4636,28 +3057,13 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     }
   }
 
-  const openCreateWizard = () => {
+  const handleCreateAgent = () => {
     if (!canStartAgentCreation()) return
-    setWizardOpen(true)
-  }
-
-  // Atajo: crea un agente (casi en blanco) y salta directo al editor (sin wizard).
-  const handleCreateAgent = async (overrides: ConversationalAgentDefInput = {}) => {
-    if (!canStartAgentCreation()) return
-    await runCreateAgent({ ...overrides, enabled: false })
-  }
-
-  // Modo avanzado: antes del formulario largo preguntamos SOLO el alcance de contactos.
-  const confirmScopeAndCreate = (contactScope: ConversationalContactScope) => {
-    setScopePrompt(false)
-    void handleCreateAgent({ contactScope })
-  }
-
-  // El wizard ya arma el ConversationalAgentDefInput completo (incluye goalWorkflow,
-  // anticipos/pagos y calendario). Aquí solo lo creamos.
-  const handleWizardComplete = async (overrides: ConversationalAgentDefInput) => {
-    const agent = await runCreateAgent(overrides)
-    if (agent) setWizardOpen(false)
+    void runCreateAgent({
+      enabled: false,
+      contactScope: 'all',
+      capabilitiesConfig: { schemaVersion: 1, items: [] }
+    })
   }
 
   const handleCreatePausedConflictDraft = async () => {
@@ -4864,10 +3270,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           calendars={calendars}
           products={products}
           productsLoading={productsLoading}
-          triggerLinks={triggerLinks}
-          triggerLinksLoading={triggerLinksLoading}
           filterOptions={filterOptions}
-          businessPromptStatus={businessPromptStatus}
           onConnectProvider={openProviderModal}
           onBack={() => {
             setSelectedAgentId(null)
@@ -4939,7 +3342,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
               )}
             </div>
             <Button
-              onClick={openCreateWizard}
+              onClick={handleCreateAgent}
               loading={creating}
               disabled={loading || creating || conversationalAgentLimitReached}
               title={conversationalAgentLimitReached ? conversationalAgentLimitMessage : undefined}
@@ -5021,7 +3424,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           <h3>Aún no tienes agentes</h3>
           <p>Crea uno y configura qué chats debe tomar, cómo debe responder y cuándo debe pedir ayuda.</p>
           <Button
-            onClick={openCreateWizard}
+            onClick={handleCreateAgent}
             loading={creating}
             disabled={creating || conversationalAgentLimitReached}
             title={conversationalAgentLimitReached ? conversationalAgentLimitMessage : undefined}
@@ -5035,8 +3438,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       {!loading && agents.length > 0 && (
         <div className={styles.agentDirectoryGrid}>
           {agents.map((agent) => {
-            const objectiveLabel = objectiveOptions.find((option) => option.value === agent.objective)?.label || 'Objetivo'
-            const actionLabel = getDirectoryGoalExecutionInfo(agent.successAction, agent.objective, agent.goalWorkflow).label
             const provider = getConversationalAIProviderOption(agent.aiProvider)
             const modelLabel = getConversationalModelLabel(agent.aiProvider, agent.model)
             const entryRules = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
@@ -5044,10 +3445,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             const skippedCount = agentMetrics?.skippedConversations ?? 0
             const resettingSkips = resettingAgentSkipsId === agent.id
             const publishValidationError = getAgentValidationError({ ...agent, enabled: true })
-            const legacyBusinessPromptBlocked = agent.runtimeMode !== 'tool_calling_v2' && !businessPromptReady
-            const directoryPurpose = agent.runtimeMode === 'tool_calling_v2'
-              ? `${(agent.capabilitiesConfig?.items || []).filter((item) => item.enabled).length} capacidades · flujo directo`
-              : `${objectiveLabel} · ${actionLabel}`
+            const directoryPurpose = `${(agent.capabilitiesConfig?.items || []).filter((item) => item.enabled).length} capacidades · flujo directo`
 
             return (
               <div
@@ -5086,8 +3484,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                   <Button
                     variant={agent.enabled ? 'secondary' : 'primary'}
                     onClick={() => handleAgentChange(agent.id, { enabled: !agent.enabled })}
-                    disabled={!agent.enabled && (legacyBusinessPromptBlocked || Boolean(publishValidationError))}
-                    title={!agent.enabled ? (publishValidationError || (legacyBusinessPromptBlocked ? promptBlockerText : undefined)) : undefined}
+                    disabled={!agent.enabled && Boolean(publishValidationError)}
+                    title={!agent.enabled ? (publishValidationError || undefined) : undefined}
                   >
                     {agent.enabled ? <Pause size={15} /> : <Play size={15} />}
                     {agent.enabled ? 'Pausar' : 'Publicar'}
@@ -5112,47 +3510,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           })}
         </div>
       )}
-      <AgentCreationWizard
-        isOpen={wizardOpen}
-        onClose={() => setWizardOpen(false)}
-        onComplete={handleWizardComplete}
-        onSkipToManual={() => { setWizardOpen(false); setScopePrompt(true) }}
-        creating={creating}
-        defaultName={`Agente ${agents.length + 1}`}
-        aiProvider={getKnownConversationalAIProvider(config?.aiProvider)}
-        model={getKnownConversationalModel(getKnownConversationalAIProvider(config?.aiProvider), config?.model || getDefaultConversationalModel(getKnownConversationalAIProvider(config?.aiProvider)))}
-        aiProviders={aiProviders}
-        onConnectProvider={openProviderModal}
-      />
       {renderProviderModal()}
       {renderActivationConflictModal()}
-      <Modal
-        isOpen={scopePrompt}
-        onClose={() => setScopePrompt(false)}
-        type="custom"
-        size="sm"
-        title="Antes de armarlo a mano…"
-      >
-        <div className={styles.scopePromptModal}>
-          <p className={styles.scopePromptText}>
-            Una cosa rápida de seguridad: ¿a quién puede atender este asistente? Solo a los
-            contactos <strong>nuevos</strong> desde ahora, a cualquier chat con <strong>mensajes
-            nuevos</strong> (incluye tu base), o solo a los contactos que <strong>ya tienes</strong>.
-          </p>
-          <div className={styles.scopePromptActions}>
-            <Button variant="secondary" onClick={() => confirmScopeAndCreate('new_only')} disabled={creating}>
-              <ShieldCheck size={16} /> A todos los nuevos contactos desde ahora
-            </Button>
-            <Button variant="primary" onClick={() => confirmScopeAndCreate('all')} loading={creating} disabled={creating}>
-              <Users size={16} /> A todos los nuevos mensajes desde ahora
-            </Button>
-            <Button variant="secondary" onClick={() => confirmScopeAndCreate('existing_only')} disabled={creating}>
-              <UserCheck size={16} /> A todos los contactos existentes
-            </Button>
-          </div>
-          <p className={styles.scopePromptHint}>Lo puedes cambiar después en la configuración del asistente.</p>
-        </div>
-      </Modal>
     </div>
   )
 }

@@ -336,10 +336,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     `expo-file-system` y envia por `/whatsapp-api/messages/image` o
     `/whatsapp-api/messages/video` al contacto seleccionado. Pendiente extender
     esta accion a canales no WhatsApp si el contacto no tiene telefono.
-- [x] Menu global de agente.
+- [x] Menu de agentes.
   - Avance: la bandeja Android ya tiene botón robot en la esquina superior
-    izquierda y abre un Hub nativo conectado a `/conversational-agent/config`
-    y `/conversational-agent/agents`. Permite encender/pausar cada agente,
+    izquierda y abre un Hub nativo conectado a `/conversational-agent/agents`.
+    Permite encender/pausar cada agente directamente,
     reiniciar omisiones y entrar a su editor; no muestra controles globales
     `Todos`/`Apagar todos`.
 - [ ] Administrador de filtros.

@@ -3253,11 +3253,11 @@ export const DesktopChat: React.FC = () => {
   const [metaMessengerConnected, setMetaMessengerConnected] = useState(false)
   const [metaInstagramConnected, setMetaInstagramConnected] = useState(false)
   const [emailConnected, setEmailConnected] = useState(false)
-  const [conversationAgentEnabled, setConversationAgentEnabled] = useState(false)
   const [conversationAgentState, setConversationAgentState] = useState<ConversationAgentState | null>(null)
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
   const [agentStateLists, setAgentStateLists] = useState<Record<string, ConversationAgentState[]>>({})
   const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>([])
+  const conversationAgentEnabled = agentDefs.some((agent) => agent.enabled)
   const [agentInboxStatusFilter, setAgentInboxStatusFilter] = useState<AgentInboxStatusFilter>(DEFAULT_AGENT_INBOX_STATUS_FILTER)
   const [agentComposerMenuOpen, setAgentComposerMenuOpen] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
@@ -4472,12 +4472,11 @@ export const DesktopChat: React.FC = () => {
   const loadSupportData = useCallback(async () => {
     setCalendarsLoading(true)
     try {
-      const [status, integrationsStatus, emailStatus, calendarList, conversationalConfig, agentList] = await Promise.all([
+      const [status, integrationsStatus, emailStatus, calendarList, agentList] = await Promise.all([
         whatsappApiService.getStatus().catch(() => null),
         getIntegrationsStatus().catch(() => null),
         emailService.getStatus().catch(() => null),
         calendarsService.getCalendars(locationId, accessToken).catch(() => []),
-        conversationalAgentService.getConfig().catch(() => null),
         conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
       ])
       const stateList = await conversationalAgentService.listStates().catch(() => [] as ConversationAgentState[])
@@ -4486,7 +4485,6 @@ export const DesktopChat: React.FC = () => {
       setMetaMessengerConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.pageId))
       setMetaInstagramConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.instagramAccountId))
       setEmailConnected(Boolean(emailStatus?.connected))
-      setConversationAgentEnabled(Boolean(conversationalConfig?.enabled))
       setAgentStates(mapAgentStatesByContactId(stateList))
       setAgentStateLists(mapAgentStateListsByContactId(stateList))
       setAgentDefs(agentList)
@@ -7183,7 +7181,7 @@ export const DesktopChat: React.FC = () => {
 
 	    const contactAgentStates = activeContactAgentStates.filter((state) => state.agentId)
 	    const showPicker = agentPickerOpen || !contactAgentStates.length
-	    const disabledByGlobalConfig = !conversationAgentEnabled
+	    const noPublishedAgents = availableAgentDefs.length === 0
 	    const getStateAgentName = (state: ConversationAgentState) => (
 	      state.agentName ||
 	      agentDefs.find((agent) => agent.id === state.agentId)?.name ||
@@ -7195,7 +7193,7 @@ export const DesktopChat: React.FC = () => {
         <div className={styles.agentComposerMenu} role="menu" aria-label="Seleccionar chatbot">
           <div className={styles.agentComposerMenuHeader}>
             <strong>Asignar agente</strong>
-            <span>{disabledByGlobalConfig ? 'El agente está apagado en configuración.' : 'Elige quién atenderá este chat.'}</span>
+            <span>{noPublishedAgents ? 'No hay agentes publicados.' : 'Elige quién atenderá este chat.'}</span>
           </div>
           {availableAgentDefs.length > 0 ? (
             <div className={styles.agentPickerList}>
@@ -7205,7 +7203,7 @@ export const DesktopChat: React.FC = () => {
                   type="button"
                   role="menuitem"
                   onClick={() => handleAssignConversationAgent(agent.id)}
-                  disabled={conversationAgentBusy || disabledByGlobalConfig}
+                  disabled={conversationAgentBusy}
                 >
                   <span className={styles.agentPickerIcon}>
                     <Bot size={15} />
@@ -7220,9 +7218,6 @@ export const DesktopChat: React.FC = () => {
           ) : (
             <p className={styles.agentComposerHint}>No hay agentes publicados. Créalo en Chatbot.</p>
           )}
-          {disabledByGlobalConfig ? (
-            <p className={styles.agentComposerHint}>Activa la configuración general del agente antes de asignarlo a un chat.</p>
-          ) : null}
         </div>
       )
     }
@@ -7244,7 +7239,7 @@ export const DesktopChat: React.FC = () => {
 	                type="button"
 	                role="menuitem"
 	                className={styles.agentMenuAction}
-	                disabled={conversationAgentBusy || disabledByGlobalConfig}
+	                disabled={conversationAgentBusy}
 	                onClick={() => handleRunConversationAgentAction('activate', `${agentName} volvió a atender este chat.`, actionOptions)}
 	              >
 	                <Play size={15} />
