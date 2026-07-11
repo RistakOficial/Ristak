@@ -201,6 +201,8 @@ const SCROLLABLE_CHAT_SELECTOR = '[data-phone-chat-scrollable="true"], [data-pho
 const CHAT_READ_STATE_KEY = 'ristak_phone_chat_read_state_v1'
 const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
 const CHAT_MUTED_STATE_KEY = 'ristak_phone_chat_muted_state_v1'
+const CHAT_PINNED_STATE_KEY = 'ristak_phone_chat_pinned_state_v1'
+const CHAT_MANUAL_UNREAD_STATE_KEY = 'ristak_phone_chat_manual_unread_state_v1'
 const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
 const CHAT_FAST_START_INBOX_KEY = 'ristak_phone_chat_fast_start_inbox_v1'
 const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
@@ -5293,8 +5295,11 @@ export const PhoneChat: React.FC = () => {
   const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ManualAgentSendPrompt | null>(null)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
+  const [pinnedChatIds, setPinnedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_PINNED_STATE_KEY))
+  const [manualUnreadChatIds, setManualUnreadChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MANUAL_UNREAD_STATE_KEY))
   const [starredMessageIds, setStarredMessageIds] = useState<string[]>(() => readStoredChatIds(CHAT_STARRED_MESSAGES_KEY))
   const [openSwipeChatId, setOpenSwipeChatId] = useState<string | null>(null)
+  const [openSwipeSide, setOpenSwipeSide] = useState<'leading' | 'trailing' | null>(null)
   const [draggingSwipe, setDraggingSwipe] = useState<{ contactId: string; offset: number } | null>(null)
   const [closingSwipeChatId, setClosingSwipeChatId] = useState<string | null>(null)
   const [chatSwipeSuppressed, setChatSwipeSuppressed] = useState(false)
@@ -6758,6 +6763,8 @@ export const PhoneChat: React.FC = () => {
   const hasChats = chats.length > 0
   const archivedChatIdSet = useMemo(() => new Set(archivedChatIds), [archivedChatIds])
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds])
+  const pinnedChatIdSet = useMemo(() => new Set(pinnedChatIds), [pinnedChatIds])
+  const manualUnreadChatIdSet = useMemo(() => new Set(manualUnreadChatIds), [manualUnreadChatIds])
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
   const knownAgentIdSet = useMemo(
@@ -6985,8 +6992,16 @@ export const PhoneChat: React.FC = () => {
     setAiAgentHubAgentFilter(nextFilter)
   }, [aiAgentHubAgentFilter, aiAgentHubAgentFilters])
 
+  const displayChats = useMemo(
+    () => chats.map((contact) => (
+      manualUnreadChatIdSet.has(contact.id) && Number(contact.unreadCount || 0) === 0
+        ? { ...contact, unreadCount: 1 }
+        : contact
+    )),
+    [chats, manualUnreadChatIdSet]
+  )
   const listBaseChats = useMemo(
-    () => chats.filter((contact) => {
+    () => displayChats.filter((contact) => {
       if (agentPriorityViewOpen) return agentPriorityChatIdSet.has(contact.id)
       if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
       if (archivedChatIdSet.has(contact.id)) return false
@@ -6994,7 +7009,7 @@ export const PhoneChat: React.FC = () => {
       if (agentPriorityChatIdSet.has(contact.id)) return false
       return true
     }),
-    [agentPriorityChatIdSet, agentPriorityViewOpen, archivedChatIdSet, archivedViewOpen, chats]
+    [agentPriorityChatIdSet, agentPriorityViewOpen, archivedChatIdSet, archivedViewOpen, displayChats]
   )
   const isCustomerContact = useCallback((contact: ChatContact) => contact.status === 'customer' || Number(contact.purchases || 0) > 0, [])
   const isAppointmentContact = useCallback((contact: ChatContact) => contact.status === 'appointment' || Boolean(contact.hasAppointments), [])
@@ -7004,7 +7019,7 @@ export const PhoneChat: React.FC = () => {
   }, [isAppointmentContact, isCustomerContact])
   const filteredChats = useMemo(() => {
     const sourceChats = chatFilter === 'agent'
-      ? chats.filter((contact) => !archivedChatIdSet.has(contact.id) && agentActiveChatIdSet.has(contact.id))
+      ? displayChats.filter((contact) => !archivedChatIdSet.has(contact.id) && agentActiveChatIdSet.has(contact.id))
       : listBaseChats
 
     const phoneFilteredChats = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
@@ -7044,13 +7059,15 @@ export const PhoneChat: React.FC = () => {
       return true
     })
 
-    if (conversationSortMode !== 'unread') return chipFilteredChats
+    const sortedChats = conversationSortMode !== 'unread'
+      ? chipFilteredChats
+      : [...chipFilteredChats].sort((left, right) => {
+          const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0)
+          if (unreadDelta !== 0) return unreadDelta
+          return parseSortableDateValue(right.lastMessageDate || right.createdAt) - parseSortableDateValue(left.lastMessageDate || left.createdAt)
+        })
 
-    return [...chipFilteredChats].sort((left, right) => {
-      const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0)
-      if (unreadDelta !== 0) return unreadDelta
-      return parseSortableDateValue(right.lastMessageDate || right.createdAt) - parseSortableDateValue(left.lastMessageDate || left.createdAt)
-    })
+    return [...sortedChats].sort((left, right) => Number(pinnedChatIdSet.has(right.id)) - Number(pinnedChatIdSet.has(left.id)))
   }, [
     agentActiveChatIdSet,
     activeAdvancedChatFilterCount,
@@ -7060,7 +7077,7 @@ export const PhoneChat: React.FC = () => {
     chatFilter,
     commentsView,
     commentsPlatform,
-    chats,
+    displayChats,
     conversationSortMode,
     effectiveSelectedChatPhone,
     effectiveSelectedChatPhoneId,
@@ -7069,6 +7086,7 @@ export const PhoneChat: React.FC = () => {
     isLeadContact,
     listBaseChats,
     phoneChatConditionEvalContext,
+    pinnedChatIdSet,
     selectedChatPhoneFilterActive
   ])
   const selectableChatRows = useMemo(() => {
@@ -7094,10 +7112,10 @@ export const PhoneChat: React.FC = () => {
     ? 'Quitar silencio'
     : 'Silenciar chats'
   const unreadTotal = useMemo(
-    () => chats.reduce((total, contact) => (
+    () => displayChats.reduce((total, contact) => (
       archivedChatIdSet.has(contact.id) ? total : total + Math.max(0, Number(contact.unreadCount || 0))
     ), 0),
-    [archivedChatIdSet, chats]
+    [archivedChatIdSet, displayChats]
   )
   const chatSearchExpanded = chatQuery.trim().length > 0
   const cameraShareSelectedIds = useMemo(
@@ -8599,8 +8617,17 @@ export const PhoneChat: React.FC = () => {
   }, [mutedChatIds])
 
   useEffect(() => {
+    writeStoredChatIds(CHAT_PINNED_STATE_KEY, pinnedChatIds)
+  }, [pinnedChatIds])
+
+  useEffect(() => {
+    writeStoredChatIds(CHAT_MANUAL_UNREAD_STATE_KEY, manualUnreadChatIds)
+  }, [manualUnreadChatIds])
+
+  useEffect(() => {
     chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
+    setOpenSwipeSide(null)
     setDraggingSwipe(null)
     clearClosingSwipeActions()
   }, [activeChatFilterPresetId, agentPickerOpen, aiAgentHubOpen, archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId, clearClosingSwipeActions])
@@ -8640,6 +8667,7 @@ export const PhoneChat: React.FC = () => {
     chatSwipeGenerationRef.current += 1
     setChatSwipeSuppressed(true)
     setOpenSwipeChatId(null)
+    setOpenSwipeSide(null)
     setDraggingSwipe(null)
     clearClosingSwipeActions()
     chatSwipeGestureRef.current = null
@@ -8649,6 +8677,7 @@ export const PhoneChat: React.FC = () => {
     const releaseSwipe = window.setTimeout(() => {
       chatSwipeGenerationRef.current += 1
       setOpenSwipeChatId(null)
+      setOpenSwipeSide(null)
       setDraggingSwipe(null)
       clearClosingSwipeActions()
       chatSwipeGestureRef.current = null
@@ -8662,6 +8691,7 @@ export const PhoneChat: React.FC = () => {
     if (!activeContactId) return
     chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
+    setOpenSwipeSide(null)
     setDraggingSwipe(null)
     clearClosingSwipeActions()
     chatSwipeGestureRef.current = null
@@ -9676,6 +9706,7 @@ export const PhoneChat: React.FC = () => {
     clearMessageActionPress()
     markContactReadState(chatContact)
     persistChatsRead([nextContact.id], { silent: true })
+    setManualUnreadChatIds((current) => current.filter((id) => id !== nextContact.id))
     startConversationBottomLock(nextContact.id)
     runConversationOpenBottomScrollSequence()
     setActiveContactId(nextContact.id)
@@ -9937,6 +9968,7 @@ export const PhoneChat: React.FC = () => {
   const closeSwipeActions = () => {
     chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
+    setOpenSwipeSide(null)
     setDraggingSwipe(null)
     clearClosingSwipeActions()
     chatSwipeGestureRef.current = null
@@ -10239,6 +10271,26 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const handleMarkChatUnread = (contact: Contact) => {
+    setManualUnreadChatIds((current) => current.includes(contact.id) ? current : [contact.id, ...current])
+    setChats((current) => current.map((item) => (
+      item.id === contact.id ? { ...item, unreadCount: Math.max(1, Number(item.unreadCount || 0)) } : item
+    )))
+    closeSwipeActions()
+    showToast('success', 'Marcado como no leído', `${getContactName(contact)} quedó pendiente.`)
+  }
+
+  const handleTogglePinChat = (contact: Contact) => {
+    const alreadyPinned = pinnedChatIdSet.has(contact.id)
+    setPinnedChatIds((current) => alreadyPinned
+      ? current.filter((id) => id !== contact.id)
+      : [contact.id, ...current.filter((id) => id !== contact.id)])
+    closeSwipeActions()
+    showToast('success', alreadyPinned ? 'Chat desfijado' : 'Chat fijado', alreadyPinned
+      ? `${getContactName(contact)} volvió a su orden normal.`
+      : `${getContactName(contact)} se quedó arriba.`)
+  }
+
   const handleToggleMuteChat = (contact: Contact) => {
     const alreadyMuted = mutedChatIdSet.has(contact.id)
 
@@ -10306,6 +10358,7 @@ export const PhoneChat: React.FC = () => {
     setChats((current) => current.map((contact) => (
       selectedIds.has(contact.id) ? { ...contact, unreadCount: 0 } : contact
     )))
+    setManualUnreadChatIds((current) => current.filter((id) => !selectedIds.has(id)))
     clearChatSelection()
 
     showToast(
@@ -10870,7 +10923,9 @@ export const PhoneChat: React.FC = () => {
 
     const currentOffset = draggingSwipe?.contactId === contactId
       ? draggingSwipe.offset
-      : openSwipeChatId === contactId ? CHAT_SWIPE_ACTION_WIDTH : 0
+      : openSwipeChatId === contactId
+        ? (openSwipeSide === 'leading' ? -CHAT_SWIPE_ACTION_WIDTH : CHAT_SWIPE_ACTION_WIDTH)
+        : 0
 
     if (openSwipeChatId && openSwipeChatId !== contactId) {
       closeSwipeActions()
@@ -10923,11 +10978,11 @@ export const PhoneChat: React.FC = () => {
     event.preventDefault()
     const nextOffset = Math.round(Math.min(
       CHAT_SWIPE_ACTION_WIDTH,
-      Math.max(0, gesture.startOffset - deltaX)
+      Math.max(-CHAT_SWIPE_ACTION_WIDTH, gesture.startOffset - deltaX)
     ))
 
     gesture.offset = nextOffset
-    if (nextOffset > 0 && closingSwipeChatId === gesture.contactId) {
+    if (nextOffset !== 0 && closingSwipeChatId === gesture.contactId) {
       clearClosingSwipeActions(gesture.contactId)
     }
     if (Math.abs(nextOffset - gesture.lastRenderedOffset) < CHAT_SWIPE_RENDER_STEP) return
@@ -10953,16 +11008,18 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (gesture.active) {
-      const openThreshold = gesture.startOffset > 0 ? CHAT_SWIPE_CLOSE_THRESHOLD : CHAT_SWIPE_OPEN_THRESHOLD
-      const shouldOpenSwipe = gesture.offset >= openThreshold
+      const openThreshold = gesture.startOffset !== 0 ? CHAT_SWIPE_CLOSE_THRESHOLD : CHAT_SWIPE_OPEN_THRESHOLD
+      const shouldOpenSwipe = Math.abs(gesture.offset) >= openThreshold
       if (shouldOpenSwipe) {
         clearClosingSwipeActions(gesture.contactId)
         setOpenSwipeChatId(gesture.contactId)
+        setOpenSwipeSide(gesture.offset < 0 ? 'leading' : 'trailing')
       } else {
-        if (gesture.startOffset > 0 || gesture.offset > 0) {
+        if (gesture.startOffset !== 0 || gesture.offset !== 0) {
           keepSwipeActionsBehindClosingRow(gesture.contactId)
         }
         setOpenSwipeChatId(null)
+        setOpenSwipeSide(null)
       }
       setDraggingSwipe(null)
       suppressNextChatClick(240)
@@ -14004,6 +14061,7 @@ export const PhoneChat: React.FC = () => {
     const hasUnread = showUnreadIndicators && source === 'chat' && unreadCount > 0
     const isArchived = archivedChatIdSet.has(contact.id)
     const isMuted = mutedChatIdSet.has(contact.id)
+    const isPinned = pinnedChatIdSet.has(contact.id)
     const agentState = source === 'chat' && agentEnabled ? agentStates[contact.id] || null : null
     const isAgentActionChat = Boolean(agentState?.signal && agentState.signal !== 'discarded')
     const canSelectChat = source === 'chat' && contact.id !== AI_AGENT_CHAT_ID
@@ -14028,6 +14086,11 @@ export const PhoneChat: React.FC = () => {
           {isMuted && (
             <span className={styles.chatMutedIcon} aria-label="Chat silenciado">
               <BellOff size={13} />
+            </span>
+          )}
+          {isPinned && (
+            <span className={styles.chatMutedIcon} aria-label="Chat fijado">
+              <Pin size={13} fill="currentColor" />
             </span>
           )}
           {hasUnread && <i className={styles.chatUnreadBadge} aria-label={`${unreadCount} mensajes no leídos`}>{unreadCount > 9 ? '9+' : unreadCount}</i>}
@@ -14056,19 +14119,22 @@ export const PhoneChat: React.FC = () => {
       ? 0
       : isDraggingSwipe
         ? draggingSwipe.offset
-        : openSwipeChatId === contact.id ? CHAT_SWIPE_ACTION_WIDTH : 0
+        : openSwipeChatId === contact.id
+          ? (openSwipeSide === 'leading' ? -CHAT_SWIPE_ACTION_WIDTH : CHAT_SWIPE_ACTION_WIDTH)
+          : 0
+    const visibleSwipeSide = swipeOffset < 0 ? 'leading' : swipeOffset > 0 ? 'trailing' : openSwipeSide
     const showSwipeActions = !swipeLocked && (
       isDraggingSwipe ||
       openSwipeChatId === contact.id ||
       closingSwipeChatId === contact.id ||
-      swipeOffset > 0
+      swipeOffset !== 0
     )
     const swipeActionsInteractive = !swipeLocked && openSwipeChatId === contact.id && !isDraggingSwipe && closingSwipeChatId !== contact.id
 
     return (
       <div
         key={contact.id}
-        className={`${styles.chatSwipeRow} ${swipeOffset > 0 ? styles.chatSwipeRowOpen : ''} ${isDraggingSwipe ? styles.chatSwipeRowDragging : ''} ${isSelectedChat ? styles.chatSwipeRowSelected : ''} ${isActiveChat ? styles.chatSwipeRowActive : ''}`}
+        className={`${styles.chatSwipeRow} ${swipeOffset !== 0 ? styles.chatSwipeRowOpen : ''} ${isDraggingSwipe ? styles.chatSwipeRowDragging : ''} ${isSelectedChat ? styles.chatSwipeRowSelected : ''} ${isActiveChat ? styles.chatSwipeRowActive : ''}`}
         onTouchStart={swipeLocked ? undefined : (event) => handleChatTouchStart(contact.id, event)}
         onTouchMove={swipeLocked ? undefined : handleChatTouchMove}
         onTouchEnd={swipeLocked ? undefined : handleChatTouchEnd}
@@ -14079,12 +14145,42 @@ export const PhoneChat: React.FC = () => {
         }}
       >
         {showSwipeActions && (
-          <div className={styles.chatSwipeActions} aria-hidden={!swipeActionsInteractive}>
+          <div className={`${styles.chatSwipeActions} ${styles.chatSwipeActionsLeading}`} aria-hidden={!swipeActionsInteractive || visibleSwipeSide !== 'leading'}>
+            <button
+              type="button"
+              className={`${styles.chatSwipeAction} ${styles.chatSwipeUnread}`}
+              disabled={!swipeActionsInteractive || visibleSwipeSide !== 'leading'}
+              tabIndex={swipeActionsInteractive && visibleSwipeSide === 'leading' ? 0 : -1}
+              onClick={(event) => {
+                event.stopPropagation()
+                handleMarkChatUnread(contact)
+              }}
+            >
+              <Mail size={28} />
+              <span>No leído</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.chatSwipeAction} ${styles.chatSwipePin}`}
+              disabled={!swipeActionsInteractive || visibleSwipeSide !== 'leading'}
+              tabIndex={swipeActionsInteractive && visibleSwipeSide === 'leading' ? 0 : -1}
+              onClick={(event) => {
+                event.stopPropagation()
+                handleTogglePinChat(contact)
+              }}
+            >
+              <Pin size={28} fill={isPinned ? 'currentColor' : 'none'} />
+              <span>{isPinned ? 'Desfijar' : 'Fijar'}</span>
+            </button>
+          </div>
+        )}
+        {showSwipeActions && (
+          <div className={`${styles.chatSwipeActions} ${styles.chatSwipeActionsTrailing}`} aria-hidden={!swipeActionsInteractive || visibleSwipeSide !== 'trailing'}>
             <button
               type="button"
               className={`${styles.chatSwipeAction} ${styles.chatSwipeMore}`}
-              disabled={!swipeActionsInteractive}
-              tabIndex={swipeActionsInteractive ? 0 : -1}
+              disabled={!swipeActionsInteractive || visibleSwipeSide !== 'trailing'}
+              tabIndex={swipeActionsInteractive && visibleSwipeSide === 'trailing' ? 0 : -1}
               onClick={(event) => {
                 event.stopPropagation()
                 handleOpenChatMore(contact)
@@ -14096,8 +14192,8 @@ export const PhoneChat: React.FC = () => {
             <button
               type="button"
               className={`${styles.chatSwipeAction} ${styles.chatSwipeArchive}`}
-              disabled={!swipeActionsInteractive}
-              tabIndex={swipeActionsInteractive ? 0 : -1}
+              disabled={!swipeActionsInteractive || visibleSwipeSide !== 'trailing'}
+              tabIndex={swipeActionsInteractive && visibleSwipeSide === 'trailing' ? 0 : -1}
               onClick={(event) => {
                 event.stopPropagation()
                 handleArchiveChat(contact)
@@ -14112,7 +14208,7 @@ export const PhoneChat: React.FC = () => {
           role="button"
           tabIndex={0}
           className={`${styles.chatItem} ${styles.chatSwipeContent} ${showChatSelectionControl ? styles.chatItemSelecting : ''} ${isSelectedChat ? styles.chatItemSelected : ''} ${isActiveChat ? styles.chatItemActive : ''} ${hasUnread ? styles.chatItemUnread : ''} ${isAgentActionChat ? styles.chatItemAgentAction : ''}`}
-          style={{ transform: `translate3d(-${swipeOffset}px, 0, 0)` }}
+          style={{ transform: `translate3d(${-swipeOffset}px, 0, 0)` }}
           onTransitionEnd={(event) => handleChatSwipeContentTransitionEnd(contact.id, event)}
           onClick={() => handleChatItemPress(contact)}
           onKeyDown={(event) => handleChatRowKeyDown(event, () => handleChatItemPress(contact))}

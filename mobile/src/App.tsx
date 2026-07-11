@@ -92,6 +92,7 @@ import {
   Pause,
   Phone,
   Pencil,
+  Pin,
   Play,
   Reply,
   Smile,
@@ -811,6 +812,9 @@ const PHONE_CHAT_CUSTOM_FILTER_PREFIX = 'custom:';
 const PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD = 'chat_segment';
 const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
 const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
+const PINNED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.pinnedIds.v1';
+const MANUAL_UNREAD_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.manualUnreadIds.v1';
+const CHAT_ROW_SWIPE_ACTION_WIDTH = 184;
 const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000;
 const CHAT_REALTIME_REFRESH_DEBOUNCE_MS = 80;
 const CHAT_INBOX_REQUEST_TIMEOUT_MS = 8000;
@@ -2601,6 +2605,8 @@ function ChatScreen({
   const [filterManagerOpen, setFilterManagerOpen] = useState(false);
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>([]);
   const [mutedChatIds, setMutedChatIds] = useState<string[]>([]);
+  const [pinnedChatIds, setPinnedChatIds] = useState<string[]>([]);
+  const [manualUnreadChatIds, setManualUnreadChatIds] = useState<string[]>([]);
   const [archivedViewOpen, setArchivedViewOpen] = useState(false);
   const [chatPrefsHydrated, setChatPrefsHydrated] = useState(false);
   const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
@@ -3013,12 +3019,16 @@ function ChatScreen({
       readJsonValue<string[]>(CHAT_FILTERS_STORAGE_KEY, DEFAULT_CHAT_FILTER_IDS),
       readJsonValue<string[]>(ARCHIVED_CHAT_IDS_STORAGE_KEY, []),
       readJsonValue<string[]>(MUTED_CHAT_IDS_STORAGE_KEY, []),
-    ]).then(([savedFilterIds, savedArchivedIds, savedMutedIds]) => {
+      readJsonValue<string[]>(PINNED_CHAT_IDS_STORAGE_KEY, []),
+      readJsonValue<string[]>(MANUAL_UNREAD_CHAT_IDS_STORAGE_KEY, []),
+    ]).then(([savedFilterIds, savedArchivedIds, savedMutedIds, savedPinnedIds, savedManualUnreadIds]) => {
       if (cancelled || !chatMountedRef.current) return;
       const next = savedFilterIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index);
       setVisibleFilterIds(next.includes('all') ? next : ['all', ...next]);
       setArchivedChatIds(savedArchivedIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index));
       setMutedChatIds(savedMutedIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index));
+      setPinnedChatIds(savedPinnedIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index));
+      setManualUnreadChatIds(savedManualUnreadIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index));
       setChatPrefsHydrated(true);
     });
     return () => {
@@ -3113,6 +3123,16 @@ function ChatScreen({
   }, [chatPrefsHydrated, mutedChatIds]);
 
   useEffect(() => {
+    if (!chatPrefsHydrated) return;
+    void writeJsonValue(PINNED_CHAT_IDS_STORAGE_KEY, pinnedChatIds);
+  }, [chatPrefsHydrated, pinnedChatIds]);
+
+  useEffect(() => {
+    if (!chatPrefsHydrated) return;
+    void writeJsonValue(MANUAL_UNREAD_CHAT_IDS_STORAGE_KEY, manualUnreadChatIds);
+  }, [chatPrefsHydrated, manualUnreadChatIds]);
+
+  useEffect(() => {
     if (activeSheet !== 'newChat' && activeSheet !== 'cameraShare') {
       setContactsLoading(false);
       return;
@@ -3150,11 +3170,18 @@ function ChatScreen({
     void loadChats(true);
   };
 
+  const manualUnreadChatIdSet = useMemo(() => new Set(manualUnreadChatIds), [manualUnreadChatIds]);
+  const pinnedChatIdSet = useMemo(() => new Set(pinnedChatIds), [pinnedChatIds]);
+  const displayChats = useMemo(() => chats.map((contact) => (
+    manualUnreadChatIdSet.has(contact.id) && getUnreadCount(contact) === 0
+      ? { ...contact, unreadCount: 1 }
+      : contact
+  )), [chats, manualUnreadChatIdSet]);
   const unreadTotal = useMemo(
-    () => chats.reduce((total, contact) => (
+    () => displayChats.reduce((total, contact) => (
       archivedChatIds.includes(contact.id) ? total : total + getUnreadCount(contact)
     ), 0),
-    [archivedChatIds, chats],
+    [archivedChatIds, displayChats],
   );
   const visibleUnreadTotal = settings.showUnreadIndicators ? unreadTotal : 0;
 
@@ -3163,10 +3190,10 @@ function ChatScreen({
   }, [onUnreadTotalChange, visibleUnreadTotal]);
 
   const listBaseChats = useMemo(
-    () => chats.filter((contact) => (
+    () => displayChats.filter((contact) => (
       archivedViewOpen ? archivedChatIds.includes(contact.id) : !archivedChatIds.includes(contact.id)
     )),
-    [archivedChatIds, archivedViewOpen, chats],
+    [archivedChatIds, archivedViewOpen, displayChats],
   );
 
   const normalizedCustomChatFilters = useMemo(
@@ -3221,15 +3248,15 @@ function ChatScreen({
   const filteredChats = useMemo(() => {
     const nextChats = listBaseChats
       .filter((contact) => chatMatchesFilter(contact, archivedViewOpen ? 'all' : activeFilter, phoneChatConditionEvalContext));
-    if (settings.sortMode === 'unread') {
-      return nextChats.slice().sort((left, right) => {
+    const sortedChats = settings.sortMode === 'unread'
+      ? nextChats.slice().sort((left, right) => {
         const unreadDelta = getUnreadCount(right) - getUnreadCount(left);
         if (unreadDelta !== 0) return unreadDelta;
         return parseSortableDateValue(right.lastMessageDate) - parseSortableDateValue(left.lastMessageDate);
-      });
-    }
-    return sortChatContactsByRecency(nextChats);
-  }, [activeFilter, archivedViewOpen, listBaseChats, phoneChatConditionEvalContext, settings.sortMode]);
+      })
+      : sortChatContactsByRecency(nextChats);
+    return sortedChats.slice().sort((left, right) => Number(pinnedChatIdSet.has(right.id)) - Number(pinnedChatIdSet.has(left.id)));
+  }, [activeFilter, archivedViewOpen, listBaseChats, phoneChatConditionEvalContext, pinnedChatIdSet, settings.sortMode]);
   const visibleChatIdSet = useMemo(() => new Set(filteredChats.map((contact) => contact.id)), [filteredChats]);
   const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds]);
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds]);
@@ -3564,6 +3591,21 @@ function ChatScreen({
 
   const restoreChat = (contact: ChatContact) => {
     setArchivedChatIds((current) => current.filter((id) => id !== contact.id));
+  };
+
+  const markChatUnread = (contact: ChatContact) => {
+    setManualUnreadChatIds((current) => current.includes(contact.id) ? current : [contact.id, ...current]);
+    setChats((current) => current.map((item) => (
+      item.id === contact.id ? { ...item, unreadCount: Math.max(1, getUnreadCount(item)) } : item
+    )));
+    void Haptics.selectionAsync().catch(() => Vibration.vibrate(12));
+  };
+
+  const togglePinChat = (contact: ChatContact) => {
+    setPinnedChatIds((current) => current.includes(contact.id)
+      ? current.filter((id) => id !== contact.id)
+      : [contact.id, ...current.filter((id) => id !== contact.id)]);
+    void Haptics.selectionAsync().catch(() => Vibration.vibrate(12));
   };
 
   const clearSheetCloseTimer = useCallback(() => {
@@ -3952,6 +3994,8 @@ function ChatScreen({
       toggleChatSelection(contact);
       return;
     }
+    setManualUnreadChatIds((current) => current.filter((id) => id !== contact.id));
+    setChats((current) => current.map((item) => item.id === contact.id ? { ...item, unreadCount: 0 } : item));
     openChatConversation(contact);
   };
 
@@ -3974,6 +4018,7 @@ function ChatScreen({
     setChats((current) => current.map((contact) => (
       contactIds.includes(contact.id) ? { ...contact, unreadCount: 0 } : contact
     )));
+    setManualUnreadChatIds((current) => current.filter((id) => !contactIds.includes(id)));
     try {
       await api.markChatsRead(contactIds);
       clearChatSelection();
@@ -4229,7 +4274,7 @@ function ChatScreen({
           }}
           data={filteredChats}
           keyExtractor={(item) => item.id}
-          extraData={`${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${businessTimezone}|${businessTimezoneReady ? 'timezone-ready' : 'timezone-pending'}|${selectionActive ? 'selecting' : 'normal'}|${settings.showLastPreview ? 'preview' : 'no-preview'}|${settings.showUnreadIndicators ? 'unread' : 'no-unread'}`}
+          extraData={`${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${pinnedChatIds.join(',')}|${manualUnreadChatIds.join(',')}|${businessTimezone}|${businessTimezoneReady ? 'timezone-ready' : 'timezone-pending'}|${selectionActive ? 'selecting' : 'normal'}|${settings.showLastPreview ? 'preview' : 'no-preview'}|${settings.showUnreadIndicators ? 'unread' : 'no-unread'}`}
           refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
           onEndReached={() => {
             if (!canPaginateChatList) return;
@@ -4247,6 +4292,7 @@ function ChatScreen({
             <ChatRow
               contact={item}
               archived={archivedChatIds.includes(item.id)}
+              pinned={pinnedChatIdSet.has(item.id)}
               selectionActive={selectionActive}
               showLastPreview={settings.showLastPreview}
               showUnreadIndicators={settings.showUnreadIndicators}
@@ -4256,6 +4302,10 @@ function ChatScreen({
               timezoneReady={businessTimezoneReady}
               onLongPress={handleChatRowLongPress}
               onPress={handleChatRowPress}
+              onArchive={() => archivedChatIds.includes(item.id) ? restoreChat(item) : archiveChat(item)}
+              onMarkUnread={() => markChatUnread(item)}
+              onMore={() => openChatMoreActions(item)}
+              onTogglePin={() => togglePinChat(item)}
             />
           )}
           ListEmptyComponent={
@@ -20016,6 +20066,7 @@ function ChatSelectionPanel({
 const ChatRow = React.memo(function ChatRow({
   contact,
   archived,
+  pinned,
   selected,
   selectionActive,
   showLastPreview,
@@ -20027,9 +20078,14 @@ const ChatRow = React.memo(function ChatRow({
   timezoneReady,
   onPress,
   onLongPress,
+  onArchive,
+  onMarkUnread,
+  onMore,
+  onTogglePin,
 }: {
   contact: ChatContact;
   archived?: boolean;
+  pinned?: boolean;
   selected: boolean;
   selectionActive: boolean;
   showLastPreview: boolean;
@@ -20039,26 +20095,96 @@ const ChatRow = React.memo(function ChatRow({
   timezoneReady: boolean;
   onPress: (contact: ChatContact) => void;
   onLongPress?: (contact: ChatContact) => void;
+  onArchive: () => void;
+  onMarkUnread: () => void;
+  onMore: () => void;
+  onTogglePin: () => void;
 }) {
   const avatar = getContactAvatar(contact);
   const unread = getUnreadCount(contact);
   const showUnread = showUnreadIndicators && unread > 0;
   const channelKind = getContactChannelKind(contact);
+  const translateX = useRef(new Animated.Value(0)).current;
+  const openOffsetRef = useRef(0);
+  const settleSwipe = useCallback((offset: number) => {
+    openOffsetRef.current = offset;
+    Animated.spring(translateX, {
+      toValue: offset,
+      useNativeDriver: true,
+      damping: 24,
+      stiffness: 260,
+      mass: 0.8,
+    }).start();
+  }, [translateX]);
+  useEffect(() => {
+    if (selectionActive) settleSwipe(0);
+  }, [selectionActive, settleSwipe]);
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => (
+      !selectionActive
+      && Math.abs(gesture.dx) > 8
+      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25
+    ),
+    onPanResponderGrant: () => {
+      translateX.stopAnimation();
+    },
+    onPanResponderMove: (_event, gesture) => {
+      const next = Math.max(-CHAT_ROW_SWIPE_ACTION_WIDTH, Math.min(CHAT_ROW_SWIPE_ACTION_WIDTH, openOffsetRef.current + gesture.dx));
+      translateX.setValue(next);
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const next = openOffsetRef.current + gesture.dx;
+      settleSwipe(Math.abs(next) >= 44 ? Math.sign(next) * CHAT_ROW_SWIPE_ACTION_WIDTH : 0);
+    },
+    onPanResponderTerminate: () => settleSwipe(0),
+  }), [selectionActive, settleSwipe, translateX]);
+  const runSwipeAction = (action: () => void) => {
+    settleSwipe(0);
+    action();
+  };
 
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.chatRow,
-        selectionActive && styles.chatRowSelecting,
-        selected && styles.chatRowSelected,
-        showUnread && styles.chatRowUnread,
-        archived && styles.chatRowArchived,
-        pressed && styles.pressed,
-      ]}
-      onPress={() => onPress(contact)}
-      onLongPress={selectionActive || !onLongPress ? undefined : () => onLongPress(contact)}
-      delayLongPress={310}
-    >
+    <View style={styles.chatSwipeRow}>
+      <View style={[styles.chatSwipeRail, styles.chatSwipeRailLeading]}>
+        <Pressable accessibilityLabel="Marcar como no leído" onPress={() => runSwipeAction(onMarkUnread)} style={[styles.chatSwipeAction, styles.chatSwipeActionUnread]}>
+          <Mail size={25} color={COLORS.white} strokeWidth={2.4} />
+          <Text style={styles.chatSwipeActionText}>No leído</Text>
+        </Pressable>
+        <Pressable accessibilityLabel={pinned ? 'Desfijar chat' : 'Fijar chat'} onPress={() => runSwipeAction(onTogglePin)} style={[styles.chatSwipeAction, styles.chatSwipeActionPin]}>
+          <Pin size={25} color={COLORS.white} fill={pinned ? COLORS.white : 'none'} strokeWidth={2.4} />
+          <Text style={styles.chatSwipeActionText}>{pinned ? 'Desfijar' : 'Fijar'}</Text>
+        </Pressable>
+      </View>
+      <View style={[styles.chatSwipeRail, styles.chatSwipeRailTrailing]}>
+        <Pressable accessibilityLabel="Más acciones" onPress={() => runSwipeAction(onMore)} style={[styles.chatSwipeAction, styles.chatSwipeActionMore]}>
+          <MoreHorizontal size={27} color={COLORS.white} strokeWidth={2.5} />
+          <Text style={styles.chatSwipeActionText}>Más</Text>
+        </Pressable>
+        <Pressable accessibilityLabel={archived ? 'Restaurar chat' : 'Archivar chat'} onPress={() => runSwipeAction(onArchive)} style={[styles.chatSwipeAction, styles.chatSwipeActionArchive]}>
+          <Archive size={25} color={COLORS.white} strokeWidth={2.4} />
+          <Text style={styles.chatSwipeActionText}>{archived ? 'Restaurar' : 'Archivar'}</Text>
+        </Pressable>
+      </View>
+      <Animated.View style={[styles.chatSwipeContent, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.chatRow,
+            selectionActive && styles.chatRowSelecting,
+            selected && styles.chatRowSelected,
+            showUnread && styles.chatRowUnread,
+            archived && styles.chatRowArchived,
+            pressed && styles.pressed,
+          ]}
+          onPress={() => {
+            if (openOffsetRef.current !== 0) {
+              settleSwipe(0);
+              return;
+            }
+            onPress(contact);
+          }}
+          onLongPress={selectionActive || !onLongPress ? undefined : () => onLongPress(contact)}
+          delayLongPress={310}
+        >
       {selectionActive ? (
         <View style={[styles.chatSelectionCheck, selected && styles.chatSelectionCheckActive]}>
           {selected ? <Check size={17} color={COLORS.white} strokeWidth={3} /> : null}
@@ -20077,9 +20203,12 @@ const ChatRow = React.memo(function ChatRow({
       <View style={styles.chatRowBody}>
         <View style={styles.rowHeader}>
           <Text numberOfLines={1} style={[styles.chatName, showUnread && styles.chatNameUnread]}>{getContactName(contact)}</Text>
-          <Text style={[styles.rowTime, showUnread && styles.rowTimeUnread]}>
-            {timezoneReady ? formatChatListDate(contact.lastMessageDate, timezone) : ''}
-          </Text>
+          <View style={styles.chatRowMetaLine}>
+            {pinned ? <Pin size={13} color={COLORS.meta} fill={COLORS.meta} strokeWidth={2.2} /> : null}
+            <Text style={[styles.rowTime, showUnread && styles.rowTimeUnread]}>
+              {timezoneReady ? formatChatListDate(contact.lastMessageDate, timezone) : ''}
+            </Text>
+          </View>
         </View>
         {showLastPreview || showUnread ? (
           <View style={styles.rowFooter}>
@@ -20088,7 +20217,9 @@ const ChatRow = React.memo(function ChatRow({
           </View>
         ) : null}
       </View>
-    </Pressable>
+        </Pressable>
+      </Animated.View>
+    </View>
   );
 });
 
@@ -32267,6 +32398,63 @@ function createAppStyles() {
     minHeight: CHAT_ROW_MIN_HEIGHT,
     paddingHorizontal: 14,
     borderRadius: 0,
+    backgroundColor: COLORS.bg,
+  },
+  chatSwipeRow: {
+    position: 'relative',
+    width: '100%',
+    minHeight: CHAT_ROW_MIN_HEIGHT,
+    overflow: 'hidden',
+    backgroundColor: COLORS.bg,
+  },
+  chatSwipeContent: {
+    position: 'relative',
+    zIndex: 2,
+    width: '100%',
+    backgroundColor: COLORS.bg,
+  },
+  chatSwipeRail: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: CHAT_ROW_SWIPE_ACTION_WIDTH,
+    flexDirection: 'row',
+    zIndex: 1,
+  },
+  chatSwipeRailLeading: {
+    left: 0,
+  },
+  chatSwipeRailTrailing: {
+    right: 0,
+  },
+  chatSwipeAction: {
+    width: CHAT_ROW_SWIPE_ACTION_WIDTH / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  chatSwipeActionUnread: {
+    backgroundColor: COLORS.primary,
+  },
+  chatSwipeActionPin: {
+    backgroundColor: COLORS.success,
+  },
+  chatSwipeActionMore: {
+    backgroundColor: COLORS.meta,
+  },
+  chatSwipeActionArchive: {
+    backgroundColor: COLORS.primary,
+  },
+  chatSwipeActionText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  chatRowMetaLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
   },
   chatRowUnread: {
     backgroundColor: neutralSelectedSurface,

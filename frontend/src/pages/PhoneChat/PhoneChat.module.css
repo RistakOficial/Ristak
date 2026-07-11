@@ -594,7 +594,8 @@
 
 .chatSwipeActions {
   position: absolute;
-  inset: 0 0 0 auto;
+  top: 0;
+  bottom: 0;
   z-index: 0;
   display: grid;
   grid-template-columns: 84px 100px;
@@ -602,6 +603,15 @@
   min-height: 86px;
   border-radius: 0 !important;
   overflow: hidden;
+}
+
+.chatSwipeActionsLeading {
+  left: 0;
+  grid-template-columns: 100px 84px;
+}
+
+.chatSwipeActionsTrailing {
+  right: 0;
 }
 
 .chatSwipeAction {
@@ -637,6 +647,16 @@
 .chatSwipeArchive {
   color: var(--phone-chat-text-on-primary);
   background: var(--phone-chat-primary);
+}
+
+.chatSwipeUnread {
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-primary);
+}
+
+.chatSwipePin {
+  color: var(--phone-chat-surface);
+  background: color-mix(in srgb, var(--phone-chat-text) 64%, var(--phone-chat-surface) 36%);
 }
 
 .chatSwipeContent {

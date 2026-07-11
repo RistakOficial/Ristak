@@ -3138,8 +3138,10 @@ La lista de chats nativa debe mantenerse alineada con `PhoneChat`: header de
 chats, buscador, chips de filtros, filas planas, avatares sin aro de canal y
 badge inferior derecho con asset nativo, preview de ultimo mensaje, estados de
 no leido, fila/vista de archivados y seleccion multiple por long press. Tocar
-abre la conversacion y mantener presionado abre `Mas acciones`; no hay acciones
-laterales por swipe. Tambien debe usar sheets nativos para
+abre la conversacion y mantener presionado abre `Mas acciones`. El swipe de fila
+es comun a `/movil`, React Native e iOS: izquierda muestra `Mas` y luego
+`Archivar/Restaurar`; derecha muestra `No leido` y luego `Fijar/Desfijar`. Los
+fijados quedan arriba y el estado local persiste en el dispositivo. Tambien debe usar sheets nativos para
 `Mas`, `+`/nuevo chat y selector de destinatarios despues de camara. Cuando
 cambien filtros, labels, canales, unread, archivados, seleccion, swipe, camara,
 sheets o preview en `/movil`, se debe revisar el equivalente en

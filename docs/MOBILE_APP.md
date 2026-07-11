@@ -68,11 +68,13 @@ forzarla como ancla hace que la pantalla abra visualmente mas abajo. Si hay que
 reiniciar la bandeja, remonta la `List` con una identidad nueva y deja que iOS
 coloque el tope real.
 
-Cada fila real de la bandeja iOS admite swipe hacia la izquierda con acciones
-nativas de `List`: **Archivar** (o **Restaurar** dentro de Archivados) y **Más**.
-El swipe no permite ejecución completa accidental, desaparece durante selección
-múltiple y reutiliza exactamente el mismo estado local y el mismo sheet de Más
-acciones que el long-press.
+Cada fila real de las bandejas `/movil`, `mobile/` e `ios/app` comparte el mismo
+contrato: al deslizar hacia la izquierda aparecen, en ese orden, **Más** y
+**Archivar** (o **Restaurar** dentro de Archivados); al deslizar hacia la derecha
+aparecen **No leído** y **Fijar/Desfijar**. No se ejecuta una acción completa por
+accidente y el gesto desaparece durante selección múltiple. Los fijados quedan
+arriba y tanto ese estado como el pendiente manual persisten localmente por
+dispositivo; abrir o marcar leído un chat elimina el pendiente manual.
 
 Los bottom sheets nativos que contienen formularios, pickers o contenido con
 boton final deben reservar un margen inferior de seguridad dentro del contenido
@@ -822,13 +824,12 @@ pantalla y no deben auto-centrarse dejando chips cortados en los laterales. Las
 filas deben ser suficientemente altas para lectura tactil, con avatar grande y
 separadores/alineacion propios de la fila.
 
-La bandeja nativa ya no usa swipe horizontal para acciones de fila. Tocar una
-fila abre el chat; mantenerla presionada abre el sheet `Mas acciones` con feedback
-haptico. En ese sheet, `Seleccionar` debe ser la primera accion, antes de
-agendar, registrar pagos o cualquier otra herramienta. Al tocar `Seleccionar`,
-la lista entra en seleccion multiple y desde ahi se pueden marcar leidos,
-archivar/restaurar o seleccionar visibles. No reintroduzcas `Mas`/`Archivar`
-como botones laterales por swipe.
+La bandeja nativa usa swipe horizontal con el contrato compartido descrito
+arriba. Tocar una fila abre el chat; mantenerla presionada abre el sheet `Mas
+acciones` con feedback haptico. En ese sheet, `Seleccionar` debe ser la primera
+accion, antes de agendar, registrar pagos o cualquier otra herramienta. Al tocar
+`Seleccionar`, la lista entra en seleccion multiple y desde ahi se pueden marcar
+leidos, archivar/restaurar o seleccionar visibles.
 
 Las fechas de la lista de chats se formatean con la zona horaria del negocio:
 los mensajes del dia actual muestran la hora exacta (`7:47 p.m.`), los del dia
@@ -1158,7 +1159,8 @@ acciones`; las acciones masivas minimas son marcar como leidos via
 `/contacts/chats/read` y archivar/restaurar la seleccion. El sheet completo debe
 mantener agendar cita, registrar pagos, programar mensaje, agregar etiqueta,
 silenciar/quitar silencio, controles del agente, marcar como leido y
-archivar/restaurar. No debe existir swipe lateral de fila para estas acciones.
+archivar/restaurar. El swipe lateral conserva solo las cuatro acciones rápidas
+del contrato común: Más, Archivar/Restaurar, No leído y Fijar/Desfijar.
 
 El cliente React Native debe usar bottom sheets nativos para acciones de bandeja,
 no `Alert.alert`, cuando el flujo existe como sheet en `/movil`: `Mas` de la

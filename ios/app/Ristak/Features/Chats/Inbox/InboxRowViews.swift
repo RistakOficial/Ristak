@@ -8,6 +8,7 @@ struct ChatRowView: View {
     let showPreview: Bool
     let showUnreadIndicators: Bool
     let isMuted: Bool
+    let isPinned: Bool
     let isSelecting: Bool
     let isSelected: Bool
     /// Fila activa resaltada (iPad/wide).
@@ -72,6 +73,13 @@ struct ChatRowView: View {
                             .font(.caption)
                             .foregroundStyle(RistakTheme.textMute)
                             .accessibilityLabel("Silenciado")
+                    }
+
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption)
+                            .foregroundStyle(RistakTheme.textMute)
+                            .accessibilityLabel("Fijado")
                     }
 
                     if showUnreadIndicators, hasVisibleUnread {

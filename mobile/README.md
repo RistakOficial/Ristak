@@ -35,7 +35,8 @@ Service extensions, or Apple native code in this folder. Apple work belongs in
   passes from the mobile migration worktrees.
 - Conversation view from `/api/contacts/:id/journey`.
 - Text sending through `/api/whatsapp-api/messages/text`.
-- Native chat/conversation pass with swipe actions, reusable bottom sheets,
+- Native chat/conversation pass with row swipe actions (**More → Archive** to
+  the left, **Unread → Pin** to the right), reusable bottom sheets,
   camera/photo/video send, templates, CLABE/payment helpers, scheduling, tags,
   agent actions, attachments and channel selection.
 - Native appointments pass with business-timezone month/timeline views,

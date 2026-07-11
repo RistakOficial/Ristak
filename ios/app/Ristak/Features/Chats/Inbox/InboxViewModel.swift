@@ -1069,12 +1069,21 @@ final class InboxViewModel {
         // del servidor no cacheados salen aparte en «Contactos encontrados».
         if isSearchActive { return localSearchMatches }
 
+        let locallyPresentedRows = rows.map { contact -> ChatContact in
+            guard localState.isManuallyUnread(contact.id), contact.visibleUnreadCount == 0 else {
+                return contact
+            }
+            var copy = contact
+            copy.unreadCount = 1
+            return copy
+        }
+
         var list: [ChatContact]
         if archivedViewActive {
             // En archivados se ignoran los filtros rápidos (doc 03 §4.8).
-            list = rows.filter { localState.isArchived($0.id) }
+            list = locallyPresentedRows.filter { localState.isArchived($0.id) }
         } else {
-            list = rows.filter { !localState.isArchived($0.id) }
+            list = locallyPresentedRows.filter { !localState.isArchived($0.id) }
             list = list.filter { matchesActiveFilter($0) }
         }
         if sortMode == .unread {
@@ -1087,6 +1096,14 @@ final class InboxViewModel {
                 return lhs.offset < rhs.offset
             }.map(\.element)
         }
+        // Fijados siempre arriba, conservando entre ellos y entre los demás el
+        // orden que ya determinó servidor/filtro/modo de ordenamiento.
+        list = list.enumerated().sorted { lhs, rhs in
+            let lhsPinned = localState.isPinned(lhs.element.id)
+            let rhsPinned = localState.isPinned(rhs.element.id)
+            if lhsPinned != rhsPinned { return lhsPinned }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
         return list
     }
 
@@ -1178,7 +1195,7 @@ final class InboxViewModel {
     var unreadTotal: Int {
         rows.reduce(into: 0) { total, contact in
             guard !localState.isArchived(contact.id), !contact.isCommentOnlyChat else { return }
-            total += contact.visibleUnreadCount
+            total += max(contact.visibleUnreadCount, localState.isManuallyUnread(contact.id) ? 1 : 0)
         }
     }
 
@@ -1190,11 +1207,13 @@ final class InboxViewModel {
 
     /// Al abrir un chat: optimista a 0 + POST fire-and-forget (doc 03 §4.6).
     func markOpened(contactID: String) {
+        localState.setManuallyUnread(false, contactIDs: [contactID])
         setUnreadZero(ids: [contactID])
         Task { try? await chatsService.markChatRead(contactId: contactID) }
     }
 
     func markRead(contactID: String) {
+        localState.setManuallyUnread(false, contactIDs: [contactID])
         setUnreadZero(ids: [contactID])
         Task {
             try? await chatsService.markChatRead(contactId: contactID)
@@ -1210,6 +1229,15 @@ final class InboxViewModel {
         syncUnreadBadge()
     }
 
+    func markUnread(contactID: String) {
+        localState.setManuallyUnread(true, contactIDs: [contactID])
+        if let index = rows.firstIndex(where: { $0.id == contactID }) {
+            rows[index].unreadCount = max(1, rows[index].unreadCount)
+        }
+        syncUnreadBadge()
+        successHapticTick &+= 1
+    }
+
     // MARK: - Silenciar / archivar (estado local)
 
     func toggleMuted(contactID: String) {
@@ -1219,6 +1247,11 @@ final class InboxViewModel {
     func setArchived(_ archived: Bool, contactID: String) {
         localState.setArchived(archived, contactIDs: [contactID])
         syncUnreadBadge()
+        successHapticTick &+= 1
+    }
+
+    func setPinned(_ pinned: Bool, contactID: String) {
+        localState.setPinned(pinned, contactIDs: [contactID])
         successHapticTick &+= 1
     }
 

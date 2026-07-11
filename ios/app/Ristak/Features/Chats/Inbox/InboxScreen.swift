@@ -241,6 +241,7 @@ struct InboxScreen: View {
             showPreview: viewModel.showLastPreview,
             showUnreadIndicators: viewModel.showUnreadIndicators,
             isMuted: viewModel.localState.isMuted(contact.id),
+            isPinned: viewModel.localState.isPinned(contact.id),
             isSelecting: viewModel.isSelecting,
             isSelected: viewModel.selectedIDs.contains(contact.id),
             isActive: selectedContactID == contact.id,
@@ -255,14 +256,6 @@ struct InboxScreen: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if !viewModel.isSelecting {
                 Button {
-                    presentMoreActions(for: contact)
-                } label: {
-                    Label("Más", systemImage: "ellipsis")
-                }
-                .tint(RistakTheme.textDim)
-                .accessibilityIdentifier("ristak-inbox-swipe-more-\(contact.id)")
-
-                Button {
                     let shouldArchive = !viewModel.localState.isArchived(contact.id)
                     viewModel.setArchived(shouldArchive, contactID: contact.id)
                 } label: {
@@ -274,6 +267,38 @@ struct InboxScreen: View {
                 }
                 .tint(RistakTheme.accent)
                 .accessibilityIdentifier("ristak-inbox-swipe-archive-\(contact.id)")
+
+                Button {
+                    presentMoreActions(for: contact)
+                } label: {
+                    Label("Más", systemImage: "ellipsis")
+                }
+                .tint(RistakTheme.textDim)
+                .accessibilityIdentifier("ristak-inbox-swipe-more-\(contact.id)")
+            }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if !viewModel.isSelecting {
+                Button {
+                    let shouldPin = !viewModel.localState.isPinned(contact.id)
+                    viewModel.setPinned(shouldPin, contactID: contact.id)
+                } label: {
+                    if viewModel.localState.isPinned(contact.id) {
+                        Label("Desfijar", systemImage: "pin.slash")
+                    } else {
+                        Label("Fijar", systemImage: "pin")
+                    }
+                }
+                .tint(RistakTheme.warn)
+                .accessibilityIdentifier("ristak-inbox-swipe-pin-\(contact.id)")
+
+                Button {
+                    viewModel.markUnread(contactID: contact.id)
+                } label: {
+                    Label("No leído", systemImage: "envelope.badge")
+                }
+                .tint(RistakTheme.accent)
+                .accessibilityIdentifier("ristak-inbox-swipe-unread-\(contact.id)")
             }
         }
         .ristakRowSeparator()

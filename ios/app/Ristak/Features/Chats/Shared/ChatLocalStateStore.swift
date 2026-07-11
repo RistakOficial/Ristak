@@ -1,7 +1,8 @@
 import Foundation
 import Observation
 
-/// Archivados y silenciados de la bandeja. **Estado 100 % local por
+/// Archivados, silenciados, fijados y marcados manualmente como no leídos.
+/// **Estado 100 % local por
 /// dispositivo** (doc research/03 §1.7/§4.8: no existe endpoint backend; gap
 /// documentado — multi-dispositivo no sincroniza). Persistencia en
 /// `UserDefaults`, con clave namespaceada por cuenta (baseURL + userId) para
@@ -11,10 +12,14 @@ import Observation
 final class ChatLocalStateStore {
     private static let archivedKeyPrefix = "ristak.ios.chat.archivedIds.v1"
     private static let mutedKeyPrefix = "ristak.ios.chat.mutedIds.v1"
+    private static let pinnedKeyPrefix = "ristak.ios.chat.pinnedIds.v1"
+    private static let manualUnreadKeyPrefix = "ristak.ios.chat.manualUnreadIds.v1"
     private static let destinationPhonesKeyPrefix = "ristak.ios.chat.destinationPhones.v1"
 
     private(set) var archivedIDs: Set<String> = []
     private(set) var mutedIDs: Set<String> = []
+    private(set) var pinnedIDs: Set<String> = []
+    private(set) var manualUnreadIDs: Set<String> = []
     /// Último teléfono elegido explícitamente para cada contacto. Un contacto
     /// puede tener varios números; volver a abrir el hilo no debe cambiar en
     /// silencio del número alterno al primario.
@@ -32,11 +37,15 @@ final class ChatLocalStateStore {
         guard namespace != nil else {
             archivedIDs = []
             mutedIDs = []
+            pinnedIDs = []
+            manualUnreadIDs = []
             destinationPhones = [:]
             return
         }
         archivedIDs = load(prefix: Self.archivedKeyPrefix)
         mutedIDs = load(prefix: Self.mutedKeyPrefix)
+        pinnedIDs = load(prefix: Self.pinnedKeyPrefix)
+        manualUnreadIDs = load(prefix: Self.manualUnreadKeyPrefix)
         destinationPhones = loadDictionary(prefix: Self.destinationPhonesKeyPrefix)
     }
 
@@ -70,6 +79,32 @@ final class ChatLocalStateStore {
             mutedIDs.subtract(contactIDs)
         }
         persist(mutedIDs, prefix: Self.mutedKeyPrefix)
+    }
+
+    // MARK: - Fijados
+
+    func isPinned(_ contactID: String) -> Bool {
+        pinnedIDs.contains(contactID)
+    }
+
+    func setPinned(_ pinned: Bool, contactIDs: [String]) {
+        guard !contactIDs.isEmpty else { return }
+        if pinned { pinnedIDs.formUnion(contactIDs) }
+        else { pinnedIDs.subtract(contactIDs) }
+        persist(pinnedIDs, prefix: Self.pinnedKeyPrefix)
+    }
+
+    // MARK: - No leído manual
+
+    func isManuallyUnread(_ contactID: String) -> Bool {
+        manualUnreadIDs.contains(contactID)
+    }
+
+    func setManuallyUnread(_ unread: Bool, contactIDs: [String]) {
+        guard !contactIDs.isEmpty else { return }
+        if unread { manualUnreadIDs.formUnion(contactIDs) }
+        else { manualUnreadIDs.subtract(contactIDs) }
+        persist(manualUnreadIDs, prefix: Self.manualUnreadKeyPrefix)
     }
 
     // MARK: - Destino de conversación
