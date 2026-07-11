@@ -835,7 +835,9 @@ Los selectores iOS de nuevo chat, cita y pagos usan
 `/contacts/search?picker=true`: hidratan inmediatamente el snapshot de la cuenta,
 revalidan sin bloquear y no vuelven a pedir la bandeja de chats. El backend
 omite agregados de pagos/citas y calentamiento de avatares, limita el payload y
-devuelve todos los telefonos del contacto. Solo una consulta con forma real de
+devuelve todos los telefonos del contacto junto con las señales mínimas del
+último mensaje (`lastMessageChannel`, tipo, transporte y fecha) para pintar el
+badge de canal sin recalcular la bandeja completa. Solo una consulta con forma real de
 telefono puede producir `matchedPhone`; digitos dentro de un nombre no cambian
 el destinatario.
 El cache de queries exactas es LRU en memoria; solo los recientes se guardan en

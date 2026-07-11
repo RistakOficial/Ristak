@@ -1972,6 +1972,154 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   hasPrivateDm: Boolean(Number(contact.meta_has_private_dm || 0))
 })
 
+const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByContact = new Map()) => {
+  const contactIds = contacts.map(contact => cleanString(contact.id)).filter(Boolean)
+  if (!contactIds.length) return new Map()
+
+  const phonePairs = []
+  contacts.forEach(contact => {
+    const contactId = cleanString(contact.id)
+    if (!contactId) return
+    const seenPhones = new Set()
+    const addPhone = (value) => {
+      const phone = cleanString(value)
+      if (!phone || seenPhones.has(phone)) return
+      seenPhones.add(phone)
+      phonePairs.push([contactId, phone])
+    }
+    addPhone(contact.phone)
+    ;(phoneRowsByContact.get(contactId) || []).forEach(row => addPhone(row.phone))
+  })
+
+  const phoneRowsCte = phonePairs.length
+    ? `VALUES ${phonePairs.map(() => '(?, ?)').join(', ')}`
+    : 'SELECT NULL AS contact_id, NULL AS phone WHERE 1 = 0'
+  const directWhatsAppContactIdSql = 'COALESCE(msg.contact_id, api_profile.contact_id)'
+  const params = [
+    ...contactIds,
+    ...phonePairs.flatMap(([contactId, phone]) => [contactId, phone])
+  ]
+
+  const rows = await db.all(
+    `WITH picked_contacts(contact_id) AS (
+        VALUES ${contactIds.map(() => '(?)').join(', ')}
+      ),
+      picked_contact_phones(contact_id, phone) AS (
+        ${phoneRowsCte}
+      ),
+      picker_message_rows AS (
+        SELECT
+          ${directWhatsAppContactIdSql} AS contact_id,
+          msg.message_text,
+          msg.message_type,
+          msg.direction,
+          msg.business_phone,
+          msg.business_phone_number_id,
+          msg.transport,
+          COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
+          msg.created_at,
+          'whatsapp' AS message_channel
+        FROM whatsapp_api_messages msg
+        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
+        JOIN picked_contacts pc ON pc.contact_id = ${directWhatsAppContactIdSql}
+        WHERE ${directWhatsAppContactIdSql} IS NOT NULL
+        UNION ALL
+        SELECT
+          MIN(picked_contact_phones.contact_id) AS contact_id,
+          msg.message_text,
+          msg.message_type,
+          msg.direction,
+          msg.business_phone,
+          msg.business_phone_number_id,
+          msg.transport,
+          COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
+          msg.created_at,
+          'whatsapp' AS message_channel
+        FROM whatsapp_api_messages msg
+        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
+        JOIN picked_contact_phones
+          ON picked_contact_phones.phone IN (msg.phone, msg.from_phone, msg.to_phone, api_profile.phone)
+        WHERE ${directWhatsAppContactIdSql} IS NULL
+          AND TRIM(COALESCE(picked_contact_phones.phone, '')) != ''
+        GROUP BY
+          msg.id,
+          msg.message_text,
+          msg.message_type,
+          msg.direction,
+          msg.business_phone,
+          msg.business_phone_number_id,
+          msg.transport,
+          COALESCE(msg.message_timestamp, msg.created_at),
+          msg.created_at
+        UNION ALL
+        SELECT
+          meta_social_messages.contact_id,
+          meta_social_messages.message_text,
+          meta_social_messages.message_type,
+          meta_social_messages.direction,
+          NULL AS business_phone,
+          NULL AS business_phone_number_id,
+          NULL AS transport,
+          COALESCE(meta_social_messages.message_timestamp, meta_social_messages.created_at) AS message_date,
+          meta_social_messages.created_at,
+          meta_social_messages.platform AS message_channel
+        FROM meta_social_messages
+        JOIN picked_contacts pc ON pc.contact_id = meta_social_messages.contact_id
+        WHERE meta_social_messages.contact_id IS NOT NULL
+        UNION ALL
+        SELECT
+          email_messages.contact_id,
+          CASE
+            WHEN COALESCE(email_messages.subject, '') != '' AND COALESCE(email_messages.message_text, '') != '' THEN email_messages.subject || ' · ' || email_messages.message_text
+            WHEN COALESCE(email_messages.subject, '') != '' THEN email_messages.subject
+            ELSE COALESCE(email_messages.message_text, '')
+          END AS message_text,
+          'email' AS message_type,
+          email_messages.direction,
+          NULL AS business_phone,
+          NULL AS business_phone_number_id,
+          CASE
+            WHEN email_messages.raw_payload_json LIKE '%"provider":"highlevel"%' THEN 'ghl_email'
+            ELSE 'smtp'
+          END AS transport,
+          COALESCE(email_messages.message_timestamp, email_messages.created_at) AS message_date,
+          email_messages.created_at,
+          'email' AS message_channel
+        FROM email_messages
+        JOIN picked_contacts pc ON pc.contact_id = email_messages.contact_id
+        WHERE email_messages.contact_id IS NOT NULL
+      ),
+      latest_picker_messages AS (
+        SELECT
+          *,
+          ROW_NUMBER() OVER (
+            PARTITION BY contact_id
+            ORDER BY ${timestampSortExpression('message_date')} DESC, ${timestampSortExpression('created_at')} DESC
+          ) AS row_rank
+        FROM picker_message_rows
+        WHERE contact_id IS NOT NULL
+      )
+      SELECT
+        contact_id,
+        message_text AS last_message_text,
+        message_type AS last_message_type,
+        message_channel AS last_message_channel,
+        message_date AS last_message_date,
+        direction AS last_message_direction,
+        business_phone AS last_business_phone,
+        business_phone_number_id AS last_business_phone_number_id,
+        transport AS last_message_transport
+      FROM latest_picker_messages
+      WHERE row_rank = 1`,
+    params
+  ).catch(error => {
+    logger.warn(`No se pudo hidratar canal del directorio picker: ${error.message}`)
+    return []
+  })
+
+  return new Map(rows.map(row => [cleanString(row.contact_id), row]))
+}
+
 const CHAT_CONTACTS_DEFAULT_LIMIT = 50
 const CHAT_CONTACTS_MAX_LIMIT = 100
 
@@ -3808,6 +3956,7 @@ export const searchContacts = async (req, res) => {
           })
         })
       }
+      const latestMessagesByContact = await fetchPickerLatestMessageRowsByContact(contacts, phoneRowsByContact)
       const queryDigits = isPhoneSearchText(trimmedQuery)
         ? normalizePhoneDigits(trimmedQuery)
         : ''
@@ -3815,6 +3964,7 @@ export const searchContacts = async (req, res) => {
       return res.json({
         success: true,
         data: contacts.map(contact => {
+          const latestMessage = latestMessagesByContact.get(cleanString(contact.id)) || {}
           const phones = buildContactPhonesForResponse({
             ...contact,
             phoneNumbers: phoneRowsByContact.get(cleanString(contact.id)) || []
@@ -3843,7 +3993,23 @@ export const searchContacts = async (req, res) => {
             preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
             phones,
             phoneNumbers: phones,
-            notes: ''
+            notes: '',
+            lastMessageText: latestMessage.last_message_text || '',
+            lastMessageType: latestMessage.last_message_type || '',
+            lastMessageChannel: latestMessage.last_message_channel || '',
+            lastMessageDate: latestMessage.last_message_date || contact.created_at,
+            lastMessageDirection: latestMessage.last_message_direction || '',
+            lastBusinessPhone: latestMessage.last_business_phone || '',
+            lastBusinessPhoneNumberId: latestMessage.last_business_phone_number_id || '',
+            lastInboundBusinessPhone: '',
+            lastInboundBusinessPhoneNumberId: '',
+            firstInboundBusinessPhone: '',
+            firstInboundBusinessPhoneNumberId: '',
+            lastMessageTransport: latestMessage.last_message_transport || '',
+            messageCount: 0,
+            unreadCount: 0,
+            hasCommentMessage: false,
+            hasPrivateDm: false
           }
         })
       })

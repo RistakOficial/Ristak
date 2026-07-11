@@ -154,7 +154,12 @@ struct PaymentContactSummaryRow: View {
 
     var body: some View {
         HStack(spacing: RistakTheme.Spacing.sm) {
-            ContactAvatarView(name: contact.displayName, photoURL: contact.photoURL, size: 40)
+            ContactAvatarView(
+                name: contact.displayName,
+                photoURL: contact.photoURL,
+                size: 40,
+                channel: contact.channel
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.displayName)

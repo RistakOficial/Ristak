@@ -252,7 +252,7 @@ struct NewChatSheet: View {
         var indexByID: [String: Int] = [:]
         for contact in first + second where !contact.id.isEmpty {
             if let index = indexByID[contact.id] {
-                merged[index] = ChatInboxPaginator.preservingHydratedAvatar(
+                merged[index] = preservingPickerPresentation(
                     old: merged[index],
                     fresh: contact
                 )
@@ -278,12 +278,22 @@ struct NewChatSheet: View {
         result.reserveCapacity(min(fresh.count, 100))
         for contact in fresh where !contact.id.isEmpty && seen.insert(contact.id).inserted {
             if let old = cachedByID[contact.id] {
-                result.append(ChatInboxPaginator.preservingHydratedAvatar(old: old, fresh: contact))
+                result.append(preservingPickerPresentation(old: old, fresh: contact))
             } else {
                 result.append(contact)
             }
             if result.count == 100 { break }
         }
         return result
+    }
+
+    private func preservingPickerPresentation(old: ChatContact, fresh: ChatContact) -> ChatContact {
+        var merged = ChatInboxPaginator.preservingHydratedAvatar(old: old, fresh: fresh)
+        if ChatRowSignals.badgeChannel(merged) == nil, ChatRowSignals.badgeChannel(old) != nil {
+            merged.lastMessageType = old.lastMessageType
+            merged.lastMessageChannel = old.lastMessageChannel
+            merged.lastMessageTransport = old.lastMessageTransport
+        }
+        return merged
     }
 }

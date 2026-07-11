@@ -147,6 +147,11 @@ flujo "Nuevo chat".
   hasAppointments, hasShowedAppointment, hasAttendedAppointment,
   hasUpcomingConfirmedAppointmentBadge, source, ad_name, ad_id,
   profilePhotoUrl, phones, phoneNumbers, notes:''`).
+- Modo ligero iOS `picker=true`: no calcula LTV, pagos, citas ni calienta
+  avatares, pero sí devuelve `phones`, `matchedPhone` y señales mínimas del
+  último mensaje (`lastMessageChannel`, `lastMessageType`,
+  `lastMessageTransport`, `lastMessageDate`) para que Nuevo chat, Nueva cita y
+  Pagos pinten el badge de canal sin pedir `/contacts/chats`.
 
 ### 1.4 `GET /api/search/global` — búsqueda global (referencia)
 

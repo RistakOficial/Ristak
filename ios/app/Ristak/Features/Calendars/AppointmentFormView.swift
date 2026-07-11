@@ -81,7 +81,12 @@ struct AppointmentFormView: View {
         if let contact = model.contact {
             Section {
                 HStack(spacing: RistakTheme.Spacing.sm) {
-                    ContactAvatarView(name: contact.displayName, size: 40)
+                    ContactAvatarView(
+                        name: contact.displayName,
+                        photoURL: contact.photoURL,
+                        size: 40,
+                        channel: contact.channel
+                    )
                     VStack(alignment: .leading, spacing: 1) {
                         Text(contact.displayName)
                             .font(.subheadline.weight(.semibold))

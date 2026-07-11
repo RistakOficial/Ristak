@@ -297,20 +297,45 @@ struct AppointmentContactSelection: Identifiable, Hashable, Sendable {
     let name: String
     let phone: String
     let email: String
+    let photoURL: URL?
+    let channel: RistakChatChannel?
 
-    init(id: String, name: String, phone: String = "", email: String = "") {
+    init(
+        id: String,
+        name: String,
+        phone: String = "",
+        email: String = "",
+        photoURL: URL? = nil,
+        channel: RistakChatChannel? = nil
+    ) {
         self.id = id
         self.name = name
         self.phone = phone
         self.email = email
+        self.photoURL = photoURL
+        self.channel = channel
     }
 
     init(chat: ChatContact) {
-        self.init(id: chat.id, name: chat.name, phone: chat.phone, email: chat.email)
+        self.init(
+            id: chat.id,
+            name: chat.name,
+            phone: chat.phone,
+            email: chat.email,
+            photoURL: chat.profilePhotoUrl.flatMap(URL.init(string:)),
+            channel: ChatRowSignals.badgeChannel(chat)
+        )
     }
 
     init(detail: ContactDetail) {
-        self.init(id: detail.id, name: detail.name, phone: detail.phone, email: detail.email)
+        self.init(
+            id: detail.id,
+            name: detail.name,
+            phone: detail.phone,
+            email: detail.email,
+            photoURL: detail.profilePhotoUrl.flatMap(URL.init(string:)),
+            channel: RistakChatChannel(raw: detail.source)
+        )
     }
 
     var displayName: String {

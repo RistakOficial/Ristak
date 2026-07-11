@@ -10,15 +10,25 @@ struct PickedPaymentContact: Identifiable, Hashable, Sendable {
     let email: String
     let phone: String
     let photoURL: URL?
+    let channel: RistakChatChannel?
     /// `true` cuando viene precargado desde el chat (no editable).
     var isLocked: Bool = false
 
-    init(id: String, name: String, email: String, phone: String, photoURL: URL? = nil, isLocked: Bool = false) {
+    init(
+        id: String,
+        name: String,
+        email: String,
+        phone: String,
+        photoURL: URL? = nil,
+        channel: RistakChatChannel? = nil,
+        isLocked: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.email = email
         self.phone = phone
         self.photoURL = photoURL
+        self.channel = channel
         self.isLocked = isLocked
     }
 
@@ -29,6 +39,7 @@ struct PickedPaymentContact: Identifiable, Hashable, Sendable {
             email: chatContact.email,
             phone: chatContact.phone,
             photoURL: chatContact.profilePhotoUrl.flatMap(URL.init(string:)),
+            channel: ChatRowSignals.badgeChannel(chatContact),
             isLocked: isLocked
         )
     }
@@ -40,6 +51,7 @@ struct PickedPaymentContact: Identifiable, Hashable, Sendable {
             email: detail.email,
             phone: detail.phone,
             photoURL: detail.profilePhotoUrl.flatMap(URL.init(string:)),
+            channel: RistakChatChannel(raw: detail.source),
             isLocked: isLocked
         )
     }

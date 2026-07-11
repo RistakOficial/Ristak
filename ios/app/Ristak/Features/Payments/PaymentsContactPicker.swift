@@ -151,7 +151,12 @@ struct PaymentsContactPickerSheet: View {
                     dismiss()
                 } label: {
                     HStack(spacing: RistakTheme.Spacing.sm) {
-                        ContactAvatarView(name: contact.displayName, photoURL: contact.photoURL, size: 42)
+                        ContactAvatarView(
+                            name: contact.displayName,
+                            photoURL: contact.photoURL,
+                            size: 42,
+                            channel: contact.channel
+                        )
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(contact.displayName)

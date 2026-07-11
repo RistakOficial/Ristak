@@ -33,10 +33,12 @@ test('el directorio picker busca identidad y teléfono alterno sin métricas pes
   const suffix = randomUUID().replace(/-/g, '')
   const contactId = `contact_picker_${suffix}`
   const phoneId = `contact_phone_picker_${suffix}`
+  const messageId = `contact_picker_message_${suffix}`
   const alternatePhone = `+5299${suffix.replace(/\D/g, '').padEnd(10, '7').slice(0, 10)}`
   const uniqueName = `Selector Veloz ${suffix.slice(0, 10)}`
 
   const cleanup = async () => {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => undefined)
     await db.run('DELETE FROM contact_phone_numbers WHERE id = ?', [phoneId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
@@ -65,6 +67,12 @@ test('el directorio picker busca identidad y teléfono alterno sin métricas pes
       ) VALUES (?, ?, ?, 'Trabajo', 0, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [phoneId, contactId, alternatePhone]
     )
+    await db.run(
+      `INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, direction, message_type, message_text, transport, message_timestamp, created_at
+      ) VALUES (?, ?, ?, 'inbound', 'text', 'Hola desde WhatsApp', 'api', ?, ?)`,
+      [messageId, contactId, '+526561234567', '2099-09-01T10:03:00.000Z', '2099-09-01T10:03:00.000Z']
+    )
 
     const byName = await runSearch({ picker: 'true', q: uniqueName, limit: '60' })
     assert.equal(byName.length, 1)
@@ -75,6 +83,9 @@ test('el directorio picker busca identidad y teléfono alterno sin métricas pes
     assert.equal(byName[0].profilePhotoUrl, null)
     assert.equal(byName[0].phones[0].phone, '+526561234567')
     assert.equal(byName[0].phones.some(entry => entry.phone === alternatePhone), true)
+    assert.equal(byName[0].lastMessageChannel, 'whatsapp')
+    assert.equal(byName[0].lastMessageTransport, 'api')
+    assert.equal(byName[0].lastMessageType, 'text')
 
     const alternateDigits = alternatePhone.replace(/\D/g, '').slice(-8)
     const byAlternatePhone = await runSearch({ picker: 'true', q: alternateDigits })

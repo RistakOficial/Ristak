@@ -146,21 +146,13 @@ struct RootView: View {
 /// cacheado de inmediato (arranque instantáneo estilo WhatsApp).
 private struct RistakBootSplashView: View {
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 2) {
-            Text("Ristak")
-                .font(.system(size: 44, weight: .bold, design: .rounded))
-                .foregroundStyle(RistakTheme.textPrimary)
-
-            Circle()
-                .fill(RistakTheme.accent)
-                .frame(width: 10, height: 10)
-                .alignmentGuide(.firstTextBaseline) { dimensions in
-                    dimensions[.bottom]
-                }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Ristak")
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(RistakTheme.bg)
+        Image("LoginLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: 128, height: 128)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Ristak")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(RistakTheme.bg)
     }
 }

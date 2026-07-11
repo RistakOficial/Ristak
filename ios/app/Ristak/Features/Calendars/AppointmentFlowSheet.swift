@@ -240,7 +240,8 @@ struct AppointmentContactPickerView: View {
                 ContactAvatarView(
                     name: contact.name.isEmpty ? contact.phone : contact.name,
                     photoURL: contact.profilePhotoUrl.flatMap(URL.init(string:)),
-                    size: Self.avatarSize
+                    size: Self.avatarSize,
+                    channel: ChatRowSignals.badgeChannel(contact)
                 )
                 VStack(alignment: .leading, spacing: 1) {
                     Text(contact.name.isEmpty ? (contact.phone.isEmpty ? contact.email : contact.phone) : contact.name)
