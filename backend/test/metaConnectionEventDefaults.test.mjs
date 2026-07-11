@@ -199,7 +199,7 @@ test('saving new Meta social profiles enables Page switches and page-backed Inst
           assert.equal(await getAppConfig(key), '1', `${key} should default on for new Page profiles`)
         }
         assert.equal(await getAppConfig('meta_instagram_messaging_enabled'), '1')
-        assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '0')
+        assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '1')
 
         const messengerTokenForPageOne = encrypt('messenger-user-token-for-page-one')
         await db.run('UPDATE meta_config SET messenger_user_token = ?', [messengerTokenForPageOne])
@@ -238,7 +238,7 @@ test('saving new Meta social profiles enables Page switches and page-backed Inst
           assert.equal(await getAppConfig(key), '1', `${key} should turn back on for changed Page profiles`)
         }
         assert.equal(await getAppConfig('meta_instagram_messaging_enabled'), '1')
-        assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '0')
+        assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '1')
 
         for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
           await setAppConfig(key, '0')
@@ -256,7 +256,7 @@ test('saving new Meta social profiles enables Page switches and page-backed Inst
           assert.equal(await getAppConfig(key), '1', `${key} should turn on for changed Page profiles`)
         }
         assert.equal(await getAppConfig('meta_instagram_messaging_enabled'), '1')
-        assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '0')
+        assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '1')
       })
     })
   } finally {

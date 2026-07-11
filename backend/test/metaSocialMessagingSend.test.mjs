@@ -7,6 +7,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey, isEncrypted } from '../src/utils/encryption.js'
 import {
+  enableMetaSocialChannelsForConnectedProfiles,
   getMetaConfig,
   getMetaDeveloperSetup,
   saveMetaMessengerUserToken
@@ -575,7 +576,13 @@ test('Messenger usa su User Token humano y arma enlaces de Developers con la app
     Object.defineProperty(API_URLS, 'META_TOKEN_DEBUG', { value: `${graphBase}/debug_token`, configurable: true })
 
     await snapshotMetaConfig(async () => {
-      await db.run(`
+      await snapshotAppConfig([
+        'meta_messenger_messaging_enabled',
+        'meta_facebook_comments_enabled',
+        'meta_instagram_messaging_enabled',
+        'meta_instagram_comments_enabled'
+      ], async () => {
+        await db.run(`
         INSERT INTO meta_config (
           ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
           timezone_id, timezone_name, timezone_offset_hours_utc
@@ -591,26 +598,44 @@ test('Messenger usa su User Token humano y arma enlaces de Developers con la app
         null
       ])
 
-      await saveMetaMessengerUserToken('messenger-user-token-test')
-      const rawConfig = await db.get('SELECT messenger_user_token FROM meta_config LIMIT 1')
-      assert.equal(isEncrypted(rawConfig?.messenger_user_token), true)
+        await saveMetaMessengerUserToken('messenger-user-token-test')
+        const rawConfig = await db.get('SELECT messenger_user_token FROM meta_config LIMIT 1')
+        assert.equal(isEncrypted(rawConfig?.messenger_user_token), true)
 
-      const config = await getMetaConfig()
-      assert.equal(config?.messenger_user_token, 'messenger-user-token-test')
+        const config = await getMetaConfig()
+        assert.equal(config?.messenger_user_token, 'messenger-user-token-test')
 
-      const messengerPageToken = await resolveMetaPageAccessToken({ config, platform: 'messenger' })
-      const instagramPageToken = await resolveMetaPageAccessToken({ config, platform: 'instagram' })
-      assert.equal(messengerPageToken, 'page-token-from-messenger-user')
-      assert.equal(instagramPageToken, 'page-token-from-system-user')
+        const enabledChannels = await enableMetaSocialChannelsForConnectedProfiles(config)
+        assert.deepEqual(enabledChannels, {
+          messengerMessaging: true,
+          facebookComments: true,
+          instagramMessaging: true,
+          instagramComments: true
+        })
+        for (const key of [
+          'meta_messenger_messaging_enabled',
+          'meta_facebook_comments_enabled',
+          'meta_instagram_messaging_enabled',
+          'meta_instagram_comments_enabled'
+        ]) {
+          const row = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', [key])
+          assert.equal(row?.config_value, '1')
+        }
 
-      const setup = await getMetaDeveloperSetup()
-      assert.equal(setup.appId, 'app-developer-setup-test')
-      assert.equal(setup.businessId, 'business-developer-setup-test')
-      assert.equal(setup.messengerUserTokenConfigured, true)
-      assert.match(setup.messengerUrl, /use_case_enum=FACEBOOK_MESSAGING/)
-      assert.match(setup.messengerUrl, /business_id=business-developer-setup-test/)
-      assert.match(setup.instagramUrl, /use_case_enum=INSTAGRAM_BUSINESS/)
-      assert.match(setup.instagramUrl, /selected_tab=API-Setup/)
+        const messengerPageToken = await resolveMetaPageAccessToken({ config, platform: 'messenger' })
+        const instagramPageToken = await resolveMetaPageAccessToken({ config, platform: 'instagram' })
+        assert.equal(messengerPageToken, 'page-token-from-messenger-user')
+        assert.equal(instagramPageToken, 'page-token-from-system-user')
+
+        const setup = await getMetaDeveloperSetup()
+        assert.equal(setup.appId, 'app-developer-setup-test')
+        assert.equal(setup.businessId, 'business-developer-setup-test')
+        assert.equal(setup.messengerUserTokenConfigured, true)
+        assert.match(setup.messengerUrl, /use_case_enum=FACEBOOK_MESSAGING/)
+        assert.match(setup.messengerUrl, /business_id=business-developer-setup-test/)
+        assert.match(setup.instagramUrl, /use_case_enum=INSTAGRAM_BUSINESS/)
+        assert.match(setup.instagramUrl, /selected_tab=API-Setup/)
+      })
     })
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))

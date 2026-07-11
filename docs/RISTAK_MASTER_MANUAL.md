@@ -2087,13 +2087,14 @@ Ristak usa Meta en varias areas:
   sincronizacion inmediata; Ristak persiste la configuracion una sola vez al
   terminar el wizard. Al terminarlo, Ristak arranca automaticamente la
   sincronizacion de anuncios de Meta en segundo plano y lleva al usuario a
-  `Configuracion > Meta > Redes sociales`. Las Page nuevas dejan encendidos
-  por default Messenger y comentarios de Facebook. Instagram DM y comentarios se
-  operan con el token de Pagina derivado de `meta_config.access_token` cuando la
-  cuenta profesional de Instagram esta enlazada a esa Page y el token base tiene
-  permisos de Instagram. Ristak no pide, guarda ni acepta un token separado de
-  Instagram. Los comentarios de Instagram se controlan aparte desde la columna de
-  Instagram. En la pestaña Redes sociales, la guia de Webhooks muestra solo la
+  `Configuracion > Meta > Redes sociales`. Las Page nuevas dejan encendidos por
+  default Messenger y comentarios de Facebook; cuando tambien hay una cuenta
+  profesional de Instagram enlazada, quedan encendidos sus cuatro switches de
+  mensajes y comentarios. Instagram DM y comentarios se operan con el token de
+  Pagina derivado de `meta_config.access_token` cuando la cuenta profesional de
+  Instagram esta enlazada a esa Page y el token base tiene permisos de Instagram.
+  Ristak no pide, guarda ni acepta un token separado de Instagram. En la pestaña
+  Redes sociales, la guia de Webhooks muestra solo la
   URL de devolucion de llamada y el token de verificacion que deben repetirse en
   cada caso de uso/producto de Meta activo (Page, Messenger, Instagram o
   WhatsApp). La UI no debe pedir al usuario copiar campos de suscripcion
@@ -2118,7 +2119,10 @@ Ristak usa Meta en varias areas:
   para Messenger/Page; anuncios, CAPI e Instagram siguen usando
   `meta_config.access_token` (System User). El toggle de Messenger no se puede
   activar sin ese User Token, porque Meta rechaza DMs a personas externas con un
-  Page Token derivado únicamente del System User.
+  Page Token derivado únicamente del System User. Al guardarlo, Ristak activa
+  los switches de mensajes y comentarios de las superficies que ya tienen activo
+  configurado; el campo se muestra enmascarado como conectado y permite pegar un
+  token nuevo para cambiarlo sin revelar el anterior.
 - En las tarjetas de Messenger e Instagram, los botones de Meta Developers se
   arman con el App ID y el portafolio de la integración guardada; nunca con un
   ID hardcodeado de Ristak. Si una conexión antigua no tenía esos IDs, Ristak

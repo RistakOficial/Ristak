@@ -76,7 +76,7 @@ async function syncMetaSocialChannelDefaults({
       newPageId !== oldPageId
     )
   ) {
-    updates.set('meta_instagram_messaging_enabled', '1')
+    META_SOCIAL_CHANNEL_CONFIG_KEYS.instagram.forEach(key => updates.set(key, '1'))
   } else if (!newInstagramAccountId && oldInstagramAccountId) {
     META_SOCIAL_CHANNEL_CONFIG_KEYS.instagram.forEach(key => updates.set(key, '0'))
   }
@@ -85,6 +85,35 @@ async function syncMetaSocialChannelDefaults({
 
   await Promise.all([...updates].map(([key, value]) => setAppConfig(key, value)))
   logger.info(`Meta social: switches actualizados por perfiles conectados (${[...updates.keys()].join(', ')})`)
+}
+
+/**
+ * Cuando se valida el User Token humano de Messenger, las superficies sociales
+ * ya tienen autorización real para empezar a recibir mensajes y comentarios.
+ * Encendemos todas las que tengan activo configurado; no prendemos Instagram
+ * si aún no se eligió una cuenta profesional porque no tendría transporte.
+ */
+export async function enableMetaSocialChannelsForConnectedProfiles(metaConfig = {}) {
+  const pageId = normalizeMetaProfileId(metaConfig?.page_id)
+  const instagramAccountId = normalizeMetaProfileId(metaConfig?.instagram_account_id)
+  const updates = new Map()
+
+  if (pageId) {
+    META_SOCIAL_CHANNEL_CONFIG_KEYS.page.forEach(key => updates.set(key, '1'))
+  }
+
+  if (pageId && instagramAccountId) {
+    META_SOCIAL_CHANNEL_CONFIG_KEYS.instagram.forEach(key => updates.set(key, '1'))
+  }
+
+  await Promise.all([...updates].map(([key, value]) => setAppConfig(key, value)))
+
+  return {
+    messengerMessaging: Boolean(pageId),
+    facebookComments: Boolean(pageId),
+    instagramMessaging: Boolean(pageId && instagramAccountId),
+    instagramComments: Boolean(pageId && instagramAccountId)
+  }
 }
 
 export function getMetaSyncProgress() {

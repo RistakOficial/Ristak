@@ -9,6 +9,7 @@ import {
   getMetaSyncProgress,
   getMetaConfig,
   getMetaDeveloperSetup,
+  enableMetaSocialChannelsForConnectedProfiles,
   resolveMetaCapiAccessToken,
   saveMetaMessengerUserToken as persistMetaMessengerUserToken,
   verifyMetaToken,
@@ -1528,12 +1529,14 @@ export const saveMetaMessengerUserToken = async (req, res) => {
     });
 
     await persistMetaMessengerUserToken(userToken);
+    const socialChannels = await enableMetaSocialChannelsForConnectedProfiles(config);
     const subscription = await ensureMetaPageMessagingSubscription();
     const setup = await getMetaDeveloperSetup();
 
     res.json({
       success: true,
       configured: true,
+      socialChannels,
       subscription,
       setup
     });

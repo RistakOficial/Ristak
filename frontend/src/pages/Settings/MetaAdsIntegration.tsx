@@ -553,7 +553,12 @@ export const MetaAdsIntegration: React.FC = () => {
       updates.push(setMessengerMessagingEnabled(false), setFacebookCommentsEnabled(false))
     }
 
-    if (!newInstagramAccountId && oldInstagramAccountId) {
+    if (newPageId && newInstagramAccountId && (
+      newInstagramAccountId !== oldInstagramAccountId ||
+      newPageId !== oldPageId
+    )) {
+      updates.push(setInstagramMessagingEnabled(true), setInstagramCommentsEnabled(true))
+    } else if (!newInstagramAccountId && oldInstagramAccountId) {
       updates.push(setInstagramMessagingEnabled(false), setInstagramCommentsEnabled(false))
     }
 
@@ -1778,6 +1783,14 @@ export const MetaAdsIntegration: React.FC = () => {
         throw new Error(data?.error || 'Meta no aceptó el User Token para esta Página.')
       }
 
+      const socialChannels = data.socialChannels || {}
+      const socialUpdates: Array<Promise<void>> = []
+      if (socialChannels.messengerMessaging) socialUpdates.push(setMessengerMessagingEnabled(true))
+      if (socialChannels.facebookComments) socialUpdates.push(setFacebookCommentsEnabled(true))
+      if (socialChannels.instagramMessaging) socialUpdates.push(setInstagramMessagingEnabled(true))
+      if (socialChannels.instagramComments) socialUpdates.push(setInstagramCommentsEnabled(true))
+      await Promise.all(socialUpdates)
+
       setMessengerUserToken('')
       const setup = data.setup || {}
       setMetaDeveloperSetup({
@@ -2515,7 +2528,7 @@ export const MetaAdsIntegration: React.FC = () => {
                           autoComplete="off"
                           value={messengerUserToken}
                           onChange={(event) => setMessengerUserToken(event.target.value)}
-                          placeholder={metaDeveloperSetup?.messengerUserTokenConfigured ? 'Token guardado — pega otro para reemplazarlo' : 'Pega el User Token que generaste en Meta'}
+                          placeholder={metaDeveloperSetup?.messengerUserTokenConfigured ? '•••••••• conectado' : 'Pega el User Token que generaste en Meta'}
                           aria-label="User Token de Messenger"
                           disabled={!hasPageId || isSavingMessengerUserToken}
                         />
@@ -2526,7 +2539,7 @@ export const MetaAdsIntegration: React.FC = () => {
                           disabled={!hasPageId || !messengerUserToken.trim() || isSavingMessengerUserToken}
                         >
                           <Save size={16} />
-                          {isSavingMessengerUserToken ? 'Validando' : metaDeveloperSetup?.messengerUserTokenConfigured ? 'Reemplazar' : 'Guardar'}
+                          {isSavingMessengerUserToken ? 'Validando' : metaDeveloperSetup?.messengerUserTokenConfigured ? 'Cambiar' : 'Guardar'}
                         </Button>
                       </div>
                       <p className={styles.connectedPagesDescription}>
@@ -2550,7 +2563,6 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Mensajes de Messenger</strong>
-                          <span>Recibir y responder DMs desde la bandeja de chat.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge variant={getMetaMessagingStatusVariant(messengerMessagingEnabled, canEnableMessengerMessaging)}>
@@ -2568,7 +2580,6 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Comentarios de Facebook</strong>
-                          <span>Guardar comentarios de publicaciones y anuncios. Requiere sesión activa y webhook suscrito.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge variant={getMetaMessagingStatusVariant(facebookCommentsEnabled, canEnableMessengerComments)}>
@@ -2621,7 +2632,6 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Instagram DM</strong>
-                          <span>Nombres, fotos y respuestas usan la Página enlazada.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge
@@ -2641,7 +2651,6 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Comentarios de Instagram</strong>
-                          <span>Guardar autores, fotos y comentarios nuevos usando la misma conexión de Meta.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge variant={getMetaMessagingStatusVariant(instagramCommentsEnabled, canEnableInstagramComments)}>
