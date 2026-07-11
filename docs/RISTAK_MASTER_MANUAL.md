@@ -741,10 +741,10 @@ audio reproducible. Cuando el archivo proviene del almacenamiento de Ristak,
 WhatsApp API lo valida como OGG/Opus y lo sube al proveedor antes de mandarlo por
 Media ID: nunca delega de nuevo la descarga a una URL CDN, porque Meta/YCloud
 puede clasificar ese fetch como `application/octet-stream` aunque el asset sea
-válido. Ese upload se arma con el `FormData` y `Blob` de `node-fetch`, la misma
-librería que hace la petición: no se pueden mezclar con los objetos globales de
-Node porque el archivo acabaría serializado como texto y el proveedor recibiría
-`application/octet-stream`. Los assets externos se conservan como enlaces HTTPS y entran a la misma
+válido. Ese upload se construye como multipart binario determinista, con boundary
+y `Content-Length` explícitos: el buffer OGG/Opus se entrega byte por byte sin
+depender de cómo un runtime serialice `FormData`. Los assets externos se conservan
+como enlaces HTTPS y entran a la misma
 normalización cuando se proporcionan como archivo.
 Las URLs públicas existen exclusivamente para que los proveedores puedan descargar
 el contenido; el endpoint/proxy mantiene MIME, `nosniff` y fuerza la descarga de

@@ -4,7 +4,7 @@ import fs from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import nodeFetch, { Blob as NodeFetchBlob, FormData as NodeFetchFormData } from 'node-fetch'
+import nodeFetch from 'node-fetch'
 import sharp from 'sharp'
 import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates, generateContactId, recordContactPhoneNumber } from './contactIdentityService.js'
@@ -2192,6 +2192,35 @@ async function ycloudRequest(path, { apiKey, method = 'GET', body, query } = {})
   return data || {}
 }
 
+function multipartSafeFilename(value = '') {
+  const filename = cleanString(value).replace(/[\r\n"]/g, '_')
+  return filename || `whatsapp-media-${Date.now()}`
+}
+
+/**
+ * Construye el multipart como bytes deterministas. YCloud reenvía ese archivo
+ * a Meta y sus validadores son muy estrictos con OGG/Opus: dejar que dos
+ * implementaciones Fetch distintas serialicen FormData produjo cargas que el
+ * proveedor aceptaba inicialmente pero luego clasificaba como octet-stream.
+ */
+function buildYCloudMultipartUpload({ buffer, filename, mimeType } = {}) {
+  const boundary = `----RistakYCloud${crypto.randomBytes(18).toString('hex')}`
+  const safeFilename = multipartSafeFilename(filename)
+  const safeMimeType = cleanString(mimeType).replace(/[\r\n]/g, '') || 'application/octet-stream'
+  const opening = Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="file"; filename="${safeFilename}"\r\n` +
+    `Content-Type: ${safeMimeType}\r\n\r\n`,
+    'utf8'
+  )
+  const closing = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
+
+  return {
+    body: Buffer.concat([opening, buffer, closing]),
+    contentType: `multipart/form-data; boundary=${boundary}`
+  }
+}
+
 async function ycloudUploadWhatsAppMedia({ apiKey, phoneNumber, buffer, mimeType, filename } = {}) {
   const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
   if (!cleanApiKey) {
@@ -2203,24 +2232,25 @@ async function ycloudUploadWhatsAppMedia({ apiKey, phoneNumber, buffer, mimeType
 
   const normalizedMimeType = normalizeYCloudUploadMimeType(mimeType)
   const cleanFilename = cleanString(filename) || `whatsapp-media-${Date.now()}`
-  // No mezclar las clases globales de Node (undici) con `node-fetch`. Aunque
-  // ambas se llaman FormData/Blob, node-fetch sólo reconoce sus propias clases;
-  // con las globales serializa el cuerpo como texto en vez de multipart y Meta
-  // acaba recibiendo `application/octet-stream` en lugar del OGG/Opus real.
-  const formData = new NodeFetchFormData()
-  formData.append(
-    'file',
-    new NodeFetchBlob([buffer], { type: normalizedMimeType || 'application/octet-stream' }),
-    cleanFilename
-  )
+  const upload = buildYCloudMultipartUpload({
+    buffer,
+    filename: cleanFilename,
+    mimeType: normalizedMimeType || 'application/octet-stream'
+  })
 
   const response = await ycloudFetch(`${YCLOUD_API_BASE_URL}/whatsapp/media/${encodeURIComponent(cleanPhoneNumber)}/upload`, {
     method: 'POST',
     headers: {
       accept: 'application/json',
-      'X-API-Key': cleanApiKey
+      'X-API-Key': cleanApiKey,
+      'content-type': upload.contentType,
+      'content-length': String(upload.body.length)
     },
-    body: formData
+    // Mandamos un Buffer ya formado, no una implementación de FormData. Así el
+    // límite/host de YCloud recibe los bytes OGG/Opus exactos, el boundary y el
+    // Content-Length explícito, sin diferencias entre undici, node-fetch o el
+    // runtime de Render.
+    body: upload.body
   })
 
   const text = await response.text()

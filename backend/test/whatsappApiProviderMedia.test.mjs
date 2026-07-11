@@ -93,6 +93,35 @@ function normalizeDigits(value = '') {
   return String(value || '').replace(/\D/g, '')
 }
 
+function readMultipartUploadFile(options = {}) {
+  const legacyFile = options.body?.get?.('file')
+  if (legacyFile) return legacyFile
+
+  const body = Buffer.isBuffer(options.body)
+    ? options.body
+    : Buffer.from(options.body || '')
+  const contentType = String(options.headers?.['content-type'] || options.headers?.['Content-Type'] || '')
+  const boundary = /boundary=([^;\s]+)/i.exec(contentType)?.[1]
+  if (!boundary || !body.length) return null
+
+  const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'))
+  const closing = Buffer.from(`\r\n--${boundary}`)
+  const contentStart = headerEnd + 4
+  const contentEnd = body.indexOf(closing, contentStart)
+  if (headerEnd < 0 || contentEnd < contentStart) return null
+
+  const header = body.subarray(0, headerEnd).toString('utf8')
+  const filename = /filename="([^"]*)"/i.exec(header)?.[1] || ''
+  const mimeType = /(?:^|\r\n)Content-Type:\s*([^\r\n]+)/i.exec(header)?.[1] || ''
+  const bytes = body.subarray(contentStart, contentEnd)
+
+  return {
+    name: filename,
+    type: mimeType,
+    arrayBuffer: async () => bytes
+  }
+}
+
 function createFakeQrRuntime(sentMessages = [], connectedJid) {
   let messageIndex = 0
 
@@ -300,7 +329,7 @@ async function withYCloudProviderMediaCapture(callback) {
         const method = String(options.method || 'GET').toUpperCase()
 
         if (method === 'POST' && /^\/whatsapp\/media\/.+\/upload$/.test(path)) {
-          const file = options.body?.get?.('file')
+          const file = readMultipartUploadFile(options)
           const bytes = file?.arrayBuffer ? Buffer.from(await file.arrayBuffer()) : Buffer.alloc(0)
           const mediaId = `provider_media_${captures.uploads.length + 1}`
           captures.uploads.push({
