@@ -495,6 +495,29 @@ async function startRuntimeServices() {
     'No se pudo revisar la versión de Meta API al arrancar'
   )
 
+  // La Página pudo haberse conectado antes de que Ristak necesitara un campo
+  // adicional del webhook. Reconciliamos la lista completa en cada arranque
+  // (idempotente) para que una instalación ya conectada no pierda eventos de
+  // entrega/lectura/edición. Sólo se toca Meta cuando la integración y
+  // Messenger están activos.
+  runStartupDrainTask(
+    'startup:meta-page-messaging-subscription',
+    async () => {
+      if (!(await isMetaConnected())) {
+        logger.info('Suscripción Meta de Messenger omitida: Meta no está conectado')
+        return { skipped: true, reason: 'meta-disconnected' }
+      }
+
+      const { reconcileMetaPageMessagingSubscription } = await import('./services/metaSocialMessagingService.js')
+      const result = await reconcileMetaPageMessagingSubscription()
+      if (result.skipped) {
+        logger.info('Suscripción Meta de Messenger omitida: Messenger está apagado')
+      }
+      return result
+    },
+    'No se pudo reconciliar la suscripción Meta de Messenger al arrancar'
+  )
+
   // (CRON-006) Verificar y actualizar webhooks en producción SIN bloquear el boot:
   // si HighLevel responde lento, el await anterior dejaba la app en 'starting' y
   // devolvía 503 a todo el tráfico. Se ejecuta en segundo plano (best-effort), igual

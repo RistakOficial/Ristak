@@ -1739,6 +1739,29 @@ export async function ensureMetaPageMessagingSubscription() {
   return { pageId, subscribedFields: [...META_PAGE_SUBSCRIBED_FIELDS] }
 }
 
+/**
+ * Reconcilia la suscripción del inbox al arrancar una instalación ya conectada.
+ *
+ * El flujo de conexión y el toggle de Messenger ya registran la Página, pero
+ * instalaciones que se conectaron antes de agregar un campo nuevo al webhook no
+ * vuelven a pasar por ese flujo. Meta no agrega automáticamente los campos que
+ * el cliente empieza a necesitar después. Esta pasada idempotente conserva la
+ * suscripción completa sin tocar cuentas donde Messenger está apagado.
+ */
+export async function reconcileMetaPageMessagingSubscription({
+  isMessengerEnabled = isMetaSocialMessagingEnabled,
+  ensureSubscription = ensureMetaPageMessagingSubscription
+} = {}) {
+  if (!(await isMessengerEnabled('messenger'))) {
+    return { skipped: true, reason: 'messenger-disabled' }
+  }
+
+  return {
+    skipped: false,
+    ...(await ensureSubscription())
+  }
+}
+
 /** Lee la suscripción actual de la Página (para verificar/diagnosticar). */
 export async function getMetaPageMessagingSubscription() {
   const config = await getMetaConfig().catch(() => null)

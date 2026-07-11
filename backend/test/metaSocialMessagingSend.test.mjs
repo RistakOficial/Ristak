@@ -9,6 +9,7 @@ import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   processMetaSocialWebhook,
   ensureMetaPageMessagingSubscription,
+  reconcileMetaPageMessagingSubscription,
   resolveMetaPageAccessToken,
   sendMetaSocialAttachmentMessage,
   sendMetaSocialAudioMessage,
@@ -497,6 +498,41 @@ test('ensureMetaPageMessagingSubscription conserva todos los eventos necesarios 
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
   }
+})
+
+test('reconcileMetaPageMessagingSubscription actualiza instalaciones existentes sólo si Messenger está activo', async () => {
+  let ensureCalls = 0
+  const skipped = await reconcileMetaPageMessagingSubscription({
+    isMessengerEnabled: async (platform) => {
+      assert.equal(platform, 'messenger')
+      return false
+    },
+    ensureSubscription: async () => {
+      ensureCalls += 1
+      return { pageId: 'should-not-run' }
+    }
+  })
+
+  assert.deepEqual(skipped, { skipped: true, reason: 'messenger-disabled' })
+  assert.equal(ensureCalls, 0)
+
+  const reconciled = await reconcileMetaPageMessagingSubscription({
+    isMessengerEnabled: async () => true,
+    ensureSubscription: async () => {
+      ensureCalls += 1
+      return {
+        pageId: 'page-existing-connection',
+        subscribedFields: ['messages', 'message_deliveries']
+      }
+    }
+  })
+
+  assert.deepEqual(reconciled, {
+    skipped: false,
+    pageId: 'page-existing-connection',
+    subscribedFields: ['messages', 'message_deliveries']
+  })
+  assert.equal(ensureCalls, 1)
 })
 
 test('syncMetaSocialConversationHistory importa historial disponible de Messenger al chat', async () => {

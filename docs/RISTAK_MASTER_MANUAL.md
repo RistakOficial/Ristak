@@ -2052,6 +2052,13 @@ Ristak usa Meta en varias areas:
   `messaging_referrals` y `feed`: los primeros ocho mantienen DMs, estados y
   origen; `feed` conserva comentarios de Facebook. No se suscriben campos de
   pagos, carrito, juegos o account linking si esos productos no estan activos.
+  Como la configuracion previa de Meta no se reejecuta sola cuando Ristak agrega
+  un campo de webhook, cada arranque reconcilia idempotentemente esa lista para
+  instalaciones ya conectadas. Esa pasada solo llama a Meta si la integracion y
+  Messenger estan activos; no prende Messenger ni modifica una Page desconectada.
+  El webhook entrega eventos futuros: antes de importar conversaciones historicas,
+  Ristak registra la suscripcion y despues hace el backfill separado por
+  Conversations API, deduplicando por ID de mensaje.
 - El bloque **Perfil de red social** del editor de Sites lee los perfiles desde
   la configuracion Meta guardada (`meta_config.page_id`,
   `meta_config.instagram_account_id` y `meta_config.access_token`) cuando el
