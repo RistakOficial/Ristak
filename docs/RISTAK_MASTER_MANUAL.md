@@ -751,13 +751,15 @@ reclasificarlo como `application/octet-stream`. Si web, móvil o un flujo legacy
 entregan un `dataUrl`, el backend primero convierte/publica un OGG/Opus y después
 manda ese enlace. Antes de reutilizar la URL de un asset de Automatizaciones,
 el runtime valida que sus bytes sí sean OGG/Opus; un MP3/M4A legacy se convierte
-y publica de nuevo. El storage y el CDN deben conservar el MIME completo
-`audio/ogg; codecs=opus`; no deben reducirlo a `audio/ogg`, porque el proveedor
-puede reclasificar la nota durante su procesamiento asíncrono. Todo asset de voz
-administrado por Ristak usa para la entrega al proveedor el proxy
-público `/media/assets/:id/voice.ogg`: valida los bytes y responde con el MIME
-completo, una URL terminada en `.ogg` y un `Content-Disposition` cuyo filename
-también termina en `.ogg`. Nunca debe conservar ahí la extensión original `.mp3`
+y publica de nuevo. En el mensaje interno de WhatsApp QR/Baileys se conserva
+`audio/ogg; codecs=opus`, pero el archivo público que descarga Meta debe responder
+con el MIME base exacto `audio/ogg`: Meta valida Opus inspeccionando los bytes y
+puede reclasificar como `application/octet-stream` un `Content-Type` HTTP que
+incluya el parámetro `codecs=opus`. Todo asset de voz administrado por Ristak usa
+para la entrega al proveedor el proxy público `/media/assets/:id/voice.ogg`:
+valida los bytes, responde con `audio/ogg`, usa una URL terminada en `.ogg` y un
+`Content-Disposition` cuyo filename también termina en `.ogg`. Nunca debe
+conservar ahí la extensión original `.mp3`
 después de convertir el archivo: mezclar bytes/MIME OGG con filename MP3 hace que
 Meta lo reclasifique como `application/octet-stream` y devuelva `131053`.
 YCloud conserva el envío por su cola asíncrona con filtros de desuscritos y

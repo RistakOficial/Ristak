@@ -443,20 +443,13 @@ function cleanMimeType(value = '') {
 }
 
 /**
- * YCloud/Meta necesita conservar el codec en el multipart de una nota de voz.
- * Quitar el parámetro y dejar solo `audio/ogg` vuelve ambiguo el archivo: OGG
- * también puede contener codecs que WhatsApp no acepta. Para cualquier otro
- * medio seguimos usando el MIME base, que es el contrato normal de subida.
+ * Meta acepta `audio/ogg` y comprueba que el contenedor use Opus leyendo los
+ * bytes. El parámetro HTTP `codecs=opus` se conserva para Baileys, pero no debe
+ * viajar en el Content-Type del multipart de YCloud/Meta: su procesador puede
+ * reclasificarlo como application/octet-stream y responder 131053.
  */
 function normalizeYCloudUploadMimeType(value = '') {
-  const original = cleanString(value).toLowerCase()
-  if (
-    cleanMimeType(original) === 'audio/ogg' &&
-    /(?:^|;)\s*codecs\s*=\s*opus\s*(?:;|$)/.test(original)
-  ) {
-    return WHATSAPP_VOICE_NOTE_MIME_TYPE
-  }
-  return cleanMimeType(original)
+  return cleanMimeType(value)
 }
 
 function safeJson(value) {

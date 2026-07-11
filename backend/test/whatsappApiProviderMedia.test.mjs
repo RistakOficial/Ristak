@@ -806,7 +806,7 @@ test('envío API convierte un MP3 real, publica OGG/Opus decodificable y lo mand
           originalUrl: `/media/assets/${deliveryMediaAssetId}/voice.ogg`
         }, proxyResponse)
         assert.equal(proxyResponse.statusCode, 200)
-        assert.equal(proxyResponse.headers['content-type'], 'audio/ogg; codecs=opus')
+        assert.equal(proxyResponse.headers['content-type'], 'audio/ogg')
         assert.equal(
           proxyResponse.headers['content-disposition'],
           `inline; filename="ristak-voice-${deliveryMediaAssetId}.ogg"`

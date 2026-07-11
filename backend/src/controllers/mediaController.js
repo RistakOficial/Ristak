@@ -629,7 +629,12 @@ export async function serveMediaAssetFileHandler(req, res) {
         error.status = 415
         throw error
       }
-      res.setHeader('Content-Type', 'audio/ogg; codecs=opus')
+      // Meta documenta el tipo admitido como `audio/ogg` y valida el codec
+      // inspeccionando los bytes. Enviar el parametro `codecs=opus` en el
+      // header HTTP hace que su fetcher asincrono reclasifique un OGG valido
+      // como application/octet-stream (131053), aunque Baileys si use ese MIME
+      // completo dentro del mensaje. El proxy publico debe usar el MIME base.
+      res.setHeader('Content-Type', 'audio/ogg')
       res.setHeader('Content-Length', String(file.buffer.length))
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
       res.setHeader('X-Content-Type-Options', 'nosniff')
