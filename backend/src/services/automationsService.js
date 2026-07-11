@@ -1440,14 +1440,19 @@ export async function listAutomationWhatsAppTemplatesCatalog({ status = 'APPROVE
 // Archivos adjuntos (imágenes/videos/audios/docs de los bloques de mensaje)
 // ---------------------------------------------------------------------------
 
-export async function saveAutomationAsset({ fileBase64, filename, userId }) {
+export async function saveAutomationAsset({ fileBase64, filename, userId, deliveryMode = '' }) {
   const { uploadMediaAssetFromDataUrl } = await import('./mediaStorageService.js')
+  const cleanDeliveryMode = cleanCatalogString(deliveryMode).toLowerCase()
   const asset = await uploadMediaAssetFromDataUrl({
     fileBase64,
     filename,
     userId,
     module: 'automations',
-    isPublic: true
+    isPublic: true,
+    // "Audio" conserva su archivo/calidad original. Sólo "Nota de voz" debe
+    // normalizarse a OGG/Opus para la semántica PTT de WhatsApp.
+    skipCompression: cleanDeliveryMode === 'audio',
+    metadata: cleanDeliveryMode ? { automationDeliveryMode: cleanDeliveryMode } : undefined
   })
 
   return {

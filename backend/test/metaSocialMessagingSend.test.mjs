@@ -1905,6 +1905,7 @@ test('sendMetaSocialAudioMessage manda audio Messenger con URL pública y lo per
           assert.equal(result.remoteMessageId, 'mid-messenger-send-test')
           assert.equal(result.audio?.mimeType, 'audio/mp4')
           assert.equal(result.audio?.durationMs, 1800)
+          assert.equal(result.audio?.voice, true)
           const tokenLookupCall = calls.find(call => call.method === 'GET')
           if (tokenLookupCall) assert.match(tokenLookupCall.url, /^\/page-send-test\?/)
           const sendCall = calls.find(call => call.method === 'POST')
@@ -1937,6 +1938,7 @@ test('sendMetaSocialAudioMessage manda audio Messenger con URL pública y lo per
           assert.match(row.media_url, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
           assert.equal(row.media_mime_type, 'audio/mp4')
           assert.equal(JSON.parse(row.raw_payload_json).context.audio.durationMs, 1800)
+          assert.equal(JSON.parse(row.raw_payload_json).context.audio.voice, true)
         } finally {
           if (mediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -1999,6 +2001,7 @@ test('sendMetaSocialAudioMessage manda audio Instagram con Page token derivado y
             platform: 'instagram',
             audioDataUrl: `data:audio/mp4;base64,${Buffer.from('fake native instagram audio').toString('base64')}`,
             durationMs: 2400,
+            voice: false,
             publicBaseUrl: 'https://ristak.test'
           })
           mediaAssetId = result.localMedia?.mediaAssetId || ''
@@ -2007,6 +2010,7 @@ test('sendMetaSocialAudioMessage manda audio Instagram con Page token derivado y
           assert.equal(result.platform, 'instagram')
           assert.equal(result.audio?.mimeType, 'audio/mp4')
           assert.equal(result.audio?.durationMs, 2400)
+          assert.equal(result.audio?.voice, false)
           const sendCall = calls.find(call => call.method === 'POST' && call.url === '/page-send-test/messages')
           assert.ok(sendCall)
           assert.equal(sendCall.authorization, 'Bearer page-token-send-test')
@@ -2036,6 +2040,7 @@ test('sendMetaSocialAudioMessage manda audio Instagram con Page token derivado y
           assert.match(row.media_url, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
           assert.equal(row.media_mime_type, 'audio/mp4')
           assert.equal(JSON.parse(row.raw_payload_json).context.audio.durationMs, 2400)
+          assert.equal(JSON.parse(row.raw_payload_json).context.audio.voice, false)
         } finally {
           if (mediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)

@@ -55,6 +55,15 @@ function safeHeaderFilename(value = '', fallback = 'media') {
   return filename || fallback
 }
 
+function voiceNoteTransportFilename(assetId = '') {
+  // Esta ruta la consume Meta, no es una descarga con el nombre original.
+  // Si el usuario subió un MP3 que después convertimos a OGG/Opus, conservar
+  // `.mp3` en Content-Disposition contradice el MIME y Meta reclasifica los
+  // bytes como application/octet-stream (131053).
+  const safeAssetId = cleanString(assetId).replace(/[^a-zA-Z0-9_.-]+/g, '-') || 'audio'
+  return `ristak-voice-${safeAssetId}.ogg`
+}
+
 function attachmentDisposition(filename) {
   const safe = safeHeaderFilename(filename)
   const ascii = safe.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_')
@@ -593,8 +602,28 @@ export async function storageDiagnosticsHandler(_req, res) {
 export async function serveMediaAssetFileHandler(req, res) {
   try {
     const assetId = req.params.assetId || extractMediaAssetIdFromUrl(req.originalUrl)
-    if (parseBoolean(req.query?.voice, false)) {
+    if (parseBoolean(req.query?.voice, false) || req.params.variant === 'voice') {
+      const asset = await getMediaAsset(assetId)
+      const assetSize = Number(asset?.sizeProcessed || asset?.sizeOriginal || 0)
+      if (asset?.mediaType !== 'audio') {
+        const error = new Error('El asset solicitado no es audio.')
+        error.status = 400
+        error.code = 'invalid_voice_asset'
+        throw error
+      }
+      if (assetSize > 16 * 1024 * 1024) {
+        const error = new Error('La nota de voz supera el límite de 16 MB de WhatsApp.')
+        error.status = 413
+        error.code = 'voice_asset_too_large'
+        throw error
+      }
       const file = await getMediaAssetBuffer(assetId)
+      if (file.buffer.length > 16 * 1024 * 1024) {
+        const error = new Error('La nota de voz supera el límite de 16 MB de WhatsApp.')
+        error.status = 413
+        error.code = 'voice_asset_too_large'
+        throw error
+      }
       if (!isValidWhatsAppVoiceNoteBuffer(file.buffer)) {
         const error = new Error('El archivo no es una nota de voz OGG/Opus válida.')
         error.status = 415
@@ -604,9 +633,7 @@ export async function serveMediaAssetFileHandler(req, res) {
       res.setHeader('Content-Length', String(file.buffer.length))
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
       res.setHeader('X-Content-Type-Options', 'nosniff')
-      if (file.filename) {
-        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.filename)}"`)
-      }
+      res.setHeader('Content-Disposition', `inline; filename="${voiceNoteTransportFilename(assetId)}"`)
       res.send(file.buffer)
       return
     }

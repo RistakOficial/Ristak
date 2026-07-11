@@ -31,6 +31,10 @@ import {
   resetWhatsAppQrServiceForTest,
   setBaileysRuntimeForTest
 } from '../src/services/whatsappQrService.js'
+import {
+  resetWhatsAppQrDripRuntimeForTest,
+  setWhatsAppQrDripSleepForTest
+} from '../src/services/whatsappQrDripService.js'
 import { getChatContacts } from '../src/controllers/contactsController.js'
 
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
@@ -1330,6 +1334,9 @@ test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
   const contactId = `rstk_contact_audio_131053_${id}`
   const messageId = `waapi_audio_131053_${id}`
   const ycloudMessageId = `ycloud_audio_131053_${id}`
+  const regularMessageId = `waapi_regular_audio_131053_${id}`
+  const regularYCloudMessageId = `ycloud_regular_audio_131053_${id}`
+  const raceYCloudMessageId = `ycloud_audio_race_131053_${id}`
   const sentMessages = []
   const errorMessage = 'Audio file uploaded with mimetype as audio/ogg; codecs=opus, however on processing it is of type application/octet-stream.'
 
@@ -1402,22 +1409,23 @@ test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
       ackDelayMs: 0,
       sendDelayMs: 75
     }))
+    setWhatsAppQrDripSleepForTest(async () => {})
 
-    const processFailure = async (eventId) => {
+    const processFailure = async (eventId, providerMessageId = ycloudMessageId, voice = true) => {
       const payload = {
         id: eventId,
         type: 'whatsapp.message.updated',
         apiVersion: 'v2',
         createTime: new Date().toISOString(),
         whatsappMessage: {
-          id: ycloudMessageId,
-          wamid: `wamid.${id}`,
+          id: providerMessageId,
+          wamid: `wamid.${providerMessageId}`,
           status: 'failed',
           from: businessPhone,
           to: phone,
           wabaId: 'waba_audio_131053',
           type: 'audio',
-          audio: { id: `media_${id}`, voice: true },
+          audio: { id: `media_${providerMessageId}`, voice },
           errorCode: '131053',
           errorMessage,
           createTime: new Date().toISOString()
@@ -1460,12 +1468,118 @@ test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
     await processFailure(`evt_audio_131053_b_${id}`)
     await new Promise(resolve => setTimeout(resolve, 50))
     assert.equal(sentMessages.length, 1)
+
+    const regularAudioDataUrl = `data:audio/mpeg;base64,${Buffer.from('ID3-audio-normal-fallback').toString('base64')}`
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+        business_phone, business_phone_number_id, transport, direction, message_type,
+        media_mime_type, media_duration_ms, status, message_timestamp, raw_payload_json,
+        created_at, updated_at
+      ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, 'api', 'outbound', 'audio',
+        'audio/mpeg', 300, 'sent', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      regularMessageId,
+      regularYCloudMessageId,
+      contactId,
+      phone,
+      businessPhone,
+      phone,
+      businessPhone,
+      phoneNumberId,
+      JSON.stringify({
+        id: regularYCloudMessageId,
+        from: businessPhone,
+        to: phone,
+        type: 'audio',
+        status: 'sent',
+        audio: {
+          deliveryUrl: regularAudioDataUrl,
+          voice: false,
+          asyncQrFallbackAllowed: true,
+          durationMs: 300
+        }
+      })
+    ])
+
+    await processFailure(`evt_regular_audio_131053_${id}`, regularYCloudMessageId, false)
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    assert.equal(sentMessages.length, 2)
+    assert.equal(sentMessages[1].payload.ptt, false)
+    assert.equal(sentMessages[1].payload.mimetype, 'audio/mpeg')
+    assert.deepEqual(sentMessages[1].payload.audio, Buffer.from('ID3-audio-normal-fallback'))
+
+    const regularRow = await db.get(`
+      SELECT transport, routing_reason, status, error_code, error_message
+      FROM whatsapp_api_messages
+      WHERE id = ?
+    `, [regularMessageId])
+    assert.equal(regularRow.transport, 'qr')
+    assert.ok(['sent', 'delivered'].includes(regularRow.status))
+    assert.equal(regularRow.error_code, null)
+    assert.equal(regularRow.error_message, null)
+    assert.match(regularRow.routing_reason, /no pudo procesar el audio/i)
+
+    // Carrera real: el webhook 131053 puede llegar antes de que la respuesta
+    // del POST se persista con asyncQrFallbackAllowed. El segundo upsert debe
+    // detectar el fallo previo y mandar QR sin necesitar otro webhook.
+    await processFailure(`evt_audio_race_failed_${id}`, raceYCloudMessageId, true)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(sentMessages.length, 2)
+
+    const acceptedPayload = {
+      id: `evt_audio_race_accepted_${id}`,
+      type: 'whatsapp.message.updated',
+      apiVersion: 'v2',
+      createTime: new Date().toISOString(),
+      whatsappMessage: {
+        id: raceYCloudMessageId,
+        wamid: `wamid.${raceYCloudMessageId}`,
+        status: 'sent',
+        from: businessPhone,
+        to: phone,
+        wabaId: 'waba_audio_131053',
+        type: 'audio',
+        audio: {
+          deliveryUrl: VALID_OGG_OPUS_DATA_URL,
+          voice: true,
+          asyncQrFallbackAllowed: true,
+          durationMs: 200
+        },
+        createTime: new Date().toISOString()
+      }
+    }
+    await processYCloudWhatsAppWebhook({
+      payload: acceptedPayload,
+      rawBody: JSON.stringify(acceptedPayload),
+      signatureHeader: '',
+      endpointId: ''
+    })
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    assert.equal(sentMessages.length, 3)
+    assert.equal(sentMessages[2].payload.ptt, true)
+    const raceRow = await db.get(`
+      SELECT transport, status, error_code, error_message, routing_reason
+      FROM whatsapp_api_messages
+      WHERE ycloud_message_id = ?
+    `, [raceYCloudMessageId])
+    assert.equal(raceRow.transport, 'qr')
+    assert.ok(['sent', 'delivered'].includes(raceRow.status))
+    assert.equal(raceRow.error_code, null)
+    assert.equal(raceRow.error_message, null)
+    assert.match(raceRow.routing_reason, /no pudo procesar la nota de voz/i)
   } finally {
     resetWhatsAppQrServiceForTest()
+    resetWhatsAppQrDripRuntimeForTest()
     await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id = ? OR ycloud_message_id = ?', [regularMessageId, regularYCloudMessageId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ?', [raceYCloudMessageId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_webhook_events WHERE event_id LIKE ? OR id LIKE ?', [`%${id}%`, `%${id}%`]).catch(() => undefined)
     await cleanup({ contactId, messageId, phone })
   }
 })

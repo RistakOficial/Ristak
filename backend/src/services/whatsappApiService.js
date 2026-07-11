@@ -866,6 +866,17 @@ function cleanMimeTypeValue(value = '') {
   return cleanString(value).toLowerCase().split(';')[0].trim()
 }
 
+export function isWhatsAppRegularAudioCompatible({ mimeType = '', buffer = null } = {}) {
+  const normalizedMimeType = cleanMimeTypeValue(mimeType)
+  if (['audio/aac', 'audio/amr', 'audio/mp4', 'audio/mpeg'].includes(normalizedMimeType)) {
+    return true
+  }
+  if (normalizedMimeType !== 'audio/ogg') return false
+  return Buffer.isBuffer(buffer)
+    ? isOggOpusBuffer(buffer)
+    : /(?:^|;)\s*codecs\s*=\s*"?opus"?(?:;|$)/i.test(cleanString(mimeType))
+}
+
 function normalizeVoiceNoteMimeType({ mimeType, params } = {}) {
   const cleanMimeType = cleanString(mimeType).toLowerCase()
   if (cleanMimeType === 'audio/ogg' && String(params || '').toLowerCase().includes('opus')) {
@@ -1402,6 +1413,45 @@ async function prepareChatAudioPlaybackPreview(parsed) {
   }
 }
 
+async function prepareWhatsAppRegularAudio(parsed) {
+  if (isWhatsAppRegularAudioCompatible({ mimeType: parsed.mimeType, buffer: parsed.buffer })) {
+    const isOggOpus = cleanMimeTypeValue(parsed.mimeType) === 'audio/ogg'
+    return {
+      buffer: parsed.buffer,
+      mimeType: isOggOpus ? WHATSAPP_VOICE_NOTE_MIME_TYPE : cleanMimeTypeValue(parsed.mimeType),
+      extension: isOggOpus ? 'ogg' : parsed.extension,
+      compression: 'original_regular_audio'
+    }
+  }
+
+  return {
+    buffer: await convertAudioToChatPlaybackMp4(parsed),
+    mimeType: CHAT_AUDIO_PLAYBACK_MIME_TYPE,
+    extension: CHAT_AUDIO_PLAYBACK_EXTENSION,
+    compression: 'whatsapp_regular_audio_m4a_aac'
+  }
+}
+
+export async function prepareWhatsAppRegularAudioBuffer({ buffer, mimeType = '' } = {}) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) {
+    throw new Error('El audio está vacío.')
+  }
+  if (buffer.length > MAX_WHATSAPP_AUDIO_BYTES) {
+    throw new Error('El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp.')
+  }
+  const normalizedMimeType = cleanMimeTypeValue(mimeType)
+  const extension = AUDIO_EXTENSION_BY_MIME[normalizedMimeType]
+  if (!extension) {
+    throw new Error('WhatsApp no acepta este formato de audio. Usa MP3, M4A, AAC, AMR, OGG/Opus, WAV o WebM.')
+  }
+  return prepareWhatsAppRegularAudio({
+    buffer,
+    mimeType: normalizedMimeType,
+    params: cleanString(mimeType).toLowerCase().split(';').slice(1).join(';'),
+    extension
+  })
+}
+
 export async function saveWhatsAppImageDataUrl(dataUrl = '') {
   const parsed = parseImageDataUrl(dataUrl)
   const prepared = await prepareWhatsAppApiImageBuffer(parsed)
@@ -1506,6 +1556,76 @@ export async function saveWhatsAppAudioDataUrl(dataUrl = '') {
     filePath,
     publicPath: `${WHATSAPP_AUDIO_PUBLIC_PATH}/${dayKey}/${filename}`,
     filename
+  }
+}
+
+export async function saveWhatsAppRegularAudioDataUrl(dataUrl = '', durationMs = null) {
+  const parsed = parseAudioDataUrl(dataUrl)
+  const media = await prepareWhatsAppRegularAudio(parsed)
+  const cleanDurationMs = Number(durationMs || 0)
+  try {
+    const { uploadMediaAsset } = await import('./mediaStorageService.js')
+    const asset = await uploadMediaAsset({
+      buffer: media.buffer,
+      mimeType: media.mimeType,
+      filename: `whatsapp-audio.${media.extension}`,
+      module: 'chat',
+      isPublic: true,
+      skipCompression: true,
+      metadata: {
+        whatsappApiCompatible: true,
+        whatsappRegularAudio: true,
+        whatsappAudioCompression: media.compression,
+        originalMimeType: parsed.mimeType,
+        originalExtension: parsed.extension,
+        ...(cleanDurationMs > 0 ? { durationMs: Math.round(cleanDurationMs) } : {})
+      }
+    })
+    const publicUrl = cleanString(asset.publicUrl || asset.url)
+    return {
+      mimeType: asset.mimeType || media.mimeType,
+      originalMimeType: parsed.mimeType,
+      size: asset.sizeProcessed,
+      publicPath: publicUrl,
+      publicUrl,
+      mediaUrl: publicUrl,
+      url: publicUrl,
+      link: publicUrl,
+      filename: asset.storedFilename,
+      mediaAssetId: asset.id,
+      storage: cleanString(asset.storageProvider || 'media_storage'),
+      storageProvider: cleanString(asset.storageProvider || ''),
+      ...(cleanDurationMs > 0 ? { durationMs: Math.round(cleanDurationMs) } : {})
+    }
+  } catch (error) {
+    handleWhatsAppMediaStorageError('audio normal de chat', error)
+  }
+
+  const dayKey = await getBusinessDayKey()
+  const folder = join(WHATSAPP_AUDIO_UPLOAD_ROOT, dayKey)
+  const filename = `${crypto.randomUUID()}.${media.extension}`
+  const filePath = join(folder, filename)
+  const publicPath = `${WHATSAPP_AUDIO_PUBLIC_PATH}/${dayKey}/${filename}`
+
+  await fs.mkdir(folder, { recursive: true })
+  await fs.writeFile(filePath, media.buffer)
+
+  return {
+    mimeType: media.mimeType,
+    originalMimeType: parsed.mimeType,
+    size: media.buffer.length,
+    localFallback: true,
+    qrOnly: true,
+    filePath,
+    publicPath,
+    publicUrl: publicPath,
+    mediaUrl: publicPath,
+    url: publicPath,
+    link: publicPath,
+    filename,
+    storage: 'local',
+    storageProvider: 'local',
+    ...(cleanDurationMs > 0 ? { durationMs: Math.round(cleanDurationMs) } : {})
   }
 }
 
@@ -3624,7 +3744,11 @@ async function retryFailedOfficialApiMessageViaQr({
 } = {}) {
   const previousTransport = cleanString(existingMessage?.transport).toLowerCase()
   const currentStatus = cleanString(normalizedMessage?.status).toLowerCase()
-  if ((previousTransport === 'qr' && cleanString(existingMessage?.routing_reason)) || currentStatus !== 'failed') return null
+  const previousStatus = cleanString(existingMessage?.status).toLowerCase()
+  if (
+    (previousTransport === 'qr' && cleanString(existingMessage?.routing_reason)) ||
+    (currentStatus !== 'failed' && previousStatus !== 'failed')
+  ) return null
 
   const phoneRow = await findQrFallbackPhoneRowForSender({
     phoneNumberId: businessPhoneNumberId,
@@ -3704,6 +3828,8 @@ async function retryFailedOfficialApiMessageViaQr({
       const link = cleanString(
         audio.link ||
         audio.url ||
+        audio.deliveryUrl ||
+        audio.deliveryLink ||
         existingMedia.deliveryUrl ||
         existingMedia.deliveryLink ||
         existingMedia.link ||
@@ -3712,13 +3838,15 @@ async function retryFailedOfficialApiMessageViaQr({
       )
       if (!link) return null
       const inlineAudioDataUrl = /^data:audio\//i.test(link) ? link : ''
+      const isVoiceNote = audio.voice === true || audio.ptt === true ||
+        existingMedia.voice === true || existingMedia.ptt === true
       fallbackResponse = await sendAudioViaQrFallback({
         phoneNumberId: phoneRow.id,
         fromPhone,
         toPhone,
         requestAudio: {
           ...(inlineAudioDataUrl ? {} : { link }),
-          voice: true,
+          ...(isVoiceNote ? { voice: true } : {}),
           ...(existingMedia.mimeType || existingMessage?.media_mime_type
             ? { mimeType: existingMedia.mimeType || existingMessage.media_mime_type }
             : {})
@@ -6982,7 +7110,8 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const computedMessageId = hashId('waapi_msg', ycloudMessageId || metaMessageId || wamid || `${payload.id}|${identity.direction}|${identity.phone}`)
   const existingMessage = await db.get(`
     SELECT id, status, transport, routing_reason, raw_payload_json,
-           media_url, media_mime_type, media_filename, media_duration_ms
+           media_url, media_mime_type, media_filename, media_duration_ms,
+           error_code, error_message
     FROM whatsapp_api_messages
     WHERE id = ?
       OR (? != '' AND ycloud_message_id = ?)
@@ -7123,26 +7252,33 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     attribution.ctwaPayload || null
   ])
 
-  const failureText = `${errorCode} ${errorMessage}`.trim()
-  const restrictionReason = incomingStatus === 'failed'
+  // Si el webhook falló antes de que terminara la llamada de envío, esta
+  // segunda conciliación ya trae el payload completo (incluido el permiso de
+  // fallback). Conservamos el 131053 previo y ejecutamos aquí el respaldo; así
+  // no dependemos de que YCloud repita el webhook.
+  const effectiveErrorCode = errorCode || cleanString(existingMessage?.error_code)
+  const effectiveErrorMessage = errorMessage || cleanString(existingMessage?.error_message)
+  const effectiveFailure = incomingStatus === 'failed' || normalizeMessageDeliveryStatus(existingMessage?.status) === 'failed'
+  const failureText = `${effectiveErrorCode} ${effectiveErrorMessage}`.trim()
+  const restrictionReason = effectiveFailure
     ? getOfficialApiRestrictionErrorReason({ message: failureText })
     : ''
   // Ventana de 24 horas (131047 y parecidos): el mensaje se reintenta por QR,
   // pero NO se crea ninguna alerta de bloqueo porque el número y la cuenta
   // estan perfectamente sanos.
-  const conversationWindowReason = incomingStatus === 'failed' && !restrictionReason
+  const conversationWindowReason = effectiveFailure && !restrictionReason
     ? getOfficialApiConversationWindowReason({ message: failureText })
     : ''
   const existingPayload = parseJsonValue(existingMessage?.raw_payload_json, {}) || {}
-  const existingAudio = isPlainObject(existingPayload?.audio)
-    ? existingPayload.audio
-    : isPlainObject(existingPayload?.whatsappMessage?.audio)
-      ? existingPayload.whatsappMessage.audio
-      : isPlainObject(normalizedMessage?.audio)
-        ? normalizedMessage.audio
-        : {}
-  const mediaProcessingReason = incomingStatus === 'failed' && messageType === 'audio' && errorCode === '131053'
-    ? 'WhatsApp API no pudo procesar la nota de voz; se usó WhatsApp QR como respaldo.'
+  const existingAudio = {
+    ...(isPlainObject(existingPayload?.whatsappMessage?.audio) ? existingPayload.whatsappMessage.audio : {}),
+    ...(isPlainObject(existingPayload?.audio) ? existingPayload.audio : {}),
+    ...(isPlainObject(normalizedMessage?.audio) ? normalizedMessage.audio : {})
+  }
+  const mediaProcessingReason = effectiveFailure && messageType === 'audio' && effectiveErrorCode === '131053'
+    ? (existingAudio.voice === true || existingAudio.ptt === true
+        ? 'WhatsApp API no pudo procesar la nota de voz; se usó WhatsApp QR como respaldo.'
+        : 'WhatsApp API no pudo procesar el audio; se usó WhatsApp QR como respaldo.')
     : ''
   const mediaFallbackAllowed = mediaProcessingReason && existingAudio.asyncQrFallbackAllowed === true
 
@@ -10714,6 +10850,7 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
       audioPublicUrl: publicAudioUrl,
       externalId,
       durationMs,
+      voice: requestAudio?.voice === true || requestAudio?.ptt === true,
       skipQrSendProtection
     })
     const responseAudio = isPlainObject(response.audio) ? response.audio : {}
@@ -10732,7 +10869,7 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
       link: cleanString(responseAudio.link || publicAudioUrl),
       url: cleanString(responseAudio.url || responseAudio.link || publicAudioUrl),
       mimeType: cleanString(responseAudio.mimeType || requestAudio?.mimeType || qrMetadata.mimeType || localMedia?.mimeType),
-      ptt: true,
+      ptt: requestAudio?.voice === true || requestAudio?.ptt === true,
       ...(durationMs ? { durationMs } : {})
     }
     if (finalAudio.mimeType) finalAudio.mimetype = finalAudio.mimeType
@@ -12186,7 +12323,11 @@ export async function sendWhatsAppApiAudioMessage({
 
   const getDeliveryAudio = async () => {
     if (!cleanString(audioDataUrl)) return null
-    if (!deliveryAudio) deliveryAudio = await saveWhatsAppAudioDataUrl(audioDataUrl)
+    if (!deliveryAudio) {
+      deliveryAudio = isVoiceNote
+        ? await saveWhatsAppAudioDataUrl(audioDataUrl)
+        : await saveWhatsAppRegularAudioDataUrl(audioDataUrl, durationMs)
+    }
     return deliveryAudio
   }
 
@@ -12269,13 +12410,20 @@ export async function sendWhatsAppApiAudioMessage({
   throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   if (!link) {
-    const results = await Promise.all([
-      getDeliveryAudio(),
-      getProviderPreviewAudio()
-    ])
-    deliveryAudio = results[0]
-    providerPreviewAudio = results[1]
-    link = requirePublicMediaUrl(deliveryAudio, publicBaseUrl, 'notas de voz')
+    if (isVoiceNote) {
+      const results = await Promise.all([
+        getDeliveryAudio(),
+        getProviderPreviewAudio()
+      ])
+      deliveryAudio = results[0]
+      providerPreviewAudio = results[1]
+    } else {
+      // El archivo de audio normal ya es reproducible. Se reutiliza como
+      // entrega y preview para no duplicar storage ni degradarlo a Opus/32 kbps.
+      deliveryAudio = await getDeliveryAudio()
+      providerPreviewAudio = deliveryAudio
+    }
+    link = requirePublicMediaUrl(deliveryAudio, publicBaseUrl, isVoiceNote ? 'notas de voz' : 'audios')
   } else {
     // La API entrega el OGG público directamente, pero el historial local sigue
     // necesitando su preview M4A para reproducirse igual en todos los clientes.

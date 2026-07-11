@@ -18,9 +18,12 @@ import {
   testWebhookAction,
   resolveAutomationMediaAssetId,
   resolveAutomationMediaSource,
-  resolveAutomationAudioDelivery
+  resolveAutomationAudioDelivery,
+  resolveAutomationVoicePublicUrl,
+  inferAutomationDownloadedAudioMimeType
 } from '../src/services/automationEngine.js'
 import { resetCentralStorageConfigCache, uploadMediaAssetFromDataUrl } from '../src/services/mediaStorageService.js'
+import { saveAutomationAsset } from '../src/services/automationsService.js'
 import {
   connectEmail,
   setEmailMxResolverForTest,
@@ -157,6 +160,44 @@ test('las automatizaciones leen su audio administrado antes de entregarlo a cada
   }
 })
 
+test('el bloque Audio conserva el MP3 original al subirlo a Automatizaciones', async () => {
+  const previousProvider = process.env.MEDIA_STORAGE_PROVIDER
+  const previousRequireBunny = process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+  const originalBytes = Buffer.from('ID3-audio-normal-de-automatizacion')
+  let assetId = ''
+  let localPath = ''
+
+  process.env.MEDIA_STORAGE_PROVIDER = 'local'
+  process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'false'
+  resetCentralStorageConfigCache()
+
+  try {
+    const asset = await saveAutomationAsset({
+      fileBase64: `data:audio/mpeg;base64,${originalBytes.toString('base64')}`,
+      filename: 'musica.mp3',
+      deliveryMode: 'audio'
+    })
+    assetId = asset.id
+
+    assert.equal(asset.contentType, 'audio/mpeg')
+    assert.equal(asset.compression, 'disabled')
+    const source = await resolveAutomationMediaSource(asset.url)
+    assert.equal(source.mimeType, 'audio/mpeg')
+    assert.deepEqual(Buffer.from(source.dataUrl.split(',')[1], 'base64'), originalBytes)
+
+    const row = await db.get('SELECT metadata_json FROM media_assets WHERE id = ?', [assetId])
+    localPath = JSON.parse(row?.metadata_json || '{}').localPath || ''
+  } finally {
+    if (assetId) await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+    if (localPath) await import('node:fs/promises').then(({ rm }) => rm(localPath, { force: true })).catch(() => undefined)
+    if (previousProvider === undefined) delete process.env.MEDIA_STORAGE_PROVIDER
+    else process.env.MEDIA_STORAGE_PROVIDER = previousProvider
+    if (previousRequireBunny === undefined) delete process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+    else process.env.MEDIA_STORAGE_REQUIRE_BUNNY = previousRequireBunny
+    resetCentralStorageConfigCache()
+  }
+})
+
 test('una nota de voz propia usa la URL pública ya normalizada que sí entrega Meta', () => {
   const dataUrl = `data:audio/ogg;base64,${Buffer.from('OggS-test-OpusHead-audio').toString('base64')}`
   const publicUrl = 'https://cdn.example.test/automations/nota-validada.ogg'
@@ -169,6 +210,34 @@ test('una nota de voz propia usa la URL pública ya normalizada que sí entrega 
 
   assert.equal(delivery.audioDataUrl, undefined)
   assert.equal(delivery.audioUrl, publicUrl)
+})
+
+test('toda nota de voz administrada usa proxy .ogg aunque el asset conserve nombre MP3', () => {
+  const deliveryUrl = resolveAutomationVoicePublicUrl({
+    publicUrl: 'https://cdn.example.test/automations/grabacion-original.mp3',
+    publicUrlVerified: true,
+    mediaAssetId: 'rstk_media_voice_contract',
+    ctx: { publicBaseUrl: 'https://ristak.test' }
+  })
+
+  assert.equal(
+    deliveryUrl,
+    'https://ristak.test/media/assets/rstk_media_voice_contract/voice.ogg'
+  )
+})
+
+test('audio externo infiere MP3 aunque el CDN responda application/octet-stream', () => {
+  assert.equal(inferAutomationDownloadedAudioMimeType({
+    mimeType: 'application/octet-stream',
+    url: 'https://cdn.example.test/audio/cancion.mp3',
+    buffer: Buffer.from('ID3-audio')
+  }), 'audio/mpeg')
+
+  assert.throws(() => inferAutomationDownloadedAudioMimeType({
+    mimeType: 'application/octet-stream',
+    url: 'https://cdn.example.test/audio/sin-extension',
+    buffer: Buffer.from('contenido-desconocido')
+  }), /formato de audio reconocible/i)
 })
 
 test('una URL propia no verificada conserva los bytes para convertirlos antes del envío', () => {

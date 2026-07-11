@@ -467,10 +467,11 @@ export const automationsService = {
   },
 
   /** Sube un archivo (data URL base64) y devuelve su URL pública en Ristak */
-  async uploadAsset(fileBase64: string, filename: string): Promise<{ id: string; url: string; contentType: string }> {
+  async uploadAsset(fileBase64: string, filename: string, deliveryMode?: 'audio' | 'voice'): Promise<{ id: string; url: string; contentType: string }> {
     return apiClient.post<{ id: string; url: string; contentType: string }>('/automations/assets', {
       fileBase64,
-      filename
+      filename,
+      ...(deliveryMode ? { deliveryMode } : {})
     })
   }
 }

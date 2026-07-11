@@ -499,6 +499,7 @@ export async function sendMetaSocialAudioMessageView(req, res) {
       audioDataUrl: req.body?.audioDataUrl,
       audioUrl: media?.url,
       durationMs: req.body?.durationMs,
+      voice: req.body?.voice,
       externalId: req.body?.externalId,
       replyToMessageId: req.body?.replyToMessageId,
       replyToProviderMessageId: req.body?.replyToProviderMessageId,

@@ -12923,6 +12923,7 @@ export const PhoneChat: React.FC = () => {
               platform: activeMetaSocialChannel,
               audioDataUrl: nativeMetaAudio.dataUrl,
               durationMs: nativeMetaAudioDurationMs,
+              voice: Boolean(voiceToSend),
               externalId: optimisticId,
               ...(hasMessageReplyTarget ? replyReferencePayload : {})
             })
@@ -13333,6 +13334,7 @@ export const PhoneChat: React.FC = () => {
         const result = await whatsappApiService.sendAudio({
           to: activeContact.phone || '',
           from: selectedBusinessPhoneValue,
+          contactId: activeContact.id,
           audioDataUrl: voiceToSend.dataUrl,
           durationMs: voiceToSend.durationMs,
           voice: true,
@@ -13400,6 +13402,7 @@ export const PhoneChat: React.FC = () => {
             return whatsappApiService.sendAudio({
               to: activeContact.phone || '',
               from: selectedBusinessPhoneValue,
+              contactId: activeContact.id,
               audioDataUrl: attachment.dataUrl,
               durationMs: undefined,
               voice: attachment.deliveryMode === 'voice',

@@ -753,12 +753,27 @@ manda ese enlace. Antes de reutilizar la URL de un asset de Automatizaciones,
 el runtime valida que sus bytes sí sean OGG/Opus; un MP3/M4A legacy se convierte
 y publica de nuevo. El storage y el CDN deben conservar el MIME completo
 `audio/ogg; codecs=opus`; no deben reducirlo a `audio/ogg`, porque el proveedor
-puede reclasificar la nota durante su procesamiento asíncrono. Para assets legacy
-que ya viven en CDN con el MIME incompleto, el enlace de entrega usa el proxy
-público `/media/assets/:id/file?voice=1`: valida los bytes y responde con el MIME
-completo sin obligar al usuario a volver a subir el archivo. Meta Direct usa el
-mismo `audio.link` con `voice=true` a través de Graph API. Los assets externos se
-conservan como enlaces HTTPS.
+puede reclasificar la nota durante su procesamiento asíncrono. Todo asset de voz
+administrado por Ristak usa para la entrega al proveedor el proxy
+público `/media/assets/:id/voice.ogg`: valida los bytes y responde con el MIME
+completo, una URL terminada en `.ogg` y un `Content-Disposition` cuyo filename
+también termina en `.ogg`. Nunca debe conservar ahí la extensión original `.mp3`
+después de convertir el archivo: mezclar bytes/MIME OGG con filename MP3 hace que
+Meta lo reclasifique como `application/octet-stream` y devuelva `131053`.
+YCloud conserva el envío por su cola asíncrona con filtros de desuscritos y
+bloqueados. Si Meta devuelve `131053` en el webhook, el claim atómico existente
+activa una sola vez el respaldo QR/PTT cuando esa sesión está lista, sin duplicar
+la nota. Meta Direct usa el mismo `audio.link` con `voice=true` a través de Graph
+API. Los assets externos se conservan como enlaces HTTPS.
+El bloque **Audio** conserva byte por byte los formatos normales que WhatsApp
+acepta (MP3/MPEG, M4A/MP4, AAC, AMR y OGG/Opus); WAV y WebM se normalizan a
+M4A/AAC reproducible, nunca a Opus/PTT. En WhatsApp API se envía sin `voice=true`
+y en WhatsApp QR/Baileys con `ptt=false`. El bloque **Nota de
+voz** sí usa OGG/Opus y `voice=true`/`ptt=true`. Messenger e Instagram no exponen
+un flag PTT: ambos tipos viajan como `attachment.type=audio`, pero Ristak conserva
+la distinción en su historial y evita degradar un audio normal.
+Como WhatsApp tampoco admite caption dentro de un audio, el texto opcional del
+bloque se envía inmediatamente después como un mensaje separado.
 Las URLs públicas existen exclusivamente para que los proveedores puedan descargar
 el contenido; el endpoint/proxy mantiene MIME, `nosniff` y fuerza la descarga de
 tipos no seguros.

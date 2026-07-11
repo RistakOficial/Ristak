@@ -3405,7 +3405,7 @@ export async function sendWhatsAppQrVideoMessage({ phoneNumberId, from, to, vide
   }
 }
 
-export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audioDataUrl, audioUrl, audioPublicUrl, externalId, durationMs, skipQrSendProtection = false } = {}) {
+export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audioDataUrl, audioUrl, audioPublicUrl, externalId, durationMs, voice = true, skipQrSendProtection = false } = {}) {
   const phone = await resolveQrPhone({ phoneNumberId, from })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
 
@@ -3422,19 +3422,31 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
     url: audioUrl,
     label: 'el audio'
   })
-  let mimeType = normalizeVoiceNoteMimeType(inferAudioMimeType({ mimeType: media.mimeType, url: media.sourceUrl }))
+  const isVoiceNote = voice !== false
+  let mimeType = inferAudioMimeType({ mimeType: media.mimeType, url: media.sourceUrl })
   // Baileys/WhatsApp Web exige un contenedor OGG/Opus REAL para las notas de voz
   // (ptt). Si el contenido no es un OGG/Opus REAL —aunque alguien lo etiquete
   // como audio/ogg—, transcodifícalo con la MISMA tubería del canal API antes
   // de mandarlo como PTT. Mandar AAC, MP3 u OGG sin Opus con ptt:true rompe la
   // reproducción en el receptor (aparece como archivo o "audio no disponible").
-  const { convertAudioToOggOpus, isValidWhatsAppVoiceNoteBuffer } = await loadWhatsAppApiService()
-  if (Buffer.isBuffer(media.content) && !isValidWhatsAppVoiceNoteBuffer(media.content)) {
-    media.content = await convertAudioToOggOpus({
+  if (isVoiceNote) {
+    mimeType = normalizeVoiceNoteMimeType(mimeType)
+    const { convertAudioToOggOpus, isValidWhatsAppVoiceNoteBuffer } = await loadWhatsAppApiService()
+    if (Buffer.isBuffer(media.content) && !isValidWhatsAppVoiceNoteBuffer(media.content)) {
+      media.content = await convertAudioToOggOpus({
+        buffer: media.content,
+        extension: qrAudioInputExtension(media.mimeType)
+      })
+      mimeType = WHATSAPP_VOICE_NOTE_MIME_TYPE
+    }
+  } else if (Buffer.isBuffer(media.content)) {
+    const { prepareWhatsAppRegularAudioBuffer } = await loadWhatsAppApiService()
+    const prepared = await prepareWhatsAppRegularAudioBuffer({
       buffer: media.content,
-      extension: qrAudioInputExtension(media.mimeType)
+      mimeType
     })
-    mimeType = WHATSAPP_VOICE_NOTE_MIME_TYPE
+    media.content = prepared.buffer
+    mimeType = prepared.mimeType
   }
   const seconds = getAudioDurationSeconds(durationMs)
   const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de audio' })
@@ -3453,7 +3465,7 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
     payload: {
       audio: media.content,
       mimetype: mimeType,
-      ptt: true,
+      ptt: isVoiceNote,
       ...(seconds ? { seconds } : {})
     },
     skipQrSendProtection
@@ -3473,7 +3485,7 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
       url: audioLink,
       mimeType,
       mimetype: mimeType,
-      ptt: true,
+      ptt: isVoiceNote,
       ...(seconds ? { seconds } : {}),
       ...(durationMs ? { durationMs } : {})
     },

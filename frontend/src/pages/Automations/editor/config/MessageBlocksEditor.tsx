@@ -315,14 +315,18 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
       image.src = url
     })
 
-  const uploadFile = (index: number, blockId: string, file: File) => {
+  const uploadFile = (index: number, blockId: string, file: File, blockType: MessageBlockType) => {
     setUploading((current) => ({ ...current, [blockId]: true }))
     setUploadErrors((current) => ({ ...current, [blockId]: '' }))
     void compressImageInBrowser(file).then((prepared) => {
       const reader = new FileReader()
       reader.onload = () => {
         void automationsService
-          .uploadAsset(String(reader.result), prepared.name)
+          .uploadAsset(
+            String(reader.result),
+            prepared.name,
+            blockType === 'voice' ? 'voice' : blockType === 'audio' ? 'audio' : undefined
+          )
           .then((asset) => updateBlock(index, { url: asset.url }))
           .catch((error: Error) => {
             setUploadErrors((current) => ({ ...current, [blockId]: error.message || 'No se pudo subir el archivo' }))
@@ -528,7 +532,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
                 disabled={isUploading}
                 onChange={(event) => {
                   const file = event.target.files?.[0]
-                  if (file) uploadFile(index, block.id, file)
+                  if (file) uploadFile(index, block.id, file, block.type)
                   event.target.value = ''
                 }}
               />

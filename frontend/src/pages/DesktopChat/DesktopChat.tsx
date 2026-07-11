@@ -6679,6 +6679,7 @@ export const DesktopChat: React.FC = () => {
           platform: activeNativeMetaChannel,
           audioDataUrl: nativeMetaAudio.dataUrl,
           durationMs: nativeMetaAudioDurationMs,
+          voice: Boolean(sendVoiceThroughNativeMeta),
           externalId: nativeMetaOptimisticId
         })
         const resultData = result.data || result
@@ -6742,6 +6743,7 @@ export const DesktopChat: React.FC = () => {
         const result = await whatsappApiService.sendAudio({
           to: activeContact.phone || '',
           from: selectedBusinessPhoneValue,
+          contactId: activeContact.id,
           audioDataUrl: voiceToSend.dataUrl,
           durationMs: voiceToSend.durationMs,
           voice: true,
@@ -6841,6 +6843,7 @@ export const DesktopChat: React.FC = () => {
               return whatsappApiService.sendAudio({
                 to: activeContact.phone || '',
                 from: selectedBusinessPhoneValue,
+                contactId: activeContact.id,
                 audioDataUrl: attachment.dataUrl,
                 durationMs: undefined,
                 voice: attachment.deliveryMode === 'voice',

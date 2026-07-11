@@ -105,6 +105,12 @@ export function classifyMediaUpload(req, _res, next) {
 
 // Público: Bunny/CDN redirige; fallback local sirve el archivo sin sesión.
 router.get('/assets/:assetId/file', serveMediaAssetFileHandler)
+// URL y nombre terminan explícitamente en .ogg. Meta valida MIME, extensión y
+// bytes al procesar una nota de voz; no debe heredar el nombre MP3 original.
+router.get('/assets/:assetId/voice.ogg', (req, res, next) => {
+  req.params.variant = 'voice'
+  return serveMediaAssetFileHandler(req, res, next)
+})
 router.get('/assets/:assetId/thumbnail', (req, res, next) => {
   req.params.variant = 'thumbnail'
   return serveMediaAssetFileHandler(req, res, next)

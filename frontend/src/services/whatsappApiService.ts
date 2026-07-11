@@ -422,6 +422,7 @@ export interface WhatsAppApiVideoSendPayload {
 export interface WhatsAppApiAudioSendPayload {
   to: string
   from?: string
+  contactId?: string
   audioDataUrl?: string
   audioUrl?: string
   durationMs?: number
@@ -531,6 +532,7 @@ export interface MetaSocialAudioSendPayload {
   audioDataUrl?: string
   audioUrl?: string
   durationMs?: number
+  voice?: boolean
   externalId?: string
   replyToMessageId?: string
   replyToProviderMessageId?: string

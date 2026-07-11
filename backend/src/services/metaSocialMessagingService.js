@@ -2229,11 +2229,12 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
   }
 }
 
-export async function sendMetaSocialAudioMessage({ contactId, platform, audioDataUrl = '', audioUrl = '', durationMs = null, externalId, replyToMessageId = '', replyToProviderMessageId = '', publicBaseUrl = '' } = {}) {
+export async function sendMetaSocialAudioMessage({ contactId, platform, audioDataUrl = '', audioUrl = '', durationMs = null, voice = true, externalId, replyToMessageId = '', replyToProviderMessageId = '', publicBaseUrl = '' } = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const cleanAudioUrl = cleanString(audioUrl)
   const cleanAudioDataUrl = cleanString(audioDataUrl)
+  const isVoiceNote = voice !== false
   const parsedDurationMs = Number(durationMs)
   const audioDurationMs = Number.isFinite(parsedDurationMs) && parsedDurationMs > 0
     ? Math.round(parsedDurationMs)
@@ -2341,7 +2342,7 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
         link: attachmentUrl,
         url: attachmentUrl,
         mimeType: mediaMimeType,
-        voice: true,
+        voice: isVoiceNote,
         ...(audioDurationMs ? { durationMs: audioDurationMs } : {})
       },
       ...(replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : {})
@@ -2357,7 +2358,7 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
       link: attachmentUrl,
       url: attachmentUrl,
       mimeType: mediaMimeType,
-      voice: true,
+      voice: isVoiceNote,
       ...(audioDurationMs ? { durationMs: audioDurationMs } : {})
     },
     ...(localMedia ? { localMedia } : {}),

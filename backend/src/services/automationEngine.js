@@ -3570,10 +3570,66 @@ export function resolveAutomationAudioDelivery({
   }
 }
 
+export function resolveAutomationVoicePublicUrl({
+  publicUrl = '',
+  publicUrlVerified = false,
+  mediaAssetId = '',
+  ctx = {}
+} = {}) {
+  const assetId = str(mediaAssetId)
+  if (!publicUrlVerified || !assetId) return str(publicUrl)
+
+  // Meta valida en conjunto bytes, MIME, extensión de URL y filename. Todos
+  // los assets de voz administrados pasan por esta ruta, aunque su MIME ya
+  // incluya codecs=opus, para que un nombre original .mp3 jamás contradiga al
+  // OGG convertido durante el procesamiento asíncrono.
+  return publicAutomationMediaUrl(
+    `/media/assets/${encodeURIComponent(assetId)}/voice.ogg`,
+    ctx
+  )
+}
+
+export function inferAutomationDownloadedAudioMimeType({ mimeType = '', url = '', buffer = null } = {}) {
+  const declared = str(mimeType).toLowerCase().split(';')[0].trim()
+  if (/^audio\//.test(declared) || declared === 'video/mp4') return declared
+
+  let extension = ''
+  try {
+    extension = new URL(str(url)).pathname.split('.').pop()?.toLowerCase() || ''
+  } catch {
+    extension = str(url).split('?')[0].split('#')[0].split('.').pop()?.toLowerCase() || ''
+  }
+  const byExtension = {
+    aac: 'audio/aac',
+    amr: 'audio/amr',
+    m4a: 'audio/mp4',
+    mp4: 'audio/mp4',
+    mp3: 'audio/mpeg',
+    ogg: 'audio/ogg',
+    opus: 'audio/ogg',
+    wav: 'audio/wav',
+    wave: 'audio/wav',
+    webm: 'audio/webm'
+  }
+  if (byExtension[extension]) return byExtension[extension]
+
+  if (Buffer.isBuffer(buffer)) {
+    if (buffer.subarray(0, 4).toString('latin1') === 'OggS') return 'audio/ogg'
+    if (buffer.subarray(0, 4).toString('latin1') === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'WAVE') return 'audio/wav'
+    if (buffer.subarray(0, 3).toString('latin1') === 'ID3') return 'audio/mpeg'
+    if (buffer.subarray(0, 5).toString('latin1') === '#!AMR') return 'audio/amr'
+    if (buffer.subarray(4, 8).toString('latin1') === 'ftyp') return 'audio/mp4'
+    if (buffer.length >= 4 && buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3) return 'audio/webm'
+  }
+
+  throw new Error('El enlace no declara un formato de audio reconocible. Usa MP3, M4A, AAC, AMR, OGG/Opus, WAV o WebM.')
+}
+
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
     data URL (el servicio de WhatsApp lo publica); si es URL externa, directo */
 async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport = 'api', allowQrFallback = true, ctx }) {
   const {
+    isWhatsAppRegularAudioCompatible,
     isValidWhatsAppVoiceNoteBuffer,
     sendWhatsAppApiImageMessage,
     sendWhatsAppApiVideoMessage,
@@ -3600,24 +3656,41 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
     return sendWhatsAppApiVideoMessage({ to, from: fromPhone, videoDataUrl: dataUrl || undefined, videoUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
   } else if (block.type === 'audio' || block.type === 'voice') {
     const isVoiceNote = block.type === 'voice' || block.voiceNote !== false
+    if (externalUrl && !dataUrl) {
+      const { downloadSafeOutboundMediaUrl } = await import('./outboundMediaReferenceService.js')
+      const downloaded = await downloadSafeOutboundMediaUrl(externalUrl, {
+        maxBytes: 16 * 1024 * 1024
+      })
+      const downloadedMimeType = inferAutomationDownloadedAudioMimeType({
+        mimeType: downloaded.mimeType,
+        url: downloaded.url || externalUrl,
+        buffer: downloaded.buffer
+      })
+      dataUrl = `data:${downloadedMimeType};base64,${downloaded.buffer.toString('base64')}`
+      externalUrl = null
+      mimeType = downloadedMimeType
+    }
     let publicUrlVerified = false
     let voiceDeliveryPublicUrl = str(media.publicUrl)
     if (media.publicUrl && dataUrl) {
       try {
         const encodedAudio = str(dataUrl).slice(str(dataUrl).indexOf(',') + 1)
-        publicUrlVerified = isValidWhatsAppVoiceNoteBuffer(Buffer.from(encodedAudio, 'base64'))
-        if (
-          publicUrlVerified &&
-          !/^audio\/ogg\s*;[^,]*\bcodecs\s*=\s*"?opus"?/i.test(str(media.mimeType)) &&
-          media.mediaAssetId
-        ) {
-          // Assets legacy sí contienen OGG/Opus válido, pero Bunny los guardó
-          // como `audio/ogg`. El proxy público conserva el parámetro de códec
-          // que YCloud/Meta necesitan durante el procesamiento asíncrono.
-          voiceDeliveryPublicUrl = publicAutomationMediaUrl(
-            `/media/assets/${encodeURIComponent(media.mediaAssetId)}/file?voice=1`,
+        const audioBuffer = Buffer.from(encodedAudio, 'base64')
+        if (isVoiceNote) {
+          publicUrlVerified = isValidWhatsAppVoiceNoteBuffer(audioBuffer)
+          voiceDeliveryPublicUrl = resolveAutomationVoicePublicUrl({
+            publicUrl: media.publicUrl,
+            publicUrlVerified,
+            mediaAssetId: media.mediaAssetId,
             ctx
-          )
+          })
+        } else {
+          // Un bloque "Audio" no es PTT: conserva la URL y el formato que el
+          // usuario subió, sin convertirlo ni pasarlo por el proxy de voz.
+          publicUrlVerified = isWhatsAppRegularAudioCompatible({
+            mimeType: media.mimeType,
+            buffer: audioBuffer
+          })
         }
       } catch {
         publicUrlVerified = false
@@ -4020,6 +4093,29 @@ async function sendWhatsAppBlocks(node, ctx) {
       })
       transports.push(whatsappTransportFromResult(response))
       sent += 1
+      if (block.type === 'audio' || block.type === 'voice') {
+        const caption = renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim()
+        if (caption) {
+          const captionResponse = await sendWhatsAppAutomationMessage({
+            allowQrFallback,
+            qrPrimary,
+            phoneNumberId,
+            fromPhone,
+            description: 'texto posterior al audio de WhatsApp',
+            send: ({ phoneNumberId: nextPhoneNumberId, fromPhone: nextFromPhone, transport, allowQrFallback: nextAllowQrFallback }) => sendWhatsAppApiTextMessage({
+              to,
+              from: nextFromPhone,
+              text: caption,
+              contactId: ctx.contact?.id,
+              phoneNumberId: nextPhoneNumberId,
+              transport,
+              allowQrFallback: nextAllowQrFallback
+            })
+          })
+          transports.push(whatsappTransportFromResult(captionResponse))
+          sent += 1
+        }
+      }
     } else {
       notes.push(`adjunto "${block.type}" sin archivo: omitido`)
     }
@@ -4037,8 +4133,8 @@ function publicAutomationMediaUrl(rawUrl, ctx = {}) {
   const baseUrl = [
     ctx.publicBaseUrl,
     ctx.public_base_url,
-    process.env.PUBLIC_URL,
     process.env.RENDER_EXTERNAL_URL,
+    process.env.PUBLIC_URL,
     process.env.PUBLIC_APP_URL,
     process.env.APP_URL
   ].map(str).find((candidate) => /^https:\/\//i.test(candidate))
@@ -4106,6 +4202,7 @@ async function sendMetaSocialBlocks(node, ctx, platform) {
           platform,
           audioDataUrl: media.dataUrl || undefined,
           audioUrl: media.dataUrl ? undefined : attachmentUrl,
+          voice: block.type === 'voice' || block.voiceNote !== false,
           externalId
         })
       } else {

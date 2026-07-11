@@ -29,6 +29,26 @@ function normalizeDigits(value = '') {
   return String(value || '').replace(/\D/g, '')
 }
 
+function createPcmWavBuffer() {
+  const sampleRate = 8_000
+  const samples = 2_000
+  const dataSize = samples * 2
+  const buffer = Buffer.alloc(44 + dataSize)
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + dataSize, 4)
+  buffer.write('WAVEfmt ', 8)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(1, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(sampleRate * 2, 28)
+  buffer.writeUInt16LE(2, 32)
+  buffer.writeUInt16LE(16, 34)
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(dataSize, 40)
+  return buffer
+}
+
 function sqlFuture(offsetMs = 1500) {
   return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ')
 }
@@ -275,6 +295,54 @@ test('WhatsApp QR aplica pausas automáticas a todos los tipos de mensaje QR', a
     assert.ok(sleeps[1] >= 28_000 && sleeps[1] <= 31_000)
     assert.ok(sleeps[2] >= 42_000 && sleeps[2] <= 46_000)
     assert.ok(sleeps[3] >= 56_000 && sleeps[3] <= 61_000)
+  })
+})
+
+test('WhatsApp QR distingue archivo de audio de nota de voz PTT', async () => {
+  const sentMessages = []
+  const mp3Bytes = Buffer.from('ID3-audio-normal-sin-transcodificar')
+  const wavBytes = createPcmWavBuffer()
+
+  await withQrFixture(async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sentMessages))
+
+    const regularAudio = await sendWhatsAppQrAudioMessage({
+      phoneNumberId,
+      to: CONTACT_PHONE,
+      audioDataUrl: `data:audio/mpeg;base64,${mp3Bytes.toString('base64')}`,
+      voice: false,
+      skipQrSendProtection: true
+    })
+    const voiceNote = await sendWhatsAppQrAudioMessage({
+      phoneNumberId,
+      to: CONTACT_PHONE,
+      audioDataUrl: VALID_OGG_OPUS_DATA_URL,
+      voice: true,
+      skipQrSendProtection: true
+    })
+    const convertedRegularAudio = await sendWhatsAppQrAudioMessage({
+      phoneNumberId,
+      to: CONTACT_PHONE,
+      audioDataUrl: `data:audio/wav;base64,${wavBytes.toString('base64')}`,
+      voice: false,
+      skipQrSendProtection: true
+    })
+
+    assert.equal(sentMessages.length, 3)
+    assert.deepEqual(sentMessages[0].payload.audio, mp3Bytes)
+    assert.equal(sentMessages[0].payload.mimetype, 'audio/mpeg')
+    assert.equal(sentMessages[0].payload.ptt, false)
+    assert.equal(regularAudio.audio.ptt, false)
+
+    assert.equal(sentMessages[1].payload.mimetype, 'audio/ogg; codecs=opus')
+    assert.equal(sentMessages[1].payload.ptt, true)
+    assert.equal(voiceNote.audio.ptt, true)
+
+    assert.equal(sentMessages[2].payload.mimetype, 'audio/mp4')
+    assert.equal(sentMessages[2].payload.ptt, false)
+    assert.equal(sentMessages[2].payload.audio.subarray(4, 8).toString('ascii'), 'ftyp')
+    assert.equal(convertedRegularAudio.audio.mimeType, 'audio/mp4')
+    assert.equal(convertedRegularAudio.audio.ptt, false)
   })
 })
 
