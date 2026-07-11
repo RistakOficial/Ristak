@@ -2221,6 +2221,22 @@ function buildYCloudMultipartUpload({ buffer, filename, mimeType } = {}) {
   }
 }
 
+function describeYCloudMediaUpload({ buffer, mimeType, upload } = {}) {
+  const bytes = Buffer.isBuffer(buffer) ? buffer.length : 0
+  const fingerprint = Buffer.isBuffer(buffer) && buffer.length
+    ? crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16)
+    : 'empty'
+
+  return [
+    `mime=${cleanString(mimeType) || 'application/octet-stream'}`,
+    `bytes=${bytes}`,
+    `ogg=${isOggBuffer(buffer)}`,
+    `opus=${isOggOpusBuffer(buffer)}`,
+    `sha256=${fingerprint}`,
+    `multipartBytes=${upload?.body?.length || 0}`
+  ].join(', ')
+}
+
 async function ycloudUploadWhatsAppMedia({ apiKey, phoneNumber, buffer, mimeType, filename } = {}) {
   const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
   if (!cleanApiKey) {
@@ -2237,6 +2253,18 @@ async function ycloudUploadWhatsAppMedia({ apiKey, phoneNumber, buffer, mimeType
     filename: cleanFilename,
     mimeType: normalizedMimeType || 'application/octet-stream'
   })
+  const uploadDescription = describeYCloudMediaUpload({
+    buffer,
+    mimeType: normalizedMimeType,
+    upload
+  })
+
+  // No registra el archivo ni la llave. Sí deja una huella corta y las firmas
+  // del contenedor para poder comprobar en soporte qué bytes salieron hacia
+  // YCloud si Meta vuelve a rechazar una nota de voz de forma asíncrona.
+  if (normalizedMimeType?.startsWith('audio/')) {
+    logger.info(`[WhatsApp API] Subiendo audio a YCloud (${uploadDescription})`)
+  }
 
   const response = await ycloudFetch(`${YCLOUD_API_BASE_URL}/whatsapp/media/${encodeURIComponent(cleanPhoneNumber)}/upload`, {
     method: 'POST',
@@ -2279,6 +2307,10 @@ async function ycloudUploadWhatsAppMedia({ apiKey, phoneNumber, buffer, mimeType
     error.ycloudPath = '/whatsapp/media/{phoneNumber}/upload'
     error.ycloud = data
     throw error
+  }
+
+  if (normalizedMimeType?.startsWith('audio/')) {
+    logger.info(`[WhatsApp API] YCloud aceptó el binario de audio (mediaId=${mediaId}, ${uploadDescription})`)
   }
 
   return {
