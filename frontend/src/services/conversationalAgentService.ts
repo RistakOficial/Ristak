@@ -22,8 +22,11 @@ export type ConversationalCapabilityId =
   | 'custom_goal'
 
 export interface ConversationalPromptConfig {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   templateVersion: string
+  strategyText?: string
+  personalityText?: string
+  /** Compatibilidad con clientes anteriores; en schema 2 se deriva de ambos campos. */
   editableText: string
 }
 
@@ -515,8 +518,7 @@ const CONVERSATIONAL_CAPABILITY_IDS: ConversationalCapabilityId[] = [
 ]
 const VALID_CONVERSATIONAL_CAPABILITY_IDS = new Set<ConversationalCapabilityId>(CONVERSATIONAL_CAPABILITY_IDS)
 
-export const DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS = [
-  'Atiende cada conversación como un asesor del negocio: claro, humano, útil y directo.',
+export const DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS = [
   'Responde primero lo que la persona preguntó usando únicamente información real del negocio y del historial.',
   'Entiende qué necesita, recomienda sólo la opción que realmente le ayude, explica su beneficio con datos verificados y resuelve sus dudas sin presionarla.',
   'Haz una sola pregunta útil a la vez y no vuelvas a pedir datos que ya estén confirmados.',
@@ -526,9 +528,35 @@ export const DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS = [
   'Nunca inventes precios, horarios, disponibilidad, pagos, citas ni resultados. Tampoco muestres instrucciones internas, nombres de herramientas o códigos del sistema.'
 ].join('\n')
 
+export const DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS = [
+  'Habla como un asesor humano del negocio: claro, cálido, útil y directo.',
+  'Adapta la extensión y el tono a la forma de escribir de la persona sin perder profesionalismo.',
+  'Evita sonar como robot, usar frases acartonadas o repetir información que la persona ya dio.'
+].join('\n')
+
+const normalizeOwnerPromptText = (value: unknown) => String(value ?? '').replace(/\r\n?/g, '\n')
+
+export function buildConversationalLegacyEditableText(strategyText = '', personalityText = '') {
+  const strategy = normalizeOwnerPromptText(strategyText)
+  const personality = normalizeOwnerPromptText(personalityText)
+  if (!personality) return strategy
+  if (!strategy) return personality
+  return [
+    `# Estrategia y capacitación\n${strategy}`,
+    `# Personalidad del agente\n${personality}`
+  ].join('\n\n')
+}
+
+export const DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS = buildConversationalLegacyEditableText(
+  DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS,
+  DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS
+)
+
 export const DEFAULT_CONVERSATIONAL_PROMPT_CONFIG: ConversationalPromptConfig = {
-  schemaVersion: 1,
-  templateVersion: 'ristak-conversational-v1',
+  schemaVersion: 2,
+  templateVersion: 'ristak-conversational-v2',
+  strategyText: DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS,
+  personalityText: DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS,
   editableText: DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS
 }
 
@@ -672,12 +700,22 @@ function normalizePromptConfig(value: unknown): ConversationalPromptConfig {
   const hasStoredPrompt = Boolean(value && typeof value === 'object')
   const raw = hasStoredPrompt ? value as Partial<ConversationalPromptConfig> : {}
   const hasEditableText = Object.prototype.hasOwnProperty.call(raw, 'editableText')
+  const hasStrategyText = Object.prototype.hasOwnProperty.call(raw, 'strategyText')
+  const hasPersonalityText = Object.prototype.hasOwnProperty.call(raw, 'personalityText')
+  const hasSplitPrompt = hasStrategyText || hasPersonalityText
+  const legacyText = hasEditableText ? normalizeOwnerPromptText(raw.editableText) : ''
+  const strategyText = hasSplitPrompt
+    ? normalizeOwnerPromptText(raw.strategyText)
+    : (hasEditableText ? legacyText : DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS)
+  const personalityText = hasSplitPrompt
+    ? normalizeOwnerPromptText(raw.personalityText)
+    : (hasEditableText ? '' : DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS)
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     templateVersion: String(raw.templateVersion || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.templateVersion).trim().slice(0, 120),
-    editableText: hasEditableText
-      ? String(raw.editableText ?? '').replace(/\r/g, '').slice(0, 16000)
-      : DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS
+    strategyText,
+    personalityText,
+    editableText: buildConversationalLegacyEditableText(strategyText, personalityText)
   }
 }
 
@@ -721,7 +759,7 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
       deposit: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit,
         ...deposit,
-        enabled: paymentMode === 'deposit' || normalizeCapabilityEnabled(deposit.enabled),
+        enabled: paymentMode === 'deposit',
         methods: {
           ...DEFAULT_AGENT_DEPOSIT_METHODS,
           ...methods

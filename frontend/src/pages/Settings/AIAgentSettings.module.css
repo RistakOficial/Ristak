@@ -543,7 +543,7 @@
 }
 
 .moneyInput {
-  padding-left: 28px;
+  padding-left: var(--money-prefix-space, 30px);
 }
 
 .inlineFields {
@@ -1460,6 +1460,29 @@
   min-width: 112px;
 }
 
+.agentPublishNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  color: var(--warn);
+  font-size: 12.5px;
+  line-height: 1.45;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-ctl);
+}
+
+.agentPublishNotice svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.agentPublishNotice strong {
+  font-weight: 600;
+}
+
 .agentDetailLayout {
   --agent-test-panel-width: clamp(340px, 19vw, 390px);
   --agent-test-panel-gutter: 32px;
@@ -2075,9 +2098,10 @@
   font-size: 12.5px;
 }
 
-.nativePromptTextarea {
-  min-height: 260px;
-  line-height: 1.55;
+.nativePromptFields {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
 }
 
 .nativeCapabilityList,
@@ -2093,6 +2117,30 @@
 
 .nativeCapabilityRow:last-child {
   border-bottom: 0;
+}
+
+.nativeCapabilityRow[data-invalid='true'] .nativeCapabilityIcon {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.nativeCapabilityError {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.nativeCapabilityError svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.nativeCapabilityRow > .nativeCapabilityError {
+  margin: 10px 0 0 48px;
 }
 
 .nativeCapabilityHeading {
@@ -2185,6 +2233,10 @@
   }
 
   .nativeCapabilitySettings {
+    margin-left: 0;
+  }
+
+  .nativeCapabilityRow > .nativeCapabilityError {
     margin-left: 0;
   }
 

@@ -5,6 +5,7 @@ type NumberInputValue = string | number
 export interface NumberInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type' | 'inputMode' | 'value' | 'defaultValue' | 'onChange'> {
   value?: NumberInputValue
   defaultValue?: NumberInputValue
+  maxFractionDigits?: number
   onChange?: React.ChangeEventHandler<HTMLInputElement>
   onValueChange?: (value: number) => void
 }
@@ -14,7 +15,7 @@ const toFiniteNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-const sanitizeNumberDraft = (raw: string, min?: number | null) => {
+const sanitizeNumberDraft = (raw: string, min?: number | null, maxFractionDigits?: number | null) => {
   const allowNegative = min === undefined || min === null || min < 0
   let value = raw.replace(',', '.').replace(/[^\d.-]/g, '')
   const sign = allowNegative && value.startsWith('-') ? '-' : ''
@@ -33,7 +34,11 @@ const sanitizeNumberDraft = (raw: string, min?: number | null) => {
     : integerPart
   const safeInteger = normalizedInteger || '0'
 
-  return `${sign}${safeInteger}${decimalPart !== undefined ? `.${decimalPart}` : ''}`
+  const allowsDecimals = maxFractionDigits === undefined || maxFractionDigits === null || maxFractionDigits > 0
+  const safeDecimal = maxFractionDigits === undefined || maxFractionDigits === null
+    ? decimalPart
+    : decimalPart?.slice(0, maxFractionDigits)
+  return `${sign}${safeInteger}${allowsDecimals && decimalPart !== undefined ? `.${safeDecimal}` : ''}`
 }
 
 const parseNumberDraft = (draft: string) => {
@@ -51,6 +56,7 @@ export const NumberInput: React.FC<NumberInputProps> = ({
   min,
   max,
   step,
+  maxFractionDigits,
   onChange,
   onValueChange,
   onBlur,
@@ -62,18 +68,22 @@ export const NumberInput: React.FC<NumberInputProps> = ({
   const minNumber = useMemo(() => toFiniteNumber(min), [min])
   const maxNumber = useMemo(() => toFiniteNumber(max), [max])
   const stepNumber = useMemo(() => toFiniteNumber(step), [step])
+  const fractionDigits = useMemo(() => {
+    const parsed = Number(maxFractionDigits)
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null
+  }, [maxFractionDigits])
   const inputMode: React.HTMLAttributes<HTMLInputElement>['inputMode'] =
     minNumber !== null && minNumber < 0 || stepNumber !== null && !Number.isInteger(stepNumber)
       ? 'decimal'
       : 'numeric'
-  const [draft, setDraft] = useState(() => sanitizeNumberDraft(formatInputValue(value ?? defaultValue), minNumber))
+  const [draft, setDraft] = useState(() => sanitizeNumberDraft(formatInputValue(value ?? defaultValue), minNumber, fractionDigits))
   const [editing, setEditing] = useState(false)
 
   useEffect(() => {
     if (isControlled && !editing) {
-      setDraft(sanitizeNumberDraft(formatInputValue(value), minNumber))
+      setDraft(sanitizeNumberDraft(formatInputValue(value), minNumber, fractionDigits))
     }
-  }, [editing, isControlled, minNumber, value])
+  }, [editing, fractionDigits, isControlled, minNumber, value])
 
   const clampValue = (nextValue: number) => {
     let clamped = nextValue
@@ -96,7 +106,7 @@ export const NumberInput: React.FC<NumberInputProps> = ({
         onFocus?.(event)
       }}
       onChange={(event) => {
-        const nextDraft = sanitizeNumberDraft(event.currentTarget.value, minNumber)
+        const nextDraft = sanitizeNumberDraft(event.currentTarget.value, minNumber, fractionDigits)
         event.currentTarget.value = nextDraft
         setDraft(nextDraft)
         onChange?.(event)
@@ -113,7 +123,7 @@ export const NumberInput: React.FC<NumberInputProps> = ({
           onValueChange?.(clamped)
           event.currentTarget.value = nextDraft
         } else {
-          setDraft(isControlled ? formatInputValue(value) : sanitizeNumberDraft(formatInputValue(defaultValue), minNumber))
+          setDraft(isControlled ? formatInputValue(value) : sanitizeNumberDraft(formatInputValue(defaultValue), minNumber, fractionDigits))
         }
 
         setEditing(false)

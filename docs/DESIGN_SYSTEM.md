@@ -129,6 +129,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |
 | Select enriquecido | `<CustomSelect>` | — |
 | Campo numérico | `<NumberInput>`; en primitivas móviles, `type="text"` + `inputMode="numeric\|decimal"` | `<input type="number">` nativo o controles con flechas subir/bajar |
+| Texto largo enfocable | `<ExpandableTextareaField>`; comparte el mismo valor entre el campo y su editor `<Modal size="xl">` | duplicar estado, recortar silenciosamente o construir un overlay local |
 | Ruta / slug con prefijo fijo | `<PathInput prefix="…">` | un wrapper con prefijo + `<input className={styles.input}>` que crea doble contenedor |
 | Menú | `<DropdownMenu>` | — |
 | Modal / overlay | `<Modal>` (recipe `[data-overlay]`/`[data-modal]`) | un `position:fixed` a mano |

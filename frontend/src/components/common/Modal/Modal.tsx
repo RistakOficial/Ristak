@@ -114,6 +114,8 @@ export const Modal: React.FC<ModalProps> = ({
 }) => {
   const [typedConfirmation, setTypedConfirmation] = useState('')
   const [pendingAction, setPendingAction] = useState<'confirm' | 'secondary' | null>(null)
+  const modalRef = useRef<HTMLDivElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
   const requiresTypedConfirmation = type === 'confirm' && !!typeToConfirm
   const typedConfirmationValid = !requiresTypedConfirmation ||
     normalizeModalText(typedConfirmation) === normalizeModalText(typeToConfirm || '')
@@ -200,21 +202,70 @@ export const Modal: React.FC<ModalProps> = ({
 
     const previousBodyOverflow = document.body.style.overflow
 
-    const handleEscape = (e: KeyboardEvent) => {
+    const handleModalKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' && e.key !== 'Tab') return
+      const modal = modalRef.current
+      if (!modal) return
+      const openModals = [...document.querySelectorAll<HTMLElement>('[data-modal]')]
+      if (openModals[openModals.length - 1] !== modal) return
+
       if (e.key === 'Escape' && isOpen && closeOnEscape) {
+        e.preventDefault()
+        e.stopPropagation()
         if (draggableSheet) closeWithSheetAnimation()
         else handleCancel()
+        return
+      }
+
+      if (e.key !== 'Tab') return
+      const focusable = [...modal.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )].filter((element) => !element.hasAttribute('hidden') && element.getAttribute('aria-hidden') !== 'true')
+      if (!focusable.length) {
+        e.preventDefault()
+        modal.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+        e.preventDefault()
+        first.focus()
       }
     }
 
-    document.addEventListener('keydown', handleEscape)
+    document.addEventListener('keydown', handleModalKeyDown)
     document.body.style.overflow = 'hidden'
 
     return () => {
-      document.removeEventListener('keydown', handleEscape)
+      document.removeEventListener('keydown', handleModalKeyDown)
       document.body.style.overflow = previousBodyOverflow
     }
   }, [closeOnEscape, closeWithSheetAnimation, draggableSheet, handleCancel, isOpen])
+
+  useEffect(() => {
+    if (!isOpen) return
+    previousFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
+    const frame = window.requestAnimationFrame(() => {
+      const modal = modalRef.current
+      if (!modal || modal.contains(document.activeElement)) return
+      const firstFocusable = modal.querySelector<HTMLElement>(
+        '[autofocus], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      )
+      ;(firstFocusable || modal).focus()
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      const previous = previousFocusRef.current
+      if (previous?.isConnected) previous.focus()
+      previousFocusRef.current = null
+    }
+  }, [isOpen])
 
   if (!isOpen && !sheetExiting) return null
 
@@ -234,8 +285,13 @@ export const Modal: React.FC<ModalProps> = ({
       data-phone-modal-root="true"
     >
       <div
+        ref={modalRef}
         className={`${styles.modal} ${styles[type]} ${styles[size]} ${isDestructiveConfirm ? styles.destructive : ''} ${draggableSheet ? styles.bottomSheetModal : ''} ${draggableSheet && bottomSheetMoving ? styles.bottomSheetModalInteractive : ''} ${sheetExiting ? styles.bottomSheetModalExiting : ''} ${className}`.trim()}
         style={draggableSheet ? bottomSheetDismiss.sheetStyle : undefined}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title || closeAriaLabel || 'Ventana'}
+        tabIndex={-1}
         data-modal=""
         data-modal-size={size}
         data-modal-type={type}

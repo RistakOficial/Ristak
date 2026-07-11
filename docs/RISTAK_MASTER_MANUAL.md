@@ -2756,15 +2756,25 @@ La API conserva endpoints separados:
 ### Configuracion y experiencia del usuario
 
 Todos los agentes conversacionales usan un solo runtime nativo de tool calling.
-No existe selector, fallback ni ruta de ejecucion del motor anterior. El wizard
-deja una plantilla de instrucciones util por defecto y el editor separa dos zonas:
+No existe selector, fallback ni ruta de ejecucion del motor anterior. El editor
+deja plantillas utiles por defecto y separa tres piezas visibles:
 
-- Zona editable: tono, guion, conocimiento y reglas del negocio. El dueño puede
-  conservar la plantilla, modificarla o dejarla vacia.
+- Estrategia y capacitacion: conocimiento, objetivo, guion y proceso del negocio.
+- Personalidad: tono, vocabulario, formalidad, humor, emojis y estilo del agente.
+  Si queda vacia, la voz general del negocio funciona como respaldo.
 - Zona blindada: manifiesto derivado por el servidor para las capacidades
   `schedule_appointment`, `collect_payment`, `send_link`, `handoff_human` y
   `custom_goal`. Se muestra en la interfaz, pero nunca se acepta desde el cliente
   como fuente de permisos ni se mezcla con el texto editable.
+
+Los dos campos editables aceptan el texto completo sin recortes silenciosos y
+pueden abrirse en un editor enfocado grande sin crear una copia temporal del
+borrador. El contrato `prompt_config` schema 2 conserva `strategyText` y
+`personalityText` por separado; un agente anterior con solo `editableText` se
+migra de forma compatible copiando todo su contenido a estrategia y dejando
+personalidad vacia, sin intentar adivinar como partirlo. El autosave usa una
+revision por borrador para que una respuesta lenta no pise cambios mas nuevos y
+ejecuta cualquier guardado pendiente al cerrar, probar, publicar o salir.
 
 Cada capacidad se configura por separado y un agente puede tener varias. Agenda
 queda amarrada a un calendario; cobro a un producto/precio real o a un anticipo
@@ -2775,6 +2785,15 @@ incompleto; al publicar, el backend valida el manifiesto otra vez y consulta la
 realidad operativa antes de persistir el cambio: calendario y usuario activos,
 producto/precio relacionados y cobrables, moneda de la cuenta, monto de
 anticipo y destino HTTP(S) de enlaces directos o triggers.
+
+En la capacidad Cobrar, `paymentMode` es la fuente de verdad: pago completo
+apaga cualquier configuracion vieja de anticipo y anticipo la activa. Los montos
+se editan con el simbolo derivado de `account_currency` y respetan los decimales
+de esa moneda. Publicar permanece accionable aun cuando falte configuracion: al
+intentarlo, la interfaz muestra el requisito exacto dentro de Cobrar y junto al
+boton, en vez de dejar un boton deshabilitado sin explicacion. Si el catalogo no
+puede cargarse, el selector tambien informa el error en lugar de aparentar que
+no existen productos.
 
 El boton `Nuevo agente` crea directamente un borrador con la plantilla y abre
 este mismo editor; ya no existe un wizard paralelo basado en objetivo, intención

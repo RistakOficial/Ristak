@@ -24,7 +24,7 @@ const variantMap: Record<ButtonVariant, 'primary' | 'secondary' | 'ghost' | 'dan
 
 const smallSizes: ButtonSize[] = ['sm', 'small']
 
-export const Button: React.FC<ButtonProps> = ({
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({
   variant = 'primary',
   size = 'md',
   fullWidth = false,
@@ -35,10 +35,11 @@ export const Button: React.FC<ButtonProps> = ({
   children,
   className = '',
   ...props
-}) => {
+}, ref) => {
   const isDisabled = disabled || loading
   return (
     <button
+      ref={ref}
       data-btn=""
       data-v={variantMap[variant]}
       data-size={smallSizes.includes(size) ? 'sm' : undefined}
@@ -65,4 +66,6 @@ export const Button: React.FC<ButtonProps> = ({
       )}
     </button>
   )
-}
+})
+
+Button.displayName = 'Button'

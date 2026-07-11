@@ -19,6 +19,7 @@ import {
 } from './paymentFlowService.js'
 import {
   buildConversationalCapabilityManifest,
+  buildLegacyConversationalEditableText,
   getConversationalCapabilitiesConfig,
   getEnabledConversationalCapabilities,
   getConversationalNativeRuntimeValidationErrors,
@@ -4278,6 +4279,49 @@ async function refreshAssignedConversationStatesForAgent(agentId, { updatedBy = 
   return Number(result?.changes || result?.rowCount || 0)
 }
 
+function normalizeAgentPromptPatch(promptInput, basePrompt) {
+  const normalizedBase = normalizeConversationalPromptConfig(basePrompt, { materializeDefault: true })
+  if (promptInput === undefined || promptInput === null) return normalizedBase
+  if (!promptInput || typeof promptInput !== 'object' || Array.isArray(promptInput)) {
+    return normalizeConversationalPromptConfig(promptInput, { materializeDefault: true })
+  }
+
+  const hasStrategyText = Object.prototype.hasOwnProperty.call(promptInput, 'strategyText')
+  const hasPersonalityText = Object.prototype.hasOwnProperty.call(promptInput, 'personalityText')
+  const hasLegacyEditableText = Object.prototype.hasOwnProperty.call(promptInput, 'editableText')
+
+  // Los clientes nuevos pueden parchear un campo sin borrar el otro. Un
+  // cliente anterior que sólo envía editableText conserva su semántica: ese
+  // texto completo pasa a estrategia y personalidad queda vacía.
+  if (hasStrategyText || hasPersonalityText) {
+    // Un bundle anterior puede haber recibido los campos schema 2, conservarlos
+    // al hacer spread y editar únicamente editableText. Si el texto legacy ya
+    // no coincide con esos campos, ésa es la edición real del cliente viejo.
+    const splitLegacyText = buildLegacyConversationalEditableText(
+      promptInput.strategyText,
+      promptInput.personalityText
+    )
+    const legacyEditableText = String(promptInput.editableText ?? '').replace(/\r\n?/g, '\n')
+    if (hasLegacyEditableText && legacyEditableText !== splitLegacyText) {
+      return normalizeConversationalPromptConfig({
+        schemaVersion: 1,
+        templateVersion: promptInput.templateVersion,
+        editableText: promptInput.editableText
+      }, { materializeDefault: true })
+    }
+    return normalizeConversationalPromptConfig({ ...normalizedBase, ...promptInput }, { materializeDefault: true })
+  }
+  if (hasLegacyEditableText) {
+    const legacyEditableText = String(promptInput.editableText ?? '').replace(/\r\n?/g, '\n')
+    // La app móvil nativa anterior reenvía editableText aunque el usuario sólo
+    // cambie el nombre o el modelo. Si el valor sigue idéntico, conservar los
+    // dos campos schema 2 en vez de colapsarlos de nuevo a uno solo.
+    if (legacyEditableText === normalizedBase.editableText) return normalizedBase
+    return normalizeConversationalPromptConfig(promptInput, { materializeDefault: true })
+  }
+  return normalizeConversationalPromptConfig({ ...normalizedBase, ...promptInput }, { materializeDefault: true })
+}
+
 function agentInputToRowValues(input, base) {
   assertAgentTimingInput(input)
   const identity = normalizeAgentIdentity(input, base)
@@ -4346,13 +4390,9 @@ function agentInputToRowValues(input, base) {
   }
   next.runtimeMode = 'tool_calling_v2'
 
-  // El borrado intencional del texto editable se representa con editableText: ''.
-  const promptSource = input.promptConfig === undefined || input.promptConfig === null
-    ? base.promptConfig
-    : input.promptConfig
-  next.promptConfig = promptSource === null || promptSource === undefined
-    ? normalizeConversationalPromptConfig(null, { materializeDefault: true })
-    : normalizeConversationalPromptConfig(promptSource, { materializeDefault: true })
+  // Los dos campos admiten borrado intencional con ''. No se recortan y un
+  // patch parcial nunca debe borrar el campo hermano.
+  next.promptConfig = normalizeAgentPromptPatch(input.promptConfig, base.promptConfig)
 
   // Las capacidades sólo nacen del constructor nativo. Campos históricos como
   // successAction o goalWorkflow nunca pueden volver a habilitar herramientas.

@@ -370,9 +370,13 @@ test('búsqueda SQL real sólo consulta el tramo omitido del contacto y canal li
   }
 })
 
-test('prompt v2 separa texto editable, contexto real y capacidades blindadas', () => {
+test('prompt nativo separa estrategia, personalidad, contexto real y capacidades blindadas sin recortar', () => {
+  const strategyText = `${'Capacitación extensa del negocio.\n'.repeat(700)}MARCADOR_FINAL_PROMPT`
   const instructions = buildNativeConversationalInstructions({
-    promptConfig: { editableText: 'Habla como Ana y responde con mucha calma.' },
+    promptConfig: {
+      strategyText,
+      personalityText: 'Habla como Ana y responde con mucha calma.'
+    },
     capabilityManifest: [
       {
         id: 'schedule_appointment',
@@ -391,7 +395,10 @@ test('prompt v2 separa texto editable, contexto real y capacidades blindadas', (
     channel: 'WhatsApp'
   })
 
-  assert.match(instructions, /Zona editable del negocio/)
+  assert.ok(strategyText.length > 16_000)
+  assert.match(instructions, /Estrategia y capacitación del agente/)
+  assert.match(instructions, /MARCADOR_FINAL_PROMPT/)
+  assert.match(instructions, /Personalidad del agente/)
   assert.match(instructions, /Habla como Ana y responde con mucha calma/)
   assert.match(instructions, /La consulta dura 45 minutos/)
   assert.match(instructions, /Zona blindada del sistema · no editable/)
@@ -433,7 +440,8 @@ test('prompt v2 respeta que el dueño deje vacía la zona editable', () => {
     businessContext: 'Atendemos de lunes a viernes.'
   })
 
-  assert.match(instructions, /Sin instrucciones editables adicionales/)
+  assert.match(instructions, /Sin estrategia o capacitación adicional/)
+  assert.match(instructions, /Sin personalidad específica configurada/)
   assert.doesNotMatch(instructions, /Responde de forma clara, útil, cálida y breve/)
   assert.match(instructions, /contexto real del negocio como datos de referencia/i)
 })

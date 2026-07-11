@@ -99,10 +99,27 @@ function normalizeCurrencyCode(value) {
   return String(value || '').trim().toUpperCase()
 }
 
-function normalizedMoney(value) {
+function currencyFractionDigits(currency) {
+  try {
+    const digits = new Intl.NumberFormat('en', {
+      style: 'currency',
+      currency: normalizeCurrencyCode(currency)
+    }).resolvedOptions().maximumFractionDigits
+    return Number.isInteger(digits) && digits >= 0 && digits <= 6 ? digits : 2
+  } catch {
+    return 2
+  }
+}
+
+function normalizedMoney(value, currency = '') {
   const amount = Number(value)
   if (!Number.isFinite(amount) || amount <= 0) return 0
-  return Math.round(amount * 100) / 100
+  const factor = 10 ** currencyFractionDigits(currency)
+  return Math.round((amount + Number.EPSILON) * factor) / factor
+}
+
+function currencyComparisonTolerance(currency) {
+  return 0.5 / (10 ** currencyFractionDigits(currency))
 }
 
 function isSafeHttpUrl(value) {
@@ -144,10 +161,10 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
     }
     const explicitAgreedAmount = agreedAmount === null || agreedAmount === undefined
       ? 0
-      : normalizedMoney(agreedAmount)
-    const minAmount = normalizedMoney(deposit.minAmount)
-    const maxAmount = normalizedMoney(deposit.maxAmount)
-    const fixedAmount = normalizedMoney(deposit.amount)
+      : normalizedMoney(agreedAmount, trustedAccountCurrency)
+    const minAmount = normalizedMoney(deposit.minAmount, trustedAccountCurrency)
+    const maxAmount = normalizedMoney(deposit.maxAmount, trustedAccountCurrency)
+    const fixedAmount = normalizedMoney(deposit.amount, trustedAccountCurrency)
     let amount = fixedAmount
     if (deposit.mode === 'range') {
       if (!explicitAgreedAmount) {
@@ -170,7 +187,7 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
         }
       }
       amount = explicitAgreedAmount
-    } else if (explicitAgreedAmount && Math.abs(explicitAgreedAmount - fixedAmount) >= 0.005) {
+    } else if (explicitAgreedAmount && Math.abs(explicitAgreedAmount - fixedAmount) >= currencyComparisonTolerance(trustedAccountCurrency)) {
       return {
         ok: false,
         actionCompleted: false,
@@ -232,8 +249,8 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
     return { ok: false, actionCompleted: false, transferRequired: true, error: 'El producto o precio configurado ya no existe o no está activo. No se creó ningún link.' }
   }
 
-  const unitAmount = normalizedMoney(row.amount)
   const currency = normalizeCurrencyCode(row.price_currency || row.product_currency || trustedAccountCurrency)
+  const unitAmount = normalizedMoney(row.amount, currency)
   if (!unitAmount) {
     return { ok: false, actionCompleted: false, transferRequired: true, error: 'El precio guardado no tiene un monto válido. No se creó ningún link.' }
   }
@@ -246,11 +263,11 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
     }
   }
 
-  const amount = normalizedMoney(unitAmount * boundedQuantity)
+  const amount = normalizedMoney(unitAmount * boundedQuantity, trustedAccountCurrency)
   const explicitAgreedAmount = agreedAmount === null || agreedAmount === undefined
     ? 0
-    : normalizedMoney(agreedAmount)
-  if (explicitAgreedAmount && Math.abs(explicitAgreedAmount - amount) >= 0.005) {
+    : normalizedMoney(agreedAmount, trustedAccountCurrency)
+  if (explicitAgreedAmount && Math.abs(explicitAgreedAmount - amount) >= currencyComparisonTolerance(trustedAccountCurrency)) {
     return {
       ok: false,
       actionCompleted: false,
@@ -716,15 +733,16 @@ const NATIVE_APPOINTMENT_BINDING_EVENT = 'appointment_creation_binding_v2'
 function nativeAppointmentDepositContract(ctx, config) {
   const deposit = getDepositRequirementForRuntime(ctx, config)
   const methods = getDepositPaymentMethodsForRuntime(ctx, config)
+  const currency = normalizeCurrencyCode(deposit?.currency || ctx?.accountLocale?.currency || '')
   const canonical = deposit
     ? {
         required: true,
         paymentPurpose: getNativePaymentPurpose(ctx, config),
         mode: String(deposit.mode || 'fixed'),
-        amount: normalizedMoney(deposit.amount),
-        minAmount: normalizedMoney(deposit.minAmount),
-        maxAmount: normalizedMoney(deposit.maxAmount),
-        currency: normalizeCurrencyCode(deposit.currency || ctx?.accountLocale?.currency || ''),
+        amount: normalizedMoney(deposit.amount, currency),
+        minAmount: normalizedMoney(deposit.minAmount, currency),
+        maxAmount: normalizedMoney(deposit.maxAmount, currency),
+        currency,
         paymentLink: methods.paymentLink === true,
         bankTransfer: methods.bankTransfer === true
       }

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, LockKeyhole, Pause, PauseCircle, Play, Plus, RotateCcw, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
-import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import { Badge, Button, Card, CustomSelect, ExpandableTextareaField, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -27,6 +27,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability, useAppConfig } from '@/hooks'
 import {
   conversationalAgentService,
+  buildConversationalLegacyEditableText,
   isConversationalAgentEntryConflictError,
   DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
@@ -735,9 +736,39 @@ function isSafeConversationalUrl(value: string) {
   }
 }
 
+function getCurrencyInputSymbol(currency: string) {
+  const normalized = normalizeCurrencyCode(currency)
+  try {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: normalized,
+      currencyDisplay: 'narrowSymbol'
+    }).formatToParts(0).find((part) => part.type === 'currency')?.value || normalized
+  } catch {
+    return normalized
+  }
+}
+
+function getCurrencyFractionDigits(currency: string) {
+  try {
+    const digits = new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: normalizeCurrencyCode(currency)
+    }).resolvedOptions().maximumFractionDigits
+    return typeof digits === 'number' && Number.isInteger(digits) && digits >= 0 && digits <= 6 ? digits : 2
+  } catch {
+    return 2
+  }
+}
+
+function getCurrencyInputStep(currency: string) {
+  return 10 ** -getCurrencyFractionDigits(currency)
+}
+
 function getNativeCapabilityItemError(
   item: ConversationalCapabilityItem,
-  allItems: ConversationalCapabilityItem[]
+  allItems: ConversationalCapabilityItem[],
+  accountCurrency = ''
 ) {
   if (!item.enabled) return ''
   if (item.id === 'schedule_appointment' && !item.calendarId) return 'Selecciona el calendario de la capacidad para agendar.'
@@ -747,6 +778,14 @@ function getNativeCapabilityItemError(
       const validFixed = deposit.mode !== 'range' && Number(deposit.amount) > 0
       const validRange = deposit.mode === 'range' && Number(deposit.minAmount) > 0 && Number(deposit.maxAmount) >= Number(deposit.minAmount)
       if (!validFixed && !validRange) return 'Configura el monto verificable del anticipo.'
+      const configuredCurrency = normalizeCurrencyCode(deposit.currency || item.currency)
+      const expectedCurrency = normalizeCurrencyCode(accountCurrency)
+      if (expectedCurrency && !configuredCurrency) {
+        return `Confirma de nuevo el monto para guardarlo en la moneda de la cuenta (${expectedCurrency}).`
+      }
+      if (expectedCurrency && configuredCurrency && configuredCurrency !== expectedCurrency) {
+        return `El anticipo está en ${configuredCurrency}, pero la cuenta cobra en ${expectedCurrency}. Confirma de nuevo el monto para guardarlo en ${expectedCurrency}.`
+      }
       if (!deposit.methods?.paymentLink && !deposit.methods?.bankTransfer) return 'Activa un método para cobrar el anticipo.'
       if (deposit.methods?.bankTransfer && !String(deposit.bankTransferDetails || '').trim()) return 'Escribe los datos de transferencia.'
     } else if (!item.productId || !item.priceId) {
@@ -763,7 +802,7 @@ function getNativeCapabilityItemError(
     if (!String(item.description || '').trim()) return 'Describe el objetivo propio.'
     if (item.completion === 'send_link') {
       const link = allItems.find((candidate) => candidate.id === 'send_link' && candidate.enabled)
-      if (!link || getNativeCapabilityItemError(link, allItems)) {
+      if (!link || getNativeCapabilityItemError(link, allItems, accountCurrency)) {
         return 'Activa y configura Mandar enlace para completar este objetivo.'
       }
     }
@@ -771,17 +810,17 @@ function getNativeCapabilityItemError(
   return ''
 }
 
-function getNativeCapabilityError(agent: ConversationalAgentDef) {
+function getNativeCapabilityError(agent: ConversationalAgentDef, accountCurrency = '') {
   const items = agent.capabilitiesConfig?.items || []
   for (const item of items) {
-    const error = getNativeCapabilityItemError(item, items)
+    const error = getNativeCapabilityItemError(item, items, accountCurrency)
     if (error) return error
   }
   return ''
 }
 
-function getAgentValidationError(agent: ConversationalAgentDef) {
-  return (agent.enabled ? getNativeCapabilityError(agent) : '') ||
+function getAgentValidationError(agent: ConversationalAgentDef, accountCurrency = '') {
+  return (agent.enabled ? getNativeCapabilityError(agent, accountCurrency) : '') ||
     getResponseDelayError(getAgentResponseDelay(agent)) ||
     getReplyDeliveryError(getAgentReplyDelivery(agent)) ||
     getFollowUpError(getAgentFollowUp(agent))
@@ -930,6 +969,7 @@ interface AgentCardProps {
   calendars: Calendar[]
   products: ProductItem[]
   productsLoading: boolean
+  productsError?: string
   filterOptions?: AgentFilterOptions
   onConnectProvider: (providerId: ConversationalAIProviderId) => void
   onBack: () => void
@@ -1043,10 +1083,12 @@ interface NativeConversationBuilderProps {
   calendars: Calendar[]
   products: ProductItem[]
   productsLoading: boolean
+  productsError?: string
   teamUsers: TeamUser[]
   teamUsersLoading: boolean
   accountCurrency: string
   onChange: (patch: ConversationalAgentDefInput) => void
+  onFlushSave: () => Promise<ConversationalAgentDef | null>
 }
 
 const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
@@ -1054,13 +1096,35 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   calendars,
   products,
   productsLoading,
+  productsError,
   teamUsers,
   teamUsersLoading,
   accountCurrency,
-  onChange
+  onChange,
+  onFlushSave
 }) => {
   const { showToast } = useNotification()
   const capabilities = agent.capabilitiesConfig || { schemaVersion: 1, items: [] }
+  const promptConfig = agent.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG
+  const strategyText = promptConfig.strategyText ?? promptConfig.editableText ?? ''
+  const personalityText = promptConfig.personalityText ?? ''
+
+  const updatePromptText = (field: 'strategyText' | 'personalityText', value: string) => {
+    const nextStrategyText = field === 'strategyText' ? value : strategyText
+    const nextPersonalityText = field === 'personalityText' ? value : personalityText
+    onChange({
+      promptConfig: {
+        ...promptConfig,
+        schemaVersion: 2,
+        strategyText: nextStrategyText,
+        personalityText: nextPersonalityText,
+        editableText: buildConversationalLegacyEditableText(nextStrategyText, nextPersonalityText)
+      }
+    })
+  }
+  const flushPromptSave = () => {
+    void onFlushSave().catch(() => undefined)
+  }
 
   const updateCapability = (next: ConversationalCapabilityItem, { pause = true } = {}) => {
     const exists = capabilities.items.some((item) => item.id === next.id)
@@ -1089,6 +1153,13 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   const linkCapability = getNativeCapability(capabilities, 'send_link')
   const handoffCapability = getNativeCapability(capabilities, 'handoff_human')
   const customCapability = getNativeCapability(capabilities, 'custom_goal')
+  const depositCurrency = normalizeCurrencyCode(paymentCapability?.deposit?.currency || accountCurrency)
+  const currencySymbol = getCurrencyInputSymbol(depositCurrency)
+  const currencyStep = getCurrencyInputStep(accountCurrency)
+  const currencyFractionDigits = getCurrencyFractionDigits(accountCurrency)
+  const moneyPrefixStyle = {
+    '--money-prefix-space': `${Math.max(30, 20 + Array.from(currencySymbol).length * 8)}px`
+  } as React.CSSProperties
   const selectedProduct = products.find((product) => getProductId(product) === paymentCapability?.productId) || null
   const productPrices = selectedProduct?.prices || []
   const manifestById = new Map<ConversationalCapabilityId, ConversationalCapabilityManifestItem>(
@@ -1137,8 +1208,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
             <option value="deposit">Anticipo</option>
           </CustomSelect>
           {paymentCapability.paymentMode === 'full_payment' ? (
-            <div className={styles.nativeInlineFields}>
-              <div className={styles.field}>
+            <>
+              <div className={styles.nativeInlineFields}>
+                <div className={styles.field}>
                 <label className={styles.label}>Producto</label>
                 <CustomSelect
                   value={paymentCapability.productId}
@@ -1155,8 +1227,8 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                   <option value="">{productsLoading ? 'Cargando productos...' : 'Elegir producto real'}</option>
                   {products.map((product) => <option key={getProductId(product)} value={getProductId(product)}>{product.name}</option>)}
                 </CustomSelect>
-              </div>
-              <div className={styles.field}>
+                </div>
+                <div className={styles.field}>
                 <label className={styles.label}>Precio</label>
                 <CustomSelect
                   value={paymentCapability.priceId}
@@ -1179,8 +1251,17 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                     </option>
                   ))}
                 </CustomSelect>
+                </div>
               </div>
-            </div>
+              {productsError ? (
+                <p className={styles.nativeCapabilityError} role="alert">
+                  <AlertTriangle size={15} />
+                  {productsError}
+                </p>
+              ) : (!productsLoading && products.length === 0 ? (
+                <p className={styles.helper}>No hay productos con precios disponibles. Crea uno en Pagos o cambia el tipo de cobro a Anticipo.</p>
+              ) : null)}
+            </>
           ) : (
             <>
               <label className={styles.label}>Cómo se define el anticipo</label>
@@ -1204,42 +1285,60 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                 {paymentCapability.deposit.mode === 'range' ? (
                   <>
                     <div className={styles.field}>
-                      <label className={styles.label}>Mínimo</label>
-                      <NumberInput
-                        value={paymentCapability.deposit.minAmount || ''}
-                        min={0}
-                        step={0.01}
-                        onValueChange={(minAmount) => updateCapability({
-                          ...paymentCapability,
-                          deposit: { ...paymentCapability.deposit, enabled: true, mode: 'range', minAmount, currency: accountCurrency }
-                        })}
-                      />
+                      <label className={styles.label}>Mínimo ({depositCurrency})</label>
+                      <div className={styles.moneyInputWrap} style={moneyPrefixStyle}>
+                        <span className={styles.moneyPrefix} title={depositCurrency} aria-hidden="true">{currencySymbol}</span>
+                        <NumberInput
+                          className={styles.moneyInput}
+                          value={paymentCapability.deposit.minAmount || ''}
+                          min={0}
+                          step={currencyStep}
+                          maxFractionDigits={currencyFractionDigits}
+                          aria-label={`Monto mínimo en ${accountCurrency}`}
+                          onValueChange={(minAmount) => updateCapability({
+                            ...paymentCapability,
+                            deposit: { ...paymentCapability.deposit, enabled: true, mode: 'range', minAmount, currency: accountCurrency }
+                          })}
+                        />
+                      </div>
                     </div>
                     <div className={styles.field}>
-                      <label className={styles.label}>Máximo</label>
-                      <NumberInput
-                        value={paymentCapability.deposit.maxAmount || ''}
-                        min={0}
-                        step={0.01}
-                        onValueChange={(maxAmount) => updateCapability({
-                          ...paymentCapability,
-                          deposit: { ...paymentCapability.deposit, enabled: true, mode: 'range', maxAmount, currency: accountCurrency }
-                        })}
-                      />
+                      <label className={styles.label}>Máximo ({depositCurrency})</label>
+                      <div className={styles.moneyInputWrap} style={moneyPrefixStyle}>
+                        <span className={styles.moneyPrefix} title={depositCurrency} aria-hidden="true">{currencySymbol}</span>
+                        <NumberInput
+                          className={styles.moneyInput}
+                          value={paymentCapability.deposit.maxAmount || ''}
+                          min={0}
+                          step={currencyStep}
+                          maxFractionDigits={currencyFractionDigits}
+                          aria-label={`Monto máximo en ${accountCurrency}`}
+                          onValueChange={(maxAmount) => updateCapability({
+                            ...paymentCapability,
+                            deposit: { ...paymentCapability.deposit, enabled: true, mode: 'range', maxAmount, currency: accountCurrency }
+                          })}
+                        />
+                      </div>
                     </div>
                   </>
                 ) : (
                   <div className={styles.field}>
-                    <label className={styles.label}>Monto del anticipo</label>
-                    <NumberInput
-                      value={paymentCapability.deposit.amount || ''}
-                      min={0}
-                      step={0.01}
-                      onValueChange={(amount) => updateCapability({
-                        ...paymentCapability,
-                        deposit: { ...paymentCapability.deposit, enabled: true, mode: 'fixed', amount, currency: accountCurrency }
-                      })}
-                    />
+                    <label className={styles.label}>Monto del anticipo ({depositCurrency})</label>
+                    <div className={styles.moneyInputWrap} style={moneyPrefixStyle}>
+                      <span className={styles.moneyPrefix} title={depositCurrency} aria-hidden="true">{currencySymbol}</span>
+                      <NumberInput
+                        className={styles.moneyInput}
+                        value={paymentCapability.deposit.amount || ''}
+                        min={0}
+                        step={currencyStep}
+                        maxFractionDigits={currencyFractionDigits}
+                        aria-label={`Monto del anticipo en ${accountCurrency}`}
+                        onValueChange={(amount) => updateCapability({
+                          ...paymentCapability,
+                          deposit: { ...paymentCapability.deposit, enabled: true, mode: 'fixed', amount, currency: accountCurrency }
+                        })}
+                      />
+                    </div>
                   </div>
                 )}
                 <div className={styles.nativePaymentMethods}>
@@ -1391,7 +1490,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
     .filter((row) => row.item?.enabled)
     .map((row) => {
       const item = row.item as ConversationalCapabilityItem
-      const localError = getNativeCapabilityItemError(item, capabilities.items)
+      const localError = getNativeCapabilityItemError(item, capabilities.items, accountCurrency)
       const persisted = manifestById.get(row.id)
       return {
         id: row.id,
@@ -1414,21 +1513,35 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       </div>
 
       <div className={styles.agentSection}>
-        <h3 className={styles.sectionTitle}>1. Instrucciones de tu agente</h3>
-        <p className={styles.agentSectionHint}>Esta zona es tuya. La plantilla ya funciona; puedes dejarla, editarla o borrarla completa.</p>
-        <textarea
-          className={`${styles.textarea} ${styles.nativePromptTextarea}`}
-          value={agent.promptConfig?.editableText ?? ''}
-          rows={12}
-          placeholder="Escribe aquí cómo debe atender, qué debe saber y cómo quieres que hable."
-          onChange={(event) => onChange({
-            promptConfig: {
-              ...(agent.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG),
-              editableText: event.target.value
-            }
-          })}
-        />
-        <p className={styles.helper}>Aunque borres todo, las herramientas, validaciones y datos reales siguen protegidos por Ristak.</p>
+        <h3 className={styles.sectionTitle}>1. Capacitación y personalidad</h3>
+        <p className={styles.agentSectionHint}>Son dos cosas distintas: qué debe saber y hacer, y cómo debe hablar. Puedes dejar las plantillas, editarlas o borrarlas completas.</p>
+        <div className={styles.nativePromptFields}>
+          <ExpandableTextareaField
+            id={`agent-${agent.id}-strategy`}
+            label="Estrategia y capacitación"
+            description="Qué debe saber del negocio, qué debe conseguir, cómo atender y qué proceso debe seguir."
+            value={strategyText}
+            rows={12}
+            placeholder="Describe el negocio, productos, proceso, respuestas, objetivos y forma de llevar la conversación."
+            spellCheck
+            onChange={(value) => updatePromptText('strategyText', value)}
+            onBlur={flushPromptSave}
+            onExpandedClose={flushPromptSave}
+          />
+          <ExpandableTextareaField
+            id={`agent-${agent.id}-personality`}
+            label="Personalidad del agente"
+            description="Cómo debe hablar: tono, vocabulario, formalidad, humor, emojis y estilo. Si lo dejas vacío, usa la voz general del negocio."
+            value={personalityText}
+            rows={7}
+            placeholder="Ejemplo: cálido, directo, mexicano, breve y sin frases acartonadas."
+            spellCheck
+            onChange={(value) => updatePromptText('personalityText', value)}
+            onBlur={flushPromptSave}
+            onExpandedClose={flushPromptSave}
+          />
+        </div>
+        <p className={styles.helper}>Ristak guarda ambos textos completos. Aunque borres los dos, las herramientas, validaciones y datos reales siguen protegidos.</p>
       </div>
 
       <div className={styles.agentSection}>
@@ -1438,8 +1551,14 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
           {capabilityRows.map(({ id, item, settings }) => {
             const meta = nativeCapabilityMeta[id]
             const Icon = meta.Icon
+            const localError = item?.enabled ? getNativeCapabilityItemError(item, capabilities.items, accountCurrency) : ''
             return (
-              <div key={id} className={styles.nativeCapabilityRow} data-enabled={item?.enabled ? 'true' : undefined}>
+              <div
+                key={id}
+                className={styles.nativeCapabilityRow}
+                data-enabled={item?.enabled ? 'true' : undefined}
+                data-invalid={localError ? 'true' : undefined}
+              >
                 <div className={styles.nativeCapabilityHeading}>
                   <span className={styles.nativeCapabilityIcon}><Icon size={18} /></span>
                   <div>
@@ -1453,6 +1572,12 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                   />
                 </div>
                 {settings}
+                {localError && (
+                  <p className={styles.nativeCapabilityError} role="alert">
+                    <AlertTriangle size={15} />
+                    Antes de publicar: {localError}
+                  </p>
+                )}
               </div>
             )
           })}
@@ -1495,7 +1620,7 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
   return aiProviders.find((provider) => provider.id === providerId) || null
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, filterOptions, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, productsError, filterOptions, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
   const { showToast } = useNotification()
   const { labels } = useLabels()
   const leadLowerLabel = formatCrmLabelLower(labels.lead, DEFAULT_CRM_LABELS.lead)
@@ -1584,7 +1709,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }))
   const selectedAttendedChatActionValue = getAttendedChatActionValue(agent)
   const selectedAttendedChatAction = attendedChatActionOptions.find((option) => option.value === selectedAttendedChatActionValue) || attendedChatActionOptions[0]
-  const publishValidationError = getAgentValidationError({ ...agent, enabled: true })
+  const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig || detectedLocaleDefaults.currency)
+  const publishValidationError = getAgentValidationError({ ...agent, enabled: true }, accountCurrency)
   const entryCount = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
   const exitCount = agent.filters.exit.groups.reduce((total, group) => total + group.conditions.length, 0)
   const responseDelay = getAgentResponseDelay(agent)
@@ -1596,7 +1722,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const responseDelayError = getResponseDelayError(responseDelay)
   const replyDeliveryError = getReplyDeliveryError(replyDelivery)
   const followUpError = getFollowUpError(followUp)
-  const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig || detectedLocaleDefaults.currency)
   const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
   const hasTestConversation = testPracticeExpired || testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
 
@@ -2195,14 +2320,19 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             <Button
               variant={agent.enabled ? 'secondary' : 'primary'}
               onClick={() => onChange({ enabled: !agent.enabled })}
-              disabled={!agent.enabled && Boolean(publishValidationError)}
-              title={!agent.enabled ? (publishValidationError || undefined) : undefined}
             >
               {agent.enabled ? <Pause size={16} /> : <Play size={16} />}
               {agent.enabled ? 'Pausar' : 'Publicar'}
             </Button>
           </div>
         </div>
+
+        {!agent.enabled && publishValidationError && (
+          <div className={styles.agentPublishNotice} role="status" aria-live="polite">
+            <AlertTriangle size={16} />
+            <span><strong>Antes de publicar:</strong> {publishValidationError}</span>
+          </div>
+        )}
 
         <div className={styles.agentConfigColumn}>
           <div className={styles.agentCardHeader}>
@@ -2239,10 +2369,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             calendars={calendars}
             products={products}
             productsLoading={productsLoading}
+            productsError={productsError}
             teamUsers={teamUsers}
             teamUsersLoading={teamUsersLoading}
             accountCurrency={accountCurrency}
             onChange={onChange}
+            onFlushSave={onFlushSave}
           />
 
           <div className={styles.agentSection}>
@@ -2718,6 +2850,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [products, setProducts] = useState<ProductItem[]>([])
   const [productsLoading, setProductsLoading] = useState(false)
+  const [productsError, setProductsError] = useState('')
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -2729,6 +2862,16 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [providerSaving, setProviderSaving] = useState(false)
   const [activationConflict, setActivationConflict] = useState<AgentActivationConflictModalState | null>(null)
   const saveTimersRef = useRef<Map<string, number>>(new Map())
+  const saveQueuesRef = useRef<Map<string, Promise<ConversationalAgentDef | null>>>(new Map())
+  const saveRevisionsRef = useRef<Map<string, number>>(new Map())
+  const agentMutationVersionsRef = useRef<Map<string, number>>(new Map())
+  const dirtyAgentIdsRef = useRef<Set<string>>(new Set())
+  const deletedAgentIdsRef = useRef<Set<string>>(new Set())
+  const mountedRef = useRef(true)
+  const saveAgentNowRef = useRef<(
+    agentId: string,
+    options?: { notify?: boolean; enabled?: boolean }
+  ) => Promise<ConversationalAgentDef | null>>(async () => null)
   const agentsRef = useRef<ConversationalAgentDef[]>([])
   const businessProfileVersion = [
     openAIAvailability.businessProfile?.updatedAt || '',
@@ -2737,6 +2880,32 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     openAIAvailability.businessProfile?.industry || ''
   ].join('|')
   agentsRef.current = agents
+
+  const applyServerAgentsPreservingDrafts = useCallback((
+    serverAgents: ConversationalAgentDef[],
+    versionsAtRequestStart = new Map<string, number>()
+  ) => {
+    const dirtyIds = dirtyAgentIdsRef.current
+    const deletedIds = deletedAgentIdsRef.current
+    const localById = new Map(agentsRef.current.map((agent) => [agent.id, agent]))
+    const filteredServerAgents = serverAgents.filter((agent) => !deletedIds.has(agent.id))
+    const serverIds = new Set(filteredServerAgents.map((agent) => agent.id))
+    const merged = filteredServerAgents.flatMap((agent) => {
+      const changedSinceRequest = dirtyIds.has(agent.id) ||
+        (agentMutationVersionsRef.current.get(agent.id) || 0) !== (versionsAtRequestStart.get(agent.id) || 0)
+      if (!changedSinceRequest) return [agent]
+      const local = localById.get(agent.id)
+      // Si cambió desde que arrancó el request y ya no existe localmente, fue
+      // eliminado: una respuesta vieja jamás debe resucitarlo en la interfaz.
+      return local ? [local] : []
+    })
+    for (const [localId, local] of localById) {
+      const changedSinceRequest = (agentMutationVersionsRef.current.get(localId) || 0) !== (versionsAtRequestStart.get(localId) || 0)
+      if ((dirtyIds.has(localId) || changedSinceRequest) && !serverIds.has(localId)) merged.push(local)
+    }
+    agentsRef.current = merged
+    setAgents(merged)
+  }, [])
 
   const refreshMetrics = useCallback(async () => {
     try {
@@ -2748,19 +2917,21 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   }, [])
 
   const refreshAgentData = useCallback(async () => {
+    const versionsAtRequestStart = new Map(agentMutationVersionsRef.current)
     const [nextConfig, nextAgents, nextProviders] = await Promise.all([
       conversationalAgentService.getConfig(),
       conversationalAgentService.listAgents(),
       conversationalAgentService.listAIProviders()
     ])
     setConfig(nextConfig)
-    setAgents(nextAgents)
+    applyServerAgentsPreservingDrafts(nextAgents, versionsAtRequestStart)
     setAIProviders(nextConfig.aiProviders || nextProviders)
-  }, [])
+  }, [applyServerAgentsPreservingDrafts])
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
+      const versionsAtRequestStart = new Map(agentMutationVersionsRef.current)
       setLoading(true)
       setProductsLoading(true)
       try {
@@ -2775,18 +2946,24 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
               limit: '100',
               includePrices: 'true'
             }
-          }).catch(() => null),
+          })
+            .then((data) => ({ data, error: '' }))
+            .catch((error: any) => ({
+              data: null,
+              error: error?.message || 'No se pudo cargar el catálogo de productos. Recarga la página o usa Anticipo.'
+            })),
           conversationalAgentService.getFilterOptions().catch(() => undefined)
         ])
         if (cancelled) return
         setConfig(nextConfig)
-        setAgents(nextAgents)
+        applyServerAgentsPreservingDrafts(nextAgents, versionsAtRequestStart)
         setAIProviders(nextConfig.aiProviders || nextProviders)
         setMetrics(nextMetrics)
         setCalendars(calendarList.filter((cal) => cal.isActive !== false))
-        setProducts(Array.isArray(productsResponse?.products)
-          ? productsResponse.products.filter((product) => getProductId(product))
+        setProducts(Array.isArray(productsResponse.data?.products)
+          ? productsResponse.data.products.filter((product) => getProductId(product))
           : [])
+        setProductsError(productsResponse.error)
         setFilterOptions(nextOptions)
       } catch (error: any) {
         if (!cancelled) {
@@ -2803,15 +2980,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     return () => {
       cancelled = true
     }
-  }, [businessProfileVersion, showToast])
-
-  useEffect(() => {
-    const timers = saveTimersRef.current
-    return () => {
-      timers.forEach((timer) => window.clearTimeout(timer))
-      timers.clear()
-    }
-  }, [])
+  }, [applyServerAgentsPreservingDrafts, businessProfileVersion, showToast])
 
   useEffect(() => {
     if (loading) return
@@ -2830,9 +2999,9 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     navigate(buildConversationalAgentPath(null, routeBase), { replace: true })
   }, [agents, loading, navigate, routeAgentId, routeBase])
 
-  const saveAgentNow = useCallback(async (
+  const saveAgentNow = useCallback((
     agentId: string,
-    options: { notify?: boolean } = {}
+    options: { notify?: boolean; enabled?: boolean } = {}
   ): Promise<ConversationalAgentDef | null> => {
     const timers = saveTimersRef.current
     const existing = timers.get(agentId)
@@ -2841,40 +3010,118 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       timers.delete(agentId)
     }
 
-    const agent = agentsRef.current.find((item) => item.id === agentId)
-    if (!agent) return null
-
-    const validationError = getAgentValidationError(agent)
-    if (validationError) {
-      if (options.notify !== false) {
-        showToast('warning', 'Revisa el agente', validationError)
-      }
-      throw new Error(validationError)
+    const queues = saveQueuesRef.current
+    const queued = queues.get(agentId)
+    if (!dirtyAgentIdsRef.current.has(agentId) && options.enabled === undefined) {
+      return queued || Promise.resolve(agentsRef.current.find((item) => item.id === agentId) || null)
     }
 
-    try {
-      const next = await conversationalAgentService.updateAgent(agentId, agentToInput(agent))
-      setAgents((current) => current.map((item) => (item.id === agentId ? next : item)))
-      return next
-    } catch (error: any) {
-      if (isConversationalAgentEntryConflictError(error)) {
-        setActivationConflict({
-          message: error.message,
-          conflicts: error.conflicts || []
-        })
-        await refreshAgentData().catch(() => undefined)
-        throw error
-      }
-      // El servidor es la fuente de verdad. Si un autosave fue rechazado,
-      // recuperamos la versión persistida para que la pantalla no siga
-      // mostrando como aplicado algo que nunca se guardó.
-      await refreshAgentData().catch(() => undefined)
-      if (options.notify !== false) {
-        showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
-      }
-      throw error
-    }
+    const operation = (queued || Promise.resolve(null))
+      .catch(() => null)
+      .then(async () => {
+        if (!dirtyAgentIdsRef.current.has(agentId) && options.enabled === undefined) {
+          return agentsRef.current.find((item) => item.id === agentId) || null
+        }
+
+        const currentAgent = agentsRef.current.find((item) => item.id === agentId)
+        if (!currentAgent) return null
+        const agent = options.enabled === undefined
+          ? currentAgent
+          : ({ ...currentAgent, enabled: options.enabled } as ConversationalAgentDef)
+        const requestRevision = saveRevisionsRef.current.get(agentId) || 0
+        const validationError = getAgentValidationError(agent)
+        if (validationError) {
+          if (options.notify !== false) {
+            showToast('warning', 'Revisa el agente', validationError)
+          }
+          // Publicar puede fallar porque el borrador todavía está incompleto,
+          // pero ese borrador sí debe persistirse en pausa. Lo encolamos detrás
+          // de este intento antes de devolver el error visible.
+          if (options.enabled !== undefined && dirtyAgentIdsRef.current.has(agentId)) {
+            void saveAgentNowRef.current(agentId, { notify: false }).catch(() => undefined)
+          }
+          throw new Error(validationError)
+        }
+
+        try {
+          const next = await conversationalAgentService.updateAgent(agentId, agentToInput(agent))
+          agentMutationVersionsRef.current.set(
+            agentId,
+            (agentMutationVersionsRef.current.get(agentId) || 0) + 1
+          )
+          const revisionUnchanged = (saveRevisionsRef.current.get(agentId) || 0) === requestRevision
+          if (revisionUnchanged) {
+            dirtyAgentIdsRef.current.delete(agentId)
+            const pendingRetry = timers.get(agentId)
+            if (pendingRetry) window.clearTimeout(pendingRetry)
+            timers.delete(agentId)
+          }
+
+          const latestAgents = agentsRef.current
+          const latestAgent = latestAgents.find((item) => item.id === agentId)
+          const localNext = revisionUnchanged
+            ? next
+            : (options.enabled === undefined
+                ? latestAgent
+                : ({ ...next, ...latestAgent, enabled: next.enabled } as ConversationalAgentDef))
+          if (localNext) {
+            const nextAgents = latestAgents.map((item) => (item.id === agentId ? localNext : item))
+            agentsRef.current = nextAgents
+            if (mountedRef.current) setAgents(nextAgents)
+          }
+          return next
+        } catch (error: any) {
+          const stillDirty = dirtyAgentIdsRef.current.has(agentId)
+          if (isConversationalAgentEntryConflictError(error)) {
+            if (mountedRef.current) {
+              setActivationConflict({
+                message: error.message,
+                conflicts: error.conflicts || []
+              })
+            }
+            if (!stillDirty && (saveRevisionsRef.current.get(agentId) || 0) === requestRevision) {
+              await refreshAgentData().catch(() => undefined)
+            }
+          } else if (options.notify !== false) {
+            showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
+          }
+
+          // Un fallo transitorio no convierte el borrador en "guardado". Si la
+          // pantalla sigue abierta, lo reintentamos en orden y sin pisar texto.
+          if (stillDirty && mountedRef.current && !timers.has(agentId)) {
+            timers.set(agentId, window.setTimeout(() => {
+              timers.delete(agentId)
+              void saveAgentNowRef.current(agentId, { notify: false }).catch(() => undefined)
+            }, AUTOSAVE_DELAY_MS * 2))
+          }
+          throw error
+        }
+      })
+
+    queues.set(agentId, operation)
+    void operation.finally(() => {
+      if (queues.get(agentId) === operation) queues.delete(agentId)
+    }).catch(() => undefined)
+    return operation
   }, [refreshAgentData, showToast])
+
+  saveAgentNowRef.current = saveAgentNow
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      const timers = saveTimersRef.current
+      const pendingAgentIds = new Set([...timers.keys(), ...dirtyAgentIdsRef.current])
+      timers.forEach((timer) => window.clearTimeout(timer))
+      timers.clear()
+      // Navegar no se come los últimos 900 ms: el cierre entra a la misma cola
+      // serial y manda el snapshot más reciente una sola vez.
+      pendingAgentIds.forEach((agentId) => {
+        void saveAgentNowRef.current(agentId, { notify: false }).catch(() => undefined)
+      })
+    }
+  }, [])
 
   const scheduleAgentSave = useCallback((agentId: string) => {
     const timers = saveTimersRef.current
@@ -2916,39 +3163,18 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     // confirmarlo backend. Así el badge no miente si
     // falla una validación factual de calendario, producto, precio o enlace.
     if (currentAgent && patch.enabled !== undefined) {
-      const timers = saveTimersRef.current
-      const existingTimer = timers.get(agentId)
-      if (existingTimer) {
-        window.clearTimeout(existingTimer)
-        timers.delete(agentId)
-      }
-      const candidate = { ...currentAgent, ...patch } as ConversationalAgentDef
-      const validationError = getAgentValidationError(candidate)
-      if (validationError) {
-        showToast('warning', 'Revisa el agente', validationError)
-        return
-      }
-
-      void (async () => {
-        try {
-          const persisted = await conversationalAgentService.updateAgent(agentId, agentToInput(candidate))
-          setAgents((current) => current.map((agent) => (agent.id === agentId ? persisted : agent)))
-        } catch (error: any) {
-          if (isConversationalAgentEntryConflictError(error)) {
-            setActivationConflict({
-              message: error.message,
-              conflicts: error.conflicts || []
-            })
-          } else {
-            showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
-          }
-          await refreshAgentData().catch(() => undefined)
-        }
-      })()
+      void saveAgentNow(agentId, { enabled: patch.enabled }).catch(() => undefined)
       return
     }
 
-    setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent)))
+    saveRevisionsRef.current.set(agentId, (saveRevisionsRef.current.get(agentId) || 0) + 1)
+    agentMutationVersionsRef.current.set(agentId, (agentMutationVersionsRef.current.get(agentId) || 0) + 1)
+    dirtyAgentIdsRef.current.add(agentId)
+    const nextAgents = agentsRef.current.map((agent) => (
+      agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent
+    ))
+    agentsRef.current = nextAgents
+    setAgents(nextAgents)
     scheduleAgentSave(agentId)
   }
 
@@ -3036,7 +3262,10 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     }
     try {
       const agent = await conversationalAgentService.createAgent(draftInput)
-      setAgents((current) => [...current, agent])
+      agentMutationVersionsRef.current.set(agent.id, 1)
+      const nextAgents = [...agentsRef.current, agent]
+      agentsRef.current = nextAgents
+      setAgents(nextAgents)
       setSelectedAgentId(agent.id)
       navigate(buildConversationalAgentPath(agent.id, routeBase))
       void refreshMetrics()
@@ -3077,7 +3306,10 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     try {
       const agent = await conversationalAgentService.createAgent({ ...draftInput, enabled: false })
       setActivationConflict(null)
-      setAgents((current) => [...current, agent])
+      agentMutationVersionsRef.current.set(agent.id, 1)
+      const nextAgents = [...agentsRef.current, agent]
+      agentsRef.current = nextAgents
+      setAgents(nextAgents)
       setSelectedAgentId(agent.id)
       navigate(buildConversationalAgentPath(agent.id, routeBase))
       void refreshMetrics()
@@ -3096,7 +3328,11 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       async () => {
         try {
           await conversationalAgentService.deleteAgent(agent.id)
-          setAgents((current) => current.filter((item) => item.id !== agent.id))
+          deletedAgentIdsRef.current.add(agent.id)
+          agentMutationVersionsRef.current.set(agent.id, (agentMutationVersionsRef.current.get(agent.id) || 0) + 1)
+          const nextAgents = agentsRef.current.filter((item) => item.id !== agent.id)
+          agentsRef.current = nextAgents
+          setAgents(nextAgents)
           setSelectedAgentId((current) => (current === agent.id ? null : current))
           if (selectedAgentId === agent.id || routeAgentId === agent.id) {
             navigate(buildConversationalAgentPath(null, routeBase), { replace: true })
@@ -3270,14 +3506,22 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           calendars={calendars}
           products={products}
           productsLoading={productsLoading}
+          productsError={productsError}
           filterOptions={filterOptions}
           onConnectProvider={openProviderModal}
           onBack={() => {
-            setSelectedAgentId(null)
-            navigate(buildConversationalAgentPath(null, routeBase))
+            void (async () => {
+              try {
+                await saveAgentNow(selectedAgent.id)
+              } catch {
+                return
+              }
+              setSelectedAgentId(null)
+              navigate(buildConversationalAgentPath(null, routeBase))
+            })()
           }}
           onChange={(patch) => handleAgentChange(selectedAgent.id, patch)}
-          onFlushSave={() => saveAgentNow(selectedAgent.id, { notify: false })}
+          onFlushSave={() => saveAgentNow(selectedAgent.id)}
           onDelete={() => handleDeleteAgent(selectedAgent)}
         />
         {renderProviderModal()}
@@ -3444,7 +3688,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             const agentMetrics = metricsByAgentId.get(agent.id)
             const skippedCount = agentMetrics?.skippedConversations ?? 0
             const resettingSkips = resettingAgentSkipsId === agent.id
-            const publishValidationError = getAgentValidationError({ ...agent, enabled: true })
             const directoryPurpose = `${(agent.capabilitiesConfig?.items || []).filter((item) => item.enabled).length} capacidades · flujo directo`
 
             return (
@@ -3484,8 +3727,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                   <Button
                     variant={agent.enabled ? 'secondary' : 'primary'}
                     onClick={() => handleAgentChange(agent.id, { enabled: !agent.enabled })}
-                    disabled={!agent.enabled && Boolean(publishValidationError)}
-                    title={!agent.enabled ? (publishValidationError || undefined) : undefined}
                   >
                     {agent.enabled ? <Pause size={15} /> : <Play size={15} />}
                     {agent.enabled ? 'Pausar' : 'Publicar'}

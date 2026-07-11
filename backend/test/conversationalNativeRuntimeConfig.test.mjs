@@ -15,6 +15,8 @@ import { createAgent as createAgentController } from '../src/controllers/convers
 import * as nativeRuntimeConfig from '../src/agents/conversational/nativeRuntimeConfig.js'
 
 const {
+  DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS,
+  DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS,
   DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS,
   buildConversationalCapabilityManifest,
   getConversationalCapability,
@@ -51,8 +53,10 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
     editableText: ''
   }, { materializeDefault: true })
   assert.deepEqual(prompt, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     templateVersion: 'custom-v7',
+    strategyText: '',
+    personalityText: '',
     editableText: ''
   })
 
@@ -81,6 +85,85 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       pastClientsToHuman: false
     }
   ])
+})
+
+test('prompt schema 2 conserva textos largos completos y migra schema 1 sin adivinar personalidad', () => {
+  const legacyText = `${'estrategia larga con acento y emoji 🙂\n'.repeat(1600)}MARCADOR_FINAL_LEGACY`
+  assert.ok(legacyText.length > 50_000)
+
+  const migrated = normalizeConversationalPromptConfig({
+    schemaVersion: 1,
+    templateVersion: 'legacy-v1',
+    editableText: legacyText
+  }, { materializeDefault: true })
+  assert.equal(migrated.schemaVersion, 2)
+  assert.equal(migrated.strategyText, legacyText)
+  assert.equal(migrated.personalityText, '')
+  assert.equal(migrated.editableText, legacyText)
+
+  const personalityText = `${'cálido, directo y humano\n'.repeat(900)}MARCADOR_FINAL_PERSONALIDAD`
+  const split = normalizeConversationalPromptConfig({
+    schemaVersion: 2,
+    strategyText: legacyText,
+    personalityText
+  }, { materializeDefault: true })
+  assert.equal(split.strategyText, legacyText)
+  assert.equal(split.personalityText, personalityText)
+  assert.match(split.editableText, /MARCADOR_FINAL_LEGACY/)
+  assert.match(split.editableText, /MARCADOR_FINAL_PERSONALIDAD/)
+})
+
+test('paymentMode elimina residuos de anticipo que antes bloqueaban Publicar con campos ocultos', () => {
+  const capabilities = normalizeConversationalCapabilitiesConfig({
+    schemaVersion: 1,
+    items: [{
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'full_payment',
+      productId: 'product_real',
+      priceId: 'price_real',
+      deposit: {
+        enabled: true,
+        mode: 'fixed',
+        amount: null,
+        currency: 'MXN',
+        methods: { paymentLink: true }
+      }
+    }]
+  })
+  const payment = capabilities.items[0]
+  assert.equal(payment.paymentMode, 'full_payment')
+  assert.equal(payment.deposit.enabled, false)
+  assert.equal(buildConversationalCapabilityManifest({ capabilitiesConfig: capabilities })
+    .find((item) => item.id === 'collect_payment')?.ready, true)
+})
+
+test('los anticipos respetan la precisión de la moneda configurada', () => {
+  const capabilities = normalizeConversationalCapabilitiesConfig({
+    schemaVersion: 1,
+    items: [
+      {
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'deposit',
+        deposit: { enabled: true, amount: 12.3456, currency: 'KWD' }
+      }
+    ]
+  })
+  assert.equal(capabilities.items[0].deposit.amount, 12.346)
+
+  const zeroDecimal = normalizeConversationalCapabilitiesConfig({
+    schemaVersion: 1,
+    items: [
+      {
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'deposit',
+        deposit: { enabled: true, amount: 12.6, currency: 'JPY' }
+      }
+    ]
+  })
+  assert.equal(zeroDecimal.items[0].deposit.amount, 13)
 })
 
 test('campos viejos nunca habilitan capacidades nativas', () => {
@@ -153,7 +236,9 @@ test('agente nuevo nace con plantilla materializada, capacidades nativas y sin s
 
     assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
     assert.equal(agent.promptConfig.editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
-    assert.equal(agent.promptConfig.schemaVersion, 1)
+    assert.equal(agent.promptConfig.schemaVersion, 2)
+    assert.equal(agent.promptConfig.strategyText, DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS)
+    assert.equal(agent.promptConfig.personalityText, DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS)
     assert.equal(getConversationalCapability(agent, 'schedule_appointment')?.calendarId, 'cal_native_default')
     assert.equal(Object.hasOwn(agent, 'migrationCapabilitiesConfig'), false)
     assert.equal(agent.capabilityManifest.find((item) => item.id === 'schedule_appointment')?.ready, true)
@@ -165,6 +250,60 @@ test('agente nuevo nace con plantilla materializada, capacidades nativas y sin s
     assert.equal(row.runtime_mode, 'tool_calling_v2')
     assert.equal(JSON.parse(row.prompt_config).editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
     assert.equal(JSON.parse(row.capabilities_config).schemaVersion, 1)
+  } finally {
+    await removeAgent(agent?.id)
+  }
+})
+
+test('crear, leer y parchear instrucciones largas conserva ambos campos completos', async () => {
+  let agent = null
+  const strategyText = `${'Proceso real del negocio con ñ y saltos.\n'.repeat(1800)}FIN_ESTRATEGIA`
+  const personalityText = `${'Tono humano y breve 🙂\n'.repeat(900)}FIN_PERSONALIDAD`
+  try {
+    agent = await createConversationalAgent({
+      name: 'Prompt largo sin recortes',
+      enabled: false,
+      promptConfig: { schemaVersion: 2, strategyText, personalityText }
+    })
+    assert.equal(agent.promptConfig.strategyText, strategyText)
+    assert.equal(agent.promptConfig.personalityText, personalityText)
+
+    const stored = JSON.parse((await db.get(
+      'SELECT prompt_config FROM conversational_agents WHERE id = ?',
+      [agent.id]
+    )).prompt_config)
+    assert.equal(stored.strategyText, strategyText)
+    assert.equal(stored.personalityText, personalityText)
+
+    const changedPersonality = `${personalityText}\nSEGUNDO_FINAL`
+    agent = await updateConversationalAgent(agent.id, {
+      promptConfig: { personalityText: changedPersonality }
+    })
+    assert.equal(agent.promptConfig.strategyText, strategyText)
+    assert.equal(agent.promptConfig.personalityText, changedPersonality)
+    assert.match(agent.promptConfig.editableText, /FIN_ESTRATEGIA/)
+    assert.match(agent.promptConfig.editableText, /SEGUNDO_FINAL/)
+
+    agent = await updateConversationalAgent(agent.id, {
+      promptConfig: {
+        schemaVersion: 1,
+        templateVersion: agent.promptConfig.templateVersion,
+        editableText: agent.promptConfig.editableText
+      }
+    })
+    assert.equal(agent.promptConfig.strategyText, strategyText)
+    assert.equal(agent.promptConfig.personalityText, changedPersonality)
+
+    const legacyMobileEdit = `${'Edición desde cliente anterior.\n'.repeat(700)}FIN_CLIENTE_ANTERIOR`
+    agent = await updateConversationalAgent(agent.id, {
+      promptConfig: {
+        ...agent.promptConfig,
+        editableText: legacyMobileEdit
+      }
+    })
+    assert.equal(agent.promptConfig.strategyText, legacyMobileEdit)
+    assert.equal(agent.promptConfig.personalityText, '')
+    assert.equal(agent.promptConfig.editableText, legacyMobileEdit)
   } finally {
     await removeAgent(agent?.id)
   }

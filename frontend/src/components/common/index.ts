@@ -61,6 +61,8 @@ export { ChatMessageSurface } from './ChatMessageSurface'
 export type { ChatMessageSurfaceProps } from './ChatMessageSurface'
 export { ContentFocusModal } from './ContentFocusModal'
 export type { ContentFocusItem, ContentFocusKind } from './ContentFocusModal'
+export { ExpandableTextareaField } from './ExpandableTextareaField'
+export type { ExpandableTextareaFieldProps } from './ExpandableTextareaField'
 export {
   EmailChatMessageBubble,
   buildEmailChatMessageData,

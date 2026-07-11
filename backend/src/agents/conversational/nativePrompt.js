@@ -61,6 +61,10 @@ function cleanText(value, maxLength = 12000) {
   return String(value ?? '').replace(/\r/g, '').trim().slice(0, maxLength)
 }
 
+function cleanOwnerPromptText(value) {
+  return String(value ?? '').replace(/\r\n?/g, '\n')
+}
+
 function capabilitySection(manifest = [], capabilitiesConfig = {}) {
   const enabled = (Array.isArray(manifest) ? manifest : []).filter((item) => item?.enabled)
   if (!enabled.length) {
@@ -103,7 +107,14 @@ export function buildNativeConversationalInstructions({
   followUpContext = null,
   historyContext = null
 } = {}) {
-  const editableText = cleanText(promptConfig?.editableText, 16000)
+  const hasSplitPrompt = Object.prototype.hasOwnProperty.call(promptConfig || {}, 'strategyText') ||
+    Object.prototype.hasOwnProperty.call(promptConfig || {}, 'personalityText')
+  const strategyText = cleanOwnerPromptText(
+    hasSplitPrompt ? promptConfig?.strategyText : promptConfig?.editableText
+  )
+  const personalityText = cleanOwnerPromptText(
+    hasSplitPrompt ? promptConfig?.personalityText : ''
+  )
   const realBusinessContext = cleanText(businessContext, 10000)
   const voice = cleanText(brandVoice, 2400)
   const visibleBusinessName = cleanText(businessName, 180) || 'este negocio'
@@ -124,8 +135,11 @@ export function buildNativeConversationalInstructions({
 
   return [
     `Eres el asistente conversacional de ${visibleBusinessName}. Atiendes a una persona por ${visibleChannel}.`,
-    `## Zona editable del negocio\n${editableText || '(Sin instrucciones editables adicionales. Usa el contexto real y las reglas blindadas.)'}`,
-    voice ? `## Voz de marca\n${voice}` : '',
+    `## Estrategia y capacitación del agente\n${strategyText.trim() ? strategyText : '(Sin estrategia o capacitación adicional. Usa el contexto real y las reglas blindadas.)'}`,
+    `## Personalidad del agente\n${personalityText.trim() ? personalityText : '(Sin personalidad específica configurada.)'}`,
+    // La personalidad por agente manda. La voz general del negocio sólo sirve
+    // como respaldo cuando ese campo está vacío.
+    voice && !personalityText.trim() ? `## Voz de marca\n${voice}` : '',
     realBusinessContext
       ? `## Contexto real del negocio\n${realBusinessContext}`
       : '## Contexto real del negocio\nNo hay información suficiente cargada. No inventes datos; pregunta lo mínimo necesario o explica con honestidad qué falta.',
