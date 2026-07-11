@@ -1956,6 +1956,7 @@ export const AutomationEditor: React.FC = () => {
             className={styles.fab}
             title="Agregar paso"
             data-automation-interactive="true"
+            data-automation-canvas-chrome="true"
             onPointerDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
             onClick={handleFabClick}

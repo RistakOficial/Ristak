@@ -2585,10 +2585,12 @@ estatica: en pantallas muy amplias usa el ancho grande fijo, y en ventanas
 normales o chicas se compacta por breakpoint. No se expande ni se contrae al
 hover o al enfocar controles internos.
 
-Las herramientas flotantes del canvas (post-it, zoom, centrar y ordenar flujo)
-se muestran solo cuando el editor ya monto el frame estable de la automatizacion
-activa. Al entrar o cambiar entre automatizaciones no deben aparecer solas sobre
-el fondo del lienzo antes de que la pagina del editor cargue completa.
+Las herramientas flotantes del canvas (post-it, zoom, centrar y ordenar flujo),
+la barra de selección múltiple y el botón de agregar paso se muestran solo
+cuando el editor montó el frame estable de la automatización activa **y** el
+cargador de datos de la ruta ya se retiró. El canvas se prepara por detrás, pero
+sus controles no deben aparecer solos sobre el fondo del lienzo mientras la
+página sigue mostrando que carga contenido.
 
 El editor visual no ofrece una vista previa separada del flujo. El canvas es la
 representacion editable del recorrido; la validacion practica se hace con

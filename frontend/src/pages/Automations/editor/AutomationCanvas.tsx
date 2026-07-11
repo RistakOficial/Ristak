@@ -950,6 +950,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
           <div
             className={styles.multiToolbar}
             data-automation-interactive="true"
+            data-automation-canvas-chrome="true"
             style={{ left: multiToolbar.left, top: multiToolbar.top }}
             onPointerDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
@@ -992,7 +993,12 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
         {chromeReady && (
           <>
             {/* Herramientas del canvas */}
-            <div className={styles.canvasTools} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+            <div
+              className={styles.canvasTools}
+              data-automation-canvas-chrome="true"
+              onPointerDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
               <button
                 type="button"
                 className={styles.canvasToolButton}
