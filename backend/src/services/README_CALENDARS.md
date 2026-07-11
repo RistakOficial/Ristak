@@ -198,7 +198,7 @@ Operaciones soportadas:
 - `noshow`: marca `appointmentStatus = noshow`.
 - `delete`: elimina el evento con `DELETE /calendars/events/:eventId`.
 
-La herramienta resuelve contacto por DB/GHL, usa `default_calendar_id` cuando no se proporciona calendario, calcula `endTime` con la duracion del calendario si falta, guarda espejo local en `appointments` y dispara el evento WhatsApp de cita agendada al crear.
+La herramienta resuelve contacto por DB/GHL, usa `default_calendar_id` cuando no se proporciona calendario, calcula `endTime` con la duracion del calendario si falta, guarda espejo local en `appointments`, dispara los eventos de Automatizaciones `appointment-booked` y `appointment-status` al crear, y conserva el evento WhatsApp de cita agendada.
 
 ## Referencias
 

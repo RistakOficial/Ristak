@@ -1285,6 +1285,12 @@ Reglas base:
   el contrato anterior. Los deep links de cita de Android esperan primero un
   bootstrap utilizable de `account_timezone` y calendarios para no consumir el
   enlace con contexto fallback.
+- Las creaciones locales desde calendario publico, admin o agente disparan los
+  eventos `appointment-booked` y `appointment-status` del motor de
+  Automatizaciones despues de persistir la cita. Los cambios de estado desde
+  esas superficies disparan `appointment-status`; las sincronizaciones de
+  Google/HighLevel no deben tratarse como si el cliente hubiera agendado en
+  Ristak.
 - En `ios/app`, los snapshots de citas usan una clave compuesta por calendario y
   mes. Cambiar calendario vacia las filas anteriores antes de hidratar la clave
   correcta, y volver a foreground fuerza la revalidacion del calendario activo.
@@ -1627,6 +1633,13 @@ Cada par `reminder_id + appointment_id` se reclama en
 `error`, el cron puede reintentarlo despues de 15 minutos, siempre que la hora de
 envio siga dentro de la ventana util de 3 horas; si ya se paso esa ventana se
 marca como omitido en vez de mandar un WhatsApp tarde.
+
+En PostgreSQL, las columnas de citas y envios siguen siendo
+`timestamp without time zone` con el valor normalizado a UTC. Al leerlas, el
+backend debe rehidratar los componentes guardados como UTC porque
+`node-postgres` puede entregarlas como objetos `Date` interpretados en la zona
+del proceso. Si se convierten directamente a texto y se pasan a Luxon, el
+recordatorio queda fuera de la cola sin error visible.
 
 ### Planes de pago locales
 

@@ -19,6 +19,10 @@ import { createClipPaymentLink, getClipPaymentConfig } from './clipPaymentServic
 import { createRebillPaymentLink, createRebillPaymentPlan, getRebillPaymentConfig } from './rebillPaymentService.js'
 import { recordAttendanceAttributionSignal } from './appointmentsMerge.js'
 import { triggerWhatsappAppointmentBookedEvent } from './metaWhatsappEventsService.js'
+import {
+  dispatchAppointmentAutomationEvent,
+  dispatchAppointmentCreatedAutomations
+} from './appointmentAutomationService.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { coalescedTimestampSortExpression, timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { logger } from '../utils/logger.js'
@@ -9679,6 +9683,7 @@ async function executeCreateHighLevelAppointment(args = {}, highLevelConnection 
     calendarId: calendarResult.calendarId,
     appointmentId: appointment?.id
   })
+  await dispatchAppointmentCreatedAutomations(appointment)
   await refreshAppointmentContactStats(resolvedContact.contact.id)
 
   return {
@@ -9795,6 +9800,12 @@ async function executeUpdateHighLevelAppointment(args = {}, highLevelConnection 
     locationId: appointment.locationId || highLevelConnection.locationId,
     appointmentStatus: updateData.appointmentStatus || appointment.appointmentStatus
   })
+
+  const previousStatus = cleanText(appointment.appointmentStatus || appointment.status).toLowerCase()
+  const nextStatus = cleanText(mirrored?.appointmentStatus || mirrored?.status || updateData.appointmentStatus).toLowerCase()
+  if (nextStatus && nextStatus !== previousStatus) {
+    await dispatchAppointmentAutomationEvent('appointment-status', mirrored || appointment, { previousStatus })
+  }
 
   if (operation === 'showed' && (mirrored?.contactId || contact?.id)) {
     await recordAttendanceAttributionSignal({

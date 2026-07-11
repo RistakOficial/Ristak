@@ -22,6 +22,39 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+/**
+ * PostgreSQL devuelve las columnas `timestamp without time zone` como Date en
+ * node-postgres. Ese Date contiene los componentes del timestamp guardado
+ * interpretados en la zona del proceso, no necesariamente el instante UTC que
+ * representa nuestro contrato de almacenamiento. Recuperamos esos
+ * componentes locales y los rehidratamos explícitamente como UTC.
+ *
+ * Las columnas de citas/reminders se normalizan a UTC antes de persistirse, por
+ * eso esta función es sólo para leer esos timestamps naive sin moverlos seis
+ * horas (o el offset que tenga el proceso).
+ */
+export function parseStoredUtcDateTime(value) {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null
+    const local = DateTime.fromJSDate(value)
+    return DateTime.utc(
+      local.year,
+      local.month,
+      local.day,
+      local.hour,
+      local.minute,
+      local.second,
+      local.millisecond
+    )
+  }
+
+  const text = cleanString(value)
+  if (!text) return null
+  const normalized = text.includes('T') ? text : text.replace(' ', 'T')
+  const parsed = DateTime.fromISO(normalized, { zone: 'utc' })
+  return parsed.isValid ? parsed : null
+}
+
 export function parseHHMM(value, fallback) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(cleanString(value))
   if (!match) return fallback
@@ -57,8 +90,8 @@ export function offsetToMs(reminder) {
  * mañana. Nunca antes de agendar ni —si se puede evitar— después de la cita.
  */
 function computeAfterBookingSendAt(startTimeIso, bookingTimeIso, reminder, timezone) {
-  const booking = DateTime.fromISO(cleanString(bookingTimeIso).replace(' ', 'T'), { zone: 'utc' })
-  if (!booking.isValid) return null
+  const booking = parseStoredUtcDateTime(bookingTimeIso)
+  if (!booking) return null
 
   const raw = booking.plus({ milliseconds: offsetToMs(reminder) })
   let sendAt = raw
@@ -86,8 +119,8 @@ function computeAfterBookingSendAt(startTimeIso, bookingTimeIso, reminder, timez
 
   // Si el ajuste empuja el aviso más allá del inicio de la cita, pierde
   // sentido: se respeta el tiempo simple (agendó + offset) para que llegue antes.
-  const start = DateTime.fromISO(cleanString(startTimeIso).replace(' ', 'T'), { zone: 'utc' })
-  if (start.isValid && sendAt >= start) sendAt = raw
+  const start = parseStoredUtcDateTime(startTimeIso)
+  if (start && sendAt >= start) sendAt = raw
 
   return sendAt
 }
@@ -105,8 +138,8 @@ export function computeReminderSendAt(startTimeIso, reminder, timezone, bookingT
     return computeAfterBookingSendAt(startTimeIso, bookingTimeIso, reminder, timezone)
   }
 
-  const start = DateTime.fromISO(cleanString(startTimeIso).replace(' ', 'T'), { zone: 'utc' })
-  if (!start.isValid) return null
+  const start = parseStoredUtcDateTime(startTimeIso)
+  if (!start) return null
 
   let sendAt = start.minus({ milliseconds: offsetToMs(reminder) })
 
@@ -144,9 +177,8 @@ export function renderMessageText(template, { contact = {}, appointment = {}, ti
     [cleanString(contact.first_name), cleanString(contact.last_name)].filter(Boolean).join(' ')
   const firstName = cleanString(contact.first_name) || fullName.split(' ')[0] || ''
 
-  const start = DateTime
-    .fromISO(cleanString(appointment.start_time).replace(' ', 'T'), { zone: 'utc' })
-    .setZone(timezone)
+  const start = parseStoredUtcDateTime(appointment.start_time)
+    ?.setZone(timezone)
     .setLocale('es')
 
   const values = {
@@ -155,9 +187,9 @@ export function renderMessageText(template, { contact = {}, appointment = {}, ti
     'contact.first_name': firstName,
     'contact.phone': cleanString(contact.phone),
     'cita.titulo': cleanString(appointment.title) || 'tu cita',
-    'cita.fecha': start.isValid ? start.toFormat("cccc d 'de' LLLL") : '',
-    'cita.hora': start.isValid ? start.toFormat('h:mm a').toLowerCase() : '',
-    'cita.fecha_hora': start.isValid
+    'cita.fecha': start?.isValid ? start.toFormat("cccc d 'de' LLLL") : '',
+    'cita.hora': start?.isValid ? start.toFormat('h:mm a').toLowerCase() : '',
+    'cita.fecha_hora': start?.isValid
       ? `${start.toFormat("cccc, d 'de' LLLL 'de' yyyy")} ${start.toFormat('H:mm')}`
       : ''
   }

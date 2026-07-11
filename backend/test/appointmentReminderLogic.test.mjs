@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   computeReminderSendAt,
   renderMessageText,
+  parseStoredUtcDateTime,
   isAffirmativeReply,
   formatOffsetLabel
 } from '../src/services/appointmentReminderLogic.js'
@@ -85,6 +86,25 @@ test('renderMessageText sustituye variables de contacto y cita en la zona horari
   // El locale usa espacios no separables en "p. m."; normalizamos para comparar.
   const normalized = text.replace(/\s+/gu, ' ')
   assert.equal(normalized, 'Hola Ana, tu cita "Valoración" es el lunes 15 de junio a las 12:00 p. m. (lunes, 15 de junio de 2026 12:00).')
+})
+
+test('timestamps Date de PostgreSQL conservan sus componentes UTC en recordatorios', () => {
+  // node-postgres parsea `timestamp without time zone` como Date en la zona del
+  // proceso. La lectura debe recuperar 18:00 como 18:00 UTC, sin desplazarla.
+  const postgresTimestamp = new Date(2026, 5, 15, 18, 0, 0, 0)
+  const parsed = parseStoredUtcDateTime(postgresTimestamp)
+  assert.equal(parsed?.toISO(), '2026-06-15T18:00:00.000Z')
+
+  const reminder = { ...baseReminder, offsetValue: 30, offsetUnit: 'minutes' }
+  const sendAt = computeReminderSendAt(postgresTimestamp, reminder, TZ)
+  assert.equal(sendAt?.toISO(), '2026-06-15T17:30:00.000Z')
+
+  const text = renderMessageText('Cita: {{cita.fecha_hora}}', {
+    contact: { first_name: 'Ana' },
+    appointment: { title: 'Consulta', start_time: postgresTimestamp },
+    timezone: TZ
+  })
+  assert.match(text, /lunes, 15 de junio de 2026 12:00/)
 })
 
 test('formatOffsetLabel genera títulos legibles', () => {
