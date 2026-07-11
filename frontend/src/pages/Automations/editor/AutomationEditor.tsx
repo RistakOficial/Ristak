@@ -274,6 +274,7 @@ export const AutomationEditor: React.FC = () => {
   const [nodeErrors, setNodeErrors] = useState<Record<string, string[]>>({})
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [statusBusy, setStatusBusy] = useState(false)
+  const [canvasChromeReady, setCanvasChromeReady] = useState(false)
 
   const viewportRef = useRef<AutomationViewport>({ x: 0, y: 0, zoom: 1 })
   const [configViewport, setConfigViewport] = useState<AutomationViewport>(viewportRef.current)
@@ -589,6 +590,7 @@ export const AutomationEditor: React.FC = () => {
       setEnrollmentsNode(null)
       setNodeErrors({})
       setSaveState('saved')
+      setCanvasChromeReady(false)
     }
 
     const initFrom = (data: Automation) => {
@@ -650,6 +652,28 @@ export const AutomationEditor: React.FC = () => {
       cancelled = true
     }
   }, [automationId])
+
+  useEffect(() => {
+    const activeAutomationId = automation?.id
+    if (!activeAutomationId) {
+      setCanvasChromeReady(false)
+      return
+    }
+
+    setCanvasChromeReady(false)
+    let firstFrame = 0
+    let secondFrame = 0
+    firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        if (automationRef.current?.id === activeAutomationId) setCanvasChromeReady(true)
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame)
+      window.cancelAnimationFrame(secondFrame)
+    }
+  }, [automation?.id])
 
   // ------------------------------------------------------------------
   // Guardado manual del editor
@@ -1913,69 +1937,70 @@ export const AutomationEditor: React.FC = () => {
           onAutomationUpdated={handleLibraryAutomationUpdated}
         />
         <AutomationCanvas
-        nodes={nodes}
-        edges={edges}
-        selectedNodeId={selectedNodeId}
-        multiSelectedIds={multiSelectedIds}
-        selectedEdgeId={selectedEdgeId}
-        nodeErrors={nodeErrors}
-        initialViewport={automation.flow.viewport || { x: 0, y: 0, zoom: 1 }}
-        pendingEdge={pendingEdge}
-        fitSignal={fitSignal}
-        nodeStats={nodeStats}
-        hideFirstStepGhost={Boolean(picker) && !emailEditor}
-        actions={canvasActions}
-      >
-        <button
-          type="button"
-          className={styles.fab}
-          title="Agregar paso"
-          data-automation-interactive="true"
-          onPointerDown={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-          onClick={handleFabClick}
+          nodes={nodes}
+          edges={edges}
+          selectedNodeId={selectedNodeId}
+          multiSelectedIds={multiSelectedIds}
+          selectedEdgeId={selectedEdgeId}
+          nodeErrors={nodeErrors}
+          initialViewport={automation.flow.viewport || { x: 0, y: 0, zoom: 1 }}
+          pendingEdge={pendingEdge}
+          fitSignal={fitSignal}
+          nodeStats={nodeStats}
+          hideFirstStepGhost={Boolean(picker) && !emailEditor}
+          chromeReady={canvasChromeReady}
+          actions={canvasActions}
         >
-          <Plus size={20} />
-        </button>
+          <button
+            type="button"
+            className={styles.fab}
+            title="Agregar paso"
+            data-automation-interactive="true"
+            onPointerDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onClick={handleFabClick}
+          >
+            <Plus size={20} />
+          </button>
 
-        {!emailEditor && picker && (
-          <StepPickerBubble
-            kind={picker.kind}
-            variant={picker.variant}
-            placement={picker.placement}
-            anchor={picker.anchor}
-            bounds={canvasBounds}
-            connectLabel={
-              picker.offerConnect && picker.kind === 'action'
-                ? 'Conectar con el paso seleccionado'
-                : undefined
-            }
-            connectEnabled={picker.connectEnabled}
-            onToggleConnect={(enabled) => setPicker({ ...picker, connectEnabled: enabled })}
-            showStartStep={picker.showStartStep}
-            onSelectStartStep={() => setPicker({ ...picker, kind: 'trigger', showStartStep: false })}
-            definitionFilter={canUseNodeDefinition}
-            onSelect={handlePickStep}
-            onClose={() => setPicker(null)}
-          />
-        )}
+          {!emailEditor && picker && (
+            <StepPickerBubble
+              kind={picker.kind}
+              variant={picker.variant}
+              placement={picker.placement}
+              anchor={picker.anchor}
+              bounds={canvasBounds}
+              connectLabel={
+                picker.offerConnect && picker.kind === 'action'
+                  ? 'Conectar con el paso seleccionado'
+                  : undefined
+              }
+              connectEnabled={picker.connectEnabled}
+              onToggleConnect={(enabled) => setPicker({ ...picker, connectEnabled: enabled })}
+              showStartStep={picker.showStartStep}
+              onSelectStartStep={() => setPicker({ ...picker, kind: 'trigger', showStartStep: false })}
+              definitionFilter={canUseNodeDefinition}
+              onSelect={handlePickStep}
+              onClose={() => setPicker(null)}
+            />
+          )}
 
-        {/* Panel de configuración flotante junto al evento */}
-        {!emailEditor && config && configNode && configDefinition && configAnchor && (
-          <NodeConfigBubble
-            definition={configDefinition}
-            config={(configTrigger ? configTrigger.config : configNode.config) || {}}
-            anchor={configAnchor}
-            bounds={canvasBounds}
-            onChange={handleConfigChange}
-            waitMessageSources={waitMessageSources}
-            onRefreshWebhookSample={refreshWebhookSample}
-            onTestWebhookAction={testWebhookAction}
-            onOpenRichEmailEditor={handleOpenRichEmailEditor}
-            onClose={closeConfig}
-          />
-        )}
-      </AutomationCanvas>
+          {/* Panel de configuración flotante junto al evento */}
+          {!emailEditor && config && configNode && configDefinition && configAnchor && (
+            <NodeConfigBubble
+              definition={configDefinition}
+              config={(configTrigger ? configTrigger.config : configNode.config) || {}}
+              anchor={configAnchor}
+              bounds={canvasBounds}
+              onChange={handleConfigChange}
+              waitMessageSources={waitMessageSources}
+              onRefreshWebhookSample={refreshWebhookSample}
+              onTestWebhookAction={testWebhookAction}
+              onOpenRichEmailEditor={handleOpenRichEmailEditor}
+              onClose={closeConfig}
+            />
+          )}
+        </AutomationCanvas>
       </div>
 
       <RichEmailEditorModal

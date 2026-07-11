@@ -114,6 +114,8 @@ interface AutomationCanvasProps {
   nodeStats?: Record<string, number>
   /** Oculta la tarjeta "Elegir primer paso" (cuando el selector está abierto) */
   hideFirstStepGhost?: boolean
+  /** Muestra herramientas flotantes solo cuando el editor ya terminó su primer frame estable. */
+  chromeReady?: boolean
   actions: CanvasActions
   children?: React.ReactNode
 }
@@ -170,6 +172,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   fitSignal,
   nodeStats,
   hideFirstStepGhost,
+  chromeReady = true,
   actions,
   children
 }) => {
@@ -943,7 +946,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
         </div>
 
         {/* Barra contextual de selección múltiple */}
-        {multiToolbar && (
+        {chromeReady && multiToolbar && (
           <div
             className={styles.multiToolbar}
             data-automation-interactive="true"
@@ -986,39 +989,43 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
           </div>
         )}
 
-        {/* Herramientas del canvas */}
-        <div className={styles.canvasTools} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
-          <button
-            type="button"
-            className={styles.canvasToolButton}
-            title="Agregar post-it"
-            onClick={handleAddStickyNote}
-          >
-            <StickyNote size={14} />
-          </button>
-          <div className={styles.zoomControls}>
-            <button type="button" className={styles.zoomButton} title="Acercar" onClick={() => zoomBy(1.2)}>
-              <Plus size={14} />
-            </button>
-            <span className={styles.zoomLevel}>{Math.round(viewport.zoom * 100)}%</span>
-            <button type="button" className={styles.zoomButton} title="Alejar" onClick={() => zoomBy(1 / 1.2)}>
-              <Minus size={14} />
-            </button>
-            <button type="button" className={styles.zoomButton} title="Centrar flujo" onClick={fitView}>
-              <Maximize size={13} />
-            </button>
-            <button
-              type="button"
-              className={styles.zoomButton}
-              title="Ordenar flujo (alinea los pasos de izquierda a derecha)"
-              onClick={handleAutoLayout}
-            >
-              <LayoutGrid size={13} />
-            </button>
-          </div>
-        </div>
+        {chromeReady && (
+          <>
+            {/* Herramientas del canvas */}
+            <div className={styles.canvasTools} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                className={styles.canvasToolButton}
+                title="Agregar post-it"
+                onClick={handleAddStickyNote}
+              >
+                <StickyNote size={14} />
+              </button>
+              <div className={styles.zoomControls}>
+                <button type="button" className={styles.zoomButton} title="Acercar" onClick={() => zoomBy(1.2)}>
+                  <Plus size={14} />
+                </button>
+                <span className={styles.zoomLevel}>{Math.round(viewport.zoom * 100)}%</span>
+                <button type="button" className={styles.zoomButton} title="Alejar" onClick={() => zoomBy(1 / 1.2)}>
+                  <Minus size={14} />
+                </button>
+                <button type="button" className={styles.zoomButton} title="Centrar flujo" onClick={fitView}>
+                  <Maximize size={13} />
+                </button>
+                <button
+                  type="button"
+                  className={styles.zoomButton}
+                  title="Ordenar flujo (alinea los pasos de izquierda a derecha)"
+                  onClick={handleAutoLayout}
+                >
+                  <LayoutGrid size={13} />
+                </button>
+              </div>
+            </div>
 
-        {children}
+            {children}
+          </>
+        )}
       </div>
     </div>
   )
