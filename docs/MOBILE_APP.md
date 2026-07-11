@@ -338,7 +338,10 @@ El fondo de la conversacion nativa usa una textura sutil detras de los globos.
 La app Android de Play usa esa textura de forma estatica y no incluye
 `expo-sensors`/`DeviceMotion`, porque esos modulos agregan
 `android.permission.ACTIVITY_RECOGNITION` aunque la app no tenga funciones de
-salud. Los mensajes, header y composer no deben moverse ni redimensionarse.
+salud. El manifest Android tambien bloquea explicitamente ese permiso con
+`android.blockedPermissions`; no lo quites salvo que Ristak agregue una funcion
+real de salud/actividad fisica y se complete la declaracion de salud en Google
+Play. Los mensajes, header y composer no deben moverse ni redimensionarse.
 
 El avance por fases de esa paridad vive en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`. Antes de retomar la migracion nativa,
