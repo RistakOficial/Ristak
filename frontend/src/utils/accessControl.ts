@@ -284,7 +284,7 @@ const LICENSE_FEATURE_LABELS: Record<string, string> = {
   advanced_reports: 'reportes avanzados',
   web_analytics: 'analíticas web',
   conversion_analytics: 'conversiones web',
-  meta_ads: 'Meta Ads',
+  meta_ads: 'Meta',
   meta_pixel: 'Meta Pixel',
   meta_catalog: 'catálogo de Meta',
   site_builder: 'editor de sitios',

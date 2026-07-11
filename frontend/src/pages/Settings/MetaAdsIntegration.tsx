@@ -2300,7 +2300,7 @@ export const MetaAdsIntegration: React.FC = () => {
       <PageHeader
         className={styles.metaHeader}
         eyebrow="Integración"
-        title="Meta Ads"
+        title="Meta"
         subtitle="Conecta anuncios, Página, Messenger e Instagram DM desde un solo lugar."
         actions={isMetaConfigured ? (
           <Badge variant="success">
@@ -2483,7 +2483,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     </div>
 
                     <p className={styles.connectedPagesDescription}>
-                      Ristak deriva el token de la Página desde el System User token de Meta Ads. Ese mismo flujo opera DMs, perfiles, media y comentarios de Instagram cuando la app tiene permisos de mensajería/comentarios y la cuenta está enlazada a la Page.
+                      Ristak deriva el token de la Página desde el System User token de Meta. Ese mismo flujo opera DMs, perfiles, media y comentarios de Instagram cuando la app tiene permisos de mensajería/comentarios y la cuenta está enlazada a la Page.
                     </p>
 
                     <div className={styles.socialSettingRows}>

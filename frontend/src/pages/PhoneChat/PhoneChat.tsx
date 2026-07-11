@@ -16525,10 +16525,10 @@ export const PhoneChat: React.FC = () => {
       if (!latestEligibleCommentReplyTarget || latestEligibleCommentReplyTarget.platform !== platform) {
         return 'Para responder en la publicación toca el comentario exacto.'
       }
-      if (platform === 'messenger' && !facebookCommentsEnabled) return 'Activa comentarios de Facebook en Configuración > Meta Ads > Redes sociales.'
-      if (platform === 'instagram' && !instagramCommentsEnabled) return 'Activa comentarios de Instagram en Configuración > Meta Ads > Redes sociales.'
-      if (platform === 'messenger' && !metaMessengerConnected) return 'Conecta Meta Ads para responder comentarios de Facebook.'
-      if (platform === 'instagram' && !metaInstagramConnected) return 'Conecta Meta Ads para responder comentarios de Instagram.'
+      if (platform === 'messenger' && !facebookCommentsEnabled) return 'Activa comentarios de Facebook en Configuración > Meta > Redes sociales.'
+      if (platform === 'instagram' && !instagramCommentsEnabled) return 'Activa comentarios de Instagram en Configuración > Meta > Redes sociales.'
+      if (platform === 'messenger' && !metaMessengerConnected) return 'Conecta Meta para responder comentarios de Facebook.'
+      if (platform === 'instagram' && !metaInstagramConnected) return 'Conecta Meta para responder comentarios de Instagram.'
       return ''
     }
     if (isWhatsAppComposerRoute(value)) {
@@ -16548,10 +16548,10 @@ export const PhoneChat: React.FC = () => {
       return ''
     }
     if (value === 'messenger' && !highLevelConnected && !metaMessengerConnected) {
-      return 'Activa Messenger en Configuración > Meta Ads para responder desde Ristak.'
+      return 'Activa Messenger en Configuración > Meta para responder desde Ristak.'
     }
     if (value === 'instagram' && !highLevelConnected && !metaInstagramConnected) {
-      return 'Activa Instagram en Configuración > Meta Ads para responder desde Ristak.'
+      return 'Activa Instagram en Configuración > Meta para responder desde Ristak.'
     }
     return ''
   }

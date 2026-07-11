@@ -100,7 +100,7 @@ const STEP_CONFIGS: StepConfig[] = [
   },
   {
     key: 'metaAds',
-    label: 'Meta Ads',
+    label: 'Meta',
     icon: Megaphone,
     description: 'Importando métricas publicitarias'
   }

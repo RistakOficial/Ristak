@@ -1477,9 +1477,9 @@ export function ContactDetailsModal({
     : selectedChatChannel === 'instagram' && !hasDetectedInstagram
     ? 'Este contacto no tiene Instagram detectado.'
     : selectedChatChannel === 'messenger' && !canSendMessenger
-    ? 'Activa Messenger en Configuracion > Meta Ads para responder desde Ristak.'
+    ? 'Activa Messenger en Configuracion > Meta para responder desde Ristak.'
     : selectedChatChannel === 'instagram' && !canSendInstagram
-    ? 'Activa Instagram en Configuracion > Meta Ads para responder desde Ristak.'
+    ? 'Activa Instagram en Configuracion > Meta para responder desde Ristak.'
     : ''
   const canSendChatMessage = Boolean(
     selectedContact?.id &&

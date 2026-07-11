@@ -3945,19 +3945,19 @@ export const DesktopChat: React.FC = () => {
     : isCommentComposerChannel(composerChannel) && !selectedCommentReplyTarget
     ? 'Para responder en la publicación elige el comentario exacto.'
     : isCommentComposerChannel(composerChannel) && selectedCommentComposerPlatform === 'messenger' && !facebookCommentsEnabled
-    ? 'Activa comentarios de Facebook en Configuración > Meta Ads > Redes sociales.'
+    ? 'Activa comentarios de Facebook en Configuración > Meta > Redes sociales.'
     : isCommentComposerChannel(composerChannel) && selectedCommentComposerPlatform === 'instagram' && !instagramCommentsEnabled
-    ? 'Activa comentarios de Instagram en Configuración > Meta Ads > Redes sociales.'
+    ? 'Activa comentarios de Instagram en Configuración > Meta > Redes sociales.'
     : isCommentComposerChannel(composerChannel) && !canSendSelectedCommentPlatform
-    ? 'Conecta Meta Ads para responder comentarios desde Ristak.'
+    ? 'Conecta Meta para responder comentarios desde Ristak.'
     : composerChannel === 'messenger' && !hasDetectedMessenger
     ? 'Este contacto no tiene Messenger detectado.'
     : composerChannel === 'instagram' && !hasDetectedInstagram
     ? 'Este contacto no tiene Instagram detectado.'
     : composerChannel === 'messenger' && !canSendMessenger
-    ? 'Activa Messenger en Configuración > Meta Ads para responder desde Ristak.'
+    ? 'Activa Messenger en Configuración > Meta para responder desde Ristak.'
     : composerChannel === 'instagram' && !canSendInstagram
-    ? 'Activa Instagram en Configuración > Meta Ads para responder desde Ristak.'
+    ? 'Activa Instagram en Configuración > Meta para responder desde Ristak.'
     : ''
   const hasComposerContent = isEmailComposer
     ? Boolean(emailSubject.trim() && emailPlainText.trim())

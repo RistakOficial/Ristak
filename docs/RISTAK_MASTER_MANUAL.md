@@ -1928,10 +1928,10 @@ Implementacion esperada:
   `live`, `production`.
 - `backend/src/services/metaConversionEventsService.js` bloquea eventos Purchase
   para pagos test por default.
-- Si Configuracion > Meta Ads tiene activo `meta_test_event_code`, el backend puede
+- Si Configuracion > Meta tiene activo `meta_test_event_code`, el backend puede
   mandar el evento CAPI con `test_event_code`. Eso debe entrar a Meta Test
   Events, no a conversiones reales.
-- Si no hay Dataset/Pixel conectado en Configuracion > Meta Ads, una compra `live`
+- Si no hay Dataset/Pixel conectado en Configuracion > Meta, una compra `live`
   puede usar WhatsApp QR/Baileys como fallback aplicando la etiqueta nativa
   `Paid` al chat del contacto. Esto solo aplica si el contacto tiene telefono,
   el numero QR esta conectado y Baileys ya sincronizo esa etiqueta nativa.
@@ -1965,7 +1965,7 @@ prueba. No la debilites por comodidad.
 Ristak usa Meta en varias areas:
 
 - Meta Ads config y sync.
-- Dataset Test en la UI de Configuracion > Meta Ads; las rutas internas pueden
+- Dataset Test en la UI de Configuracion > Meta; las rutas internas pueden
   conservar `pixel` por contrato con Meta y tracking.
 - En Dataset Test, los eventos web usan `action_source=website`; los eventos
   `LeadSubmitted (Messaging)` y `Purchase (Messaging)` usan
@@ -1979,7 +1979,7 @@ Ristak usa Meta en varias areas:
 - Conversions API usa siempre el System User Access Token guardado en
   `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). No hay un
   token separado para CAPI: no se pide, no se genera y no se sincroniza.
-- En Configuracion > Meta Ads, al editar el wizard o moverse entre sus pasos, la UI
+- En Configuracion > Meta, al editar el wizard o moverse entre sus pasos, la UI
   vuelve a consultar cuentas de anuncios, datasets/pixeles, Facebook Pages e
   Instagram disponibles con el System User Access Token guardado. El usuario no
   debe borrar y pegar de nuevo el token solo para que aparezcan activos recien
@@ -1988,7 +1988,7 @@ Ristak usa Meta en varias areas:
   sincronizacion inmediata; Ristak persiste la configuracion una sola vez al
   terminar el wizard. Al terminarlo, Ristak arranca automaticamente la
   sincronizacion de anuncios de Meta en segundo plano y lleva al usuario a
-  `Configuracion > Meta Ads > Redes sociales`. Las Page nuevas dejan encendidos
+  `Configuracion > Meta > Redes sociales`. Las Page nuevas dejan encendidos
   por default Messenger y comentarios de Facebook. Instagram DM y comentarios se
   operan con el token de Pagina derivado de `meta_config.access_token` cuando la
   cuenta profesional de Instagram esta enlazada a esa Page y el token base tiene
@@ -2104,7 +2104,7 @@ Ristak usa Meta en varias areas:
   Ristak conserva el mejor nombre disponible y no inventa avatar.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.
-- Test Events desde Configuracion > Meta Ads.
+- Test Events desde Configuracion > Meta.
 
 Tracking:
 
@@ -2564,6 +2564,11 @@ En el editor visual, la libreria lateral de automatizaciones es responsiva y
 estatica: en pantallas muy amplias usa el ancho grande fijo, y en ventanas
 normales o chicas se compacta por breakpoint. No se expande ni se contrae al
 hover o al enfocar controles internos.
+
+Las herramientas flotantes del canvas (post-it, zoom, centrar y ordenar flujo)
+se muestran solo cuando el editor ya monto el frame estable de la automatizacion
+activa. Al entrar o cambiar entre automatizaciones no deben aparecer solas sobre
+el fondo del lienzo antes de que la pagina del editor cargue completa.
 
 El editor visual no ofrece una vista previa separada del flujo. El canvas es la
 representacion editable del recorrido; la validacion practica se hace con
