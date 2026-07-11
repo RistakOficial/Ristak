@@ -590,7 +590,7 @@ export const MetaAdsIntegration: React.FC = () => {
   }, [metaTestEventCode])
 
   // Datos del webhook de Meta para el mini-tutorial de Redes sociales (URL a pegar en
-  // Meta Developers, token de verificación y campos a suscribir).
+  // Meta Developers y token de verificación).
   useEffect(() => {
     let cancelled = false
     const loadWebhookInfo = async () => {
@@ -2415,7 +2415,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Messenger</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Para nuevos mensajes o comentarios, suscribe en Webhooks.
+                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Para nuevos mensajes o comentarios, configura Webhooks en el caso de uso correspondiente.
                         </p>
                       </div>
                     </div>
@@ -2530,9 +2530,9 @@ export const MetaAdsIntegration: React.FC = () => {
 
                 <div className={styles.webhookGuide}>
                   <div className={styles.connectedPagesHeader}>
-                    <h4 className={styles.connectedPagesTitle}>Conectar los mensajes en Meta Developers</h4>
+                    <h4 className={styles.connectedPagesTitle}>Webhooks en Meta Developers</h4>
                     <p className={styles.connectedPagesDescription}>
-                      Para que Ristak reciba Messenger e Instagram DM, pega estos valores en los Webhooks de tu app de Meta. Facebook e Instagram se configuran por separado (mira los pasos de abajo).
+                      Usa estos valores en cada caso de uso de Meta que actives. La misma URL y el mismo token sirven para Pages, Messenger, Instagram y WhatsApp; Meta separa la configuración por producto.
                     </p>
                   </div>
 
@@ -2568,97 +2568,27 @@ export const MetaAdsIntegration: React.FC = () => {
                         </Button>
                       </div>
                     </div>
-
-                    <div className={styles.webhookField}>
-                      <span className={styles.webhookFieldLabel}>Campos del webhook a suscribir</span>
-                      <div className={styles.webhookFieldRow}>
-                        <code className={styles.webhookFieldValue}>{(metaWebhookInfo?.fields?.length ? metaWebhookInfo.fields : ['messages', 'messaging_postbacks', 'message_reactions', 'messaging_referrals']).join(', ')}</code>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => handleCopyValue((metaWebhookInfo?.fields?.length ? metaWebhookInfo.fields : ['messages', 'messaging_postbacks', 'message_reactions', 'messaging_referrals']).join(','), 'Campos')}
-                        >
-                          <Copy size={16} />
-                          Copiar
-                        </Button>
-                      </div>
-                    </div>
                   </div>
 
-                  <div className={styles.webhookTutorialGallery}>
-                    <figure className={styles.webhookTutorialItem}>
-                      <p className={styles.webhookTutorialTitle}>Conexión de Messenger (Webhooks)</p>
-                      <p className={styles.webhookTutorialDescription}>
-                        Conecta las páginas de Facebook para generar tokens de acceso y configurar suscripciones a webhooks.
-                      </p>
-                      <img
-                        src="/meta-tutorial-messenger.png"
-                        alt="Guía de configuración de Messenger en Meta Developers"
-                        className={styles.webhookTutorialImage}
-                        loading="lazy"
-                      />
-                    </figure>
-                    <figure className={styles.webhookTutorialItem}>
-                      <p className={styles.webhookTutorialTitle}>Conexión de Instagram enlazado a la Page</p>
-                      <p className={styles.webhookTutorialDescription}>
-                        Verifica que la cuenta profesional esté conectada a la misma Facebook Page y que la app tenga permisos de mensajería/comentarios.
-                      </p>
-                      <img
-                        src="/meta-tutorial-instagram.png"
-                        alt="Guía de configuración de Instagram en Meta Developers"
-                        className={styles.webhookTutorialImage}
-                        loading="lazy"
-                      />
-                    </figure>
-                  </div>
+                  <figure className={styles.webhookTutorialItem}>
+                    <p className={styles.webhookTutorialTitle}>Casos de uso en Meta</p>
+                    <p className={styles.webhookTutorialDescription}>
+                      En cada caso de uso entra a <strong>Personalizar</strong> → <strong>Webhooks</strong>, selecciona el producto correspondiente y pega la URL y el token de arriba.
+                    </p>
+                    <img
+                      src="/meta-use-cases-pages.png"
+                      alt="Pantalla de casos de uso de Meta para administrar páginas, Messenger, Instagram y WhatsApp"
+                      className={styles.webhookTutorialImage}
+                      loading="lazy"
+                    />
+                  </figure>
 
                   <ol className={styles.webhookSteps}>
-                    <li><strong>Facebook / Messenger:</strong> en Meta Developers entra a <strong>Configuración de la API con Facebook</strong> → <strong>Webhooks</strong>, pega la <strong>URL de devolución de llamada</strong> y el <strong>token de verificación</strong> de arriba, da <strong>Verificar y guardar</strong> y suscríbete a los campos.</li>
-                    <li><strong>Facebook / Messenger:</strong> conecta la Page desde el wizard de Meta Ads. Ristak deriva el Page token desde el System User token guardado.</li>
-                    <li><strong>Instagram:</strong> enlaza la cuenta profesional a esa misma Page dentro de Meta Business y selecciónala en el wizard de Ristak.</li>
-                    <li><strong>Permisos:</strong> el System User/App debe tener acceso a la Page y permisos como <strong>pages_messaging</strong>, <strong>pages_manage_engagement</strong>, <strong>pages_read_user_content</strong>, <strong>instagram_manage_messages</strong> e <strong>instagram_manage_comments</strong> cuando uses comentarios.</li>
-                    <li><strong>Webhooks:</strong> usa la misma URL y el mismo token de verificación de arriba. Para Messenger se suscribe la Page; para comentarios de Instagram suscribe los campos del objeto Instagram si Meta no lo entrega por la Page.</li>
+                    <li><strong>Administrar páginas:</strong> configura el producto <strong>Page</strong> para comentarios y eventos de la página.</li>
+                    <li><strong>Messenger e Instagram:</strong> configura los productos que correspondan a los casos de uso activos. Usa la misma URL y el mismo token.</li>
+                    <li><strong>WhatsApp:</strong> configura el producto <strong>WhatsApp Business Account</strong> si vas a recibir mensajes de WhatsApp Cloud API.</li>
+                    <li><strong>Ristak:</strong> después guarda el System User token actualizado y selecciona la Page/Instagram desde este wizard.</li>
                   </ol>
-
-                  <div className={styles.webhookComments}>
-                    <span className={styles.webhookFieldLabel}>Comentarios de Facebook e Instagram — opcional</span>
-                    <p className={styles.connectedPagesDescription}>
-                      Si además quieres recibir comentarios (de publicaciones y anuncios), suscribe también estos campos. En Facebook van en el webhook de la Página; en Instagram, en el objeto Instagram del panel.
-                    </p>
-                    <div className={styles.webhookFields}>
-                      <div className={styles.webhookField}>
-                        <span className={styles.webhookFieldLabel}>Facebook — campo a suscribir</span>
-                        <div className={styles.webhookFieldRow}>
-                          <code className={styles.webhookFieldValue}>feed</code>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() => handleCopyValue('feed', 'Campo')}
-                          >
-                            <Copy size={16} />
-                            Copiar
-                          </Button>
-                        </div>
-                      </div>
-                      <div className={styles.webhookField}>
-                        <span className={styles.webhookFieldLabel}>Instagram — campos a suscribir</span>
-                        <div className={styles.webhookFieldRow}>
-                          <code className={styles.webhookFieldValue}>comments, mentions</code>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() => handleCopyValue('comments,mentions', 'Campos')}
-                          >
-                            <Copy size={16} />
-                            Copiar
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                    <p className={styles.connectedPagesDescription}>
-                      Para leerlos y responderlos, Facebook e Instagram usan el System User token guardado y el Page token derivado.
-                    </p>
-                  </div>
                 </div>
               </section>
             )}

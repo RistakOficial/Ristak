@@ -1974,7 +1974,12 @@ Ristak usa Meta en varias areas:
   cuenta profesional de Instagram esta enlazada a esa Page y el token base tiene
   permisos de Instagram. Ristak no pide, guarda ni acepta un token separado de
   Instagram. Los comentarios de Instagram se controlan aparte desde la columna de
-  Instagram.
+  Instagram. En la pestaña Redes sociales, la guia de Webhooks muestra solo la
+  URL de devolucion de llamada y el token de verificacion que deben repetirse en
+  cada caso de uso/producto de Meta activo (Page, Messenger, Instagram o
+  WhatsApp). La UI no debe pedir al usuario copiar campos de suscripcion
+  manuales; Ristak mantiene la suscripcion programatica de la Page cuando
+  conecta o actualiza la integracion.
 - El bloque **Perfil de red social** del editor de Sites lee los perfiles desde
   la configuracion Meta guardada (`meta_config.page_id`,
   `meta_config.instagram_account_id` y `meta_config.access_token`) cuando el

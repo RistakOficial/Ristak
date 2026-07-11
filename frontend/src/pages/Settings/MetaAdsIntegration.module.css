@@ -219,18 +219,12 @@
   border-top: 1px solid var(--border);
 }
 
-.webhookTutorialGallery {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 14px;
-}
-
 .webhookTutorialItem {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  margin: 14px 0 0;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
@@ -427,16 +421,6 @@
 
 .webhookSteps li {
   padding-left: 4px;
-}
-
-/* Bloque opcional de comentarios dentro del tutorial de webhooks. */
-.webhookComments {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border);
 }
 
 .wizardSection {
@@ -1734,10 +1718,6 @@
   }
 
   .socialChannelGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .webhookTutorialGallery {
     grid-template-columns: 1fr;
   }
 
