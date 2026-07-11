@@ -161,6 +161,7 @@ const tokenSetupScopes = [
   'pages_manage_metadata',
   'pages_messaging',
   'pages_read_engagement',
+  'pages_read_user_content',
   'pages_manage_engagement',
   'instagram_basic',
   'instagram_manage_messages',
@@ -2615,7 +2616,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <li><strong>Facebook / Messenger:</strong> en Meta Developers entra a <strong>Configuración de la API con Facebook</strong> → <strong>Webhooks</strong>, pega la <strong>URL de devolución de llamada</strong> y el <strong>token de verificación</strong> de arriba, da <strong>Verificar y guardar</strong> y suscríbete a los campos.</li>
                     <li><strong>Facebook / Messenger:</strong> conecta la Page desde el wizard de Meta Ads. Ristak deriva el Page token desde el System User token guardado.</li>
                     <li><strong>Instagram:</strong> enlaza la cuenta profesional a esa misma Page dentro de Meta Business y selecciónala en el wizard de Ristak.</li>
-                    <li><strong>Permisos:</strong> el System User/App debe tener acceso a la Page y permisos como <strong>pages_messaging</strong>, <strong>instagram_manage_messages</strong> e <strong>instagram_manage_comments</strong> cuando uses comentarios.</li>
+                    <li><strong>Permisos:</strong> el System User/App debe tener acceso a la Page y permisos como <strong>pages_messaging</strong>, <strong>pages_manage_engagement</strong>, <strong>pages_read_user_content</strong>, <strong>instagram_manage_messages</strong> e <strong>instagram_manage_comments</strong> cuando uses comentarios.</li>
                     <li><strong>Webhooks:</strong> usa la misma URL y el mismo token de verificación de arriba. Para Messenger se suscribe la Page; para comentarios de Instagram suscribe los campos del objeto Instagram si Meta no lo entrega por la Page.</li>
                   </ol>
 

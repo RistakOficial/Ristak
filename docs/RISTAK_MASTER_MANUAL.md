@@ -1993,9 +1993,15 @@ Ristak usa Meta en varias areas:
   de Meta. El recipient sigue siendo el IGSID recibido por webhook.
   Para perfil/DM/comentarios el System User token debe tener los permisos
   Meta correspondientes (`instagram_manage_messages`,
-  `instagram_manage_comments`, `pages_messaging`/`pages_show_list` segun el
+  `instagram_manage_comments`, `pages_messaging`, `pages_manage_engagement`,
+  `pages_read_user_content`, `pages_read_engagement`/`pages_show_list` segun el
   endpoint y acceso a la Page); no se debe pedir otra credencial en Redes
-  sociales.
+  sociales. Facebook comments tiene tres contratos distintos: recibir comentarios
+  por webhook usa la suscripcion `feed` de la Page; responder publicamente un
+  comentario usa `/{COMMENT_ID}/comments` y requiere `pages_manage_engagement`;
+  leer comentarios historicos por Graph (`/{PAGE_ID}/posts?...comments` o
+  similares) puede requerir `pages_read_user_content` o Page Public Content
+  Access aunque `pages_read_engagement` aparezca como concedido.
   Los switches son `meta_messenger_messaging_enabled` /
   `meta_instagram_messaging_enabled` para DMs y
   `meta_facebook_comments_enabled` / `meta_instagram_comments_enabled` para

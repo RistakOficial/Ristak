@@ -844,6 +844,24 @@ function createMetaSocialPermissionMessage(platform) {
   return 'Meta rechazó Messenger por permisos insuficientes. Revisa que el token de la Página incluya pages_messaging y que la persona/cuenta tenga acceso de mensajería sobre la Página conectada.'
 }
 
+function createMetaSocialCommentPermissionMessage(platform, replyType) {
+  const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
+  const mode = replyType === 'private' ? 'private' : 'public'
+
+  if (cleanPlatform === 'instagram') {
+    if (mode === 'public') {
+      return 'Meta rechazó la respuesta pública al comentario de Instagram por permisos insuficientes. Revisa que el token de la Página incluya instagram_manage_comments y que la cuenta profesional esté enlazada a la Página conectada.'
+    }
+    return 'Meta rechazó el DM privado desde comentario de Instagram por permisos insuficientes. Revisa instagram_manage_messages y que la cuenta profesional esté enlazada a la Página conectada.'
+  }
+
+  if (mode === 'public') {
+    return 'Meta rechazó la respuesta pública al comentario de Facebook por permisos insuficientes. Revisa que el token de la Página incluya pages_manage_engagement; para leer comentarios por API, Meta también puede exigir pages_read_user_content o Page Public Content Access.'
+  }
+
+  return 'Meta rechazó el DM privado desde comentario de Facebook por permisos insuficientes. Revisa que el token de la Página incluya pages_messaging y que la persona/cuenta tenga acceso de mensajería sobre la Página conectada.'
+}
+
 function normalizeMetaSocialSendError(error, platform) {
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
   if (isMetaCapabilityError(error)) {
@@ -876,6 +894,25 @@ function normalizeMetaSocialSendError(error, platform) {
   }
 
   return error
+}
+
+function normalizeMetaSocialCommentReplyError(error, platform, replyType) {
+  const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
+  if (isMetaCapabilityError(error)) {
+    return createMetaSocialMessageError(createMetaSocialCapabilityMessage(cleanPlatform), error.statusCode || 400, {
+      ...(error.meta || {}),
+      actionRequired: 'meta_app_capability'
+    })
+  }
+
+  if (isMetaPermissionError(error)) {
+    return createMetaSocialMessageError(createMetaSocialCommentPermissionMessage(cleanPlatform, replyType), error.statusCode || 400, {
+      ...(error.meta || {}),
+      actionRequired: 'meta_permissions'
+    })
+  }
+
+  return normalizeMetaSocialSendError(error, cleanPlatform)
 }
 
 async function metaSocialGraphRequest(path, { method = 'GET', token, query, body, baseUrl = API_URLS.META_GRAPH } = {}) {
@@ -2586,7 +2623,7 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     })
   } catch (error) {
     const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw normalizeMetaSocialSendError(error, cleanPlatform)
+    if (!looksLikeTokenIssue) throw normalizeMetaSocialCommentReplyError(error, cleanPlatform, mode)
     try {
       const retryCredentials = await resolveMetaSocialGraphCredentials(cleanPlatform, config, { forceRefresh: true })
       const retryPath = mode === 'private' && cleanPlatform === 'instagram'
@@ -2603,7 +2640,7 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
         body: payload
       })
     } catch (retryError) {
-      throw normalizeMetaSocialSendError(retryError, cleanPlatform)
+      throw normalizeMetaSocialCommentReplyError(retryError, cleanPlatform, mode)
     }
   }
 

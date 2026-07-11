@@ -258,6 +258,19 @@ async function startMetaSendServer(calls) {
         return
       }
 
+      if (req.method === 'POST' && req.url.startsWith('/fb-comment-permission-test/comments')) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          error: {
+            message: '(#200) Requires pages_manage_engagement permission to manage the object.',
+            type: 'OAuthException',
+            code: 200,
+            fbtrace_id: 'trace-comment-permission-test'
+          }
+        }))
+        return
+      }
+
       if (req.method === 'POST' && req.url.startsWith('/ig-business-send-test/messages')) {
         const parsedBody = JSON.parse(body || '{}')
         if (parsedBody?.message?.attachment?.type === 'audio') {
@@ -1356,6 +1369,85 @@ test('sendMetaSocialCommentReply manda privado Instagram con Page token derivado
             message: { text: 'Te escribo por DM' }
           })
           assert.equal(calls.some(call => call.url.startsWith('/ig-business-send-test/messages')), false)
+        } finally {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('sendMetaSocialCommentReply explica permiso faltante para comentario publico Facebook', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const contactId = 'meta_comment_facebook_permission_contact'
+  const metaContactId = 'meta_comment_facebook_permission_profile'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_facebook_comments_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-send-test',
+            encrypt('user-token-send-test'),
+            null,
+            'page-send-test',
+            null,
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_facebook_comments_enabled', '1')
+          await seedMessengerContact({ contactId, metaContactId })
+
+          await assert.rejects(
+            () => sendMetaSocialCommentReply({
+              contactId,
+              platform: 'messenger',
+              message: 'Respuesta publica',
+              replyType: 'public',
+              commentId: 'fb-comment-permission-test',
+              postId: 'page-send-test_123'
+            }),
+            (error) => {
+              assert.equal(error.statusCode, 400)
+              assert.match(error.message, /respuesta pública al comentario de Facebook/)
+              assert.match(error.message, /pages_manage_engagement/)
+              assert.doesNotMatch(error.message, /pages_messaging/)
+              assert.equal(error.meta?.actionRequired, 'meta_permissions')
+              assert.equal(error.meta?.graphError?.code, 200)
+              return true
+            }
+          )
+
+          const sendCall = calls.find(call => call.method === 'POST' && call.url === '/fb-comment-permission-test/comments')
+          assert.ok(sendCall)
+          assert.equal(sendCall.authorization, 'Bearer page-token-send-test')
+          assert.deepEqual(JSON.parse(sendCall.body), { message: 'Respuesta publica' })
         } finally {
           await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
