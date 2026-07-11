@@ -527,11 +527,29 @@ export async function duplicateAutomation(automationId) {
 }
 
 export async function deleteAutomation(automationId) {
-  const row = await db.get('SELECT id FROM automations WHERE id = ?', [automationId])
-  if (!row) throw notFound('Automatización no encontrada')
+  const id = cleanString(automationId)
+  if (!id) throw notFound('Automatización no encontrada')
 
-  await db.run('DELETE FROM automations WHERE id = ?', [automationId])
-  return { id: automationId }
+  return db.transaction(async (tx) => {
+    const row = await tx.get('SELECT id FROM automations WHERE id = ?', [id])
+    if (!row) throw notFound('Automatización no encontrada')
+
+    await tx.run('DELETE FROM automation_drip_entries WHERE automation_id = ?', [id])
+    await tx.run('DELETE FROM automation_schedule_runs WHERE automation_id = ?', [id])
+    await tx.run('DELETE FROM automation_contact_enrollment_jobs WHERE automation_id = ?', [id])
+    await tx.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [id])
+    await tx.run(
+      `UPDATE internal_notifications
+          SET automation_id = NULL,
+              automation_node_id = NULL,
+              enrollment_id = NULL,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE automation_id = ?`,
+      [id]
+    )
+    await tx.run('DELETE FROM automations WHERE id = ?', [id])
+    return { id }
+  })
 }
 
 export async function recordAutomationWebhookSample({ endpointId, method, body, query }) {

@@ -293,6 +293,7 @@ export const automationsCache = {
 }
 
 const automationRequests = new Map<string, Promise<Automation>>()
+const deletedAutomationIds = new Set<string>()
 
 export function automationToSummary(automation: Automation): AutomationSummary {
   return {
@@ -310,6 +311,7 @@ export function automationToSummary(automation: Automation): AutomationSummary {
 }
 
 function cacheAutomation(automation: Automation) {
+  if (deletedAutomationIds.has(automation.id)) return
   automationsCache.automations.set(automation.id, automation)
   if (!automationsCache.overview) return
 
@@ -361,30 +363,40 @@ export const automationsService = {
 
   async createAutomation(input: { name: string; folderId?: string | null }): Promise<Automation> {
     const automation = await apiClient.post<Automation>('/automations', input)
+    deletedAutomationIds.delete(automation.id)
     cacheAutomation(automation)
     return automation
   },
 
   async updateAutomation(automationId: string, input: AutomationUpdateInput): Promise<Automation> {
     const automation = await apiClient.put<Automation>(`/automations/${automationId}`, input)
+    if (deletedAutomationIds.has(automation.id)) return automation
     cacheAutomation(automation)
     return automation
   },
 
   async duplicateAutomation(automationId: string): Promise<Automation> {
     const automation = await apiClient.post<Automation>(`/automations/${automationId}/duplicate`)
+    deletedAutomationIds.delete(automation.id)
     cacheAutomation(automation)
     return automation
   },
 
   async deleteAutomation(automationId: string): Promise<void> {
-    await apiClient.delete(`/automations/${automationId}`)
-    automationsCache.automations.delete(automationId)
-    if (automationsCache.overview) {
-      automationsCache.overview = {
-        ...automationsCache.overview,
-        automations: automationsCache.overview.automations.filter((automation) => automation.id !== automationId)
+    deletedAutomationIds.add(automationId)
+    try {
+      await apiClient.delete(`/automations/${automationId}`)
+      automationRequests.delete(automationId)
+      automationsCache.automations.delete(automationId)
+      if (automationsCache.overview) {
+        automationsCache.overview = {
+          ...automationsCache.overview,
+          automations: automationsCache.overview.automations.filter((automation) => automation.id !== automationId)
+        }
       }
+    } catch (error) {
+      deletedAutomationIds.delete(automationId)
+      throw error
     }
   },
 

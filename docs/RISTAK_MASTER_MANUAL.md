@@ -2504,6 +2504,12 @@ automatizaciones nuevas se vean iguales en la libreria. El renombrado manual no
 aplica esa numeracion automatica: si el usuario cambia el nombre, se respeta lo
 que escriba.
 
+Al eliminar una automatizacion, el backend debe hacerlo en transaccion y limpiar
+su estado runtime directo: inscripciones, entradas de goteo, ejecuciones de
+disparadores programados y jobs manuales/programados. Las notificaciones internas
+historicas no se borran, pero se les quitan las referencias a la automatizacion,
+nodo e inscripcion eliminados para evitar enlaces fantasma.
+
 Los disparadores programados de una automatizacion tienen recuperacion acotada:
 si un reinicio o despliegue cruza su hora, el scheduler ejecuta la instancia
 perdida solo durante las siguientes 24 horas. `automation_schedule_runs` reclama

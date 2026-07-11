@@ -5,6 +5,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import {
   controlAutomationEnrollment,
   createAutomation,
+  deleteAutomation,
   duplicateAutomation,
   enrollContactInAutomation,
   getAutomation,
@@ -227,6 +228,77 @@ test('duplicateAutomation asigna nombres de copia numerados únicos', async () =
     await Promise.all(created.map((automation) =>
       db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
     ))
+  }
+})
+
+test('deleteAutomation limpia estado runtime relacionado sin borrar notificaciones históricas', async () => {
+  const suffix = Date.now()
+  const automation = await createAutomation({ name: `Borrado runtime ${suffix}` })
+  const enrollmentId = `enrollment_delete_${suffix}`
+  const notificationId = `notification_delete_${suffix}`
+
+  try {
+    await db.run(
+      `INSERT INTO automation_enrollments
+         (id, automation_id, contact_id, contact_name, status, current_node_id, log)
+       VALUES (?, ?, ?, ?, 'waiting', 'node_wait', '[]')`,
+      [enrollmentId, automation.id, `contact_delete_${suffix}`, 'Contacto Borrado']
+    )
+    await db.run(
+      `INSERT INTO automation_drip_entries
+         (id, automation_id, node_id, enrollment_id, position, batch_index, scheduled_for)
+       VALUES (?, ?, 'node_wait', ?, 1, 0, CURRENT_TIMESTAMP)`,
+      [`drip_delete_${suffix}`, automation.id, enrollmentId]
+    )
+    await db.run(
+      `INSERT INTO automation_schedule_runs
+         (id, automation_id, trigger_id, run_key, scheduled_for)
+       VALUES (?, ?, 'trigger_delete', ?, CURRENT_TIMESTAMP)`,
+      [`schedule_delete_${suffix}`, automation.id, `run_${suffix}`]
+    )
+    await db.run(
+      `INSERT INTO automation_contact_enrollment_jobs
+         (id, automation_id, contact_id, contact_name, scheduled_at, status)
+       VALUES (?, ?, ?, 'Contacto Borrado', CURRENT_TIMESTAMP, 'scheduled')`,
+      [`job_delete_${suffix}`, automation.id, `contact_delete_${suffix}`]
+    )
+    await db.run(
+      `INSERT INTO internal_notifications
+         (id, title, category, automation_id, automation_node_id, enrollment_id)
+       VALUES (?, 'Aviso histórico', 'automation', ?, 'node_wait', ?)`,
+      [notificationId, automation.id, enrollmentId]
+    )
+
+    await deleteAutomation(automation.id)
+
+    const deleted = await db.get('SELECT id FROM automations WHERE id = ?', [automation.id])
+    assert.equal(deleted == null, true)
+
+    for (const table of [
+      'automation_enrollments',
+      'automation_drip_entries',
+      'automation_schedule_runs',
+      'automation_contact_enrollment_jobs'
+    ]) {
+      const row = await db.get(`SELECT COUNT(*) AS total FROM ${table} WHERE automation_id = ?`, [automation.id])
+      assert.equal(Number(row.total), 0, `${table} conserva filas de la automatización eliminada`)
+    }
+
+    const notification = await db.get(
+      'SELECT automation_id, automation_node_id, enrollment_id FROM internal_notifications WHERE id = ?',
+      [notificationId]
+    )
+    assert.ok(notification)
+    assert.equal(notification.automation_id, null)
+    assert.equal(notification.automation_node_id, null)
+    assert.equal(notification.enrollment_id, null)
+  } finally {
+    await db.run('DELETE FROM internal_notifications WHERE id = ?', [notificationId]).catch(() => undefined)
+    await db.run('DELETE FROM automation_drip_entries WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+    await db.run('DELETE FROM automation_schedule_runs WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+    await db.run('DELETE FROM automation_contact_enrollment_jobs WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+    await db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
   }
 })
 
