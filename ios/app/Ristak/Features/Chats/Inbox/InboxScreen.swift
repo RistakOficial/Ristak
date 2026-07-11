@@ -252,6 +252,30 @@ struct InboxScreen: View {
                 onLongPress: { handleLongPress(contact) }
             )
         }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if !viewModel.isSelecting {
+                Button {
+                    presentMoreActions(for: contact)
+                } label: {
+                    Label("Más", systemImage: "ellipsis")
+                }
+                .tint(RistakTheme.textDim)
+                .accessibilityIdentifier("ristak-inbox-swipe-more-\(contact.id)")
+
+                Button {
+                    let shouldArchive = !viewModel.localState.isArchived(contact.id)
+                    viewModel.setArchived(shouldArchive, contactID: contact.id)
+                } label: {
+                    if viewModel.localState.isArchived(contact.id) {
+                        Label("Restaurar", systemImage: "tray.and.arrow.up")
+                    } else {
+                        Label("Archivar", systemImage: "archivebox")
+                    }
+                }
+                .tint(RistakTheme.accent)
+                .accessibilityIdentifier("ristak-inbox-swipe-archive-\(contact.id)")
+            }
+        }
         .ristakRowSeparator()
     }
 
@@ -264,6 +288,11 @@ struct InboxScreen: View {
     }
 
     private func handleLongPress(_ contact: ChatContact) {
+        guard !viewModel.isSelecting else { return }
+        presentMoreActions(for: contact)
+    }
+
+    private func presentMoreActions(for contact: ChatContact) {
         guard !viewModel.isSelecting else { return }
         viewModel.triggerImpactHaptic()
         activeSheet = .more(contact)

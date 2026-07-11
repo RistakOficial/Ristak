@@ -68,6 +68,12 @@ forzarla como ancla hace que la pantalla abra visualmente mas abajo. Si hay que
 reiniciar la bandeja, remonta la `List` con una identidad nueva y deja que iOS
 coloque el tope real.
 
+Cada fila real de la bandeja iOS admite swipe hacia la izquierda con acciones
+nativas de `List`: **Archivar** (o **Restaurar** dentro de Archivados) y **Más**.
+El swipe no permite ejecución completa accidental, desaparece durante selección
+múltiple y reutiliza exactamente el mismo estado local y el mismo sheet de Más
+acciones que el long-press.
+
 Los bottom sheets nativos que contienen formularios, pickers o contenido con
 boton final deben reservar un margen inferior de seguridad dentro del contenido
 scrollable para que el ultimo control quede visible por encima del area inferior

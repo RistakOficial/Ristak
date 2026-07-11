@@ -96,6 +96,7 @@ solo en capa flotante; copy en español.
   WhatsApp, presets condicionales, archivados y silenciados (locales), fila
   fija del Asistente AI, selección múltiple con acciones masivas, long-press
   → Más acciones (agente, cita, pago, programar, etiqueta, leído, archivar),
+  swipe nativo por fila con acciones **Archivar/Restaurar** y **Más**,
   cache en disco para arranque en frío, SSE + polling 20s, badge de no leídos.
   Conversación: todos los tipos de mensaje (texto, foto, video, nota de voz,
   documento, ubicación, email desplegable, comentarios FB/IG, sistema), texto
