@@ -350,137 +350,332 @@ enum MessagePreviewText {
 
 // MARK: - Texto con formato WhatsApp
 
-/// Parser de `*negrita*`, `_itálica_`, `~tachado~` y `` `mono` `` respetando
-/// límites de palabra (RN `parseWhatsAppFormattedText`).
+/// Parser compartido con la sintaxis que Ristak pinta en escritorio: conserva el
+/// texto original en datos/copiar, pero al renderizar elimina los delimitadores
+/// válidos de WhatsApp. Los delimitadores incompletos o identificadores como
+/// `folio_123` se respetan literalmente.
 enum WhatsAppTextFormatter {
-    private struct Style: OptionSet {
+    struct Style: OptionSet, Equatable {
         let rawValue: Int
+
         static let bold = Style(rawValue: 1 << 0)
         static let italic = Style(rawValue: 1 << 1)
         static let strike = Style(rawValue: 1 << 2)
-        static let mono = Style(rawValue: 1 << 3)
+        static let inlineCode = Style(rawValue: 1 << 3)
+        static let monospace = Style(rawValue: 1 << 4)
     }
 
-    private static let openerBoundary = Set(" \t\n([{\"'¿¡")
-    private static let closerBoundary = Set(" \t\n.,;:!?)]}\"'…")
+    struct InlineSegment: Equatable {
+        let text: String
+        let styles: Style
+    }
 
-    private static func marker(for char: Character) -> Style? {
-        switch char {
-        case "*": return .bold
-        case "_": return .italic
-        case "~": return .strike
-        case "`": return .mono
-        default: return nil
+    enum LineKind: Equatable {
+        case paragraph
+        case bullet
+        case numbered(String)
+        case quote
+    }
+
+    struct ParsedLine: Equatable {
+        let kind: LineKind
+        let segments: [InlineSegment]
+    }
+
+    struct RenderedLine {
+        let kind: LineKind
+        let text: AttributedString
+    }
+
+    private struct Rule {
+        let style: Style
+        let delimiter: [Character]
+        let literal: Bool
+    }
+
+    private static let rules: [Rule] = [
+        .init(style: .monospace, delimiter: Array("```"), literal: true),
+        .init(style: .inlineCode, delimiter: Array("`"), literal: true),
+        .init(style: .bold, delimiter: Array("*"), literal: false),
+        .init(style: .italic, delimiter: Array("_"), literal: false),
+        .init(style: .strike, delimiter: Array("~"), literal: false)
+    ]
+
+    private static let boundaryCharacters = Set(" \t\n()[]{}\"'“”‘’.,;:!?¿¡/\\|<>=+-")
+
+    /// Interpreta párrafos, listas, citas y estilos inline. Es interno a la
+    /// app, pero testeable para mantener la misma semántica que escritorio.
+    static func parsedLines(_ source: String) -> [ParsedLine] {
+        let normalized = source
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        return normalized.split(separator: "\n", omittingEmptySubsequences: false).map { raw in
+            let line = String(raw)
+
+            if let body = listBody(in: line, marker: "-") ?? listBody(in: line, marker: "*") {
+                return ParsedLine(kind: .bullet, segments: parseInline(body))
+            }
+            if let numbered = numberedList(in: line) {
+                return ParsedLine(kind: .numbered(numbered.marker), segments: parseInline(numbered.body))
+            }
+            if line.hasPrefix("> ") {
+                return ParsedLine(kind: .quote, segments: parseInline(String(line.dropFirst(2))))
+            }
+            return ParsedLine(kind: .paragraph, segments: parseInline(line))
         }
     }
 
-    /// Convierte el texto plano a `AttributedString` con los estilos aplicados.
-    static func attributed(_ text: String, baseFont: Font = .body) -> AttributedString {
-        var result = AttributedString()
-        appendParsed(Array(text), styles: [], baseFont: baseFont, into: &result)
+    /// Líneas ya preparadas para el cuerpo de un globo. La caché evita repetir
+    /// el parseo y la creación de atributos con cada poll, tick o scroll.
+    static func bodyLines(_ text: String) -> [RenderedLine] {
+        let key = text as NSString
+        if let cached = bodyCache.object(forKey: key) { return cached.value }
+        let result = renderedLines(text, baseFont: .body)
+        bodyCache.setObject(RenderedLinesBox(result), forKey: key)
         return result
     }
 
-    private final class AttributedBox {
-        let value: AttributedString
-        init(_ value: AttributedString) { self.value = value }
+    /// Render inline para previews compactos: las listas/citas siguen legibles
+    /// sin abrir un layout de globo dentro de la fila de la bandeja.
+    static func attributedPreview(_ text: String, baseFont: Font = .subheadline) -> AttributedString {
+        let lines = parsedLines(text)
+        var result = AttributedString()
+
+        for (index, line) in lines.enumerated() {
+            switch line.kind {
+            case .paragraph:
+                break
+            case .bullet:
+                result.append(styledText("• ", styles: [], baseFont: baseFont))
+            case .numbered(let marker):
+                result.append(styledText("\(marker). ", styles: [], baseFont: baseFont))
+            case .quote:
+                result.append(styledText("› ", styles: [], baseFont: baseFont))
+            }
+            result.append(attributed(line.segments, baseFont: baseFont))
+            if index < lines.count - 1 {
+                result.append(AttributedString("\n"))
+            }
+        }
+        return result
     }
 
-    /// Caché del texto formateado con la fuente por defecto (`.body`), usada por
-    /// las burbujas del hilo. El mismo texto SIEMPRE produce el mismo
-    /// `AttributedString`, así que memoizarlo evita re-parsear carácter por
-    /// carácter en cada render de fila (poll, tick, scroll). `NSCache` acotada y
-    /// thread-safe. Se cachea `AttributedString` directo (conserva los `Font` de
-    /// SwiftUI; un puente a `NSAttributedString` perdería negrita/itálica/mono).
-    nonisolated(unsafe) private static let bodyCache: NSCache<NSString, AttributedBox> = {
-        let cache = NSCache<NSString, AttributedBox>()
+    static func attributedInline(_ text: String, baseFont: Font = .body) -> AttributedString {
+        attributed(parseInline(text), baseFont: baseFont)
+    }
+
+    private final class RenderedLinesBox {
+        let value: [RenderedLine]
+        init(_ value: [RenderedLine]) { self.value = value }
+    }
+
+    nonisolated(unsafe) private static let bodyCache: NSCache<NSString, RenderedLinesBox> = {
+        let cache = NSCache<NSString, RenderedLinesBox>()
         cache.countLimit = 2000
         return cache
     }()
 
-    /// Variante memoizada para el cuerpo de las burbujas (baseFont `.body`).
-    static func attributedBody(_ text: String) -> AttributedString {
-        let key = text as NSString
-        if let cached = bodyCache.object(forKey: key) { return cached.value }
-        let result = attributed(text, baseFont: .body)
-        bodyCache.setObject(AttributedBox(result), forKey: key)
-        return result
+    static func renderedLines(_ text: String, baseFont: Font) -> [RenderedLine] {
+        parsedLines(text).map { line in
+            RenderedLine(kind: line.kind, text: attributed(line.segments, baseFont: baseFont))
+        }
     }
 
-    private static func styledPiece(_ text: String, styles: Style, baseFont: Font) -> AttributedString {
-        var piece = AttributedString(text)
-        var font = baseFont
-        if styles.contains(.mono) {
-            font = .system(.body, design: .monospaced)
-        }
-        if styles.contains(.bold) { font = font.weight(.semibold) }
-        if styles.contains(.italic) { font = font.italic() }
-        piece.font = font
-        if styles.contains(.strike) {
-            piece.strikethroughStyle = .single
-        }
-        return piece
+    private static func listBody(in line: String, marker: Character) -> String? {
+        guard line.first == marker, line.dropFirst().first?.isWhitespace == true else { return nil }
+        return String(line.dropFirst(2))
     }
 
-    private static func appendParsed(_ chars: [Character], styles: Style, baseFont: Font, into result: inout AttributedString) {
+    private static func numberedList(in line: String) -> (marker: String, body: String)? {
+        let characters = Array(line)
+        var end = 0
+        while end < characters.count, characters[end].isNumber, end < 3 {
+            end += 1
+        }
+        guard end > 0,
+              end + 2 <= characters.count,
+              characters[end] == ".",
+              characters[end + 1].isWhitespace else {
+            return nil
+        }
+        return (String(characters[..<end]), String(characters.dropFirst(end + 2)))
+    }
+
+    private static func parseInline(_ source: String, active: Style = []) -> [InlineSegment] {
+        let characters = Array(source)
+        var segments: [InlineSegment] = []
+        var plain = ""
         var index = 0
-        var plainBuffer = ""
 
         func flushPlain() {
-            guard !plainBuffer.isEmpty else { return }
-            result.append(styledPiece(plainBuffer, styles: styles, baseFont: baseFont))
-            plainBuffer = ""
+            guard !plain.isEmpty else { return }
+            appendSegment(&segments, text: plain, styles: active)
+            plain = ""
         }
 
-        while index < chars.count {
-            let char = chars[index]
-            if let style = marker(for: char), !styles.contains(style),
-               isValidOpening(chars, at: index),
-               let close = findClosing(chars, from: index + 1, marker: char) {
+        while index < characters.count {
+            if let rule = openingRule(in: characters, at: index),
+               let close = closingIndex(in: characters, from: index + rule.delimiter.count, rule: rule) {
                 flushPlain()
-                let inner = Array(chars[(index + 1)..<close])
-                appendParsed(inner, styles: styles.union(style), baseFont: baseFont, into: &result)
-                index = close + 1
+                let contentStart = index + rule.delimiter.count
+                let content = String(characters[contentStart..<close])
+                let styles = active.union(rule.style)
+
+                if rule.literal {
+                    appendSegment(&segments, text: content, styles: styles)
+                } else {
+                    for segment in parseInline(content, active: styles) {
+                        appendSegment(&segments, text: segment.text, styles: segment.styles)
+                    }
+                }
+                index = close + rule.delimiter.count
                 continue
             }
-            plainBuffer.append(char)
+
+            plain.append(characters[index])
             index += 1
         }
         flushPlain()
+        return segments
     }
 
-    private static func isValidOpening(_ chars: [Character], at index: Int) -> Bool {
-        // Antes: inicio o boundary de apertura.
-        if index > 0 {
-            let previous = chars[index - 1]
-            guard openerBoundary.contains(previous) else { return false }
+    private static func appendSegment(_ segments: inout [InlineSegment], text: String, styles: Style) {
+        guard !text.isEmpty else { return }
+        if let last = segments.indices.last, segments[last].styles == styles {
+            segments[last] = InlineSegment(text: segments[last].text + text, styles: styles)
+        } else {
+            segments.append(InlineSegment(text: text, styles: styles))
         }
-        // Después: contenido no vacío que no empiece con espacio ni el marker.
-        let nextIndex = index + 1
-        guard nextIndex < chars.count else { return false }
-        let next = chars[nextIndex]
-        if next == chars[index] { return false }
-        if next.isWhitespace || next.isNewline { return false }
-        return true
     }
 
-    private static func findClosing(_ chars: [Character], from start: Int, marker: Character) -> Int? {
+    private static func openingRule(in source: [Character], at index: Int) -> Rule? {
+        rules.first { rule in
+            guard matches(rule.delimiter, in: source, at: index) else { return false }
+            if rule.literal {
+                return index + rule.delimiter.count < source.count
+            }
+            return canOpenDelimitedFormat(source, at: index, delimiter: rule.delimiter)
+        }
+    }
+
+    private static func closingIndex(in source: [Character], from start: Int, rule: Rule) -> Int? {
         var index = start
-        while index < chars.count {
-            if chars[index] == marker {
-                // Antes del cierre: no-espacio; después: fin o boundary.
-                let previous = chars[index - 1]
-                if !previous.isWhitespace {
-                    let afterIndex = index + 1
-                    if afterIndex >= chars.count || closerBoundary.contains(chars[afterIndex]) {
-                        return index
-                    }
+        while index <= source.count - rule.delimiter.count {
+            if matches(rule.delimiter, in: source, at: index) {
+                let content = Array(source[start..<index])
+                let hasContent = rule.literal
+                    ? !content.isEmpty
+                    : content.contains(where: { !$0.isWhitespace })
+                if hasContent, rule.literal || canCloseDelimitedFormat(source, at: index, delimiter: rule.delimiter) {
+                    return index
                 }
             }
-            if chars[index].isNewline && marker != "`" { return nil }
             index += 1
         }
         return nil
     }
+
+    private static func matches(_ delimiter: [Character], in source: [Character], at index: Int) -> Bool {
+        guard index >= 0, index + delimiter.count <= source.count else { return false }
+        for offset in delimiter.indices where source[index + offset] != delimiter[offset] {
+            return false
+        }
+        return true
+    }
+
+    private static func canOpenDelimitedFormat(_ source: [Character], at index: Int, delimiter: [Character]) -> Bool {
+        let nextIndex = index + delimiter.count
+        guard nextIndex < source.count, !source[nextIndex].isWhitespace else { return false }
+        return index == 0 || isBoundary(source[index - 1])
+    }
+
+    private static func canCloseDelimitedFormat(_ source: [Character], at index: Int, delimiter: [Character]) -> Bool {
+        guard index > 0, !source[index - 1].isWhitespace else { return false }
+        let afterIndex = index + delimiter.count
+        return afterIndex == source.count || isBoundary(source[afterIndex])
+    }
+
+    private static func isBoundary(_ character: Character) -> Bool {
+        character.isWhitespace || boundaryCharacters.contains(character)
+    }
+
+    private static func attributed(_ segments: [InlineSegment], baseFont: Font) -> AttributedString {
+        segments.reduce(into: AttributedString()) { result, segment in
+            result.append(styledText(segment.text, styles: segment.styles, baseFont: baseFont))
+        }
+    }
+
+    private static func styledText(_ text: String, styles: Style, baseFont: Font) -> AttributedString {
+        var result = AttributedString(text)
+        var font = baseFont
+        if styles.contains(.inlineCode) || styles.contains(.monospace) {
+            font = .system(.body, design: .monospaced)
+        }
+        if styles.contains(.bold) { font = font.weight(.semibold) }
+        if styles.contains(.italic) { font = font.italic() }
+        result.font = font
+        if styles.contains(.strike) {
+            result.strikethroughStyle = .single
+        }
+        return result
+    }
 }
 
+/// Vista de mensajes enriquecidos para los globos. No toca el contenido
+/// almacenado; solo expresa las líneas que WhatsApp formatea visualmente.
+struct WhatsAppFormattedMessageText: View {
+    let text: String
+    let baseFont: Font
+    let usesBodyCache: Bool
+
+    init(text: String, baseFont: Font = .body, usesBodyCache: Bool = true) {
+        self.text = text
+        self.baseFont = baseFont
+        self.usesBodyCache = usesBodyCache
+    }
+
+    private var lines: [WhatsAppTextFormatter.RenderedLine] {
+        usesBodyCache
+            ? WhatsAppTextFormatter.bodyLines(text)
+            : WhatsAppTextFormatter.renderedLines(text, baseFont: baseFont)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: RistakTheme.Spacing.xxs) {
+            ForEach(Array(lines.indices), id: \.self) { index in
+                lineView(lines[index])
+            }
+        }
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func lineView(_ line: WhatsAppTextFormatter.RenderedLine) -> some View {
+        switch line.kind {
+        case .paragraph:
+            Text(line.text)
+        case .bullet:
+            HStack(alignment: .firstTextBaseline, spacing: RistakTheme.Spacing.xs) {
+                Text("•")
+                    .font(baseFont)
+                Text(line.text)
+            }
+        case .numbered(let marker):
+            HStack(alignment: .firstTextBaseline, spacing: RistakTheme.Spacing.xs) {
+                Text("\(marker).")
+                    .font(baseFont)
+                    .frame(minWidth: 18, alignment: .trailing)
+                Text(line.text)
+            }
+        case .quote:
+            HStack(alignment: .top, spacing: RistakTheme.Spacing.xs) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(RistakTheme.accent)
+                    .frame(width: 3)
+                Text(line.text)
+            }
+        }
+    }
+}

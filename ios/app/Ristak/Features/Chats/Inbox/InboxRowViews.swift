@@ -54,8 +54,7 @@ struct ChatRowView: View {
                 }
 
                 HStack(alignment: .center, spacing: RistakTheme.Spacing.xs) {
-                    Text(subtitle)
-                        .font(.subheadline)
+                    Text(subtitleText)
                         .foregroundStyle(RistakTheme.textDim)
                         .lineLimit(2)
 
@@ -111,12 +110,16 @@ struct ChatRowView: View {
         showUnreadIndicators && contact.visibleUnreadCount > 0
     }
 
-    private var subtitle: String {
+    private var subtitleText: AttributedString {
         if showPreview {
             let preview = ChatRowSignals.preview(contact)
-            if !preview.isEmpty { return preview }
+            if !preview.isEmpty {
+                return WhatsAppTextFormatter.attributedPreview(preview, baseFont: .subheadline)
+            }
         }
-        return ChatRowSignals.contactDetailSubtitle(contact)
+        var plain = AttributedString(ChatRowSignals.contactDetailSubtitle(contact))
+        plain.font = .subheadline
+        return plain
     }
 
     private var relativeDate: String {

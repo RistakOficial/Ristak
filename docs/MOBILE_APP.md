@@ -1318,9 +1318,13 @@ Los enlaces genericos recibidos no deben hacer una visita automatica desde el
 telefono solo por renderizar el globo: muestran host/copy local y cargan el
 destino cuando el usuario toca. Los links enviados por el negocio y los de pago
 pueden enriquecer metadata con timeout, abort, limite de HTML y cache acotada.
-ubicacion. Los globos de texto deben interpretar el formato estilo WhatsApp
-(`*negrita*`, `_italica_`, `~tachado~` y monospace con backticks) sin romper URLs
-ni identificadores con guion bajo. Cualquier canal pendiente
+ubicacion. Los globos de texto y el preview de la bandeja de la app nativa Apple
+deben interpretar la misma sintaxis que escritorio: `*negrita*`, `_italica_`,
+`~tachado~`, inline code con un backtick, monospace con triple backtick, listas
+con `- ` o `* `, listas numeradas con `1. ` y citas con `> `. Los marcadores
+validos se ocultan solo al pintar; el mensaje almacenado y copiado conserva el
+texto original. Delimitadores incompletos, URLs e identificadores como
+`folio_123` permanecen literales. Cualquier canal pendiente
 (QR, HighLevel, Messenger, Instagram, email/SMS) debe quedar marcado como brecha
 en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md` hasta que use el mismo contrato que
 `/movil`.

@@ -126,8 +126,7 @@ struct SystemBubbleView: View {
     let message: ChatMessage
 
     var body: some View {
-        Text(message.text)
-            .font(.footnote)
+        WhatsAppFormattedMessageText(text: message.text, baseFont: .footnote, usesBodyCache: false)
             .foregroundStyle(RistakTheme.textDim)
             .multilineTextAlignment(.center)
             .padding(.horizontal, RistakTheme.Spacing.sm)
@@ -304,8 +303,10 @@ struct MessageRowView: View, Equatable {
                         Text(quoteTitle(target: target))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(RistakTheme.accent)
-                        Text(target.map(MessagePreviewText.preview(for:)) ?? "Mensaje")
-                            .font(.caption)
+                        Text(WhatsAppTextFormatter.attributedPreview(
+                            target.map(MessagePreviewText.preview(for:)) ?? "Mensaje",
+                            baseFont: .caption
+                        ))
                             .foregroundStyle(RistakTheme.textDim)
                             .lineLimit(1)
                     }
@@ -426,10 +427,8 @@ struct MessageRowView: View, Equatable {
     private var textBlock: some View {
         // El globo NO repite el texto plano cuando hay emailDetails (doc 04 §7.6).
         if message.emailDetails == nil, !message.text.isEmpty {
-            Text(WhatsAppTextFormatter.attributedBody(message.text))
+            WhatsAppFormattedMessageText(text: message.text)
                 .foregroundStyle(message.failed ? RistakTheme.neg : RistakTheme.bubbleTextInbound)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

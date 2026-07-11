@@ -98,8 +98,10 @@ solo en capa flotante; copy en español.
   → Más acciones (agente, cita, pago, programar, etiqueta, leído, archivar),
   cache en disco para arranque en frío, SSE + polling 20s, badge de no leídos.
   Conversación: todos los tipos de mensaje (texto, foto, video, nota de voz,
-  documento, ubicación, email desplegable, comentarios FB/IG, sistema),
-  receipts, respuestas con swipe, reacciones por canal, mensajes programados
+  documento, ubicación, email desplegable, comentarios FB/IG, sistema), texto
+  con formato WhatsApp en globos y previews (`*negrita*`, `_italica_`,
+  `~tachado~`, código/monospace, listas y citas), receipts, respuestas con
+  swipe, reacciones por canal, mensajes programados
   (crear/editar/cancelar), info de mensaje, reintento de fallidos, carga de
   historial hacia atrás, polling 7s + presencia (suprime push y marca leído).
   Composer: adjuntos (cámara/galería/documentos/ubicación), notas de voz,
