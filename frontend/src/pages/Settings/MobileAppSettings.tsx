@@ -1,5 +1,5 @@
 import React from 'react'
-import { CheckCircle2, Copy, ExternalLink, Home, MessageCircle, Share2, Smartphone } from 'lucide-react'
+import { CheckCircle2, Copy, ExternalLink, MessageCircle, Smartphone } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { PHONE_APP_HOME_PATH } from '@/utils/phoneAccess'
@@ -7,23 +7,24 @@ import styles from './Settings.module.css'
 
 const MOBILE_CHAT_PATH = PHONE_APP_HOME_PATH
 const MOBILE_APP_NAME = 'Ristak'
+const IOS_APP_STORE_URL = 'https://apps.apple.com/us/app/ristak/id6782473900'
 
-const safariSteps = [
+const iosSteps = [
   {
-    title: 'Abre Safari',
-    description: 'En el iPhone o iPad, abre Safari y pega el enlace completo del chat.'
+    title: 'Abre App Store',
+    description: 'En el iPhone o iPad, abre el enlace oficial de Ristak en App Store.'
+  },
+  {
+    title: 'Instala Ristak',
+    description: 'Toca Obtener o Actualizar para instalar la app nativa oficial.'
   },
   {
     title: 'Inicia sesión',
-    description: 'Entra con el usuario de Ristak. Si ya había sesión abierta, pasará directo al chat.'
+    description: 'Entra con el usuario de Ristak asignado al equipo.'
   },
   {
-    title: 'Toca Compartir',
-    description: 'Usa el botón de compartir de Safari para abrir las opciones del navegador.'
-  },
-  {
-    title: 'Agrega al inicio',
-    description: 'Elige “Agregar a pantalla de inicio”, deja el nombre Ristak y toca Agregar.'
+    title: 'Activa notificaciones',
+    description: 'Permite notificaciones para recibir mensajes del chat en tiempo real.'
   }
 ]
 
@@ -37,7 +38,7 @@ export const MobileAppSettings: React.FC = () => {
       await navigator.clipboard.writeText(value)
       showToast('success', 'Copiado', `${label} copiado`)
     } catch {
-      showToast('error', 'No se pudo copiar', 'Copia el texto manualmente e inténtalo en Safari.')
+      showToast('error', 'No se pudo copiar', 'Copia el texto manualmente e inténtalo de nuevo.')
     }
   }
 
@@ -52,7 +53,7 @@ export const MobileAppSettings: React.FC = () => {
             <div>
               <h2 className={styles.panelTitle}>Aplicación móvil</h2>
               <p className={styles.panelDescription}>
-                Instala el chat de conversaciones desde Safari para abrirlo como app en el celular.
+                Instala la app oficial de Ristak en iPhone o comparte el acceso web del chat móvil.
               </p>
             </div>
           </div>
@@ -71,14 +72,14 @@ export const MobileAppSettings: React.FC = () => {
                 <MessageCircle size={32} />
               </div>
               <div>
-                <h3 className={styles.sectionTitle}>Acceso disponible: conversaciones</h3>
+                <h3 className={styles.sectionTitle}>iOS: App Store oficial</h3>
                 <p className={styles.sectionDescription}>
-                  Por ahora comparte solamente el enlace del chat. Ese acceso abre la vista móvil de WhatsApp para buscar conversaciones y responder desde el celular.
+                  En iPhone y iPad manda al equipo directo a la ficha oficial de Ristak en App Store. El enlace web del chat queda como respaldo para abrir conversaciones desde navegador.
                 </p>
               </div>
               <div className={styles.mobileGuideNote}>
                 <strong>Importante</strong>
-                <span>No compartas otras rutas móviles todavía. La ruta correcta para el equipo es la de Chat.</span>
+                <span>Para iOS usa App Store. El enlace interno de Chat se conserva como acceso web/PWA de respaldo.</span>
               </div>
             </div>
 
@@ -86,13 +87,30 @@ export const MobileAppSettings: React.FC = () => {
               <div className={styles.mobileRouteHeader}>
                 <Smartphone size={18} />
                 <div>
-                  <h3>Ruta para Safari</h3>
-                  <p>Copia esto y pégalo en Safari desde el celular.</p>
+                  <h3>Enlaces de instalación</h3>
+                  <p>Usa App Store para iOS; conserva el chat web como respaldo.</p>
                 </div>
               </div>
 
               <div className={styles.mobileRouteField}>
-                <label>Enlace completo</label>
+                <label>App Store iOS</label>
+                <div className={styles.mobileRouteValueRow}>
+                  <code className={styles.mobileRouteValue}>{IOS_APP_STORE_URL}</code>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => copyText(IOS_APP_STORE_URL, 'Enlace de App Store')}
+                    aria-label="Copiar enlace de App Store"
+                  >
+                    <Copy size={16} />
+                    Copiar
+                  </Button>
+                </div>
+              </div>
+
+              <div className={styles.mobileRouteField}>
+                <label>Enlace web de respaldo</label>
                 <div className={styles.mobileRouteValueRow}>
                   <code className={styles.mobileRouteValue}>{mobileChatUrl}</code>
                   <Button
@@ -142,9 +160,9 @@ export const MobileAppSettings: React.FC = () => {
                 </div>
               </div>
 
-              <a className={styles.mobilePreviewLink} href={MOBILE_CHAT_PATH} target="_blank" rel="noopener noreferrer">
+              <a className={styles.mobilePreviewLink} href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">
                 <ExternalLink size={16} />
-                Abrir enlace del chat
+                Abrir en App Store
               </a>
             </div>
           </div>
@@ -154,19 +172,19 @@ export const MobileAppSettings: React.FC = () => {
       <Card>
         <div className={styles.mobileStepsHeader}>
           <div>
-            <h3 className={styles.sectionTitle}>Cómo instalarla desde Safari</h3>
+            <h3 className={styles.sectionTitle}>Cómo instalarla en iPhone o iPad</h3>
             <p className={styles.sectionDescription}>
-              Estos son los pasos que puede seguir cualquier persona del equipo en su iPhone o iPad.
+              Estos son los pasos que puede seguir cualquier persona del equipo desde App Store.
             </p>
           </div>
           <div className={styles.mobileStepsIcons} aria-hidden="true">
-            <Share2 size={18} />
-            <Home size={18} />
+            <ExternalLink size={18} />
+            <CheckCircle2 size={18} />
           </div>
         </div>
 
         <ol className={styles.mobileStepList}>
-          {safariSteps.map((step, index) => (
+          {iosSteps.map((step, index) => (
             <li className={styles.mobileStepItem} key={step.title}>
               <span className={styles.mobileStepNumber}>{index + 1}</span>
               <div>

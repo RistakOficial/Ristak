@@ -33,6 +33,12 @@ Regla practica: para builds nuevos usa `com.ristak.android` en Android,
 oficial al bundle temporal anterior; ese namespace ya no es el objetivo de
 tienda.
 
+En Configuracion > Aplicacion movil, la accion principal de iOS debe mandar al
+App Store oficial de Ristak:
+`https://apps.apple.com/us/app/ristak/id6782473900`. El enlace web interno de
+Chat puede mantenerse como respaldo PWA/navegador, pero iPhone y iPad no deben
+seguir guiando al usuario a instalar desde Safari cuando se ofrece la app nativa.
+
 Regla obligatoria de mantenimiento: cualquier cambio de producto movil, chat,
 login, permisos, push, pagos, agenda, filtros, labels visibles o contrato de API
 debe revisarse en las superficies que apliquen: `/movil` para web, `mobile/`
