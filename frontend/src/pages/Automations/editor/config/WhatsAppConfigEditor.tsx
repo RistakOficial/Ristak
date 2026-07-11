@@ -102,8 +102,11 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   // Compatibilidad: si la config vieja solo tenía templateId, se ve como bloque
   const rawBlocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
   const normalBlocks = rawBlocks.filter(isNormalWhatsAppBlock)
-  const hasNormalTextBlock = normalBlocks.some((block) => block.type === 'text')
-  const visibleNormalBlocks = hasNormalTextBlock ? normalBlocks : [initialTextBlock, ...normalBlocks]
+  // Un adjunto también es un mensaje válido. Antes usábamos la presencia de texto
+  // como condición para pintar el editor y eso volvía a insertar un bloque vacío
+  // cada vez que se intentaba enviar solamente una foto, video, audio o archivo.
+  const hasNormalMessageBlock = normalBlocks.some((block) => block.type !== 'delay')
+  const visibleNormalBlocks = hasNormalMessageBlock ? normalBlocks : [initialTextBlock, ...normalBlocks]
   const normalBlocksKey = rawBlocks.map((block) => `${block.id || ''}:${block.type}`).join('|')
   const templateMetaKey = `${str(config.templateId)}:${str(config.templateName)}`
   const templateBlocks =
@@ -124,16 +127,16 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
     if (messageType !== 'text') return
     const hasTemplateBlock = rawBlocks.some((block) => block.type === 'template')
     const hasTemplateMeta = Boolean(str(config.templateId) || str(config.templateName))
-    if (!hasTemplateBlock && hasNormalTextBlock && !hasTemplateMeta) return
+    if (!hasTemplateBlock && hasNormalMessageBlock && !hasTemplateMeta) return
 
     onChange({
       ...config,
-      messageBlocks: hasNormalTextBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
+      messageBlocks: hasNormalMessageBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
       templateId: '',
       templateName: ''
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messageType, normalBlocksKey, templateMetaKey, hasNormalTextBlock])
+  }, [messageType, normalBlocksKey, templateMetaKey, hasNormalMessageBlock])
 
   const setNormalBlocks = (messageBlocks: MessageBlock[]) => {
     set({
@@ -171,7 +174,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
     }
     set({
       messageType: next,
-      messageBlocks: hasNormalTextBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
+      messageBlocks: hasNormalMessageBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
       templateId: '',
       templateName: '',
       sendViaQr: false,

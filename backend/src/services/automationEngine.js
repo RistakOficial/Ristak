@@ -3481,6 +3481,22 @@ async function executeSystemNotification(node, ctx, enrollment) {
   }
 }
 
+/** Resuelve tanto URLs-proxy legacy como la URL pública CDN de un asset Ristak. */
+export async function resolveAutomationMediaAssetId(mediaUrl = '') {
+  const cleanMediaUrl = str(mediaUrl)
+  const { extractMediaAssetIdFromUrl, findMediaAssetsByPublicUrls } = await import('./mediaStorageService.js')
+  let mediaAssetId = extractMediaAssetIdFromUrl(cleanMediaUrl)
+  // Los assets nuevos se guardan con la URL pública del CDN. Esa URL no contiene
+  // /media/assets/:id, así que antes se trataba como un link externo y WhatsApp
+  // recibía el WebP tal cual. Resolverla contra el asset permite usar su contenido
+  // y el conversor JPEG que ya usamos para los chats normales.
+  if (!mediaAssetId && cleanMediaUrl) {
+    const [mediaAsset] = await findMediaAssetsByPublicUrls([cleanMediaUrl])
+    mediaAssetId = mediaAsset?.id || ''
+  }
+  return mediaAssetId
+}
+
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
     data URL (el servicio de WhatsApp lo publica); si es URL externa, directo */
 async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport = 'api', allowQrFallback = true, ctx }) {
@@ -3498,8 +3514,8 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
   let mimeType
 
   const mediaUrl = str(block.url)
-  const { extractMediaAssetIdFromUrl, getMediaAssetDataUrl } = await import('./mediaStorageService.js')
-  const mediaAssetId = extractMediaAssetIdFromUrl(mediaUrl)
+  const { getMediaAssetDataUrl } = await import('./mediaStorageService.js')
+  const mediaAssetId = await resolveAutomationMediaAssetId(mediaUrl)
   const assetMatch = /\/api\/automations\/assets\/([\w-]+)/.exec(mediaUrl)
   if (mediaAssetId) {
     const media = await getMediaAssetDataUrl(mediaAssetId)

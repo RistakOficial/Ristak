@@ -719,9 +719,12 @@ archivo reproducible. Messenger e Instagram reciben imagen, video, audio y
 archivo mediante `message.attachment` con una URL publica HTTPS; si el bloque
 trae texto opcional, Ristak lo manda como el siguiente mensaje porque Meta no
 admite caption dentro del payload de adjunto. Los assets cargados en
-`/api/automations/assets/:assetId` son publicos exclusivamente para que los
-proveedores los puedan descargar; el endpoint mantiene MIME, `nosniff` y fuerza
-la descarga de tipos no seguros.
+automatizaciones se resuelven desde su URL pública CDN al asset interno antes de
+enviar. Así una foto WebP ya cargada se manda por la misma ruta de conversión a
+JPEG compatible que usa el chat normal; no se reenvía el WebP crudo a WhatsApp.
+Las URLs públicas existen exclusivamente para que los proveedores puedan descargar
+el contenido; el endpoint/proxy mantiene MIME, `nosniff` y fuerza la descarga de
+tipos no seguros.
 
 Cuando el usuario toca contenido enviado o recibido dentro del chat (`/chat`,
 `/movil` o `mobile/`), Ristak debe abrirlo primero en su propio modal de enfoque,

@@ -15,7 +15,8 @@ import {
   processScheduledTriggers,
   processScheduledContactEnrollments,
   enrollContactManually,
-  testWebhookAction
+  testWebhookAction,
+  resolveAutomationMediaAssetId
 } from '../src/services/automationEngine.js'
 import {
   connectEmail,
@@ -96,6 +97,25 @@ test('renderTemplate resuelve payloads de webhook con objetos y arrays anidados'
   assert.equal(renderTemplate('{{webhook.categories[0].name}}', { payload }), 'Trabajo')
   assert.equal(renderTemplate('{{webhook.categories[1].items[1]}}', { payload }), 'Ejercicio')
   assert.equal(renderTemplate('{{webhook.mixed[1].deep.value}}', { payload }), '7')
+})
+
+test('los adjuntos de automatización resuelven la URL pública CDN al asset interno', async () => {
+  const suffix = randomUUID()
+  const assetId = `rstk_media_automation_cdn_${suffix}`
+  const publicUrl = `https://cdn.example.test/automations/${assetId}-foto.webp`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (id, business_id, public_url, status, storage_provider, module, metadata_json)
+       VALUES (?, 'default', ?, 'ready', 'bunny', 'automations', '{}')`,
+      [assetId, publicUrl]
+    )
+
+    assert.equal(await resolveAutomationMediaAssetId(publicUrl), assetId)
+    assert.equal(await resolveAutomationMediaAssetId('https://files.example.test/foto.webp'), '')
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId])
+  }
 })
 
 test('testWebhookAction ejecuta el POST y devuelve salida mapeable', async () => {

@@ -212,7 +212,7 @@ const SortableBlock: React.FC<{
       className={`${styles.blockSortableItem} ${isDragging ? styles.blockDragging : ''}`}
     >
       <div className={styles.blockSortWrap}>
-        <span className={styles.blockHoverActions}>
+        <span className={styles.blockHoverActions} data-automation-interactive="true">
           <span
             className={styles.blockDragHandle}
             title="Arrastra para reordenar"
@@ -221,7 +221,17 @@ const SortableBlock: React.FC<{
           >
             <GripVertical size={12} />
           </span>
-          <button type="button" className={styles.configIconButton} title="Quitar bloque" onClick={onRemove}>
+          <button
+            type="button"
+            className={styles.configIconButton}
+            title="Quitar bloque"
+            data-automation-interactive="true"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              onRemove()
+            }}
+          >
             <Trash2 size={11} />
           </button>
         </span>
@@ -262,11 +272,12 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
   const [uploading, setUploading] = useState<Record<string, boolean>>({})
   const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({})
 
-  /** Reduce imágenes en el navegador (máx. 1600px, WebP/JPEG) antes de subir.
+  /** Reduce fotos JPEG/WebP en el navegador (máx. 1600px) antes de subir.
       El backend además convierte audio→Ogg Opus (nota de voz) y video→MP4. */
   const compressImageInBrowser = (file: File): Promise<File> =>
     new Promise((resolve) => {
-      if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml' || file.size < 150 * 1024) {
+      const canSafelyRecompress = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/webp'
+      if (!canSafelyRecompress || file.size < 150 * 1024) {
         resolve(file)
         return
       }
@@ -287,12 +298,12 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
         canvas.toBlob(
           (blob) => {
             if (blob && blob.size < file.size) {
-              resolve(new File([blob], file.name.replace(/\.\w+$/, '') + '.webp', { type: 'image/webp' }))
+              resolve(new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }))
             } else {
               resolve(file)
             }
           },
-          'image/webp',
+          'image/jpeg',
           0.82
         )
       }
