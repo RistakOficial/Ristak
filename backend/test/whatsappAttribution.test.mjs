@@ -43,3 +43,52 @@ test('keeps official source id while exposing Ristak marker as a candidate', () 
   assert.equal(detected.sourceIdSource, 'official_source_id')
   assert.equal(detected.sourceType, 'ad')
 })
+
+test('uses Ristak marker from referral headline as attribution fallback', () => {
+  const detected = detectWhatsAppAttributionFields({
+    referral: {
+      headline: 'Promo consulta rstkad_id=6994538207001!'
+    }
+  })
+
+  assert.equal(detected.sourceId, '6994538207001')
+  assert.equal(detected.ristakAdId, '6994538207001')
+  assert.equal(detected.sourceIdSource, 'rstkad_id')
+  assert.equal(detected.sourceType, 'ad')
+})
+
+test('uses Ristak marker from referral body as attribution fallback', () => {
+  const detected = detectWhatsAppAttributionFields({
+    referral: {
+      body: 'Agenda hoy rstkad_id=6994538207002!'
+    }
+  })
+
+  assert.equal(detected.sourceId, '6994538207002')
+  assert.equal(detected.ristakAdId, '6994538207002')
+  assert.equal(detected.sourceIdSource, 'rstkad_id')
+  assert.equal(detected.sourceType, 'ad')
+})
+
+test('uses Ristak marker from QR raw external ad text as attribution fallback', () => {
+  const detected = detectWhatsAppAttributionFields({
+    message: {
+      qrRaw: {
+        message: {
+          extendedTextMessage: {
+            contextInfo: {
+              externalAdReply: {
+                title: 'Anuncio QR rstkad_id=6994538207003!'
+              }
+            }
+          }
+        }
+      }
+    }
+  })
+
+  assert.equal(detected.sourceId, '6994538207003')
+  assert.equal(detected.ristakAdId, '6994538207003')
+  assert.equal(detected.sourceIdSource, 'rstkad_id')
+  assert.equal(detected.sourceType, 'ad')
+})
