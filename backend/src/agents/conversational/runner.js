@@ -100,6 +100,11 @@ import {
   retrieveRelevantBusinessKnowledge,
   saveConversationIntelligenceState
 } from './intelligence/index.js'
+import {
+  enforceOpeningConversationPolicy,
+  evaluateTurnPolicy,
+  isOpeningConversationTurn
+} from './intelligence/turnPolicy.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 
 const HISTORY_LIMIT = 20
@@ -444,8 +449,12 @@ export function shouldEscalateSilentSchedulingQuestion(latestText = '', actions 
 export function applyConversationalRuntimeReplyGuard({
   reply = '',
   latestText = '',
+  messages = [],
   actions = [],
   config = {},
+  channel = 'whatsapp',
+  pastClientContext = null,
+  preflightDecision = null,
   readiness = null,
   suppressReply = false,
   priceInsistenceCount = 0
@@ -453,15 +462,31 @@ export function applyConversationalRuntimeReplyGuard({
   let nextReply = String(reply || '').trim()
   let nextSuppressReply = Boolean(suppressReply)
   const events = []
-  // [Fase 0 — anti-ghosting] Se retiraron los traspasos a humano FORZADOS por heurística:
-  //  1) readiness "suficiente" (marcaba objetivo cumplido + silencio antes de tiempo),
-  //  2) pregunta de agenda con stay_silent (mandaba "te paso con el equipo" + mute),
-  //  3) la regex replySuggestsHumanHandoff (frases normales como "te ayudan a agendar" o
-  //     "te confirman" forzaban un pase que dejaba al bot MUDO para siempre).
-  // Todos disparaban falsos positivos y ghosting en el momento de convertir. El traspaso
-  // ahora SOLO lo decide el modelo con sus tools explícitas (send_to_human /
-  // mark_ready_to_advance). La señal de readiness sigue llegando al modelo como HINT
-  // (buildConversationDecisionContextMessage), no como acción terminal.
+  // Las señales amplias de readiness y las promesas redactadas por el modelo siguen
+  // siendo sólo contexto. Aquí se fuerzan únicamente dos contratos inequívocos:
+  // petición explícita de humano y cliente previo cuando el negocio activó esa regla.
+  const turnDecision = preflightDecision || evaluateTurnPolicy({ latestText, config, pastClientContext })
+  const alreadyHandedOff = hasActionType(actions, new Set(['send_to_human']))
+  const forceHumanHandoff = alreadyHandedOff ? null : turnDecision.forceHumanHandoff
+  if (forceHumanHandoff) {
+    nextReply = turnDecision.reply || nextReply
+    nextSuppressReply = false
+    events.push({ type: 'runtime_policy_handoff', source: forceHumanHandoff.source })
+  }
+
+  const openingGuard = enforceOpeningConversationPolicy({
+    reply: nextReply,
+    messages,
+    latestText,
+    config,
+    priceInsistenceCount,
+    channel
+  })
+  if (openingGuard.changed) {
+    nextReply = openingGuard.reply
+    if (openingGuard.reason) events.push({ type: 'runtime_opening_guard_rewrite', reason: openingGuard.reason })
+  }
+
   const priceGuardReply = rewritePrematurePriceDisclosure(nextReply, config, { priceInsistenceCount })
   if (priceGuardReply !== nextReply) {
     nextReply = priceGuardReply
@@ -471,7 +496,7 @@ export function applyConversationalRuntimeReplyGuard({
   return {
     reply: nextReply,
     suppressReply: nextSuppressReply,
-    forceHumanHandoff: null,
+    forceHumanHandoff: forceHumanHandoff || null,
     events
   }
 }
@@ -2472,7 +2497,6 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         agentState,
         dryRun: false
       })
-
       const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
         config: agentConfig,
         conversationModel: agentConfig.model || config.model,
@@ -2500,11 +2524,28 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         model,
         channel: normalizedChannel
       })
-      const strategy = planConversationStrategy({
-        intelligenceState: assessed.state,
-        policy: compiledPolicy,
-        latestMessage: traceMessage
+      const turnPolicyDecision = evaluateTurnPolicy({
+        latestText: traceMessage,
+        config: agentConfig,
+        pastClientContext,
+        intelligenceState: assessed.state
       })
+      const strategy = turnPolicyDecision.forceHumanHandoff
+        ? {
+            action: 'handoff',
+            reason: turnPolicyDecision.forceHumanHandoff.reason,
+            primaryQuestion: '',
+            tool: 'send_to_human',
+            shouldReply: true,
+            candidates: ['handoff']
+          }
+        : planConversationStrategy({
+            intelligenceState: assessed.state,
+            policy: compiledPolicy,
+            latestMessage: traceMessage,
+            isOpeningTurn: isOpeningConversationTurn(baseMessagesForAgent),
+            priceInsistenceCount
+          })
       let intelligenceState = applyStrategyPlan(assessed.state, strategy)
       await saveConversationIntelligenceState({
         stateId: agentState.id,
@@ -2548,30 +2589,32 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       ctx.intelligenceState = intelligenceState
       ctx.compiledPolicy = compiledPolicy
 
-      let reply = await runWithConversationStateChannel(normalizedChannel, () => executeAgent({
-        agent,
-        modelProvider: runtime.modelProvider,
-        messages: messagesForAgent,
-        contactId,
-        model,
-        aiProvider,
-        channel: normalizedChannel,
-        traceMessage,
-        intelligenceTrace: {
-          policyHash: compiledPolicy.hash,
-          policyVersion: compiledPolicy.version,
-          stateRevision: intelligenceState.revision,
-          source: assessed.source,
-          stage: intelligenceState.stage,
-          temperature: intelligenceState.temperature,
-          strategy: intelligenceState.strategy,
-          intent: intelligenceState.intent,
-          signalSummary: intelligenceState.signals
-        }
-      }))
+      let reply = turnPolicyDecision.forceHumanHandoff
+        ? turnPolicyDecision.reply
+        : await runWithConversationStateChannel(normalizedChannel, () => executeAgent({
+            agent,
+            modelProvider: runtime.modelProvider,
+            messages: messagesForAgent,
+            contactId,
+            model,
+            aiProvider,
+            channel: normalizedChannel,
+            traceMessage,
+            intelligenceTrace: {
+              policyHash: compiledPolicy.hash,
+              policyVersion: compiledPolicy.version,
+              stateRevision: intelligenceState.revision,
+              source: assessed.source,
+              stage: intelligenceState.stage,
+              temperature: intelligenceState.temperature,
+              strategy: intelligenceState.strategy,
+              intent: intelligenceState.intent,
+              signalSummary: intelligenceState.signals
+            }
+          }))
       // Guardián de cumplimiento: revisa las reglas de apertura de la biblia sobre la
       // respuesta visible y la reescribe si las rompe (precio/pitch antes de calificar).
-      if (reply && !ctx.suppressReply) {
+      if (reply && !ctx.suppressReply && !turnPolicyDecision.forceHumanHandoff) {
         const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: agentConfig, runtime, model, priceInsistenceCount })
         if (guarded.changed) {
           reply = guarded.reply
@@ -2583,8 +2626,12 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       const runtimeGuard = applyConversationalRuntimeReplyGuard({
         reply,
         latestText: traceMessage,
+        messages: messagesForAgent,
         actions: ctx.actions,
         config: agentConfig,
+        channel: normalizedChannel,
+        pastClientContext,
+        preflightDecision: turnPolicyDecision,
         readiness: conversationDecision,
         suppressReply: ctx.suppressReply,
         priceInsistenceCount
@@ -3159,11 +3206,28 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     channel: previewChannel
   })
   const latestPreviewText = [...cleanMessages].reverse().find((message) => message.role === 'user')?.content || ''
-  const strategy = planConversationStrategy({
-    intelligenceState: assessed.state,
-    policy: compiledPolicy,
-    latestMessage: latestPreviewText
+  const turnPolicyDecision = evaluateTurnPolicy({
+    latestText: latestPreviewText,
+    config: runtimeConfig,
+    pastClientContext: previewPastClientContext,
+    intelligenceState: assessed.state
   })
+  const strategy = turnPolicyDecision.forceHumanHandoff
+    ? {
+        action: 'handoff',
+        reason: turnPolicyDecision.forceHumanHandoff.reason,
+        primaryQuestion: '',
+        tool: 'send_to_human',
+        shouldReply: true,
+        candidates: ['handoff']
+      }
+    : planConversationStrategy({
+        intelligenceState: assessed.state,
+        policy: compiledPolicy,
+        latestMessage: latestPreviewText,
+        isOpeningTurn: isOpeningConversationTurn(cleanMessages),
+        priceInsistenceCount: previewPriceInsistenceCount
+      })
   let intelligenceState = applyStrategyPlan(assessed.state, strategy)
   const intelligenceContextMessage = buildConversationIntelligenceContextMessage(intelligenceState, compiledPolicy)
   const learningContextMessage = buildApprovedLearningContextMessage(approvedLearning)
@@ -3180,34 +3244,64 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   ctx.intelligenceState = intelligenceState
   ctx.compiledPolicy = compiledPolicy
 
-  let reply = await executeAgent({
-    agent,
-    modelProvider: runtime.modelProvider,
-    messages: messagesForAgent,
-    contactId: null,
-    model,
-    aiProvider,
-    channel: previewChannel,
-    intelligenceTrace: {
-      policyHash: compiledPolicy.hash,
-      policyVersion: compiledPolicy.version,
-      stateRevision: intelligenceState.revision,
-      source: assessed.source,
-      stage: intelligenceState.stage,
-      temperature: intelligenceState.temperature,
-      strategy: intelligenceState.strategy,
-      intent: intelligenceState.intent,
-      signalSummary: intelligenceState.signals
-    }
-  })
+  let reply = turnPolicyDecision.forceHumanHandoff
+    ? turnPolicyDecision.reply
+    : await executeAgent({
+        agent,
+        modelProvider: runtime.modelProvider,
+        messages: messagesForAgent,
+        contactId: null,
+        model,
+        aiProvider,
+        channel: previewChannel,
+        intelligenceTrace: {
+          policyHash: compiledPolicy.hash,
+          policyVersion: compiledPolicy.version,
+          stateRevision: intelligenceState.revision,
+          source: assessed.source,
+          stage: intelligenceState.stage,
+          temperature: intelligenceState.temperature,
+          strategy: intelligenceState.strategy,
+          intent: intelligenceState.intent,
+          signalSummary: intelligenceState.signals
+        }
+      })
 
   // Guardián de cumplimiento (mismo que en vivo, para que el tester lo refleje 1:1).
-  if (reply && !ctx.suppressReply) {
+  if (reply && !ctx.suppressReply && !turnPolicyDecision.forceHumanHandoff) {
     const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: runtimeConfig, runtime, model, priceInsistenceCount: previewPriceInsistenceCount })
     if (guarded.changed) {
       reply = guarded.reply
       ctx.actions.push({ type: 'compliance_rewrite', rules: guarded.violation?.rules || [], reason: guarded.violation?.reason || '', effect: { liveEffect: 'REESCRIBIÓ el mensaje para cumplir la biblia (no soltar precio/pitch antes de calificar)', marksObjectiveCompleted: false } })
     }
+  }
+
+  const runtimeGuard = applyConversationalRuntimeReplyGuard({
+    reply,
+    latestText: latestPreviewText,
+    messages: messagesForAgent,
+    actions: ctx.actions,
+    config: runtimeConfig,
+    channel: previewChannel,
+    pastClientContext: previewPastClientContext,
+    preflightDecision: turnPolicyDecision,
+    suppressReply: ctx.suppressReply,
+    priceInsistenceCount: previewPriceInsistenceCount
+  })
+  reply = runtimeGuard.reply
+  ctx.suppressReply = runtimeGuard.suppressReply
+  if (runtimeGuard.forceHumanHandoff && !hasActionType(ctx.actions, new Set(['send_to_human']))) {
+    ctx.actions.push({
+      type: 'send_to_human',
+      motivo: runtimeGuard.forceHumanHandoff.reason,
+      resumen: runtimeGuard.forceHumanHandoff.summary,
+      simulated: true,
+      outcome: { ok: true, simulated: true, actionCompleted: false },
+      effect: {
+        liveEffect: 'PASARÍA el chat a un humano (el bot deja de responder). NO marca el objetivo como cumplido.',
+        marksObjectiveCompleted: false
+      }
+    })
   }
 
   intelligenceState = finalizeConversationIntelligenceTurn({

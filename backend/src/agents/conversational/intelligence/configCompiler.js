@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-const POLICY_VERSION = 1
+const POLICY_VERSION = 2
 
 const OBJECTIVE_DESCRIPTIONS = {
   citas: 'Ayudar a la persona a reservar una cita real o entregar el caso al equipo cuando corresponda.',
@@ -195,8 +195,11 @@ export function compileConversationalAgentPolicy(config = {}, { businessProfile 
       persuasion: ['low', 'medium', 'high'].includes(config.persuasionLevel) ? config.persuasionLevel : 'medium',
       language: ['professional', 'intermediate', 'colloquial'].includes(config.languageLevel) ? config.languageLevel : 'intermediate',
       allowEmojis: config.allowEmojis === true,
+      openingStrategy: config.closingStrategyMode === 'custom' || config.persuasionLevel === 'low'
+        ? 'direct'
+        : 'criterio_pull',
       principles: [
-        'Responder preguntas directas antes de intentar avanzar.',
+        'Responder preguntas directas antes de intentar avanzar, salvo la aclaración breve de apertura definida por la estrategia.',
         'Hacer una sola pregunta principal por mensaje.',
         'No repetir datos ya conocidos.',
         'No presionar, avergonzar ni manipular.',

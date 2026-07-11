@@ -45,7 +45,9 @@ export function buildConversationIntelligenceContextMessage(intelligenceState = 
     state.strategy.tool !== 'none' ? `Herramienta candidata: ${state.strategy.tool}. Debe validar sus propias precondiciones y resultado real.` : '',
     state.strategy.primaryQuestion ? `Pregunta principal sugerida: ${state.strategy.primaryQuestion}` : '',
     state.handoff.recommended ? `Traspaso recomendado: ${state.handoff.reason}` : '',
-    'Reglas de uso: responde primero cualquier pregunta concreta; una sola pregunta principal; no repitas datos; No menciones temperaturas, probabilidades, assessment ni estrategia; no afirmes una acción hasta que la herramienta la confirme; una hipótesis sólo sirve para preguntar mejor, nunca para etiquetar o juzgar.'
+    state.strategy.action === 'ask_clarifying_question'
+      ? 'Reglas de uso: haz la pregunta principal breve sin soltar un catálogo, pitch ni importe; una sola pregunta; no repitas datos; No menciones temperaturas, probabilidades, assessment ni estrategia.'
+      : 'Reglas de uso: responde primero cualquier pregunta concreta; una sola pregunta principal; no repitas datos; No menciones temperaturas, probabilidades, assessment ni estrategia; no afirmes una acción hasta que la herramienta la confirme; una hipótesis sólo sirve para preguntar mejor, nunca para etiquetar o juzgar.'
   ].filter(Boolean)
 
   return { role: 'user', content: lines.join('\n') }

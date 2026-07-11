@@ -48,6 +48,8 @@ export function planConversationStrategy({
   intelligenceState = {},
   policy = {},
   latestMessage = '',
+  isOpeningTurn = false,
+  priceInsistenceCount = 0,
   followUpMode = false,
   toolFailures = []
 } = {}) {
@@ -91,6 +93,19 @@ export function planConversationStrategy({
   if (state.qualification.status === 'disqualified' || signals.disqualification >= 0.85) {
     return plan('disqualify', 'El contacto no cumple los criterios configurados o pidió finalizar.', {
       candidates: ['disqualify', 'close_respectfully', 'handoff']
+    })
+  }
+
+  const criterioPriceOpening = isOpeningTurn &&
+    PRICE_PATTERN.test(latest) &&
+    policy?.communication?.openingStrategy === 'criterio_pull' &&
+    Number(priceInsistenceCount) < 3
+
+  if (criterioPriceOpening) {
+    return plan('ask_clarifying_question', 'La persona abrió preguntando precio y la estrategia configurada exige ubicar primero qué necesita, sin revelar importes ni desplegar el catálogo.', {
+      tool: 'none',
+      primaryQuestion: '¿Qué está buscando resolver?',
+      candidates: ['ask_clarifying_question', 'explore_need']
     })
   }
 

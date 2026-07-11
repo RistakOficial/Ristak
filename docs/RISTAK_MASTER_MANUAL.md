@@ -2699,12 +2699,21 @@ generador recibe la politica, conocimiento relevante, assessment y estrategia,
 pero no puede convertir una intencion del modelo en un efecto real.
 
 La prueba del wizard/editor usa el mismo compilador, assessment, planner,
-generador, tools en `dryRun` y guardianes del runtime. Devuelve tambien el estado
+generador, tools en `dryRun`, politica previa al modelo y guardianes del runtime. Devuelve tambien el estado
 interno (etapa, temperatura y siguiente movimiento) para mostrarlo solo al
 usuario que configura el agente. `responseDelayMs` es cero en preview; el chat
 publicado conserva su espera. Si entran mensajes durante esa espera o entre
 globos, el runtime recarga contexto, detiene partes obsoletas y vuelve a ejecutar
 el turno mas reciente.
+
+Antes de ejecutar el modelo, `turnPolicy` resuelve los contratos que no admiten
+interpretacion probabilistica. Una peticion explicita de hablar con una persona
+fuerza `send_to_human`; si `pastClientsToHuman` esta activo, tambien lo hacen la
+evidencia CRM o una declaracion inequivoca en primera persona de que ya es
+cliente. El modelo no alcanza a ejecutar agenda, pago ni cierre en esos turnos.
+Las negaciones, preguntas generales y frases sobre terceros no activan ese pase.
+Las heuristicas amplias de readiness o frases redactadas por el propio agente
+siguen sin poder forzar un estado terminal.
 
 ### Herramientas y verdad operativa
 
@@ -2765,17 +2774,21 @@ la base de datos, nunca un booleano escrito por el modelo.
 
 Manejo de precio. El guion de fabrica ("Agente conversacional de cierre, version
 con criterio", `backend/src/agents/conversational/strategies/agenteCierreCriterio.md`)
-abre las preguntas de precio construyendo valor primero (pull), pero con una
-escalera dura anti-toreo contada por mensaje entrante
+abre las preguntas de precio construyendo valor primero (pull). Esa apertura no
+depende solo del prompt: el compilador marca `communication.openingStrategy`, el
+planner evita sugerir `list_products` en el primer turno y el guard compartido
+de preview/runtime elimina importes, menus o pitch si el borrador rompe la
+apertura. El modo Anfitrion y las estrategias custom conservan apertura directa.
+La regla convive con una escalera dura anti-toreo contada por mensaje entrante
 (`countPriceInsistence`): a la 2a peticion el prompt prohibe un tercer rebote y a
 la 3a (`PRICE_INSISTENCE_HARD_THRESHOLD`) se inyecta la REGLA DURA de soltar el
 precio real de inmediato, y los guardianes de precio (complianceGuard y el
-rewrite del runtime) dejan pasar el dato aunque exista una condicion literal del
-negocio. El bloqueo condicionado sigue existiendo solo cuando el negocio escribio
+guard de apertura/runtime) dejan pasar el dato aunque exista una condicion literal del
+negocio. `complianceGuard` conserva el bloqueo condicionado solo cuando el negocio escribio
 la condicion en sus reglas y aplica hasta la 2a peticion. El nivel de iniciativa
-no crea por si solo un bloqueo de precio. Tampoco se fuerza un handoff por regex
-de texto ni se transforma un silencio transitorio en una transferencia
-permanente: las tools y el estado real mandan.
+no crea por si solo un bloqueo de precio. Tampoco se transforma un silencio
+transitorio en una transferencia permanente: las tools y los contratos
+inequivocos de `turnPolicy` mandan.
 
 Bases de estrategia: la base adaptable de fabrica es el guion con criterio
 (pull, estatus con calidez, textura humana de chat, cierre etico, giros
@@ -2806,8 +2819,11 @@ send_to_human en el primer turno con resumen; (2) senales conversacionales (la
 persona dice ser cliente, menciona su ultima visita/pedido) — aplica aunque
 escriba desde un numero o canal nuevo; ante ambiguedad, una pregunta ligera de
 confirmacion y al confirmar, traspaso. El traspaso usa la via normal de
-send_to_human (estado `human` + push prioritaria); no hay handoff forzado por
-regex del runtime.
+`send_to_human` (estado `human` + push prioritaria). Las senales inequivocas se
+resuelven en `turnPolicy` antes del modelo para impedir que una respuesta
+equivocada reagende, cobre o marque la meta. No se usan coincidencias amplias:
+debe existir evidencia CRM, declaracion afirmativa en primera persona o peticion
+explicita de humano.
 
 ### Aprendizaje, metricas y seguridad
 
