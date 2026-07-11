@@ -157,9 +157,35 @@ test('las automatizaciones leen su audio administrado antes de entregarlo a cada
   }
 })
 
-test('una nota de voz propia fuerza Media ID y nunca reexpone su URL CDN al proveedor', () => {
+test('una nota de voz propia usa la URL pública ya normalizada que sí entrega Meta', () => {
   const dataUrl = `data:audio/ogg;base64,${Buffer.from('OggS-test-OpusHead-audio').toString('base64')}`
-  const delivery = resolveAutomationAudioDelivery({ dataUrl, externalUrl: '' })
+  const publicUrl = 'https://cdn.example.test/automations/nota-validada.ogg'
+  const delivery = resolveAutomationAudioDelivery({
+    dataUrl,
+    externalUrl: '',
+    publicUrl,
+    publicUrlVerified: true
+  })
+
+  assert.equal(delivery.audioDataUrl, undefined)
+  assert.equal(delivery.audioUrl, publicUrl)
+})
+
+test('una URL propia no verificada conserva los bytes para convertirlos antes del envío', () => {
+  const dataUrl = `data:audio/mpeg;base64,${Buffer.from('mp3-sin-normalizar').toString('base64')}`
+  const delivery = resolveAutomationAudioDelivery({
+    dataUrl,
+    publicUrl: 'https://cdn.example.test/automations/audio-original.mp3',
+    publicUrlVerified: false
+  })
+
+  assert.equal(delivery.audioDataUrl, dataUrl)
+  assert.equal(delivery.audioUrl, undefined)
+})
+
+test('una nota de voz legacy sin URL se publica desde sus bytes antes de enviarse', () => {
+  const dataUrl = `data:audio/ogg;base64,${Buffer.from('legacy-audio').toString('base64')}`
+  const delivery = resolveAutomationAudioDelivery({ dataUrl })
 
   assert.equal(delivery.audioDataUrl, dataUrl)
   assert.equal(delivery.audioUrl, undefined)

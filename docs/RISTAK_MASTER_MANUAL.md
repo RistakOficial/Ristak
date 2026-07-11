@@ -736,18 +736,23 @@ ambas vistas. Es un control propio basado en los tokens activos de Ristak, por l
 que conserva el modo oscuro y no depende de los controles blancos del navegador.
 Las notas de voz de Automatizaciones pasan por la misma preparación del chat
 directo: WhatsApp API recibe un OGG real con códec Opus y la marca de voz; el
-transporte QR/Baileys verifica los bytes `OggS` + `OpusHead` y usa además
-`ptt=true`; no confía únicamente en el MIME declarado. Messenger e Instagram no exponen un
-flag equivalente de PTT, por lo que una nota de voz se entrega como adjunto de
-audio reproducible. Cuando el archivo proviene del almacenamiento de Ristak,
-WhatsApp API lo valida como OGG/Opus y lo sube al proveedor antes de mandarlo por
-Media ID: nunca delega de nuevo la descarga a una URL CDN, porque Meta/YCloud
-puede clasificar ese fetch como `application/octet-stream` aunque el asset sea
-válido. Ese upload se construye como multipart binario determinista, con boundary
-y `Content-Length` explícitos: el buffer OGG/Opus se entrega byte por byte sin
-depender de cómo un runtime serialice `FormData`. Los assets externos se conservan
-como enlaces HTTPS y entran a la misma
-normalización cuando se proporcionan como archivo.
+transporte QR/Baileys valida los límites y segmentos de las páginas OGG y los headers
+`OpusHead`/`OpusTags`, y usa además `ptt=true`; no confía únicamente en el MIME
+declarado ni en encontrar dos cadenas dentro del archivo. Messenger e Instagram
+no exponen un flag equivalente de PTT, por lo que una nota de voz se entrega como
+adjunto de audio reproducible. Tanto el chat de escritorio como el chat móvil
+envían la grabación por el canal activo de Instagram/Messenger, sin exigir un
+teléfono ni desviarla a WhatsApp. Cuando el archivo proviene del almacenamiento de Ristak,
+WhatsApp API lo entrega mediante su URL pública HTTPS ya normalizada y marca
+`voice=true`. Esta es también la ruta del chat nativo que ha confirmado entrega
+real. Las notas de voz no se vuelven a subir por Media ID de YCloud: ese proxy
+puede aceptar el upload y después hacer que Meta rechace el medio con `131053` al
+reclasificarlo como `application/octet-stream`. Si web, móvil o un flujo legacy
+entregan un `dataUrl`, el backend primero convierte/publica un OGG/Opus y después
+manda ese enlace. Antes de reutilizar la URL de un asset de Automatizaciones,
+el runtime valida que sus bytes sí sean OGG/Opus; un MP3/M4A legacy se convierte
+y publica de nuevo. Meta Direct usa el mismo `audio.link` con `voice=true` a
+través de Graph API. Los assets externos se conservan como enlaces HTTPS.
 Las URLs públicas existen exclusivamente para que los proveedores puedan descargar
 el contenido; el endpoint/proxy mantiene MIME, `nosniff` y fuerza la descarga de
 tipos no seguros.
@@ -1032,7 +1037,9 @@ del proveedor, Ristak debe guardar una copia de preview/reproduccion en
 `mediaStorageService` y persistir su `media_url` en `whatsapp_api_messages`.
 WhatsApp no debe recibir ese link si el proveedor acepta media ID, pero el
 historial interno si lo necesita para pintar la burbuja del chat en vez de
-mostrar solo el nombre del archivo o un audio roto.
+mostrar solo el nombre del archivo o un audio roto. Las notas de voz son la
+excepcion deliberada: conservan un OGG/Opus público para entrega por enlace y
+otra variante reproducible para el historial.
 Cuando una foto se envia directamente por WhatsApp QR/Baileys desde un archivo
 local o `dataUrl`, el envio puede usar el buffer privado de Baileys, pero el
 historial interno debe guardar una copia publica de preview en
@@ -1078,7 +1085,12 @@ etiqueta `QR`; la razon tecnica de ruteo/fallback no debe pintarse como nota
 debajo del mensaje cuando el envio QR fue exitoso. Si Baileys captura despues el
 eco saliente de un mensaje que coincide con un registro API fallido, ese
 registro debe repararse como enviado por `qr`, limpiando `error_code` y
-`error_message`. Si despues llega un
+`error_message`. El fallo asíncrono de media `131053` en una nota de voz también
+debe usar este respaldo cuando el envío permitió QR: el webhook suele traer solo
+`audio.id`, así que el backend recupera de la fila original la URL de entrega o
+preview y reintenta una sola vez con `ptt=true`. Ante webhooks duplicados o
+concurrentes, un claim atómico en la fila del mensaje permite que sólo un proceso
+ejecute el respaldo QR. Si despues llega un
 webhook tardio de WhatsApp API con estado `failed` para un mensaje que ya quedo
 resuelto por QR, el historial debe conservar el transporte `qr` y mantener
 limpios esos campos de error. Solo se guarda error visible cuando no existe

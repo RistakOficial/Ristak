@@ -244,13 +244,6 @@ function normalizeVoiceNoteMimeType(mimeType = '') {
   return cleanMimeType
 }
 
-function isOggOpusVoiceNoteBuffer(buffer) {
-  return Buffer.isBuffer(buffer) &&
-    buffer.length > 12 &&
-    buffer.subarray(0, 4).toString('latin1') === 'OggS' &&
-    buffer.includes(Buffer.from('OpusHead', 'ascii'))
-}
-
 function getAudioDurationSeconds(durationMs) {
   const value = Number(durationMs || 0)
   if (!Number.isFinite(value) || value <= 0) return 0
@@ -3435,8 +3428,8 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
   // como audio/ogg—, transcodifícalo con la MISMA tubería del canal API antes
   // de mandarlo como PTT. Mandar AAC, MP3 u OGG sin Opus con ptt:true rompe la
   // reproducción en el receptor (aparece como archivo o "audio no disponible").
-  if (Buffer.isBuffer(media.content) && !isOggOpusVoiceNoteBuffer(media.content)) {
-    const { convertAudioToOggOpus } = await loadWhatsAppApiService()
+  const { convertAudioToOggOpus, isValidWhatsAppVoiceNoteBuffer } = await loadWhatsAppApiService()
+  if (Buffer.isBuffer(media.content) && !isValidWhatsAppVoiceNoteBuffer(media.content)) {
     media.content = await convertAudioToOggOpus({
       buffer: media.content,
       extension: qrAudioInputExtension(media.mimeType)

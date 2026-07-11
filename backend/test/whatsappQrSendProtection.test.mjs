@@ -23,6 +23,7 @@ import {
 const BUSINESS_PHONE = '+526561234567'
 const CONNECTED_JID = '526561234567@s.whatsapp.net'
 const CONTACT_PHONE = '+526569998888'
+const VALID_OGG_OPUS_DATA_URL = 'data:audio/ogg;codecs=opus;base64,T2dnUwACAAAAAAAAAAC3bz5UAAAAAF9EXgkBE09wdXNIZWFkAQE4AYC7AAAAAABPZ2dTAAAAAAAAAAAAALdvPlQBAAAAGaef4gE+T3B1c1RhZ3MNAAAATGF2ZjYyLjEyLjEwMgEAAAAdAAAAZW5jb2Rlcj1MYXZjNjIuMjguMTAyIGxpYm9wdXNPZ2dTAAS4JgAAAAAAALdvPlQCAAAAC0SjeAtFNjQxMjcwMzUqF3iCAbdsfkDmAAAGS7TjumYR3p00RmwBHPB+I1m2zIXrmd7aBIGjduC2A1wWfuKopx7fzlrQS4bGLc+BnYqkIkXcxwldWXijP/esmIUDXCYJlv9nCL7fgGPAvjeM8OkgudL/caOCG6HJnKqN6vBOROgBGTLI+axxcdqjR3iboxJRRQCs0ky14jfRZlm92WkiUNr3DzWw4+Wx98jdsGxYSXK89+hYLRz8wpvjzDHFfgN4m6MSVs4iKkTY4B+i5MZKX7oD0oqS8sDjgb3P1kzpjChOdn4p8hKrIOo5iNWlBQ2HeJujX3Wc/EkNeFc8EJ8EQgTM6vBjyEl0VL8/GXoXtJgxBWlaTy5ZsndLX2+12lIG4vp4m6MXUV8mKyhiES+Om70HKUgcHjLILmQd5M+0sQ+XSDU8UWqsEkjj64ueAeySOq+RhfBzeZureJujX3Wc/EXtr4kI5+fJxq6G+cwFCZR6q7Kutp0WvvmBv231nX0Hb9Se/0S+7VGjeJujElFFANDLwZ1z7toAlP1FFw5GylCcHpCS4YWDdWoTkDdThgxrmgWllJqky5ujivwGeJujElbOIipFGIWoi9E7IdHXTfF6kHlqfNIV5rk86Mc/0dbzcR6fM4Wq/NQLtMYQ/eGxFdZImysfdZz8STOyk08i9Ec9uRIoArhlUWBwvWCPq76xEWvHCYXWbyTIJ0BIBbul8BHm3h2TRdVKljNtaNImd5UVgA=='
 
 function normalizeDigits(value = '') {
   return String(value || '').replace(/\D/g, '')
@@ -245,7 +246,7 @@ test('WhatsApp QR aplica pausas automáticas a todos los tipos de mensaje QR', a
       await sendWhatsAppQrAudioMessage({
         phoneNumberId,
         to: CONTACT_PHONE,
-        audioDataUrl: 'data:audio/ogg;codecs=opus;base64,T2dnUy1mYWtlLU9wdXNIZWFkLWF1ZGlv',
+        audioDataUrl: VALID_OGG_OPUS_DATA_URL,
         durationMs: 1000
       })
       await sendWhatsAppQrDocumentMessage({

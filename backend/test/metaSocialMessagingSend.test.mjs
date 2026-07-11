@@ -2016,8 +2016,7 @@ test('sendMetaSocialAudioMessage manda audio Instagram con Page token derivado y
               attachment: {
                 type: 'audio',
                 payload: {
-                  url: result.audio.url,
-                  is_reusable: false
+                  url: result.audio.url
                 }
               }
             }

@@ -1,11 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { createServer } from 'node:http'
+import { execFile as execFileCallback } from 'node:child_process'
 import fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import nodeFetch from 'node-fetch'
+import { promisify } from 'node:util'
+import ffmpegPath from 'ffmpeg-static'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
@@ -15,6 +16,7 @@ import {
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiLocationMessage,
   sendWhatsAppApiVideoMessage,
+  setMetaDirectFetchForTest,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 import {
@@ -27,6 +29,8 @@ const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA
 const PDF_DATA_URL = 'data:application/pdf;base64,JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlIC9QYWdlcyAvQ291bnQgMD4+CmVuZG9iago='
 const MP4_AUDIO_DATA_URL = `data:audio/mp4;base64,${Buffer.from('mp4-provider-audio-test').toString('base64')}`
 const WEBM_VIDEO_DATA_URL = `data:video/webm;base64,${Buffer.from('webm-provider-media-test').toString('base64')}`
+const VALID_OGG_OPUS_BASE64 = 'T2dnUwACAAAAAAAAAAC3bz5UAAAAAF9EXgkBE09wdXNIZWFkAQE4AYC7AAAAAABPZ2dTAAAAAAAAAAAAALdvPlQBAAAAGaef4gE+T3B1c1RhZ3MNAAAATGF2ZjYyLjEyLjEwMgEAAAAdAAAAZW5jb2Rlcj1MYXZjNjIuMjguMTAyIGxpYm9wdXNPZ2dTAAS4JgAAAAAAALdvPlQCAAAAC0SjeAtFNjQxMjcwMzUqF3iCAbdsfkDmAAAGS7TjumYR3p00RmwBHPB+I1m2zIXrmd7aBIGjduC2A1wWfuKopx7fzlrQS4bGLc+BnYqkIkXcxwldWXijP/esmIUDXCYJlv9nCL7fgGPAvjeM8OkgudL/caOCG6HJnKqN6vBOROgBGTLI+axxcdqjR3iboxJRRQCs0ky14jfRZlm92WkiUNr3DzWw4+Wx98jdsGxYSXK89+hYLRz8wpvjzDHFfgN4m6MSVs4iKkTY4B+i5MZKX7oD0oqS8sDjgb3P1kzpjChOdn4p8hKrIOo5iNWlBQ2HeJujX3Wc/EkNeFc8EJ8EQgTM6vBjyEl0VL8/GXoXtJgxBWlaTy5ZsndLX2+12lIG4vp4m6MXUV8mKyhiES+Om70HKUgcHjLILmQd5M+0sQ+XSDU8UWqsEkjj64ueAeySOq+RhfBzeZureJujX3Wc/EXtr4kI5+fJxq6G+cwFCZR6q7Kutp0WvvmBv231nX0Hb9Se/0S+7VGjeJujElFFANDLwZ1z7toAlP1FFw5GylCcHpCS4YWDdWoTkDdThgxrmgWllJqky5ujivwGeJujElbOIipFGIWoi9E7IdHXTfF6kHlqfNIV5rk86Mc/0dbzcR6fM4Wq/NQLtMYQ/eGxFdZImysfdZz8STOyk08i9Ec9uRIoArhlUWBwvWCPq76xEWvHCYXWbyTIJ0BIBbul8BHm3h2TRdVKljNtaNImd5UVgA=='
+const execFile = promisify(execFileCallback)
 const MEDIA_STORAGE_ENV_KEYS = [
   'MEDIA_STORAGE_PROVIDER',
   'MEDIA_STORAGE_REQUIRE_BUNNY',
@@ -63,7 +67,7 @@ async function withFakeFfmpeg(callback) {
     "import fs from 'node:fs';",
     'const outputPath = process.argv[process.argv.length - 1];',
     "const isOgg = outputPath.endsWith('.ogg');",
-    "fs.writeFileSync(outputPath, isOgg ? Buffer.from('OggS-fake-OpusHead-audio') : Buffer.from('converted-video-for-whatsapp'));",
+    `fs.writeFileSync(outputPath, isOgg ? Buffer.from('${VALID_OGG_OPUS_BASE64}', 'base64') : Buffer.from('converted-video-for-whatsapp'));`,
     ''
   ].join('\n'))
   await fs.chmod(scriptPath, 0o755)
@@ -76,6 +80,40 @@ async function withFakeFfmpeg(callback) {
     else process.env.FFMPEG_PATH = previousPath
     await fs.rm(folder, { recursive: true, force: true })
   }
+}
+
+async function withRealMp3(callback) {
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-real-audio-'))
+  const inputPath = join(folder, 'input.mp3')
+  try {
+    await execFile(ffmpegPath, [
+      '-v', 'error',
+      '-f', 'lavfi',
+      '-i', 'sine=frequency=440:duration=1',
+      '-ac', '1',
+      '-ar', '44100',
+      '-c:a', 'libmp3lame',
+      '-b:a', '64k',
+      inputPath
+    ])
+    const input = await fs.readFile(inputPath)
+    return await callback(`data:audio/mpeg;base64,${input.toString('base64')}`)
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true })
+  }
+}
+
+async function readAndDecodeStoredOgg(mediaAssetId) {
+  const asset = await db.get('SELECT metadata_json FROM media_assets WHERE id = ?', [mediaAssetId])
+  assert.ok(asset)
+  const metadata = JSON.parse(asset.metadata_json || '{}')
+  assert.ok(metadata.localPath)
+  const bytes = await fs.readFile(metadata.localPath)
+  assert.equal(bytes.subarray(0, 4).toString('latin1'), 'OggS')
+  assert.ok(bytes.includes(Buffer.from('OpusHead', 'ascii')))
+  assert.ok(bytes.includes(Buffer.from('OpusTags', 'ascii')))
+  await execFile(ffmpegPath, ['-v', 'error', '-xerror', '-i', metadata.localPath, '-f', 'null', '-'])
+  return bytes
 }
 
 function snapshotMediaStorageEnv() {
@@ -368,6 +406,54 @@ async function withYCloudProviderMediaCapture(callback) {
   })
 }
 
+async function withMetaDirectAudioCapture(callback) {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const businessPhone = '+526561234567'
+  const phoneNumberId = 'phone_meta_direct_audio_test'
+  const configKeys = [
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken,
+    keys.metaLastError
+  ]
+  const captures = []
+
+  return snapshotAppConfig(configKeys, async () => {
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, 'waba_meta_direct_audio_test')
+    await setAppConfig(keys.metaPhoneNumberId, phoneNumberId)
+    await setAppConfig(keys.metaDisplayPhoneNumber, businessPhone)
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_audio_test_token'))
+    await setAppConfig(keys.metaLastError, '')
+
+    setMetaDirectFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const method = String(options.method || 'GET').toUpperCase()
+      if (parsed.pathname.endsWith(`/${phoneNumberId}/messages`) && method === 'POST') {
+        const body = JSON.parse(options.body || '{}')
+        captures.push(body)
+        return ycloudJsonResponse({
+          messaging_product: 'whatsapp',
+          contacts: [{ input: body.to, wa_id: normalizeDigits(body.to) }],
+          messages: [{ id: `wamid.meta_audio_${captures.length}` }]
+        })
+      }
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      return await callback({ captures, businessPhone, phoneNumberId })
+    } finally {
+      setMetaDirectFetchForTest(null)
+    }
+  })
+}
+
 test('envío QR de imagen con dataUrl conserva preview interno en historial', async () => {
   const previousMediaStorageEnv = snapshotMediaStorageEnv()
   const sentMessages = []
@@ -636,42 +722,45 @@ test('envío API de documento conserva metadata del archivo sin guardar URL prop
   })
 })
 
-test('envío API de audio sube nota de voz al proveedor y conserva preview interno reproducible', async () => {
-  await withFakeFfmpeg(async () => {
+test('envío API convierte un MP3 real, publica OGG/Opus decodificable y lo manda por enlace', async () => {
+  await withRealMp3(async (audioDataUrl) => {
     await withYCloudProviderMediaCapture(async (captures) => {
       const suffix = randomUUID()
       const to = `+52158${Date.now().toString().slice(-8)}`
       const externalId = `provider-audio-${suffix}`
       let previewMediaAssetId = ''
+      let deliveryMediaAssetId = ''
 
       try {
         await captures.openReplyWindow(to)
 
         const response = await sendWhatsAppApiAudioMessage({
           to,
-          audioDataUrl: MP4_AUDIO_DATA_URL,
+          audioDataUrl,
           externalId,
+          publicBaseUrl: 'https://ristak.test',
           allowQrFallback: false,
-          durationMs: 1200
+          durationMs: 1000
         })
 
-        assert.equal(captures.uploads.length, 1)
-        assert.equal(captures.uploads[0].filename, 'whatsapp-audio.ogg')
-        assert.equal(captures.uploads[0].mimeType, 'audio/ogg; codecs=opus')
-        assert.ok(captures.uploads[0].size > 0)
-        assert.equal(captures.uploads[0].bytes.subarray(0, 4).toString('latin1'), 'OggS')
-        assert.ok(captures.uploads[0].bytes.includes(Buffer.from('OpusHead', 'ascii')))
-
+        assert.equal(captures.uploads.length, 0)
         assert.equal(captures.messages.length, 1)
         assert.equal(captures.messages[0].type, 'audio')
-        assert.equal(captures.messages[0].audio.id, 'provider_media_1')
-        assert.equal(captures.messages[0].audio.link, undefined)
+        assert.equal(captures.messages[0].audio.id, undefined)
+        assert.match(captures.messages[0].audio.link, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
         assert.equal(captures.messages[0].audio.voice, true)
-        assert.equal(response.audio.providerMediaId, 'provider_media_1')
-        assert.equal(response.audio.providerMimeType, 'audio/ogg; codecs=opus')
-        assert.equal(response.audio.mimeType, 'audio/mp4')
-        assert.match(response.audio.link, /^\/media\/assets\/.+\/file$/)
-        assert.equal(response.audio.durationMs, 1200)
+
+        deliveryMediaAssetId = response.audio.deliveryMediaAssetId
+        previewMediaAssetId = response.audio.previewMediaAssetId
+        assert.match(deliveryMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
+        assert.match(previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
+        assert.equal(response.audio.deliveryUrl, captures.messages[0].audio.link)
+        assert.equal(response.audio.deliveryMimeType, 'audio/ogg; codecs=opus')
+        assert.equal(response.audio.mimeType, 'audio/mpeg')
+        assert.equal(response.audio.durationMs, 1000)
+
+        const storedBytes = await readAndDecodeStoredOgg(deliveryMediaAssetId)
+        assert.ok(storedBytes.length > 100)
 
         const row = await db.get(
           `SELECT media_url, media_mime_type, media_filename, media_duration_ms, raw_payload_json
@@ -681,25 +770,19 @@ test('envío API de audio sube nota de voz al proveedor y conserva preview inter
         )
         assert.ok(row)
         assert.match(row.media_url, /^\/media\/assets\/.+\/file$/)
-        assert.equal(row.media_mime_type, 'audio/mp4')
-        assert.match(row.media_filename, /\.m4a$/)
-        assert.equal(row.media_duration_ms, 1200)
+        assert.equal(row.media_mime_type, 'audio/mpeg')
+        assert.match(row.media_filename, /\.mp3$/)
+        assert.equal(row.media_duration_ms, 1000)
         const raw = JSON.parse(row.raw_payload_json)
-        assert.equal(raw.audio.id, 'provider_media_1')
-        assert.equal(raw.audio.providerMediaId, 'provider_media_1')
-        assert.equal(raw.audio.providerMimeType, 'audio/ogg; codecs=opus')
-        assert.equal(raw.audio.storage, 'provider')
-        assert.equal(raw.audio.storageProvider, 'ycloud')
-        assert.equal(raw.audio.link, row.media_url)
-        assert.equal(raw.audio.publicUrl, row.media_url)
-        assert.match(raw.audio.previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
-        assert.equal(raw.audio.metadata.originalMimeType, 'audio/mp4')
-        assert.equal(raw.audio.metadata.originalUploadMimeType, undefined)
-        previewMediaAssetId = raw.audio.previewMediaAssetId
+        assert.equal(raw.audio.id, undefined)
+        assert.equal(raw.audio.deliveryUrl, captures.messages[0].audio.link)
+        assert.equal(raw.audio.asyncQrFallbackAllowed, false)
+        assert.equal(raw.audio.deliveryMediaAssetId, deliveryMediaAssetId)
+        assert.equal(raw.audio.previewMediaAssetId, previewMediaAssetId)
       } finally {
         await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
-        if (previewMediaAssetId) {
-          await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
+        for (const mediaAssetId of [previewMediaAssetId, deliveryMediaAssetId]) {
+          if (mediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
         }
         await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
         await db.run('DELETE FROM contacts WHERE phone = ?', [to])
@@ -708,83 +791,86 @@ test('envío API de audio sube nota de voz al proveedor y conserva preview inter
   })
 })
 
-test('el upload de nota de voz llega a YCloud como multipart binario OGG/Opus', async () => {
-  await withFakeFfmpeg(async () => {
-    await withYCloudProviderMediaCapture(async (captures) => {
-      const requests = []
-      let to = ''
-      let previewMediaAssetId = ''
-      const server = createServer(async (request, response) => {
-        const chunks = []
-        for await (const chunk of request) chunks.push(Buffer.from(chunk))
-        const body = Buffer.concat(chunks)
-        requests.push({
-          method: request.method,
-          path: request.url,
-          headers: request.headers,
-          body
-        })
+test('Meta Direct envía la nota de voz por Graph API con audio.link y voice', async () => {
+  await withMetaDirectAudioCapture(async ({ captures, businessPhone, phoneNumberId }) => {
+    const suffix = randomUUID()
+    const to = `+52159${Date.now().toString().slice(-8)}`
+    const contactId = `meta_audio_contact_${suffix}`
+    const inboundId = `meta_audio_inbound_${suffix}`
+    const audioUrl = 'https://cdn.example.test/chat/nota-validada.ogg'
 
-        if (/\/whatsapp\/media\/.+\/upload$/.test(request.url || '')) {
-          response.writeHead(200, { 'content-type': 'application/json' })
-          response.end(JSON.stringify({ id: 'provider_media_multipart' }))
-          return
-        }
+    try {
+      await db.run(`
+        INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+        VALUES (?, ?, 'Cliente Meta Audio', 'Cliente', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [contactId, to])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, meta_message_id, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'meta_direct', ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text',
+          'Ventana abierta', 'received', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [inboundId, inboundId, contactId, to, to, businessPhone, businessPhone, phoneNumberId])
 
-        const outbound = JSON.parse(body.toString('utf8') || '{}')
-        response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({
-          id: 'ycloud_provider_message_multipart',
-          from: outbound.from,
-          to: outbound.to,
-          type: outbound.type,
-          status: 'sent',
-          audio: outbound.audio
-        }))
+      const response = await sendWhatsAppApiAudioMessage({
+        to,
+        from: businessPhone,
+        contactId,
+        phoneNumberId,
+        audioUrl,
+        voice: true,
+        externalId: `meta-audio-${suffix}`,
+        allowQrFallback: false
       })
 
-      await new Promise((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-      const { port } = server.address()
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].messaging_product, 'whatsapp')
+      assert.equal(captures[0].type, 'audio')
+      assert.deepEqual(captures[0].audio, { link: audioUrl, voice: true })
+      assert.equal(response.provider, 'meta_direct')
+      assert.equal(response.wamid, 'wamid.meta_audio_1')
 
-      try {
-        // Pasamos el body que construye el servicio a node-fetch real. Si se
-        // vuelve a usar el FormData global, node-fetch lo convierte en el texto
-        // "[object FormData]" y esta prueba falla antes de tocar YCloud.
-        setYCloudFetchForTest((url, options = {}) => {
-          const upstream = new URL(String(url))
-          return nodeFetch(`http://127.0.0.1:${port}${upstream.pathname}`, options)
-        })
+      const row = await db.get(`
+        SELECT provider, message_type, status, raw_payload_json
+        FROM whatsapp_api_messages
+        WHERE wamid = ?
+      `, ['wamid.meta_audio_1'])
+      assert.equal(row.provider, 'meta_direct')
+      assert.equal(row.message_type, 'audio')
+      assert.equal(row.status, 'sent')
+      const raw = JSON.parse(row.raw_payload_json)
+      assert.equal(raw.audio.deliveryUrl, audioUrl)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE id = ? OR wamid = ? OR phone = ? OR to_phone = ?', [inboundId, 'wamid.meta_audio_1', to, to]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, to]).catch(() => undefined)
+    }
+  })
+})
 
-        to = `+52158${Date.now().toString().slice(-8)}`
-        await captures.openReplyWindow(to)
-        const sent = await sendWhatsAppApiAudioMessage({
+test('un OGG falso con firmas de texto no pasa como nota de voz válida', async () => {
+  await withYCloudProviderMediaCapture(async (captures) => {
+    const to = `+52157${Date.now().toString().slice(-8)}`
+    try {
+      await captures.openReplyWindow(to)
+      await assert.rejects(
+        sendWhatsAppApiAudioMessage({
           to,
-          audioDataUrl: MP4_AUDIO_DATA_URL,
-          externalId: `provider-audio-multipart-${randomUUID()}`,
-          allowQrFallback: false,
-          durationMs: 1200
-        })
-        previewMediaAssetId = sent.audio?.previewMediaAssetId || ''
-
-        const upload = requests.find((request) => /\/whatsapp\/media\/.+\/upload$/.test(request.path || ''))
-        assert.ok(upload)
-        assert.match(String(upload.headers['content-type'] || ''), /^multipart\/form-data;\s*boundary=/i)
-        assert.equal(Number(upload.headers['content-length']), upload.body.length)
-        assert.ok(upload.body.includes(Buffer.from('Content-Disposition: form-data; name="file"; filename="whatsapp-audio.ogg"', 'utf8')))
-        assert.ok(upload.body.includes(Buffer.from('Content-Type: audio/ogg; codecs=opus', 'utf8')))
-        assert.ok(upload.body.includes(Buffer.from('OggS-fake-OpusHead-audio', 'utf8')))
-      } finally {
-        setYCloudFetchForTest(null)
-        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-        await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_multipart', to, to]).catch(() => undefined)
-        if (previewMediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
-        await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)
-        await db.run('DELETE FROM contacts WHERE phone = ?', [to]).catch(() => undefined)
-      }
-    })
+          audioDataUrl: `data:audio/ogg;base64,${Buffer.from('OggS-fake-OpusHead-audio').toString('base64')}`,
+          externalId: `invalid-ogg-${randomUUID()}`,
+          publicBaseUrl: 'https://ristak.test',
+          allowQrFallback: false
+        }),
+        /No se pudo preparar el audio|formato de nota de voz/i
+      )
+      assert.equal(captures.uploads.length, 0)
+      assert.equal(captures.messages.length, 0)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE to_phone = ? OR phone = ?', [to, to]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to]).catch(() => undefined)
+    }
   })
 })
 

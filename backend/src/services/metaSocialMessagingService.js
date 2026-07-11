@@ -1949,8 +1949,7 @@ async function sendMetaInstagramAttachmentRequest({ businessId, recipientId, att
         attachment: {
           type: attachmentType,
           payload: {
-            url: attachmentUrl,
-            is_reusable: false
+            url: attachmentUrl
           }
         },
         ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})

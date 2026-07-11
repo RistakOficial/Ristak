@@ -821,6 +821,11 @@ function getDraftAttachmentMessageType(attachment: DesktopDraftAttachment): Chat
   return 'document'
 }
 
+function getNativeMetaAudioDurationMs(audio: DesktopDraftAttachment | VoiceDraftAttachment | null | undefined) {
+  if (!audio || !('durationMs' in audio)) return undefined
+  return Number(audio.durationMs || 0) || undefined
+}
+
 function getDraftAttachmentLabel(attachment: DesktopDraftAttachment) {
   if (attachment.deliveryMode === 'document') return 'Archivo'
   if (attachment.kind === 'image') return 'Foto'
@@ -3864,6 +3869,15 @@ export const DesktopChat: React.FC = () => {
   ))
   const canSendMessenger = metaMessengerConnected || highLevelConnected
   const canSendInstagram = metaInstagramConnected || highLevelConnected
+  const activeNativeMetaChannel: 'messenger' | 'instagram' | null = composerChannel === 'messenger' && metaMessengerConnected
+    ? 'messenger'
+    : composerChannel === 'instagram' && metaInstagramConnected
+      ? 'instagram'
+      : null
+  const socialVoiceChannelReady = Boolean(
+    activeNativeMetaChannel ||
+    ((composerChannel === 'messenger' || composerChannel === 'instagram') && highLevelConnected)
+  )
   const canSendSelectedCommentPlatform = selectedCommentComposerPlatform === 'instagram'
     ? Boolean(metaInstagramConnected && instagramCommentsEnabled)
     : selectedCommentComposerPlatform === 'messenger'
@@ -4855,14 +4869,21 @@ export const DesktopChat: React.FC = () => {
   const startVoiceRecording = useCallback(async () => {
     if (voiceRecording || voiceProcessing || voiceDraft) return
 
-    if (!activeContact?.phone) {
-      showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
-      return
-    }
+    if (composerChannel === 'messenger' || composerChannel === 'instagram') {
+      if (!socialVoiceChannelReady) {
+        showToast('warning', 'Conecta el canal para audio', 'Activa la conexión de este canal antes de mandar una nota de voz.')
+        return
+      }
+    } else {
+      if (!activeContact?.phone) {
+        showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar una nota de voz.')
+        return
+      }
 
-    if (!whatsappConnected) {
-      showToast('warning', 'Conecta WhatsApp para audio', 'Los mensajes de voz salen por WhatsApp API.')
-      return
+      if (!whatsappConnected && !selectedQrReady) {
+        showToast('warning', 'Conecta el canal para audio', 'Conecta WhatsApp API o QR antes de mandar una nota de voz.')
+        return
+      }
     }
 
     if (composerText.trim() || draftAttachments.length > 0) {
@@ -4923,7 +4944,7 @@ export const DesktopChat: React.FC = () => {
             return
           }
           if (blob.size > MAX_VOICE_MESSAGE_BYTES) {
-            showToast('error', 'Audio muy pesado', 'Graba un audio más corto para enviarlo por WhatsApp.')
+            showToast('error', 'Audio muy pesado', 'Graba un audio más corto para enviarlo.')
             setVoiceElapsedMs(0)
             setVoiceProcessing(false)
             return
@@ -4960,7 +4981,7 @@ export const DesktopChat: React.FC = () => {
       setVoiceProcessing(false)
       showToast('error', 'No se abrió el micrófono', error?.message || 'Revisa permisos del navegador.')
     }
-  }, [activeContact?.phone, clearVoiceTimer, composerText, draftAttachments.length, showToast, stopVoiceStream, voiceDraft, voiceProcessing, voiceRecording, whatsappConnected])
+  }, [activeContact?.phone, clearVoiceTimer, composerChannel, composerText, draftAttachments.length, selectedQrReady, showToast, socialVoiceChannelReady, stopVoiceStream, voiceDraft, voiceProcessing, voiceRecording, whatsappConnected])
 
   const stopVoiceRecording = useCallback(() => {
     const recorder = voiceRecorderRef.current
@@ -6501,12 +6522,35 @@ export const DesktopChat: React.FC = () => {
       composerChannel === 'instagram' ||
       (composerChannel === 'whatsapp' && !whatsappConnected && !selectedQrReady)
     )
-    const sendAttachmentsThroughNativeMeta = attachmentsToSend.length > 0 && (
-      (composerChannel === 'messenger' && metaMessengerConnected && !sendAttachmentsThroughHighLevel) ||
-      (composerChannel === 'instagram' && metaInstagramConnected && !sendAttachmentsThroughHighLevel)
+    const sendVoiceThroughNativeMeta = Boolean(voiceToSend && activeNativeMetaChannel)
+    const sendVoiceThroughHighLevel = Boolean(
+      voiceToSend &&
+      !activeNativeMetaChannel &&
+      highLevelConnected &&
+      (composerChannel === 'messenger' || composerChannel === 'instagram')
+    )
+    const sendAttachmentsThroughNativeMeta = attachmentsToSend.length > 0 && Boolean(activeNativeMetaChannel) && !sendAttachmentsThroughHighLevel
+    const nativeMetaAudioAttachment = sendAttachmentsThroughNativeMeta && attachmentsToSend.length === 1 && getDraftAttachmentMessageType(attachmentsToSend[0]) === 'audio'
+      ? attachmentsToSend[0]
+      : null
+    const nativeMetaAudio = sendVoiceThroughNativeMeta ? voiceToSend : nativeMetaAudioAttachment
+    const nativeMetaAudioPayloadCount = (sendVoiceThroughNativeMeta ? 1 : 0) + attachmentsToSend.filter((attachment) => getDraftAttachmentMessageType(attachment) === 'audio').length
+    const hasUnsupportedNativeMetaAttachment = sendAttachmentsThroughNativeMeta && (
+      attachmentsToSend.some((attachment) => getDraftAttachmentMessageType(attachment) !== 'audio') ||
+      nativeMetaAudioPayloadCount > 1
     )
 
-	    if (voiceToSend) {
+    if (hasUnsupportedNativeMetaAttachment) {
+      showToast('warning', 'Adjunto no disponible', 'Messenger e Instagram desde Meta nativo mandan texto o audio en este chat.')
+      return
+    }
+
+    if (nativeMetaAudio && text) {
+      showToast('warning', 'Audio sin texto', 'Messenger e Instagram desde Meta nativo no combinan texto y audio en el mismo envío.')
+      return
+    }
+
+	    if (voiceToSend && !sendVoiceThroughNativeMeta && !sendVoiceThroughHighLevel) {
       if (!activeContact.phone) {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
         return
@@ -6515,10 +6559,7 @@ export const DesktopChat: React.FC = () => {
         showToast('warning', 'Conecta WhatsApp para audio', 'Los mensajes de voz salen por WhatsApp API o QR.')
         return
       }
-    } else if (sendAttachmentsThroughNativeMeta) {
-      showToast('warning', 'Solo texto por ahora', 'Messenger e Instagram nativo todavía no mandan archivos desde este chat. Con HighLevel conectado sí salen como adjuntos.')
-      return
-    } else if (attachmentsToSend.length > 0 && !sendAttachmentsThroughHighLevel) {
+    } else if (attachmentsToSend.length > 0 && !sendAttachmentsThroughHighLevel && !sendAttachmentsThroughNativeMeta) {
       if (!activeContact.phone) {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar archivos por WhatsApp.')
         return
@@ -6547,6 +6588,16 @@ export const DesktopChat: React.FC = () => {
     const optimisticId = `desktop-chat-${Date.now()}`
     const sentAt = new Date().toISOString()
     const nativeSendStatus = nativeWhatsAppTransport === 'qr' ? 'enviando por QR' : 'enviando'
+    const voiceOptimisticTransport = sendVoiceThroughNativeMeta
+      ? activeNativeMetaChannel || activeConversationChannel
+      : sendVoiceThroughHighLevel
+        ? activeConversationChannel
+        : nativeWhatsAppTransport
+    const attachmentOptimisticTransport = sendAttachmentsThroughHighLevel
+      ? activeConversationChannel
+      : sendAttachmentsThroughNativeMeta
+        ? activeNativeMetaChannel || activeConversationChannel
+        : nativeWhatsAppTransport
     const optimisticMessages: DesktopChatMessage[] = voiceToSend
       ? [{
           id: `${optimisticId}-audio`,
@@ -6554,10 +6605,10 @@ export const DesktopChat: React.FC = () => {
           text: '',
           date: sentAt,
           direction: 'outbound',
-          status: sendAttachmentsThroughHighLevel ? 'enviando' : nativeSendStatus,
+          status: sendVoiceThroughNativeMeta || sendVoiceThroughHighLevel ? 'enviando' : nativeSendStatus,
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
-          transport: sendAttachmentsThroughHighLevel ? activeConversationChannel : nativeWhatsAppTransport,
+          transport: voiceOptimisticTransport,
           attachment: {
             type: 'audio',
             dataUrl: voiceToSend.dataUrl,
@@ -6573,10 +6624,10 @@ export const DesktopChat: React.FC = () => {
           text: index === 0 ? text : '',
           date: sentAt,
           direction: 'outbound',
-          status: sendAttachmentsThroughHighLevel ? 'enviando' : nativeSendStatus,
+          status: sendAttachmentsThroughHighLevel || sendAttachmentsThroughNativeMeta ? 'enviando' : nativeSendStatus,
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
-          transport: sendAttachmentsThroughHighLevel ? activeConversationChannel : nativeWhatsAppTransport,
+          transport: attachmentOptimisticTransport,
           attachment: {
             type: getDraftAttachmentMessageType(attachment),
             dataUrl: attachment.dataUrl,
@@ -6620,7 +6671,74 @@ export const DesktopChat: React.FC = () => {
     })
 
     try {
-      if (voiceToSend) {
+      if (nativeMetaAudio && activeNativeMetaChannel) {
+        const nativeMetaOptimisticId = voiceToSend ? `${optimisticId}-audio` : `${optimisticId}-attachment-0`
+        const nativeMetaAudioDurationMs = getNativeMetaAudioDurationMs(nativeMetaAudio)
+        const result = await whatsappApiService.sendMetaSocialAudio({
+          contactId: activeContact.id,
+          platform: activeNativeMetaChannel,
+          audioDataUrl: nativeMetaAudio.dataUrl,
+          durationMs: nativeMetaAudioDurationMs,
+          externalId: nativeMetaOptimisticId
+        })
+        const resultData = result.data || result
+        const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
+        const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
+        const responseAudioDurationMs = Number(result.audio?.durationMs || 0) || nativeMetaAudioDurationMs
+        const responseIds = getChatSendResponseIds(result)
+        setMessages((current) => current.map((message) => message.id === nativeMetaOptimisticId
+          ? {
+              ...message,
+              serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+              providerMessageId: responseIds.providerMessageId || message.providerMessageId,
+              status: resultData.status || 'sent',
+              transport: resultData.transport || activeNativeMetaChannel,
+              attachment: message.attachment?.type === 'audio'
+                ? {
+                    ...message.attachment,
+                    ...(responseAudioUrl ? { url: responseAudioUrl } : {}),
+                    ...(responseAudioMimeType ? { mimeType: responseAudioMimeType } : {}),
+                    ...(responseAudioDurationMs ? { durationMs: responseAudioDurationMs } : {})
+                  }
+                : message.attachment
+            }
+          : message
+        ))
+      } else if (voiceToSend && sendVoiceThroughHighLevel) {
+        const result = await highLevelService.sendConversationMessage({
+          contactId: activeContact.id,
+          channel: activeConversationChannel,
+          message: '',
+          audioDataUrl: voiceToSend.dataUrl,
+          durationMs: voiceToSend.durationMs,
+          fromNumber: selectedBusinessPhoneValue || undefined,
+          toNumber: activeContact.phone || undefined,
+          externalId: `${optimisticId}-audio`
+        })
+        const resultData = result.data || result
+        const responseAudioUrl = resultData.audio?.link || resultData.audio?.url || resultData.localMedia?.publicUrl || ''
+        const responseAudioMimeType = resultData.audio?.mimeType || resultData.localMedia?.mimeType || ''
+        const responseAudioDurationMs = Number(resultData.audio?.durationMs || 0) || voiceToSend.durationMs
+        const responseIds = getChatSendResponseIds(result)
+        setMessages((current) => current.map((message) => message.id === `${optimisticId}-audio`
+          ? {
+              ...message,
+              serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+              providerMessageId: responseIds.providerMessageId || message.providerMessageId,
+              status: resultData.status || 'pending',
+              transport: resultData.transport || activeConversationChannel,
+              attachment: message.attachment?.type === 'audio'
+                ? {
+                    ...message.attachment,
+                    ...(responseAudioUrl ? { url: responseAudioUrl } : {}),
+                    ...(responseAudioMimeType ? { mimeType: responseAudioMimeType } : {}),
+                    durationMs: responseAudioDurationMs
+                  }
+                : message.attachment
+            }
+          : message
+        ))
+      } else if (voiceToSend) {
         const result = await whatsappApiService.sendAudio({
           to: activeContact.phone || '',
           from: selectedBusinessPhoneValue,

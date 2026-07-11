@@ -1699,6 +1699,8 @@ async function removeObsoleteMetaCapiColumn() {
         access_token TEXT NOT NULL,
         app_id TEXT,
         app_secret TEXT,
+        messenger_user_token TEXT,
+        meta_business_id TEXT,
         token_expires_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1710,12 +1712,14 @@ async function removeObsoleteMetaCapiColumn() {
         instagram_account_id TEXT
       );
       INSERT INTO meta_config_capi_cleanup (
-        id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
+        id, ad_account_id, access_token, app_id, app_secret, messenger_user_token,
+        meta_business_id, token_expires_at,
         created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
         pixel_id, page_id, instagram_account_id
       )
       SELECT
-        id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
+        id, ad_account_id, access_token, app_id, app_secret, messenger_user_token,
+        meta_business_id, token_expires_at,
         created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
         pixel_id, page_id, instagram_account_id
       FROM meta_config;
@@ -4849,11 +4853,24 @@ async function initTables() {
         }
       }
 
+      await ensureTableColumns('meta_config', [
+        ['messenger_user_token', 'TEXT'],
+        ['meta_business_id', 'TEXT']
+      ])
+
       try {
         await removeObsoleteMetaCapiColumn()
       } catch (err) {
         logger.warn('Advertencia al eliminar columna obsoleta de Meta CAPI:', err.message)
       }
+
+      // Estas columnas también deben existir en instalaciones actualizadas, no
+      // sólo en bases creadas desde cero. Se agregan después de todas las
+      // reconstrucciones SQLite legacy de meta_config para que ninguna las tire.
+      await ensureTableColumns('meta_config', [
+        ['messenger_user_token', 'TEXT'],
+        ['meta_business_id', 'TEXT']
+      ])
 
       // Agregar columnas de creative a meta_ads para previsualizar anuncios
       const metaAdsCreativeColumns = [

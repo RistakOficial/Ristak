@@ -34,6 +34,7 @@ import {
 import { getChatContacts } from '../src/controllers/contactsController.js'
 
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+const VALID_OGG_OPUS_DATA_URL = 'data:audio/ogg;codecs=opus;base64,T2dnUwACAAAAAAAAAAC3bz5UAAAAAF9EXgkBE09wdXNIZWFkAQE4AYC7AAAAAABPZ2dTAAAAAAAAAAAAALdvPlQBAAAAGaef4gE+T3B1c1RhZ3MNAAAATGF2ZjYyLjEyLjEwMgEAAAAdAAAAZW5jb2Rlcj1MYXZjNjIuMjguMTAyIGxpYm9wdXNPZ2dTAAS4JgAAAAAAALdvPlQCAAAAC0SjeAtFNjQxMjcwMzUqF3iCAbdsfkDmAAAGS7TjumYR3p00RmwBHPB+I1m2zIXrmd7aBIGjduC2A1wWfuKopx7fzlrQS4bGLc+BnYqkIkXcxwldWXijP/esmIUDXCYJlv9nCL7fgGPAvjeM8OkgudL/caOCG6HJnKqN6vBOROgBGTLI+axxcdqjR3iboxJRRQCs0ky14jfRZlm92WkiUNr3DzWw4+Wx98jdsGxYSXK89+hYLRz8wpvjzDHFfgN4m6MSVs4iKkTY4B+i5MZKX7oD0oqS8sDjgb3P1kzpjChOdn4p8hKrIOo5iNWlBQ2HeJujX3Wc/EkNeFc8EJ8EQgTM6vBjyEl0VL8/GXoXtJgxBWlaTy5ZsndLX2+12lIG4vp4m6MXUV8mKyhiES+Om70HKUgcHjLILmQd5M+0sQ+XSDU8UWqsEkjj64ueAeySOq+RhfBzeZureJujX3Wc/EXtr4kI5+fJxq6G+cwFCZR6q7Kutp0WvvmBv231nX0Hb9Se/0S+7VGjeJujElFFANDLwZ1z7toAlP1FFw5GylCcHpCS4YWDdWoTkDdThgxrmgWllJqky5ujivwGeJujElbOIipFGIWoi9E7IdHXTfF6kHlqfNIV5rk86Mc/0dbzcR6fM4Wq/NQLtMYQ/eGxFdZImysfdZz8STOyk08i9Ec9uRIoArhlUWBwvWCPq76xEWvHCYXWbyTIJ0BIBbul8BHm3h2TRdVKljNtaNImd5UVgA=='
 
 async function cleanup({ contactId, apiContactId, messageId, phone, eventId }) {
   await db.run('DELETE FROM chat_inbound_message_claims WHERE channel = ? AND contact_id = ?', ['whatsapp', contactId]).catch(() => undefined)
@@ -142,7 +143,7 @@ async function insertInboundMessageForOpenReplyWindow({
   ])
 }
 
-function createFakeBaileysRuntime({ connectedJid, sentMessages = [], ackDelayMs = null } = {}) {
+function createFakeBaileysRuntime({ connectedJid, sentMessages = [], ackDelayMs = null, sendDelayMs = 0 } = {}) {
   let messageIndex = 0
 
   return {
@@ -199,6 +200,9 @@ function createFakeBaileysRuntime({ connectedJid, sentMessages = [], ackDelayMs 
           jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
         })),
         sendMessage: async (jid, payload) => {
+          if (sendDelayMs > 0) {
+            await new Promise(resolve => setTimeout(resolve, sendDelayMs))
+          }
           messageIndex += 1
           const id = `qr_fallback_msg_${messageIndex}`
           sentMessages.push({ id, jid, payload })
@@ -1314,6 +1318,155 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
     await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
     await cleanup({ contactId, messageId: ycloudMessageId, phone })
+  }
+})
+
+test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
+  const id = randomUUID()
+  const phone = `+52991${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000008'
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const phoneNumberId = `phone_audio_131053_${id}`
+  const contactId = `rstk_contact_audio_131053_${id}`
+  const messageId = `waapi_audio_131053_${id}`
+  const ycloudMessageId = `ycloud_audio_131053_${id}`
+  const sentMessages = []
+  const errorMessage = 'Audio file uploaded with mimetype as audio/ogg; codecs=opus, however on processing it is of type application/octet-stream.'
+
+  await cleanup({ contactId, messageId, phone })
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Cliente Audio', 'Cliente', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, phone])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+      ) VALUES (?, 'ycloud', 'waba_audio_131053', ?, ?, 'Audio Fallback Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
+    `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_sessions (
+        id, phone_number_id, expected_phone, connected_phone, status,
+        consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [`qr_${phoneNumberId}`, phoneNumberId, businessPhone, businessPhone, QR_CONSENT_TEXT])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+      VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+    `, [phoneNumberId, JSON.stringify({ me: { id: connectedJid }, registered: true })])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+        business_phone, business_phone_number_id, transport, direction, message_type,
+        media_mime_type, media_duration_ms, status, message_timestamp, raw_payload_json,
+        created_at, updated_at
+      ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, 'api', 'outbound', 'audio',
+        'audio/ogg; codecs=opus', 200, 'sent', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      messageId,
+      ycloudMessageId,
+      contactId,
+      phone,
+      businessPhone,
+      phone,
+      businessPhone,
+      phoneNumberId,
+      JSON.stringify({
+        id: ycloudMessageId,
+        from: businessPhone,
+        to: phone,
+        type: 'audio',
+        status: 'sent',
+        audio: {
+          deliveryUrl: VALID_OGG_OPUS_DATA_URL,
+          voice: true,
+          asyncQrFallbackAllowed: true,
+          durationMs: 200
+        }
+      })
+    ])
+
+    setBaileysRuntimeForTest(createFakeBaileysRuntime({
+      connectedJid,
+      sentMessages,
+      ackDelayMs: 0,
+      sendDelayMs: 75
+    }))
+
+    const processFailure = async (eventId) => {
+      const payload = {
+        id: eventId,
+        type: 'whatsapp.message.updated',
+        apiVersion: 'v2',
+        createTime: new Date().toISOString(),
+        whatsappMessage: {
+          id: ycloudMessageId,
+          wamid: `wamid.${id}`,
+          status: 'failed',
+          from: businessPhone,
+          to: phone,
+          wabaId: 'waba_audio_131053',
+          type: 'audio',
+          audio: { id: `media_${id}`, voice: true },
+          errorCode: '131053',
+          errorMessage,
+          createTime: new Date().toISOString()
+        }
+      }
+      await processYCloudWhatsAppWebhook({
+        payload,
+        rawBody: JSON.stringify(payload),
+        signatureHeader: '',
+        endpointId: ''
+      })
+    }
+
+    await Promise.all([
+      processFailure(`evt_audio_131053_a_${id}`),
+      processFailure(`evt_audio_131053_parallel_${id}`)
+    ])
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    assert.equal(sentMessages.length, 1)
+    assert.equal(sentMessages[0].payload.ptt, true)
+    assert.equal(sentMessages[0].payload.mimetype, 'audio/ogg; codecs=opus')
+    assert.ok(Buffer.isBuffer(sentMessages[0].payload.audio))
+    assert.equal(sentMessages[0].payload.audio.subarray(0, 4).toString('latin1'), 'OggS')
+
+    const row = await db.get(`
+      SELECT transport, routing_reason, status, error_code, error_message, raw_payload_json
+      FROM whatsapp_api_messages
+      WHERE id = ?
+    `, [messageId])
+    assert.equal(row.transport, 'qr')
+    assert.ok(['sent', 'delivered'].includes(row.status))
+    assert.equal(row.error_code, null)
+    assert.equal(row.error_message, null)
+    assert.match(row.routing_reason, /no pudo procesar la nota de voz/i)
+    const raw = JSON.parse(row.raw_payload_json)
+    assert.equal(raw.fallbackFrom, 'api')
+    assert.equal(raw.fallbackTransport, 'qr')
+
+    await processFailure(`evt_audio_131053_b_${id}`)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(sentMessages.length, 1)
+  } finally {
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId, phone })
   }
 })
 
