@@ -849,15 +849,24 @@ ultimos 50 mensajes combinados del hilo (`messageLimit`) y conserva el historial
 ya visible durante refresh silenciosos. Si el usuario sube al inicio de la
 conversacion, la UI pide otro bloque anterior usando `beforeMessageDate`; no
 debe precargar el historial completo de todas las conversaciones de la bandeja.
-Al insertar mensajes antiguos arriba del hilo, la UI debe conservar la posicion
-visible del usuario y nunca forzar scroll al ultimo mensaje.
+Al entrar a un chat nuevo, desktop, `/movil`, `mobile/` e iOS presentan el
+timeline en el ultimo mensaje disponible. Ese anclaje inicial se mantiene
+mientras termina la hidratacion de caché, mensajes, media y actividad; no usa
+animación para corregir una posición intermedia. Al insertar mensajes antiguos
+arriba del hilo, la UI debe conservar la posición visible del usuario y nunca
+forzar scroll al último mensaje.
 
 El mismo contrato aplica al chat dentro del modal de contacto: debe usar
 `/contacts/:id/conversation` para no mezclar eventos de viaje, visitas, compras
 o contacto creado dentro del historial de WhatsApp/Meta/email. Las tarjetas
 `appointment_confirmation` con accion `chat_card` si pertenecen al hilo y se
-incluyen en ese endpoint. `/contacts/:id/journey` queda reservado para el viaje
-del cliente y compatibilidad legacy.
+incluyen en ese endpoint. Para los marcadores inline de `Pago completado`,
+`Cita agendada` y `Cita confirmada`, las superficies de chat pueden consultar
+además `/contacts/:id/journey` de forma secundaria: solo se extraen pagos/citas,
+se ordenan dentro del timeline y nunca se convierten visitas u otros eventos de
+CRM en burbujas. Si esa lectura secundaria falla, se conserva la actividad
+conocida y se reintenta en la siguiente reconciliación; una respuesta vacía
+autoritativa sí puede retirar marcadores que ya no existan.
 
 La recepcion rapida de mensajes de chat usa `/api/chat-events/stream` como
 camino principal en desktop (`/chat`), movil web (`/movil`), cliente nativo
@@ -1510,12 +1519,12 @@ la respuesta se perdio y el usuario reintenta sin cambiar los datos. Android
 aplica el mismo contrato con su identificador estable de transaccion.
 
 Cuando se registra un pago manual, se cobra una tarjeta guardada o se agenda una
-cita desde la app nativa, el contacto vuelve a su conversacion y el chat muestra
-un marcador inline en la linea de mensajes. Ese marcador no es un globo del
-cliente ni del negocio: es una anotacion de conversacion que indica que en ese
-punto se completo un cobro o se agendo una cita. La accion tambien muestra una
-confirmacion breve con check animado dentro del area del chat, sin cubrir el
-header ni la informacion del contacto.
+cita desde desktop o una app nativa, el contacto vuelve a su conversacion y el
+chat muestra un marcador inline en la linea de mensajes. Ese marcador no es un
+globo del cliente ni del negocio: es una anotacion de conversacion que indica
+que en ese punto se completo un cobro o se agendo una cita. Las apps nativas
+pueden ademas mostrar una confirmacion breve con check animado dentro del area
+del chat, sin cubrir el header ni la informacion del contacto.
 
 Un pago exitoso en modo `test` puede clasificar al contacto como `Cliente` dentro
 del CRM y del filtro de Contactos para validar flujos sandbox. Ese mismo pago no

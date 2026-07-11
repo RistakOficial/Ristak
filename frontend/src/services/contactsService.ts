@@ -27,6 +27,7 @@ export interface JourneyEvent {
 
 interface ContactJourneyOptions {
   refreshExternalStatuses?: boolean
+  throwOnError?: boolean
 }
 
 interface ContactConversationOptions {
@@ -454,6 +455,7 @@ export const contactsService = {
       return normalizeJourneyEvents(data)
     } catch (error) {
       // TODO: Implement proper logging service
+      if (options.throwOnError) throw error
       return []
     }
   },

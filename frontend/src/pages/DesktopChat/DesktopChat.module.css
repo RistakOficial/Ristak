@@ -1013,6 +1013,7 @@
 .messagePane {
   --chat-message-surface-gap: 14px;
   --chat-message-surface-padding: 18px 18px 12px;
+  overflow-anchor: none;
 }
 
 .messagePaneDropActive {
@@ -1169,6 +1170,78 @@
   border-radius: 999px;
   background: var(--color-background-primary);
   color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.activityMarkerRowWrap {
+  width: 100%;
+}
+
+.activityMarkerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 0;
+}
+
+.activityMarkerLine {
+  flex: 1 1 auto;
+  min-width: 18px;
+  height: 1px;
+  background: var(--border);
+  opacity: 0.72;
+}
+
+.activityMarkerPill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: min(88%, 640px);
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: var(--shadow-xs);
+}
+
+.activityMarkerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.activityMarkerCopy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.activityMarkerCopy strong,
+.activityMarkerCopy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activityMarkerCopy strong {
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+}
+
+.activityMarkerCopy small {
+  color: var(--text-mute);
   font-size: 11px;
   font-weight: 500;
 }

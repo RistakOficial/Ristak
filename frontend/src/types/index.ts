@@ -1,6 +1,7 @@
 export interface ContactPayment {
   id: string
   amount: number
+  currency?: string | null
   status?: string | null
   date: string
   payment_mode?: 'live' | 'test'
