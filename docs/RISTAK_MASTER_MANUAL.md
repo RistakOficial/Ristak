@@ -2469,6 +2469,14 @@ El motor principal vive en `backend/src/services/automationEngine.js`.
 Los cambios de fechas/delays deben obedecer `DATE_TIME_GUIDELINES.md`.
 Los crons de integraciones externas deben obedecer `INTEGRATION_CRON_RULES.md`.
 
+Los disparadores del nodo inicial son opcionales. Una automatizacion publicada
+puede funcionar como secuencia manual o externa y arrancar desde contactos,
+acciones masivas, jobs programados, pruebas del editor, API o cualquier
+superficie que inscriba contactos explicitamente. Publicar sin disparadores es
+valido siempre que exista al menos un paso conectado al inicio; si el flujo debe
+arrancar solo ante un evento, entonces se agrega y valida el disparador
+correspondiente.
+
 Los disparadores programados de una automatizacion tienen recuperacion acotada:
 si un reinicio o despliegue cruza su hora, el scheduler ejecuta la instancia
 perdida solo durante las siguientes 24 horas. `automation_schedule_runs` reclama

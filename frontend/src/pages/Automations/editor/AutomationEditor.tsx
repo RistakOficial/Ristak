@@ -1515,7 +1515,7 @@ export const AutomationEditor: React.FC = () => {
 
     const triggers = getStartTriggers(startNode)
     if (triggers.length === 0) {
-      steps.push({ key: 'no-trigger', icon: Zap, accent: 'green', title: 'Cuando...', detail: 'Sin disparadores todavía' })
+      steps.push({ key: 'no-trigger', icon: Zap, accent: 'green', title: 'Cuando...', detail: 'Inicio manual o externo' })
     }
     triggers.forEach((trigger) => {
       const definition = getNodeDefinition(trigger.type)

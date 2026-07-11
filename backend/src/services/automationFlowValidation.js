@@ -440,8 +440,10 @@ export function validateFlowForPublish(flow) {
   const startNode = nodes.find((node) => node.type === START_NODE_TYPE)
   const triggers = asArray(startNode?.config?.triggers)
 
-  if (!startNode || triggers.length === 0) {
-    errors.push('Agrega al menos un disparador antes de publicar')
+  if (!startNode) {
+    errors.push('El flujo no tiene tarjeta inicial "Cuando..."')
+  } else if (!edges.some((edge) => edge.sourceNodeId === startNode.id)) {
+    errors.push('Agrega al menos un paso conectado al inicio antes de publicar')
   }
 
   triggers

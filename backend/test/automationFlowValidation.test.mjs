@@ -52,9 +52,17 @@ test('normalizeFlow rechaza estructuras inválidas', () => {
   )
 })
 
-test('publicar requiere al menos un disparador', () => {
+test('publicar requiere al menos un paso conectado al inicio', () => {
   const errors = validateFlowForPublish({ nodes: [startNode([])], edges: [] })
-  assert.ok(errors.some((message) => message.includes('disparador')))
+  assert.ok(errors.some((message) => message.includes('paso conectado')))
+})
+
+test('publicar acepta una secuencia sin disparadores si tiene pasos', () => {
+  const flow = {
+    nodes: [startNode([]), actionNode('a1')],
+    edges: [edge('e1', 'start', 'a1')]
+  }
+  assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
 test('publicar acepta un flujo lineal válido', () => {
@@ -276,15 +284,16 @@ test('publicar acepta el canal "any" y canales permitidos en disparadores', () =
         { id: 't4', type: 'trigger-instagram-message', config: { keywords: [] } },
         { id: 't5', type: 'trigger-messenger-message', config: { keywords: [] } },
         { id: 't6', type: 'trigger-email-message', config: { keywords: [] } }
-      ])
+      ]),
+      actionNode('a1')
     ],
-    edges: []
+    edges: [edge('e1', 'start', 'a1')]
   }
   assert.deepEqual(validateFlowForPublish(flow), [])
 
   const badFlow = {
-    nodes: [startNode([{ id: 't1', type: 'trigger-customer-replied', config: { channel: 'email' } }])],
-    edges: []
+    nodes: [startNode([{ id: 't1', type: 'trigger-customer-replied', config: { channel: 'email' } }]), actionNode('a1')],
+    edges: [edge('e1', 'start', 'a1')]
   }
   const errors = validateFlowForPublish(badFlow)
   assert.ok(errors.some((message) => message.includes('email')))
@@ -328,6 +337,8 @@ test('publicar valida el horario global del flujo', () => {
   assert.ok(errors.some((message) => message.includes('al menos un día permitido')))
   assert.ok(errors.some((message) => message.includes('hora de inicio y fin')))
 
+  flow.nodes.push(actionNode('a1'))
+  flow.edges.push(edge('e1', 'start', 'a1'))
   flow.settings.allowedSchedule = {
     enabled: true,
     daysOfWeek: ['mon', 'tue'],

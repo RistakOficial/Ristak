@@ -301,8 +301,8 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
           <>
             {triggers.length === 0 && (
               <p className={styles.startIntro}>
-                Un disparador es un evento que inicia tu Automatización. Haz clic para añadir un
-                disparador.
+                Puedes iniciar esta secuencia desde contactos, cargas externas o pruebas. Si quieres
+                que arranque sola, añade un disparador.
               </p>
             )}
             {triggers.map((trigger) => {

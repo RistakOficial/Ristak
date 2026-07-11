@@ -136,14 +136,14 @@ export function validateAutomationFlow(
 
   const startNode = nodes.find(isStartNode)
 
-  // 1. Disparadores
+  // 1. Inicio y disparadores
   if (!startNode) {
     result.issues.push({ message: 'El flujo no tiene tarjeta inicial "Cuando..."' })
   } else {
-    const triggers = getStartTriggers(startNode)
-    if (triggers.length === 0) {
-      pushNodeError(result, startNode.id, 'Agrega al menos un disparador antes de publicar')
+    if (!edges.some((edge) => edge.sourceNodeId === startNode.id)) {
+      pushNodeError(result, startNode.id, 'Agrega al menos un paso conectado al inicio antes de publicar')
     }
+    const triggers = getStartTriggers(startNode)
     triggers.forEach((trigger) => {
       const definition = getNodeDefinition(trigger.type)
       if (!definition) {
