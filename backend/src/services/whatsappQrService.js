@@ -2581,17 +2581,15 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       const connectionReplaced = isConnectionReplacedDisconnect(statusCode, lastError, DisconnectReason)
       const restartRequired = isRestartRequiredDisconnect(statusCode, lastError, DisconnectReason)
 
-      if (loggedOut || badSession) {
-        await clearAuthState(phone.id).catch(error => {
-          logger.warn(`[WhatsApp QR] No se pudo limpiar auth ${phone.id}: ${error.message}`)
-        })
-
-        const finalStatus = loggedOut ? 'logged_out' : 'bad_session'
-        const message = badSession
-          ? 'La sesión QR se dano. Genera un QR nuevo para conectarlo otra vez.'
-          : lastError || 'WhatsApp cerro la sesión. Genera un QR nuevo para conectarlo otra vez.'
+      if (loggedOut) {
+        // Un 401 significa que WhatsApp ya desvinculo el dispositivo. El auth
+        // probablemente ya no sea reutilizable, pero Ristak no debe borrarlo
+        // por su cuenta: solo una regeneracion/desconexion explicita del usuario
+        // puede destruir credenciales guardadas.
+        const message = 'WhatsApp informó que el dispositivo fue desvinculado. Ristak conservó las credenciales y no las borrará automáticamente; genera otro QR para volver a vincularlo.'
+        logger.warn(`[WhatsApp QR] WhatsApp desvinculó ${phone.id}; auth conservado hasta acción explícita`)
         await upsertSession(phone, {
-          status: finalStatus,
+          status: QR_REPAIR_REQUIRED_STATUS,
           connectedPhone: null,
           qrCode: null,
           qrCodeDataUrl: null,
@@ -2604,9 +2602,12 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       }
 
       const nextReconnectAttempt = currentReconnectAttempt + 1
-      const staleRegisteredAuth = startedWithRegisteredAuth &&
+      const repeatedlyRejectedRegisteredAuth = startedWithRegisteredAuth &&
         !live?.connected &&
-        isConnectionClosedDisconnect(statusCode, lastError, DisconnectReason)
+        (
+          badSession ||
+          isConnectionClosedDisconnect(statusCode, lastError, DisconnectReason)
+        )
 
       if (restartRequired) {
         try {
@@ -2631,22 +2632,21 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         }
       }
 
-      // 428 es recuperable según Baileys, por eso primero reintentamos. Pero si
-      // una credencial ya registrada es rechazada tres veces antes de abrir, seguir
-      // golpeando a WhatsApp no producirá un QR: solo deja al usuario viendo un
-      // spinner eterno. Conservamos la sesión y pedimos una regeneración explícita.
-      if (staleRegisteredAuth && nextReconnectAttempt >= MAX_STALE_AUTH_CONNECTION_CLOSED_ATTEMPTS) {
-        const message = 'WhatsApp rechazó la sesión guardada tres veces antes de abrir. La conservamos para no desconectar el número automáticamente; genera un QR nuevo para vincularla otra vez.'
-        logger.warn(`[WhatsApp QR] La sesión ${phone.id} requiere QR nuevo después de ${nextReconnectAttempt} cierres 428`)
+      // 428 y 500 son fallos recuperables mientras el auth siga guardado. Si
+      // una credencial ya registrada es rechazada varias veces antes de abrir,
+      // no destruimos la sesión ni obligamos al usuario a escanear otro QR:
+      // dejamos el estado en reconexión para que el watchdog vuelva a intentarlo.
+      if (repeatedlyRejectedRegisteredAuth && nextReconnectAttempt >= MAX_STALE_AUTH_CONNECTION_CLOSED_ATTEMPTS) {
+        logger.warn(`[WhatsApp QR] La sesión ${phone.id} seguirá en reconexión automática después de ${nextReconnectAttempt} rechazos ${statusCode || ''}; auth conservado`)
         await upsertSession(phone, {
-          status: QR_REPAIR_REQUIRED_STATUS,
+          status: 'reconnecting',
           qrCode: null,
           qrCodeDataUrl: null,
-          lastError: message,
+          lastError: null,
           lastDisconnectedAt: nowIso()
         })
         closeLiveSession(phone.id)
-        rejectCurrentOpen(new Error(message))
+        rejectCurrentOpen(new Error('WhatsApp QR sigue en reconexión automática; las credenciales se conservaron'))
         return
       }
 

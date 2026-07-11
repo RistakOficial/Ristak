@@ -624,7 +624,7 @@ test('cierre 440 de Baileys conserva credenciales y deja la sesión reconectando
   })
 })
 
-test('tres cierres 428 de una sesión guardada piden QR nuevo sin borrar credenciales automáticamente', async () => {
+test('tres cierres 428 de una sesión guardada conservan auth y dejan reconexión automática', async () => {
   const sockets = []
 
   await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
@@ -675,10 +675,99 @@ test('tres cierres 428 de una sesión guardada piden QR nuevo sin borrar credenc
       [phoneNumberId, 'creds']
     )
 
+    assert.equal(session.status, 'reconnecting')
+    assert.equal(session.last_error, null)
+    assert.equal(phone.qr_status, 'reconnecting')
+    assert.equal(Number(phone.qr_send_enabled), 1)
+    assert.equal(auth.present, 1)
+  })
+})
+
+test('un logout 401 conserva credenciales y solo permite borrarlas mediante una acción explícita', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+
+    await sockets[0].emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Logged Out',
+          output: { statusCode: 401 }
+        }
+      }
+    })
+
+    const session = await db.get(
+      'SELECT status, last_error FROM whatsapp_qr_sessions WHERE phone_number_id = ?',
+      [phoneNumberId]
+    )
+    const phone = await db.get(
+      'SELECT qr_send_enabled, qr_status FROM whatsapp_api_phone_numbers WHERE id = ?',
+      [phoneNumberId]
+    )
+    const auth = await db.get(
+      'SELECT 1 AS present FROM whatsapp_qr_auth_state WHERE phone_number_id = ? AND auth_key = ?',
+      [phoneNumberId, 'creds']
+    )
+
     assert.equal(session.status, 'qr_repair_required')
-    assert.match(session.last_error, /genera un QR nuevo/i)
+    assert.match(session.last_error, /conservó las credenciales/i)
     assert.equal(phone.qr_status, 'qr_repair_required')
     assert.equal(Number(phone.qr_send_enabled), 0)
+    assert.equal(auth.present, 1)
+  })
+})
+
+test('badSession reintenta y deja el watchdog listo para recuperar sin borrar credenciales', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
+    setWhatsAppQrReconnectDelayForTest(0)
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+
+    const closedUpdate = {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Bad Session',
+          output: { statusCode: 500 }
+        }
+      }
+    }
+
+    for (let index = 0; index < 3; index += 1) {
+      while (sockets.length <= index) {
+        await new Promise(resolve => setTimeout(resolve, 5))
+      }
+      await sockets[index].emit('connection.update', closedUpdate)
+    }
+
+    const session = await db.get(
+      'SELECT status, last_error FROM whatsapp_qr_sessions WHERE phone_number_id = ?',
+      [phoneNumberId]
+    )
+    const phone = await db.get(
+      'SELECT qr_send_enabled, qr_status FROM whatsapp_api_phone_numbers WHERE id = ?',
+      [phoneNumberId]
+    )
+    const auth = await db.get(
+      'SELECT 1 AS present FROM whatsapp_qr_auth_state WHERE phone_number_id = ? AND auth_key = ?',
+      [phoneNumberId, 'creds']
+    )
+
+    assert.equal(sockets.length, 3)
+    assert.equal(session.status, 'reconnecting')
+    assert.equal(session.last_error, null)
+    assert.equal(phone.qr_status, 'reconnecting')
+    assert.equal(Number(phone.qr_send_enabled), 1)
     assert.equal(auth.present, 1)
   })
 })

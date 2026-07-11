@@ -1128,9 +1128,14 @@ Si el numero oficial y la conexion QR quedaron en filas distintas de
 telefono (`phone_number`, `display_phone_number` o `qr_connected_phone`) y enviar
 desde ahi. Tambien cuenta como usable una sesion QR conectada o en reconexion
 tecnica (`connected`, `reconnecting`, `restarting`, `connection_replaced` o
-`disconnected_*`); estados terminales como `logged_out`, `bad_session` o
-`number_mismatch` requieren escanear un QR nuevo y no se usan como respaldo
-automatico.
+`disconnected_*`). Un `bad_session` (`500`) y los `connectionClosed` (`428`) se
+reintentan y, si superan el limite de un intento, quedan en `reconnecting` para
+que el watchdog los recupere sin borrar auth ni pedir otro QR. Si WhatsApp
+reporta `logged_out` (`401`), el dispositivo ya fue desvinculado fuera de
+Ristak: se conservan las credenciales, pero hace falta un QR nuevo. Solo una
+regeneracion o desconexion solicitada explicitamente por el usuario puede
+borrar credenciales. `number_mismatch` requiere escanear un QR nuevo y no se
+usa como respaldo automatico.
 Los ecos salientes capturados desde WhatsApp normal/QR deben persistir
 `business_phone_number_id` resolviendo tambien por `qr_connected_phone`; si se
 pierde ese enlace, la app de chats (`/chat`), la ficha de contacto, el chat movil
