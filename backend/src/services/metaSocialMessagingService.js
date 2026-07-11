@@ -957,7 +957,7 @@ const META_PAGE_SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,message_reacti
 // mientras el de usuario siga vivo, así que cachearlo es seguro y evita una
 // llamada extra por cada mensaje. Ante un 190 (token inválido) se re-deriva.
 const PAGE_TOKEN_TTL_MS = 30 * 60 * 1000
-let pageTokenCache = { pageId: '', token: '', at: 0 }
+let pageTokenCache = { pageId: '', sourceTokenHash: '', token: '', at: 0 }
 
 export async function resolveMetaPageAccessToken({ config, forceRefresh = false } = {}) {
   const cfg = config || await getMetaConfig().catch(() => null)
@@ -966,11 +966,16 @@ export async function resolveMetaPageAccessToken({ config, forceRefresh = false 
   if (!pageId) throw createMetaSocialMessageError('Falta seleccionar la Página de Facebook en Meta Ads.', 409)
   if (!userToken) throw createMetaSocialMessageError('Conecta Meta Ads para operar Messenger/Instagram.', 409)
 
+  // La Página puede mantenerse igual mientras el usuario reemplaza el System
+  // User token (por ejemplo, después de corregir permisos). No reutilices el
+  // Page token derivado del secreto anterior durante los 30 minutos de caché.
+  const sourceTokenHash = crypto.createHash('sha256').update(userToken).digest('hex')
   const now = Date.now()
   if (
     !forceRefresh &&
     pageTokenCache.token &&
     pageTokenCache.pageId === pageId &&
+    pageTokenCache.sourceTokenHash === sourceTokenHash &&
     (now - pageTokenCache.at) < PAGE_TOKEN_TTL_MS
   ) {
     return pageTokenCache.token
@@ -988,8 +993,17 @@ export async function resolveMetaPageAccessToken({ config, forceRefresh = false 
     )
   }
 
-  pageTokenCache = { pageId, token: pageToken, at: now }
+  pageTokenCache = { pageId, sourceTokenHash, token: pageToken, at: now }
   return pageToken
+}
+
+// Un Page token recién regenerado puede arreglar un rechazo #200 cuando Meta
+// acabó de reconocer permisos nuevos. El primer POST fue rechazado, por lo que
+// repetirlo una única vez con el token de Página rederivado no duplica mensajes.
+function shouldRefreshMetaPageToken(error) {
+  return error?.statusCode === 401 ||
+    isMetaPermissionError(error) ||
+    /oauth|access token|\b190\b/i.test(error?.message || '')
 }
 
 // Devuelve el mejor token disponible para leer/enviar por la Página, cayendo al
@@ -1812,8 +1826,7 @@ async function sendMetaMessengerTextRequest({ businessId, recipientId, body, con
       body: sendPayload
     })
   } catch (error) {
-    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw error
+    if (!shouldRefreshMetaPageToken(error)) throw error
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
       token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
@@ -1862,8 +1875,7 @@ async function sendMetaMessengerAttachmentRequest({ businessId, recipientId, att
       body: sendPayload
     })
   } catch (error) {
-    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw error
+    if (!shouldRefreshMetaPageToken(error)) throw error
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
       token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
@@ -1912,8 +1924,7 @@ async function sendMetaMessengerReactionRequest({ businessId, recipientId, react
       body: sendPayload
     })
   } catch (error) {
-    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw error
+    if (!shouldRefreshMetaPageToken(error)) throw error
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
       token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
@@ -1953,8 +1964,7 @@ async function sendMetaMessengerMarkSeenRequest({ businessId, recipientId, confi
       body: sendPayload
     })
   } catch (error) {
-    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw error
+    if (!shouldRefreshMetaPageToken(error)) throw error
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
       token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
@@ -2743,8 +2753,7 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
       body: payload
     })
   } catch (error) {
-    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw normalizeMetaSocialCommentReplyError(error, cleanPlatform, mode)
+    if (!shouldRefreshMetaPageToken(error)) throw normalizeMetaSocialCommentReplyError(error, cleanPlatform, mode)
     try {
       const retryCredentials = await resolveMetaSocialGraphCredentials(cleanPlatform, config, { forceRefresh: true })
       const retryPath = mode === 'private' && cleanPlatform === 'instagram'

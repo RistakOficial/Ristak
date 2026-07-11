@@ -8,6 +8,7 @@ import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   processMetaSocialWebhook,
+  resolveMetaPageAccessToken,
   sendMetaSocialAttachmentMessage,
   sendMetaSocialAudioMessage,
   sendMetaSocialCommentReply,
@@ -65,6 +66,22 @@ async function startMetaSendServer(calls) {
       if (req.method === 'GET' && /^\/page-send-test(?:\?|$)/.test(req.url)) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ access_token: 'page-token-send-test' }))
+        return
+      }
+
+      if (req.method === 'GET' && /^\/page-refresh-test(?:\?|$)/.test(req.url)) {
+        const sourceToken = req.headers.authorization === 'Bearer user-token-refresh-new'
+          ? 'page-token-refresh-new'
+          : 'page-token-refresh-old'
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ access_token: sourceToken }))
+        return
+      }
+
+      if (req.method === 'GET' && /^\/page-permission-retry-test(?:\?|$)/.test(req.url)) {
+        const derivations = calls.filter(call => call.method === 'GET' && /^\/page-permission-retry-test(?:\?|$)/.test(call.url)).length
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ access_token: derivations === 1 ? 'page-token-stale' : 'page-token-fresh' }))
         return
       }
 
@@ -259,6 +276,24 @@ async function startMetaSendServer(calls) {
         return
       }
 
+      if (req.method === 'POST' && req.url.startsWith('/page-permission-retry-test/messages')) {
+        if (req.headers.authorization === 'Bearer page-token-stale') {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            error: {
+              message: '(#200) Requires pages_messaging permission to manage the object.',
+              type: 'OAuthException',
+              code: 200,
+              fbtrace_id: 'trace-permission-retry-test'
+            }
+          }))
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ recipient_id: 'psid-send-test', message_id: 'mid-permission-retry-test' }))
+        return
+      }
+
       if (req.method === 'POST' && req.url.startsWith('/fb-comment-permission-test/comments')) {
         res.writeHead(400, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
@@ -333,7 +368,7 @@ async function seedInstagramContact({ contactId, metaContactId }) {
   )
 }
 
-async function seedMessengerContact({ contactId, metaContactId }) {
+async function seedMessengerContact({ contactId, metaContactId, pageId = 'page-send-test' }) {
   await db.run(
     `INSERT INTO contacts (id, full_name, first_name, source, created_at, updated_at)
      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -358,7 +393,7 @@ async function seedMessengerContact({ contactId, metaContactId }) {
       'messenger',
       'psid-send-test',
       'page-send-test',
-      'page-send-test',
+      pageId,
       null,
       'Messenger Test'
     ]
@@ -1967,6 +2002,101 @@ test('sendMetaSocialReactionMessage envia sender_action react para Messenger', a
               reaction: 'love'
             }
           })
+        } finally {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('resolveMetaPageAccessToken invalida el cache al reemplazar el System User token', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+
+  try {
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    const oldPageToken = await resolveMetaPageAccessToken({
+      config: { page_id: 'page-refresh-test', access_token: 'user-token-refresh-old' }
+    })
+    const newPageToken = await resolveMetaPageAccessToken({
+      config: { page_id: 'page-refresh-test', access_token: 'user-token-refresh-new' }
+    })
+
+    assert.equal(oldPageToken, 'page-token-refresh-old')
+    assert.equal(newPageToken, 'page-token-refresh-new')
+    assert.equal(calls.filter(call => call.method === 'GET' && /^\/page-refresh-test(?:\?|$)/.test(call.url)).length, 2)
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('sendMetaSocialTextMessage rederiva el Page token tras un rechazo temporal de pages_messaging', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const contactId = 'meta_permission_retry_messenger_contact'
+  const metaContactId = 'meta_permission_retry_messenger_profile'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-permission-retry-test',
+            encrypt('user-token-permission-retry-test'),
+            null,
+            'page-permission-retry-test',
+            null,
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_messenger_messaging_enabled', '1')
+          await seedMessengerContact({ contactId, metaContactId, pageId: 'page-permission-retry-test' })
+
+          const result = await sendMetaSocialTextMessage({
+            contactId,
+            platform: 'messenger',
+            message: 'Hola después de refrescar permisos'
+          })
+
+          assert.equal(result.remoteMessageId, 'mid-permission-retry-test')
+          const sends = calls.filter(call => call.method === 'POST' && call.url === '/page-permission-retry-test/messages')
+          assert.equal(sends.length, 2)
+          assert.equal(sends[0].authorization, 'Bearer page-token-stale')
+          assert.equal(sends[1].authorization, 'Bearer page-token-fresh')
         } finally {
           await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)

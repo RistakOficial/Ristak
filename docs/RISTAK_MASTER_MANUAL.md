@@ -2062,7 +2062,13 @@ Ristak usa Meta en varias areas:
   `graph.facebook.com/{PAGE_ID}/messages` cuando la cuenta profesional esta
   enlazada a la Page. Ristak resuelve credenciales por plataforma derivando
   siempre el token de Pagina desde `meta_config.access_token` y usando Facebook
-  Graph para DMs, comentarios, media y conversaciones de Instagram. No hay
+  Graph para DMs, comentarios, media y conversaciones de Instagram. El cache
+  del Page token queda ligado al hash del System User token origen: reemplazar
+  ese token para corregir permisos invalida el cache de inmediato, aunque la
+  Página seleccionada sea la misma. Si un envío Messenger recibe un rechazo de
+  token o permisos, Ristak rederiva el Page token y repite una sola vez el POST
+  rechazado antes de reportar el bloqueo; como Meta ya rechazó el primer POST,
+  ese reintento no duplica mensajes. No hay
   token alterno ni fallback para Instagram; si no se puede derivar el Page token,
   la integracion falla con un error accionable para revisar permisos/asignaciones
   de Meta. El recipient sigue siendo el IGSID recibido por webhook.
