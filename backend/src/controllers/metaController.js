@@ -33,6 +33,7 @@ import { parseContactCustomFields } from '../utils/contactCustomFields.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
 import {
+  META_PAGE_SUBSCRIBED_FIELDS,
   getMetaWebhookVerifyToken,
   ensureMetaPageMessagingSubscription,
   getMetaPageMessagingSubscription,
@@ -1413,7 +1414,7 @@ export const getMetaWebhookInfo = async (req, res) => {
       data: {
         webhookUrl: `${baseUrl}/webhook/meta`,
         verifyToken,
-        fields: ['messages', 'messaging_postbacks', 'message_reactions', 'messaging_referrals']
+        fields: META_PAGE_SUBSCRIBED_FIELDS
       }
     });
   } catch (error) {

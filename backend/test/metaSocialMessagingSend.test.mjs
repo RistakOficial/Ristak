@@ -8,6 +8,7 @@ import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   processMetaSocialWebhook,
+  ensureMetaPageMessagingSubscription,
   resolveMetaPageAccessToken,
   sendMetaSocialAttachmentMessage,
   sendMetaSocialAudioMessage,
@@ -88,6 +89,18 @@ async function startMetaSendServer(calls) {
       if (req.method === 'GET' && /^\/page-history-test(?:\?|$)/.test(req.url)) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ access_token: 'page-token-history-test' }))
+        return
+      }
+
+      if (req.method === 'GET' && /^\/page-subscription-test(?:\?|$)/.test(req.url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ access_token: 'page-token-subscription-test' }))
+        return
+      }
+
+      if (req.method === 'POST' && req.url.startsWith('/page-subscription-test/subscribed_apps')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: true }))
         return
       }
 
@@ -426,6 +439,65 @@ async function cleanupSocialRows({ senderId, metaMessageId }) {
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_webhook_events WHERE raw_payload_json LIKE ?', [`%${metaMessageId}%`]).catch(() => undefined)
 }
+
+test('ensureMetaPageMessagingSubscription conserva todos los eventos necesarios para inbox e historial vivo', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await db.run(`
+        INSERT INTO meta_config (
+          ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+          timezone_id, timezone_name, timezone_offset_hours_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        'act-subscription-test',
+        encrypt('user-token-subscription-test'),
+        null,
+        'page-subscription-test',
+        null,
+        null,
+        null,
+        null
+      ])
+
+      const result = await ensureMetaPageMessagingSubscription()
+      const expectedFields = [
+        'messages',
+        'message_echoes',
+        'message_edits',
+        'message_reactions',
+        'message_reads',
+        'message_deliveries',
+        'messaging_postbacks',
+        'messaging_referrals',
+        'feed'
+      ]
+
+      assert.equal(result.pageId, 'page-subscription-test')
+      assert.deepEqual(result.subscribedFields, expectedFields)
+
+      const subscriptionCall = calls.find(call => (
+        call.method === 'POST' && call.url.startsWith('/page-subscription-test/subscribed_apps')
+      ))
+      assert.equal(subscriptionCall?.authorization, 'Bearer page-token-subscription-test')
+      const subscriptionUrl = new URL(subscriptionCall.url, 'http://127.0.0.1')
+      assert.equal(subscriptionUrl.searchParams.get('subscribed_fields'), expectedFields.join(','))
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+  }
+})
 
 test('syncMetaSocialConversationHistory importa historial disponible de Messenger al chat', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')

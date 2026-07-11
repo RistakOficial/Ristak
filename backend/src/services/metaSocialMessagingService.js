@@ -949,7 +949,20 @@ async function metaSocialGraphRequest(path, { method = 'GET', token, query, body
 // messaging_* para DMs; feed = comentarios de la Página de Facebook. Los
 // comentarios de Instagram NO son campo de la Página: llegan por el objeto
 // 'instagram' (comments/live_comments) suscrito a nivel de app en el panel de Meta.
-const META_PAGE_SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,message_reactions,messaging_referrals,feed'
+// La suscripción de una Page se declara completa en cada conexión para que el
+// inbox no pierda ecos, cambios ni estados cuando Meta vuelve a registrar el
+// webhook. El historial previo se importa aparte por Conversations API.
+export const META_PAGE_SUBSCRIBED_FIELDS = [
+  'messages',
+  'message_echoes',
+  'message_edits',
+  'message_reactions',
+  'message_reads',
+  'message_deliveries',
+  'messaging_postbacks',
+  'messaging_referrals',
+  'feed'
+]
 
 // Para Messenger y operaciones de Página, Meta exige un token de PÁGINA. Lo
 // derivamos on-demand desde el token base guardado y lo cacheamos en memoria:
@@ -1719,11 +1732,11 @@ export async function ensureMetaPageMessagingSubscription() {
   await metaSocialGraphRequest(`/${encodeURIComponent(pageId)}/subscribed_apps`, {
     method: 'POST',
     token: pageToken,
-    query: { subscribed_fields: META_PAGE_SUBSCRIBED_FIELDS }
+    query: { subscribed_fields: META_PAGE_SUBSCRIBED_FIELDS.join(',') }
   })
 
-  logger.info(`[Meta social] Página ${pageId} suscrita al webhook de mensajería (${META_PAGE_SUBSCRIBED_FIELDS})`)
-  return { pageId, subscribedFields: META_PAGE_SUBSCRIBED_FIELDS.split(',') }
+  logger.info(`[Meta social] Página ${pageId} suscrita al webhook de mensajería (${META_PAGE_SUBSCRIBED_FIELDS.join(',')})`)
+  return { pageId, subscribedFields: [...META_PAGE_SUBSCRIBED_FIELDS] }
 }
 
 /** Lee la suscripción actual de la Página (para verificar/diagnosticar). */

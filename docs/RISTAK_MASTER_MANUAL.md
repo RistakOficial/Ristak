@@ -2046,7 +2046,12 @@ Ristak usa Meta en varias areas:
   cada caso de uso/producto de Meta activo (Page, Messenger, Instagram o
   WhatsApp). La UI no debe pedir al usuario copiar campos de suscripcion
   manuales; Ristak mantiene la suscripcion programatica de la Page cuando
-  conecta o actualiza la integracion.
+  conecta o actualiza la integracion. La suscripcion canonica del inbox pide
+  `messages`, `message_echoes`, `message_edits`, `message_reactions`,
+  `message_reads`, `message_deliveries`, `messaging_postbacks`,
+  `messaging_referrals` y `feed`: los primeros ocho mantienen DMs, estados y
+  origen; `feed` conserva comentarios de Facebook. No se suscriben campos de
+  pagos, carrito, juegos o account linking si esos productos no estan activos.
 - El bloque **Perfil de red social** del editor de Sites lee los perfiles desde
   la configuracion Meta guardada (`meta_config.page_id`,
   `meta_config.instagram_account_id` y `meta_config.access_token`) cuando el
@@ -2128,7 +2133,9 @@ Ristak usa Meta en varias areas:
   deduplica por `meta_message_id`, guarda inbound/outbound en
   `meta_social_messages` y fusiona el contacto por PSID/IGSID igual que los
   webhooks. Es historial: no incrementa no leidos, no dispara push,
-  automatizaciones, confirmaciones ni agente conversacional. Meta puede no
+  automatizaciones, confirmaciones ni agente conversacional. La suscripcion de
+  webhook no reenvia eventos viejos: Ristak primero la asegura para capturar lo
+  nuevo y deduplica por ID mientras el backfill trae lo disponible. Meta puede no
   devolver hilos de Requests inactivos por mas de 30 dias; Ristak importa todo lo
   que la API expone y registra skip/fallos sin bloquear la conexion.
 - Los comentarios publicados por la propia Pagina de Facebook o cuenta de
