@@ -28,6 +28,8 @@ import {
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
+const AUTOMATION_NAME_MAX_LENGTH = 120
+const DEFAULT_AUTOMATION_NAME = 'Automatización sin título'
 
 export const AUTOMATION_STATUSES = ['draft', 'published', 'paused', 'archived']
 
@@ -168,8 +170,29 @@ function normalizeName(rawName, fallback) {
   const name = typeof rawName === 'string' ? rawName.trim() : ''
   if (!name && fallback !== undefined) return fallback
   if (!name) throw badRequest('El nombre es obligatorio')
-  if (name.length > 120) throw badRequest('El nombre no puede superar 120 caracteres')
+  if (name.length > AUTOMATION_NAME_MAX_LENGTH) throw badRequest('El nombre no puede superar 120 caracteres')
   return name
+}
+
+function buildNumberedAutomationName(baseName, number) {
+  const suffix = ` ${number}`
+  const safeBase = String(baseName || DEFAULT_AUTOMATION_NAME)
+    .slice(0, Math.max(1, AUTOMATION_NAME_MAX_LENGTH - suffix.length))
+    .trim()
+  return `${safeBase || DEFAULT_AUTOMATION_NAME}${suffix}`
+}
+
+async function resolveNewAutomationName(rawName, fallback = DEFAULT_AUTOMATION_NAME) {
+  const baseName = normalizeName(rawName, fallback)
+  const rows = await db.all('SELECT name FROM automations')
+  const existingNames = new Set(rows.map((row) => cleanString(row.name)).filter(Boolean))
+
+  for (let number = 1; number < 100000; number += 1) {
+    const candidate = buildNumberedAutomationName(baseName, number)
+    if (!existingNames.has(candidate)) return candidate
+  }
+
+  throw conflict('No se pudo generar un nombre disponible para la automatización')
 }
 
 function isEmptyObject(value) {
@@ -404,7 +427,7 @@ async function assertFolderExists(folderId) {
 }
 
 export async function createAutomation(input = {}) {
-  const name = normalizeName(input.name, 'Automatización sin título')
+  const name = await resolveNewAutomationName(input.name)
   const folderId = input.folderId || null
   await assertFolderExists(folderId)
 
@@ -492,7 +515,7 @@ export async function updateAutomation(automationId, input = {}) {
 export async function duplicateAutomation(automationId) {
   const original = await getAutomation(automationId)
   const id = makeId('auto')
-  const name = normalizeName(`${original.name} (copia)`.slice(0, 120))
+  const name = await resolveNewAutomationName(`${original.name} (copia)`.slice(0, AUTOMATION_NAME_MAX_LENGTH))
 
   await db.run(
     `INSERT INTO automations (id, folder_id, name, description, status, flow, created_at, updated_at)

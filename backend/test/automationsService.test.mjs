@@ -5,6 +5,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import {
   controlAutomationEnrollment,
   createAutomation,
+  duplicateAutomation,
   enrollContactInAutomation,
   getAutomation,
   getEnrollmentStats,
@@ -186,6 +187,49 @@ function makeWaitThenTagFlow(tagId) {
   }
 }
 
+test('createAutomation asigna nombres numerados únicos por defecto', async () => {
+  const baseName = `Automatización sin título test ${Date.now()}`
+  const created = []
+
+  try {
+    created.push(await createAutomation({ name: baseName }))
+    created.push(await createAutomation({ name: baseName }))
+    created.push(await createAutomation({ name: baseName }))
+
+    assert.deepEqual(
+      created.map((automation) => automation.name),
+      [`${baseName} 1`, `${baseName} 2`, `${baseName} 3`]
+    )
+  } finally {
+    await Promise.all(created.map((automation) =>
+      db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
+    ))
+  }
+})
+
+test('duplicateAutomation asigna nombres de copia numerados únicos', async () => {
+  const baseName = `Duplicado automático ${Date.now()}`
+  const created = []
+
+  try {
+    const original = await createAutomation({ name: baseName })
+    created.push(original)
+
+    const firstCopy = await duplicateAutomation(original.id)
+    created.push(firstCopy)
+    const secondCopy = await duplicateAutomation(original.id)
+    created.push(secondCopy)
+
+    assert.equal(original.name, `${baseName} 1`)
+    assert.equal(firstCopy.name, `${original.name} (copia) 1`)
+    assert.equal(secondCopy.name, `${original.name} (copia) 2`)
+  } finally {
+    await Promise.all(created.map((automation) =>
+      db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
+    ))
+  }
+})
+
 test('updateAutomation separa borrador guardado de flujo publicado', async () => {
   const automation = await createAutomation({
     name: `Publicación con borrador ${Date.now()}`,
@@ -249,7 +293,7 @@ test('testAutomationRun inscribe un contacto real desde una automatización guar
     assert.equal(result.mode, 'test')
     assert.equal(result.automationId, automation.id)
     assert.equal(result.contactId, contactId)
-    assert.equal(result.enrollment.automationName, `Prueba runner ${suffix}`)
+    assert.equal(result.enrollment.automationName, automation.name)
     assert.ok(result.enrollment.log.some((entry) => entry.detail === 'Prueba iniciada desde Automatizaciones'))
     assert.ok(tags.includes(tagId))
   } finally {

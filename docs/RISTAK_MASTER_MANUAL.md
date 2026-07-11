@@ -2477,6 +2477,13 @@ valido siempre que exista al menos un paso conectado al inicio; si el flujo debe
 arrancar solo ante un evento, entonces se agrega y valida el disparador
 correspondiente.
 
+Al crear o duplicar automatizaciones, el backend asigna nombres numerados y
+unicos a partir del nombre base: `Automatización sin título 1`,
+`Automatización sin título 2`, etc. La numeracion evita que varias
+automatizaciones nuevas se vean iguales en la libreria. El renombrado manual no
+aplica esa numeracion automatica: si el usuario cambia el nombre, se respeta lo
+que escriba.
+
 Los disparadores programados de una automatizacion tienen recuperacion acotada:
 si un reinicio o despliegue cruza su hora, el scheduler ejecuta la instancia
 perdida solo durante las siguientes 24 horas. `automation_schedule_runs` reclama
