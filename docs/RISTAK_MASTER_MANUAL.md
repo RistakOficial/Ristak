@@ -734,13 +734,17 @@ ambas vistas. Es un control propio basado en los tokens activos de Ristak, por l
 que conserva el modo oscuro y no depende de los controles blancos del navegador.
 Las notas de voz de Automatizaciones pasan por la misma preparación del chat
 directo: WhatsApp API recibe un OGG real con códec Opus y la marca de voz; el
-transporte QR/Baileys usa además `ptt=true`. Messenger e Instagram no exponen un
+transporte QR/Baileys verifica los bytes `OggS` + `OpusHead` y usa además
+`ptt=true`; no confía únicamente en el MIME declarado. Messenger e Instagram no exponen un
 flag equivalente de PTT, por lo que una nota de voz se entrega como adjunto de
 audio reproducible. Cuando el archivo proviene del almacenamiento de Ristak,
 WhatsApp API lo valida como OGG/Opus y lo sube al proveedor antes de mandarlo por
 Media ID: nunca delega de nuevo la descarga a una URL CDN, porque Meta/YCloud
 puede clasificar ese fetch como `application/octet-stream` aunque el asset sea
-válido. Los assets externos se conservan como enlaces HTTPS y entran a la misma
+válido. Ese upload se arma con el `FormData` y `Blob` de `node-fetch`, la misma
+librería que hace la petición: no se pueden mezclar con los objetos globales de
+Node porque el archivo acabaría serializado como texto y el proveedor recibiría
+`application/octet-stream`. Los assets externos se conservan como enlaces HTTPS y entran a la misma
 normalización cuando se proporcionan como archivo.
 Las URLs públicas existen exclusivamente para que los proveedores puedan descargar
 el contenido; el endpoint/proxy mantiene MIME, `nosniff` y fuerza la descarga de

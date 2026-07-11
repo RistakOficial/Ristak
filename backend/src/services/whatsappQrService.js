@@ -331,6 +331,13 @@ function normalizeVoiceNoteMimeType(mimeType = '') {
   return cleanMimeType
 }
 
+function isOggOpusVoiceNoteBuffer(buffer) {
+  return Buffer.isBuffer(buffer) &&
+    buffer.length > 12 &&
+    buffer.subarray(0, 4).toString('latin1') === 'OggS' &&
+    buffer.includes(Buffer.from('OpusHead', 'ascii'))
+}
+
 function getAudioDurationSeconds(durationMs) {
   const value = Number(durationMs || 0)
   if (!Number.isFinite(value) || value <= 0) return 0
@@ -3494,11 +3501,11 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
   })
   let mimeType = normalizeVoiceNoteMimeType(inferAudioMimeType({ mimeType: media.mimeType, url: media.sourceUrl }))
   // Baileys/WhatsApp Web exige un contenedor OGG/Opus REAL para las notas de voz
-  // (ptt). Si el contenido es un buffer que aún NO es OGG (p. ej. el m4a/AAC que
-  // graba iOS), transcodifícalo con la MISMA tubería del canal API antes de
-  // mandarlo como PTT — mandar AAC con ptt:true rompe la reproducción en el
-  // receptor (aparece como archivo o "audio no disponible").
-  if (Buffer.isBuffer(media.content) && !/^audio\/ogg/i.test(cleanString(mimeType))) {
+  // (ptt). Si el contenido no es un OGG/Opus REAL —aunque alguien lo etiquete
+  // como audio/ogg—, transcodifícalo con la MISMA tubería del canal API antes
+  // de mandarlo como PTT. Mandar AAC, MP3 u OGG sin Opus con ptt:true rompe la
+  // reproducción en el receptor (aparece como archivo o "audio no disponible").
+  if (Buffer.isBuffer(media.content) && !isOggOpusVoiceNoteBuffer(media.content)) {
     const { convertAudioToOggOpus } = await loadWhatsAppApiService()
     media.content = await convertAudioToOggOpus({
       buffer: media.content,

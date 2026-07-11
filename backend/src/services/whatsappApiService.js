@@ -4,7 +4,7 @@ import fs from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import nodeFetch from 'node-fetch'
+import nodeFetch, { Blob as NodeFetchBlob, FormData as NodeFetchFormData } from 'node-fetch'
 import sharp from 'sharp'
 import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates, generateContactId, recordContactPhoneNumber } from './contactIdentityService.js'
@@ -2203,8 +2203,16 @@ async function ycloudUploadWhatsAppMedia({ apiKey, phoneNumber, buffer, mimeType
 
   const normalizedMimeType = normalizeYCloudUploadMimeType(mimeType)
   const cleanFilename = cleanString(filename) || `whatsapp-media-${Date.now()}`
-  const formData = new FormData()
-  formData.append('file', new Blob([buffer], { type: normalizedMimeType || 'application/octet-stream' }), cleanFilename)
+  // No mezclar las clases globales de Node (undici) con `node-fetch`. Aunque
+  // ambas se llaman FormData/Blob, node-fetch sólo reconoce sus propias clases;
+  // con las globales serializa el cuerpo como texto en vez de multipart y Meta
+  // acaba recibiendo `application/octet-stream` en lugar del OGG/Opus real.
+  const formData = new NodeFetchFormData()
+  formData.append(
+    'file',
+    new NodeFetchBlob([buffer], { type: normalizedMimeType || 'application/octet-stream' }),
+    cleanFilename
+  )
 
   const response = await ycloudFetch(`${YCLOUD_API_BASE_URL}/whatsapp/media/${encodeURIComponent(cleanPhoneNumber)}/upload`, {
     method: 'POST',

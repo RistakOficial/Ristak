@@ -69,13 +69,13 @@ interface ContentBlockOption {
 
 // Cada adjunto es un mensaje válido por sí solo: no necesita un globo de texto
 // antes ni después. "Audio" y "Nota de voz" se guardan como tipos distintos
-// porque WhatsApp los presenta distinto al receptor.
+// para que cada canal pueda entregarlos con el formato que le corresponde.
 const CONTENT_BLOCKS: ContentBlockOption[] = [
   { type: 'text', title: 'Texto', description: 'Añadir texto y botones simples', icon: AlignLeft },
   { type: 'image', title: 'Imagen', description: 'Aumenta la participación con elementos visuales', icon: Image },
   { type: 'video', title: 'Video', description: 'Comparte un video con el contacto', icon: Video },
   { type: 'audio', title: 'Audio', description: 'Envía un archivo de audio reproducible', icon: Music },
-  { type: 'voice', title: 'Nota de voz', description: 'Envía el audio como mensaje de voz de WhatsApp', icon: Mic },
+  { type: 'voice', title: 'Nota de voz', description: 'Comparte un mensaje de voz con el contacto', icon: Mic },
   { type: 'file', title: 'Archivo', description: 'Adjunta un documento o archivo', icon: FileText },
   { type: 'delay', title: 'Retraso', description: 'Espera unos segundos entre los textos', icon: Clock }
 ]

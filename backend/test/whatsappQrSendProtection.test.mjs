@@ -245,7 +245,7 @@ test('WhatsApp QR aplica pausas automáticas a todos los tipos de mensaje QR', a
       await sendWhatsAppQrAudioMessage({
         phoneNumberId,
         to: CONTACT_PHONE,
-        audioDataUrl: 'data:audio/ogg;base64,T2dnUw==',
+        audioDataUrl: 'data:audio/ogg;codecs=opus;base64,T2dnUy1mYWtlLU9wdXNIZWFkLWF1ZGlv',
         durationMs: 1000
       })
       await sendWhatsAppQrDocumentMessage({

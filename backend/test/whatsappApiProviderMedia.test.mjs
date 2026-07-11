@@ -1,9 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 import fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import nodeFetch from 'node-fetch'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
@@ -672,6 +674,86 @@ test('envío API de audio sube nota de voz al proveedor y conserva preview inter
         }
         await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
         await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+      }
+    })
+  })
+})
+
+test('el upload de nota de voz llega a YCloud como multipart binario OGG/Opus', async () => {
+  await withFakeFfmpeg(async () => {
+    await withYCloudProviderMediaCapture(async (captures) => {
+      const requests = []
+      let to = ''
+      let previewMediaAssetId = ''
+      const server = createServer(async (request, response) => {
+        const chunks = []
+        for await (const chunk of request) chunks.push(Buffer.from(chunk))
+        const body = Buffer.concat(chunks)
+        requests.push({
+          method: request.method,
+          path: request.url,
+          headers: request.headers,
+          body
+        })
+
+        if (/\/whatsapp\/media\/.+\/upload$/.test(request.url || '')) {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ id: 'provider_media_multipart' }))
+          return
+        }
+
+        const outbound = JSON.parse(body.toString('utf8') || '{}')
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({
+          id: 'ycloud_provider_message_multipart',
+          from: outbound.from,
+          to: outbound.to,
+          type: outbound.type,
+          status: 'sent',
+          audio: outbound.audio
+        }))
+      })
+
+      await new Promise((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      const { port } = server.address()
+
+      try {
+        // Pasamos el body que construye el servicio a node-fetch real. Si se
+        // vuelve a usar el FormData global, node-fetch lo convierte en el texto
+        // "[object FormData]" y esta prueba falla antes de tocar YCloud.
+        setYCloudFetchForTest((url, options = {}) => {
+          const upstream = new URL(String(url))
+          return nodeFetch(`http://127.0.0.1:${port}${upstream.pathname}`, options)
+        })
+
+        to = `+52158${Date.now().toString().slice(-8)}`
+        await captures.openReplyWindow(to)
+        const sent = await sendWhatsAppApiAudioMessage({
+          to,
+          audioDataUrl: MP4_AUDIO_DATA_URL,
+          externalId: `provider-audio-multipart-${randomUUID()}`,
+          allowQrFallback: false,
+          durationMs: 1200
+        })
+        previewMediaAssetId = sent.audio?.previewMediaAssetId || ''
+
+        const upload = requests.find((request) => /\/whatsapp\/media\/.+\/upload$/.test(request.path || ''))
+        assert.ok(upload)
+        assert.match(String(upload.headers['content-type'] || ''), /^multipart\/form-data;\s*boundary=/i)
+        assert.equal(Number(upload.headers['content-length']), upload.body.length)
+        assert.ok(upload.body.includes(Buffer.from('Content-Disposition: form-data; name="file"; filename="whatsapp-audio.ogg"', 'utf8')))
+        assert.ok(upload.body.includes(Buffer.from('Content-Type: audio/ogg; codecs=opus', 'utf8')))
+        assert.ok(upload.body.includes(Buffer.from('OggS-fake-OpusHead-audio', 'utf8')))
+      } finally {
+        setYCloudFetchForTest(null)
+        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+        await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_multipart', to, to]).catch(() => undefined)
+        if (previewMediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
+        await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE phone = ?', [to]).catch(() => undefined)
       }
     })
   })
