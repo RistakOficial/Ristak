@@ -943,7 +943,13 @@ los bloques recibidos, pero no puede fabricar mensajes que WhatsApp no envie.
 WhatsApp API/YCloud ejecuta al conectar un sync de contactos, pagina el listado
 saliente disponible en `/whatsapp/messages` y reprocesa los eventos
 `whatsapp.smb.history`/webhooks ya recibidos para recuperar entradas, salidas,
-estados, atribucion y payload crudo. WhatsApp Cloud API directo no ofrece un
+estados, atribucion y payload crudo. El webhook YCloud debe suscribirse a
+`whatsapp.smb.message.echoes`: ese es el evento que refleja los mensajes que el
+negocio envia desde WhatsApp Business o un dispositivo companion. Cada
+instalacion actualiza esa suscripcion y ejecuta una importacion saliente
+idempotente una vez por version; si YCloud o el webhook fallan, no marca el
+backfill como terminado para reintentarlo en el siguiente arranque. WhatsApp
+Cloud API directo no ofrece un
 endpoint Graph para descargar retroactivamente toda la cuenta: en ese proveedor
 la fuente historica disponible son webhooks/relay y ecos de coexistencia desde
 el momento en que quedan activos. La API `syncMetaDirectHistory` debe reportar

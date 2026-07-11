@@ -195,7 +195,7 @@ const REQUIRED_WEBHOOK_EVENTS = [
   'whatsapp.inbound_message.received',
   'whatsapp.message.updated',
   'whatsapp.smb.history',
-  'whatsapp.smb.message.created',
+  'whatsapp.smb.message.echoes',
   'whatsapp.user.preferences',
   'contact.unsubscribe.created',
   'contact.unsubscribe.deleted',
@@ -216,7 +216,7 @@ const INBOUND_MESSAGE_EVENT_TYPES = new Set([
 
 const OUTBOUND_MESSAGE_EVENT_TYPES = new Set([
   'whatsapp.message.updated',
-  'whatsapp.smb.message.created'
+  'whatsapp.smb.message.echoes'
 ])
 
 const HISTORY_MESSAGE_EVENT_TYPES = new Set([
@@ -366,7 +366,7 @@ const CONFIG_KEYS = {
 }
 
 const HISTORY_DIRECTION_REPAIR_CONFIG_KEY = 'whatsapp_api_history_direction_repair_version'
-const HISTORY_DIRECTION_REPAIR_VERSION = '2026-06-17-history-context-and-outbound-list'
+const HISTORY_DIRECTION_REPAIR_VERSION = '2026-07-11-ycloud-smb-echoes-backfill'
 
 function nowIso() {
   return new Date().toISOString()
@@ -3808,6 +3808,36 @@ async function ensureWebhookEndpoint({ apiKey, webhookUrl, webhookEndpointId }) 
   return createWebhookEndpoint(apiKey, cleanWebhookUrl)
 }
 
+async function refreshYCloudWebhookEndpoint(config = {}) {
+  let webhookUrl = cleanString(config.webhookUrl)
+
+  if (!webhookUrl && config.webhookEndpointId) {
+    const existingEndpoint = await ycloudRequest(`/webhookEndpoints/${encodeURIComponent(config.webhookEndpointId)}`, {
+      apiKey: config.apiKey
+    })
+    webhookUrl = cleanString(existingEndpoint?.url)
+  }
+
+  if (!webhookUrl) {
+    return { skipped: true, reason: 'missing_webhook_url' }
+  }
+
+  const webhookEndpoint = await ensureWebhookEndpoint({
+    apiKey: config.apiKey,
+    webhookUrl,
+    webhookEndpointId: config.webhookEndpointId
+  })
+
+  await setAppConfig(CONFIG_KEYS.webhookEndpointId, webhookEndpoint.id || config.webhookEndpointId || '')
+  await setAppConfig(CONFIG_KEYS.webhookStatus, webhookEndpoint.status || config.webhookStatus || '')
+  await setAppConfig(CONFIG_KEYS.webhookUrl, webhookEndpoint.url || webhookUrl)
+  if (webhookEndpoint.secret) {
+    await setEncryptedConfig(CONFIG_KEYS.webhookSecret, webhookEndpoint.secret)
+  }
+
+  return { skipped: false, webhookEndpoint }
+}
+
 async function getPhoneNumbersFromDb() {
   return db.all(`
     SELECT id, waba_id, phone_number, display_phone_number, verified_name,
@@ -4675,21 +4705,7 @@ export async function refreshWhatsAppApi() {
 
     if (config.webhookEndpointId || config.webhookUrl) {
       try {
-        const webhookEndpoint = config.webhookUrl
-          ? await ensureWebhookEndpoint({
-              apiKey: config.apiKey,
-              webhookUrl: config.webhookUrl,
-              webhookEndpointId: config.webhookEndpointId
-            })
-          : await ycloudRequest(`/webhookEndpoints/${encodeURIComponent(config.webhookEndpointId)}`, {
-              apiKey: config.apiKey
-            })
-        await setAppConfig(CONFIG_KEYS.webhookEndpointId, webhookEndpoint.id || config.webhookEndpointId || '')
-        await setAppConfig(CONFIG_KEYS.webhookStatus, webhookEndpoint.status || config.webhookStatus || '')
-        await setAppConfig(CONFIG_KEYS.webhookUrl, webhookEndpoint.url || config.webhookUrl || '')
-        if (webhookEndpoint.secret) {
-          await setEncryptedConfig(CONFIG_KEYS.webhookSecret, webhookEndpoint.secret)
-        }
+        await refreshYCloudWebhookEndpoint(config)
       } catch (error) {
         webhookSetupWarning = buildWebhookSetupWarning(error)
         await setAppConfig(CONFIG_KEYS.webhookStatus, 'pending')
@@ -7905,25 +7921,46 @@ export async function repairStoredYCloudHistoryMessageDirections({ force = false
   const result = await backfillStoredWhatsAppApiMessageEvents({
     businessPhoneHints,
     limit,
-    eventTypes: [...HISTORY_MESSAGE_EVENT_TYPES]
+    eventTypes: [...HISTORY_MESSAGE_EVENT_TYPES, ...OUTBOUND_MESSAGE_EVENT_TYPES]
   })
 
   let outboundSync = null
-  if (config.apiKey) {
+  let webhookSync = { skipped: true, reason: 'ycloud_disconnected' }
+  let backfillCompleted = true
+  if (config.enabled && config.apiKey) {
+    try {
+      webhookSync = await refreshYCloudWebhookEndpoint(config)
+      if (webhookSync.skipped) {
+        backfillCompleted = false
+        logger.warn('WhatsApp API omitio la actualizacion del webhook YCloud: falta la URL publica del endpoint.')
+      }
+    } catch (error) {
+      backfillCompleted = false
+      const webhookSetupWarning = buildWebhookSetupWarning(error)
+      await setAppConfig(CONFIG_KEYS.webhookStatus, 'pending')
+      await setAppConfig(CONFIG_KEYS.lastError, webhookSetupWarning)
+      logger.warn(`No se pudo actualizar webhook YCloud durante backfill: ${error.message}`)
+    }
+
     const wabaIds = [config.wabaId].filter(Boolean)
-    outboundSync = await syncYCloudMessagesFromApi(config.apiKey, {
-      businessPhoneHints,
-      wabaIds
-    }).catch(error => {
+    try {
+      outboundSync = await syncYCloudMessagesFromApi(config.apiKey, {
+        businessPhoneHints,
+        wabaIds
+      })
+    } catch (error) {
+      backfillCompleted = false
       logger.warn(`No se pudo corregir historial saliente desde YCloud durante reparación: ${error.message}`)
-      return { messages: 0, created: 0, updated: 0, failed: 0 }
-    })
+      outboundSync = { messages: 0, created: 0, updated: 0, failed: 0 }
+    }
   }
 
   await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
     logger.warn(`No se pudo reparar identidad tras recalcular historial WhatsApp API: ${error.message}`)
   })
-  await setAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY, HISTORY_DIRECTION_REPAIR_VERSION)
+  if (backfillCompleted) {
+    await setAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY, HISTORY_DIRECTION_REPAIR_VERSION)
+  }
 
   if (result.events) {
     logger.info(`WhatsApp API recalculo dirección de historial guardado: ${result.messages} mensajes en ${result.events} eventos.`)
@@ -7934,7 +7971,10 @@ export async function repairStoredYCloudHistoryMessageDirections({ force = false
 
   return {
     skipped: false,
+    completed: backfillCompleted,
     ...result,
+    webhookUpdated: webhookSync.skipped === false,
+    webhookSkipReason: webhookSync.skipped ? webhookSync.reason : '',
     outboundMessages: outboundSync?.messages || 0,
     outboundCreated: outboundSync?.created || 0,
     outboundUpdated: outboundSync?.updated || 0,

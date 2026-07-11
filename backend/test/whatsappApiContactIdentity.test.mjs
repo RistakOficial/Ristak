@@ -14,6 +14,7 @@ import {
 import {
   captureQrChatMessage,
   getWhatsAppApiConfigKeys,
+  getWhatsAppApiRequiredWebhookEvents,
   processYCloudWhatsAppWebhook,
   repairStoredYCloudHistoryMessageDirections,
   sendWhatsAppApiImageMessage,
@@ -2109,6 +2110,75 @@ test('historial smb de YCloud infiere entrantes y salientes por teléfonos conoc
   }
 })
 
+test('ecos de WhatsApp Business App se guardan como mensajes salientes', async () => {
+  const id = randomUUID()
+  const phone = `+52988${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const eventId = `evt_smb_echo_${id}`
+  const messageId = `ycloud_smb_echo_${id}`
+  const messageAt = '2024-06-09T08:09:10.000Z'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.senderPhone, keys.provider, keys.webhookSecret]
+
+  await cleanup({ phone, eventId, messageId })
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.provider, 'ycloud')
+
+      const payload = {
+        id: eventId,
+        type: 'whatsapp.smb.message.echoes',
+        apiVersion: 'v2',
+        createTime: messageAt,
+        whatsappMessage: {
+          id: messageId,
+          from: businessPhone,
+          to: phone,
+          wabaId: 'waba_smb_echo_test',
+          status: 'sent',
+          type: 'text',
+          text: { body: 'Mensaje escrito desde la app oficial' },
+          createTime: messageAt,
+          sendTime: messageAt
+        }
+      }
+
+      await processYCloudWhatsAppWebhook({
+        payload,
+        rawBody: JSON.stringify(payload),
+        signatureHeader: '',
+        endpointId: ''
+      })
+
+      const message = await db.get(`
+        SELECT direction, phone, from_phone, to_phone, message_text
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [messageId])
+
+      assert.deepEqual(message, {
+        direction: 'outbound',
+        phone,
+        from_phone: businessPhone,
+        to_phone: phone,
+        message_text: 'Mensaje escrito desde la app oficial'
+      })
+    })
+  } finally {
+    await cleanup({ phone, eventId, messageId })
+  }
+})
+
+test('YCloud suscribe los ecos de WhatsApp Business App con el evento oficial', () => {
+  const events = getWhatsAppApiRequiredWebhookEvents()
+
+  assert.ok(events.includes('whatsapp.smb.message.echoes'))
+  assert.ok(!events.includes('whatsapp.smb.message.created'))
+})
+
 test('historial smb anidado usa metadata y thread para separar hablante e interlocutor', async () => {
   const id = randomUUID()
   const phone = `+52989${Date.now().toString().slice(-7)}`
@@ -2332,6 +2402,9 @@ test('reparacion retroactiva corrige salientes guardados mal usando lista de YCl
     keys.phoneNumberId,
     keys.wabaId,
     keys.provider,
+    keys.webhookEndpointId,
+    keys.webhookUrl,
+    keys.webhookStatus,
     repairConfigKey
   ]
 
@@ -2346,6 +2419,9 @@ test('reparacion retroactiva corrige salientes guardados mal usando lista de YCl
       await setAppConfig(keys.phoneNumberId, 'phone_ycloud_repair_test')
       await setAppConfig(keys.wabaId, 'waba_ycloud_repair_test')
       await setAppConfig(keys.provider, 'ycloud')
+      await setAppConfig(keys.webhookEndpointId, 'webhook_ycloud_repair_test')
+      await setAppConfig(keys.webhookUrl, 'https://example.test/webhook/whatsapp-api/ycloud')
+      await setAppConfig(keys.webhookStatus, 'active')
 
       await db.run(`
         INSERT INTO whatsapp_api_messages (
@@ -2366,6 +2442,16 @@ test('reparacion retroactiva corrige salientes guardados mal usando lista de YCl
         const parsed = new URL(String(url))
         const path = parsed.pathname.replace(/^\/v2/, '')
         const method = String(options.method || 'GET').toUpperCase()
+        if (path === '/webhookEndpoints/webhook_ycloud_repair_test' && method === 'PATCH') {
+          const body = JSON.parse(String(options.body || '{}'))
+          assert.ok(body.enabledEvents.includes('whatsapp.smb.message.echoes'))
+          assert.ok(!body.enabledEvents.includes('whatsapp.smb.message.created'))
+          return ycloudJsonResponse({
+            id: 'webhook_ycloud_repair_test',
+            url: 'https://example.test/webhook/whatsapp-api/ycloud',
+            status: 'active'
+          })
+        }
         if (path === '/whatsapp/messages' && method === 'GET') {
           return ycloudJsonResponse({
             total: 1,
@@ -2388,6 +2474,8 @@ test('reparacion retroactiva corrige salientes guardados mal usando lista de YCl
       })
 
       const result = await repairStoredYCloudHistoryMessageDirections({ force: true })
+      assert.equal(result.completed, true)
+      assert.equal(result.webhookUpdated, true)
       assert.equal(result.outboundMessages, 1)
 
       const row = await db.get(`
