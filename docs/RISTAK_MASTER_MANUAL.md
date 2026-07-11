@@ -1099,6 +1099,16 @@ confirmar el mensaje.
 Durante `SIGTERM`/deploy drain, el proceso viejo debe cerrar sus sockets QR y
 liberar el lease de sesion antes de quedarse drenando requests; no debe seguir
 renovando el candado mientras la instancia nueva ya esta live.
+Al escanear un QR, Baileys puede cerrar con `restartRequired` (`515`): Ristak
+guarda primero cada `creds.update` pendiente y solo despues crea el socket nuevo
+con esas credenciales. Un `connectionClosed` (`428`) de una sesion previamente
+registrada se reintenta dos veces porque puede ser transitorio. Si vuelve a cerrar
+antes de abrir, Ristak conserva el auth local, desactiva ese QR para envios y lo
+marca `qr_repair_required`; nunca borra ni desconecta automaticamente un numero
+sano. El operador debe elegir generar un QR nuevo, y solo ese acto explicito
+limpia el auth rechazado y empieza un emparejamiento limpio. Si Baileys emite un
+QR pero no se puede convertir en imagen, el estado tambien queda como error
+accionable en lugar de dejar el modal girando indefinidamente.
 
 El respaldo QR se resuelve por telefono, no solo por el id exacto del numero API.
 Si el numero oficial y la conexion QR quedaron en filas distintas de

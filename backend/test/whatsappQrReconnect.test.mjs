@@ -60,6 +60,7 @@ function createFakeBaileysRuntime(sockets = [], options = {}) {
   }
   const defaultVersion = options.defaultVersion || DEFAULT_FAKE_WA_WEB_VERSION
   const socketUser = options.user || { id: CONNECTED_JID }
+  const authRegistered = options.authRegistered ?? true
   const fetchLatestWaWebVersion = options.fetchLatestWaWebVersion ||
     (options.latestWaWebVersion ? async () => ({ version: options.latestWaWebVersion, isLatest: true }) : undefined)
 
@@ -79,7 +80,7 @@ function createFakeBaileysRuntime(sockets = [], options = {}) {
     },
     initAuthCreds: () => ({
       me: options.authMe || { id: CONNECTED_JID },
-      registered: true
+      registered: authRegistered
     }),
     makeCacheableSignalKeyStore: (keys) => keys,
     proto: {
@@ -621,5 +622,97 @@ test('cierre 440 de Baileys conserva credenciales y deja la sesión reconectando
     assert.equal(phone.qr_status, 'reconnecting')
     assert.equal(phone.qr_last_error, null)
     assert.equal(auth.present, 1)
+  })
+})
+
+test('tres cierres 428 de una sesión guardada piden QR nuevo sin borrar credenciales automáticamente', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
+    setWhatsAppQrReconnectDelayForTest(0)
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+    assert.equal(sockets.length, 1)
+
+    const closedUpdate = {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Connection Closed',
+          output: { statusCode: 428 }
+        }
+      }
+    }
+
+    await sockets[0].emit('connection.update', closedUpdate)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sockets.length, 2)
+
+    await sockets[1].emit('connection.update', closedUpdate)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sockets.length, 3)
+
+    await sockets[2].emit('connection.update', closedUpdate)
+
+    const session = await db.get(
+      'SELECT status, last_error FROM whatsapp_qr_sessions WHERE phone_number_id = ?',
+      [phoneNumberId]
+    )
+    const phone = await db.get(
+      'SELECT qr_send_enabled, qr_status FROM whatsapp_api_phone_numbers WHERE id = ?',
+      [phoneNumberId]
+    )
+    const auth = await db.get(
+      'SELECT 1 AS present FROM whatsapp_qr_auth_state WHERE phone_number_id = ? AND auth_key = ?',
+      [phoneNumberId, 'creds']
+    )
+
+    assert.equal(session.status, 'qr_repair_required')
+    assert.match(session.last_error, /genera un QR nuevo/i)
+    assert.equal(phone.qr_status, 'qr_repair_required')
+    assert.equal(Number(phone.qr_send_enabled), 0)
+    assert.equal(auth.present, 1)
+  })
+})
+
+test('regenerar QR borra solo el auth rechazado y no vuelve a usar credenciales viejas', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'qr_repair_required' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+      autoOpen: true,
+      authRegistered: false
+    }))
+
+    const session = await startWhatsAppQrConnection({
+      phoneNumberId,
+      acceptedRisk: true,
+      acceptedBy: 'test'
+    })
+
+    assert.equal(sockets.length, 1)
+    assert.equal(sockets[0].options.auth.creds.registered, false)
+    assert.equal(session.status, 'connected')
+  })
+})
+
+test('volver a conectar un QR sano no reemplaza ni cierra su socket vivo', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+    assert.equal(sockets.length, 1)
+
+    await sockets[0].emit('connection.update', { connection: 'open' })
+    const session = await startWhatsAppQrConnection({ phoneNumberId, acceptedRisk: true })
+
+    assert.equal(sockets.length, 1)
+    assert.equal(sockets[0].closed, false)
+    assert.equal(session.status, 'connected')
   })
 })
