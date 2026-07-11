@@ -964,20 +964,31 @@ export const META_PAGE_SUBSCRIBED_FIELDS = [
   'feed'
 ]
 
-// Para Messenger y operaciones de Página, Meta exige un token de PÁGINA. Lo
-// derivamos on-demand desde el token base guardado y lo cacheamos en memoria:
-// un token de Página derivado de un token de usuario de larga duración no expira
-// mientras el de usuario siga vivo, así que cachearlo es seguro y evita una
-// llamada extra por cada mensaje. Ante un 190 (token inválido) se re-deriva.
+// Meta exige un token de Página para operar DMs. Messenger prefiere el User
+// Token humano guardado específicamente para esa superficie; Instagram, CAPI y
+// anuncios conservan el System User Token principal. El Page token resultante se
+// deriva on-demand y se cachea por token origen. Ante un 190 se re-deriva.
 const PAGE_TOKEN_TTL_MS = 30 * 60 * 1000
 let pageTokenCache = { pageId: '', sourceTokenHash: '', token: '', at: 0 }
 
-export async function resolveMetaPageAccessToken({ config, forceRefresh = false } = {}) {
+export async function resolveMetaPageAccessToken({ config, forceRefresh = false, platform = 'messenger' } = {}) {
   const cfg = config || await getMetaConfig().catch(() => null)
   const pageId = cleanString(cfg?.page_id)
-  const userToken = cleanString(cfg?.access_token)
+  const useMessengerToken = !isInstagramPlatform(platform)
+  const userToken = cleanString(
+    useMessengerToken
+      ? cfg?.messenger_user_token || cfg?.access_token
+      : cfg?.access_token
+  )
   if (!pageId) throw createMetaSocialMessageError('Falta seleccionar la Página de Facebook en Meta Ads.', 409)
-  if (!userToken) throw createMetaSocialMessageError('Conecta Meta Ads para operar Messenger/Instagram.', 409)
+  if (!userToken) {
+    throw createMetaSocialMessageError(
+      useMessengerToken
+        ? 'Guarda el User Token de Messenger y selecciona la Facebook Page para operar Messenger.'
+        : 'Conecta Meta Ads para operar Instagram.',
+      409
+    )
+  }
 
   // La Página puede mantenerse igual mientras el usuario reemplaza el System
   // User token (por ejemplo, después de corregir permisos). No reutilices el
@@ -1020,12 +1031,17 @@ function shouldRefreshMetaPageToken(error) {
 }
 
 // Devuelve el mejor token disponible para leer/enviar por la Página, cayendo al
-// token de usuario si por alguna razón no se puede derivar el de Página (para no
+// token origen si por alguna razón no se puede derivar el de Página (para no
 // romper el flujo de recepción por un fallo transitorio de derivación).
-async function resolveMetaPageTokenSafe(config) {
-  return resolveMetaPageAccessToken({ config }).catch(error => {
+async function resolveMetaPageTokenSafe(config, platform = 'messenger') {
+  const fallbackToken = cleanString(
+    isInstagramPlatform(platform)
+      ? config?.access_token
+      : config?.messenger_user_token || config?.access_token
+  )
+  return resolveMetaPageAccessToken({ config, platform }).catch(error => {
     logger.warn(`No se pudo derivar token de Página, usando token base: ${error.message}`)
-    return cleanString(config?.access_token)
+    return fallbackToken
   })
 }
 
@@ -1053,7 +1069,7 @@ async function resolveMetaSocialGraphCredentials(platform, config, { forceRefres
   if (isInstagramPlatform(platform)) {
     let token = ''
     try {
-      token = await resolveMetaPageAccessToken({ config, forceRefresh })
+      token = await resolveMetaPageAccessToken({ config, forceRefresh, platform: 'instagram' })
     } catch (error) {
       if (!safe) throw error
       logger.warn(`No se pudo derivar token de Página para Instagram: ${error.message}`)
@@ -1062,8 +1078,8 @@ async function resolveMetaSocialGraphCredentials(platform, config, { forceRefres
   }
 
   const token = safe
-    ? await resolveMetaPageTokenSafe(config)
-    : await resolveMetaPageAccessToken({ config, forceRefresh })
+    ? await resolveMetaPageTokenSafe(config, 'messenger')
+    : await resolveMetaPageAccessToken({ config, forceRefresh, platform: 'messenger' })
   return { token, baseUrl: API_URLS.META_GRAPH, tokenSource: 'page' }
 }
 
@@ -1728,7 +1744,7 @@ export async function ensureMetaPageMessagingSubscription() {
   const pageId = cleanString(config?.page_id)
   if (!pageId) throw createMetaSocialMessageError('Falta seleccionar la Página de Facebook en Meta Ads.', 409)
 
-  const pageToken = await resolveMetaPageAccessToken({ config })
+  const pageToken = await resolveMetaPageAccessToken({ config, platform: 'messenger' })
   await metaSocialGraphRequest(`/${encodeURIComponent(pageId)}/subscribed_apps`, {
     method: 'POST',
     token: pageToken,
@@ -1768,7 +1784,7 @@ export async function getMetaPageMessagingSubscription() {
   const pageId = cleanString(config?.page_id)
   if (!pageId) return { pageId: '', subscribed: false, apps: [] }
 
-  const pageToken = await resolveMetaPageAccessToken({ config })
+  const pageToken = await resolveMetaPageAccessToken({ config, platform: 'messenger' })
   const data = await metaSocialGraphRequest(`/${encodeURIComponent(pageId)}/subscribed_apps`, {
     token: pageToken
   })
@@ -1858,14 +1874,14 @@ async function sendMetaMessengerTextRequest({ businessId, recipientId, body, con
   try {
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config }),
+      token: await resolveMetaPageAccessToken({ config, platform: 'messenger' }),
       body: sendPayload
     })
   } catch (error) {
     if (!shouldRefreshMetaPageToken(error)) throw error
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true, platform: 'messenger' }),
       body: sendPayload
     })
   }
@@ -1907,14 +1923,14 @@ async function sendMetaMessengerAttachmentRequest({ businessId, recipientId, att
   try {
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config }),
+      token: await resolveMetaPageAccessToken({ config, platform: 'messenger' }),
       body: sendPayload
     })
   } catch (error) {
     if (!shouldRefreshMetaPageToken(error)) throw error
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true, platform: 'messenger' }),
       body: sendPayload
     })
   }
@@ -1956,14 +1972,14 @@ async function sendMetaMessengerReactionRequest({ businessId, recipientId, react
   try {
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config }),
+      token: await resolveMetaPageAccessToken({ config, platform: 'messenger' }),
       body: sendPayload
     })
   } catch (error) {
     if (!shouldRefreshMetaPageToken(error)) throw error
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true, platform: 'messenger' }),
       body: sendPayload
     })
   }
@@ -1996,14 +2012,14 @@ async function sendMetaMessengerMarkSeenRequest({ businessId, recipientId, confi
   try {
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config }),
+      token: await resolveMetaPageAccessToken({ config, platform: 'messenger' }),
       body: sendPayload
     })
   } catch (error) {
     if (!shouldRefreshMetaPageToken(error)) throw error
     return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true, platform: 'messenger' }),
       body: sendPayload
     })
   }

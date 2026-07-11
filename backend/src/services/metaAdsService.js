@@ -516,6 +516,7 @@ export async function getMetaConfig() {
     }
 
     await decryptMetaConfigSecret(config, 'access_token', 'token principal')
+    await decryptMetaConfigSecret(config, 'messenger_user_token', 'User Token de Messenger')
 
     // También desencriptar app_secret si existe
     if (config.app_secret && isEncrypted(config.app_secret)) {
@@ -530,6 +531,117 @@ export async function getMetaConfig() {
   } catch (error) {
     logger.error('Error obteniendo configuración de Meta:', error.message)
     throw error
+  }
+}
+
+/**
+ * Guarda el User Token humano que Meta exige para enviar Messenger a personas
+ * externas a la app. Vive separado del System User Token: CAPI, anuncios e
+ * Instagram siguen usando el token principal de la integración.
+ */
+export async function saveMetaMessengerUserToken(userToken) {
+  const normalizedToken = normalizeId(userToken)
+  if (!normalizedToken) throw new Error('Pega el User Token completo de Messenger.')
+
+  const encryptedToken = isEncrypted(normalizedToken) ? normalizedToken : encrypt(normalizedToken)
+  const result = await db.run(
+    `UPDATE meta_config
+     SET messenger_user_token = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = (SELECT id FROM meta_config ORDER BY id LIMIT 1)`,
+    [encryptedToken]
+  )
+
+  const changedRows = Number(result?.rowCount ?? result?.changes ?? 0)
+  if (!changedRows) {
+    throw new Error('Conecta primero Meta Ads y selecciona la Facebook Page.')
+  }
+
+  return { configured: true }
+}
+
+function buildMetaDeveloperUseCaseUrl({ appId, businessId, useCase, selectedTab, productRoute }) {
+  const cleanAppId = normalizeId(appId)
+  if (!cleanAppId) return ''
+
+  const url = new URL(
+    `https://developers.facebook.com/apps/${encodeURIComponent(cleanAppId)}/use_cases/customize/messenger_api_settings/`
+  )
+  url.searchParams.set('use_case_enum', useCase)
+  if (normalizeId(businessId)) url.searchParams.set('business_id', String(businessId).trim())
+  url.searchParams.set('selected_tab', selectedTab)
+  url.searchParams.set('product_route', productRoute)
+  return url.toString()
+}
+
+/**
+ * Recupera y conserva los IDs reales para abrir la configuración exacta de
+ * Messenger e Instagram en Meta Developers, sin exponer tokens al frontend.
+ */
+export async function getMetaDeveloperSetup() {
+  const config = await getMetaConfig()
+  if (!config?.access_token) {
+    return {
+      configured: false,
+      appId: '',
+      businessId: '',
+      messengerUrl: '',
+      instagramUrl: '',
+      messengerUserTokenConfigured: false
+    }
+  }
+
+  let appId = normalizeId(config.app_id) || ''
+  let businessId = normalizeId(config.meta_business_id) || ''
+
+  if (!appId) {
+    const tokenStatus = await verifyMetaToken(config.access_token)
+    if (tokenStatus.valid) appId = normalizeId(tokenStatus.appId) || ''
+  }
+
+  if (appId && !businessId) {
+    try {
+      const response = await fetch(
+        `${API_URLS.META_GRAPH}/${encodeURIComponent(appId)}?fields=business&access_token=${encodeURIComponent(config.access_token)}`
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || data?.error) {
+        logger.warn(`Meta no devolvió el portafolio para abrir Developers: ${data?.error?.message || response.status}`)
+      } else {
+        businessId = normalizeId(data?.business?.id) || ''
+      }
+    } catch (error) {
+      logger.warn(`No se pudo obtener el portafolio de Meta Developers: ${error.message}`)
+    }
+  }
+
+  if (appId !== (normalizeId(config.app_id) || '') || businessId !== (normalizeId(config.meta_business_id) || '')) {
+    await db.run(
+      `UPDATE meta_config
+       SET app_id = ?, meta_business_id = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [appId || null, businessId || null, config.id]
+    )
+  }
+
+  return {
+    configured: Boolean(appId),
+    appId,
+    businessId,
+    messengerUrl: buildMetaDeveloperUseCaseUrl({
+      appId,
+      businessId,
+      useCase: 'FACEBOOK_MESSAGING',
+      selectedTab: 'messenger_api_settings',
+      productRoute: 'messenger'
+    }),
+    instagramUrl: buildMetaDeveloperUseCaseUrl({
+      appId,
+      businessId,
+      useCase: 'INSTAGRAM_BUSINESS',
+      selectedTab: 'API-Setup',
+      productRoute: 'instagram-business'
+    }),
+    messengerUserTokenConfigured: Boolean(normalizeId(config.messenger_user_token))
   }
 }
 
@@ -742,20 +854,38 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     // IMPORTANTE: Solo permitir 1 configuración de Meta en la base de datos
     // Eliminar cualquier configuración existente antes de insertar la nueva
     const existingCount = await db.get('SELECT COUNT(*) as count FROM meta_config')
-    const existingMetaConfig = await db.get('SELECT page_id, instagram_account_id FROM meta_config LIMIT 1')
+    const existingMetaConfig = await db.get(
+      `SELECT page_id, instagram_account_id, app_id, meta_business_id, messenger_user_token
+       FROM meta_config
+       LIMIT 1`
+    )
 
     if (existingCount && existingCount.count > 0) {
       logger.info('Eliminando configuración de Meta existente (solo se permite 1)')
       await db.run('DELETE FROM meta_config')
     }
 
-    // Insertar la nueva configuración (System User - solo necesita access_token + ad_account_id)
+    // Renovar el System User Token no debe borrar el User Token de Messenger ni
+    // los IDs que usan los enlaces de Meta Developers. La excepción es cuando
+    // cambia la Página: el token humano se valida contra una Page concreta y
+    // debe volver a confirmarse antes de habilitar Messenger en la nueva.
+    const previousPageId = normalizeId(existingMetaConfig?.page_id)
+    const nextPageId = normalizeId(pageId)
+    const messengerTokenForNextConfig = previousPageId && nextPageId && previousPageId !== nextPageId
+      ? null
+      : existingMetaConfig?.messenger_user_token || null
     await db.run(`
-      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO meta_config (
+        ad_account_id, access_token, app_id, meta_business_id, messenger_user_token,
+        pixel_id, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       adAccountId,
       encryptedToken,
+      existingMetaConfig?.app_id || null,
+      existingMetaConfig?.meta_business_id || null,
+      messengerTokenForNextConfig,
       pixelId,
       pageId,
       instagramAccountId,
@@ -1245,7 +1375,9 @@ export async function updateRecentAds() {
  */
 export async function verifyMetaToken(accessToken) {
   try {
-    const response = await fetch(`${API_URLS.META_TOKEN_DEBUG}?input_token=${accessToken}&access_token=${accessToken}`)
+    const response = await fetch(
+      `${API_URLS.META_TOKEN_DEBUG}?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`
+    )
     const data = await response.json()
 
     if (data.error) {
@@ -1258,7 +1390,8 @@ export async function verifyMetaToken(accessToken) {
     return {
       valid: isValid,
       expiresAt,
-      scopes: data.data?.scopes || []
+      scopes: data.data?.scopes || [],
+      appId: normalizeId(data.data?.app_id) || ''
     }
   } catch (error) {
     logger.error('Error verificando token de Meta:', error.message)

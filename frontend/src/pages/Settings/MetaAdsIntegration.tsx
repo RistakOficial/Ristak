@@ -88,6 +88,14 @@ interface MetaWebhookInfo {
   fields: string[]
 }
 
+interface MetaDeveloperSetup {
+  appId: string
+  businessId: string
+  messengerUrl: string
+  instagramUrl: string
+  messengerUserTokenConfigured: boolean
+}
+
 const metaConnectedTabs: Array<{ id: MetaConnectedTab; label: string; icon: React.ReactNode }> = [
   { id: 'cuenta', label: 'Cuenta', icon: <Link2 size={16} /> },
   { id: 'redes-sociales', label: 'Redes sociales', icon: <MessageCircle size={16} /> },
@@ -482,6 +490,9 @@ export const MetaAdsIntegration: React.FC = () => {
   const [wizardRefreshNonce, setWizardRefreshNonce] = useState(0)
   const [activeMetaTab, setActiveMetaTab] = useState<MetaConnectedTab>(routeConnectedTab || 'cuenta')
   const [metaWebhookInfo, setMetaWebhookInfo] = useState<MetaWebhookInfo | null>(null)
+  const [metaDeveloperSetup, setMetaDeveloperSetup] = useState<MetaDeveloperSetup | null>(null)
+  const [messengerUserToken, setMessengerUserToken] = useState('')
+  const [isSavingMessengerUserToken, setIsSavingMessengerUserToken] = useState(false)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
   const { showToast } = useNotification()
@@ -610,6 +621,28 @@ export const MetaAdsIntegration: React.FC = () => {
     }
     void loadWebhookInfo()
     return () => { cancelled = true }
+  }, [])
+
+  const loadMetaDeveloperSetup = async () => {
+    try {
+      const response = await fetch('/api/meta/social/messaging/setup')
+      const data = await response.json()
+      if (data?.success) {
+        setMetaDeveloperSetup({
+          appId: data.appId || '',
+          businessId: data.businessId || '',
+          messengerUrl: data.messengerUrl || '',
+          instagramUrl: data.instagramUrl || '',
+          messengerUserTokenConfigured: data.messengerUserTokenConfigured === true
+        })
+      }
+    } catch {
+      setMetaDeveloperSetup(null)
+    }
+  }
+
+  useEffect(() => {
+    void loadMetaDeveloperSetup()
   }, [])
 
   const goToMetaStep = (stepIndex: number, options?: { replace?: boolean }) => {
@@ -1125,6 +1158,8 @@ export const MetaAdsIntegration: React.FC = () => {
     setPages([])
     setInstagramAccounts([])
     setRealAccessToken('')
+    setMetaDeveloperSetup(null)
+    setMessengerUserToken('')
     setSavedPageId('')
     setSavedInstagramAccountId('')
     goToMetaStep(0, { replace: true })
@@ -1221,6 +1256,7 @@ export const MetaAdsIntegration: React.FC = () => {
           setCredentials(prev => ({ ...prev, pixelId: nextPixelId }))
         }
         await loadCredentials()
+        await loadMetaDeveloperSetup()
         return { saved: true, syncStarted: data.data?.syncStarted === true }
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar Meta')
@@ -1650,6 +1686,15 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
+    if (newValue && !isInstagram && !metaDeveloperSetup?.messengerUserTokenConfigured) {
+      showToast(
+        'warning',
+        'Falta el User Token de Messenger',
+        'Guárdalo en esta misma sección antes de activar Messenger para poder responder a personas externas.'
+      )
+      return
+    }
+
     if (newValue && isInstagram && !hasInstagramAccount) {
       showToast(
         'warning',
@@ -1714,6 +1759,42 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
+  const handleSaveMessengerUserToken = async () => {
+    const userToken = messengerUserToken.trim()
+    if (userToken.length < 40) {
+      showToast('warning', 'Token incompleto', 'Pega el User Token completo que generaste en Meta Developers.')
+      return
+    }
+
+    setIsSavingMessengerUserToken(true)
+    try {
+      const response = await fetch('/api/meta/social/messaging/user-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userToken })
+      })
+      const data = await response.json()
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || 'Meta no aceptó el User Token para esta Página.')
+      }
+
+      setMessengerUserToken('')
+      const setup = data.setup || {}
+      setMetaDeveloperSetup({
+        appId: setup.appId || '',
+        businessId: setup.businessId || '',
+        messengerUrl: setup.messengerUrl || '',
+        instagramUrl: setup.instagramUrl || '',
+        messengerUserTokenConfigured: true
+      })
+      showToast('success', 'Messenger listo', 'El User Token quedó validado, cifrado y la Página se suscribió a los eventos de Messenger.')
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Revisa el User Token de Messenger.')
+    } finally {
+      setIsSavingMessengerUserToken(false)
+    }
+  }
+
   const syncMetaAds = async (options: { automatic?: boolean } = {}) => {
     if (isSyncingMetaAds) return
 
@@ -1758,7 +1839,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasPixel = Boolean(credentials.pixelId)
   const hasPageId = Boolean(credentials.pageId)
   const hasInstagramAccount = Boolean(credentials.instagramAccountId)
-  const canEnableMessengerMessaging = hasAccessToken && hasPageId
+  const canEnableMessengerMessaging = hasAccessToken && hasPageId && metaDeveloperSetup?.messengerUserTokenConfigured === true
   const canEnableMessengerComments = hasAccessToken && hasPageId
   const canEnableInstagramMessaging = hasAccessToken && hasPageId && hasInstagramAccount
   const canEnableInstagramComments = hasAccessToken && hasPageId && hasInstagramAccount
@@ -2402,7 +2483,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div className={styles.connectedPagesHeader}>
                   <h4 className={styles.connectedPagesTitle}>Redes sociales</h4>
                   <p className={styles.connectedPagesDescription}>
-                    Configura Messenger e Instagram por separado para activar mensajes y comentarios. Ambos usan el System User token guardado y el token de la Página enlazada.
+                    Configura Messenger e Instagram por separado. Messenger usa un User Token humano para poder responder DMs externos; Instagram conserva el System User token de la integración.
                   </p>
                 </div>
 
@@ -2415,7 +2496,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Messenger</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Para nuevos mensajes o comentarios, configura Webhooks en el caso de uso correspondiente.
+                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Genera el User Token en Meta Developers, guárdalo aquí y configura sus Webhooks en el mismo caso de uso.
                         </p>
                       </div>
                     </div>
@@ -2424,6 +2505,46 @@ export const MetaAdsIntegration: React.FC = () => {
                       <span className={styles.webhookFieldLabel}>Facebook Page</span>
                       <strong>{hasPageId ? getSelectedPageLabel() : 'Selecciona una Facebook Page'}</strong>
                     </div>
+
+                    <div className={styles.webhookField}>
+                      <span className={styles.webhookFieldLabel}>User Token de Messenger</span>
+                      <div className={styles.webhookFieldRow}>
+                        <input
+                          className={styles.secretTokenInput}
+                          type="password"
+                          autoComplete="off"
+                          value={messengerUserToken}
+                          onChange={(event) => setMessengerUserToken(event.target.value)}
+                          placeholder={metaDeveloperSetup?.messengerUserTokenConfigured ? 'Token guardado — pega otro para reemplazarlo' : 'Pega el User Token que generaste en Meta'}
+                          aria-label="User Token de Messenger"
+                          disabled={!hasPageId || isSavingMessengerUserToken}
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={handleSaveMessengerUserToken}
+                          disabled={!hasPageId || !messengerUserToken.trim() || isSavingMessengerUserToken}
+                        >
+                          <Save size={16} />
+                          {isSavingMessengerUserToken ? 'Validando' : metaDeveloperSetup?.messengerUserTokenConfigured ? 'Reemplazar' : 'Guardar'}
+                        </Button>
+                      </div>
+                      <p className={styles.connectedPagesDescription}>
+                        {metaDeveloperSetup?.messengerUserTokenConfigured
+                          ? 'Está guardado cifrado. Sólo se usa para derivar el token de Página de Messenger.'
+                          : 'Ristak no lo muestra después de guardarlo y valida que tenga acceso a la Página seleccionada.'}
+                      </p>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => window.open(metaDeveloperSetup?.messengerUrl, '_blank', 'noopener,noreferrer')}
+                      disabled={!metaDeveloperSetup?.messengerUrl}
+                    >
+                      <ExternalLink size={16} />
+                      Configurar Messenger y Webhooks en Meta
+                    </Button>
 
                     <div className={styles.socialSettingRows}>
                       <div className={styles.socialSettingRow}>
@@ -2472,7 +2593,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Instagram</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa la cuenta profesional enlazada a la Facebook Page. Todo se autoriza con el System User token.
+                          Usa la cuenta profesional enlazada a la Facebook Page. El System User token opera DMs y comentarios; configura sus Webhooks desde Meta Developers.
                         </p>
                       </div>
                     </div>
@@ -2485,6 +2606,16 @@ export const MetaAdsIntegration: React.FC = () => {
                     <p className={styles.connectedPagesDescription}>
                       Ristak deriva el token de la Página desde el System User token de Meta. Ese mismo flujo opera DMs, perfiles, media y comentarios de Instagram cuando la app tiene permisos de mensajería/comentarios y la cuenta está enlazada a la Page.
                     </p>
+
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => window.open(metaDeveloperSetup?.instagramUrl, '_blank', 'noopener,noreferrer')}
+                      disabled={!metaDeveloperSetup?.instagramUrl}
+                    >
+                      <ExternalLink size={16} />
+                      Configurar Instagram y Webhooks en Meta
+                    </Button>
 
                     <div className={styles.socialSettingRows}>
                       <div className={styles.socialSettingRow}>

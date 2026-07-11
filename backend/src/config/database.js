@@ -3559,6 +3559,8 @@ async function initTables() {
         access_token TEXT NOT NULL,
         app_id TEXT,
         app_secret TEXT,
+        messenger_user_token TEXT,
+        meta_business_id TEXT,
         instagram_account_id TEXT,
         token_expires_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

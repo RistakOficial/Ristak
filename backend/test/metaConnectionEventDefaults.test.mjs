@@ -7,7 +7,7 @@ import { API_URLS } from '../src/config/constants.js'
 import { saveMetaConfig } from '../src/services/metaAdsService.js'
 import { createLocalCalendar, updateLocalCalendar, upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import { createBlock, createSite, updateSite } from '../src/services/sitesService.js'
-import { initializeMasterKey } from '../src/utils/encryption.js'
+import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 
 const EVENT_CONFIG_KEYS = [
   'meta_whatsapp_schedule_enabled',
@@ -201,6 +201,9 @@ test('saving new Meta social profiles enables Page switches and page-backed Inst
         assert.equal(await getAppConfig('meta_instagram_messaging_enabled'), '1')
         assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '0')
 
+        const messengerTokenForPageOne = encrypt('messenger-user-token-for-page-one')
+        await db.run('UPDATE meta_config SET messenger_user_token = ?', [messengerTokenForPageOne])
+
         for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
           await setAppConfig(key, '0')
         }
@@ -213,6 +216,9 @@ test('saving new Meta social profiles enables Page switches and page-backed Inst
           'ig-1'
         )
 
+        const samePageConfig = await db.get('SELECT messenger_user_token FROM meta_config LIMIT 1')
+        assert.equal(samePageConfig?.messenger_user_token, messengerTokenForPageOne, 'same Page should keep its validated Messenger User Token')
+
         for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
           assert.equal(await getAppConfig(key), '0', `${key} should respect manual off for the same profiles`)
         }
@@ -224,6 +230,9 @@ test('saving new Meta social profiles enables Page switches and page-backed Inst
           'page-2',
           'ig-2'
         )
+
+        const changedPageConfig = await db.get('SELECT messenger_user_token FROM meta_config LIMIT 1')
+        assert.equal(changedPageConfig?.messenger_user_token, null, 'new Page must request a new validated Messenger User Token')
 
         for (const key of PAGE_SOCIAL_CHANNEL_CONFIG_KEYS) {
           assert.equal(await getAppConfig(key), '1', `${key} should turn back on for changed Page profiles`)

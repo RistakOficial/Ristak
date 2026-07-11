@@ -2056,9 +2056,23 @@ Ristak usa Meta en varias areas:
   un campo de webhook, cada arranque reconcilia idempotentemente esa lista para
   instalaciones ya conectadas. Esa pasada solo llama a Meta si la integracion y
   Messenger estan activos; no prende Messenger ni modifica una Page desconectada.
-  El webhook entrega eventos futuros: antes de importar conversaciones historicas,
-  Ristak registra la suscripcion y despues hace el backfill separado por
-  Conversations API, deduplicando por ID de mensaje.
+  El webhook entrega eventos futuros. El historial previo se importa de forma
+  separada por Conversations API y se deduplica por ID de mensaje; no depende de
+  que Meta vuelva a emitir los mensajes viejos por Webhook.
+- **Messenger externo** usa un User Token humano distinto del System User Token.
+  El usuario lo pega en `Configuracion > Meta > Redes sociales > Messenger`;
+  Ristak comprueba antes que pueda derivar el Page Token de la Page elegida y lo
+  guarda cifrado en `meta_config.messenger_user_token`. Ese token solo se usa
+  para Messenger/Page; anuncios, CAPI e Instagram siguen usando
+  `meta_config.access_token` (System User). El toggle de Messenger no se puede
+  activar sin ese User Token, porque Meta rechaza DMs a personas externas con un
+  Page Token derivado únicamente del System User.
+- En las tarjetas de Messenger e Instagram, los botones de Meta Developers se
+  arman con el App ID y el portafolio de la integración guardada; nunca con un
+  ID hardcodeado de Ristak. Si una conexión antigua no tenía esos IDs, Ristak
+  los recupera del System User Token y los conserva en `meta_config.app_id` y
+  `meta_config.meta_business_id` antes de abrir el caso de uso correcto para
+  generar token/configurar Webhooks.
 - El bloque **Perfil de red social** del editor de Sites lee los perfiles desde
   la configuracion Meta guardada (`meta_config.page_id`,
   `meta_config.instagram_account_id` y `meta_config.access_token`) cuando el

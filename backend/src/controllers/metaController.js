@@ -8,7 +8,9 @@ import {
   updateRecentAds,
   getMetaSyncProgress,
   getMetaConfig,
+  getMetaDeveloperSetup,
   resolveMetaCapiAccessToken,
+  saveMetaMessengerUserToken as persistMetaMessengerUserToken,
   verifyMetaToken,
   fetchMetaCreativeMediaForAds,
   fetchMetaCreativeMediaForAd
@@ -37,6 +39,7 @@ import {
   getMetaWebhookVerifyToken,
   ensureMetaPageMessagingSubscription,
   getMetaPageMessagingSubscription,
+  resolveMetaPageAccessToken,
   syncMetaSocialConversationHistoryInBackground
 } from '../services/metaSocialMessagingService.js';
 import { clearMetaIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
@@ -1459,6 +1462,87 @@ export const getMetaSocialMessagingSubscription = async (req, res) => {
   } catch (error) {
     logger.warn(`No se pudo leer la suscripción de la Página: ${error.message}`);
     res.status(200).json({ success: false, subscribed: false, error: error.message });
+  }
+};
+
+/**
+ * Devuelve el enlace de Developers correcto para la app/portafolio conectados,
+ * sin mandar IDs ni tokens sensibles al frontend fuera de los IDs públicos.
+ */
+export const getMetaSocialMessagingSetup = async (req, res) => {
+  try {
+    const setup = await getMetaDeveloperSetup();
+    res.json({ success: true, ...setup });
+  } catch (error) {
+    logger.warn(`No se pudo preparar la configuración de Messenger en Meta Developers: ${error.message}`);
+    res.status(200).json({
+      success: false,
+      configured: false,
+      appId: '',
+      businessId: '',
+      messengerUrl: '',
+      instagramUrl: '',
+      messengerUserTokenConfigured: false,
+      error: error.message || 'No se pudo preparar la configuración de Messenger'
+    });
+  }
+};
+
+/**
+ * Guarda y verifica el User Token humano que Messenger requiere para hablar
+ * con personas externas a la app. Antes de persistirlo comprobamos que pueda
+ * derivar un Page Token para la Página seleccionada.
+ */
+export const saveMetaMessengerUserToken = async (req, res) => {
+  try {
+    const userToken = cleanString(req.body?.userToken);
+    if (userToken.length < 40) {
+      return res.status(400).json({
+        success: false,
+        error: 'Pega el User Token completo de Messenger.'
+      });
+    }
+
+    const config = await getMetaConfig();
+    if (!config?.page_id) {
+      return res.status(409).json({
+        success: false,
+        error: 'Selecciona primero una Facebook Page en el wizard de Meta.'
+      });
+    }
+
+    const tokenStatus = await verifyMetaToken(userToken);
+    if (!tokenStatus.valid) {
+      return res.status(400).json({
+        success: false,
+        error: tokenStatus.error || 'El User Token de Messenger no es válido.'
+      });
+    }
+
+    // No guardamos un token que Meta no pueda convertir al Page Token que usa
+    // realmente el endpoint de Messenger.
+    await resolveMetaPageAccessToken({
+      config: { ...config, messenger_user_token: userToken },
+      forceRefresh: true,
+      platform: 'messenger'
+    });
+
+    await persistMetaMessengerUserToken(userToken);
+    const subscription = await ensureMetaPageMessagingSubscription();
+    const setup = await getMetaDeveloperSetup();
+
+    res.json({
+      success: true,
+      configured: true,
+      subscription,
+      setup
+    });
+  } catch (error) {
+    logger.warn(`No se pudo guardar el User Token de Messenger: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo guardar el User Token de Messenger.'
+    });
   }
 };
 

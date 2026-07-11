@@ -5,7 +5,12 @@ import http from 'node:http'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
-import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
+import { encrypt, initializeMasterKey, isEncrypted } from '../src/utils/encryption.js'
+import {
+  getMetaConfig,
+  getMetaDeveloperSetup,
+  saveMetaMessengerUserToken
+} from '../src/services/metaAdsService.js'
 import {
   processMetaSocialWebhook,
   ensureMetaPageMessagingSubscription,
@@ -64,6 +69,27 @@ async function startMetaSendServer(calls) {
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
       calls.push({ method: req.method, url: req.url, body, authorization: req.headers.authorization || '' })
+
+      if (req.method === 'GET' && /^\/debug_token(?:\?|$)/.test(req.url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ data: { is_valid: true, app_id: 'app-developer-setup-test', scopes: ['pages_messaging'] } }))
+        return
+      }
+
+      if (req.method === 'GET' && /^\/app-developer-setup-test(?:\?|$)/.test(req.url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ business: { id: 'business-developer-setup-test' } }))
+        return
+      }
+
+      if (req.method === 'GET' && /^\/page-messenger-user-token-test(?:\?|$)/.test(req.url)) {
+        const pageToken = req.headers.authorization === 'Bearer messenger-user-token-test'
+          ? 'page-token-from-messenger-user'
+          : 'page-token-from-system-user'
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ access_token: pageToken }))
+        return
+      }
 
       if (req.method === 'GET' && /^\/page-send-test(?:\?|$)/.test(req.url)) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -533,6 +559,64 @@ test('reconcileMetaPageMessagingSubscription actualiza instalaciones existentes 
     subscribedFields: ['messages', 'message_deliveries']
   })
   assert.equal(ensureCalls, 1)
+})
+
+test('Messenger usa su User Token humano y arma enlaces de Developers con la app configurada', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const previousMetaTokenDebugDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_TOKEN_DEBUG')
+  const calls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    const graphBase = `http://127.0.0.1:${metaServer.address().port}`
+    Object.defineProperty(API_URLS, 'META_GRAPH', { value: graphBase, configurable: true })
+    Object.defineProperty(API_URLS, 'META_TOKEN_DEBUG', { value: `${graphBase}/debug_token`, configurable: true })
+
+    await snapshotMetaConfig(async () => {
+      await db.run(`
+        INSERT INTO meta_config (
+          ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+          timezone_id, timezone_name, timezone_offset_hours_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        'act-messenger-user-token-test',
+        encrypt('system-user-token-test'),
+        null,
+        'page-messenger-user-token-test',
+        'ig-business-user-token-test',
+        null,
+        null,
+        null
+      ])
+
+      await saveMetaMessengerUserToken('messenger-user-token-test')
+      const rawConfig = await db.get('SELECT messenger_user_token FROM meta_config LIMIT 1')
+      assert.equal(isEncrypted(rawConfig?.messenger_user_token), true)
+
+      const config = await getMetaConfig()
+      assert.equal(config?.messenger_user_token, 'messenger-user-token-test')
+
+      const messengerPageToken = await resolveMetaPageAccessToken({ config, platform: 'messenger' })
+      const instagramPageToken = await resolveMetaPageAccessToken({ config, platform: 'instagram' })
+      assert.equal(messengerPageToken, 'page-token-from-messenger-user')
+      assert.equal(instagramPageToken, 'page-token-from-system-user')
+
+      const setup = await getMetaDeveloperSetup()
+      assert.equal(setup.appId, 'app-developer-setup-test')
+      assert.equal(setup.businessId, 'business-developer-setup-test')
+      assert.equal(setup.messengerUserTokenConfigured, true)
+      assert.match(setup.messengerUrl, /use_case_enum=FACEBOOK_MESSAGING/)
+      assert.match(setup.messengerUrl, /business_id=business-developer-setup-test/)
+      assert.match(setup.instagramUrl, /use_case_enum=INSTAGRAM_BUSINESS/)
+      assert.match(setup.instagramUrl, /selected_tab=API-Setup/)
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousMetaTokenDebugDescriptor) Object.defineProperty(API_URLS, 'META_TOKEN_DEBUG', previousMetaTokenDebugDescriptor)
+  }
 })
 
 test('syncMetaSocialConversationHistory importa historial disponible de Messenger al chat', async () => {
