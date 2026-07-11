@@ -21,7 +21,8 @@ import {
   formatOffsetLabel,
   offsetToMs,
   computeReminderSendAt,
-  renderMessageText
+  renderMessageText,
+  parseStoredUtcDateTime
 } from './appointmentReminderLogic.js'
 
 export { DEFAULT_REMINDER_TEXT, DEFAULT_CONFIRMATION_TEXT, formatOffsetLabel, computeReminderSendAt }
@@ -138,14 +139,6 @@ function createSendId() {
 
 function nowIso() {
   return new Date().toISOString()
-}
-
-function parseStoredUtcDateTime(value) {
-  const text = cleanString(value)
-  if (!text) return null
-  const normalized = text.includes('T') ? text : text.replace(' ', 'T')
-  const parsed = DateTime.fromISO(normalized, { zone: 'utc' })
-  return parsed.isValid ? parsed : null
 }
 
 function shouldHoldErroredSend(row, now) {
@@ -1484,8 +1477,8 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
       if (reminder.timingAnchor === 'after_booking') {
         const apptSource = cleanString(appointment.source).toLowerCase() || 'ristak'
         if (apptSource === 'google' || apptSource === 'ghl') continue
-        const bookedAt = DateTime.fromISO(cleanString(appointment.date_added).replace(' ', 'T'), { zone: 'utc' })
-        if (!bookedAt.isValid || (afterSince && bookedAt < afterSince)) continue
+        const bookedAt = parseStoredUtcDateTime(appointment.date_added)
+        if (!bookedAt || (afterSince && bookedAt < afterSince)) continue
       }
 
       const sendAt = computeReminderSendAt(appointment.start_time, reminder, timezone, appointment.date_added)

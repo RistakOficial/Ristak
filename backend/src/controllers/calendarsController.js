@@ -42,6 +42,10 @@ import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCr
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js';
 import { runIdempotentAppointmentCreation } from '../services/appointmentCreationSafetyService.js';
 import { assertConversationalAppointmentDepositReservationFence } from '../services/conversationalAgentService.js';
+import {
+  dispatchAppointmentAutomationEvent,
+  dispatchAppointmentCreatedAutomations
+} from '../services/appointmentAutomationService.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -1666,6 +1670,8 @@ export async function createPublicAppointment(req, res) {
       logger.warn(`[Calendars Controller] Cita publica guardada local, sync Google pendiente/error: ${error.message}`);
     }
 
+    await dispatchAppointmentCreatedAutomations(appointment);
+
     const customEvents = localCalendarService.normalizeCalendarCustomEventsConfig(calendar.customEvents || {});
     let metaEvent = null;
     let metaFiredViaSite = false;
@@ -2200,6 +2206,8 @@ export async function createAppointment(req, res) {
       logger.warn(`[Calendars Controller] Cita guardada local, sync Google pendiente/error: ${error.message}`);
     }
 
+    await dispatchAppointmentCreatedAutomations(appointment);
+
     const contactId = appointmentData.contactId || appointmentData.contact_id || appointment?.contactId || appointment?.contact_id;
 
     if (contactId) {
@@ -2384,6 +2392,10 @@ export async function updateAppointment(req, res) {
       }
     } catch (error) {
       logger.warn(`[Calendars Controller] Update local guardado, sync Google pendiente/error: ${error.message}`);
+    }
+
+    if (nextStatus && nextStatus !== previousStatus) {
+      await dispatchAppointmentAutomationEvent('appointment-status', appointment, { previousStatus });
     }
 
     res.json({
