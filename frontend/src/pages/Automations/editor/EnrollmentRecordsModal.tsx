@@ -3,8 +3,9 @@ import { UserRound } from 'lucide-react'
 import { Badge, Loading, Modal, TabList, type BadgeVariant } from '@/components/common'
 import automationsService, { type AutomationEnrollment } from '@/services/automationsService'
 import type { AutomationNode } from '@/services/automationsService'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { getNodeDefinition } from './nodeRegistry'
-import { formatDate } from '@/utils/format'
+import { formatDateTime } from '@/utils/format'
 import styles from './AutomationEditor.module.css'
 
 /**
@@ -38,6 +39,7 @@ export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
   initialTab,
   onClose
 }) => {
+  const { timezone } = useTimezone()
   const [tab, setTab] = useState<RecordsTab>(initialTab)
   const [enrollments, setEnrollments] = useState<AutomationEnrollment[] | null>(null)
 
@@ -129,7 +131,7 @@ export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
                       <Badge variant={status.variant}>{status.label}</Badge>
                     </span>
                     <span>{enrollment.status === 'active' ? nodeName(enrollment.currentNodeId) : '—'}</span>
-                    <span>{formatDate(enrollment.enteredAt, { includeYear: true })}</span>
+                    <span>{formatDateTime(enrollment.enteredAt, { timezone, includeTime: true })}</span>
                   </div>
                 )
               })}
@@ -156,7 +158,7 @@ export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
                 </span>
                 <span>{row.step}</span>
                 <span>{row.status}</span>
-                <span>{formatDate(row.at, { includeYear: true })}</span>
+                <span>{formatDateTime(row.at, { timezone, includeTime: true })}</span>
               </div>
             ))}
           </div>

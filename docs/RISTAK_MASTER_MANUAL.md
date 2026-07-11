@@ -2532,6 +2532,11 @@ El modal de prueba usa un solo campo **Contacto**: el usuario puede buscar un
 contacto existente o crear uno nuevo desde el mismo selector, y la prueba corre
 sobre ese contacto elegido.
 
+El modal **Registros de la automatización** muestra el historial de
+inscripciones y los registros de ejecución con fecha y hora en la zona horaria
+del negocio. Esto permite reconstruir cuándo entró cada contacto y cuándo se
+ejecutó cada paso, no sólo el día calendario.
+
 La acción **Notificaciones** permite elegir canales de entrega independientes:
 campanita interna del CRM (`internal_notifications`), push a la app movil/PWA
 (`push_subscriptions` y `mobile_push_devices`) y correo interno al email del
