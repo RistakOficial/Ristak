@@ -325,10 +325,10 @@ test('saveWhatsAppAudioDataUrl convierte grabaciones MP4 a nota de voz Ogg Opus 
       uploads.every(upload => !decodeURIComponent(upload.url).endsWith('-whatsapp-audio.mp4')),
       'la nota de voz no debe llegar a Bunny como .mp4'
     )
-    assert.equal(uploads[0].contentType, 'audio/ogg')
+    assert.equal(uploads[0].contentType, 'audio/ogg; codecs=opus')
 
     const row = await db.get('SELECT mime_type, media_type, extension, stored_filename, metadata_json FROM media_assets WHERE id = ?', [mediaAssetId])
-    assert.equal(row.mime_type, 'audio/ogg')
+    assert.equal(row.mime_type, 'audio/ogg; codecs=opus')
     assert.equal(row.media_type, 'audio')
     assert.equal(row.extension, 'ogg')
     assert.match(row.stored_filename, /\.ogg$/)

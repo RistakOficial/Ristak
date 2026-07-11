@@ -751,8 +751,14 @@ reclasificarlo como `application/octet-stream`. Si web, móvil o un flujo legacy
 entregan un `dataUrl`, el backend primero convierte/publica un OGG/Opus y después
 manda ese enlace. Antes de reutilizar la URL de un asset de Automatizaciones,
 el runtime valida que sus bytes sí sean OGG/Opus; un MP3/M4A legacy se convierte
-y publica de nuevo. Meta Direct usa el mismo `audio.link` con `voice=true` a
-través de Graph API. Los assets externos se conservan como enlaces HTTPS.
+y publica de nuevo. El storage y el CDN deben conservar el MIME completo
+`audio/ogg; codecs=opus`; no deben reducirlo a `audio/ogg`, porque el proveedor
+puede reclasificar la nota durante su procesamiento asíncrono. Para assets legacy
+que ya viven en CDN con el MIME incompleto, el enlace de entrega usa el proxy
+público `/media/assets/:id/file?voice=1`: valida los bytes y responde con el MIME
+completo sin obligar al usuario a volver a subir el archivo. Meta Direct usa el
+mismo `audio.link` con `voice=true` a través de Graph API. Los assets externos se
+conservan como enlaces HTTPS.
 Las URLs públicas existen exclusivamente para que los proveedores puedan descargar
 el contenido; el endpoint/proxy mantiene MIME, `nosniff` y fuerza la descarga de
 tipos no seguros.

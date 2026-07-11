@@ -3601,10 +3601,24 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
   } else if (block.type === 'audio' || block.type === 'voice') {
     const isVoiceNote = block.type === 'voice' || block.voiceNote !== false
     let publicUrlVerified = false
+    let voiceDeliveryPublicUrl = str(media.publicUrl)
     if (media.publicUrl && dataUrl) {
       try {
         const encodedAudio = str(dataUrl).slice(str(dataUrl).indexOf(',') + 1)
         publicUrlVerified = isValidWhatsAppVoiceNoteBuffer(Buffer.from(encodedAudio, 'base64'))
+        if (
+          publicUrlVerified &&
+          !/^audio\/ogg\s*;[^,]*\bcodecs\s*=\s*"?opus"?/i.test(str(media.mimeType)) &&
+          media.mediaAssetId
+        ) {
+          // Assets legacy sí contienen OGG/Opus válido, pero Bunny los guardó
+          // como `audio/ogg`. El proxy público conserva el parámetro de códec
+          // que YCloud/Meta necesitan durante el procesamiento asíncrono.
+          voiceDeliveryPublicUrl = publicAutomationMediaUrl(
+            `/media/assets/${encodeURIComponent(media.mediaAssetId)}/file?voice=1`,
+            ctx
+          )
+        }
       } catch {
         publicUrlVerified = false
       }
@@ -3616,7 +3630,7 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
     const audioDelivery = resolveAutomationAudioDelivery({
       dataUrl,
       externalUrl,
-      publicUrl: media.publicUrl,
+      publicUrl: voiceDeliveryPublicUrl,
       publicUrlVerified
     })
     return sendWhatsAppApiAudioMessage({

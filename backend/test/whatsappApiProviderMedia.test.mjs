@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import ffmpegPath from 'ffmpeg-static'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
+import { serveMediaAssetFileHandler } from '../src/controllers/mediaController.js'
 import {
   getWhatsAppApiConfigKeys,
   sendWhatsAppApiAudioMessage,
@@ -761,6 +762,24 @@ test('envío API convierte un MP3 real, publica OGG/Opus decodificable y lo mand
 
         const storedBytes = await readAndDecodeStoredOgg(deliveryMediaAssetId)
         assert.ok(storedBytes.length > 100)
+
+        const proxyResponse = {
+          headers: {},
+          statusCode: 200,
+          body: null,
+          setHeader(name, value) { this.headers[String(name).toLowerCase()] = String(value) },
+          status(code) { this.statusCode = code; return this },
+          json(body) { this.body = body; return this },
+          send(body) { this.body = body; return this }
+        }
+        await serveMediaAssetFileHandler({
+          params: { assetId: deliveryMediaAssetId },
+          query: { voice: '1' },
+          originalUrl: `/media/assets/${deliveryMediaAssetId}/file?voice=1`
+        }, proxyResponse)
+        assert.equal(proxyResponse.statusCode, 200)
+        assert.equal(proxyResponse.headers['content-type'], 'audio/ogg; codecs=opus')
+        assert.deepEqual(proxyResponse.body, storedBytes)
 
         const row = await db.get(
           `SELECT media_url, media_mime_type, media_filename, media_duration_ms, raw_payload_json

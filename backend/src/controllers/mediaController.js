@@ -19,7 +19,10 @@ import {
 } from '../services/mediaStorageService.js'
 import { logger } from '../utils/logger.js'
 import { db } from '../config/database.js'
-import { prepareWhatsAppMediaForDirectUpload } from '../services/whatsappApiService.js'
+import {
+  isValidWhatsAppVoiceNoteBuffer,
+  prepareWhatsAppMediaForDirectUpload
+} from '../services/whatsappApiService.js'
 import {
   createMediaUploadRequestHashes,
   runIdempotentMediaUpload
@@ -590,6 +593,23 @@ export async function storageDiagnosticsHandler(_req, res) {
 export async function serveMediaAssetFileHandler(req, res) {
   try {
     const assetId = req.params.assetId || extractMediaAssetIdFromUrl(req.originalUrl)
+    if (parseBoolean(req.query?.voice, false)) {
+      const file = await getMediaAssetBuffer(assetId)
+      if (!isValidWhatsAppVoiceNoteBuffer(file.buffer)) {
+        const error = new Error('El archivo no es una nota de voz OGG/Opus válida.')
+        error.status = 415
+        throw error
+      }
+      res.setHeader('Content-Type', 'audio/ogg; codecs=opus')
+      res.setHeader('Content-Length', String(file.buffer.length))
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+      if (file.filename) {
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.filename)}"`)
+      }
+      res.send(file.buffer)
+      return
+    }
     const file = await getMediaAssetFile(assetId, req.params.variant || '')
     if (file.redirectUrl) {
       return res.redirect(302, file.redirectUrl)

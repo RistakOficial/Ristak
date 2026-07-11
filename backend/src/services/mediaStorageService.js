@@ -432,6 +432,15 @@ function mimeBase(mimeType = '') {
   return MIME_TYPE_ALIASES.get(base) || base
 }
 
+function storageMimeType(mimeType = '') {
+  const clean = cleanString(mimeType).toLowerCase()
+  const base = mimeBase(clean)
+  if (base === 'audio/ogg' && /(?:^|;)\s*codecs\s*=\s*"?opus"?(?:;|$)/i.test(clean)) {
+    return 'audio/ogg; codecs=opus'
+  }
+  return base
+}
+
 function mediaTypeFromMime(mimeType = '') {
   const base = mimeBase(mimeType)
   if (base.startsWith('image/')) return 'image'
@@ -1762,7 +1771,7 @@ async function processMedia({ buffer, mimeType, mediaType, config, skipCompressi
   logger.info(`[MediaStorage] Compresión completada: ${mediaType} ${compressed.note || 'original'}`)
   return {
     buffer: compressed.buffer,
-    mimeType: mimeBase(compressed.contentType || mimeType),
+    mimeType: storageMimeType(compressed.contentType || mimeType),
     compression: compressed.note || 'original'
   }
 }
@@ -2061,7 +2070,14 @@ export async function uploadMediaAsset(input = {}) {
       return existingAsset
     }
 
-    const detected = await detectMimeType(headerSample, input.mimeType || input.contentType || '', originalFilename)
+    const declaredStorageMimeType = storageMimeType(input.mimeType || input.contentType || '')
+    const detectedMedia = await detectMimeType(headerSample, input.mimeType || input.contentType || '', originalFilename)
+    const detected = {
+      ...detectedMedia,
+      mimeType: mimeBase(declaredStorageMimeType) === detectedMedia.mimeType
+        ? declaredStorageMimeType
+        : detectedMedia.mimeType
+    }
     const mediaType = mediaTypeFromMime(detected.mimeType)
     validateMediaType({ mimeType: detected.mimeType, mediaType, sizeBytes, settings: config })
 
@@ -2107,7 +2123,10 @@ export async function uploadMediaAsset(input = {}) {
       skipCompression: boolValue(input.skipCompression)
     })
     const processedDetected = await detectMimeType(processed.buffer, processed.mimeType, originalFilename)
-    const finalMimeType = processedDetected.mimeType
+    const processedStorageMimeType = storageMimeType(processed.mimeType)
+    const finalMimeType = mimeBase(processedStorageMimeType) === processedDetected.mimeType
+      ? processedStorageMimeType
+      : processedDetected.mimeType
     const finalMediaType = mediaTypeFromMime(finalMimeType)
     const extension = extensionForMime(finalMimeType, originalFilename)
     const dimensions = await getImageMetadata(processed.buffer, finalMimeType)
