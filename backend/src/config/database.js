@@ -4995,6 +4995,7 @@ async function initTables() {
       UPDATE whatsapp_api_messages
       SET provider_message_id = COALESCE(NULLIF(meta_message_id, ''), NULLIF(ycloud_message_id, ''), NULLIF(wamid, ''))
       WHERE COALESCE(provider_message_id, '') = ''
+        AND COALESCE(NULLIF(meta_message_id, ''), NULLIF(ycloud_message_id, ''), NULLIF(wamid, '')) IS NOT NULL
     `)
     await db.run(`
       UPDATE whatsapp_api_messages
@@ -5003,7 +5004,14 @@ async function initTables() {
         WHEN LOWER(COALESCE(provider, '')) = 'meta_direct' THEN 'meta_direct'
         ELSE 'ycloud'
       END
-      WHERE COALESCE(source_adapter, '') = '' OR source_adapter = 'ycloud'
+      WHERE COALESCE(source_adapter, '') = ''
+         OR (
+           source_adapter = 'ycloud'
+           AND (
+             LOWER(COALESCE(transport, '')) = 'qr'
+             OR LOWER(COALESCE(provider, '')) IN ('qr', 'meta_direct')
+           )
+         )
     `)
     await db.run(`
       UPDATE whatsapp_api_webhook_events
@@ -5012,7 +5020,14 @@ async function initTables() {
           OR LOWER(COALESCE(webhook_endpoint_id, '')) = 'installer_relay' THEN 'meta_direct'
         ELSE 'ycloud'
       END
-      WHERE COALESCE(provider, '') = '' OR provider = 'ycloud'
+      WHERE COALESCE(provider, '') = ''
+         OR (
+           provider = 'ycloud'
+           AND (
+             LOWER(COALESCE(event_type, '')) LIKE 'meta.%'
+             OR LOWER(COALESCE(webhook_endpoint_id, '')) = 'installer_relay'
+           )
+         )
     `)
     await db.run(`
       UPDATE whatsapp_api_template_sends
@@ -5020,6 +5035,7 @@ async function initTables() {
           provider = COALESCE(NULLIF(provider, ''), 'ycloud'),
           source_adapter = COALESCE(NULLIF(source_adapter, ''), 'ycloud')
       WHERE COALESCE(provider_message_id, '') = ''
+        AND COALESCE(NULLIF(ycloud_message_id, ''), NULLIF(wamid, '')) IS NOT NULL
     `)
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_phone ON whatsapp_api_phone_numbers(phone_number)')
