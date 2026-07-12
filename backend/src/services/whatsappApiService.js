@@ -9279,6 +9279,11 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
   if (!wabaId) throw new Error('Falta el WABA ID de Meta')
   if (!phoneNumberId) throw new Error('Falta el Phone Number ID de Meta')
 
+  const authorizedPhone = await validateMetaDirectOperationalAccess({
+    wabaId,
+    phoneNumberId,
+    token: systemUserToken
+  })
   await subscribeMetaDirectWaba({ wabaId, token: systemUserToken })
 
   await setAppConfig(CONFIG_KEYS.metaStatus, 'connected')
@@ -9319,8 +9324,8 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
     META_DIRECT_PROVIDER_NAME,
     wabaId,
     displayPhoneNumber || null,
-    cleanString(payload.displayPhoneNumber || payload.display_phone_number) || displayPhoneNumber || null,
-    cleanString(payload.verifiedName || payload.verified_name) || 'Meta directo',
+    cleanString(authorizedPhone.display_phone_number || payload.displayPhoneNumber || payload.display_phone_number) || displayPhoneNumber || null,
+    cleanString(authorizedPhone.verified_name || payload.verifiedName || payload.verified_name) || 'Meta directo',
     safeJson({
       appId,
       businessId,
@@ -9378,7 +9383,34 @@ export async function setWhatsAppActiveProvider({ provider } = {}) {
   return getWhatsAppApiStatus()
 }
 
-async function metaDirectGraphRequest(path, { method = 'GET', token, query, body } = {}) {
+const META_DIRECT_RECONNECT_MESSAGE = 'La conexión de WhatsApp API perdió permisos en Meta. Vuelve a conectarla desde Configuración > WhatsApp.'
+
+function isMetaDirectAuthorizationError(error) {
+  const graphCode = Number(error?.graphCode || error?.code || 0)
+  const graphSubcode = Number(error?.graphSubcode || error?.errorSubcode || 0)
+  return graphCode === 190 || graphCode === 200 || (graphCode === 100 && graphSubcode === 33) ||
+    cleanString(error?.code) === 'META_PHONE_NOT_AUTHORIZED'
+}
+
+async function markMetaDirectAuthorizationRequired({ error, phoneNumberId = '' } = {}) {
+  if (!isMetaDirectAuthorizationError(error)) return false
+  const configuredPhoneNumberId = cleanString(phoneNumberId) || cleanString(await getAppConfig(CONFIG_KEYS.metaPhoneNumberId))
+  await Promise.all([
+    setAppConfig(CONFIG_KEYS.metaStatus, 'reconnect_required'),
+    setAppConfig(CONFIG_KEYS.metaLastError, META_DIRECT_RECONNECT_MESSAGE),
+    configuredPhoneNumberId
+      ? db.run(`
+          UPDATE whatsapp_api_phone_numbers
+          SET status = 'AUTHORIZATION_REQUIRED', api_send_enabled = 0, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND provider = ?
+        `, [configuredPhoneNumberId, META_DIRECT_PROVIDER_NAME])
+      : Promise.resolve()
+  ])
+  logger.warn(`[Meta directo] La autorización ya no puede operar el número configurado (Graph ${error?.graphCode || 'local'}/${error?.graphSubcode || 'sin subcode'}).`)
+  return true
+}
+
+async function metaDirectGraphRequest(path, { method = 'GET', token, query, body, operational = false, phoneNumberId = '' } = {}) {
   const cleanToken = cleanString(token)
   if (!cleanToken) throw new Error('Falta el token de Meta directo')
   const url = new URL(`${META_GRAPH_BASE_URL}${path}`)
@@ -9395,10 +9427,42 @@ async function metaDirectGraphRequest(path, { method = 'GET', token, query, body
     ...(body ? { body: JSON.stringify(body) } : {})
   })
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    throw new Error(data?.error?.message || `Meta Graph respondió ${response.status}`)
+  if (!response.ok || data?.error) {
+    const graphError = data?.error || {}
+    const error = new Error(graphError.message || `Meta Graph respondió ${response.status}`)
+    error.name = 'MetaDirectGraphError'
+    error.statusCode = response.status
+    error.graphCode = Number(graphError.code || 0) || null
+    error.graphSubcode = Number(graphError.error_subcode || 0) || null
+    error.graphMessage = cleanString(graphError.message)
+    if (isMetaDirectAuthorizationError(error)) error.message = META_DIRECT_RECONNECT_MESSAGE
+    if (operational) await markMetaDirectAuthorizationRequired({ error, phoneNumberId })
+    throw error
   }
   return data
+}
+
+async function validateMetaDirectOperationalAccess({ wabaId, phoneNumberId, token, operational = false } = {}) {
+  const cleanWabaId = cleanString(wabaId)
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  if (!cleanWabaId) throw new Error('Falta el WABA ID de Meta')
+  if (!cleanPhoneNumberId) throw new Error('Falta el Phone Number ID de Meta')
+
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(cleanWabaId)}/phone_numbers`, {
+    token,
+    query: { fields: 'id,display_phone_number,verified_name,quality_rating,messaging_limit_tier', limit: 100 },
+    operational,
+    phoneNumberId: cleanPhoneNumberId
+  })
+  const phone = (Array.isArray(response?.data) ? response.data : [])
+    .find(item => cleanString(item?.id) === cleanPhoneNumberId)
+  if (!phone) {
+    const error = new Error(META_DIRECT_RECONNECT_MESSAGE)
+    error.code = 'META_PHONE_NOT_AUTHORIZED'
+    if (operational) await markMetaDirectAuthorizationRequired({ error, phoneNumberId: cleanPhoneNumberId })
+    throw error
+  }
+  return phone
 }
 
 async function subscribeMetaDirectWaba({ wabaId, token } = {}) {
@@ -9416,9 +9480,11 @@ async function subscribeMetaDirectWaba({ wabaId, token } = {}) {
 export async function testMetaDirectConnection() {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
-  const phone = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}`, {
+  const phone = await validateMetaDirectOperationalAccess({
+    wabaId: config.wabaId,
+    phoneNumberId: config.phoneNumberId,
     token: config.systemUserToken,
-    query: { fields: 'id,display_phone_number,verified_name,quality_rating,messaging_limit_tier' }
+    operational: true
   })
 
   if (phone.display_phone_number || phone.verified_name) {
@@ -9701,6 +9767,8 @@ async function sendTextViaMetaDirect({ to, text, from, externalId, replyContext 
   return metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
+    operational: true,
+    phoneNumberId: config.phoneNumberId,
     body: {
       messaging_product: 'whatsapp',
       to: toPhone,
@@ -9729,6 +9797,8 @@ async function sendAudioViaMetaDirect({ to, audio, from, externalId } = {}) {
   const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
+    operational: true,
+    phoneNumberId: config.phoneNumberId,
     body: {
       messaging_product: 'whatsapp',
       to: toPhone,
@@ -9768,6 +9838,8 @@ async function sendReactionViaMetaDirect({ to, emoji, from, externalId, targetPr
   const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
+    operational: true,
+    phoneNumberId: config.phoneNumberId,
     body: {
       messaging_product: 'whatsapp',
       to: toPhone,
@@ -9812,6 +9884,8 @@ async function sendLocationViaMetaDirect({ to, location, from, externalId } = {}
   const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
+    operational: true,
+    phoneNumberId: config.phoneNumberId,
     body: {
       messaging_product: 'whatsapp',
       to: toPhone,
@@ -9857,6 +9931,8 @@ async function sendTemplateViaMetaDirect({ to, template, components, externalId 
   const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
+    operational: true,
+    phoneNumberId: config.phoneNumberId,
     body: {
       messaging_product: 'whatsapp',
       to: toPhone,
@@ -9997,6 +10073,8 @@ async function sendInteractiveViaMetaDirect({ to, interactive, externalId } = {}
   return metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
+    operational: true,
+    phoneNumberId: config.phoneNumberId,
     body: {
       messaging_product: 'whatsapp',
       to: toPhone,

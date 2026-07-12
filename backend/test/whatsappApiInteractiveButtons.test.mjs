@@ -288,6 +288,73 @@ async function withMetaDirectMessageCapture(callback) {
   })
 }
 
+test('Meta directo exige reconexión y deshabilita el número cuando Graph revoca el activo', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const phoneNumberId = `phone_meta_permission_${randomUUID()}`
+  const configKeys = [
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken,
+    keys.metaLastError
+  ]
+
+  await snapshotAppConfig(configKeys, async () => {
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, 'waba_meta_permission_test')
+    await setAppConfig(keys.metaPhoneNumberId, phoneNumberId)
+    await setAppConfig(keys.metaDisplayPhoneNumber, '+526568619478')
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_revoked_token'))
+    await setAppConfig(keys.metaLastError, '')
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        status, api_send_enabled, updated_at
+      ) VALUES (?, 'meta_direct', 'waba_meta_permission_test', '+526568619478', '+52 656 861 9478',
+        'Meta Permission Test', 'CONNECTED', 1, CURRENT_TIMESTAMP)
+    `, [phoneNumberId])
+
+    setMetaDirectFetchForTest(async () => ycloudJsonResponse({
+      error: {
+        code: 100,
+        error_subcode: 33,
+        message: `Unsupported post request. Object with ID '${phoneNumberId}' does not exist.`
+      }
+    }, { status: 400, statusText: 'Bad Request' }))
+
+    try {
+      await assert.rejects(
+        () => sendWhatsAppApiTextMessage({
+          to: '+526561111111',
+          text: 'Mensaje que no debe salir',
+          allowQrFallback: false
+        }),
+        /perdió permisos en Meta/
+      )
+
+      assert.equal(await db.get(
+        'SELECT config_value FROM app_config WHERE config_key = ?',
+        [keys.metaStatus]
+      ).then(row => row?.config_value), 'reconnect_required')
+      assert.match(await db.get(
+        'SELECT config_value FROM app_config WHERE config_key = ?',
+        [keys.metaLastError]
+      ).then(row => row?.config_value || ''), /Vuelve a conectarla/)
+      assert.deepEqual(await db.get(
+        'SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?',
+        [phoneNumberId]
+      ), { status: 'AUTHORIZATION_REQUIRED', api_send_enabled: 0 })
+    } finally {
+      setMetaDirectFetchForTest(null)
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    }
+  })
+})
+
 async function withOnlyQrSender(callback) {
   const phoneNumberId = `phone_auto_qr_primary_${randomUUID()}`
   const businessPhone = '+526561234567'

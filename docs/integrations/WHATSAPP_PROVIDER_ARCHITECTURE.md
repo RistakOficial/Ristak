@@ -217,6 +217,23 @@ sesión, y el backend central:
 5. retransmite `object=whatsapp_business_account` por la cola durable existente
    hacia `/api/whatsapp-api/meta/webhook-relay`.
 
+La conexión no se considera operativa sólo porque Meta devolvió un token o
+porque `/{WABA_ID}/subscribed_apps` respondió. Antes de guardar `connected`, el
+tenant debe listar `/{WABA_ID}/phone_numbers` con el token recibido y comprobar
+que el `Phone Number ID` seleccionado está en esa respuesta. El Installer valida
+además que el token sea `SYSTEM_USER`, no esté vencido y conserve
+`whatsapp_business_management` y `whatsapp_business_messaging`. Una autorización
+de Meta Ads, Facebook o Instagram nunca puede sustituir el token cifrado de
+`whatsapp_meta_direct_*`, aunque pertenezca a la misma app y al mismo negocio.
+
+Meta puede retirar permisos o acceso al activo después del onboarding. Si Graph
+responde `code=100/subcode=33`, `code=190` o un error de permisos equivalente al
+operar el WABA/número, Ristak cambia la conexión a `reconnect_required`, desactiva
+el envío API de esa fila y muestra una instrucción corta para reconectar. No debe
+seguir presentando el número como conectado ni exponer el error crudo de Graph al
+usuario. La reconexión explícita vuelve a validar el activo y reactiva la misma
+fila; no borra historial, plantillas ni contactos.
+
 El token termina cifrado sólo en la base del tenant. Installer conserva metadata
 de sesión y ruteo; un payload de entrega pendiente queda cifrado temporalmente y
 se destruye al recibir el ACK. Si el tenant estuvo caído, el siguiente state
@@ -308,6 +325,8 @@ Antes de declarar lista la conexión directa:
    token, sin exponer sus valores.
 2. Validar WABA, Phone Number ID, Business ID, App ID y scopes sin copiar
    secretos al repositorio.
+   El token debe depurarse como `SYSTEM_USER`, no estar vencido y poder listar
+   el Phone Number ID dentro de `/{WABA_ID}/phone_numbers` justo antes del ACK.
 3. Suscribir la app al WABA y verificar recepción real de `messages`, estados,
    `history`, `smb_app_state_sync` y `smb_message_echoes` según los permisos
    aprobados.

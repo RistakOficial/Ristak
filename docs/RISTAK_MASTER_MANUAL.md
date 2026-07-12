@@ -527,6 +527,14 @@ Installer conserva temporalmente el resultado cifrado y una sesión nueva de la
 misma instalación lo retoma sin volver a autorizar ni exponer el token al
 navegador.
 
+El ACK de conexión exige acceso operativo real: el token debe ser de usuario de
+sistema, conservar los dos permisos de WhatsApp y listar el Phone Number ID
+dentro del WABA. Los tokens de Meta Ads/Facebook/Instagram permanecen separados
+y no pueden reemplazar la credencial `whatsapp_meta_direct_*`. Si Meta retira el
+activo después, Ristak marca esa fila como `reconnect_required`, apaga su envío
+API y pide reconectar con un mensaje legible; el historial y la configuración de
+YCloud/QR permanecen intactos.
+
 Cada número tiene en la última columna acciones separadas para **Meta Directo**,
 **YCloud** y **QR**. Desconectar ahí sólo retira esa conexión de Ristak: no borra
 ni desregistra el número real en Meta, YCloud o WhatsApp. Una fila oficial puede
