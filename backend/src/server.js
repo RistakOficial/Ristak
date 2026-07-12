@@ -438,13 +438,6 @@ app.use('/api/chat-events', chatEventsRoutes)
 app.use('/api/payment-events', requireAuth, requireFeature('payments'), paymentEventsRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api/user-config', userConfigRoutes) // (MOB-006) preferencias de notificaciones por usuario
-app.use('/api', costsRoutes)
-app.use('/api/hidden-contacts', hiddenContactsRoutes)
-app.use('/api/ai-agent', requireAuth, requireFeature('app_assistant_ai'), aiAgentRoutes) // (LIC-002) auth antes de feature
-app.use('/api/conversational-agent', requireAuth, requireFeature('conversational_ai'), conversationalAgentRoutes) // (LIC-002) auth antes de feature
-app.use('/api/search', searchRoutes)
-app.use('/api/external', externalRoutes)
-app.use('/api/mcp', mcpRoutes)
 const requireWhatsAppFeatureForWhatsAppApiRoute = (() => {
   const whatsappFeatureGate = requireFeature('whatsapp')
   return (req, res, next) => {
@@ -454,10 +447,19 @@ const requireWhatsAppFeatureForWhatsAppApiRoute = (() => {
     return whatsappFeatureGate(req, res, next)
   }
 })()
+// Debe montarse antes de costsRoutes: ese router histórico cuelga de /api y su
+// router.use(requireAuth) intercepta cualquier /api/* que aparezca después.
 // Los callbacks Installer -> tenant viven antes de router.use(requireAuth) y se
 // autentican con HMAC, timestamp, nonce e installation id dentro del router.
 // El resto de /api/whatsapp-api sigue exigiendo la sesión humana ahí mismo.
 app.use('/api/whatsapp-api', requireWhatsAppFeatureForWhatsAppApiRoute, whatsappApiRoutes)
+app.use('/api', costsRoutes)
+app.use('/api/hidden-contacts', hiddenContactsRoutes)
+app.use('/api/ai-agent', requireAuth, requireFeature('app_assistant_ai'), aiAgentRoutes) // (LIC-002) auth antes de feature
+app.use('/api/conversational-agent', requireAuth, requireFeature('conversational_ai'), conversationalAgentRoutes) // (LIC-002) auth antes de feature
+app.use('/api/search', searchRoutes)
+app.use('/api/external', externalRoutes)
+app.use('/api/mcp', mcpRoutes)
 app.use('/api/email', requireAuth, requireFeature('email'), emailRoutes) // (LIC-002) auth antes de feature
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'

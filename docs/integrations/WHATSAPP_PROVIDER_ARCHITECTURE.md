@@ -229,7 +229,9 @@ Los callbacks Installer -> tenant (`/meta/connect/complete`,
 humana del router porque usan HMAC, timestamp, nonce e installation ID. Todas las
 rutas operadas por una persona están después de `router.use(requireAuth)`. No se
 debe volver a montar `requireAuth` sobre todo `/api/whatsapp-api`, porque eso
-bloquea los callbacks firmados antes de validarlos.
+bloquea los callbacks firmados antes de validarlos. El mount también debe quedar
+antes del router histórico `costsRoutes` montado sobre `/api`, ya que su
+`router.use(requireAuth)` actúa como catch-all para cualquier ruta posterior.
 
 Al finalizar, `meta_direct` pasa a ser el proveedor API activo. La configuración
 YCloud permanece guardada para un cambio explícito posterior; nunca se hacen dos
