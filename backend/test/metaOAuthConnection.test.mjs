@@ -178,7 +178,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
       graphCalls.push(url)
       assert.equal(url.searchParams.get('appsecret_proof'), 'oauth-bisu-proof')
       const path = url.pathname.replace(/^\/v\d+\.\d+/, '')
-      if (path === '/me' && url.searchParams.get('fields') === 'id,name') return graphResponse({ id: 'isu-1', name: 'Integration System User' })
+      if (path === '/isu-1' && url.searchParams.get('fields') === 'id,name') return graphResponse({ id: 'isu-1', name: 'Integration System User' })
       if (path === '/me/permissions') return graphResponse({ data: [
         ...graphScopes.map(permission => ({ permission, status: 'granted' })),
         { permission: 'optional_old_scope', status: 'declined' }
@@ -192,6 +192,9 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
         { id: 'act_123', name: 'Ads', timezone_name: 'America/Ciudad_Juarez', business: { id: 'business-1' } },
         { id: 'act_999', name: 'Ads no consentida', timezone_name: 'UTC', business: { id: 'business-1' } }
       ] })
+      if (path === '/isu-1/assigned_ad_accounts') return graphResponse({ data: [
+        { id: 'act_123', name: 'Ads', timezone_name: 'America/Ciudad_Juarez', business: { id: 'business-1' } }
+      ] })
       if (path === '/me/accounts') return graphResponse({ data: [{
         id: 'page-1', name: 'Página Uno', business: { id: 'business-1' },
         tasks: graphPageTasks,
@@ -199,6 +202,11 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
       }, {
         id: 'page-live-extra', name: 'No consentida', tasks: graphPageTasks,
         instagram_business_account: { id: 'ig-live-extra', username: 'extra' }
+      }] })
+      if (path === '/isu-1/assigned_pages') return graphResponse({ data: [{
+        id: 'page-1', name: 'Página Uno', business: { id: 'business-1' },
+        tasks: graphPageTasks,
+        instagram_business_account: { id: 'ig-1', username: 'demo' }
       }] })
       if (path === '/business-1/owned_pixels') return graphResponse({ data: [{ id: 'pixel-1', name: 'Pixel' }] })
       if (path === '/business-1/client_pixels') return graphResponse({ data: [] })
@@ -261,6 +269,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.deepEqual(completed.adAccounts[0].pixels, [{ id: 'pixel-1', name: 'Pixel', businessId: 'business-1' }])
     assert.equal(completed.pages.some(page => page.id === 'page-live-extra'), false)
     assert.equal(completed.pages[0].instagramAccounts[0].id, 'ig-1')
+    assert.equal(graphCalls.some(url => ['/me', '/me/accounts', '/me/adaccounts', '/me/permissions'].includes(url.pathname.replace(/^\/v\d+\.\d+/, ''))), false)
     assert.equal((await getMetaConfig()).access_token, 'manual-token', 'complete no promueve todavía')
     const pendingRow = await db.get('SELECT payload_encrypted FROM meta_oauth_pending_sessions WHERE id = ?', [completed.sessionId])
     assert.equal(pendingRow.payload_encrypted.includes('oauth-bisu-token'), false)
@@ -390,6 +399,21 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal(await getAppConfig('meta_whatsapp_schedule_enabled'), '0')
     assert.equal(await getAppConfig('meta_whatsapp_purchase_enabled'), '0')
     assert.equal(JSON.parse(await getAppConfig('meta_payment_purchase_event_config')).enabled, false)
+
+    handoffMeta.connection_id = 'connection-social-only'
+    const socialOnlyReconnect = await completeMetaOAuthConnection({ handoffToken: 'handoff-social-only' })
+    const socialOnlyFinalized = await finalizeMetaOAuthConnection({
+      sessionId: socialOnlyReconnect.sessionId,
+      adAccountId: '',
+      pixelId: '',
+      pageId: 'page-1',
+      instagramAccountId: 'ig-1',
+      publicBaseUrl: 'https://tenant.test'
+    })
+    assert.equal(socialOnlyFinalized.connected, true)
+    assert.equal(socialOnlyFinalized.adsSync.syncStarted, false)
+    assert.equal((await getMetaConfig()).ad_account_id, null)
+    assert.equal((await getMetaConfig()).page_id, 'page-1')
 
     const reconciliation = await reconcileMetaBusinessWithHighLevel('unused-location', 'unused-token')
     assert.equal(reconciliation.action, 'oauth_isolated')

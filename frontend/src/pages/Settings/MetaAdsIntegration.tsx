@@ -501,7 +501,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const [metaOAuthSelection, setMetaOAuthSelection] = useState<MetaOAuthFinalizeSelection>({ sessionId: '' })
   const [isConnectingMetaOAuth, setIsConnectingMetaOAuth] = useState(false)
   const [isLoadingAuthorizedMetaAssets, setIsLoadingAuthorizedMetaAssets] = useState(false)
-  const [isMetaAuthorizationGuideOpen, setIsMetaAuthorizationGuideOpen] = useState(false)
   const [showManualConnection, setShowManualConnection] = useState(false)
   const [isSavingToken, setIsSavingToken] = useState(false)
   const [isRevealingAccessToken, setIsRevealingAccessToken] = useState(false)
@@ -875,10 +874,6 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const handleConnectWithMeta = () => {
-    setIsMetaAuthorizationGuideOpen(true)
-  }
-
   const handleChangeAuthorizedMetaAssets = async () => {
     setIsLoadingAuthorizedMetaAssets(true)
     try {
@@ -897,7 +892,7 @@ export const MetaAdsIntegration: React.FC = () => {
         'Hace falta autorizar una vez más',
         error instanceof Error ? error.message : 'Meta no devolvió el inventario autorizado.'
       )
-      setIsMetaAuthorizationGuideOpen(true)
+      await startMetaAuthorization()
     } finally {
       setIsLoadingAuthorizedMetaAssets(false)
     }
@@ -2396,12 +2391,8 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const finishUnifiedMetaOAuth = async () => {
     if (!metaOAuthSession) return
-    if (!metaOAuthSelection.adAccountId) {
-      showToast('warning', 'Elige una cuenta publicitaria', 'La conexión necesita una cuenta para campañas y reportes.')
-      return
-    }
     if (!metaOAuthSelection.pageId) {
-      showToast('warning', 'Elige una Facebook Page', 'La misma conexión necesita la Page que recibirá mensajes y comentarios.')
+      showToast('warning', 'Elige una Facebook Page', 'La Page es necesaria para recibir mensajes y comentarios. Publicidad y Dataset pueden quedar vacíos.')
       return
     }
 
@@ -2414,10 +2405,12 @@ export const MetaAdsIntegration: React.FC = () => {
       relayNeedsRepair ? 'warning' : 'success',
       relayNeedsRepair ? 'Meta conectado con una tarea pendiente' : 'Meta conectado',
       relayNeedsRepair
-        ? 'Anuncios y Dataset quedaron listos, pero mensajes y comentarios necesitan reintentar el relay.'
+        ? 'La conexión quedó guardada, pero mensajes y comentarios necesitan reintentar el relay.'
         : metaOAuthSelection.pixelId
           ? 'Anuncios, Dataset, Facebook e Instagram quedaron listos desde un solo login.'
-          : 'Anuncios, Facebook e Instagram quedaron listos. Puedes agregar un Dataset cuando lo necesites.'
+          : metaOAuthSelection.adAccountId
+            ? 'Anuncios, Facebook e Instagram quedaron listos. Puedes agregar un Dataset cuando lo necesites.'
+            : 'Facebook e Instagram quedaron listos. Puedes conectar publicidad después si la necesitas.'
     )
   }
 
@@ -2477,7 +2470,7 @@ export const MetaAdsIntegration: React.FC = () => {
               {session.pages.reduce((total, page) => total + page.instagramAccounts.length, 0)} cuenta(s) de Instagram.
             </p>
             <label className={styles.formGroup}>
-              <span className={styles.formLabel}>Cuenta publicitaria</span>
+              <span className={styles.formLabel}>Cuenta publicitaria · Opcional</span>
               <CustomSelect
                 value={selection.adAccountId || ''}
                 onChange={(event) => {
@@ -2489,14 +2482,14 @@ export const MetaAdsIntegration: React.FC = () => {
                   const keepPage = currentPage && (!nextBusinessId || !currentPage.businessId || currentPage.businessId === nextBusinessId)
                   updateMetaOAuthSelection({
                     businessId: nextBusinessId || undefined,
-                    adAccountId: account?.id.replace(/^act_/, '') || undefined,
+                    adAccountId: account?.id.replace(/^act_/, '') || '',
                     pixelId: '',
                     pageId: keepPage ? currentPage.id : undefined,
                     instagramAccountId: keepPage ? selection.instagramAccountId || '' : ''
                   })
                 }}
               >
-                <option value="">Elige una cuenta publicitaria</option>
+                <option value="">No usar publicidad por ahora</option>
                 {session.adAccounts.map(account => (
                   <option key={account.id} value={account.id.replace(/^act_/, '')}>
                     {account.name} ({account.id.replace(/^act_/, '')})
@@ -2532,7 +2525,6 @@ export const MetaAdsIntegration: React.FC = () => {
                     instagramAccountId: ''
                   })
                 }}
-                disabled={!selection.adAccountId}
               >
                 <option value="">Elige una Facebook Page</option>
                 {availablePages.map(page => (
@@ -2563,7 +2555,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 type="button"
                 variant="primary"
                 onClick={() => void finishUnifiedMetaOAuth()}
-                disabled={isSavingWizardConfig || Boolean(session.permissions.missing.length) || !selection.adAccountId || !selection.pageId}
+                disabled={isSavingWizardConfig || Boolean(session.permissions.missing.length) || !selection.pageId}
               >
                 {isSavingWizardConfig ? <RefreshCw size={16} className={styles.spinning} /> : <CheckCircle size={16} />}
                 {isSavingWizardConfig ? 'Guardando' : 'Guardar conexión'}
@@ -2598,7 +2590,7 @@ export const MetaAdsIntegration: React.FC = () => {
             <Button
               type="button"
               variant="ghost"
-              onClick={handleConnectWithMeta}
+              onClick={() => void startMetaAuthorization()}
               disabled={isConnectingMetaOAuth || metaOAuthStatus === null || metaOAuthStatus?.available === false}
             >
               {isConnectingMetaOAuth ? <RefreshCw size={16} className={styles.spinning} /> : <MetaBrandMark size={17} />}
@@ -3929,29 +3921,6 @@ export const MetaAdsIntegration: React.FC = () => {
 
 
       </div>
-
-      <Modal
-        isOpen={isMetaAuthorizationGuideOpen}
-        onClose={() => {
-          if (!isConnectingMetaOAuth) setIsMetaAuthorizationGuideOpen(false)
-        }}
-        title="Autoriza todos tus activos actuales"
-        subtitle="Meta controla esta pantalla; Ristak no puede marcar las opciones por ti."
-        type="custom"
-        size="md"
-        confirmText={isConnectingMetaOAuth ? 'Abriendo Meta...' : 'Abrir Meta'}
-        cancelText="Ahora no"
-        onConfirm={async () => {
-          setIsMetaAuthorizationGuideOpen(false)
-          await startMetaAuthorization()
-        }}
-      >
-        <div className={styles.metaAuthorizationGuide}>
-          <p>En cada grupo que muestre Meta —Páginas, cuentas publicitarias, Datasets e Instagram— elige <strong>Seleccionar todo</strong>.</p>
-          <p>Al volver, Ristak te preguntará cuáles quieres dejar activos. Los demás quedarán disponibles para cambiarlos aquí sin repetir OAuth.</p>
-          <p>Si después creas un activo nuevo, usa <strong>Autorizar nuevos activos</strong> para agregarlo.</p>
-        </div>
-      </Modal>
 
       <Modal
         isOpen={isDisconnectModalOpen}

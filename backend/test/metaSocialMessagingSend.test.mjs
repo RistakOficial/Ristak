@@ -351,7 +351,10 @@ async function startMetaSendServer(calls, { beforeMessageResponse } = {}) {
         return
       }
 
-      if (req.method === 'GET' && req.url.startsWith('/me/conversations')) {
+      if (
+        req.method === 'GET' &&
+        (req.url.startsWith('/ig-business-history-test/conversations') || req.url.startsWith('/ig-business-send-test/conversations'))
+      ) {
         const requestUrl = new URL(req.url, 'http://127.0.0.1')
         if (!requestUrl.searchParams.get('user_id')) {
           res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -1035,8 +1038,9 @@ test('syncMetaSocialConversationHistory importa historial disponible de Instagra
           assert.equal(profile.username, 'cliente.historial')
           assert.equal(profile.profile_picture_url, 'https://cdn.example.test/instagram-history.jpg')
 
-          const conversationsCall = calls.find(call => call.url.startsWith('/me/conversations'))
+          const conversationsCall = calls.find(call => call.url.startsWith('/ig-business-history-test/conversations'))
           assert.equal(conversationsCall?.authorization, 'Bearer page-token-history-test')
+          assert.equal(calls.some(call => call.url.startsWith('/me/conversations')), false)
           const messagesCall = calls.find(call => call.url.startsWith('/conversation-instagram-history/messages'))
           assert.equal(messagesCall?.authorization, 'Bearer page-token-history-test')
         } finally {
@@ -1614,11 +1618,12 @@ test('processMetaSocialWebhook usa conversaciones de Instagram como fallback de 
           assert.equal(profile.profile_picture_url || '', '')
           assert.equal(profile.meta_user_id, senderId)
 
-          const conversationCall = calls.find(call => call.method === 'GET' && call.url.startsWith('/me/conversations?'))
+          const conversationCall = calls.find(call => call.method === 'GET' && call.url.startsWith('/ig-business-send-test/conversations?'))
           assert.ok(conversationCall)
           assert.equal(conversationCall.authorization, 'Bearer page-token-send-test')
           assert.match(conversationCall.url, /platform=instagram/)
           assert.match(conversationCall.url, /user_id=igsid-fallback-test/)
+          assert.equal(calls.some(call => call.url.startsWith('/me/conversations')), false)
           assert.equal(calls.some(call => call.url.startsWith('/page-send-test/conversations')), false)
           assert.equal(calls.some(call => call.url.startsWith('/facebook/')), false)
         } finally {

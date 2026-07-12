@@ -1181,9 +1181,7 @@ async function fetchMetaConversationParticipantName({ platform, senderId, busine
   if (!senderId || !accessToken) return ''
   if (platform !== 'instagram' && !conversationOwnerId) return ''
   try {
-    const conversationsPath = platform === 'instagram'
-      ? '/me/conversations'
-      : `/${encodeURIComponent(conversationOwnerId)}/conversations`
+    const conversationsPath = `/${encodeURIComponent(conversationOwnerId)}/conversations`
     const data = await metaSocialGraphRequest(conversationsPath, {
       token: accessToken,
       baseUrl,
@@ -1627,9 +1625,7 @@ function getMetaSocialHistoryBusinessId(platform, config = {}) {
 }
 
 function getMetaSocialHistoryConversationPath(platform, businessId) {
-  return platform === 'instagram'
-    ? '/me/conversations'
-    : `/${encodeURIComponent(businessId)}/conversations`
+  return `/${encodeURIComponent(businessId)}/conversations`
 }
 
 function getMetaSocialHistoryPlatformParam(platform) {

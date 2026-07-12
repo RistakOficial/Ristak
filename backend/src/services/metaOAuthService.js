@@ -273,12 +273,12 @@ function mergeById(primary = [], fallback = []) {
   return [...byId.values()]
 }
 
-function intersectAuthorizedAssets(authorized = [], live = [], normalizeId = value => cleanString(value)) {
+function enrichAuthorizedAssets(authorized = [], live = [], normalizeId = value => cleanString(value)) {
   const liveById = new Map(live.map(item => [normalizeId(item?.id), item]).filter(([id]) => id))
   return authorized.flatMap(item => {
     const id = normalizeId(item?.id)
     const liveItem = liveById.get(id)
-    return id && liveItem ? [{ ...item, ...liveItem, id: cleanString(liveItem?.id || item?.id) }] : []
+    return id ? [{ ...item, ...(liveItem || {}), id: cleanString(liveItem?.id || item?.id) }] : []
   })
 }
 
@@ -370,7 +370,7 @@ export function extractPageSecrets(value = {}) {
   }).filter(([pageId, secrets]) => pageId && secrets.pageAccessToken))
 }
 
-async function discoverPages({ token, appSecretProof = '', userId }) {
+async function discoverPages({ token, appSecretProof = '', userId, systemUser = false }) {
   const richFields = [
     'id',
     'name',
@@ -388,40 +388,54 @@ async function discoverPages({ token, appSecretProof = '', userId }) {
     'instagram_business_account{id,username,name}',
     'connected_instagram_account{id,username,name}'
   ].join(',')
+  if (userId) {
+    try {
+      const pages = await graphCollection(`${encodeURIComponent(userId)}/assigned_pages`, {
+        token,
+        appSecretProof,
+        fields: richFields
+      })
+      if (pages.length || systemUser) return pages
+    } catch (error) {
+      logger.warn(`Meta OAuth no devolvió assigned_pages: ${error.message}`)
+      if (systemUser) return []
+    }
+  }
   try {
     const pages = await graphCollection('me/accounts', { token, appSecretProof, fields: richFields })
     if (pages.length) return pages
   } catch (error) {
     logger.warn(`Meta OAuth no devolvió páginas por me/accounts: ${error.message}`)
   }
-  try {
-    const pages = await graphCollection('me/accounts', { token, appSecretProof, fields: fallbackFields })
-    if (pages.length) return pages
-  } catch (error) {
-    logger.warn(`Meta OAuth no devolvió páginas con fields básicos: ${error.message}`)
-  }
-  if (!userId) return []
-  return graphCollection(`${encodeURIComponent(userId)}/assigned_pages`, { token, appSecretProof, fields: fallbackFields })
+  return graphCollection('me/accounts', { token, appSecretProof, fields: fallbackFields })
     .catch(error => {
-      logger.warn(`Meta OAuth no devolvió assigned_pages: ${error.message}`)
+      logger.warn(`Meta OAuth no devolvió páginas con fields básicos: ${error.message}`)
       return []
     })
 }
 
-async function discoverAdAccounts({ token, appSecretProof = '', userId }) {
+async function discoverAdAccounts({ token, appSecretProof = '', userId, systemUser = false }) {
   const fields = 'id,account_id,name,currency,timezone_name,account_status,business{id,name}'
+  if (userId) {
+    try {
+      const accounts = await graphCollection(`${encodeURIComponent(userId)}/assigned_ad_accounts`, {
+        token,
+        appSecretProof,
+        fields
+      })
+      if (accounts.length || systemUser) return accounts
+    } catch (error) {
+      logger.warn(`Meta OAuth no devolvió assigned_ad_accounts: ${error.message}`)
+      if (systemUser) return []
+    }
+  }
   try {
     const accounts = await graphCollection('me/adaccounts', { token, appSecretProof, fields })
     if (accounts.length) return accounts
   } catch (error) {
     logger.warn(`Meta OAuth no devolvió cuentas por me/adaccounts: ${error.message}`)
   }
-  if (!userId) return []
-  return graphCollection(`${encodeURIComponent(userId)}/assigned_ad_accounts`, { token, appSecretProof, fields })
-    .catch(error => {
-      logger.warn(`Meta OAuth no devolvió assigned_ad_accounts: ${error.message}`)
-      return []
-    })
+  return []
 }
 
 async function discoverBusinessPixels({ token, appSecretProof = '', businessIds = [] }) {
@@ -462,16 +476,34 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
   const requiredScopes = splitKind ? META_OAUTH_SCOPES_BY_KIND[splitKind] : META_OAUTH_REQUIRED_SCOPES
   if (!accessToken) throw metaOAuthError('El handoff de Meta no incluyó token.', 400, 'META_OAUTH_TOKEN_MISSING')
   const hintAssets = normalizeHintAssets(handoffMeta.assets)
-  const identity = await graphJson('me', { token: accessToken, appSecretProof, fields: 'id,name' })
-  const userId = cleanString(identity?.id || handoffMeta.user_id || handoffMeta.userId)
+  const hintedUserId = cleanString(handoffMeta.user_id || handoffMeta.userId)
+  const systemUser = cleanString(handoffMeta.debug_token_type || handoffMeta.debugTokenType).toUpperCase() === 'SYSTEM_USER' ||
+    cleanString(handoffMeta.source).toLowerCase() === 'oauth_bisu'
+  let identity = {
+    id: hintedUserId,
+    name: cleanString(handoffMeta.user_name || handoffMeta.userName)
+  }
+  if (hintedUserId) {
+    identity = await graphJson(hintedUserId, { token: accessToken, appSecretProof, fields: 'id,name' })
+      .then(value => ({ ...identity, ...value }))
+      .catch(error => {
+        logger.warn(`Meta OAuth no devolvió la identidad explícita ${hintedUserId}: ${error.message}`)
+        return identity
+      })
+  } else if (!systemUser) {
+    identity = await graphJson('me', { token: accessToken, appSecretProof, fields: 'id,name' })
+  }
+  const userId = cleanString(identity?.id || hintedUserId)
   if (!userId) throw metaOAuthError('Meta no devolvió la identidad autorizada.', 502, 'META_OAUTH_IDENTITY_MISSING')
 
   const [permissionsRows, businessesRaw, adAccountsRaw, pagesRaw] = await Promise.all([
-    graphCollection('me/permissions', { token: accessToken, appSecretProof }).catch(error => {
-      logger.warn(`Meta OAuth no devolvió permisos locales: ${error.message}`)
-      return []
-    }),
-    splitKind
+    systemUser
+      ? Promise.resolve([])
+      : graphCollection('me/permissions', { token: accessToken, appSecretProof }).catch(error => {
+        logger.warn(`Meta OAuth no devolvió permisos locales: ${error.message}`)
+        return []
+      }),
+    splitKind || systemUser
       ? Promise.resolve([])
       : graphCollection('me/businesses', { token: accessToken, appSecretProof, fields: 'id,name' }).catch(error => {
         logger.warn(`Meta OAuth no devolvió portafolios: ${error.message}`)
@@ -479,10 +511,10 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
       }),
     splitKind === 'social'
       ? Promise.resolve([])
-      : discoverAdAccounts({ token: accessToken, appSecretProof, userId }),
+      : discoverAdAccounts({ token: accessToken, appSecretProof, userId, systemUser }),
     splitKind === 'ads'
       ? Promise.resolve([])
-      : discoverPages({ token: accessToken, appSecretProof, userId })
+      : discoverPages({ token: accessToken, appSecretProof, userId, systemUser })
   ])
 
   const handoffScopes = toStringArray(handoffMeta.scopes)
@@ -530,7 +562,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
       status: account?.account_status ?? null
     }
   })
-  const rawAdAccounts = intersectAuthorizedAssets(
+  const rawAdAccounts = enrichAuthorizedAssets(
     hintAssets.adAccounts,
     liveAdAccounts,
     normalizeAdAccountId
@@ -566,7 +598,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
     return {
       ...account,
       id: graphId,
-      pixels: intersectAuthorizedAssets(
+      pixels: enrichAuthorizedAssets(
         account.pixels,
         mergeById(
           discoveredPixels.map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) })),
@@ -598,7 +630,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
       instagramAccounts
     }
   })
-  const pages = intersectAuthorizedAssets(hintAssets.pages, livePages).map(page => {
+  const pages = enrichAuthorizedAssets(hintAssets.pages, livePages).map(page => {
     const hintPage = hintAssets.pages.find(hint => cleanString(hint?.id) === cleanString(page?.id)) || {}
     const livePage = livePages.find(live => cleanString(live?.id) === cleanString(page?.id)) || {}
     const liveTasksAvailable = livePage.tasksAvailable === true
@@ -609,7 +641,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
       // evidencia en vez de convertirla en "no sabemos" y omitir el gate.
       tasksAvailable: liveTasksAvailable || hintPage.tasksAvailable === true,
       tasks: liveTasksAvailable ? livePage.tasks : (hintPage.tasks || []),
-      instagramAccounts: intersectAuthorizedAssets(
+      instagramAccounts: enrichAuthorizedAssets(
         hintPage.instagramAccounts || [],
         livePage.instagramAccounts || []
       )
@@ -1188,9 +1220,9 @@ export async function completeMetaOAuthConnection({
       'META_OAUTH_REQUIRED_SCOPES_MISSING'
     )
   }
-  if (!discovered.adAccounts.length || !discovered.pages.length) {
+  if (!discovered.pages.length) {
     throw metaOAuthError(
-      'La autorización no entregó una cuenta publicitaria y una Página administrable.',
+      'La autorización no entregó una Página administrable para Messenger e Instagram.',
       409,
       'META_OAUTH_REQUIRED_ASSETS_MISSING'
     )
@@ -1625,9 +1657,9 @@ async function loadManualConnectionBackup() {
 async function finalizeMetaOAuthConnectionUnlocked({
   sessionId,
   businessId = '',
-  adAccountId = '',
+  adAccountId,
   pixelId,
-  pageId = '',
+  pageId,
   instagramAccountId,
   publicBaseUrl = ''
 } = {}) {
@@ -1636,9 +1668,9 @@ async function finalizeMetaOAuthConnectionUnlocked({
   const migrationWarnings = []
   const selected = validateSelection(payload, {
     businessId: businessId || payload.defaults?.businessId,
-    adAccountId: adAccountId || payload.defaults?.adAccountId,
+    adAccountId: adAccountId === undefined ? payload.defaults?.adAccountId : adAccountId,
     pixelId: pixelId === undefined ? payload.defaults?.pixelId : pixelId,
-    pageId: pageId || payload.defaults?.pageId,
+    pageId: pageId === undefined ? payload.defaults?.pageId : pageId,
     instagramAccountId: instagramAccountId === undefined
       ? payload.defaults?.instagramAccountId
       : instagramAccountId
@@ -1650,9 +1682,9 @@ async function finalizeMetaOAuthConnectionUnlocked({
       'META_OAUTH_REQUIRED_SCOPES_MISSING'
     )
   }
-  if (!selected.adAccountId || !selected.pageId) {
+  if (!selected.pageId) {
     throw metaOAuthError(
-      'Selecciona una cuenta publicitaria y una Página antes de terminar.',
+      'Selecciona una Página antes de terminar. La cuenta publicitaria y el Dataset son opcionales.',
       409,
       'META_OAUTH_REQUIRED_ASSET_SELECTION_MISSING'
     )

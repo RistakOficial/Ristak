@@ -12,10 +12,10 @@ para cubrir:
 - Facebook Pages e Instagram profesional enlazado;
 - Messenger, Instagram Direct y comentarios de Facebook e Instagram.
 
-La experiencia recomendada usa el boton **Conectar con Meta**. Antes de abrir
-el dialogo oficial, Ristak explica que el usuario debe marcar **Seleccionar
-todo** en cada grupo de activos actuales; esa eleccion pertenece a Meta y no se
-puede automatizar desde nuestra API. Al regresar, Ristak muestra solamente los
+La experiencia recomendada usa el boton **Conectar con Meta**, que abre
+directamente el dialogo oficial. La persona decide libremente qué activos
+autoriza; Ristak no preselecciona ni obliga opciones dentro de Meta. Al regresar,
+Ristak muestra solamente los
 activos autorizados y utilizables, y el usuario elige una
 cuenta publicitaria, una Page, un Dataset opcional y una cuenta de Instagram
 opcional. Al finalizar, OAuth sustituye la conexion visible y conserva el
@@ -162,22 +162,23 @@ https://www.facebook.com/v25.0/dialog/oauth
 
 1. **Cuenta Meta** carga primero el metodo manual y consulta en segundo plano el
    estado con `GET /api/meta/oauth/status` sin crear `state`.
-2. Al pulsar **Conectar con Meta** o **Autorizar nuevos activos**, Ristak muestra
-   la guia para elegir **Seleccionar todo** y después solicita
-   `POST /api/meta/oauth/connect-url` y manda como retorno absoluto
+2. Al pulsar **Conectar con Meta** o **Autorizar nuevos activos**, Ristak solicita
+   `POST /api/meta/oauth/connect-url` y abre Meta directamente, mandando como retorno absoluto
    `/settings/meta-ads/cuenta` en el host publico de la instalacion.
 3. Installer valida ese origin contra la instalacion, crea un `state` opaco con
    TTL y abre el Config ID unificado.
 4. Meta vuelve al callback unico de Installer. Installer consume `state`,
    canjea el code y valida `is_valid`, `app_id`, tipo `SYSTEM_USER`,
-   `client_business_id`, expiraciones, permisos y `granular_scopes`.
+   portafolio, expiraciones, permisos y `granular_scopes`. Para BISU usa el
+   `user_id` explícito de `debug_token`; no depende del alias `GET /me`.
 5. Installer enumera Pages, Instagram, Ad Accounts y Datasets autorizados, crea
    el candidato y devuelve solamente un handoff opaco en el fragmento URL.
-6. Ristak reclama el handoff desde backend, vuelve a consultar Graph y cruza los
-   activos vivos con el snapshot autorizado. Una asignacion agregada despues
-   del consentimiento no se cuela en la seleccion.
-7. El usuario elige dentro de Ristak Ad Account y Page obligatorios; Dataset e Instagram son
-   opcionales.
+6. Ristak reclama el handoff desde backend, consulta `/{SYSTEM_USER_ID}/assigned_pages`
+   y `/{SYSTEM_USER_ID}/assigned_ad_accounts`, y enriquece la allowlist firmada.
+   Si un edge opcional falla, conserva el snapshot autorizado y deja los
+   preflights finales como autoridad; una asignacion ajena nunca se agrega.
+7. El usuario elige dentro de Ristak la Page; Ad Account, Dataset e Instagram son
+   opcionales. Así una empresa puede usar sólo el inbox social sin tener Ads.
 8. Ristak hace los preflights, guarda el candidato local, suscribe la Page y
    promueve de forma atomica la conexion/ruta central.
 9. Solo despues arranca Ads sync, backfill social y los crons conectados.
@@ -191,8 +192,8 @@ limpian y piden reconectar con el boton unico.
 
 Reglas no negociables:
 
-- Ad Account y Facebook Page son obligatorios.
-- Dataset/Pixel e Instagram profesional son opcionales y nunca se eligen por
+- Facebook Page es obligatoria para el contrato unificado social. Ad Account,
+  Dataset/Pixel e Instagram profesional son opcionales y nunca se eligen por
   sorpresa.
 - La Page debe pertenecer al mismo portafolio que la cuenta publicitaria cuando
   Meta entrega esa relacion.
@@ -349,9 +350,9 @@ Installer, autenticado por licencia salvo callbacks publicos:
 
 ## Pruebas de aceptacion
 
-1. La UI explica **Seleccionar todo**, abre un solo dialogo Meta y vuelve a **Cuenta Meta**.
+1. La UI abre directamente un solo dialogo Meta y vuelve a **Cuenta Meta**, sin una guía intermedia ni selección forzada.
 2. El handoff contiene Ad Accounts, Datasets, Pages e Instagram autorizados.
-3. Ad Account y Page son obligatorios; Dataset e Instagram son opcionales.
+3. Page es obligatoria; Ad Account, Dataset e Instagram son opcionales.
 4. Cambiar Ad Account filtra Page/Dataset por Business y limpia selecciones
    incompatibles.
 5. Un Dataset de `owned_pixels` o `client_pixels` aparece aunque

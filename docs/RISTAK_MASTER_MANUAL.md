@@ -2318,9 +2318,10 @@ Ristak usa Meta en varias areas:
 
 - `Configuracion > Meta` recomienda **Conectar con Meta**; el flujo OAuth sigue siendo unico para
   anuncios, Dataset/CAPI, Facebook, Instagram, mensajes y comentarios.
-- Antes del dialogo oficial, la UI indica marcar **Seleccionar todo** en cada
-  grupo de activos actuales. Meta controla esa eleccion y Ristak no puede
-  preseleccionarla por API. Los activos futuros requieren **Autorizar nuevos activos**.
+- **Conectar con Meta** abre directamente el dialogo oficial. Meta controla la
+  elección y la persona autoriza libremente sus activos; Ristak no muestra una
+  guía intermedia ni intenta preseleccionar opciones. Los activos futuros
+  requieren **Autorizar nuevos activos**.
 - La interfaz se divide en **Cuenta Meta**, **Redes sociales**, **Rastreo web**
   y **Dataset Test**. Cuenta Meta muestra una sola tabla de la conexion activa;
   no muestra una tabla separada de capacidades OAuth. Redes sociales concentra
@@ -2512,8 +2513,8 @@ Ristak usa Meta en varias areas:
   `meta_messenger_messaging_enabled` / `meta_instagram_messaging_enabled`,
   Ristak inicia en segundo plano un backfill de conversaciones disponibles por
   Graph Conversations API: Messenger usa `/{PAGE_ID}/conversations` con Page
-  token; Instagram usa `/me/conversations?platform=instagram` con ese mismo Page
-  token por Facebook Graph. El backfill pagina conversaciones y mensajes hasta
+  token; Instagram usa `/{INSTAGRAM_ACCOUNT_ID}/conversations?platform=instagram`
+  con ese mismo Page token por Facebook Graph. El backfill pagina conversaciones y mensajes hasta
   que Graph deja de devolver cursor; no aplica topes silenciosos por conversacion
   ni por cuenta. Los limites solo se aceptan como parametros explicitos para una
   ejecucion manual/controlada. El importador conserva el payload Graph completo,
@@ -2554,7 +2555,7 @@ Ristak usa Meta en varias areas:
   Instagram lee perfiles de DMs y autores de comentarios con las mismas
   credenciales resueltas para Instagram (`name,username,profile_pic`). Si el
   perfil directo no trae nombre, Instagram cae a
-  `/me/conversations?platform=instagram` usando el token/baseUrl resuelto. Las
+  `/{INSTAGRAM_ACCOUNT_ID}/conversations?platform=instagram` usando el token/baseUrl resuelto. Las
   fotos recibidas se rehospedan best-effort antes de guardarse en
   `meta_social_contacts.profile_picture_url`; si Meta no entrega foto o permisos,
   Ristak conserva el mejor nombre disponible y no inventa avatar.
