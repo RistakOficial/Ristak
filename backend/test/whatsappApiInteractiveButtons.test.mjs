@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
+  getWhatsAppApiStatus,
   getWhatsAppApiConfigKeys,
   sendWhatsAppApiInteractiveMessage,
   sendWhatsAppApiTextMessage,
@@ -351,6 +352,153 @@ test('Meta directo exige reconexión y deshabilita el número cuando Graph revoc
     } finally {
       setMetaDirectFetchForTest(null)
       await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    }
+  })
+})
+
+test('un número YCloud elegido no se envía por Meta aunque la bandera global haya quedado vieja', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const suffix = randomUUID()
+  const ycloudPhoneNumberId = `phone_ycloud_route_${suffix}`
+  const metaPhoneNumberId = `phone_meta_stale_${suffix}`
+  const businessPhone = `+52656${Date.now().toString().slice(-7)}`
+  const to = `+52155${Date.now().toString().slice(-8)}`
+  const contactId = `contact_ycloud_route_${suffix}`
+  const configKeys = [
+    keys.enabled,
+    keys.apiKey,
+    keys.senderPhone,
+    keys.phoneNumberId,
+    keys.wabaId,
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken
+  ]
+  const ycloudRequests = []
+  let metaRequests = 0
+
+  await snapshotAppConfig(configKeys, async () => {
+    try {
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_route_test_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, ycloudPhoneNumberId)
+      await setAppConfig(keys.wabaId, `waba_ycloud_route_${suffix}`)
+      // Reproduce el estado real encontrado en soporte: YCloud sano, pero la
+      // bandera global todavía apuntando a una conexión Meta revocada.
+      await setAppConfig(keys.provider, 'meta_direct')
+      await setAppConfig(keys.metaStatus, 'reconnect_required')
+      await setAppConfig(keys.metaWabaId, `waba_meta_stale_${suffix}`)
+      await setAppConfig(keys.metaPhoneNumberId, metaPhoneNumberId)
+      await setAppConfig(keys.metaDisplayPhoneNumber, '+526568619478')
+      await setAppConfig(keys.metaSystemUserToken, encrypt('meta_stale_test_token'))
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+        ) VALUES (?, 'ycloud', ?, ?, ?, 'YCloud Route Test', 1, 1, 0, 'disconnected', 'CONNECTED')
+      `, [ycloudPhoneNumberId, `waba_ycloud_route_${suffix}`, businessPhone, businessPhone])
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+        ) VALUES (?, 'meta_direct', ?, '+526568619478', '+526568619478',
+          'Meta Stale Test', 0, 0, 0, 'disconnected', 'AUTHORIZATION_REQUIRED')
+      `, [metaPhoneNumberId, `waba_meta_stale_${suffix}`])
+      await db.run(`
+        INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+        VALUES (?, ?, 'Cliente Route Test', 'Cliente', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [contactId, to])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text',
+          'Ventana abierta', 'received', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [`inbound_ycloud_route_${suffix}`, `inbound_ycloud_route_${suffix}`, contactId, to, to, businessPhone, businessPhone, ycloudPhoneNumberId])
+
+      setYCloudFetchForTest(async (_url, options = {}) => {
+        const body = JSON.parse(options.body || '{}')
+        ycloudRequests.push(body)
+        return ycloudJsonResponse({
+          id: `ycloud_route_message_${suffix}`,
+          from: body.from,
+          to: body.to,
+          type: body.type,
+          text: body.text,
+          status: 'sent'
+        })
+      })
+      setMetaDirectFetchForTest(async () => {
+        metaRequests += 1
+        throw new Error('Meta no debe recibir este mensaje')
+      })
+
+      const result = await sendWhatsAppApiTextMessage({
+        to,
+        text: 'Este mensaje pertenece a YCloud',
+        contactId,
+        phoneNumberId: ycloudPhoneNumberId,
+        allowQrFallback: false
+      })
+
+      assert.equal(ycloudRequests.length, 1)
+      assert.equal(metaRequests, 0)
+      assert.equal(ycloudRequests[0].from, businessPhone)
+      assert.equal(ycloudRequests[0].text.body, 'Este mensaje pertenece a YCloud')
+      assert.ok(result.localMessageId)
+      assert.equal((await getWhatsAppApiStatus()).activeProvider, 'ycloud')
+    } finally {
+      setYCloudFetchForTest(null)
+      setMetaDirectFetchForTest(null)
+      await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR business_phone_number_id IN (?, ?)', [contactId, ycloudPhoneNumberId, metaPhoneNumberId]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, to]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, to]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [ycloudPhoneNumberId, metaPhoneNumberId]).catch(() => undefined)
+    }
+  })
+})
+
+test('un número Meta elegido no se envía por YCloud aunque la preferencia global diga YCloud', async () => {
+  const keys = getWhatsAppApiConfigKeys()
+  await withMetaDirectMessageCapture(async (captures) => {
+    await setAppConfig(keys.provider, 'ycloud')
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+      ) VALUES ('phone_meta_direct_buttons_test', 'meta_direct',
+        'waba_meta_direct_buttons_test', '+526561234567', '+526561234567',
+        'Meta Route Test', 0, 1, 0, 'disconnected', 'CONNECTED')
+      ON CONFLICT(id) DO UPDATE SET
+        provider = 'meta_direct',
+        api_send_enabled = 1,
+        status = 'CONNECTED'
+    `)
+
+    try {
+      const result = await sendWhatsAppApiTextMessage({
+        to: '+5215510101010',
+        text: 'Este mensaje pertenece a Meta',
+        phoneNumberId: 'phone_meta_direct_buttons_test',
+        allowQrFallback: false
+      })
+
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'text')
+      assert.equal(captures[0].text.body, 'Este mensaje pertenece a Meta')
+      assert.equal(result.messages?.[0]?.id, 'wamid.meta_direct_1')
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE business_phone_number_id = ? OR phone = ?', ['phone_meta_direct_buttons_test', '+5215510101010']).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', ['+5215510101010']).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE phone = ?', ['+5215510101010']).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', ['phone_meta_direct_buttons_test']).catch(() => undefined)
     }
   })
 })

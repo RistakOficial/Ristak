@@ -37,6 +37,37 @@ Ejemplos:
 Nunca etiquetar una captura de Baileys como `source_adapter=ycloud` o
 `source_adapter=meta_direct`, aunque el mismo número también tenga API oficial.
 
+## Autoridad de ruteo para envíos
+
+La fila elegida en `whatsapp_api_phone_numbers` es la autoridad del envío. El
+backend debe resolver en cada solicitud:
+
+1. `phoneNumberId` enviado por el chat, automatización o flujo de producto;
+2. si no viene, el número predeterminado guardado;
+3. `provider`, teléfono emisor, WABA y disponibilidad API desde esa misma fila;
+4. `transport=api` o el respaldo `transport=qr` asociado a ese número.
+
+`whatsapp_api_provider` es una preferencia global histórica y de configuración.
+No puede sobreescribir el `provider` de la fila seleccionada. En particular:
+
+- una fila `provider=ycloud` siempre llama YCloud, aunque Meta directo esté
+  conectado, revocado o haya quedado como preferencia global;
+- una fila `provider=meta_direct` siempre llama Graph y nunca usa la API key de
+  YCloud;
+- una fila `provider=qr` sólo usa Baileys;
+- desactivar o revocar una fila no debe apagar ni secuestrar las otras.
+
+Si Meta pierde permisos, además de marcar su fila `AUTHORIZATION_REQUIRED`, se
+reconcilia la preferencia global a YCloud cuando esa conexión sigue disponible.
+Esto protege rutas históricas, pero no sustituye la regla por fila.
+
+El respaldo QR sólo se ejecuta cuando existe una sesión compatible y el fallo
+es inequívoco: API desactivada/no conectada, ventana cerrada, restricción
+conocida o rechazo HTTP 4xx. No se dispara automáticamente después de timeout,
+error de red o HTTP 5xx, porque la API pudo aceptar el mensaje antes de perderse
+la respuesta y Baileys provocaría un envío duplicado. Los ecos posteriores se
+reconcilian por IDs y `wamid`; no justifican mandar simultáneamente por API y QR.
+
 ## Matriz de implementaciones
 
 | Implementación | API oficial | Intermediario | Coexistence | Entrada principal | Autenticación |
@@ -192,6 +223,8 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
    momento dado. No se debe enviar el mismo request por ambos “por seguridad”.
 7. Baileys puede ser fallback explícito. El resultado final debe registrar
    `transport=qr` y `source_adapter=baileys`.
+8. La preferencia global del tenant no decide el proveedor de salida. Cada
+   mensaje usa el proveedor de la fila `phoneNumberId` elegida.
 
 ## Embedded Signup centralizado
 

@@ -515,6 +515,16 @@ Todo registro WhatsApp debe distinguir `provider` (`ycloud`, `meta_direct` o
 endpoints, nombres de webhook ni columnas de ID específicas. Baileys nunca debe
 presentarse como proveedor de API oficial.
 
+Al enviar, el `phoneNumberId` elegido manda. El backend toma `provider`, teléfono
+emisor, WABA y disponibilidad desde esa fila; la preferencia global histórica
+`whatsapp_api_provider` no puede convertir un envío YCloud en Meta ni viceversa.
+Una fila QR usa Baileys. Si la API de la fila está indisponible y ese mismo
+número tiene respaldo QR listo, el mensaje puede salir por QR. Un rechazo HTTP
+4xx permite respaldo; un timeout, error de red o 5xx no lo dispara
+automáticamente porque la API pudo aceptar el mensaje y se evitarían dobles
+envíos. Cuando Meta pierde permisos, sólo su fila queda inactiva y YCloud/QR
+continúan operando.
+
 En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece dos conexiones
 separadas: **Conectar con Meta** precarga el Embedded Signup desde el backend del
 tenant, usa la misma pestaña para pasar por el dominio central autorizado y abre
@@ -1084,17 +1094,19 @@ debounce por numero para no repetirlo en cada reconexion. El frontend tambien
 debe ocultar cualquier imagen de avatar que dispare `onError` y mostrar
 iniciales en su lugar.
 
-Antes de mandar mensajes libres por WhatsApp API/YCloud, `whatsappApiService`
-debe revisar la ultima respuesta entrante del cliente para ese contacto y numero
-de negocio. Si la ventana de 24 horas sigue abierta, los envios manuales del chat
-deben salir por API oficial aunque el frontend haya pedido `transport='qr'` por
-un calculo local incompleto. Si la ventana ya esta cerrada o no existe una
-respuesta entrante comprobable, no debe intentar YCloud: debe usar WhatsApp
-QR/Baileys directamente cuando exista un QR usable. Desktop y movil deben
-calcular el transporte antes de pintar el mensaje optimista, pero el backend es
-la autoridad final para evitar que un QR previo secuestre conversaciones API.
-Las plantillas quedan fuera de este bloqueo porque son el camino permitido por
-WhatsApp cuando la conversacion esta cerrada.
+Antes de mandar mensajes libres por una API oficial, `whatsappApiService` debe
+resolver primero la fila del número elegido y revisar la ultima respuesta
+entrante del cliente para ese contacto y numero de negocio. Si la ventana de 24
+horas sigue abierta, los envios manuales del chat deben salir por la API oficial
+de esa fila aunque el frontend haya pedido `transport='qr'` por un calculo local
+incompleto. Si la ventana ya esta cerrada o no existe una respuesta entrante
+comprobable, no debe intentar la API: debe usar WhatsApp QR/Baileys directamente
+cuando exista un QR usable para ese número. Desktop y movil deben calcular el
+transporte antes de pintar el mensaje optimista, pero el backend es la autoridad
+final para evitar tanto que un QR previo secuestre conversaciones API como que
+una preferencia global vieja cruce YCloud y Meta directo. Las plantillas quedan
+fuera de este bloqueo porque son el camino permitido por WhatsApp cuando la
+conversacion esta cerrada.
 
 En los chats desktop y movil, el selector para enviar o programar plantillas de
 WhatsApp API debe listar solo plantillas con estado `APPROVED`. Las plantillas
