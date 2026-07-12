@@ -8,6 +8,7 @@ import {
   createWhatsAppQrPhoneNumberView,
   disconnectWhatsAppApiView,
   disconnectMetaDirectConnectionView,
+  disconnectWhatsAppPhoneNumberView,
   disconnectWhatsAppQrView,
   deleteWhatsAppQrPhoneNumberView,
   getWhatsAppApiConnectionStatus,
@@ -113,6 +114,7 @@ router.post('/meta/disconnect', requireWhatsAppApiAccess, disconnectMetaDirectCo
 router.post('/connect', requireWhatsAppApiAccess, connectWhatsAppApiView)
 router.post('/phone-numbers/preview', requireWhatsAppApiAccess, previewWhatsAppApiPhoneNumbersView)
 router.post('/phone-numbers/default', requireWhatsAppApiAccess, setWhatsAppApiDefaultPhoneNumberView)
+router.post('/phone-numbers/:id/disconnect', disconnectWhatsAppPhoneNumberView)
 router.post('/phone-numbers/:id/reroute', requireWhatsAppApiAccess, rerouteWhatsAppPhoneNumberContactsView)
 router.post('/phone-numbers/:id/restore', requireWhatsAppApiAccess, restoreWhatsAppPhoneNumberContactsView)
 router.post('/refresh', requireWhatsAppApiAccess, refreshWhatsAppApiView)

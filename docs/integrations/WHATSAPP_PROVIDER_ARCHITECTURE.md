@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-07-11.
+Ultima actualizacion: 2026-07-12.
 
 ## Proposito
 
@@ -242,6 +242,30 @@ ACK de `/api/license/whatsapp/meta/disconnect`; sólo entonces elimina el token
 local. Así no queda un WABA central activo enviando eventos a un tenant que ya
 se considera desconectado.
 
+## Desconexión por número desde Ristak
+
+La última columna de cada fila en `Configuración > WhatsApp > Números` es la
+autoridad para retirar una conexión individual. La acción siempre nombra el
+proveedor o transporte y exige escribir `DESCONECTAR`. En este flujo
+**desconectar no significa borrar ni dar de baja el número real**:
+
+- YCloud: se marca sólo esa fila con `api_send_enabled=0`, deja de ofrecerse
+  para enviar y sus nuevos eventos de mensajes se ignoran localmente. Ristak no
+  llama una operación remota de borrado. Si era el último número YCloud activo,
+  también deshabilita el webhook global y limpia las credenciales locales.
+- Meta directo: se desactiva el ruteo central de Installer, se elimina el token
+  local cifrado y la fila queda inactiva. El número sigue registrado en Meta y
+  Coexistence no se cancela ni se desregistra remotamente.
+- QR/Baileys: se cierra la sesión WhatsApp Web y se eliminan únicamente el auth
+  state y la fila local QR. No se elimina la cuenta ni el número en WhatsApp.
+- Si una fila oficial tiene respaldo QR, las dos conexiones se desconectan con
+  acciones separadas. Retirar QR no toca API; retirar API no toca el QR.
+
+Mensajes, contactos, plantillas, eventos e IDs históricos permanecen para
+auditoría. Las filas oficiales desactivadas se conservan como tombstone local
+para impedir que una sincronización normal de YCloud las reactive; una conexión
+explícita posterior sí puede reactivarlas.
+
 ## Credenciales y configuración
 
 Las credenciales viven cifradas en configuración interna/base de datos. No se
@@ -330,6 +354,8 @@ No borrar ni “reparar” IDs específicos sin contestar esas preguntas.
 - [YCloud: crear una plantilla](https://docs.ycloud.com/reference/whatsapp_template-create)
 - [YCloud: editar una plantilla](https://docs.ycloud.com/reference/whatsapp_template-edit)
 - [YCloud: configurar webhooks](https://docs.ycloud.com/reference/configure-webhooks)
+- [YCloud: listar números de WhatsApp](https://docs.ycloud.com/reference/whatsapp_phone_number-list)
+- [YCloud: eventos webhook y eliminación remota](https://docs.ycloud.com/reference/webhook-events-payloads)
 - [YCloud: enviar mensajes](https://docs.ycloud.com/reference/whatsapp_message-send)
 - [YCloud: ecos enviados desde WhatsApp Business](https://docs.ycloud.com/reference/whatsapp-business-app-sent-message-sync-webhook-examples)
 - [YCloud: cambios BSUID](https://docs.ycloud.com/reference/webhook-updates-bsuid)

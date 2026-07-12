@@ -11,7 +11,7 @@ import {
   setWhatsAppQrReconnectDelayForTest,
   shutdownWhatsAppQrService
 } from '../src/services/whatsappQrService.js'
-import { createWhatsAppQrPhoneNumber, deleteWhatsAppQrPhoneNumber } from '../src/services/whatsappApiService.js'
+import { createWhatsAppQrPhoneNumber, deleteWhatsAppQrPhoneNumber, disconnectWhatsAppPhoneNumber } from '../src/services/whatsappApiService.js'
 import { getChatContacts } from '../src/controllers/contactsController.js'
 
 const BUSINESS_PHONE = '+526561234567'
@@ -554,6 +554,48 @@ test('elimina un número WhatsApp QR standalone y limpia referencias locales', a
   }
 })
 
+test('desconecta desde la fila un QR standalone sin tocar el número real de WhatsApp', async () => {
+  const phone = await createWhatsAppQrPhoneNumber({ phoneNumber: '+526568617075', label: 'QR fila' })
+
+  try {
+    const status = await disconnectWhatsAppPhoneNumber({ phoneNumberId: phone.id, connection: 'qr' })
+    const localPhone = await db.get('SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?', [phone.id])
+
+    assert.equal(localPhone, null)
+    assert.equal(status.phoneNumbers.some(item => item.id === phone.id), false)
+  } finally {
+    await cleanupQrFixture(phone.id)
+  }
+})
+
+test('desconectar el respaldo QR de una fila oficial conserva su conexión API', async () => {
+  const phoneNumberId = `phone_ycloud_qr_disconnect_${randomUUID()}`
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        status, api_send_enabled, qr_send_enabled, qr_status
+      ) VALUES (?, 'ycloud', 'waba_qr_disconnect', '+526568617076', '+52 656 861 7076', 'YCloud con QR', 'CONNECTED', 1, 1, 'connected')
+    `, [phoneNumberId])
+
+    const status = await disconnectWhatsAppPhoneNumber({ phoneNumberId, connection: 'qr' })
+    const localPhone = await db.get(`
+      SELECT provider, api_send_enabled, qr_send_enabled, qr_status
+      FROM whatsapp_api_phone_numbers
+      WHERE id = ?
+    `, [phoneNumberId])
+
+    assert.equal(localPhone.provider, 'ycloud')
+    assert.equal(Number(localPhone.api_send_enabled), 1)
+    assert.equal(Number(localPhone.qr_send_enabled), 0)
+    assert.equal(localPhone.qr_status, 'disconnected')
+    assert.equal(status.phoneNumbers.some(item => item.id === phoneNumberId), true)
+  } finally {
+    await cleanupQrFixture(phoneNumberId)
+  }
+})
+
 test('no elimina números oficiales de YCloud desde el endpoint local de QR', async () => {
   const phoneNumberId = `phone_ycloud_delete_guard_${randomUUID()}`
 
@@ -567,7 +609,7 @@ test('no elimina números oficiales de YCloud desde el endpoint local de QR', as
 
     await assert.rejects(
       () => deleteWhatsAppQrPhoneNumber({ phoneNumberId }),
-      /Solo puedes eliminar números conectados por QR/
+      /sólo desconecta números QR independientes/
     )
 
     const row = await db.get('SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])

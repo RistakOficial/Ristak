@@ -8,6 +8,7 @@ import {
   createMetaDirectConnectUrl,
   prepareMetaDirectEmbeddedSignup,
   disconnectMetaDirectConnection,
+  disconnectWhatsAppPhoneNumber,
   disconnectWhatsAppQrForPhone,
   disconnectWhatsAppApi,
   getWhatsAppApiStatus,
@@ -305,6 +306,26 @@ export async function disconnectWhatsAppApiView(req, res) {
     res.status(500).json({
       success: false,
       error: 'No se pudo desconectar WhatsApp_API'
+    })
+  }
+}
+
+export async function disconnectWhatsAppPhoneNumberView(req, res) {
+  try {
+    const data = await disconnectWhatsAppPhoneNumber({
+      phoneNumberId: req.params?.id,
+      connection: req.body?.connection
+    })
+    await Promise.all([
+      syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-phone-disconnected' }),
+      syncRegisteredIntegrationCronsForProvider('whatsapp', { reason: 'whatsapp-phone-disconnected' })
+    ])
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error desconectando número de WhatsApp: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo desconectar el número de WhatsApp'
     })
   }
 }
