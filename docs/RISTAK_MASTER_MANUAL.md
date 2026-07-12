@@ -2951,6 +2951,21 @@ La misma pantalla de configuracion general tambien esta disponible como proxy en
 para que el usuario pueda ajustar token, modelo y contexto desde Configuracion o
 desde Chatbot sin duplicar estado ni rutas de backend.
 
+### Catalogo y default de OpenAI
+
+Cuando el proveedor es OpenAI, el catalogo actual ofrece GPT-5.6 Sol para
+trabajo complejo, GPT-5.6 Terra para balance de capacidad y costo, y GPT-5.6
+Luna para alto volumen sensible a costo. El default nuevo de Ristak AI y de los
+agentes conversacionales es `gpt-5.6-luna`; los flujos automaticos de menor
+costo aprobados por backend usan ese mismo modelo. La seleccion explicita de un
+usuario nunca se reemplaza. Al conectar o reconectar OpenAI, una configuracion
+que aun conserve exactamente el default anterior `gpt-5.4-mini` se promueve a
+Luna; los modelos anteriores siguen disponibles para quien los haya elegido.
+
+En Sites, crear una pagina con IA usa GPT-5.6 Sol por defecto y los cambios
+pequenos usan GPT-5.6 Luna. Web, Android e iOS exponen el mismo catalogo de
+OpenAI para que el usuario no pierda opciones al cambiar de superficie.
+
 La API conserva endpoints separados:
 
 - `/api/ai-agent`: asistente interno.
