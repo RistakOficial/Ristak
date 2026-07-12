@@ -528,8 +528,11 @@ continúan operando.
 En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece dos conexiones
 separadas: **Conectar con Meta** precarga el Embedded Signup desde el backend del
 tenant, usa la misma pestaña para pasar por el dominio central autorizado y abre
-una sola ventana oficial de Meta con Coexistence; al terminar regresa a la cuenta
-del cliente sin ejecutar el JSSDK desde su dominio Render;
+una sola ventana oficial de Meta con Coexistence; al terminar regresa a
+`/settings/whatsapp/numbers` sobre el mismo origen donde empezó el usuario, para
+conservar su sesión aunque la instalación tenga dominio personalizado y dominio
+Render. Ese origen viaja firmado y debe coincidir con una de las URLs registradas
+de la instalación; el JSSDK nunca se ejecuta desde el dominio del tenant;
 **YCloud** conserva su formulario de API key. La página intermedia de Installer
 queda sólo como fallback para clientes anteriores. Meta valida el WABA y el
 número, guarda el token cifrado sólo en la base de esa instalación y activa

@@ -21,7 +21,14 @@ function json(data, status = 200) {
 }
 
 test('el tenant prepara y completa Embedded Signup por backend sin exponer tokens al navegador', async () => {
-  const keys = ['license_key', 'license_client_id', 'installation_id', 'public_app_url']
+  const keys = [
+    'license_key',
+    'license_client_id',
+    'installation_id',
+    'public_app_url',
+    'sites_app_domain',
+    'sites_app_domain_verified'
+  ]
   const previousRows = await db.all(
     `SELECT config_key, config_value FROM app_config WHERE config_key IN (${keys.map(() => '?').join(',')})`,
     keys
@@ -34,6 +41,8 @@ test('el tenant prepara y completa Embedded Signup por backend sin exponer token
     await setAppConfig('license_client_id', 'client-signup-test')
     await setAppConfig('installation_id', 'installation-signup-test')
     await setAppConfig('public_app_url', 'https://tenant-signup.test')
+    await setAppConfig('sites_app_domain', 'app.ristak.com')
+    await setAppConfig('sites_app_domain_verified', '1')
     process.env.META_WHATSAPP_PUBLIC_URL = 'https://installer-signup.test'
     setMetaDirectFetchForTest(async (input, options = {}) => {
       const url = new URL(String(input))
@@ -66,6 +75,9 @@ test('el tenant prepara y completa Embedded Signup por backend sin exponer token
     assert.equal(new URL(session.connectUrl).origin, 'https://installer-signup.test')
     assert.equal(new URL(session.connectUrl).pathname, '/meta/whatsapp/connect')
     assert.equal(new URL(session.connectUrl).searchParams.get('state'), session.state)
+    const stateBody = session.state.slice(0, session.state.lastIndexOf('.'))
+    const statePayload = JSON.parse(Buffer.from(stateBody, 'base64url').toString('utf8'))
+    assert.equal(statePayload.app_url, 'https://tenant-signup.test')
     assert.equal('systemUserToken' in session, false)
     assert.equal(requests[0].url.origin, 'https://installer-signup.test')
 

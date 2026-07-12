@@ -232,7 +232,11 @@ La pantalla `Configuración > WhatsApp` prepara el onboarding con Ristak
 Installer por llamadas backend-to-backend. El botón navega la misma pestaña a
 `/meta/whatsapp/connect` en el dominio central autorizado; ahí se ejecuta el SDK
 y se abre únicamente la ventana oficial de Meta. Al terminar, la pestaña regresa
-a la instalación original. El SDK nunca corre desde dominios variables como
+al mismo origen y a `/settings/whatsapp/numbers`, conservando la sesión desde la
+que inició el usuario aunque la instalación tenga dominio personalizado y dominio
+Render. El origen se toma del request, se firma en `state` y Installer lo valida
+contra `installations.app_url` y `installations.app_origin_url`; nunca se acepta
+un destino arbitrario enviado por el navegador. El SDK nunca corre desde dominios variables como
 `*.onrender.com`, por lo que no depende de registrar cada cliente como dominio
 JSSDK en la app de Meta. La instalación crea un `state` firmado con su licencia y
 TTL de 15 minutos; el navegador no recibe tokens ni App Secret.

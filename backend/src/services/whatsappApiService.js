@@ -2218,7 +2218,10 @@ async function getLicenseRuntimeConfig({ appUrl } = {}) {
     licenseKey: cleanString(licenseKey || process.env.RISTAK_LICENSE_KEY || process.env.LICENSE_KEY),
     clientId: cleanString(clientId || process.env.RISTAK_CLIENT_ID || process.env.CLIENT_ID || process.env.RENDER_SERVICE_ID || 'local'),
     installationId: cleanString(installationId || process.env.RISTAK_INSTALLATION_ID || process.env.INSTALLATION_ID || process.env.RENDER_SERVICE_ID || 'local'),
-    appUrl: normalizePublicBaseUrl(verifiedAppBaseUrl || appUrl || savedAppUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL || 'http://localhost:5173')
+    // En flujos interactivos debe mandar el origen exacto de la solicitud para
+    // regresar a la misma sesión. El dominio app verificado queda como fallback
+    // para procesos sin request (jobs, callbacks o compatibilidad anterior).
+    appUrl: normalizePublicBaseUrl(appUrl || verifiedAppBaseUrl || savedAppUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL || 'http://localhost:5173')
   }
 }
 

@@ -60,6 +60,7 @@ import { markHumanTakeoverByPhone, markHumanTakeoverIfActive } from '../services
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js'
 import { getInstallerSignatureHeaders } from '../services/installerSignatureService.js'
+import { resolvePublicServiceBaseUrl } from '../utils/publicUrl.js'
 
 const QR_CONNECTED_AVATAR_BACKFILL_DEBOUNCE_MS = 30 * 60 * 1000
 const qrConnectedAvatarBackfills = new Map()
@@ -129,6 +130,14 @@ function getPublicBaseUrl(req) {
     req.body?.baseUrl ||
     `${req.protocol}://${req.get('host')}`
   )
+}
+
+export function getWhatsAppInteractiveBaseUrl(req) {
+  return resolvePublicServiceBaseUrl(req, [
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.PUBLIC_URL,
+    process.env.APP_URL
+  ])
 }
 
 function getWebhookUrl(req) {
@@ -346,7 +355,7 @@ export async function resetWhatsAppApiCredentialsView(req, res) {
 export async function getMetaDirectConnectUrlView(req, res) {
   try {
     const data = await createMetaDirectConnectUrl({
-      appUrl: req.query?.appUrl || req.body?.appUrl || getPublicBaseUrl(req)
+      appUrl: getWhatsAppInteractiveBaseUrl(req)
     })
     res.json({ success: true, data })
   } catch (error) {
@@ -361,7 +370,7 @@ export async function getMetaDirectConnectUrlView(req, res) {
 export async function prepareMetaDirectEmbeddedSignupView(req, res) {
   try {
     const data = await prepareMetaDirectEmbeddedSignup({
-      appUrl: req.query?.appUrl || req.body?.appUrl || getPublicBaseUrl(req)
+      appUrl: getWhatsAppInteractiveBaseUrl(req)
     })
     res.json({ success: true, data })
   } catch (error) {
