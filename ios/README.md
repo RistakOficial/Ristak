@@ -40,6 +40,10 @@ xcrun devicectl device process launch --device <UDID> com.ristak.app
   y la app queda apuntando al servidor de esa instalación.
 - El login nativo no expone configuración avanzada ni campo manual de servidor:
   la detección de cuenta por correo es el único flujo visible para usuarios.
+- La cabecera muestra el isotipo libre, sin fondo, borde, sombra ni contenedor,
+  y usa el wordmark oficial negro/blanco según el modo de apariencia. La pantalla
+  no explica la resolución automática ni muestra correos de ejemplo: los campos
+  visibles son únicamente `Correo` y `Contraseña`.
 
 ### Pruebas de calidad y carga
 

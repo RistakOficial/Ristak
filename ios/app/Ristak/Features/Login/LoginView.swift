@@ -52,50 +52,32 @@ struct LoginView: View {
     // MARK: - Marca
 
     private var brandHeader: some View {
-        VStack(spacing: RistakTheme.Spacing.sm) {
-            ZStack {
-                Circle()
-                    .fill(RistakTheme.accentSoft)
-                    .frame(width: 100, height: 100)
+        VStack(spacing: RistakTheme.Spacing.md) {
+            Image("LoginLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 112, height: 112)
 
-                Image("LoginLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 72, height: 72)
-            }
-            .overlay {
-                Circle()
-                    .stroke(RistakTheme.accent.opacity(0.18), lineWidth: 1)
-            }
-            .shadow(color: RistakTheme.accent.opacity(0.18), radius: 18, y: 8)
-            .accessibilityHidden(true)
-
-            Text("Ristak")
-                .font(.system(size: 40, weight: .bold, design: .rounded))
-                .foregroundStyle(RistakTheme.textPrimary)
+            Image("LoginWordmark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 170)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Ristak")
     }
 
     private var heading: some View {
-        VStack(spacing: RistakTheme.Spacing.xxs) {
-            Text("Iniciar sesión")
-                .font(.title2.bold())
-                .foregroundStyle(RistakTheme.textPrimary)
-
-            Text("Ristak detecta tu cuenta automáticamente con tu correo.")
-                .font(.subheadline)
-                .foregroundStyle(RistakTheme.textDim)
-                .multilineTextAlignment(.center)
-        }
+        Text("Iniciar sesión")
+            .font(.title2.bold())
+            .foregroundStyle(RistakTheme.textPrimary)
     }
 
     // MARK: - Campos
 
     private var fields: some View {
         VStack(spacing: RistakTheme.Spacing.sm) {
-            TextField("correo@negocio.com", text: $viewModel.email)
+            TextField("Correo", text: $viewModel.email)
                 .textContentType(.username)
                 .keyboardType(.emailAddress)
                 .textInputAutocapitalization(.never)

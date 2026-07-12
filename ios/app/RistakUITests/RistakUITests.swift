@@ -139,9 +139,14 @@ final class RistakUITests: XCTestCase {
         )
 
         if element(in: app, identifier: "ristak-login-root").exists {
-            XCTAssertTrue(app.textFields["ristak-login-email"].exists)
+            let emailField = app.textFields["ristak-login-email"]
+            XCTAssertTrue(emailField.exists)
+            XCTAssertEqual(emailField.placeholderValue, "Correo")
             XCTAssertTrue(app.secureTextFields["ristak-login-password"].exists)
             XCTAssertTrue(app.buttons["ristak-login-submit"].exists)
+            XCTAssertFalse(
+                app.staticTexts["Ristak detecta tu cuenta automáticamente con tu correo."].exists
+            )
         } else {
             XCTAssertTrue(element(in: app, identifier: "ristak-main-shell").exists)
         }
