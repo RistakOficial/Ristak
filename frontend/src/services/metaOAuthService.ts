@@ -1,8 +1,6 @@
 export type MetaOAuthConnectionMode = 'manual_system_user' | 'oauth_bisu' | 'oauth_user' | null
-export type MetaOAuthIntegrationKind = 'ads' | 'social'
 
 export interface MetaOAuthStatus {
-  integrationKind: MetaOAuthIntegrationKind
   available: boolean
   mode: 'redirect' | 'js_sdk'
   connectUrl: string
@@ -32,7 +30,7 @@ export interface MetaOAuthStatus {
     granularScopes: unknown[]
     tokenExpiresAt: string | null
     dataAccessExpiresAt: string | null
-    relayStatus: 'inactive' | 'registered' | 'error'
+    relayStatus: 'inactive' | 'pending' | 'registered' | 'repair_pending' | 'error'
   }
   error: string | null
 }
@@ -69,7 +67,6 @@ export interface MetaOAuthPage {
 }
 
 export interface MetaOAuthSession {
-  integrationKind: MetaOAuthIntegrationKind
   sessionId: string
   expiresAt: string
   user: { id: string; name: string }
@@ -100,7 +97,6 @@ export interface MetaOAuthFinalizeSelection {
 }
 
 export interface MetaOAuthFinalizeResult {
-  integrationKind: MetaOAuthIntegrationKind
   connectionMode: 'oauth_bisu' | 'oauth_user'
   connected: boolean
   validated: boolean
@@ -122,6 +118,8 @@ export interface MetaOAuthFinalizeResult {
   adsSync?: { syncStarted?: boolean }
   conversionEvents?: { enabled?: boolean; reason?: string }
 }
+
+export type MetaOAuthPreviousIntegrationKind = 'social' | 'ads'
 
 async function requestMetaOAuth<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -146,28 +144,22 @@ async function requestMetaOAuth<T>(url: string, init?: RequestInit): Promise<T> 
 }
 
 export const metaOAuthService = {
-  getStatus: (integrationKind: MetaOAuthIntegrationKind) => (
-    requestMetaOAuth<MetaOAuthStatus>(`/api/meta/oauth/${integrationKind}/status`)
-  ),
+  getStatus: () => requestMetaOAuth<MetaOAuthStatus>('/api/meta/oauth/status'),
 
-  createConnectUrl: (integrationKind: MetaOAuthIntegrationKind) => requestMetaOAuth<{ connectUrl: string; redirectUri?: string; expiresAt?: string }>(
-    `/api/meta/oauth/${integrationKind}/connect-url`,
+  createConnectUrl: () => requestMetaOAuth<{ connectUrl: string; redirectUri?: string; expiresAt?: string }>(
+    '/api/meta/oauth/connect-url',
     {
       method: 'POST',
       body: JSON.stringify({
-        integrationKind,
-        returnPath: integrationKind === 'social'
-          ? '/settings/meta-ads/redes-sociales'
-          : '/settings/meta-ads/ads'
+        returnPath: '/settings/meta-ads/cuenta'
       })
     }
   ),
 
-  complete: (integrationKind: MetaOAuthIntegrationKind, input: { handoffToken?: string; code?: string; configId?: string }) => (
-    requestMetaOAuth<MetaOAuthSession>(`/api/meta/oauth/${integrationKind}/complete`, {
+  complete: (input: { handoffToken?: string; code?: string; configId?: string }) => (
+    requestMetaOAuth<MetaOAuthSession>('/api/meta/oauth/complete', {
       method: 'POST',
       body: JSON.stringify({
-        integrationKind,
         handoffToken: input.handoffToken || undefined,
         code: input.code || undefined,
         configId: input.configId || undefined
@@ -175,23 +167,35 @@ export const metaOAuthService = {
     })
   ),
 
-  finalize: (integrationKind: MetaOAuthIntegrationKind, selection: MetaOAuthFinalizeSelection) => (
-    requestMetaOAuth<MetaOAuthFinalizeResult>(`/api/meta/oauth/${integrationKind}/finalize`, {
+  finalize: (selection: MetaOAuthFinalizeSelection) => (
+    requestMetaOAuth<MetaOAuthFinalizeResult>('/api/meta/oauth/finalize', {
       method: 'POST',
-      body: JSON.stringify({ integrationKind, ...selection })
+      body: JSON.stringify(selection)
     })
   ),
 
-  disconnect: (integrationKind: MetaOAuthIntegrationKind) => (
+  disconnect: () => (
+    requestMetaOAuth<{
+      disconnected: boolean
+      restoredManual?: boolean
+      restoredSplitSocial?: boolean
+      runtimeWarning?: string | null
+      runtimeWarnings?: string[]
+    }>('/api/meta/oauth/disconnect', {
+      method: 'POST',
+      body: JSON.stringify({})
+    })
+  ),
+
+  disconnectPreviousIntegration: (integrationKind: MetaOAuthPreviousIntegrationKind) => (
     requestMetaOAuth<{
       disconnected: boolean
       restoredLegacy?: boolean
-      fallbackLegacy?: boolean
       runtimeWarning?: string | null
       runtimeWarnings?: string[]
     }>(`/api/meta/oauth/${integrationKind}/disconnect`, {
       method: 'POST',
-      body: JSON.stringify({ integrationKind })
+      body: JSON.stringify({})
     })
   )
 }

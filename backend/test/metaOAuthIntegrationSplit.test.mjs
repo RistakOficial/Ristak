@@ -8,6 +8,7 @@ import {
   getMetaConfig,
   getMetaSocialConfig,
   resolveMetaCapiAccessToken,
+  saveMetaConfig,
   updateRecentAds
 } from '../src/services/metaAdsService.js'
 import {
@@ -38,6 +39,16 @@ const TABLES = [
   'meta_oauth_integration_sessions',
   'highlevel_config'
 ]
+const APP_CONFIG_KEYS = [
+  'meta_config_disconnected',
+  'meta_whatsapp_schedule_enabled',
+  'meta_whatsapp_purchase_enabled',
+  'meta_payment_purchase_event_config',
+  'meta_messenger_messaging_enabled',
+  'meta_facebook_comments_enabled',
+  'meta_instagram_messaging_enabled',
+  'meta_instagram_comments_enabled'
+]
 
 async function snapshotTable(table) {
   const rows = await db.all(`SELECT * FROM ${table}`).catch(() => [])
@@ -56,14 +67,28 @@ async function snapshotTable(table) {
 async function withIsolatedSplitMeta(callback) {
   const restorers = []
   for (const table of TABLES) restorers.push(await snapshotTable(table))
+  const configRows = await db.all(
+    `SELECT config_key, config_value FROM app_config
+     WHERE config_key IN (${APP_CONFIG_KEYS.map(() => '?').join(', ')})`,
+    APP_CONFIG_KEYS
+  )
   try {
     for (const table of TABLES) await db.run(`DELETE FROM ${table}`)
+    await db.run(
+      `DELETE FROM app_config WHERE config_key IN (${APP_CONFIG_KEYS.map(() => '?').join(', ')})`,
+      APP_CONFIG_KEYS
+    )
     await setAppConfig('meta_config_disconnected', '0')
     return await callback()
   } finally {
     setMetaOAuthFetchForTest()
     setMetaOAuthIntegrationCentralClientForTest()
     setMetaOAuthIntegrationRuntimeClientForTest()
+    await db.run(
+      `DELETE FROM app_config WHERE config_key IN (${APP_CONFIG_KEYS.map(() => '?').join(', ')})`,
+      APP_CONFIG_KEYS
+    )
+    for (const row of configRows) await setAppConfig(row.config_key, row.config_value)
     for (const restore of restorers.reverse()) await restore()
   }
 }
@@ -694,7 +719,7 @@ test('disconnect sólo reporta fallback restaurado cuando el método heredado ti
   })
 })
 
-test('custom-values expone sólo el método heredado y nunca convierte el token Social en token manual Ads', async () => {
+test('custom-values expone los fallbacks split efectivos sin mezclar sus activos', async () => {
   await initializeMasterKey()
   await withIsolatedSplitMeta(async () => {
     await db.run(
@@ -721,10 +746,30 @@ test('custom-values expone sólo el método heredado y nunca convierte el token 
 
     assert.equal(response.statusCode, 200)
     assert.equal(response.body?.success, true)
-    assert.equal(response.body?.data?.accessToken, '')
+    assert.match(response.body?.data?.accessToken || '', /^\*\*\*/)
     assert.equal(response.body?.data?.adAccountId, '')
-    assert.equal(response.body?.data?.pageId, '')
-    assert.equal(response.body?.data?.instagramAccountId, '')
+    assert.equal(response.body?.data?.pageId, 'split-page')
+    assert.equal(response.body?.data?.instagramAccountId, 'split-ig')
+    assert.equal(response.body?.data?.hasSplitAds, false)
+    assert.equal(response.body?.data?.hasSplitSocial, true)
+    assert.equal(response.body?.data?.connectionMode, 'oauth_bisu')
+
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token,
+         ad_account_id, dataset_id, validated, connected_at
+       ) VALUES ('ads-only', 'ads', 'active', 'ads-only-connection', ?, 'split-ad', 'split-dataset', 1, CURRENT_TIMESTAMP)`,
+      [encrypt('ads-only-token')]
+    )
+    await getMetaCustomValues({}, response)
+
+    assert.match(response.body?.data?.accessToken || '', /^\*\*\*/)
+    assert.equal(response.body?.data?.adAccountId, 'split-ad')
+    assert.equal(response.body?.data?.pixelId, 'split-dataset')
+    assert.equal(response.body?.data?.pageId, 'split-page')
+    assert.equal(response.body?.data?.instagramAccountId, 'split-ig')
+    assert.equal(response.body?.data?.hasSplitAds, true)
+    assert.equal(response.body?.data?.hasSplitSocial, true)
 
     await db.run(
       `INSERT INTO meta_config (
@@ -735,10 +780,19 @@ test('custom-values expone sólo el método heredado y nunca convierte el token 
     await getMetaCustomValues({}, response)
 
     assert.match(response.body?.data?.accessToken || '', /^\*\*\*/)
+    assert.equal(response.body?.data?.adAccountId, 'split-ad')
+    assert.equal(response.body?.data?.pageId, 'split-page')
+    assert.equal(response.body?.data?.instagramAccountId, 'split-ig')
+    assert.equal(response.body?.data?.connectionMode, 'oauth_bisu')
+
+    await db.run('DELETE FROM meta_oauth_integrations')
+    await getMetaCustomValues({}, response)
     assert.equal(response.body?.data?.adAccountId, 'legacy-ad')
     assert.equal(response.body?.data?.pageId, 'legacy-page')
     assert.equal(response.body?.data?.instagramAccountId, 'legacy-ig')
     assert.equal(response.body?.data?.connectionMode, 'manual_system_user')
+    assert.equal(response.body?.data?.hasSplitAds, false)
+    assert.equal(response.body?.data?.hasSplitSocial, false)
   })
 })
 
@@ -757,5 +811,46 @@ test('el flag de desconexión legacy no apaga el runtime de OAuth Ads separado',
     assert.equal(result.message, 'No config', 'OAuth Ads ignora el flag legacy y llega a validar su propia selección')
 
     await setAppConfig('meta_config_disconnected', '0')
+  })
+})
+
+test('migrar Ads split con Dataset a OAuth unificado sin Dataset pausa eventos CAPI', async () => {
+  await initializeMasterKey()
+  await withIsolatedSplitMeta(async () => {
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token,
+         ad_account_id, dataset_id, validated, connected_at
+       ) VALUES ('ads-with-dataset', 'ads', 'active', 'ads-with-dataset-connection',
+         ?, 'split-ad', 'split-dataset', 1, CURRENT_TIMESTAMP)`,
+      [encrypt('split-ads-token')]
+    )
+    await setAppConfig('meta_whatsapp_schedule_enabled', '1')
+    await setAppConfig('meta_whatsapp_purchase_enabled', '1')
+    await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({ enabled: true, channel: 'smart' }))
+
+    await saveMetaConfig('unified-ad', 'unified-token', null, 'unified-page', null, {
+      connectionMode: 'oauth_bisu',
+      oauthConnectionId: 'unified-without-dataset',
+      oauthUserId: 'isu-1',
+      oauthBusinessId: 'business-1',
+      appSecretProof: 'proof',
+      pageAccessToken: 'page-token',
+      pageAppSecretProof: 'page-proof',
+      grantedScopes: ['ads_read'],
+      validated: true,
+      timezoneData: { timezone_name: 'UTC', timezone_id: null, timezone_offset_hours_utc: 0 }
+    })
+
+    assert.equal((await getMetaConfig()).pixel_id, null)
+    assert.equal(await db.get(
+      `SELECT config_value FROM app_config WHERE config_key = 'meta_whatsapp_schedule_enabled'`
+    ).then(row => row.config_value), '0')
+    assert.equal(await db.get(
+      `SELECT config_value FROM app_config WHERE config_key = 'meta_whatsapp_purchase_enabled'`
+    ).then(row => row.config_value), '0')
+    assert.equal(JSON.parse(await db.get(
+      `SELECT config_value FROM app_config WHERE config_key = 'meta_payment_purchase_event_config'`
+    ).then(row => row.config_value)).enabled, false)
   })
 })

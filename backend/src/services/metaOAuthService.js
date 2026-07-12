@@ -13,7 +13,10 @@ import {
   updateCentralMetaWebhookSubscription
 } from './licenseService.js'
 import {
+  disableMetaConversionEventsForDisconnectedPixel,
   enableMetaSocialChannelsForConnectedProfiles,
+  ensureMetaConversionEventsEnabledForConnectedPixel,
+  getMetaConfig as getOperationalMetaConfig,
   getLegacyMetaConfig as getMetaConfig,
   normalizeMetaConnectionMode,
   saveMetaConfig,
@@ -25,7 +28,10 @@ import {
   syncMetaSocialConversationHistoryInBackground
 } from './metaSocialMessagingService.js'
 import { clearMetaIntegrationCredentials } from './integrationCredentialsCleanupService.js'
-import { hasActiveMetaOAuthSocialPage } from './metaOAuthIntegrationConfigService.js'
+import {
+  getActiveMetaOAuthIntegration,
+  hasActiveMetaOAuthSocialPage
+} from './metaOAuthIntegrationConfigService.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { withCronLock } from '../utils/cronLock.js'
 
@@ -77,11 +83,12 @@ export const META_OAUTH_SCOPES_BY_KIND = Object.freeze({
   ads: META_OAUTH_ADS_REQUIRED_SCOPES
 })
 
-// Alias del flujo combinado ya publicado. Se conserva sólo para instalaciones
-// que todavía no migran a las conexiones independientes.
+// El Config ID unificado del Installer concede en una sola autorización Ads,
+// Dataset, Pages, Instagram, mensajes y comentarios. Publicar/editar campañas
+// sigue fuera de este flujo: cuando el producto lo habilite deberá solicitar y
+// revisar `ads_management` explícitamente, no exigirlo para reportes/CAPI.
 export const META_OAUTH_REQUIRED_SCOPES = [
   ...META_OAUTH_ADS_REQUIRED_SCOPES,
-  'ads_management',
   'business_management',
   ...META_OAUTH_SOCIAL_REQUIRED_SCOPES
 ]
@@ -293,8 +300,22 @@ function normalizeHintAssets(value = {}) {
     status: account?.account_status ?? account?.status ?? null,
     pixels: mergeById(
       flatPixels
-        .filter(pixel => normalizeAdAccountId(pixel?.ad_account_id || pixel?.adAccountId) === normalizeAdAccountId(account?.id || account?.account_id))
-        .map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) })),
+        .filter(pixel => {
+          const directAccount = normalizeAdAccountId(pixel?.ad_account_id || pixel?.adAccountId)
+          const pixelBusiness = cleanString(pixel?.business_id || pixel?.businessId)
+          const accountBusiness = cleanString(account?.business_id || account?.businessId || account?.business?.id)
+          return directAccount === normalizeAdAccountId(account?.id || account?.account_id) || (
+            pixelBusiness && accountBusiness && pixelBusiness === accountBusiness
+          )
+        })
+        .map(pixel => {
+          const businessId = cleanString(pixel?.business_id || pixel?.businessId)
+          return {
+            id: cleanString(pixel?.id),
+            name: cleanString(pixel?.name),
+            ...(businessId ? { businessId } : {})
+          }
+        }),
       (Array.isArray(account?.pixels) ? account.pixels : [])
         .map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) }))
     )
@@ -402,6 +423,35 @@ async function discoverAdAccounts({ token, appSecretProof = '', userId }) {
     })
 }
 
+async function discoverBusinessPixels({ token, appSecretProof = '', businessIds = [] }) {
+  const rows = await Promise.all([...new Set(businessIds.map(cleanString).filter(Boolean))].map(async businessId => {
+    const [owned, client] = await Promise.all([
+      graphCollection(`${encodeURIComponent(businessId)}/owned_pixels`, {
+        token,
+        appSecretProof,
+        fields: 'id,name'
+      }).catch(error => {
+        logger.warn(`Meta OAuth no devolvió Datasets propios para ${businessId}: ${error.message}`)
+        return []
+      }),
+      graphCollection(`${encodeURIComponent(businessId)}/client_pixels`, {
+        token,
+        appSecretProof,
+        fields: 'id,name'
+      }).catch(error => {
+        logger.warn(`Meta OAuth no devolvió Datasets compartidos para ${businessId}: ${error.message}`)
+        return []
+      })
+    ])
+    return mergeById(owned, client).map(pixel => ({
+      id: cleanString(pixel?.id),
+      name: cleanString(pixel?.name),
+      businessId
+    }))
+  }))
+  return mergeById(rows.flat(), [])
+}
+
 /** Descubrimiento local: el Installer entrega el token, no la selección final. */
 export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integrationKind = '' } = {}) {
   const accessToken = cleanString(token)
@@ -453,10 +503,21 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
 
   // El candidate/handoff es la allowlist de consentimiento. Graph vivo sólo
   // enriquece esos IDs; una asignación posterior al callback jamás se agrega.
-  const businesses = intersectAuthorizedAssets(
-    hintAssets.businesses,
-    businessesRaw.map(item => ({ id: cleanString(item?.id), name: cleanString(item?.name) }))
+  const liveBusinessesById = new Map(
+    businessesRaw
+      .map(item => ({ id: cleanString(item?.id), name: cleanString(item?.name) }))
+      .filter(item => item.id)
+      .map(item => [item.id, item])
   )
+  // El handoff firmado del Installer es la allowlist de consentimiento. El edge
+  // /me/businesses sólo enriquece nombres: si Meta lo omite o falla, no debemos
+  // volver imposible una selección cuyo Ad Account/Page sí confirma ese mismo
+  // business_id en Graph vivo.
+  const businesses = hintAssets.businesses.map(item => ({
+    ...item,
+    ...(liveBusinessesById.get(item.id) || {}),
+    id: item.id
+  }))
   const liveAdAccounts = adAccountsRaw.map(account => {
     const businessId = cleanString(account?.business?.id)
     return {
@@ -474,6 +535,17 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
     normalizeAdAccountId
   )
 
+  const businessPixels = splitKind === 'social'
+    ? []
+    : await discoverBusinessPixels({
+        token: accessToken,
+        appSecretProof,
+        businessIds: [
+          ...hintAssets.businesses.map(item => item.id),
+          ...rawAdAccounts.map(account => account.businessId)
+        ]
+      })
+
   const adAccounts = await Promise.all(rawAdAccounts.map(async account => {
     const graphId = graphAdAccountId(account.id)
     const discoveredPixels = await graphCollection(`${graphId}/adspixels`, {
@@ -484,12 +556,21 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
       logger.warn(`Meta OAuth no devolvió pixels para ${graphId}: ${error.message}`)
       return []
     })
+    const accountBusinessId = cleanString(account.businessId) || (
+      hintAssets.businesses.length === 1 ? cleanString(hintAssets.businesses[0]?.id) : ''
+    )
+    const discoveredForBusiness = accountBusinessId
+      ? businessPixels.filter(pixel => pixel.businessId === accountBusinessId)
+      : []
     return {
       ...account,
       id: graphId,
       pixels: intersectAuthorizedAssets(
         account.pixels,
-        discoveredPixels.map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) }))
+        mergeById(
+          discoveredPixels.map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) })),
+          discoveredForBusiness
+        )
       )
     }
   }))
@@ -539,7 +620,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
     businessId: businesses.some(item => item.id === hintedBusinessId) ? hintedBusinessId : businesses[0]?.id || '',
     adAccountId: adAccounts[0]?.id || '',
     // El Dataset es una capacidad opcional y siempre exige elección explícita.
-    pixelId: splitKind === 'ads' ? '' : adAccounts[0]?.pixels?.[0]?.id || '',
+    pixelId: '',
     pageId: pages[0]?.id || '',
     instagramAccountId: pages[0]?.instagramAccounts?.[0]?.id || ''
   }
@@ -573,6 +654,42 @@ function pendingSagaPageConfig(payload = {}) {
     oauth_appsecret_proof: payload?.appSecretProof,
     oauth_page_access_token: pageSecrets?.pageAccessToken,
     oauth_page_appsecret_proof: pageSecrets?.pageAppSecretProof
+  }
+}
+
+function oauthConfigOwnsPage(config = null, pageId = '') {
+  const mode = normalizeMetaConnectionMode(config?.connection_mode)
+  return Boolean(
+    config?.access_token &&
+    ['oauth_bisu', 'oauth_user'].includes(mode) &&
+    cleanString(config?.page_id) === cleanString(pageId)
+  )
+}
+
+async function removeMetaPageSubscriptionIfUnused({
+  config,
+  fallbackConfig = null,
+  warningLabel = 'page-subscription',
+  runtimeWarnings = null
+} = {}) {
+  const pageId = cleanString(config?.page_id)
+  if (!pageId) return { removed: false, reason: 'no-page' }
+  try {
+    // DELETE /subscribed_apps afecta a toda la app sobre la Page, no sólo al
+    // connection_id candidato. Una reconexión combinada o un OAuth Social
+    // separado sobre la misma Page deben conservar esa suscripción compartida.
+    if (oauthConfigOwnsPage(fallbackConfig, pageId)) {
+      return { removed: false, reason: 'combined-page-fallback' }
+    }
+    if (await hasActiveMetaOAuthSocialPage(pageId)) {
+      return { removed: false, reason: 'split-social-page-fallback' }
+    }
+    await runtimeClient.removePageSubscription({ config })
+    return { removed: true, reason: 'unused-page' }
+  } catch (error) {
+    if (Array.isArray(runtimeWarnings)) runtimeWarnings.push(`${warningLabel}: ${error.message}`)
+    logger.warn(`Meta OAuth: ${warningLabel}: ${error.message}`)
+    return { removed: false, reason: 'error', error }
   }
 }
 
@@ -667,11 +784,12 @@ async function compensatePendingOAuthSaga(payload = {}) {
     errors.push(`relay: ${error.message}`)
   }
 
-  try {
-    await runtimeClient.removePageSubscription({ config: pendingSagaPageConfig(payload) })
-  } catch (error) {
-    errors.push(`page: ${error.message}`)
-  }
+  const pageCleanup = await removeMetaPageSubscriptionIfUnused({
+    config: pendingSagaPageConfig(payload),
+    fallbackConfig: openSnapshotMetaConfig(saga?.previousState?.config),
+    warningLabel: 'page-rollback'
+  })
+  if (pageCleanup.error) errors.push(`page: ${pageCleanup.error.message}`)
 
   if (!errors.length) {
     try {
@@ -1131,11 +1249,123 @@ function validateSelection(payload, selection = {}) {
   }
 }
 
+async function validateDatasetUploadAccess(payload, selected) {
+  const datasetId = cleanString(selected?.pixelId)
+  if (!datasetId) return { validated: false, reason: 'dataset_not_selected' }
+
+  const businessId = cleanString(selected?.businessId)
+  const systemUserId = cleanString(payload?.user?.id)
+  if (!businessId || !systemUserId) {
+    throw metaOAuthError(
+      'Meta no devolvió el portafolio o el usuario de sistema necesario para validar el Dataset.',
+      409,
+      'META_OAUTH_DATASET_IDENTITY_REQUIRED'
+    )
+  }
+
+  await graphJson(encodeURIComponent(datasetId), {
+    token: payload.accessToken,
+    appSecretProof: payload.appSecretProof,
+    fields: 'id,name'
+  }).catch(error => {
+    throw metaOAuthError(
+      `Ristak no puede leer el Dataset seleccionado: ${error.message}`,
+      409,
+      'META_OAUTH_DATASET_ACCESS_REQUIRED'
+    )
+  })
+
+  const assignedUsers = await graphCollection(`${encodeURIComponent(datasetId)}/assigned_users`, {
+    token: payload.accessToken,
+    appSecretProof: payload.appSecretProof,
+    fields: 'id,name,tasks,permitted_tasks',
+    query: { business: businessId }
+  }).catch(error => {
+    throw metaOAuthError(
+      `Meta no permitió validar quién puede enviar eventos al Dataset: ${error.message}`,
+      409,
+      'META_OAUTH_DATASET_UPLOAD_ACCESS_REQUIRED'
+    )
+  })
+  const assigned = assignedUsers.find(user => cleanString(user?.id) === systemUserId)
+  const tasks = new Set(toStringArray([
+    ...(Array.isArray(assigned?.tasks) ? assigned.tasks : []),
+    ...(Array.isArray(assigned?.permitted_tasks) ? assigned.permitted_tasks : [])
+  ]).map(task => task.toUpperCase()))
+  if (!assigned || !tasks.has('UPLOAD')) {
+    throw metaOAuthError(
+      'El usuario de sistema no tiene la tarea UPLOAD sobre este Dataset. Asígnale acceso para administrar y enviar eventos desde Meta Business.',
+      409,
+      'META_OAUTH_DATASET_UPLOAD_ACCESS_REQUIRED'
+    )
+  }
+  return { validated: true, datasetId, businessId, systemUserId }
+}
+
 function buildRelayWebhookUrl(publicBaseUrl) {
   const base = cleanString(
     publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL
   ).replace(/\/+$/, '')
   return base ? `${base}/webhooks/meta/installer-relay` : ''
+}
+
+async function getSplitSocialFallback() {
+  return getActiveMetaOAuthIntegration('social').catch(error => {
+    logger.warn(`No se pudo leer el fallback Social durante la migración Meta: ${error.message}`)
+    return null
+  })
+}
+
+async function suspendSplitSocialRoute(splitSocial, runtimeWarnings = []) {
+  if (!splitSocial?.connection_id || !splitSocial?.page_id) return
+  try {
+    await centralClient.updateWebhookSubscription({
+      action: 'unregister',
+      integrationKind: 'social',
+      connectionId: cleanString(splitSocial.connection_id),
+      pageId: cleanString(splitSocial.page_id),
+      instagramAccountId: cleanString(splitSocial.instagram_account_id),
+      webhookUrl: ''
+    })
+  } catch (error) {
+    runtimeWarnings.push(`split-social-suspend: ${error.message}`)
+    logger.warn(`Meta OAuth unificado: no se pudo pausar la ruta Social anterior: ${error.message}`)
+  }
+}
+
+async function restoreSplitSocialRoute(splitSocial, runtimeWarnings = [], { publicBaseUrl = '', required = false } = {}) {
+  if (!splitSocial?.connection_id || !splitSocial?.page_id) return { restored: false, reason: 'missing-split-social' }
+  const webhookUrl = buildRelayWebhookUrl(publicBaseUrl)
+  if (!webhookUrl) {
+    const error = metaOAuthError(
+      'No hay URL pública verificada para restaurar la conexión anterior de Facebook e Instagram.',
+      409,
+      'META_OAUTH_SPLIT_SOCIAL_RESTORE_URL_MISSING'
+    )
+    if (required) throw error
+    runtimeWarnings.push(`split-social-restore: ${error.message}`)
+    return { restored: false, reason: 'missing-public-url' }
+  }
+  try {
+    await centralClient.updateWebhookSubscription({
+      action: 'register',
+      integrationKind: 'social',
+      connectionId: cleanString(splitSocial.connection_id),
+      pageId: cleanString(splitSocial.page_id),
+      instagramAccountId: cleanString(splitSocial.instagram_account_id),
+      webhookUrl
+    })
+    return { restored: true, reason: 'registered' }
+  } catch (error) {
+    if (required) throw metaOAuthError(
+      `No se pudo restaurar la conexión anterior de Facebook e Instagram: ${error.message}`,
+      Number(error?.statusCode) || 502,
+      'META_OAUTH_SPLIT_SOCIAL_RESTORE_FAILED'
+    )
+    runtimeWarnings.push(`split-social-restore: ${error.message}`)
+    logger.warn(`Meta OAuth unificado: no se pudo restaurar la ruta Social anterior: ${error.message}`)
+    return { restored: false, reason: 'error' }
+  }
 }
 
 function openSnapshotMetaConfig(config = null) {
@@ -1170,14 +1400,14 @@ async function runMetaOAuthConnectedRuntimeEffects({
   if (
     ['oauth_bisu', 'oauth_user'].includes(cleanString(previousConfig?.connection_mode)) &&
     cleanString(previousConfig?.page_id) &&
+    cleanString(previousConfig?.page_id) !== cleanString(selected?.pageId) &&
     cleanString(previousConfig?.oauth_connection_id) !== cleanString(payload?.connectionId)
   ) {
-    try {
-      await runtimeClient.removePageSubscription({ config: previousConfig })
-    } catch (error) {
-      runtimeWarnings.push(`previous-page: ${error.message}`)
-      logger.warn(`Meta OAuth reconectado; no se pudo limpiar subscribed_apps de la Page anterior: ${error.message}`)
-    }
+    await removeMetaPageSubscriptionIfUnused({
+      config: previousConfig,
+      warningLabel: 'previous-page',
+      runtimeWarnings
+    })
   }
 
   for (const provider of ['meta', 'meta-ads', 'meta-social']) {
@@ -1297,18 +1527,22 @@ async function finalizeMetaOAuthConnectionUnlocked({
   sessionId,
   businessId = '',
   adAccountId = '',
-  pixelId = '',
+  pixelId,
   pageId = '',
-  instagramAccountId = '',
+  instagramAccountId,
   publicBaseUrl = ''
 } = {}) {
   const { payload } = await readPendingSession(sessionId)
+  const splitSocialFallback = await getSplitSocialFallback()
+  const migrationWarnings = []
   const selected = validateSelection(payload, {
     businessId: businessId || payload.defaults?.businessId,
     adAccountId: adAccountId || payload.defaults?.adAccountId,
-    pixelId: pixelId || payload.defaults?.pixelId,
+    pixelId: pixelId === undefined ? payload.defaults?.pixelId : pixelId,
     pageId: pageId || payload.defaults?.pageId,
-    instagramAccountId: instagramAccountId || payload.defaults?.instagramAccountId
+    instagramAccountId: instagramAccountId === undefined
+      ? payload.defaults?.instagramAccountId
+      : instagramAccountId
   })
   if (payload.permissions?.missing?.length) {
     throw metaOAuthError(
@@ -1339,6 +1573,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
       'META_OAUTH_PAGE_CREDENTIALS_MISSING'
     )
   }
+  await validateDatasetUploadAccess(payload, selected)
   await consumePendingSession(sessionId)
 
   const webhookUrl = buildRelayWebhookUrl(publicBaseUrl)
@@ -1470,6 +1705,12 @@ async function finalizeMetaOAuthConnectionUnlocked({
     await persistPendingPayload(sessionId, payload, 'consuming').catch(persistError => {
       logger.warn(`Meta OAuth quedó conectado, pero no se pudo marcar la etapa final temporal: ${persistError.message}`)
     })
+    if (
+      splitSocialFallback?.page_id &&
+      cleanString(splitSocialFallback.page_id) !== cleanString(selected.pageId)
+    ) {
+      await suspendSplitSocialRoute(splitSocialFallback, migrationWarnings)
+    }
     try {
       await markLocalRelayRegistered(payload, registeredAt)
     } catch (error) {
@@ -1510,7 +1751,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
       socialChannels: {},
       socialHistoryBackfill: { syncStarted: false, started: [], skipped: [] },
       adsSync: { syncStarted: false },
-      runtimeWarnings: ['relay-local-repair: pendiente']
+      runtimeWarnings: ['relay-local-repair: pendiente', ...migrationWarnings]
     }
   }
 
@@ -1527,6 +1768,10 @@ async function finalizeMetaOAuthConnectionUnlocked({
     previousConfig,
     reason: 'meta-oauth-connected'
   })
+  runtimeEffects.runtimeWarnings = [
+    ...migrationWarnings,
+    ...(runtimeEffects.runtimeWarnings || [])
+  ]
   const relay = { status: 'registered', subscribed: true, error: '', result: relayResult }
   const subscription = { subscribed: true, pageId: selected.pageId }
 
@@ -1542,10 +1787,28 @@ async function finalizeMetaOAuthConnectionUnlocked({
   }
 }
 
-async function disconnectMetaOAuthConnectionUnlocked() {
+async function disconnectMetaOAuthConnectionUnlocked({ publicBaseUrl = '' } = {}) {
   const config = await getMetaConfig().catch(() => null)
   if (!config || normalizeMetaConnectionMode(config.connection_mode) !== 'oauth_bisu') {
     return { disconnected: false, reason: 'not-oauth' }
+  }
+  const splitSocialFallback = await getSplitSocialFallback()
+  const runtimeWarnings = []
+  const splitUsesSamePage = Boolean(
+    splitSocialFallback?.connection_id &&
+    splitSocialFallback?.page_id &&
+    cleanString(splitSocialFallback.page_id) === cleanString(config.page_id)
+  )
+  let splitRestore = { restored: false, reason: 'no-split-social' }
+
+  // Si la Page es distinta, la ruta split fue pausada al promover el login
+  // unificado. Restaurarla primero deja una operación reintentable: si falla,
+  // todavía no destruimos la conexión actual ni sus secretos locales.
+  if (splitSocialFallback?.connection_id && !splitUsesSamePage) {
+    splitRestore = await restoreSplitSocialRoute(splitSocialFallback, runtimeWarnings, {
+      publicBaseUrl,
+      required: true
+    })
   }
 
   await centralClient.updateWebhookSubscription({
@@ -1556,6 +1819,11 @@ async function disconnectMetaOAuthConnectionUnlocked() {
     webhookUrl: ''
   })
   await centralClient.disconnect()
+  if (splitUsesSamePage) {
+    // Installer restaura atómicamente el fallback de la misma Page al quitar la
+    // ruta unificada; registrarla otra vez desde Ristak crearía una carrera.
+    splitRestore = { restored: true, reason: 'installer-fallback' }
+  }
   const splitSocialOwnsPage = await hasActiveMetaOAuthSocialPage(config.page_id)
   if (!splitSocialOwnsPage) {
     await runtimeClient.removePageSubscription({ config }).catch(error => {
@@ -1592,19 +1860,31 @@ async function disconnectMetaOAuthConnectionUnlocked() {
   }
   await db.run('DELETE FROM meta_oauth_pending_sessions')
   await db.run('DELETE FROM meta_oauth_connection_backups WHERE id = ?', [MANUAL_BACKUP_ID])
-  let runtimeWarning = ''
+  if (preserveSplitRuntimeState) {
+    const restoredAdsConfig = await getOperationalMetaConfig().catch(() => null)
+    if (restoredAdsConfig?.access_token && restoredAdsConfig?.pixel_id) {
+      await ensureMetaConversionEventsEnabledForConnectedPixel({
+        accessToken: restoredAdsConfig.access_token,
+        pixelId: restoredAdsConfig.pixel_id
+      })
+    } else {
+      await disableMetaConversionEventsForDisconnectedPixel()
+    }
+  }
   for (const provider of ['meta', 'meta-ads', 'meta-social']) {
     try {
       await runtimeClient.syncCrons(provider, { reason: 'meta-oauth-disconnected' })
     } catch (error) {
-      runtimeWarning ||= error.message
+      runtimeWarnings.push(`crons-${provider}: ${error.message}`)
       logger.warn(`Meta OAuth desconectado; no se pudieron sincronizar crons ${provider}: ${error.message}`)
     }
   }
   return {
     disconnected: true,
     restoredManual: Boolean(manualBackup?.config?.access_token),
-    runtimeWarning: runtimeWarning || null
+    restoredSplitSocial: splitRestore.restored === true,
+    runtimeWarning: runtimeWarnings[0] || null,
+    runtimeWarnings
   }
 }
 
@@ -1629,13 +1909,13 @@ export function finalizeMetaOAuthConnection(options = {}) {
   return withMetaConnectionLock(() => finalizeMetaOAuthConnectionUnlocked(options))
 }
 
-export function disconnectMetaOAuthConnection() {
-  return withMetaConnectionLock(() => disconnectMetaOAuthConnectionUnlocked())
+export function disconnectMetaOAuthConnection(options = {}) {
+  return withMetaConnectionLock(() => disconnectMetaOAuthConnectionUnlocked(options))
 }
 
-export function replaceMetaOAuthWithManualConnection(saveManualConfig) {
+export function replaceMetaOAuthWithManualConnection(saveManualConfig, options = {}) {
   return withMetaConnectionLock(async () => {
-    await disconnectMetaOAuthConnectionUnlocked()
+    await disconnectMetaOAuthConnectionUnlocked(options)
     return saveManualConfig()
   })
 }

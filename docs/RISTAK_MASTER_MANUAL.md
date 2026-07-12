@@ -2184,101 +2184,90 @@ Ristak usa Meta en varias areas:
 
 ### Conexion OAuth y convivencia manual
 
-- `Configuracion > Meta` tiene dos conexiones OAuth independientes. **Facebook
-  e Instagram** conecta Pages, Instagram, mensajes y comentarios; **Meta Ads**
-  conecta la cuenta publicitaria, reportes y CAPI opcional. No comparten token,
-  seleccion, relay ni ciclo de desconexion.
-- Social usa solo `pages_show_list`, `pages_manage_metadata`,
-  `pages_messaging`, `pages_read_engagement`, `pages_read_user_content`,
+- `Configuracion > Meta` usa **un solo OAuth** para anuncios, Dataset/CAPI,
+  Facebook, Instagram, mensajes y comentarios. La interfaz se divide en
+  **Cuenta Meta**, **Rastreo web** y **Dataset Test**; son funciones distintas
+  de la misma credencial, no conexiones separadas.
+- El Config ID unificado pide `ads_read`, `business_management`,
+  `pages_show_list`, `pages_manage_metadata`, `pages_messaging`,
+  `pages_read_engagement`, `pages_read_user_content`,
   `pages_manage_engagement`, `instagram_basic`,
-  `instagram_manage_messages` e `instagram_manage_comments`. La Page es
-  obligatoria, Instagram es opcional y, si Meta entrega tareas, exige
-  `MESSAGING` y `MODERATE`. No enumera Ad Accounts ni Datasets.
-- Ads usa hoy solo `ads_read`. La cuenta publicitaria es obligatoria y el
-  Dataset/Pixel es opcional: debe pertenecer a esa cuenta segun
-  `/act_<AD_ACCOUNT_ID>/adspixels` y nunca se autoselecciona. No pide Page o
-  Instagram y no registra webhooks.
-- `ads_read` cubre lectura de campañas/Insights y Server-Side API/CAPI. El
-  Campaign Builder sigue en preview; `ads_management` se agregara cuando exista
-  publicacion/edicion real demostrable en App Review. Ese upgrade tambien debe
-  resolver Page y tarea `ADVERTISE`; tomar el Page ID de Social no concede
-  permiso publicitario al token Ads.
-- Installer es el unico dueño de `meta_app_secret` y de dos Config IDs FLFB:
-  `meta_social_login_config_id` y `meta_ads_login_config_id`. El Config ID
-  combinado anterior queda solo para compatibilidad. Cada `state`, candidato y
-  handoff queda ligado a cliente, instalacion e `integration_kind`.
-- Ristak guarda las conexiones nuevas cifradas en `meta_oauth_integrations` y
-  las sesiones temporales en `meta_oauth_integration_sessions`. Solo existe una
-  fila activa por `social|ads`; `meta_config` permanece intacto como conexion
-  manual/OAuth combinado legacy y fallback gradual.
-- Las rutas nuevas son
-  `/api/meta/oauth/:integrationKind/{status,connect-url,complete,finalize,disconnect}`,
-  con `integrationKind= social|ads`. Los aliases sin tipo conservan solamente el
-  OAuth combinado anterior.
-- Ristak reclama el handoff server-to-server, valida familia de permisos,
-  activos y `granular_scopes.target_ids`, y conserva una sesion cifrada con TTL
-  hasta finalizar. Un handoff cruzado se rechaza. Cancelar, expirar o fallar
-  deja intactas la conexion activa del mismo tipo, la otra superficie y el
-  fallback legacy.
+  `instagram_manage_messages` e `instagram_manage_comments`.
+  `ads_management` no se pide mientras el Campaign Builder siga en preview y
+  no publique/edite campañas reales.
+- Installer es el unico dueno de `meta_app_secret` y
+  `meta_business_login_config_id`. Los Config IDs `social|ads` anteriores se
+  conservan solo para migracion. El alias interno `integration_kind=legacy`
+  identifica al contrato unificado sin segmento; no significa que la
+  experiencia visible sea vieja o manual.
+- La conexion unificada cifrada vive en `meta_config` con
+  `connection_mode=oauth_bisu`; su sesion temporal vive en
+  `meta_oauth_pending_sessions`. Las filas separadas anteriores en
+  `meta_oauth_integrations` y el System User Token manual se conservan como
+  fallbacks, no se borran al iniciar OAuth.
+- Las rutas canonicas son
+  `/api/meta/oauth/{status,connect-url,complete,finalize,disconnect}`. Los
+  endpoints `/api/meta/oauth/:integrationKind/*` siguen disponibles solo para
+  compatibilidad con instalaciones que ya usaron la etapa separada.
+- Ristak reclama el handoff server-to-server, valida los once permisos, activos
+  y `granular_scopes.target_ids`, y conserva una sesion cifrada con TTL hasta
+  finalizar. Cancelar, expirar o fallar deja intacta la conexion anterior.
 - Al iniciar OAuth, Ristak convierte la ruta de regreso en una URL absoluta del
   host publico que origino la solicitud. Installer valida ese origin contra la
   instalacion antes de guardarlo en `state`; asi el callback central no manda al
   usuario al dominio generico `app.ristak.com` cuando conecto desde un tenant
   Render. Con Strict Mode de Meta, la lista de redirects debe incluir el callback
   central completo, no solo la raiz de `www.ristak.com`.
-- Social prepara `subscribed_apps`, Page token/proof y ruta del broker antes de
-  promocionarse. Ads promueve Ad Account/Dataset sin tocar el broker. Una
-  confirmacion central con fallo local queda en reparacion automatica en lugar
-  de hacer un rollback falso.
-- Una sola app Meta implica un solo callback de webhooks Social. Installer
+- Al volver, Ad Account y Page son obligatorios; Dataset e Instagram son
+  opcionales. La Page se filtra por el Business de la cuenta publicitaria e
+  Instagram debe estar enlazado a la Page. Si Meta devuelve tareas de Page,
+  Ristak exige `ANALYZE`, `MESSAGING` y `MODERATE`.
+- El Dataset se descubre por `/act_<AD_ACCOUNT_ID>/adspixels` y tambien por
+  `/{BUSINESS_ID}/owned_pixels|client_pixels`. Antes de guardarlo, Ristak lee el
+  Dataset y exige que el BISU tenga tarea `UPLOAD` en
+  `/{DATASET_ID}/assigned_users?business=...`. No manda un evento automatico
+  durante el login.
+- Ristak prepara `subscribed_apps`, Page token/proof, configuracion Ads/Dataset
+  y ruta del broker antes de promocionar. Una confirmacion central con fallo
+  local queda en reparacion automatica en lugar de hacer rollback a ciegas.
+- Una sola app Meta implica un solo callback de webhooks. Installer
   valida `X-Hub-Signature-256`, deduplica, enruta por Page/Instagram y
   retransmite a `/webhooks/meta/installer-relay` con HMAC de licencia,
-  timestamp, nonce e ID estable. Ads nunca crea rutas en ese broker.
-- Desconectar Social desregistra su ruta y suscripcion, pero conserva Ads;
-  desconectar Ads conserva Social, `subscribed_apps` y entregas. Cada superficie
-  cae a `meta_config` manual/legacy cuando existe. HighLevel nunca recibe,
+  timestamp, nonce e ID estable.
+- Al desconectar, Installer restaura la ruta OAuth Social separada si era el
+  fallback de esa Page y Ristak restaura el System User Token manual cifrado si
+  existia. Las filas separadas no se eliminan. HighLevel nunca recibe,
   reconcilia ni borra credenciales OAuth. WhatsApp Embedded Signup sigue
   separado porque usa otro Config ID y activos distintos.
 - Contrato completo, permisos y checklist de revision:
   `docs/META_OAUTH.md`.
 
 - Meta Ads config y sync.
-- Dataset Test en la UI de Configuracion > Meta; las rutas internas pueden
+- `Rastreo web` mantiene los parametros UTM y la inclusion del Dataset en el
+  snippet; no se mezcla con el login ni con los controles sociales.
+- `Dataset Test` conserva su propia pestana; las rutas internas pueden
   conservar `pixel` por contrato con Meta y tracking.
 - En Dataset Test, los eventos web usan `action_source=website`; los eventos
   `LeadSubmitted (Messaging)` y `Purchase (Messaging)` usan
   `action_source=business_messaging` y permiten probar WhatsApp, Messenger o
   Instagram DM desde la UI. WhatsApp requiere `ctwa_clid` + `page_id`;
   Messenger requiere `page_scoped_user_id` + `page_id`; Instagram requiere
-  `ig_sid` + `ig_account_id`. Dataset/token salen de la conexion Ads; la
-  Page/Instagram sale de Social, con fallback a la configuracion legacy.
+  `ig_sid` + `ig_account_id`. Dataset/BISU y Page/Page Token salen de la misma
+  conexion unificada, cada uno con su proof correcto; las conexiones separadas
+  y manuales siguen como fallback.
   `Purchase (Messaging)` se envia a Meta como `event_name=Purchase` y usa por
   default la moneda de la cuenta (`app_config.account_currency`).
-- Conversions API resuelve primero la conexion OAuth Ads activa desde
-  `meta_oauth_integrations`; exige `ads_read` y un Dataset validado. Si no existe
-  OAuth Ads, conserva el System User Token/OAuth combinado de `meta_config` y
-  `META_ACCESS_TOKEN` solo como fallbacks legacy. No existe un token CAPI
-  separado del token Ads activo, pero una conexion Ads sin Dataset sigue siendo
-  valida para reportes y deja CAPI desactivado.
-- En Configuracion > Meta, cada pestaña tiene su propio wizard. Ads consulta solo
-  Ad Accounts y, despues de elegir una, sus Datasets/Pixels; la cuenta es
-  obligatoria y el Dataset es opcional. Social consulta solo Pages y sus cuentas
-  profesionales de Instagram; la Page es obligatoria e Instagram es opcional.
-  En OAuth ambos usan el snapshot seguro del handoff y nunca revelan el BISU al
-  frontend. Las selecciones son borrador y solo se guardan al finalizar la
-  conexion correspondiente.
-- Finalizar Ads arranca la sincronizacion publicitaria sin modificar Social.
-  Finalizar Social deja encendidos por default Messenger y comentarios de
-  Facebook; si tambien se eligio Instagram, habilita sus mensajes y comentarios.
-  Instagram DM y comentarios usan el Page token/proof cifrado de la conexion
-  Social activa. Ristak no pide ni acepta un token separado de Instagram.
-- En la pestaña Redes sociales, la guia de Webhooks muestra solo la
-  URL de devolucion de llamada y el token de verificacion que deben repetirse en
-  cada caso de uso/producto social activo (Page, Messenger o Instagram).
-  WhatsApp mantiene su configuracion separada. La UI no debe pedir al usuario
-  copiar campos de suscripcion
-  manuales; Ristak mantiene la suscripcion programatica de la Page cuando
-  conecta o actualiza la integracion. La suscripcion canonica del inbox pide
+- Conversions API resuelve primero el OAuth unificado activo de `meta_config`;
+  exige `ads_read` y un Dataset validado. Despues cae a OAuth Ads separado,
+  System User Token manual y `META_ACCESS_TOKEN` solo como compatibilidad. Una
+  conexion sin Dataset sigue valida para reportes/social y deja CAPI apagado.
+- Finalizar el login arranca Ads sync y backfill social, deja encendidos por
+  default Messenger y comentarios de Facebook y, si se eligio Instagram,
+  habilita DMs y comentarios de Instagram. Ristak no pide un token separado de
+  Instagram.
+- En OAuth la suscripcion de Page/webhooks es programatica y la UI no pide
+  copiar valores manuales. En modo manual, **Cuenta Meta** conserva la guia de
+  Meta Developers. La suscripcion canonica del inbox pide
   `messages`, `message_echoes`, `message_edits`, `message_reactions`,
   `message_reads`, `message_deliveries`, `messaging_postbacks`,
   `messaging_referrals` y `feed`: los primeros ocho mantienen DMs, estados y
@@ -2293,11 +2282,10 @@ Ristak usa Meta en varias areas:
   que Meta vuelva a emitir los mensajes viejos por Webhook.
 - **Messenger externo** depende del modo. En manual usa un User Token humano
   distinto del System User Token: el usuario lo pega en
-  `Configuracion > Meta > Redes sociales > Messenger`, Ristak valida la Page y
-  lo cifra en `meta_config.messenger_user_token`. En OAuth Social, Installer
-  entrega en el handoff el Page Token de la Page delegada y su proof; no aparece
-  un segundo campo de token en UI. Ads/CAPI usan exclusivamente la conexion Ads
-  y Messenger/Instagram/comentarios usan el Page token Social. El toggle solo se
+  `Configuracion > Meta > Cuenta Meta`, Ristak valida la Page y lo cifra en
+  `meta_config.messenger_user_token`. En OAuth unificado, Installer entrega el
+  Page Token y su proof; no aparece un segundo campo. Ads/CAPI usan el BISU y
+  Messenger/Instagram/comentarios usan el Page Token. El toggle solo se
   habilita cuando existe la credencial requerida por el modo.
 - En modo manual, las tarjetas de Messenger e Instagram muestran botones de Meta Developers que
   arman con el App ID y el portafolio de la integración guardada; nunca con un
@@ -2306,10 +2294,10 @@ Ristak usa Meta en varias areas:
   `meta_config.meta_business_id` antes de abrir el caso de uso correcto para
   generar token/configurar Webhooks. En OAuth esos botones y campos no aparecen:
   la app y el webhook pertenecen al Installer central.
-- El bloque **Perfil de red social** del editor de Sites lee los perfiles desde
-  la conexion Social activa (`meta_oauth_integrations`) y cae a los campos
-  `page_id`, `instagram_account_id` y `access_token` de `meta_config` para modos
-  manuales/legacy. El endpoint no debe interpretar el JWT de sesion de Ristak
+- El bloque **Perfil de red social** del editor de Sites lee primero el OAuth
+  unificado activo de `meta_config`, despues la conexion Social separada y al
+  final los campos manuales `page_id`, `instagram_account_id` y `access_token`.
+  El endpoint no debe interpretar el JWT de sesion de Ristak
   como token de Meta; solo usa `X-Meta-Access-Token` durante el wizard manual
   cuando se esta probando un token explicito. En sitios publicados, el
   refresh diario de Meta actualiza avatar, nombre y seguidores de bloques con
@@ -3939,7 +3927,7 @@ Registro de ubicacion:
 | Base de datos produccion | `DATABASE_URL` | Si en Render/Postgres | SQLite local si no existe |
 | URL publica/CORS | `APP_URL`, `PUBLIC_URL`, `RENDER_EXTERNAL_URL`, `CORS_ALLOWED_ORIGINS` | No siempre | Necesaria para webhooks y links correctos |
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
-| Meta Ads/Dataset/social | OAuth nuevo cifrado por `social|ads` en `meta_oauth_integrations`; sesiones en `meta_oauth_integration_sessions`; manual/OAuth combinado en `meta_config`; App Secret y Config IDs en DB de Installer | No | Las dos conexiones OAuth se desconectan por separado; env solo es fallback legacy y `meta_test_event_code` activa Test Events |
+| Meta Ads/Dataset/social | OAuth unificado cifrado en `meta_config`; sesion en `meta_oauth_pending_sessions`; fallbacks separados en `meta_oauth_integrations`; App Secret y Config IDs en DB de Installer | No | Un solo login; manual y OAuth `social|ads` anteriores sobreviven como fallback. Env solo es compatibilidad y `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
 | Correo SMTP/IMAP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | App password cifrado; requerido para enviar y recibir correos cuando la integracion esta activa |
 | Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |

@@ -269,6 +269,36 @@ export async function ensureMetaConversionEventsEnabledForConnectedPixel({
   }
 }
 
+export async function disableMetaConversionEventsForDisconnectedPixel() {
+  const existingPaymentConfig = parseJsonConfig(
+    await getAppConfig(META_CONVERSION_EVENT_CONFIG_KEYS.paymentPurchaseEventConfig),
+    {}
+  )
+  const paymentPurchaseEventConfig = {
+    ...(existingPaymentConfig && typeof existingPaymentConfig === 'object' && !Array.isArray(existingPaymentConfig)
+      ? existingPaymentConfig
+      : {}),
+    enabled: false
+  }
+
+  await Promise.all([
+    setAppConfig(META_CONVERSION_EVENT_CONFIG_KEYS.scheduleEnabled, '0'),
+    setAppConfig(META_CONVERSION_EVENT_CONFIG_KEYS.purchaseEnabled, '0'),
+    setAppConfig(
+      META_CONVERSION_EVENT_CONFIG_KEYS.paymentPurchaseEventConfig,
+      JSON.stringify(paymentPurchaseEventConfig)
+    )
+  ])
+
+  return {
+    enabled: false,
+    reason: 'dataset_removed',
+    scheduleEnabled: false,
+    purchaseEnabled: false,
+    paymentPurchaseEventConfig
+  }
+}
+
 function getCreativeVideoId(creative = {}) {
   const storySpec = creative.object_story_spec || {}
   const videoData = storySpec.video_data || {}
@@ -585,6 +615,12 @@ export async function getMetaConfig() {
     getLegacyMetaConfig(),
     getActiveMetaOAuthIntegration('ads')
   ])
+  if (
+    legacy?.access_token &&
+    ['oauth_bisu', 'oauth_user'].includes(normalizeMetaConnectionMode(legacy.connection_mode))
+  ) {
+    return legacy
+  }
   return mergeMetaAdsOAuthConfig(legacy, ads)
 }
 
@@ -598,6 +634,12 @@ export async function getMetaSocialConfig() {
     getLegacyMetaConfig(),
     getActiveMetaOAuthIntegration('social')
   ])
+  if (
+    legacy?.access_token &&
+    ['oauth_bisu', 'oauth_user'].includes(normalizeMetaConnectionMode(legacy.connection_mode))
+  ) {
+    return legacy
+  }
   return mergeMetaSocialOAuthConfig(legacy, social)
 }
 
@@ -1128,7 +1170,7 @@ export async function saveMetaConfig(
     logger.success(`Configuración de Meta guardada en BD local (${connectionMode} + Pixel)`)
 
     const activeSplitSocial = await getActiveMetaOAuthIntegration('social')
-    if (!activeSplitSocial) {
+    if (isOAuth || !activeSplitSocial) {
       await syncMetaSocialChannelDefaults({
         previousPageId: existingMetaConfig?.page_id,
         nextPageId: pageId,
@@ -1137,12 +1179,16 @@ export async function saveMetaConfig(
       })
     }
 
-    const conversionEventsResult = await ensureMetaConversionEventsEnabledForConnectedPixel({
-      accessToken: normalizedAccessToken,
-      pixelId
-    })
+    const conversionEventsResult = !normalizeId(pixelId) && (isOAuth || normalizeId(existingMetaConfig?.pixel_id))
+      ? await disableMetaConversionEventsForDisconnectedPixel()
+      : await ensureMetaConversionEventsEnabledForConnectedPixel({
+          accessToken: normalizedAccessToken,
+          pixelId
+        })
     if (conversionEventsResult.enabled) {
       logger.info('Eventos de Meta para calendarios y pagos activados automáticamente por token + pixel conectados')
+    } else if (conversionEventsResult.reason === 'dataset_removed') {
+      logger.info('Eventos de Meta para calendarios y pagos pausados porque se quitó el Dataset')
     }
 
     // Sincronizar custom values en HighLevel (no bloquear si falla)

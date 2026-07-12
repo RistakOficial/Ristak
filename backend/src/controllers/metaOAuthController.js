@@ -20,6 +20,7 @@ function integrationKind(req) {
 }
 
 function defaultReturnPath(kind) {
+  if (!kind) return '/settings/meta-ads/cuenta'
   return kind === 'social' ? '/settings/meta-ads/redes-sociales' : '/settings/meta-ads/ads'
 }
 
@@ -129,10 +130,10 @@ export async function finalizeMetaOAuth(req, res) {
       sessionId: req.body?.sessionId || req.body?.session_id,
       businessId: req.body?.businessId || req.body?.business_id,
       adAccountId: req.body?.adAccountId || req.body?.ad_account_id,
-      pixelId: req.body?.pixelId || req.body?.pixel_id,
-      datasetId: req.body?.datasetId || req.body?.dataset_id,
+      pixelId: req.body?.pixelId ?? req.body?.pixel_id,
+      datasetId: req.body?.datasetId ?? req.body?.dataset_id,
       pageId: req.body?.pageId || req.body?.page_id,
-      instagramAccountId: req.body?.instagramAccountId || req.body?.instagram_account_id,
+      instagramAccountId: req.body?.instagramAccountId ?? req.body?.instagram_account_id,
       publicBaseUrl: publicBaseUrl(req)
     }
     const data = kind
@@ -150,7 +151,7 @@ export async function disconnectMetaOAuth(req, res) {
     const kind = integrationKind(req)
     const data = kind
       ? await disconnectMetaOAuthIntegration(kind)
-      : await disconnectMetaOAuthConnection()
+      : await disconnectMetaOAuthConnection({ publicBaseUrl: publicBaseUrl(req) })
     res.json({ success: true, data })
   } catch (error) {
     logger.warn(`No se pudo desconectar Meta OAuth: ${error.message}`)

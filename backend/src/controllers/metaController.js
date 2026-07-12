@@ -582,10 +582,21 @@ function hasUsableLocalMetaConfig(metaConfig) {
 
 function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = '', socialConfig = null) {
   const social = socialConfig || metaConfig
+  const adsMode = cleanString(metaConfig?.connection_mode) || null
+  const socialMode = cleanString(social?.connection_mode) || null
+  const hasSplitAds = cleanString(metaConfig?.oauth_integration_kind) === 'ads'
+  const hasSplitSocial = cleanString(social?.oauth_integration_kind) === 'social'
+  const primaryCredential = metaConfig?.access_token ? metaConfig : social
   return {
-    connectionMode: cleanString(metaConfig.connection_mode) || null,
+    connectionMode: hasSplitAds || hasSplitSocial
+      ? 'oauth_bisu'
+      : (cleanString(primaryCredential?.connection_mode) || null),
+    adsConnectionMode: adsMode,
+    socialConnectionMode: socialMode,
+    hasSplitAds,
+    hasSplitSocial,
     adAccountId: normalizeMetaAdAccountId(metaConfig.ad_account_id),
-    accessToken: maskSecret(metaConfig.access_token),
+    accessToken: maskSecret(primaryCredential?.access_token),
     pixelId: cleanString(metaConfig.pixel_id),
     pageId: cleanString(social?.page_id),
     instagramAccountId: cleanString(social?.instagram_account_id),
@@ -853,7 +864,7 @@ export const saveConfig = async (req, res) => {
       { connectionMode: 'manual_system_user', allowOAuthToManual: true }
     );
     if (['oauth_bisu', 'oauth_user'].includes(cleanString(existingConfig?.connection_mode))) {
-      await replaceMetaOAuthWithManualConnection(persistManualConfig);
+      await replaceMetaOAuthWithManualConnection(persistManualConfig, { publicBaseUrl: getPublicBaseUrl(req) });
     } else {
       await persistManualConfig();
     }
@@ -1635,7 +1646,7 @@ export const deleteMetaConfig = async (req, res) => {
   try {
     const existingConfig = await getLegacyMetaConfig().catch(() => null);
     if (existingConfig && ['oauth_bisu', 'oauth_user'].includes(cleanString(existingConfig.connection_mode))) {
-      const result = await disconnectMetaOAuthConnection();
+      const result = await disconnectMetaOAuthConnection({ publicBaseUrl: getPublicBaseUrl(req) });
       return res.json({
         success: true,
         message: 'Conexión OAuth de Meta eliminada exitosamente',
@@ -3328,17 +3339,13 @@ export const getMetaCustomValues = async (req, res) => {
     logger.info('Obteniendo configuración de Meta desde HighLevel o DB local...');
 
     const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-    const [localMetaConfig, localSocialConfig, localLegacyConfig] = await Promise.all([
+    const [localMetaConfig, localSocialConfig] = await Promise.all([
       getMetaConfig().catch(error => {
         logger.warn(`No se pudo leer Meta Ads local: ${error.message}`);
         return null;
       }),
       getMetaSocialConfig().catch(error => {
         logger.warn(`No se pudo leer Meta Social local: ${error.message}`);
-        return null;
-      }),
-      getLegacyMetaConfig().catch(error => {
-        logger.warn(`No se pudo leer el método heredado de Meta: ${error.message}`);
         return null;
       })
     ]);
@@ -3367,10 +3374,9 @@ export const getMetaCustomValues = async (req, res) => {
       logger.info(`Reconciliación Meta/HighLevel al cargar Settings: ${reconciliation.action} - ${reconciliation.message}`);
 
       const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
-      const [refreshedLocalConfig, refreshedSocialConfig, refreshedLegacyConfig] = await Promise.all([
+      const [refreshedLocalConfig, refreshedSocialConfig] = await Promise.all([
         getMetaConfig().catch(() => null),
-        getMetaSocialConfig().catch(() => null),
-        getLegacyMetaConfig().catch(() => null)
+        getMetaSocialConfig().catch(() => null)
       ]);
 
       // PRIORIDAD: si ya existe configuración de Meta en Ristak, usarla siempre.
@@ -3384,9 +3390,9 @@ export const getMetaCustomValues = async (req, res) => {
         return res.json({
           success: true,
           data: toMaskedMetaCredentials(
-            refreshedLegacyConfig || {},
+            refreshedLocalConfig || {},
             whatsappBusinessAccountId?.config_value,
-            refreshedLegacyConfig
+            refreshedSocialConfig
           ),
           source: 'local',
           reconciliation
@@ -3419,9 +3425,9 @@ export const getMetaCustomValues = async (req, res) => {
       return res.json({
         success: true,
         data: toMaskedMetaCredentials(
-          localLegacyConfig || {},
+          localMetaConfig || {},
           whatsappBusinessAccountId?.config_value,
-          localLegacyConfig
+          localSocialConfig
         ),
         source: 'local',
         reconciliation: {
@@ -3552,7 +3558,7 @@ export const saveAndSyncMeta = async (req, res) => {
       { connectionMode: 'manual_system_user', allowOAuthToManual: true }
     );
     if (replacingOAuthWithManual) {
-      await replaceMetaOAuthWithManualConnection(persistManualConfig);
+      await replaceMetaOAuthWithManualConnection(persistManualConfig, { publicBaseUrl: getPublicBaseUrl(req) });
     } else {
       await persistManualConfig();
     }

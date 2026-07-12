@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import { decrypt, encrypt, initializeMasterKey, isEncrypted } from '../src/utils/encryption.js'
-import { getMetaConfig, saveMetaConfig } from '../src/services/metaAdsService.js'
+import { getMetaConfig, getMetaSocialConfig, saveMetaConfig } from '../src/services/metaAdsService.js'
 import { reconcileMetaBusinessWithHighLevel } from '../src/services/highlevelSyncService.js'
 import {
   META_OAUTH_REQUIRED_SCOPES,
@@ -19,6 +19,7 @@ import {
   setMetaOAuthRuntimeClientForTest
 } from '../src/services/metaOAuthService.js'
 import { safeMetaGraphTransportError } from '../src/utils/metaGraphSecurity.js'
+import { getMetaCustomValues } from '../src/controllers/metaController.js'
 
 const TABLES = [
   'meta_config',
@@ -32,7 +33,10 @@ const CONFIG_KEYS = [
   'meta_messenger_messaging_enabled',
   'meta_instagram_messaging_enabled',
   'meta_facebook_comments_enabled',
-  'meta_instagram_comments_enabled'
+  'meta_instagram_comments_enabled',
+  'meta_whatsapp_schedule_enabled',
+  'meta_whatsapp_purchase_enabled',
+  'meta_payment_purchase_event_config'
 ]
 
 async function snapshotTable(table) {
@@ -122,7 +126,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
           instagram_business_account: { id: 'ig-1', username: 'demo' }
         }],
         ad_accounts: [{ id: 'act_123', name: 'Ads', business_id: 'business-1' }],
-        pixels: [{ id: 'pixel-1', name: 'Pixel', ad_account_id: 'act_123' }],
+        pixels: [{ id: 'pixel-1', name: 'Pixel', business_id: 'business-1' }],
         instagram_accounts: [{ id: 'ig-1', page_id: 'page-1', username: 'demo' }]
       }
     }
@@ -164,6 +168,8 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     })
 
     let graphScopes = [...META_OAUTH_REQUIRED_SCOPES]
+    let datasetTasks = ['UPLOAD']
+    let failBusinessesEdge = false
     const graphCalls = []
     setMetaOAuthFetchForTest(async urlValue => {
       const url = new URL(urlValue)
@@ -175,7 +181,11 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
         ...graphScopes.map(permission => ({ permission, status: 'granted' })),
         { permission: 'optional_old_scope', status: 'declined' }
       ] })
-      if (path === '/me/businesses') return graphResponse({ data: [{ id: 'business-1', name: 'Negocio' }] })
+      if (path === '/me/businesses') {
+        return failBusinessesEdge
+          ? graphResponse({ error: { message: 'business edge unavailable' } }, 500)
+          : graphResponse({ data: [{ id: 'business-1', name: 'Negocio' }] })
+      }
       if (path === '/me/adaccounts') return graphResponse({ data: [
         { id: 'act_123', name: 'Ads', timezone_name: 'America/Ciudad_Juarez', business: { id: 'business-1' } },
         { id: 'act_999', name: 'Ads no consentida', timezone_name: 'UTC', business: { id: 'business-1' } }
@@ -188,7 +198,13 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
         id: 'page-live-extra', name: 'No consentida', tasks: graphPageTasks,
         instagram_business_account: { id: 'ig-live-extra', username: 'extra' }
       }] })
-      if (path === '/act_123/adspixels') return graphResponse({ data: [{ id: 'pixel-1', name: 'Pixel' }] })
+      if (path === '/business-1/owned_pixels') return graphResponse({ data: [{ id: 'pixel-1', name: 'Pixel' }] })
+      if (path === '/business-1/client_pixels') return graphResponse({ data: [] })
+      if (path === '/act_123/adspixels') return graphResponse({ data: [] })
+      if (path === '/pixel-1') return graphResponse({ id: 'pixel-1', name: 'Pixel' })
+      if (path === '/pixel-1/assigned_users') return graphResponse({
+        data: [{ id: 'isu-1', name: 'Integration System User', permitted_tasks: datasetTasks }]
+      })
       return graphResponse({ error: { message: `unexpected ${path}` } }, 404)
     })
 
@@ -240,13 +256,28 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal(serialized.includes('proof'), false)
     assert.ok(completed.sessionId)
     assert.equal(completed.adAccounts.some(account => account.id === 'act_999'), false)
+    assert.deepEqual(completed.adAccounts[0].pixels, [{ id: 'pixel-1', name: 'Pixel', businessId: 'business-1' }])
     assert.equal(completed.pages.some(page => page.id === 'page-live-extra'), false)
     assert.equal(completed.pages[0].instagramAccounts[0].id, 'ig-1')
     assert.equal((await getMetaConfig()).access_token, 'manual-token', 'complete no promueve todavía')
     const pendingRow = await db.get('SELECT payload_encrypted FROM meta_oauth_pending_sessions WHERE id = ?', [completed.sessionId])
     assert.equal(pendingRow.payload_encrypted.includes('oauth-bisu-token'), false)
 
+    datasetTasks = []
+    await assert.rejects(
+      () => finalizeMetaOAuthConnection({
+        sessionId: completed.sessionId,
+        pixelId: 'pixel-1',
+        publicBaseUrl: 'https://tenant.test'
+      }),
+      error => error.code === 'META_OAUTH_DATASET_UPLOAD_ACCESS_REQUIRED'
+    )
+    assert.equal((await db.get('SELECT status FROM meta_oauth_pending_sessions WHERE id = ?', [completed.sessionId])).status, 'pending')
+    assert.equal((await getMetaConfig()).access_token, 'manual-token')
+    datasetTasks = ['UPLOAD']
+
     const runtimeInputs = []
+    let removedRuntimeSubscriptions = 0
     setMetaOAuthRuntimeClientForTest({
       ensurePageSubscription: async ({ config }) => {
         runtimeInputs.push(config)
@@ -254,7 +285,10 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
         assert.equal(config.oauth_page_appsecret_proof, 'oauth-page-proof')
         return { pageId: 'page-1' }
       },
-      removePageSubscription: async () => ({ unsubscribed: true }),
+      removePageSubscription: async () => {
+        removedRuntimeSubscriptions += 1
+        return { unsubscribed: true }
+      },
       syncCrons: async () => { throw new Error('cron test failure') },
       enableSocialChannels: async () => ({ messengerMessaging: true }),
       startSocialHistory: () => ({ syncStarted: true, started: ['messenger', 'instagram'], skipped: [] }),
@@ -270,7 +304,11 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal((await db.get('SELECT status FROM meta_oauth_pending_sessions WHERE id = ?', [completed.sessionId])).status, 'pending')
 
     failRegister = false
-    const finalized = await finalizeMetaOAuthConnection({ sessionId: completed.sessionId, publicBaseUrl: 'https://tenant.test' })
+    const finalized = await finalizeMetaOAuthConnection({
+      sessionId: completed.sessionId,
+      pixelId: 'pixel-1',
+      publicBaseUrl: 'https://tenant.test'
+    })
     assert.equal(finalized.connected, true)
     assert.equal(finalized.connectionMode, 'oauth_bisu')
     assert.match(finalized.runtimeWarnings.join(' '), /cron test failure/)
@@ -283,10 +321,57 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal(oauth.oauth_page_access_token, 'oauth-page-token')
     assert.equal(oauth.oauth_page_appsecret_proof, 'oauth-page-proof')
     assert.equal(oauth.messenger_user_token, null)
+    assert.equal(oauth.pixel_id, 'pixel-1')
+    assert.equal(await getAppConfig('meta_whatsapp_schedule_enabled'), '1')
+    assert.equal(await getAppConfig('meta_whatsapp_purchase_enabled'), '1')
     const rawOauth = await db.get('SELECT * FROM meta_config LIMIT 1')
     assert.equal(isEncrypted(rawOauth.access_token), true)
     assert.equal(isEncrypted(rawOauth.oauth_page_access_token), true)
     assert.equal(isEncrypted(rawOauth.oauth_page_appsecret_proof), true)
+
+    // Reautorizar la misma Page no puede ejecutar DELETE subscribed_apps. Ese
+    // DELETE es global para la app/Page y rompería tanto la conexión anterior
+    // durante rollback como la conexión recién promovida al terminar.
+    handoffMeta.connection_id = 'connection-same-page'
+    failBusinessesEdge = true
+    const samePageReconnect = await completeMetaOAuthConnection({ handoffToken: 'handoff-same-page' })
+    assert.equal(samePageReconnect.businesses[0]?.id, 'business-1')
+    const removalsBeforeSamePageReconnect = removedRuntimeSubscriptions
+    failRegister = true
+    await assert.rejects(
+      () => finalizeMetaOAuthConnection({
+        sessionId: samePageReconnect.sessionId,
+        pixelId: 'pixel-1',
+        publicBaseUrl: 'https://tenant.test'
+      }),
+      /relay unavailable/
+    )
+    assert.equal(removedRuntimeSubscriptions, removalsBeforeSamePageReconnect)
+    assert.equal((await getMetaConfig()).oauth_connection_id, 'connection-1')
+
+    failRegister = false
+    const samePageFinalized = await finalizeMetaOAuthConnection({
+      sessionId: samePageReconnect.sessionId,
+      pixelId: 'pixel-1',
+      publicBaseUrl: 'https://tenant.test'
+    })
+    assert.equal(samePageFinalized.connected, true)
+    assert.equal(removedRuntimeSubscriptions, removalsBeforeSamePageReconnect)
+    assert.equal((await getMetaConfig()).oauth_connection_id, 'connection-same-page')
+    failBusinessesEdge = false
+
+    handoffMeta.connection_id = 'connection-without-dataset'
+    const withoutDatasetReconnect = await completeMetaOAuthConnection({ handoffToken: 'handoff-without-dataset' })
+    const withoutDatasetFinalized = await finalizeMetaOAuthConnection({
+      sessionId: withoutDatasetReconnect.sessionId,
+      pixelId: '',
+      publicBaseUrl: 'https://tenant.test'
+    })
+    assert.equal(withoutDatasetFinalized.connected, true)
+    assert.equal((await getMetaConfig()).pixel_id, null)
+    assert.equal(await getAppConfig('meta_whatsapp_schedule_enabled'), '0')
+    assert.equal(await getAppConfig('meta_whatsapp_purchase_enabled'), '0')
+    assert.equal(JSON.parse(await getAppConfig('meta_payment_purchase_event_config')).enabled, false)
 
     const reconciliation = await reconcileMetaBusinessWithHighLevel('unused-location', 'unused-token')
     assert.equal(reconciliation.action, 'oauth_isolated')
@@ -323,7 +408,12 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
       publicBaseUrl: 'https://tenant.test'
     })
     assert.equal(reconciled.connected, true)
-    assert.equal((await getMetaConfig()).oauth_connection_id, 'connection-2')
+    const withoutDataset = await getMetaConfig()
+    assert.equal(withoutDataset.oauth_connection_id, 'connection-2')
+    assert.equal(withoutDataset.pixel_id, null)
+    assert.equal(await getAppConfig('meta_whatsapp_schedule_enabled'), '0')
+    assert.equal(await getAppConfig('meta_whatsapp_purchase_enabled'), '0')
+    assert.equal(JSON.parse(await getAppConfig('meta_payment_purchase_event_config')).enabled, false)
     timeoutAfterCommit = false
     await disconnectMetaOAuthConnection()
     assert.equal(disconnectCalls, 2)
@@ -338,10 +428,10 @@ test('desconectar OAuth combinado conserva subscribed_apps si split Social usa l
   await withIsolatedMeta(async () => {
     await db.run(
       `INSERT INTO meta_config (
-         access_token, connection_mode, page_id, instagram_account_id,
+         ad_account_id, pixel_id, access_token, connection_mode, page_id, instagram_account_id,
          oauth_connection_id, oauth_page_access_token, oauth_page_appsecret_proof,
          oauth_connected, oauth_validated
-       ) VALUES (?, 'oauth_bisu', 'shared-page', 'shared-ig', 'legacy-combined', ?, ?, 1, 1)`,
+       ) VALUES ('unified-ad', 'unified-dataset', ?, 'oauth_bisu', 'shared-page', 'shared-ig', 'legacy-combined', ?, ?, 1, 1)`,
       [encrypt('legacy-combined-token'), encrypt('legacy-page-token'), encrypt('legacy-page-proof')]
     )
     await db.run(
@@ -355,6 +445,16 @@ test('desconectar OAuth combinado conserva subscribed_apps si split Social usa l
        )`,
       [encrypt('split-social-token'), encrypt('split-page-token'), encrypt('split-page-proof')]
     )
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token,
+         ad_account_id, dataset_id, validated, connected_at
+       ) VALUES (
+         'split-ads', 'ads', 'active', 'split-ads-connection', ?,
+         'split-ad', 'split-dataset', 1, CURRENT_TIMESTAMP
+       )`,
+      [encrypt('split-ads-token')]
+    )
 
     let removedSubscriptions = 0
     setMetaOAuthCentralClientForTest({
@@ -366,6 +466,10 @@ test('desconectar OAuth combinado conserva subscribed_apps si split Social usa l
       syncCrons: async () => undefined
     })
 
+    assert.equal((await getMetaConfig()).access_token, 'legacy-combined-token')
+    assert.equal((await getMetaConfig()).ad_account_id, 'unified-ad')
+    assert.equal((await getMetaSocialConfig()).access_token, 'legacy-combined-token')
+
     const result = await disconnectMetaOAuthConnection()
     assert.equal(result.disconnected, true)
     assert.equal(removedSubscriptions, 0)
@@ -373,6 +477,83 @@ test('desconectar OAuth combinado conserva subscribed_apps si split Social usa l
       `SELECT id FROM meta_oauth_integrations
        WHERE integration_kind = 'social' AND status = 'active' AND page_id = 'shared-page'`
     ))
+    assert.equal((await getMetaConfig()).access_token, 'split-ads-token')
+    assert.equal((await getMetaConfig()).ad_account_id, 'split-ad')
+    assert.equal((await getMetaSocialConfig()).access_token, 'split-social-token')
+  })
+})
+
+test('desconectar OAuth combinado restaura primero una Page split distinta y permite reintentar', async () => {
+  await initializeMasterKey()
+  await withIsolatedMeta(async () => {
+    await db.run(
+      `INSERT INTO meta_config (
+         ad_account_id, access_token, connection_mode, page_id, instagram_account_id,
+         oauth_connection_id, oauth_page_access_token, oauth_page_appsecret_proof,
+         oauth_connected, oauth_validated
+       ) VALUES ('unified-ad', ?, 'oauth_bisu', 'unified-page', 'unified-ig',
+         'unified-connection', ?, ?, 1, 1)`,
+      [encrypt('unified-token'), encrypt('unified-page-token'), encrypt('unified-page-proof')]
+    )
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token,
+         page_access_token, page_appsecret_proof, page_id,
+         instagram_account_id, validated, connected_at
+       ) VALUES ('split-social-different', 'social', 'active', 'split-social-different-connection',
+         ?, ?, ?, 'split-page', 'split-ig', 1, CURRENT_TIMESTAMP)`,
+      [encrypt('split-token'), encrypt('split-page-token'), encrypt('split-page-proof')]
+    )
+
+    const calls = []
+    let failRestore = true
+    let disconnectCalls = 0
+    setMetaOAuthCentralClientForTest({
+      updateWebhookSubscription: async input => {
+        calls.push(input)
+        if (input.integrationKind === 'social' && input.action === 'register' && failRestore) {
+          throw new Error('restore unavailable')
+        }
+        return { registered: input.action === 'register' }
+      },
+      disconnect: async () => { disconnectCalls += 1; return { disconnected: true } }
+    })
+    setMetaOAuthRuntimeClientForTest({
+      removePageSubscription: async () => ({ unsubscribed: true }),
+      syncCrons: async () => undefined
+    })
+
+    await assert.rejects(
+      () => disconnectMetaOAuthConnection({ publicBaseUrl: 'https://tenant.test' }),
+      error => error.code === 'META_OAUTH_SPLIT_SOCIAL_RESTORE_FAILED'
+    )
+    assert.equal(disconnectCalls, 0)
+    assert.equal(calls.some(call => !call.integrationKind && call.action === 'unregister'), false)
+    assert.equal((await getMetaConfig()).oauth_connection_id, 'unified-connection')
+
+    failRestore = false
+    calls.length = 0
+    const result = await disconnectMetaOAuthConnection({ publicBaseUrl: 'https://tenant.test' })
+    assert.equal(result.restoredSplitSocial, true)
+    assert.equal(disconnectCalls, 1)
+    assert.equal(calls[0].integrationKind, 'social')
+    assert.equal(calls[0].action, 'register')
+    assert.equal(calls[0].webhookUrl, 'https://tenant.test/webhooks/meta/installer-relay')
+    assert.equal(calls[1].integrationKind, undefined)
+    assert.equal(calls[1].action, 'unregister')
+
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) { this.statusCode = code; return this },
+      json(body) { this.body = body; return this }
+    }
+    await getMetaCustomValues({}, response)
+    assert.equal(response.body?.data?.hasSplitSocial, true)
+    assert.equal(response.body?.data?.hasSplitAds, false)
+    assert.match(response.body?.data?.accessToken || '', /^\*\*\*/)
+    assert.equal(response.body?.data?.pageId, 'split-page')
+    assert.equal(response.body?.data?.instagramAccountId, 'split-ig')
   })
 })
 
@@ -472,7 +653,6 @@ test('cleanup OAuth completa efectos idempotentes si el commit central ambiguo s
       startSocialHistory: () => { effects.history += 1; return { syncStarted: true, started: ['messenger', 'instagram'], skipped: [] } },
       updateRecentAds: async () => { effects.ads += 1; return { success: true } }
     })
-
     await cleanupMetaOAuthPendingSessions()
     assert.deepEqual(effects, { crons: 3, channels: 1, history: 1, ads: 1 })
     assert.equal(await db.get("SELECT id FROM meta_oauth_pending_sessions WHERE id = 'central-unknown'"), null)
@@ -558,6 +738,15 @@ test('commit central confirmado nunca restaura A si falla la marca local; schedu
       enableSocialChannels: async () => { effects.channels += 1; return { messengerMessaging: true } },
       startSocialHistory: () => { effects.history += 1; return { syncStarted: true, started: ['messenger', 'instagram'], skipped: [] } },
       updateRecentAds: async () => { effects.ads += 1; return { success: true } }
+    })
+    setMetaOAuthFetchForTest(async urlValue => {
+      const url = new URL(urlValue)
+      const path = url.pathname.replace(/^\/v\d+\.\d+/, '')
+      if (path === '/pixel-b') return graphResponse({ id: 'pixel-b', name: 'Pixel B' })
+      if (path === '/pixel-b/assigned_users') return graphResponse({
+        data: [{ id: 'user-b', name: 'User B', tasks: ['UPLOAD'] }]
+      })
+      return graphResponse({ error: { message: `unexpected ${path}` } }, 404)
     })
     setMetaOAuthMarkLocalRelayForTest(async () => {
       throw new Error('simulated local relay write failure')
