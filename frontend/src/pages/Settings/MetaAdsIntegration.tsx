@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Button, Icon, Modal, CustomSelect, PageHeader, SegmentTabs, Switch } from '@/components/common'
+import { Button, Icon, MetaBrandMark, Modal, CustomSelect, PageHeader, SegmentTabs, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import { Activity, ArrowLeft, ArrowRight, CheckCircle, Copy, ExternalLink, FlaskConical, Link2, MessageCircle, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -12,6 +12,13 @@ import {
   type MetaTestEventParameters,
   type MetaTestEventResponse
 } from '@/services/campaignsService'
+import {
+  metaOAuthService,
+  type MetaOAuthConnectionMode,
+  type MetaOAuthFinalizeSelection,
+  type MetaOAuthSession,
+  type MetaOAuthStatus
+} from '@/services/metaOAuthService'
 import styles from './MetaAdsIntegration.module.css'
 
 interface MetaCredentials {
@@ -36,6 +43,7 @@ interface Pixel {
   name: string
   creation_time: string
   last_fired_time: string
+  adAccountId?: string
 }
 
 interface MetaPage {
@@ -43,6 +51,7 @@ interface MetaPage {
   name: string
   category: string | null
   pictureUrl: string | null
+  businessId?: string
 }
 
 interface FetchCollectionResult {
@@ -125,6 +134,10 @@ const buildMetaAdsSettingsPath = (stepIndex: number) => `/settings/meta-ads/${me
 const buildMetaAdsConnectedTabPath = (tab: MetaConnectedTab) => `/settings/meta-ads/${tab}`
 
 const isMaskedSecretValue = (value = '') => value.trim().startsWith(MASKED_SECRET_PREFIX)
+
+const parseMetaBooleanConfig = (value: unknown) => (
+  value === true || ['1', 'true', 'yes', 'on', 'enabled'].includes(String(value ?? '').trim().toLowerCase())
+)
 
 const getMaskedSecretTail = (value = '') => (
   isMaskedSecretValue(value)
@@ -469,6 +482,11 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isLoadingPages, setIsLoadingPages] = useState(false)
   const [isLoadingInstagramAccounts, setIsLoadingInstagramAccounts] = useState(false)
   const [realAccessToken, setRealAccessToken] = useState('')
+  const [metaConnectionMode, setMetaConnectionMode] = useState<MetaOAuthConnectionMode>(null)
+  const [metaOAuthStatus, setMetaOAuthStatus] = useState<MetaOAuthStatus | null>(null)
+  const [metaOAuthSession, setMetaOAuthSession] = useState<MetaOAuthSession | null>(null)
+  const [isConnectingMetaOAuth, setIsConnectingMetaOAuth] = useState(false)
+  const [showManualConnection, setShowManualConnection] = useState(false)
   const [isSavingToken, setIsSavingToken] = useState(false)
   const [isRevealingAccessToken, setIsRevealingAccessToken] = useState(false)
   const [isSavingWizardConfig, setIsSavingWizardConfig] = useState(false)
@@ -494,6 +512,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [messengerUserToken, setMessengerUserToken] = useState('')
   const [isSavingMessengerUserToken, setIsSavingMessengerUserToken] = useState(false)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
+  const handledMetaOAuthHandoffs = useRef(new Set<string>())
 
   const { showToast } = useNotification()
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
@@ -665,6 +684,260 @@ export const MetaAdsIntegration: React.FC = () => {
     navigate(buildMetaAdsConnectedTabPath(tab))
   }
 
+  const isOAuthConnection = metaConnectionMode === 'oauth_bisu' || metaConnectionMode === 'oauth_user'
+
+  const loadMetaOAuthStatus = async () => {
+    try {
+      const status = await metaOAuthService.getStatus()
+      setMetaOAuthStatus(status)
+      if (status.connectionMode) setMetaConnectionMode(status.connectionMode)
+      return status
+    } catch (error) {
+      setMetaOAuthStatus({
+        available: false,
+        mode: 'redirect',
+        connectUrl: '',
+        appId: '',
+        configId: '',
+        reviewPending: true,
+        connectionMode: metaConnectionMode,
+        manualConfigured: Boolean(credentials.accessToken),
+        oauth: {
+          connected: false,
+          validated: false,
+          userId: '',
+          userName: '',
+          appId: '',
+          businessId: '',
+          grantedScopes: [],
+          missingScopes: [],
+          granularScopes: [],
+          tokenExpiresAt: null,
+          dataAccessExpiresAt: null,
+          relayStatus: 'inactive'
+        },
+        error: error instanceof Error ? error.message : 'El Installer no está disponible.'
+      })
+      return null
+    }
+  }
+
+  const selectionFromMetaOAuthSession = (session: MetaOAuthSession): MetaOAuthFinalizeSelection => {
+    const onlyAdAccount = session.adAccounts.length === 1 ? session.adAccounts[0] : null
+    const defaultAdAccount = session.adAccounts.find(account => (
+      account.id.replace(/^act_/, '') === String(session.defaults.adAccountId || '').replace(/^act_/, '')
+    ))
+    const selectedAdAccount = defaultAdAccount || onlyAdAccount
+    const selectedPixels = selectedAdAccount?.pixels || []
+    const selectedPixel = selectedPixels.find(pixel => pixel.id === session.defaults.pixelId)
+      || (selectedPixels.length === 1 ? selectedPixels[0] : null)
+
+    const selectedPage = session.pages.find(page => page.id === session.defaults.pageId)
+      || (session.pages.length === 1 ? session.pages[0] : null)
+    const selectedInstagramAccounts = selectedPage?.instagramAccounts || []
+    const selectedInstagram = selectedInstagramAccounts.find(account => account.id === session.defaults.instagramAccountId)
+      || (selectedInstagramAccounts.length === 1 ? selectedInstagramAccounts[0] : null)
+
+    return {
+      sessionId: session.sessionId,
+      businessId: session.defaults.businessId || selectedAdAccount?.businessId || selectedPage?.businessId || undefined,
+      adAccountId: selectedAdAccount?.id.replace(/^act_/, '') || undefined,
+      pixelId: selectedPixel?.id || undefined,
+      pageId: selectedPage?.id || undefined,
+      instagramAccountId: selectedInstagram?.id || undefined
+    }
+  }
+
+  const applyMetaOAuthSession = (session: MetaOAuthSession) => {
+    const selection = selectionFromMetaOAuthSession(session)
+    const selectedAdAccount = session.adAccounts.find(account => (
+      account.id.replace(/^act_/, '') === String(selection.adAccountId || '').replace(/^act_/, '')
+    ))
+
+    setMetaOAuthSession(session)
+    setShowManualConnection(false)
+    setAdAccounts(session.adAccounts.map(account => ({
+      id: account.id.startsWith('act_') ? account.id : `act_${account.id}`,
+      account_id: account.accountId || account.id.replace(/^act_/, ''),
+      name: account.name,
+      currency: account.currency || '',
+      timezone_name: account.timezoneName || '',
+      account_status: account.accountStatus || 0
+    })))
+    setPixels((selectedAdAccount?.pixels || []).map(pixel => ({
+      id: pixel.id,
+      name: pixel.name,
+      creation_time: '',
+      last_fired_time: '',
+      adAccountId: selectedAdAccount?.id.replace(/^act_/, '')
+    })))
+    setPages(session.pages.map(page => ({
+      id: page.id,
+      name: page.name,
+      category: page.category || null,
+      pictureUrl: page.pictureUrl || null,
+      businessId: page.businessId
+    })))
+    setInstagramAccounts(session.pages.flatMap(page => page.instagramAccounts.map(account => ({
+      id: account.id,
+      platform: 'instagram' as const,
+      sourceId: account.id,
+      pageId: page.id,
+      pageName: page.name,
+      name: account.name || account.username || account.id,
+      username: account.username || undefined
+    }))))
+    setCredentials({
+      adAccountId: selection.adAccountId || '',
+      accessToken: `${MASKED_SECRET_PREFIX}OAuth`,
+      pixelId: selection.pixelId || '',
+      pageId: selection.pageId || '',
+      instagramAccountId: selection.instagramAccountId || ''
+    })
+    setRealAccessToken('')
+    return selection
+  }
+
+  const finalizeMetaOAuthSession = async (
+    session: MetaOAuthSession,
+    selection: MetaOAuthFinalizeSelection = selectionFromMetaOAuthSession(session)
+  ) => {
+    const previousPageId = savedPageId
+    const previousInstagramAccountId = savedInstagramAccountId
+    setIsSavingWizardConfig(true)
+    try {
+      const result = await metaOAuthService.finalize(selection)
+      const nextPageId = selection.pageId || ''
+      const nextInstagramAccountId = selection.instagramAccountId || ''
+
+      await syncConnectedMetaChannelDefaults({
+        previousPageId,
+        nextPageId,
+        previousInstagramAccountId,
+        nextInstagramAccountId
+      }).catch(() => undefined)
+
+      setMetaConnectionMode(result.connectionMode === 'oauth_user' ? 'oauth_user' : 'oauth_bisu')
+      setMetaOAuthSession(null)
+      setSavedPageId(nextPageId)
+      setSavedInstagramAccountId(nextInstagramAccountId)
+      await Promise.all([
+        loadCredentials(),
+        loadMetaDeveloperSetup(),
+        loadMetaOAuthStatus()
+      ])
+
+      return {
+        saved: true,
+        syncStarted: result.adsSync?.syncStarted === true,
+        missingPermissions: result.permissions?.missing || [],
+        relayStatus: result.relay?.status || 'inactive'
+      }
+    } catch (error) {
+      showToast('error', 'No se pudo terminar Meta', error instanceof Error ? error.message : 'Inténtalo de nuevo.')
+      return { saved: false, syncStarted: false, missingPermissions: [] as string[], relayStatus: 'error' }
+    } finally {
+      setIsSavingWizardConfig(false)
+    }
+  }
+
+  const completeMetaOAuthHandoff = async (handoffToken: string) => {
+    setIsConnectingMetaOAuth(true)
+    try {
+      const session = await metaOAuthService.complete({ handoffToken })
+      const selection = applyMetaOAuthSession(session)
+      const selectedAdAccount = session.adAccounts.find(account => (
+        account.id.replace(/^act_/, '') === String(selection.adAccountId || '').replace(/^act_/, '')
+      ))
+      const selectedPage = session.pages.find(page => page.id === selection.pageId)
+      const needsAssetChoice = session.adAccounts.length !== 1
+        || (selectedAdAccount?.pixels.length || 0) > 1
+        || session.pages.length > 1
+        || (selectedPage?.instagramAccounts.length || 0) > 1
+
+      if (selection.adAccountId && !needsAssetChoice && session.permissions.missing.length === 0) {
+        const result = await finalizeMetaOAuthSession(session, selection)
+        if (!result.saved) return
+        setIsEditingMetaConfig(false)
+        setActiveMetaTab('redes-sociales')
+        navigate(buildMetaAdsConnectedTabPath('redes-sociales'), { replace: true })
+        showToast(
+          result.relayStatus === 'registered' ? 'success' : 'warning',
+          result.relayStatus === 'registered' ? 'Meta conectado' : 'Meta conectado con una advertencia',
+          result.relayStatus === 'registered'
+            ? 'Ristak detectó tus activos y dejó listos anuncios, Messenger, Instagram y comentarios.'
+            : 'Los activos quedaron guardados, pero el relay de mensajes y comentarios necesita reintentarse.'
+        )
+        return
+      }
+
+      goToMetaStep(1, { replace: true })
+      showToast(
+        session.permissions.missing.length ? 'warning' : 'success',
+        'Meta autorizó la conexión',
+        session.adAccounts.length > 1
+          ? 'Selecciona la cuenta y los activos que usará Ristak.'
+          : session.permissions.missing.length
+            ? 'Faltan permisos de Meta; revisa el detalle antes de terminar.'
+            : 'Revisa los activos detectados y termina la conexión.'
+      )
+    } catch (error) {
+      showToast('error', 'No se pudo conectar Meta', error instanceof Error ? error.message : 'La autorización no se pudo completar.')
+    } finally {
+      setIsConnectingMetaOAuth(false)
+    }
+  }
+
+  const handleConnectWithMeta = async () => {
+    setIsConnectingMetaOAuth(true)
+    try {
+      const status = metaOAuthStatus || await loadMetaOAuthStatus()
+      if (!status?.available || status.mode !== 'redirect') {
+        throw new Error(status?.error || 'El flujo OAuth todavía no está disponible en el Installer.')
+      }
+      const connect = await metaOAuthService.createConnectUrl()
+      if (!connect.connectUrl) throw new Error('El Installer no devolvió la URL segura de Meta.')
+      window.location.assign(connect.connectUrl)
+    } catch (error) {
+      setIsConnectingMetaOAuth(false)
+      showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Usa la conexión manual mientras revisamos el Installer.')
+    }
+  }
+
+  useEffect(() => {
+    void loadMetaOAuthStatus()
+  }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const fragmentParams = new URLSearchParams(location.hash.replace(/^#/, ''))
+    const readOAuthValue = (key: string) => fragmentParams.get(key) || params.get(key) || ''
+    const oauthResult = readOAuthValue('meta_oauth')
+    const handoffToken = readOAuthValue('meta_oauth_handoff_token') || readOAuthValue('meta_oauth_handoff')
+    const message = readOAuthValue('meta_oauth_message')
+    if (!oauthResult && !handoffToken) return
+
+    const oauthKeys = ['meta_oauth', 'meta_oauth_handoff_token', 'meta_oauth_handoff', 'meta_oauth_message']
+    oauthKeys.forEach(key => {
+      params.delete(key)
+      fragmentParams.delete(key)
+    })
+    navigate({
+      pathname: location.pathname,
+      search: params.toString() ? `?${params.toString()}` : '',
+      hash: fragmentParams.toString() ? `#${fragmentParams.toString()}` : ''
+    }, { replace: true })
+
+    if (oauthResult === 'error' || !handoffToken) {
+      showToast('error', 'Meta no se conectó', message || 'La autorización fue cancelada o Meta no devolvió acceso.')
+      return
+    }
+
+    if (handledMetaOAuthHandoffs.current.has(handoffToken)) return
+    handledMetaOAuthHandoffs.current.add(handoffToken)
+    void completeMetaOAuthHandoff(handoffToken)
+  }, [location.hash, location.pathname, location.search, navigate])
+
   const loadCredentials = async () => {
     setIsLoading(true)
     try {
@@ -672,6 +945,8 @@ export const MetaAdsIntegration: React.FC = () => {
       const data = await response.json()
 
       if (data.success && data.data) {
+        const connectionMode = data.data.connectionMode || data.data.connection_mode || data.connectionMode || null
+        setMetaConnectionMode(connectionMode)
         setCredentials({
           adAccountId: data.data.adAccountId || '',
           accessToken: data.data.accessToken || '',
@@ -683,22 +958,9 @@ export const MetaAdsIntegration: React.FC = () => {
         setSavedInstagramAccountId(data.data.instagramAccountId || '')
 
         if (data.data.accessToken) {
-          let tokenToUse = data.data.accessToken
-
-          if (isMaskedSecretValue(data.data.accessToken)) {
-            try {
-              const revealResponse = await fetch('/api/meta/config/reveal/access_token')
-              const revealData = await revealResponse.json()
-
-              if (revealData.success && revealData.accessToken) {
-                tokenToUse = revealData.accessToken
-              }
-            } catch {
-              setIsLoading(false)
-              return
-            }
-          }
-
+          // Una conexión guardada se consulta server-side. El secreto no vuelve
+          // al navegador sólo para poblar selectores de activos.
+          const tokenToUse = isMaskedSecretValue(data.data.accessToken) ? '' : data.data.accessToken
           setRealAccessToken(tokenToUse)
           await fetchAdAccounts(tokenToUse, data.data.adAccountId, { silent: true })
           await fetchPages(tokenToUse, data.data.pageId, { silent: true })
@@ -720,17 +982,10 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const fetchAdAccounts = async (
-    token: string,
+    token = '',
     savedAdAccountId?: string,
     options: { silent?: boolean } = {}
   ): Promise<FetchCollectionResult> => {
-    if (!token) {
-      if (!options.silent) {
-        showToast('error', 'Token requerido', 'Primero ingresa tu Access Token')
-      }
-      return { success: false, count: 0 }
-    }
-
     setIsLoadingAccounts(true)
     try {
       const result = await campaignsService.fetchAdAccounts(token)
@@ -784,11 +1039,11 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const fetchPixels = async (
     adAccountId: string,
-    token: string,
+    token = '',
     savedPixelId?: string,
     options: { silent?: boolean } = {}
   ): Promise<FetchCollectionResult> => {
-    if (!adAccountId || !token) {
+    if (!adAccountId) {
       if (!options.silent) {
         showToast('error', 'Datos requeridos', 'Primero selecciona una cuenta de anuncios')
       }
@@ -844,17 +1099,10 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const fetchPages = async (
-    token: string,
+    token = '',
     savedPageId?: string,
     options: { silent?: boolean } = {}
   ): Promise<FetchCollectionResult> => {
-    if (!token) {
-      if (!options.silent) {
-        showToast('error', 'Token requerido', 'Primero ingresa tu Access Token')
-      }
-      return { success: false, count: 0 }
-    }
-
     setIsLoadingPages(true)
     try {
       const result = await campaignsService.fetchPages(token)
@@ -896,17 +1144,10 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const fetchInstagramAccounts = async (
-    token: string,
+    token = '',
     savedInstagramAccountId?: string,
     options: MetaWizardRefreshOptions & { pageId?: string } = {}
   ): Promise<FetchCollectionResult> => {
-    if (!token) {
-      if (!options.silent) {
-        showToast('error', 'Token requerido', 'Primero ingresa tu Access Token')
-      }
-      return { success: false, count: 0 }
-    }
-
     setIsLoadingInstagramAccounts(true)
     try {
       const result = await campaignsService.getConnectedSocialProfiles({
@@ -952,7 +1193,7 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const getUsableAccessToken = async (options: MetaWizardRefreshOptions = {}) => {
+  const getUsableAccessToken = async (_options: MetaWizardRefreshOptions = {}) => {
     const typedToken = !isMaskedSecretValue(credentials.accessToken)
       ? credentials.accessToken.trim()
       : ''
@@ -960,40 +1201,17 @@ export const MetaAdsIntegration: React.FC = () => {
     if (typedToken && typedToken !== realAccessToken) return typedToken
     if (realAccessToken) return realAccessToken
     if (typedToken) return typedToken
-    if (!isMaskedSecretValue(credentials.accessToken)) return ''
-
-    setIsRevealingAccessToken(true)
-    try {
-      const response = await fetch('/api/meta/config/reveal/access_token')
-      const data = await response.json()
-      const revealedToken = data.accessToken || ''
-
-      if (!data.success || !revealedToken) {
-        throw new Error(data.error || 'Token no disponible')
-      }
-
-      setRealAccessToken(revealedToken)
-      return revealedToken
-    } catch {
-      if (!options.silent) {
-        showToast(
-          'error',
-          'No se pudo revelar',
-          'No se pudo cargar el Access Token original'
-        )
-      }
-      return ''
-    } finally {
-      setIsRevealingAccessToken(false)
-    }
+    return isMaskedSecretValue(credentials.accessToken) ? credentials.accessToken : ''
   }
 
   const refreshMetaWizardStep = async (
     stepIndex = activeStep,
     options: MetaWizardRefreshOptions = {}
   ) => {
+    if (metaOAuthSession) return
     const token = await getUsableAccessToken(options)
-    if (!token) return
+    if (!token && !hasAccessToken) return
+    const assetToken = isMaskedSecretValue(token) ? '' : token
 
     const step = Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))
     const currentAdAccountId = credentials.adAccountId
@@ -1004,44 +1222,59 @@ export const MetaAdsIntegration: React.FC = () => {
 
     if (step === 0) {
       await Promise.all([
-        fetchAdAccounts(token, currentAdAccountId, options),
-        fetchPages(token, currentPageId, options),
-        fetchInstagramAccounts(token, currentInstagramAccountId, { ...options, pageId: currentPageId }),
+        fetchAdAccounts(assetToken, currentAdAccountId, options),
+        fetchPages(assetToken, currentPageId, options),
+        fetchInstagramAccounts(assetToken, currentInstagramAccountId, { ...options, pageId: currentPageId }),
         adAccountIdForLookup
-          ? fetchPixels(adAccountIdForLookup, token, currentPixelId, options)
+          ? fetchPixels(adAccountIdForLookup, assetToken, currentPixelId, options)
           : Promise.resolve({ success: false, count: 0 })
       ])
       return
     }
 
     if (step === 1) {
-      await fetchAdAccounts(token, currentAdAccountId, options)
+      await fetchAdAccounts(assetToken, currentAdAccountId, options)
       return
     }
 
     if (step === 2) {
       if (!adAccountIdForLookup) return
-      await fetchPixels(adAccountIdForLookup, token, currentPixelId, options)
+      await fetchPixels(adAccountIdForLookup, assetToken, currentPixelId, options)
       return
     }
 
     if (step === 3) {
       await Promise.all([
-        fetchPages(token, currentPageId, options),
-        fetchInstagramAccounts(token, currentInstagramAccountId, { ...options, pageId: currentPageId })
+        fetchPages(assetToken, currentPageId, options),
+        fetchInstagramAccounts(assetToken, currentInstagramAccountId, { ...options, pageId: currentPageId })
       ])
     }
   }
 
   const handleSelectAdAccount = (account: AdAccount) => {
     const accountIdWithoutPrefix = account.id.replace(/^act_/, '')
+    const oauthAccount = metaOAuthSession?.adAccounts.find(item => (
+      item.id.replace(/^act_/, '') === accountIdWithoutPrefix
+    ))
+    const onlyOAuthPixelId = oauthAccount?.pixels.length === 1 ? oauthAccount.pixels[0].id : ''
     setCredentials(prev => ({
       ...prev,
       adAccountId: accountIdWithoutPrefix,
-      pixelId: prev.adAccountId && prev.adAccountId !== accountIdWithoutPrefix ? '' : prev.pixelId
+      pixelId: prev.adAccountId && prev.adAccountId !== accountIdWithoutPrefix
+        ? onlyOAuthPixelId
+        : prev.pixelId || onlyOAuthPixelId
     }))
     if (credentials.adAccountId && credentials.adAccountId !== accountIdWithoutPrefix) {
       setPixels([])
+    }
+    if (metaOAuthSession) {
+      setPixels((oauthAccount?.pixels || []).map(pixel => ({
+        id: pixel.id,
+        name: pixel.name,
+        creation_time: '',
+        last_fired_time: '',
+        adAccountId: accountIdWithoutPrefix
+      })))
     }
   }
 
@@ -1114,6 +1347,10 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const handleEditStoredSecret = async (field: SecretTokenField) => {
+    if (isOAuthConnection) {
+      showToast('warning', 'Token protegido por OAuth', 'Para usar el método manual pega un System User Token nuevo; Ristak nunca revela el acceso OAuth.')
+      return
+    }
     const revealedToken = await getUsableAccessToken({ silent: false })
     if (!revealedToken) return
 
@@ -1163,12 +1400,16 @@ export const MetaAdsIntegration: React.FC = () => {
     setPages([])
     setInstagramAccounts([])
     setRealAccessToken('')
+    setMetaConnectionMode(null)
+    setMetaOAuthSession(null)
+    setShowManualConnection(false)
     setMetaDeveloperSetup(null)
     setMessengerUserToken('')
     setSavedPageId('')
     setSavedInstagramAccountId('')
     goToMetaStep(0, { replace: true })
     setIsEditingMetaConfig(false)
+    void loadMetaOAuthStatus()
   }
 
   const handleContinueWithToken = async () => {
@@ -1211,6 +1452,31 @@ export const MetaAdsIntegration: React.FC = () => {
   const saveMetaWizardConfig = async () => {
     if (!credentials.adAccountId) {
       showToast('warning', 'Falta cuenta de anuncios', 'Selecciona una cuenta de anuncios para guardar Meta')
+      return { saved: false, syncStarted: false }
+    }
+
+    if (metaOAuthSession) {
+      const selectedAdAccount = metaOAuthSession.adAccounts.find(account => (
+        account.id.replace(/^act_/, '') === credentials.adAccountId.replace(/^act_/, '')
+      ))
+      const selectedPage = metaOAuthSession.pages.find(page => page.id === credentials.pageId)
+      return finalizeMetaOAuthSession(metaOAuthSession, {
+        sessionId: metaOAuthSession.sessionId,
+        businessId: selectedAdAccount?.businessId || selectedPage?.businessId || metaOAuthSession.defaults.businessId || undefined,
+        adAccountId: credentials.adAccountId.replace(/^act_/, ''),
+        pixelId: credentials.pixelId || undefined,
+        pageId: credentials.pageId || undefined,
+        instagramAccountId: credentials.instagramAccountId || undefined
+      })
+    }
+
+    if (isOAuthConnection && !showManualConnection) {
+      showToast('warning', 'Reconecta Meta para cambiar activos', 'Usa “Reconectar con Meta” o abre el método manual y pega un token nuevo.')
+      return { saved: false, syncStarted: false }
+    }
+
+    if (isOAuthConnection && isMaskedSecretValue(credentials.accessToken)) {
+      showToast('warning', 'Pega un token manual nuevo', 'El token OAuth no se puede revelar ni convertir en una conexión manual.')
       return { saved: false, syncStarted: false }
     }
 
@@ -1287,12 +1553,21 @@ export const MetaAdsIntegration: React.FC = () => {
     setIsEditingMetaConfig(false)
     setActiveMetaTab('redes-sociales')
     navigate(buildMetaAdsConnectedTabPath('redes-sociales'), { replace: true })
+    const missingPermissions = 'missingPermissions' in result && Array.isArray(result.missingPermissions)
+      ? result.missingPermissions
+      : []
+    const relayStatus = 'relayStatus' in result ? result.relayStatus : 'registered'
+    const hasOAuthWarning = missingPermissions.length > 0 || relayStatus === 'error'
     showToast(
-      'success',
-      'Meta conectado',
-      result.syncStarted
-        ? 'Los anuncios ya se están sincronizando. Ahora termina redes sociales y comentarios.'
-        : 'Ahora termina redes sociales y comentarios.'
+      hasOAuthWarning ? 'warning' : 'success',
+      hasOAuthWarning ? 'Meta conectado con pendientes' : 'Meta conectado',
+      missingPermissions.length
+        ? `La cuenta quedó guardada, pero Meta todavía no concedió: ${missingPermissions.join(', ')}.`
+        : relayStatus === 'error'
+          ? 'Publicidad quedó conectada, pero Messenger, Instagram y comentarios necesitan reintentar el relay.'
+          : result.syncStarted
+            ? 'Los anuncios ya se están sincronizando y las redes sociales quedaron enlazadas.'
+            : 'La cuenta y sus activos quedaron listos.'
     )
   }
 
@@ -1313,6 +1588,39 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'No se pudo eliminar la configuración')
+      }
+
+      if (data.data?.restoredManual === true) {
+        const configKeys = [
+          'meta_messenger_messaging_enabled',
+          'meta_instagram_messaging_enabled',
+          'meta_facebook_comments_enabled',
+          'meta_instagram_comments_enabled'
+        ]
+        const restoredConfigResponse = await fetch(`/api/config?keys=${encodeURIComponent(configKeys.join(','))}`)
+        const restoredConfigData = await restoredConfigResponse.json().catch(() => ({}))
+        const restoredConfig = restoredConfigData?.config || {}
+
+        if (restoredConfigResponse.ok) {
+          await Promise.all([
+            setMessengerMessagingEnabled(parseMetaBooleanConfig(restoredConfig.meta_messenger_messaging_enabled)),
+            setInstagramMessagingEnabled(parseMetaBooleanConfig(restoredConfig.meta_instagram_messaging_enabled)),
+            setFacebookCommentsEnabled(parseMetaBooleanConfig(restoredConfig.meta_facebook_comments_enabled)),
+            setInstagramCommentsEnabled(parseMetaBooleanConfig(restoredConfig.meta_instagram_comments_enabled))
+          ])
+        }
+
+        setMetaOAuthSession(null)
+        setShowManualConnection(false)
+        setIsEditingMetaConfig(false)
+        setIsDisconnectModalOpen(false)
+        await Promise.all([
+          loadCredentials(),
+          loadMetaDeveloperSetup(),
+          loadMetaOAuthStatus()
+        ])
+        showToast('success', 'OAuth desconectado', 'Ristak restauró tu conexión manual anterior y tus funciones de Meta siguen disponibles.')
+        return
       }
 
       await Promise.all([
@@ -1691,7 +1999,7 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
-    if (newValue && !isInstagram && !metaDeveloperSetup?.messengerUserTokenConfigured) {
+    if (newValue && !isInstagram && !isOAuthConnection && !metaDeveloperSetup?.messengerUserTokenConfigured) {
       showToast(
         'warning',
         'Falta el User Token de Messenger',
@@ -1852,7 +2160,12 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasPixel = Boolean(credentials.pixelId)
   const hasPageId = Boolean(credentials.pageId)
   const hasInstagramAccount = Boolean(credentials.instagramAccountId)
-  const canEnableMessengerMessaging = hasAccessToken && hasPageId && metaDeveloperSetup?.messengerUserTokenConfigured === true
+  const selectableInstagramAccounts = credentials.pageId
+    ? instagramAccounts.filter(account => !account.pageId || account.pageId === credentials.pageId)
+    : []
+  const canEnableMessengerMessaging = hasAccessToken && hasPageId && (
+    isOAuthConnection || metaDeveloperSetup?.messengerUserTokenConfigured === true
+  )
   const canEnableMessengerComments = hasAccessToken && hasPageId
   const canEnableInstagramMessaging = hasAccessToken && hasPageId && hasInstagramAccount
   const canEnableInstagramComments = hasAccessToken && hasPageId && hasInstagramAccount
@@ -1882,10 +2195,11 @@ export const MetaAdsIntegration: React.FC = () => {
     !isMaskedSecretValue(credentials.accessToken) &&
     (!realAccessToken || credentials.accessToken !== realAccessToken)
   )
+  const canEditMetaAssets = !isOAuthConnection || Boolean(metaOAuthSession) || showManualConnection
   const metaSetupSteps = [
     {
-      title: 'Token',
-      description: 'App y System User',
+      title: 'Conexión',
+      description: isOAuthConnection ? 'OAuth de Meta' : 'OAuth o token manual',
       done: hasAccessToken,
       required: true,
       unlocked: true
@@ -1895,26 +2209,27 @@ export const MetaAdsIntegration: React.FC = () => {
       description: 'Campañas y reportes',
       done: hasAdAccount,
       required: true,
-      unlocked: hasAccessToken
+      unlocked: hasAccessToken && canEditMetaAssets
     },
     {
       title: 'Dataset',
       description: 'Medición web opcional',
       done: hasPixel,
       required: false,
-      unlocked: hasAdAccount
+      unlocked: hasAdAccount && canEditMetaAssets
     },
     {
       title: 'Páginas de Meta',
       description: 'Facebook e Instagram',
       done: hasPageId || hasInstagramAccount,
       required: false,
-      unlocked: hasAdAccount
+      unlocked: hasAdAccount && canEditMetaAssets
     }
   ]
   const completedMetaSetupSteps = metaSetupSteps.filter(step => step.done).length
   const shouldShowStepActions = activeStep > 0 || (
     activeStep === 0 &&
+    canEditMetaAssets &&
     hasAccessToken &&
     !shouldShowAccessTokenAction &&
     !isSavingToken &&
@@ -1922,9 +2237,13 @@ export const MetaAdsIntegration: React.FC = () => {
   )
 
   useEffect(() => {
+    if (activeStep > 0 && isOAuthConnection && !metaOAuthSession && !showManualConnection) {
+      goToMetaStep(0, { replace: true })
+      return
+    }
     if (!shouldShowWizard || isLoading) return
     void refreshMetaWizardStep(activeStep, { silent: true })
-  }, [activeStep, isEditingMetaConfig, wizardRefreshNonce, shouldShowWizard, isLoading])
+  }, [activeStep, isEditingMetaConfig, isOAuthConnection, metaOAuthSession, showManualConnection, wizardRefreshNonce, shouldShowWizard, isLoading])
 
   const getSelectedAdAccountLabel = () => {
     if (!credentials.adAccountId) return 'Pendiente'
@@ -2024,102 +2343,187 @@ export const MetaAdsIntegration: React.FC = () => {
         <>
           <div className={styles.stepIntro}>
             <span className={styles.stepEyebrow}>Paso 1</span>
-            <h3 className={styles.stepTitle}>Crea la app y pega el token</h3>
+            <h3 className={styles.stepTitle}>Conecta tu negocio de Meta</h3>
             <p className={styles.stepText}>
-              El token debe salir de un usuario del sistema dentro del mismo portafolio comercial. Si ese usuario tiene la cuenta publicitaria, la Página y el dataset asignados, este único token sirve para reportes y Conversions API.
+              Inicia sesión una vez y elige los activos que vas a usar. Ristak recibe el acceso desde la app oficial del Installer sin mostrarte tokens ni pedirte el App Secret.
             </p>
           </div>
 
-          <div className={styles.setupGuide}>
-            <div className={styles.guideLinks}>
-              <a href="https://business.facebook.com/settings/apps" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
-                Apps del portafolio
-                <ExternalLink size={14} />
-              </a>
-              <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
-                Usuarios del sistema
-                <ExternalLink size={14} />
-              </a>
+          <div className={styles.oauthConnectBlock}>
+            <div className={styles.oauthConnectMain}>
+              <span className={styles.oauthBrandMark} aria-hidden="true">
+                <MetaBrandMark size={24} />
+              </span>
+              <div className={styles.oauthConnectCopy}>
+                <div className={styles.oauthConnectTitleRow}>
+                  <h4>Conexión directa</h4>
+                  <Badge variant={isOAuthConnection ? 'success' : metaOAuthStatus?.available ? 'info' : 'warning'}>
+                    {isOAuthConnection
+                      ? 'Conectado por OAuth'
+                      : metaOAuthStatus?.available
+                        ? metaOAuthStatus.reviewPending === false ? 'Disponible' : 'Vista previa'
+                        : 'No disponible'}
+                  </Badge>
+                </div>
+                <p>
+                  Autoriza Marketing API, Messenger, Instagram y comentarios en el diálogo oficial de Meta. Si tienes un solo conjunto de activos, Ristak lo configura automáticamente.
+                </p>
+              </div>
             </div>
 
-            <ol className={styles.guideList}>
-              {tokenSetupGuideSteps.map((step, index) => (
-                <li key={step.title} className={styles.guideItem}>
-                  <span className={styles.guideNumber}>{index + 1}</span>
-                  <div className={styles.guideCopy}>
-                    <strong>{step.title}</strong>
-                    <span>{step.body}</span>
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <div className={styles.oauthCapabilityList} aria-label="Funciones incluidas en la conexión">
+              <span>Publicidad y Dataset</span>
+              <span>Messenger y comentarios</span>
+              <span>Instagram Direct y comentarios</span>
+            </div>
 
-            <div className={styles.scopeBlock}>
-              <span className={styles.scopeBlockLabel}>Permisos del token</span>
-              <div className={styles.scopeList}>
-                {tokenSetupScopes.map(scope => (
-                  <code key={scope} className={styles.scopeChip}>{scope}</code>
-                ))}
-              </div>
+            {metaOAuthSession?.permissions.missing.length ? (
+              <p className={styles.oauthWarning} role="status">
+                Meta no concedió: {metaOAuthSession.permissions.missing.join(', ')}. Reconecta y autoriza la configuración completa antes de terminar; tu conexión manual actual no se modificará.
+              </p>
+            ) : null}
+
+            {metaOAuthStatus?.error ? (
+              <p className={styles.oauthWarning}>{metaOAuthStatus.error}</p>
+            ) : metaOAuthStatus?.reviewPending !== false ? (
+              <p className={styles.oauthReviewNote}>
+                Mientras Meta termina la revisión, este acceso directo funciona con usuarios y activos autorizados como testers de la app. La conexión manual sigue disponible abajo.
+              </p>
+            ) : null}
+
+            <div className={styles.oauthActions}>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => void handleConnectWithMeta()}
+                disabled={isConnectingMetaOAuth || metaOAuthStatus === null || metaOAuthStatus?.available === false}
+              >
+                {isConnectingMetaOAuth ? <RefreshCw size={16} className={styles.spinning} /> : <MetaBrandMark size={17} />}
+                {isConnectingMetaOAuth ? 'Abriendo Meta' : isOAuthConnection ? 'Reconectar con Meta' : 'Conectar con Meta'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  const nextVisible = !showManualConnection
+                  if (nextVisible && metaOAuthSession) {
+                    setMetaOAuthSession(null)
+                    if (!isOAuthConnection) void loadCredentials()
+                  }
+                  if (nextVisible && isOAuthConnection) {
+                    setCredentials(previous => ({ ...previous, accessToken: '' }))
+                    setRealAccessToken('')
+                  }
+                  setShowManualConnection(nextVisible)
+                }}
+              >
+                {showManualConnection ? 'Ocultar método manual' : isOAuthConnection ? 'Cambiar a token manual' : 'Usar token manual'}
+              </Button>
             </div>
           </div>
 
-          <div className={`${styles.formGroup} ${styles.formGroupWide}`}>
-            <span id="metaAccessTokenLabel" className={styles.formLabel}>System User Access Token</span>
-            {credentials.accessToken && isMaskedSecretValue(credentials.accessToken) ? (
-              <div
-                className={`${styles.filterChip} ${styles.secretTokenChip}`}
-                onClick={() => handleEditStoredSecret('accessToken')}
-                onKeyDown={(event) => handleSecretChipKeyDown(event, 'accessToken')}
-                role="button"
-                tabIndex={0}
-                aria-label="Mostrar y editar Access Token"
-                title="Mostrar y editar Access Token"
-              >
-                {renderMaskedSecretValue(credentials.accessToken, isRevealingAccessToken)}
-                <button
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    handleRemoveCredential('accessToken')
-                  }}
-                  className={styles.chipDeleteButton}
-                  type="button"
-                  aria-label="Eliminar Access Token"
-                >
-                  <Trash2 size={16} />
-                </button>
+          {showManualConnection && (
+            <div className={styles.manualConnectionBlock}>
+              <div className={styles.stepIntro}>
+                <span className={styles.stepEyebrow}>Método anterior</span>
+                <h4 className={styles.manualConnectionTitle}>Conectar con System User Token</h4>
+                <p className={styles.stepText}>
+                  Este flujo sigue funcionando durante la revisión de Meta. Úsalo si tu cuenta todavía no puede autorizar OAuth.
+                </p>
               </div>
-            ) : (
-              <div className={styles.inputActionRow}>
-                <input
-                  id="metaAccessToken"
-                  ref={accessTokenInputRef}
-                  type="text"
-                  value={credentials.accessToken}
-                  onChange={(event) => handleInputChange('accessToken', event.target.value)}
-                  placeholder="EAAabcdef..."
-                  className={`${styles.formInput} ${styles.secretTokenInput}`}
-                  aria-labelledby="metaAccessTokenLabel"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                {shouldShowAccessTokenAction && !isLoadingAccounts && (
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={handleContinueWithToken}
-                    disabled={isSavingToken || !credentials.accessToken || credentials.accessToken.length < 50}
+
+              <div className={styles.setupGuide}>
+                <div className={styles.guideLinks}>
+                  <a href="https://business.facebook.com/settings/apps" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
+                    Apps del portafolio
+                    <ExternalLink size={14} />
+                  </a>
+                  <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
+                    Usuarios del sistema
+                    <ExternalLink size={14} />
+                  </a>
+                </div>
+
+                <ol className={styles.guideList}>
+                  {tokenSetupGuideSteps.map((step, index) => (
+                    <li key={step.title} className={styles.guideItem}>
+                      <span className={styles.guideNumber}>{index + 1}</span>
+                      <div className={styles.guideCopy}>
+                        <strong>{step.title}</strong>
+                        <span>{step.body}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+
+                <div className={styles.scopeBlock}>
+                  <span className={styles.scopeBlockLabel}>Permisos del token</span>
+                  <div className={styles.scopeList}>
+                    {tokenSetupScopes.map(scope => (
+                      <code key={scope} className={styles.scopeChip}>{scope}</code>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className={`${styles.formGroup} ${styles.formGroupWide}`}>
+                <span id="metaAccessTokenLabel" className={styles.formLabel}>System User Access Token</span>
+                {credentials.accessToken && isMaskedSecretValue(credentials.accessToken) ? (
+                  <div
+                    className={`${styles.filterChip} ${styles.secretTokenChip}`}
+                    onClick={() => handleEditStoredSecret('accessToken')}
+                    onKeyDown={(event) => handleSecretChipKeyDown(event, 'accessToken')}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Mostrar y editar Access Token"
+                    title="Mostrar y editar Access Token"
                   >
-                    {isSavingToken ? 'Guardando...' : realAccessToken ? 'Actualizar' : 'Continuar'}
-                  </Button>
+                    {renderMaskedSecretValue(credentials.accessToken, isRevealingAccessToken)}
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        handleRemoveCredential('accessToken')
+                      }}
+                      className={styles.chipDeleteButton}
+                      type="button"
+                      aria-label="Eliminar Access Token"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className={styles.inputActionRow}>
+                    <input
+                      id="metaAccessToken"
+                      ref={accessTokenInputRef}
+                      type="text"
+                      value={credentials.accessToken}
+                      onChange={(event) => handleInputChange('accessToken', event.target.value)}
+                      placeholder="EAAabcdef..."
+                      className={`${styles.formInput} ${styles.secretTokenInput}`}
+                      aria-labelledby="metaAccessTokenLabel"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    {shouldShowAccessTokenAction && !isLoadingAccounts && (
+                      <Button
+                        type="button"
+                        variant="primary"
+                        onClick={handleContinueWithToken}
+                        disabled={isSavingToken || !credentials.accessToken || credentials.accessToken.length < 50}
+                      >
+                        {isSavingToken ? 'Guardando...' : realAccessToken ? 'Actualizar' : 'Continuar'}
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
 
-          {isLoadingAccounts && (
-            <div className={`${styles.inlineStatus} ${styles.inlineStatusCentered}`} role="status" aria-live="polite" aria-label="Cargando cuentas de anuncios">
-              <RefreshCw size={14} className={styles.spinning} aria-hidden="true" />
+              {isLoadingAccounts && (
+                <div className={`${styles.inlineStatus} ${styles.inlineStatusCentered}`} role="status" aria-live="polite" aria-label="Cargando cuentas de anuncios">
+                  <RefreshCw size={14} className={styles.spinning} aria-hidden="true" />
+                </div>
+              )}
             </div>
           )}
         </>
@@ -2301,7 +2705,21 @@ export const MetaAdsIntegration: React.FC = () => {
                   <CustomSelect
                     onChange={(event) => {
                       const page = pages.find(item => item.id === event.target.value)
-                      setCredentials(prev => ({ ...prev, pageId: page?.id || '' }))
+                      setCredentials(prev => {
+                        const nextPageId = page?.id || ''
+                        const currentInstagram = instagramAccounts.find(item => item.sourceId === prev.instagramAccountId)
+                        const oauthPage = metaOAuthSession?.pages.find(item => item.id === nextPageId)
+                        const onlyLinkedInstagram = oauthPage?.instagramAccounts.length === 1
+                          ? oauthPage.instagramAccounts[0].id
+                          : ''
+                        return {
+                          ...prev,
+                          pageId: nextPageId,
+                          instagramAccountId: currentInstagram?.pageId && currentInstagram.pageId !== nextPageId
+                            ? onlyLinkedInstagram
+                            : prev.instagramAccountId || onlyLinkedInstagram
+                        }
+                      })
                     }}
                     value={credentials.pageId || ''}
                   >
@@ -2321,7 +2739,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       type="button"
                       variant="secondary"
                       onClick={() => void refreshMetaWizardStep(3, { silent: false })}
-                      disabled={isLoadingPages || !(realAccessToken || credentials.accessToken)}
+                      disabled={Boolean(metaOAuthSession) || isLoadingPages || !(realAccessToken || credentials.accessToken)}
                     >
                       <RefreshCw size={16} className={isLoadingPages ? styles.spinning : ''} />
                       Volver a cargar
@@ -2348,16 +2766,16 @@ export const MetaAdsIntegration: React.FC = () => {
                   <div className={`${styles.inlineStatus} ${styles.inlineStatusCentered}`} role="status" aria-live="polite" aria-label="Cargando Instagram">
                     <RefreshCw size={14} className={styles.spinning} aria-hidden="true" />
                   </div>
-                ) : instagramAccounts.length > 0 ? (
+                ) : selectableInstagramAccounts.length > 0 ? (
                   <CustomSelect
                     onChange={(event) => {
-                      const account = instagramAccounts.find(item => item.sourceId === event.target.value)
+                      const account = selectableInstagramAccounts.find(item => item.sourceId === event.target.value)
                       if (account) handleSelectInstagramAccount(account)
                     }}
                     value={credentials.instagramAccountId || ''}
                   >
                     <option value="">-- Sin Instagram por ahora --</option>
-                    {instagramAccounts.map((account) => (
+                    {selectableInstagramAccounts.map((account) => (
                       <option key={account.sourceId} value={account.sourceId}>
                         {account.username ? `@${account.username}` : account.name} ({account.sourceId})
                       </option>
@@ -2372,7 +2790,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       type="button"
                       variant="secondary"
                       onClick={() => void refreshMetaWizardStep(3, { silent: false })}
-                      disabled={isLoadingInstagramAccounts || !(realAccessToken || credentials.accessToken)}
+                      disabled={Boolean(metaOAuthSession) || isLoadingInstagramAccounts || !(realAccessToken || credentials.accessToken)}
                     >
                       <RefreshCw size={16} className={isLoadingInstagramAccounts ? styles.spinning : ''} />
                       Volver a cargar
@@ -2449,6 +2867,14 @@ export const MetaAdsIntegration: React.FC = () => {
 
                 <div className={styles.connectedList}>
                   <div className={styles.connectedListRow}>
+                    <span className={styles.connectedListLabel}>Método de conexión</span>
+                    <span className={styles.connectedListValue}>
+                      <Badge variant={isOAuthConnection ? 'info' : 'neutral'}>
+                        {isOAuthConnection ? 'OAuth de Meta' : 'System User Token manual'}
+                      </Badge>
+                    </span>
+                  </div>
+                  <div className={styles.connectedListRow}>
                     <span className={styles.connectedListLabel}>Cuenta publicitaria</span>
                     <span className={styles.connectedListValue}>{getSelectedAdAccountLabel()}</span>
                   </div>
@@ -2465,7 +2891,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <span className={styles.connectedListValue}>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Sin Instagram'}</span>
                   </div>
                   <div className={styles.connectedListRow}>
-                    <span className={styles.connectedListLabel}>Token de Meta</span>
+                    <span className={styles.connectedListLabel}>Acceso de Meta</span>
                     {metaTokenStatus ? (
                       <span className={styles.connectedListValue}>
                         <Badge
@@ -2487,6 +2913,16 @@ export const MetaAdsIntegration: React.FC = () => {
                       <span className={styles.connectedListValue}>—</span>
                     )}
                   </div>
+                  {isOAuthConnection && (
+                    <div className={styles.connectedListRow}>
+                      <span className={styles.connectedListLabel}>Mensajes y comentarios</span>
+                      <span className={styles.connectedListValue}>
+                        <Badge variant={metaOAuthStatus?.oauth.relayStatus === 'registered' ? 'success' : 'warning'}>
+                          {metaOAuthStatus?.oauth.relayStatus === 'registered' ? 'Relay conectado' : 'Relay pendiente'}
+                        </Badge>
+                      </span>
+                    </div>
+                  )}
                 </div>
               </section>
             )}
@@ -2496,7 +2932,9 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div className={styles.connectedPagesHeader}>
                   <h4 className={styles.connectedPagesTitle}>Redes sociales</h4>
                   <p className={styles.connectedPagesDescription}>
-                    Configura Messenger e Instagram por separado. Messenger usa un User Token humano para poder responder DMs externos; Instagram conserva el System User token de la integración.
+                    {isOAuthConnection
+                      ? 'OAuth ya autorizó el acceso de negocio. Aquí decides qué canales quedan activos y verificas la entrega de mensajes y comentarios.'
+                      : 'Configura Messenger e Instagram por separado. Messenger usa un User Token humano para poder responder DMs externos; Instagram conserva el System User token de la integración.'}
                   </p>
                 </div>
 
@@ -2509,7 +2947,9 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Messenger</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Genera el User Token en Meta Developers, guárdalo aquí y configura sus Webhooks en el mismo caso de uso.
+                          {isOAuthConnection
+                            ? 'Usa la Facebook Page autorizada por OAuth para Messenger y comentarios de Facebook.'
+                            : 'Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Genera el User Token en Meta Developers, guárdalo aquí y configura sus Webhooks en el mismo caso de uso.'}
                         </p>
                       </div>
                     </div>
@@ -2519,6 +2959,12 @@ export const MetaAdsIntegration: React.FC = () => {
                       <strong>{hasPageId ? getSelectedPageLabel() : 'Selecciona una Facebook Page'}</strong>
                     </div>
 
+                    {isOAuthConnection ? (
+                      <div className={styles.socialAssetLine}>
+                        <span className={styles.webhookFieldLabel}>Credencial de Messenger</span>
+                        <Badge variant="success">Incluida en OAuth</Badge>
+                      </div>
+                    ) : (
                     <div className={styles.webhookField}>
                       <span className={styles.webhookFieldLabel}>User Token de Messenger</span>
                       <div className={styles.webhookFieldRow}>
@@ -2548,8 +2994,9 @@ export const MetaAdsIntegration: React.FC = () => {
                           : 'Ristak no lo muestra después de guardarlo y valida que tenga acceso a la Página seleccionada.'}
                       </p>
                     </div>
+                    )}
 
-                    <Button
+                    {!isOAuthConnection && <Button
                       type="button"
                       variant="secondary"
                       onClick={() => window.open(metaDeveloperSetup?.messengerUrl, '_blank', 'noopener,noreferrer')}
@@ -2557,7 +3004,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     >
                       <ExternalLink size={16} />
                       Configurar Messenger y Webhooks en Meta
-                    </Button>
+                    </Button>}
 
                     <div className={styles.socialSettingRows}>
                       <div className={styles.socialSettingRow}>
@@ -2604,7 +3051,9 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Instagram</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa la cuenta profesional enlazada a la Facebook Page. El System User token opera DMs y comentarios; configura sus Webhooks desde Meta Developers.
+                          {isOAuthConnection
+                            ? 'Usa la cuenta profesional enlazada a la Facebook Page. OAuth y el relay central operan DMs y comentarios.'
+                            : 'Usa la cuenta profesional enlazada a la Facebook Page. El System User token opera DMs y comentarios; configura sus Webhooks desde Meta Developers.'}
                         </p>
                       </div>
                     </div>
@@ -2615,10 +3064,12 @@ export const MetaAdsIntegration: React.FC = () => {
                     </div>
 
                     <p className={styles.connectedPagesDescription}>
-                      Ristak deriva el token de la Página desde el System User token de Meta. Ese mismo flujo opera DMs, perfiles, media y comentarios de Instagram cuando la app tiene permisos de mensajería/comentarios y la cuenta está enlazada a la Page.
+                      {isOAuthConnection
+                        ? 'Ristak usa el acceso autorizado de la Página para operar DMs, perfiles, media y comentarios. Si Instagram bloquea los DMs, activa Connected Tools → Allow Access to Messages desde la app de Instagram; Meta no permite cambiar ese ajuste por API.'
+                        : 'Ristak deriva el token de la Página desde el System User token de Meta. Ese mismo flujo opera DMs, perfiles, media y comentarios de Instagram cuando la app tiene permisos de mensajería/comentarios y la cuenta está enlazada a la Page.'}
                     </p>
 
-                    <Button
+                    {!isOAuthConnection && <Button
                       type="button"
                       variant="secondary"
                       onClick={() => window.open(metaDeveloperSetup?.instagramUrl, '_blank', 'noopener,noreferrer')}
@@ -2626,7 +3077,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     >
                       <ExternalLink size={16} />
                       Configurar Instagram y Webhooks en Meta
-                    </Button>
+                    </Button>}
 
                     <div className={styles.socialSettingRows}>
                       <div className={styles.socialSettingRow}>
@@ -2668,7 +3119,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
                 </div>
 
-                <div className={styles.webhookGuide}>
+                {!isOAuthConnection && <div className={styles.webhookGuide}>
                   <div className={styles.connectedPagesHeader}>
                     <h4 className={styles.connectedPagesTitle}>Webhooks en Meta Developers</h4>
                     <p className={styles.connectedPagesDescription}>
@@ -2729,7 +3180,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <li><strong>WhatsApp:</strong> configura el producto <strong>WhatsApp Business Account</strong> si vas a recibir mensajes de WhatsApp Cloud API.</li>
                     <li><strong>Ristak:</strong> después guarda el System User token actualizado y selecciona la Page/Instagram desde este wizard.</li>
                   </ol>
-                </div>
+                </div>}
               </section>
             )}
             {shouldShowWizard && (
@@ -2738,7 +3189,9 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div>
                   <h3 className={styles.sectionTitle}>Wizard de configuración</h3>
                   <p className={styles.sectionDescription}>
-                    Crea el token correcto y después selecciona los activos que Meta devuelve.
+                    {metaOAuthSession
+                      ? 'Meta ya autorizó el acceso. Confirma qué cuenta, Dataset y perfiles usará Ristak.'
+                      : 'Conecta Meta directamente o conserva el método manual; después confirma los activos.'}
                   </p>
                 </div>
                 <span className={styles.stepCount}>{completedMetaSetupSteps}/{metaSetupSteps.length} listo</span>
@@ -2801,7 +3254,7 @@ export const MetaAdsIntegration: React.FC = () => {
                               type="button"
                               variant="primary"
                               onClick={handleFinishWizard}
-                              disabled={!hasAdAccount || isSavingWizardConfig}
+                              disabled={!hasAdAccount || isSavingWizardConfig || Boolean(metaOAuthSession?.permissions.missing.length)}
                             >
                               {isSavingWizardConfig ? (
                                 <>
@@ -3198,11 +3651,17 @@ export const MetaAdsIntegration: React.FC = () => {
             setIsDisconnectModalOpen(false)
           }
         }}
-        title="Eliminar configuración de Meta"
-        message="Se eliminará el token, la cuenta de anuncios, el Dataset, la Página e Instagram, y se apagarán Messenger, Instagram DM y comentarios. Esta acción no se puede deshacer."
+        title={isOAuthConnection ? 'Desconectar Meta OAuth' : 'Eliminar configuración de Meta'}
+        message={isOAuthConnection && metaOAuthStatus?.manualBackupAvailable
+          ? 'Se desconectará el acceso directo por OAuth y Ristak restaurará tu conexión manual anterior. Tus activos y canales volverán a esa configuración.'
+          : 'Se eliminará el token, la cuenta de anuncios, el Dataset, la Página e Instagram, y se apagarán Messenger, Instagram DM y comentarios. Esta acción no se puede deshacer.'}
         type="confirm"
-        typeToConfirm="ELIMINAR"
-        confirmText={isDisconnectingMeta ? 'Eliminando...' : 'Eliminar'}
+        typeToConfirm={isOAuthConnection && metaOAuthStatus?.manualBackupAvailable ? 'DESCONECTAR' : 'ELIMINAR'}
+        confirmText={isDisconnectingMeta
+          ? 'Procesando...'
+          : isOAuthConnection && metaOAuthStatus?.manualBackupAvailable
+            ? 'Desconectar OAuth'
+            : 'Eliminar'}
         cancelText="Cancelar"
         onConfirm={() => {
           void handleDisconnectMetaConfig()

@@ -452,7 +452,7 @@ class CampaignsService {
     }
   }
 
-  async fetchAdAccounts(accessToken: string): Promise<{
+  async fetchAdAccounts(accessToken = ''): Promise<{
     success: boolean
     adAccounts: {
       id: string
@@ -466,9 +466,9 @@ class CampaignsService {
     try {
       // (META-005) El accessToken viaja en un header custom, no en el query string,
       // para no exponerlo en logs/historial del navegador ni del servidor.
-      const data = await apiClient.get('/meta/ad-accounts', {
+      const data = await apiClient.get('/meta/ad-accounts', accessToken ? {
         headers: { 'X-Meta-Access-Token': accessToken }
-      }) as {
+      } : undefined) as {
         adAccounts: {
           id: string
           account_id: string
@@ -489,7 +489,7 @@ class CampaignsService {
     }
   }
 
-  async fetchPixels(adAccountId: string, accessToken: string): Promise<{
+  async fetchPixels(adAccountId: string, accessToken = ''): Promise<{
     success: boolean
     pixels: {
       id: string
@@ -502,7 +502,7 @@ class CampaignsService {
       // (META-005) adAccountId no es sensible y sigue en query; el accessToken viaja en header.
       const data = await apiClient.get('/meta/pixels', {
         params: { adAccountId },
-        headers: { 'X-Meta-Access-Token': accessToken }
+        ...(accessToken ? { headers: { 'X-Meta-Access-Token': accessToken } } : {})
       }) as {
         pixels: {
           id: string
@@ -522,7 +522,7 @@ class CampaignsService {
     }
   }
 
-  async fetchPages(accessToken: string): Promise<{
+  async fetchPages(accessToken = ''): Promise<{
     success: boolean
     pages: {
       id: string
@@ -533,9 +533,9 @@ class CampaignsService {
   }> {
     try {
       // (META-005) accessToken en header custom en vez de query string.
-      const data = await apiClient.get('/meta/pages', {
+      const data = await apiClient.get('/meta/pages', accessToken ? {
         headers: { 'X-Meta-Access-Token': accessToken }
-      }) as {
+      } : undefined) as {
         pages: {
           id: string
           name: string

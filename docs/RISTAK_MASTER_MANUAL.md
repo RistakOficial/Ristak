@@ -2093,6 +2093,37 @@ prueba. No la debilites por comodidad.
 
 Ristak usa Meta en varias areas:
 
+### Conexion OAuth y convivencia manual
+
+- `Configuracion > Meta` ofrece dos rutas compatibles. `manual_system_user`
+  conserva el wizard y System User Token historicos; `oauth_bisu` usa Facebook
+  Login for Business desde la app central de Ristak Installer. OAuth permanece
+  como vista previa para roles/testers durante App Review y el metodo manual no
+  se retira.
+- Installer es el unico dueño de `meta_app_secret` y del Config ID FLFB. Genera
+  un `state` hasheado/one-time, recibe el callback HTTPS exacto, valida la
+  credencial BISU y entrega token, Page tokens y `appsecret_proof` mediante un
+  handoff cifrado ligado a cliente/instalacion. Ninguno de esos secretos llega
+  al navegador.
+- Ristak reclama el handoff server-to-server y conserva una sesion cifrada con
+  TTL mientras se eligen activos. Solo promociona `oauth_bisu` cuando estan los
+  permisos completos y las relaciones Ad Account ↔ Dataset y Page ↔ Instagram
+  pertenecen al snapshot autorizado. Cancelar, expirar o fallar deja intacta la
+  conexion activa. Installer conserva la autorizacion nueva como candidato y no
+  sustituye la conexion/ruta anterior hasta la promocion atomica final; repetir
+  esa promocion por `connection_id` es idempotente.
+- Una sola app Meta implica un solo callback de webhooks. Installer valida
+  `X-Hub-Signature-256`, deduplica, enruta por Page/Instagram y retransmite a
+  `/webhooks/meta/installer-relay` con HMAC de la licencia, timestamp, nonce e
+  ID estable de entrega. La instalacion valida firma/replay/idempotencia antes de
+  usar el procesador social normal. En OAuth, el webhook directo falla cerrado;
+  el webhook de apps manuales conserva compatibilidad legacy.
+- HighLevel nunca recibe, reconcilia ni borra la credencial OAuth. El flujo
+  manual conserva su compatibilidad previa. WhatsApp Embedded Signup sigue
+  separado porque usa otro Config ID y activos distintos.
+- Contrato completo, permisos y checklist de revision:
+  `docs/META_OAUTH.md`.
+
 - Meta Ads config y sync.
 - Dataset Test en la UI de Configuracion > Meta; las rutas internas pueden
   conservar `pixel` por contrato con Meta y tracking.
@@ -2105,12 +2136,14 @@ Ristak usa Meta en varias areas:
   configuracion detectada por el wizard de Meta. `Purchase (Messaging)` se
   envia a Meta como `event_name=Purchase` y usa por default la moneda de la
   cuenta (`app_config.account_currency`).
-- Conversions API usa siempre el System User Access Token guardado en
-  `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). No hay un
-  token separado para CAPI: no se pide, no se genera y no se sincroniza.
+- Conversions API usa la credencial base activa guardada cifrada en
+  `meta_config.access_token`: System User Token para el modo manual o BISU para
+  OAuth. `META_ACCESS_TOKEN` queda solo como fallback legacy. No existe un token
+  separado de CAPI.
 - En Configuracion > Meta, al editar el wizard o moverse entre sus pasos, la UI
   vuelve a consultar cuentas de anuncios, datasets/pixeles, Facebook Pages e
-  Instagram disponibles con el System User Access Token guardado. El usuario no
+  Instagram desde backend. En manual usa el token guardado; en OAuth usa el
+  snapshot seguro del handoff y nunca revela el BISU al frontend. El usuario no
   debe borrar y pegar de nuevo el token solo para que aparezcan activos recien
   asignados en Meta Business. Las selecciones dentro del wizard son borrador:
   elegir cuenta, dataset, Facebook Page o Instagram no dispara guardado ni
@@ -2142,23 +2175,21 @@ Ristak usa Meta en varias areas:
   El webhook entrega eventos futuros. El historial previo se importa de forma
   separada por Conversations API y se deduplica por ID de mensaje; no depende de
   que Meta vuelva a emitir los mensajes viejos por Webhook.
-- **Messenger externo** usa un User Token humano distinto del System User Token.
-  El usuario lo pega en `Configuracion > Meta > Redes sociales > Messenger`;
-  Ristak comprueba antes que pueda derivar el Page Token de la Page elegida y lo
-  guarda cifrado en `meta_config.messenger_user_token`. Ese token solo se usa
-  para Messenger/Page; anuncios, CAPI e Instagram siguen usando
-  `meta_config.access_token` (System User). El toggle de Messenger no se puede
-  activar sin ese User Token, porque Meta rechaza DMs a personas externas con un
-  Page Token derivado únicamente del System User. Al guardarlo, Ristak activa
-  los switches de mensajes y comentarios de las superficies que ya tienen activo
-  configurado; el campo se muestra enmascarado como conectado y permite pegar un
-  token nuevo para cambiarlo sin revelar el anterior.
-- En las tarjetas de Messenger e Instagram, los botones de Meta Developers se
+- **Messenger externo** depende del modo. En manual usa un User Token humano
+  distinto del System User Token: el usuario lo pega en
+  `Configuracion > Meta > Redes sociales > Messenger`, Ristak valida la Page y
+  lo cifra en `meta_config.messenger_user_token`. En `oauth_bisu`, Installer
+  entrega en el handoff el Page Token de la Page delegada y su proof; no aparece
+  un segundo campo de token en UI. Anuncios/CAPI usan la credencial base activa
+  y Messenger/Instagram/comentarios usan el Page token correspondiente. El
+  toggle solo se habilita cuando existe la credencial requerida por el modo.
+- En modo manual, las tarjetas de Messenger e Instagram muestran botones de Meta Developers que
   arman con el App ID y el portafolio de la integración guardada; nunca con un
   ID hardcodeado de Ristak. Si una conexión antigua no tenía esos IDs, Ristak
   los recupera del System User Token y los conserva en `meta_config.app_id` y
   `meta_config.meta_business_id` antes de abrir el caso de uso correcto para
-  generar token/configurar Webhooks.
+  generar token/configurar Webhooks. En OAuth esos botones y campos no aparecen:
+  la app y el webhook pertenecen al Installer central.
 - El bloque **Perfil de red social** del editor de Sites lee los perfiles desde
   la configuracion Meta guardada (`meta_config.page_id`,
   `meta_config.instagram_account_id` y `meta_config.access_token`) cuando el
@@ -2190,22 +2221,16 @@ Ristak usa Meta en varias areas:
   historial, pero no debe pisar `contacts.attribution_ad_id`, porque ese campo
   es adquisicion inicial. Detalle completo en `docs/CONVERSION_ATTRIBUTION.md`.
 - Social messaging nativo separa los contratos de envio: Messenger envia por
-  `graph.facebook.com/{PAGE_ID}/messages` con token de Pagina derivado de
-  `meta_config.access_token`; Instagram DM tambien envia por el nodo
+  `graph.facebook.com/{PAGE_ID}/messages` con token de Pagina; Instagram DM tambien envia por el nodo
   `graph.facebook.com/{PAGE_ID}/messages` cuando la cuenta profesional esta
-  enlazada a la Page. Ristak resuelve credenciales por plataforma derivando
-  siempre el token de Pagina desde `meta_config.access_token` y usando Facebook
-  Graph para DMs, comentarios, media y conversaciones de Instagram. El cache
-  del Page token queda ligado al hash del System User token origen: reemplazar
-  ese token para corregir permisos invalida el cache de inmediato, aunque la
-  Página seleccionada sea la misma. Si un envío Messenger recibe un rechazo de
-  token o permisos, Ristak rederiva el Page token y repite una sola vez el POST
-  rechazado antes de reportar el bloqueo; como Meta ya rechazó el primer POST,
-  ese reintento no duplica mensajes. No hay
-  token alterno ni fallback para Instagram; si no se puede derivar el Page token,
-  la integracion falla con un error accionable para revisar permisos/asignaciones
-  de Meta. El recipient sigue siendo el IGSID recibido por webhook.
-  Para perfil/DM/comentarios el System User token debe tener los permisos
+  enlazada a la Page. En manual Ristak deriva el Page token desde la credencial
+  base y liga su cache al hash del token origen. En OAuth usa el Page token y
+  `page_appsecret_proof` entregados por Installer para la Page seleccionada; no
+  reutiliza el proof BISU con otro token. Si Meta invalida esa credencial, exige
+  reconectar OAuth en vez de pedir el App Secret central. No hay token alterno
+  para Instagram; si falta el Page token, la integracion falla con un error
+  accionable. El recipient sigue siendo el IGSID recibido por webhook.
+  Para perfil/DM/comentarios la credencial activa debe tener los permisos
   Meta correspondientes (`instagram_manage_messages`,
   `instagram_manage_comments`, `pages_messaging`, `pages_manage_engagement`,
   `pages_read_user_content`, `pages_read_engagement`/`pages_show_list` segun el
@@ -3510,7 +3535,7 @@ Registro de ubicacion:
 | Base de datos produccion | `DATABASE_URL` | Si en Render/Postgres | SQLite local si no existe |
 | URL publica/CORS | `APP_URL`, `PUBLIC_URL`, `RENDER_EXTERNAL_URL`, `CORS_ALLOWED_ORIGINS` | No siempre | Necesaria para webhooks y links correctos |
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
-| Meta Ads/Dataset | `meta_config`, `app_config`, env fallback | No | CAPI usa System User Token; `meta_test_event_code` activa Test Events |
+| Meta Ads/Dataset/social | Credencial activa cifrada en `meta_config`; app/secret/Config ID central en DB de Installer; env solo fallback legacy | No | `manual_system_user` y `oauth_bisu` conviven; OAuth usa handoff y proofs, `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
 | Correo SMTP/IMAP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | App password cifrado; requerido para enviar y recibir correos cuando la integracion esta activa |
 | Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |

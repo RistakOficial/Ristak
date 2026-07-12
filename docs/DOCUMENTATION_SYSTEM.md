@@ -51,6 +51,7 @@ decirlo explicitamente.
 | Deploy Render | `docs/DEPLOY-RENDER.md` |
 | Licencia central e Installer | `docs/LICENSING.md` |
 | API externa, OAuth, MCP | `docs/EXTERNAL_API_ACCESS.md` |
+| Meta OAuth, BISU, permisos, handoff y broker multi-tenant de webhooks | `docs/META_OAUTH.md` |
 | Soporte interno MCP para investigar clientes instalados via Installer | `docs/support-mcp-operations.md` |
 | WhatsApp YCloud, Meta directo, Coexistence, webhooks, IDs y Baileys | `docs/integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md` y seccion Chat del manual maestro |
 | Pixel/tracking/conversiones | `docs/TRACKING_PIXEL.md`, `docs/PIXEL_SETUP.md` y seccion Meta/pagos del manual |

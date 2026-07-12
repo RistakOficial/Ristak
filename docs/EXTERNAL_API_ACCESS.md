@@ -7,6 +7,11 @@ installed Ristak app. Internal support access for agents lives in Ristak
 Installer; use `docs/support-mcp-operations.md` when Raul asks to inspect a
 customer account, logs, chats, database rows, or production errors.
 
+OAuth de proveedores externos no pertenece a esta API. La conexion de Meta usa
+Facebook Login for Business, handoff de Installer y broker de webhooks descritos
+en [`META_OAUTH.md`](./META_OAUTH.md). Sus rutas `/api/meta/oauth/*` son internas
+de la interfaz de Ristak y no autentican clientes MCP ni integraciones de terceros.
+
 ## Identity model
 
 - `App ID` identifies this Ristak instance and is safe to share with integration partners.
