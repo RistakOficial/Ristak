@@ -2681,6 +2681,19 @@ order id y payment id; la moneda enviada a Meta sigue saliendo de
 `Purchase` en clicks o intentos de pago: solo en confirmacion real/pagina de
 gracias.
 
+Los formularios HTML propios distinguen `SUBMITTED` de `QUALIFIED`. Si una
+opcion radio, checkbox o select descarta candidatos, esa opcion lleva
+`data-rstk-choice-actions` con `action="disqualify"` y el formulario final lleva
+`data-rstk-conversion-condition="qualified_only"`. El descarte puede mostrar un
+mensaje (`disqualifyOutcome="message"`), ir a una pagina del sitio
+(`specific_page`) o redirigir a una URL (`url`). En los tres casos Ristak guarda
+contacto y submission como `disqualified`, permite automatizaciones de descarte
+y bloquea el evento de conversion tanto en CAPI como en el Pixel del navegador.
+Usar solo `specific_page` o `url` navega, pero no descalifica; por eso el editor
+y las instrucciones para IA deben exigir `action="disqualify"` cuando el destino
+representa un no candidato. El selector Meta muestra explicitamente todos los
+envios (`SUBMITTED`) frente a solo calificados (`QUALIFIED`).
+
 Para HTML importado con elementos nativos de Ristak, el contrato es declarar una
 zona con `data-rstk-native-element="form|calendar|payment|video"` y
 `data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
@@ -2799,7 +2812,10 @@ formularios, calendario, video o pago de Ristak. Al terminar muestra un bloque d
 texto listo para copiar y pegar en ChatGPT, Claude o Codex junto con la peticion
 real del usuario. Desde ese modal, `Subir mi HTML` abre el flujo de importacion
 ZIP/HTML y `Ir al editor` crea una hoja HTML en blanco para pegar codigo pagina
-por pagina.
+por pagina. Si el usuario elige formulario HTML personalizado, ese bloque
+copiable incluye el contrato de calificacion por opcion, los tres destinos de
+descarte y `data-rstk-conversion-condition="qualified_only"`; tambien prohibe
+disparar Pixel/CAPI manualmente antes del veredicto de Ristak.
 
 La revision de "Ruta de datos" de HTML importado debe permitir dos salidas para
 campos personalizados: mapear a un campo guardado del catalogo o declarar un

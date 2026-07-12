@@ -895,6 +895,7 @@ export interface ImportedButtonActionStep {
   buttonUrl?: string
   buttonPageId?: string
   buttonMessage?: string
+  disqualifyOutcome?: 'message' | 'specific_page' | 'url'
   automationName?: string
   // Aviso previo a la descalificación (opción de formulario importado).
   warnBeforeDisqualify?: boolean

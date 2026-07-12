@@ -982,6 +982,12 @@ function normalizeImportedHtmlConversionMeta(meta = {}) {
   if (eventName === SITE_META_NO_EVENT) return null
 
   const conversionType = normalizeImportedHtmlConversionType(rawConversionType, eventName)
+  const rawSubmitCondition = firstImportedHtmlConversionValue(parameterSource, [
+    'submitCondition',
+    'submit_condition',
+    'conversionCondition',
+    'conversion_condition'
+  ])
   const status = firstImportedHtmlConversionValue(parameterSource, ['status', 'estado']) ||
     (conversionType === 'appointment_scheduled'
       ? 'booked'
@@ -993,6 +999,7 @@ function normalizeImportedHtmlConversionMeta(meta = {}) {
     enabled: true,
     eventName,
     conversionType,
+    submitCondition: rawSubmitCondition ? normalizeSiteMetaSubmitCondition(rawSubmitCondition) : '',
     parameters: pruneSiteMetaEventParametersForEvent(parameterSource, eventName),
     label: firstImportedHtmlConversionValue(parameterSource, ['label', 'name', 'nombre']),
     source: firstImportedHtmlConversionValue(parameterSource, ['source', 'conversionSource', 'conversion_source']),
@@ -3129,6 +3136,16 @@ function normalizeImportedActionStep(input = {}, index = 0) {
   const buttonUrl = cleanString(source.buttonUrl || source.button_url || source.url)
   const buttonPageId = cleanString(source.buttonPageId || source.button_page_id || source.pageId || source.page_id)
   const buttonMessage = limitString(cleanString(source.buttonMessage || source.button_message || source.message), 500)
+  const rawDisqualifyOutcome = cleanString(source.disqualifyOutcome || source.disqualify_outcome).toLowerCase()
+  const disqualifyOutcome = action === 'disqualify'
+    ? ['message', 'specific_page', 'url'].includes(rawDisqualifyOutcome)
+      ? rawDisqualifyOutcome
+      : buttonPageId
+        ? 'specific_page'
+        : buttonUrl
+          ? 'url'
+          : 'message'
+    : ''
   const automationName = limitString(cleanString(source.automationName || source.automation_name || source.automation || source.label), 140)
   const warnBeforeDisqualify = normalizeBoolean(source.warnBeforeDisqualify ?? source.warn_before_disqualify)
   const disqualifyNoticeMessage = limitString(cleanString(source.disqualifyNoticeMessage || source.disqualify_notice_message), 300)
@@ -3145,12 +3162,25 @@ function normalizeImportedActionStep(input = {}, index = 0) {
     throw error
   }
 
+  if (action === 'disqualify' && disqualifyOutcome === 'specific_page' && !buttonPageId) {
+    const error = new Error('Selecciona la página para contactos no calificados')
+    error.status = 400
+    throw error
+  }
+
+  if (action === 'disqualify' && disqualifyOutcome === 'url' && !safeHref(buttonUrl, '')) {
+    const error = new Error('Usa una URL válida para contactos no calificados')
+    error.status = 400
+    throw error
+  }
+
   return {
     id: cleanString(source.id) || `action-${index + 1}`,
     action,
     buttonUrl,
     buttonPageId,
     buttonMessage,
+    ...(disqualifyOutcome ? { disqualifyOutcome } : {}),
     automationName,
     warnBeforeDisqualify,
     disqualifyNoticeMessage
@@ -6665,7 +6695,11 @@ Marcado para edición rapida:
 - En botones editables, cuando sepas la acción, agrega data-rstk-button-actions como JSON de acciones. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
-- En radio buttons y checkboxes, no agregues acciones para descalificar o detener el flujo. Si una opción debe avanzar, agrega data-rstk-choice-actions con acciones permitidas como submit, next_page, specific_page o url.
+- En radio buttons, checkboxes y <option> de select, usa data-rstk-choice-actions cuando una respuesta cambie el resultado. Para descartar candidatos usa action="disqualify"; no uses specific_page o url solos porque navegan pero no marcan la submission como descalificada.
+- El descarte admite tres resultados en el mismo objeto: disqualifyOutcome="message" con buttonMessage, disqualifyOutcome="specific_page" con buttonPageId, o disqualifyOutcome="url" con buttonUrl.
+- Ejemplo de descarte a página: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
+- Si cualquier opción puede descalificar, agrega data-rstk-conversion-condition="qualified_only" al <form> final. Ristak guarda todos los submits, pero solo manda Pixel/CAPI cuando el resultado sea calificado.
+- Nunca llames fbq, gtag, dataLayer ni eventos de conversión manuales desde el HTML por click o submit. Ristak emite la conversión después del veredicto del backend.
 - Marca secciones principales con data-rstk-section y un nombre claro.
 - No envuelvas textos editables en demasiadas etiquetas. Deja un elemento claro para cada texto importante.
 
@@ -6691,6 +6725,7 @@ Conversiones Meta/CAPI para HTML importado:
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI configurados.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
+- Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
 - Para citas agendadas usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada.
 - Para pagos confirmados usa data-rstk-conversion-event="Purchase", data-rstk-conversion-type="purchase", data-rstk-conversion-value, data-rstk-conversion-content-name y data-rstk-conversion-order-id o data-rstk-payment-id. No marques Purchase en intento de pago, precio mostrado o click de checkout; solo en confirmacion real o pagina de gracias.
@@ -21335,7 +21370,8 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
     };
     window.ristakMetaTrackSiteSubmit = function(eventId, customData, eventName) {
       const submitCustomData = Object.assign({}, ${scriptJson(submitConfiguredCustomData)}, customData || {});
-      if (RISTAK_META_SUBMIT_CONDITION === 'qualified_only' && ristakMetaSubmitIsDisqualified(submitCustomData)) return;
+      const submitCondition = String(submitCustomData.submit_condition || submitCustomData.submitCondition || RISTAK_META_SUBMIT_CONDITION || 'always');
+      if (submitCondition === 'qualified_only' && ristakMetaSubmitIsDisqualified(submitCustomData)) return;
       window.ristakMetaTrackSiteEvent(
         eventName || ${JSON.stringify(submitEventName)},
         eventId,
@@ -21459,6 +21495,7 @@ function buildImportedHtmlConversionBaseCustomData(conversion = {}, site = {}, o
     ...(conversion.source ? { imported_conversion_source: conversion.source } : {}),
     ...(accountCurrency ? { currency: accountCurrency } : {}),
     ...(status ? { status } : {}),
+    ...(conversion.submitCondition ? { submit_condition: conversion.submitCondition } : {}),
     ...(conversion.contentName ? { content_name: conversion.contentName } : { content_name: site.title || site.name }),
     ...(conversion.contentCategory ? { content_category: conversion.contentCategory } : {}),
     ...(conversion.orderId ? { order_id: conversion.orderId } : {}),
@@ -21661,6 +21698,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         );
         setIfValue(data, 'eventName', firstAttr(element, ['data-rstk-conversion-event', 'data-ristak-conversion-event', 'data-ristack-conversion-event', 'data-rstk-meta-event-name', 'data-meta-event-name']));
         setIfValue(data, 'conversionType', firstAttr(element, ['data-rstk-conversion-type', 'data-ristak-conversion-type', 'data-ristack-conversion-type']));
+        setIfValue(data, 'submitCondition', firstAttr(element, ['data-rstk-conversion-condition', 'data-ristak-conversion-condition', 'data-ristack-conversion-condition', 'data-rstk-submit-condition', 'data-ristak-submit-condition', 'data-ristack-submit-condition']));
         setIfValue(data, 'value', firstAttr(element, ['data-rstk-conversion-value', 'data-ristak-conversion-value', 'data-ristack-conversion-value']));
         setIfValue(data, 'currency', firstAttr(element, ['data-rstk-conversion-currency', 'data-ristak-conversion-currency', 'data-ristack-conversion-currency']));
         setIfValue(data, 'contentName', firstAttr(element, ['data-rstk-conversion-content-name', 'data-ristak-conversion-content-name', 'data-ristack-conversion-content-name']));
@@ -21833,7 +21871,8 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
               window.ristakMetaTrackSiteSubmit(metaEventId, Object.assign({
                 status: submission.status || 'received',
                 conversion_type: 'form_submit',
-                imported_html: true
+                imported_html: true,
+                submit_condition: importedConversion && importedConversion.submitCondition ? importedConversion.submitCondition : ''
               }, capiCustomData), (submission.capi && submission.capi.eventName) || (importedConversion && importedConversion.eventName));
             }
             if (window.ristakNativeRememberContact && submission.contactId) {
@@ -21847,6 +21886,18 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             if (immediateDisqualifyChoice) {
               showImportedMessageOnly(form, (disqualifyingAction && disqualifyingAction.buttonMessage) || submission.message || 'Gracias. Por ahora no califica.');
               window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
+              if (
+                disqualifyingAction &&
+                (disqualifyingAction.buttonPageId || disqualifyingAction.buttonUrl) &&
+                typeof window.ristakRunImportedActions === 'function'
+              ) {
+                window.setTimeout(() => {
+                  window.ristakRunImportedActions(form, [disqualifyingAction], {
+                    source: 'choice_option',
+                    submission
+                  });
+                }, 200);
+              }
             } else {
               form.reset();
               clearImportedNotice();
@@ -22054,7 +22105,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
       });
       const splitActions = (actions) => {
         const terminalNames = new Set(['url', 'next_page', 'specific_page']);
-        const terminal = actions.find(item => terminalNames.has(item.action) || (item.action === 'disqualify' && item.buttonPageId));
+        const terminal = actions.find(item => terminalNames.has(item.action) || (item.action === 'disqualify' && (item.buttonPageId || item.buttonUrl)));
         const beforeTerminal = actions.filter(item => item !== terminal);
         return { beforeTerminal, terminal };
       };
@@ -22100,6 +22151,10 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
         if (action.action === 'next_page') {
           const nextPageId = getNextPageId();
           if (nextPageId) window.location.href = getPageHref(nextPageId);
+          return;
+        }
+        if (action.action === 'disqualify' && action.buttonUrl) {
+          window.location.href = preserveUrl(action.buttonUrl);
           return;
         }
         if (action.action === 'specific_page' || action.action === 'disqualify') {
@@ -26681,7 +26736,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   const submitCondition = videoGateMetaConfig
     ? 'always'
     : useImportedConversionMeta
-      ? siteSubmitMeta.submitCondition
+      ? importedConversionMeta.submitCondition || siteSubmitMeta.submitCondition
       : useEmbeddedSubmitMeta
         ? embeddedSubmitMeta.submitCondition
         : siteSubmitMeta.submitCondition

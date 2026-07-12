@@ -475,6 +475,113 @@ test('imported HTML forms can declare Purchase conversion metadata with account 
   })
 })
 
+test('imported HTML qualification rules keep the submit but suppress Pixel/CAPI for disqualified contacts', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const email = `html-qualified-only-${suffix}@example.test`
+  let siteId = ''
+  let sourceFormId = ''
+
+  await withPublicDomain(async () => {
+    await withMetaGraphMock(async metaCalls => {
+      try {
+        const html = `
+          <!doctype html>
+          <html>
+            <head><title>Filtro importado</title></head>
+            <body>
+              <form
+                id="filtro"
+                data-rstk-form-id="filtro"
+                data-rstk-conversion-event="Lead"
+                data-rstk-conversion-type="form_submit"
+                data-rstk-conversion-condition="qualified_only">
+                <input id="email" name="email" type="email" data-rstk-field="email">
+                <label>
+                  <input
+                    type="radio"
+                    name="candidato"
+                    value="no"
+                    data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"url","buttonUrl":"https://example.test/no-califica"}]'>
+                  No califico
+                </label>
+                <button type="submit">Enviar</button>
+              </form>
+            </body>
+          </html>
+        `
+        const created = await createImportedSiteFromHtml({
+          filename: 'filtro-importado.html',
+          fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+          siteType: 'landing_page',
+          name: `Filtro Importado ${suffix}`
+        })
+        siteId = created.site.id
+        sourceFormId = created.import.formMappings[0]?.formSiteId || ''
+        await db.run(
+          "UPDATE public_sites SET status = 'published', meta_capi_enabled = 1, meta_event_name = 'Lead' WHERE id = ?",
+          [siteId]
+        )
+
+        const rendered = await renderPublicSiteHtml({
+          ...created.site,
+          status: 'published',
+          metaCapiEnabled: true,
+          metaEventName: 'Lead'
+        }, {
+          pageId: 'page-1',
+          trackingEnabled: true,
+          preview: false
+        })
+        assert.match(rendered, /data-rstk-conversion-condition="qualified_only"/)
+        assert.match(rendered, /setIfValue\(data, 'submitCondition'/)
+        assert.match(rendered, /submit_condition: importedConversion && importedConversion\.submitCondition/)
+        assert.match(rendered, /action === 'disqualify' && action\.buttonUrl/)
+
+        const result = await createSubmissionFromRequest(
+          publicReq(`/${created.site.slug}`),
+          {
+            siteId,
+            importedFormId: created.import.formMappings[0].formId,
+            rawFields: { email, candidato: 'no' },
+            meta: {
+              pageUrl: `https://example.test/${created.site.slug}?fbclid=qualified-only`,
+              eventTime: 1700000060000,
+              visitorId: 'visitor-imported-qualified-only',
+              fbp: 'fb.1.1700000060.123123123',
+              importedDisqualified: true,
+              importedDisqualifiedMessage: 'Gracias. Por ahora no calificas.',
+              importedChoiceActions: [{
+                action: 'disqualify',
+                disqualifyOutcome: 'url',
+                buttonUrl: 'https://example.test/no-califica'
+              }],
+              importedConversion: {
+                eventName: 'Lead',
+                conversionType: 'form_submit',
+                submitCondition: 'qualified_only'
+              }
+            }
+          }
+        )
+
+        assert.equal(result.status, 'disqualified')
+        assert.ok(result.submissionId)
+        assert.equal(result.capi.sent, false)
+        assert.equal(result.capi.reason, 'qualified_only_disqualified')
+        assert.equal(metaCalls.length, 0)
+        const stored = await db.get('SELECT status, meta_json FROM public_site_submissions WHERE id = ?', [result.submissionId])
+        assert.equal(stored.status, 'disqualified')
+        assert.equal(JSON.parse(stored.meta_json).formDisqualified, true)
+      } finally {
+        if (siteId) await deleteSite(siteId).catch(() => undefined)
+        if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
+        await db.run('DELETE FROM sessions WHERE visitor_id = ?', ['visitor-imported-qualified-only']).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+      }
+    })
+  })
+})
+
 test('standalone forms can map option response value and text into CAPI parameters', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const email = `option-meta-${suffix}@example.test`

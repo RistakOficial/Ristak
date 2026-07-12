@@ -217,6 +217,39 @@ esta confirmado. Ristak manda CAPI server-side y el Pixel del navegador con el
 mismo `event_id`; Meta deduplica ambos. La moneda de `Purchase` sale de
 `account_currency`, no del HTML externo.
 
+### Submitted vs Qualified En Formularios HTML
+
+Un submit guardado no siempre es una conversion calificada. Cuando radio,
+checkbox o select puedan descartar candidatos, el formulario debe declarar
+`data-rstk-conversion-condition="qualified_only"` y la opcion descartada debe
+usar `action="disqualify"`:
+
+```html
+<form
+  data-rstk-form-id="aplicacion"
+  data-rstk-conversion-event="Lead"
+  data-rstk-conversion-type="form_submit"
+  data-rstk-conversion-condition="qualified_only">
+  <label>
+    <input
+      type="radio"
+      name="candidato"
+      value="no"
+      data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>
+    No cumplo los requisitos
+  </label>
+  <button type="submit">Enviar</button>
+</form>
+```
+
+`disqualifyOutcome` acepta `message` + `buttonMessage`, `specific_page` +
+`buttonPageId`, o `url` + `buttonUrl`. El backend guarda la submission y el
+contacto con estado `disqualified`, pero omite tanto CAPI como el Pixel del
+navegador. En la configuracion Meta del formulario, `SUBMITTED` conserva el
+evento para todos los envios y `QUALIFIED` lo limita a quienes no fueron
+descalificados. Un HTML importado no debe llamar `fbq`, `gtag` o `dataLayer` por
+su cuenta: Ristak dispara la conversion despues de conocer el veredicto.
+
 ### Elementos Nativos Ristak En HTML Importado
 
 Cuando el HTML externo quiere usar la misma configuracion nativa del editor de

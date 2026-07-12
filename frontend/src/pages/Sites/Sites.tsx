@@ -425,8 +425,8 @@ const CONNECTED_META_DEFAULT_PAGE_VIEW_EVENT = 'none'
 const CONNECTED_META_DEFAULT_CALENDAR_EVENT = 'Schedule'
 
 const metaSubmitConditionOptions: Array<{ value: SiteMetaSubmitCondition; label: string }> = [
-  { value: 'always', label: 'Enviar al terminar formulario' },
-  { value: 'qualified_only', label: 'Solo "CALIFICADOS"' }
+  { value: 'always', label: 'Todos los envíos (SUBMITTED)' },
+  { value: 'qualified_only', label: 'Solo calificados (QUALIFIED)' }
 ]
 
 const normalizeMetaEventName = (value?: string, fallback = 'Lead') =>
@@ -2095,7 +2095,10 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Si un dato de conversión sale de un campo, marca ese campo con data-rstk-conversion-param="value|contentName|orderId|appointment_start_time|appointment_end_time|calendarName|paymentId|status".
 - Ejemplo cita: <form data-rstk-form-id="agenda" data-rstk-conversion-event="Schedule" data-rstk-conversion-type="appointment_scheduled" data-rstk-calendar-name="Consulta inicial"> ... <input type="hidden" data-rstk-conversion-param="appointment_start_time" value="2026-08-15T17:00:00Z"> ... </form>.
 - Ejemplo pago: <form data-rstk-form-id="checkout" data-rstk-conversion-event="Purchase" data-rstk-conversion-type="purchase" data-rstk-conversion-value="1499" data-rstk-conversion-content-name="Consulta premium" data-rstk-conversion-order-id="ORD-123"> ... </form>.
-- Radio/checkbox: agrúpalos con el mismo name y usa data-rstk-choice-actions en cada input cuando una opción tenga regla.
+- Calificación en radio/checkbox/select: agrupa radio/checkbox con el mismo name y coloca data-rstk-choice-actions en el input u option que tenga una regla. Para descartar usa action="disqualify"; no uses specific_page o url solos porque navegan pero no marcan al contacto como no calificado.
+- Resultado del descarte: usa disqualifyOutcome="message" + buttonMessage, disqualifyOutcome="specific_page" + buttonPageId, o disqualifyOutcome="url" + buttonUrl. Ejemplo: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
+- Si cualquier respuesta puede descalificar, el <form> final debe llevar data-rstk-conversion-condition="qualified_only". Ristak guardará todos los submits, pero solo enviará Pixel/CAPI cuando el resultado sea calificado.
+- Nunca dispares fbq, gtag, dataLayer ni eventos de conversión manuales al click o submit. Ristak emite el evento después de conocer el resultado real.
 - Imágenes: usa <img src="..." alt="..." data-rstk-editable="true" data-rstk-edit-type="image" data-rstk-edit-id="imagen-hero">.
 - Videos: NUNCA dejes un <video>, <iframe>, <embed> u <object> suelto. Siempre envuélvelo en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id único, data-rstk-label y data-rstk-video-url.
 - Video MP4/WebM/MOV correcto:
@@ -16890,6 +16893,19 @@ const importedChoiceQuickActions: Array<{ value: '' | ImportedButtonAction; labe
   { value: 'specific_page', label: 'Enviar a página específica' },
   { value: 'url', label: 'Redirigir a URL' }
 ]
+
+type ImportedDisqualifyOutcome = 'message' | 'specific_page' | 'url'
+const importedDisqualifyOutcomes: Array<{ value: ImportedDisqualifyOutcome; label: string }> = [
+  { value: 'message', label: 'Mostrar mensaje' },
+  { value: 'specific_page', label: 'Ir a una página de este sitio' },
+  { value: 'url', label: 'Redirigir a una URL' }
+]
+
+const getImportedDisqualifyOutcome = (step?: ImportedButtonActionStep): ImportedDisqualifyOutcome => {
+  if (step?.disqualifyOutcome === 'specific_page' || step?.buttonPageId) return 'specific_page'
+  if (step?.disqualifyOutcome === 'url' || step?.buttonUrl) return 'url'
+  return 'message'
+}
 const importedChoiceQuickActionValues = new Set<ImportedButtonAction>(
   importedChoiceQuickActions
     .map(option => option.value)
@@ -16935,6 +16951,8 @@ const areImportedOptionQuickActionsValid = (options: ImportedFormFieldOption[]) 
   if (!step) return true
   if (step.action === 'specific_page') return Boolean(step.buttonPageId)
   if (step.action === 'url') return Boolean(step.buttonUrl?.trim())
+  if (step.action === 'disqualify' && getImportedDisqualifyOutcome(step) === 'specific_page') return Boolean(step.buttonPageId)
+  if (step.action === 'disqualify' && getImportedDisqualifyOutcome(step) === 'url') return Boolean(step.buttonUrl?.trim())
   return true
 })
 
@@ -16979,6 +16997,7 @@ const makeImportedActionStep = (action: ImportedButtonAction, patch: Partial<Imp
   buttonUrl: patch.buttonUrl || '',
   buttonPageId: patch.buttonPageId || '',
   buttonMessage: patch.buttonMessage || '',
+  disqualifyOutcome: patch.disqualifyOutcome,
   automationName: patch.automationName || '',
   warnBeforeDisqualify: patch.warnBeforeDisqualify === true,
   disqualifyNoticeMessage: patch.disqualifyNoticeMessage || '',
@@ -17006,6 +17025,9 @@ const normalizeImportedActionStep = (value: unknown, fallbackId = ''): ImportedB
     buttonUrl: String(record.buttonUrl || record.button_url || record.url || ''),
     buttonPageId: String(record.buttonPageId || record.button_page_id || record.pageId || ''),
     buttonMessage: String(record.buttonMessage || record.button_message || record.message || ''),
+    disqualifyOutcome: ['message', 'specific_page', 'url'].includes(String(record.disqualifyOutcome || record.disqualify_outcome))
+      ? String(record.disqualifyOutcome || record.disqualify_outcome) as ImportedButtonActionStep['disqualifyOutcome']
+      : undefined,
     automationName: String(record.automationName || record.automation_name || record.automation || ''),
     warnBeforeDisqualify: record.warnBeforeDisqualify === true || record.warn_before_disqualify === true,
     disqualifyNoticeMessage: String(record.disqualifyNoticeMessage || record.disqualify_notice_message || '')
@@ -17594,6 +17616,7 @@ const serializeImportedCodeButtonActions = (actions: ImportedButtonActionStep[])
     buttonUrl: step.buttonUrl?.trim() || '',
     buttonPageId: step.buttonPageId?.trim() || '',
     buttonMessage: step.buttonMessage?.trim() || '',
+    disqualifyOutcome: step.disqualifyOutcome,
     automationName: step.automationName?.trim() || '',
     warnBeforeDisqualify: step.warnBeforeDisqualify === true,
     disqualifyNoticeMessage: step.disqualifyNoticeMessage?.trim() || ''
@@ -18998,6 +19021,58 @@ const ImportedFieldOptionsEditor: React.FC<{
         )}
         {getImportedOptionQuickAction(option) === 'disqualify' && (
           <label className={styles.importedFieldOptionAction}>
+            <span>Qué pasa al descalificar</span>
+            <CustomSelect
+              value={getImportedDisqualifyOutcome(option.actions?.[0])}
+              disabled={disabled}
+              portal
+              onChange={(event) => {
+                const disqualifyOutcome = event.target.value as ImportedDisqualifyOutcome
+                onPatch(index, patchImportedOptionActionStep(option, {
+                  disqualifyOutcome,
+                  buttonPageId: disqualifyOutcome === 'specific_page' ? option.actions?.[0]?.buttonPageId || '' : '',
+                  buttonUrl: disqualifyOutcome === 'url' ? option.actions?.[0]?.buttonUrl || '' : '',
+                  buttonMessage: disqualifyOutcome === 'message' ? option.actions?.[0]?.buttonMessage || '' : ''
+                }))
+              }}
+            >
+              {importedDisqualifyOutcomes.map(item => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
+        {getImportedOptionQuickAction(option) === 'disqualify' && getImportedDisqualifyOutcome(option.actions?.[0]) === 'specific_page' && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>Página para no calificados</span>
+            <CustomSelect
+              value={option.actions?.[0]?.buttonPageId || ''}
+              disabled={disabled}
+              portal
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonPageId: event.target.value }))}
+            >
+              <option value="">Selecciona una página</option>
+              {targetPages.map(page => (
+                <option key={page.id} value={page.id}>{page.title || page.id}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
+        {getImportedOptionQuickAction(option) === 'disqualify' && getImportedDisqualifyOutcome(option.actions?.[0]) === 'url' && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>URL para no calificados</span>
+            <input
+              value={option.actions?.[0]?.buttonUrl || ''}
+              disabled={disabled}
+              placeholder="https://tusitio.com/no-califica"
+              name={`${namePrefix}-disqualify-url-${index}`}
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonUrl: event.target.value }))}
+            />
+          </label>
+        )}
+        {getImportedOptionQuickAction(option) === 'disqualify' && getImportedDisqualifyOutcome(option.actions?.[0]) === 'message' && (
+          <label className={styles.importedFieldOptionAction}>
             <span>Mensaje de descalificación</span>
             <input
               value={option.actions?.[0]?.buttonMessage || ''}
@@ -19039,7 +19114,7 @@ const ImportedFieldOptionsEditor: React.FC<{
       </div>
     ))}
     <p className={styles.importedFieldOptionsHint}>
-      Cada opción puede quedarse normal, enviar el formulario, descalificar o mandar a una página/URL después del envío.
+      Para un descarte usa “Descalificar”. Mandar solo a una página o URL no marca al contacto como no calificado.
     </p>
   </div>
 )
@@ -26051,6 +26126,11 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       '- Usa <form data-rstk-form-id="lead-form"> y campos con name, id, placeholder, data-rstk-editable="true", data-rstk-edit-type="form_field", data-rstk-edit-id y data-rstk-label.',
       '- Marca email y teléfono con data-rstk-field="email" o data-rstk-field="phone" cuando existan.',
       '- Si un botón envía el formulario, debe estar dentro del mismo <form> y usar una acción submit compatible.',
+      '- Para radio, checkbox o select que filtren candidatos, agrega data-rstk-choice-actions al input u option descartado con action="disqualify". No uses specific_page o url solos para un descarte porque no marcan el resultado como no calificado.',
+      '- El descarte puede mostrar mensaje con disqualifyOutcome="message" + buttonMessage, ir a página con disqualifyOutcome="specific_page" + buttonPageId, o ir a URL con disqualifyOutcome="url" + buttonUrl.',
+      '- Ejemplo: <input type="radio" name="candidato" value="no" data-rstk-choice-actions=\'[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]\'>.',
+      '- Si existe cualquier respuesta de descarte, agrega data-rstk-conversion-condition="qualified_only" al <form> final. El submit se guarda, pero Pixel/CAPI solo se envían cuando el resultado califica.',
+      '- No dispares fbq, gtag, dataLayer ni eventos manuales al click o submit; Ristak espera el veredicto del backend.',
       ''
     )
   } else {
