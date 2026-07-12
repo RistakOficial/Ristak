@@ -29,6 +29,13 @@ export const databaseDialect = usePostgres ? 'postgres' : 'sqlite'
 let db
 const databaseTransactionContext = new AsyncLocalStorage()
 const databaseConnectionContext = new AsyncLocalStorage()
+let runDatabaseInitialization = (callback) => callback()
+
+// Las instalaciones grandes pueden tener un statement_timeout conservador a
+// nivel de rol (por ejemplo 10 s). Ese límite sí conviene para consultas
+// normales, pero no para el arranque idempotente que prepara cientos de tablas,
+// índices y backfills antes de publicar el contenedor nuevo.
+const POSTGRES_INITIALIZATION_STATEMENT_TIMEOUT_MS = 120_000
 
 const DEFAULT_REPORT_TABLE_COLUMN_CONFIG = [
   ['date', true],
@@ -466,7 +473,7 @@ if (usePostgres) {
       let operationError = null
       let releaseError = null
       try {
-        result = await operation(createPostgresAdapter(client))
+        result = await operation(createPostgresAdapter(client), client)
       } catch (error) {
         operationError = error
       }
@@ -495,6 +502,31 @@ if (usePostgres) {
       throw operationError
     }
   }
+
+  runDatabaseInitialization = (callback) => withPostgresClient(async (clientDb, client) => {
+    await client.query(`SET statement_timeout = ${POSTGRES_INITIALIZATION_STATEMENT_TIMEOUT_MS}`)
+    let operationError = null
+
+    try {
+      return await databaseConnectionContext.run(
+        { client, db: clientDb },
+        callback
+      )
+    } catch (error) {
+      operationError = error
+      throw error
+    } finally {
+      try {
+        // La conexión vuelve al pool con el límite normal definido por la base.
+        await client.query('RESET statement_timeout')
+      } catch (resetError) {
+        if (!operationError) throw resetError
+        logger.warn(`No se pudo restaurar statement_timeout después de inicializar la base: ${describePostgresConnectionError(resetError)}`)
+      }
+    }
+  }, {
+    label: 'inicialización de base de datos'
+  })
 
   async function withPostgresAdvisoryLock(lockName, callback, options = {}) {
     if (typeof callback !== 'function') {
@@ -7824,7 +7856,7 @@ async function migrateTagIdsToSlugs() {
 // Render necesita que el proceso abra puerto rapido para no marcar el deploy
 // como "no open ports detected". El servidor espera esta promesa antes de
 // habilitar las rutas reales.
-export const databaseReady = initTables()
+export const databaseReady = runDatabaseInitialization(initTables)
 
 if (process.env.NODE_ENV === 'production') {
   databaseReady.catch(() => {})
