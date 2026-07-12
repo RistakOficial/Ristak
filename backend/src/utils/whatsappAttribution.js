@@ -37,6 +37,10 @@ const CTWA_PAYLOAD_KEYS = ['ctwaPayload', 'ctwaSignals', 'ctwa_payload', 'ctwa_s
 const MAX_TEXT_LENGTH = 50000
 const MAX_JSON_CANDIDATES = 50
 const RISTAK_AD_ID_PATTERN = /\brstkad_id\s*=\s*(\d+)!/i
+const RISTAK_AD_ID_MARKER_PATTERN = /\brstkad_id\s*=\s*\d+!/ig
+const RISTAK_AD_ID_PARENTHESIZED_MARKER_PATTERN = /\(\s*rstkad_id\s*=\s*\d+!\s*\)/ig
+const RISTAK_AD_ID_BRACKETED_MARKER_PATTERN = /\[\s*rstkad_id\s*=\s*\d+!\s*\]/ig
+const RISTAK_AD_ID_BRACED_MARKER_PATTERN = /\{\s*rstkad_id\s*=\s*\d+!\s*\}/ig
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -60,6 +64,26 @@ export function extractRistakAdIdFromText(value) {
 
   const match = text.match(RISTAK_AD_ID_PATTERN)
   return cleanAttributionId(match?.[1] || '')
+}
+
+// El marcador viaja dentro del texto para rescatar la atribución cuando el
+// proveedor no entrega source_id. Es metadata, no contenido del cliente. Se
+// quita después de extraer el ID y también consume su envoltura cuando viene
+// como `(rstkad_id=...!)`, para no dejar `()` flotando en ningún chat.
+export function stripRistakAdIdMarkersFromText(value) {
+  const text = cleanString(value)
+  if (!text || !RISTAK_AD_ID_PATTERN.test(text)) return text
+
+  return text
+    .replace(RISTAK_AD_ID_PARENTHESIZED_MARKER_PATTERN, ' ')
+    .replace(RISTAK_AD_ID_BRACKETED_MARKER_PATTERN, ' ')
+    .replace(RISTAK_AD_ID_BRACED_MARKER_PATTERN, ' ')
+    .replace(RISTAK_AD_ID_MARKER_PATTERN, ' ')
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 function findRistakAdIdInTexts(texts = []) {

@@ -730,8 +730,13 @@ mensajes directos. Como fallback
 operativo para WhatsApp, si el texto recibido contiene el marcador
 `rstkad_id=<ad_id>!`, Ristak extrae solo los digitos entre `=` y `!`, lo trata
 como `referral_source_id` de anuncio y oculta ese marcador del texto visible del
-mensaje. El `!` es obligatorio para no atribuir por accidente otros numeros que
-el contacto haya escrito.
+mensaje en el contrato de backend compartido por desktop, `/movil`, Android e
+iOS. Si el marcador viene envuelto como `(rstkad_id=<ad_id>!)`,
+`[rstkad_id=<ad_id>!]` o `{rstkad_id=<ad_id>!}`, también se elimina la envoltura
+completa para que el globo no deje `()`, `[]` ni `{}` vacíos. El texto real del
+contacto se conserva y el ID continúa disponible en los campos de atribución y
+en la vista previa del anuncio. El `!` es obligatorio para no atribuir por
+accidente otros números que el contacto haya escrito.
 
 El chat desktop (`/chat`) y el chat movil (`/movil`) permiten responder un
 globo especifico y reaccionar a mensajes recibidos cuando el canal expone

@@ -128,7 +128,7 @@ test('contact journey enriches WhatsApp messages that only carry rstkad_id marke
       transport: 'api',
       direction: 'inbound',
       message_type: 'text',
-      message_text: `Hola me gustaria saber costos rstkad_id=${adId}! mi cel termina en 7788`,
+      message_text: `Hola me gustaria saber costos (rstkad_id=${adId}!) mi cel termina en 7788`,
       message_timestamp: '2099-07-04T12:01:00.000Z',
       created_at: '2099-07-04T12:01:00.000Z'
     })
@@ -137,6 +137,7 @@ test('contact journey enriches WhatsApp messages that only carry rstkad_id marke
     const message = journey.find((event) => event.type === 'whatsapp_message')
 
     assert.ok(message)
+    assert.equal(message.data.message_text, 'Hola me gustaria saber costos mi cel termina en 7788')
     assert.equal(message.data.referral_source_id, adId)
     assert.equal(message.data.referral_source_type, 'ad')
     assert.equal(message.data.is_ad_attributed, true)

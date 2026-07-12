@@ -82,7 +82,10 @@ import {
   normalizeContactNameFields,
   splitContactName
 } from '../utils/contactNameFormatter.js'
-import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
+import {
+  detectWhatsAppAttributionFields,
+  stripRistakAdIdMarkersFromText
+} from '../utils/whatsappAttribution.js'
 import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
 import { getEmailStatus } from '../services/emailService.js'
 import { hasFeature } from '../services/licenseService.js'
@@ -5930,12 +5933,12 @@ export const getContactJourney = async (req, res) => {
       const data = {
         source: 'WhatsApp',
         phone: msg.phone,
-        message_text: msg.message_content,
+        message_text: stripRistakAdIdMarkersFromText(msg.message_content),
         referral_source_url: msg.referral_source_url,
         referral_source_type: msg.referral_source_type || detectedAttribution.sourceType,
         referral_source_id: referralSourceId,
-        referral_headline: msg.referral_headline || detectedAttribution.headline,
-        referral_body: msg.referral_body || detectedAttribution.body,
+        referral_headline: stripRistakAdIdMarkersFromText(msg.referral_headline || detectedAttribution.headline),
+        referral_body: stripRistakAdIdMarkersFromText(msg.referral_body || detectedAttribution.body),
         referral_image_url: msg.referral_image_url,
         referral_video_url: msg.referral_video_url,
         referral_thumbnail_url: msg.referral_thumbnail_url,
@@ -6071,7 +6074,7 @@ export const getContactJourney = async (req, res) => {
         provider: msg.provider || 'ycloud',
         source_adapter: msg.source_adapter || (msg.transport === 'qr' ? 'baileys' : 'ycloud'),
         routing_reason: msg.routing_reason || null,
-        message_text: msg.message_text,
+        message_text: stripRistakAdIdMarkersFromText(msg.message_text),
         message_type: msg.message_type,
         ...media,
         ...payloadLocation,
@@ -6079,8 +6082,8 @@ export const getContactJourney = async (req, res) => {
         referral_source_type: detectedSourceType,
         referral_ctwa_clid: msg.detected_ctwa_clid || detectedAttribution.ctwaClid,
         referral_source_id: detectedSourceId,
-        referral_headline: msg.detected_headline || detectedAttribution.headline,
-        referral_body: msg.detected_body || detectedAttribution.body,
+        referral_headline: stripRistakAdIdMarkersFromText(msg.detected_headline || detectedAttribution.headline),
+        referral_body: stripRistakAdIdMarkersFromText(msg.detected_body || detectedAttribution.body),
         ...referralPreview,
         referral_source_app: msg.detected_source_app || detectedAttribution.sourceApp,
         referral_entry_point: msg.detected_entry_point || detectedAttribution.entryPoint,

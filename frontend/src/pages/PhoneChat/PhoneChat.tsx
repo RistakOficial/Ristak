@@ -90,6 +90,7 @@ import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
+import { stripRistakAdIdMarkersFromText } from '@/utils/whatsappAttributionText'
 import {
   buildChatActivityMarkers,
   isChatActivityEvent,
@@ -3461,7 +3462,7 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
   journey.forEach((event, eventIndex) => {
     if (event.type !== 'whatsapp_message' && event.type !== 'meta_message') return
 
-    const text = String(event.data?.message_text || event.data?.message || event.data?.body || '').trim()
+    const text = stripRistakAdIdMarkersFromText(event.data?.message_text || event.data?.message || event.data?.body || '')
     const direction = normalizeWhatsAppBusinessDirection(event.data?.direction)
     const messageId = String(
       event.data?.whatsapp_api_message_id ||
@@ -3591,7 +3592,10 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   const postDeleted = isTruthyDataFlag(eventData.post_deleted || eventData.postDeleted || eventData.post_removed || eventData.postRemoved || eventData.post_unavailable || eventData.postUnavailable)
   const attachment = getJourneyMediaAttachment(event)
   const location = getJourneyLocation(event)
-  const text = cleanLocationMessageText(cleanAttachmentMessageText(rawText, attachment), location) || getCommentFallbackText(messageType, status, postDeleted)
+  const text = cleanLocationMessageText(
+    cleanAttachmentMessageText(stripRistakAdIdMarkersFromText(rawText), attachment),
+    location
+  ) || getCommentFallbackText(messageType, status, postDeleted)
 
   if (!text && !messageType && !attachment && !location) return null
 

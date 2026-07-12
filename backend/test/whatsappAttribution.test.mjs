@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 
 import {
   detectWhatsAppAttributionFields,
-  extractRistakAdIdFromText
+  extractRistakAdIdFromText,
+  stripRistakAdIdMarkersFromText
 } from '../src/utils/whatsappAttribution.js'
 
 test('extracts Ristak ad id only from the rstkad_id marker terminated by bang', () => {
@@ -13,6 +14,25 @@ test('extracts Ristak ad id only from the rstkad_id marker terminated by bang', 
   )
   assert.equal(extractRistakAdIdFromText('Hola 5551234567 sin marcador'), '')
   assert.equal(extractRistakAdIdFromText('Hola rstkad_id=3434597816743 sin cierre'), '')
+})
+
+test('hides the Ristak ad marker without leaving empty wrappers in chat text', () => {
+  assert.equal(
+    stripRistakAdIdMarkersFromText('Me gustaría recibir información (rstkad_id=6994538207438!)'),
+    'Me gustaría recibir información'
+  )
+  assert.equal(
+    stripRistakAdIdMarkersFromText('( rstkad_id = 6994538207438! )'),
+    ''
+  )
+  assert.equal(
+    stripRistakAdIdMarkersFromText('Hola rstkad_id=6994538207438! mi teléfono termina en 7788'),
+    'Hola mi teléfono termina en 7788'
+  )
+  assert.equal(
+    stripRistakAdIdMarkersFromText('Hola rstkad_id=6994538207438 sin cierre'),
+    'Hola rstkad_id=6994538207438 sin cierre'
+  )
 })
 
 test('uses Ristak ad id marker as WhatsApp ad attribution fallback', () => {

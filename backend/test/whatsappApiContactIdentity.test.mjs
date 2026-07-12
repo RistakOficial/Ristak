@@ -3310,7 +3310,7 @@ for (const scenario of [
         to: businessPhone,
         sendTime: messageAt,
         type: 'text',
-        text: { body: `Hola, me interesaria una consulta rstkad_id=${ristakAdId}!` },
+        text: { body: `Hola, me interesaria una consulta (rstkad_id=${ristakAdId}!)` },
         customerProfile: { name: 'Cliente Conflicto' },
         referral: {
           source_url: 'https://fb.me/conflict-test',
@@ -3331,13 +3331,14 @@ for (const scenario of [
       assert.equal(result.attributed, 1)
 
       const message = await db.get(`
-        SELECT id, contact_id, detected_source_id, detected_source_type
+        SELECT id, contact_id, message_text, detected_source_id, detected_source_type
         FROM whatsapp_api_messages
         WHERE ycloud_message_id = ?
       `, [messageId])
 
       assert.equal(message.detected_source_id, expectedAdId)
       assert.equal(message.detected_source_type, 'ad')
+      assert.equal(message.message_text, 'Hola, me interesaria una consulta')
 
       const contact = await db.get(`
         SELECT attribution_ad_id, attribution_ad_name, attribution_medium

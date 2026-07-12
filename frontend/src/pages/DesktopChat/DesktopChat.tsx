@@ -132,6 +132,7 @@ import {
 } from '@/utils/chatActivityMarkers'
 import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
 import { useAccountCurrency } from '@/hooks/useAccountCurrency'
+import { stripRistakAdIdMarkersFromText } from '@/utils/whatsappAttributionText'
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
@@ -160,7 +161,6 @@ type ManualAgentSendOptions = { skipAgentInterruptionConfirm?: boolean }
 type DesktopMessageReactionChannel = 'whatsapp_api' | 'whatsapp_qr' | 'messenger' | 'instagram'
 
 const RISTAK_AD_ID_PATTERN = /\brstkad_id\s*=\s*(\d+)!/i
-const RISTAK_AD_ID_MARKER_PATTERN = /\brstkad_id\s*=\s*\d+!/ig
 
 type ChatLocation = {
   latitude: number
@@ -1983,13 +1983,6 @@ function extractRistakAdIdFromMessageText(value = '') {
   return match?.[1]?.trim() || ''
 }
 
-function removeRistakAdIdMarkersFromMessageText(value = '') {
-  return String(value || '')
-    .replace(RISTAK_AD_ID_MARKER_PATTERN, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 function getMessageTypeLabel(type = '', fallback = 'Mensaje') {
   const normalized = type.toLowerCase()
   if (normalized.includes('gif')) return 'GIF'
@@ -2530,7 +2523,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const attachment = getJourneyMediaAttachment(event)
   const location = getJourneyLocation(event)
   const rawText = pickMessageText(data)
-  const text = cleanLocationMessageText(cleanAttachmentMessageText(removeRistakAdIdMarkersFromMessageText(rawText), attachment), location)
+  const text = cleanLocationMessageText(cleanAttachmentMessageText(stripRistakAdIdMarkersFromText(rawText), attachment), location)
   const messageType = String(data.message_type || data.messageType || data.type || '').trim()
   const normalizedMessageType = messageType.toLowerCase()
   if (normalizedMessageType === 'status') return null

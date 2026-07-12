@@ -28,7 +28,10 @@ import {
 import { getWhatsAppQrDripSettings } from './whatsappQrDripService.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
-import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
+import {
+  detectWhatsAppAttributionFields,
+  stripRistakAdIdMarkersFromText
+} from '../utils/whatsappAttribution.js'
 import { resolveWhatsAppProtocolMessageKey } from '../utils/whatsappProtocolIdentity.js'
 import { logger } from '../utils/logger.js'
 import { normalizeYCloudApiKeyInput } from '../utils/ycloudApiKey.js'
@@ -7463,7 +7466,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     payload.fallbackReason ||
     payload.routingReason
   )
-  const messageText = extractMessageText(normalizedMessage)
+  const rawMessageText = extractMessageText(normalizedMessage)
   const messageTimestamp = toDateTime(normalizedMessage.sendTime || normalizedMessage.createTime || normalizedMessage.updateTime || payload.createTime) || nowIso()
   const profileName = extractWhatsAppProfileName(normalizedMessage, identity.phone)
   const profileIdentity = identity.direction === 'inbound'
@@ -7482,9 +7485,15 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   }
   const profilePictureUrl = findProfilePictureUrlInValue(rawProfile)
   let attribution = await resolveWhatsAppAttributionSourceId(
-    extractAttribution(payload, normalizedMessage, messageText),
+    extractAttribution(payload, normalizedMessage, rawMessageText),
     messageTimestamp
   )
+  const messageText = stripRistakAdIdMarkersFromText(rawMessageText)
+  attribution = {
+    ...attribution,
+    headline: stripRistakAdIdMarkersFromText(attribution.headline),
+    body: stripRistakAdIdMarkersFromText(attribution.body)
+  }
   const localContact = await upsertLocalContact({
     contactId: contactIdHint,
     phone: identity.phone,
