@@ -191,7 +191,9 @@ Reglas de seleccion y promocion:
   `GET /act_<AD_ACCOUNT_ID>/adspixels` para la cuenta autorizada. Un ID escrito a
   mano o perteneciente a otra cuenta se rechaza.
 - Ads no crea `subscribed_apps`, rutas de relay ni entregas de webhook.
-- Al terminar arranca la sincronizacion de Ads y el cron `meta-ads`.
+- Al terminar arranca la sincronizacion de Ads y el cron `meta-ads`. Si se
+  eligio Dataset, tambien habilita los defaults de eventos reales para citas y
+  compras; Test Events no es un sustituto de esa activacion operativa.
 
 Una conexion Ads sin Dataset sigue siendo valida para campañas existentes,
 costos y reportes. CAPI se habilita solamente cuando coinciden estas tres
@@ -206,6 +208,11 @@ autorizacion o conservar la configuracion manual. No debe agregar
 `business_management`, asumir el primer Dataset ni fingir que el evento fue
 aceptado. Las pruebas reales se hacen con `test_event_code` y las reglas de
 `docs/CONVERSION_ATTRIBUTION.md`.
+
+Los eventos `business_messaging` de WhatsApp conservan la identidad del flujo
+WhatsApp activo: primero usan el WABA legacy explicito si existe y, si no, el
+WABA de WhatsApp Meta Direct. Ads OAuth no sustituye ni mezcla el token de
+WhatsApp; solo aporta Dataset y credencial CAPI.
 
 ### `ads_read` frente a `ads_management`
 
@@ -320,6 +327,10 @@ de terceros ni reutilizar el MCP externo del cliente.
   vacia.
 - Las mutaciones se serializan por tipo, no con un lock global que bloquee la
   otra superficie.
+- `meta_oauth_integrations` y `meta_oauth_integration_sessions` estan bloqueadas
+  por completo en el CRUD generico de API externa y en MCP; no basta con
+  redactar sus columnas secretas porque tampoco se pueden alterar estados,
+  activos ni IDs de conexion.
 - HighLevel no recibe, reconcilia ni borra credenciales OAuth.
 - Los crons `meta-social` y `meta-ads` se activan por su conexion local; el cron
   de version Meta puede seguir activo mientras cualquier superficie lo requiera.

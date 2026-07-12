@@ -24,7 +24,10 @@ const APP_CONFIG_KEYS = [
   'account_default_dial_code',
   'meta_payment_purchase_event_config',
   'meta_test_event_code',
-  'meta_test_event_code_set_at'
+  'meta_test_event_code_set_at',
+  'meta_whatsapp_business_account_id',
+  'whatsapp_meta_direct_waba_id',
+  'whatsapp_api_provider'
 ]
 
 const QR_LABEL_BUSINESS_PHONE = '+526561234567'
@@ -1211,8 +1214,9 @@ test('payment smart sends Messenger Business Messaging when the conversation liv
   }
 })
 
-test('calendar appointment Business Messaging events support Messenger and Instagram identities', async () => {
+test('calendar appointment Business Messaging events support Meta Direct, Messenger and Instagram identities', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const whatsappContactId = 'contact_meta_calendar_whatsapp_direct'
   const messengerContactId = 'contact_meta_calendar_messenger'
   const instagramContactId = 'contact_meta_calendar_instagram'
   const metaCalls = []
@@ -1223,8 +1227,15 @@ test('calendar appointment Business Messaging events support Messenger and Insta
 
     await snapshotMetaConfig(async () => {
       await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(whatsappContactId)
         await deletePaymentMetaTestContact(messengerContactId)
         await deletePaymentMetaTestContact(instagramContactId)
+        await db.run(
+          `INSERT INTO contacts (
+             id, email, full_name, phone, source, attribution_ctwa_clid, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [whatsappContactId, 'appt-wa@example.test', 'WhatsApp Appointment', '+525512345688', 'whatsapp', 'ctwa-appointment-direct-789']
+        )
         await db.run(
           `INSERT INTO contacts (id, email, full_name, source, created_at, updated_at)
            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
@@ -1261,8 +1272,16 @@ test('calendar appointment Business Messaging events support Messenger and Insta
         })
 
         await insertMetaPixelConfig({ pageId: 'page-calendar-fallback' })
+        await setAppConfig('whatsapp_api_provider', 'meta_direct')
+        await setAppConfig('whatsapp_meta_direct_waba_id', 'direct-waba-calendar-789')
         metaServer = await startMetaCaptureServer(metaCalls)
 
+        const whatsappResult = await triggerWhatsappAppointmentBookedEvent(whatsappContactId, {
+          calendarId: 'calendar_wa',
+          calendarName: 'Calendario WhatsApp',
+          appointmentId: 'appointment_wa_789',
+          customEvents: { enabled: true, channel: 'whatsapp', eventName: 'Schedule' }
+        })
         const messengerResult = await triggerWhatsappAppointmentBookedEvent(messengerContactId, {
           calendarId: 'calendar_msg',
           calendarName: 'Calendario Messenger',
@@ -1276,11 +1295,20 @@ test('calendar appointment Business Messaging events support Messenger and Insta
           customEvents: { enabled: true, channel: 'instagram', eventName: 'Schedule' }
         })
 
+        assert.equal(whatsappResult.sent, true)
         assert.equal(messengerResult.sent, true)
         assert.equal(instagramResult.sent, true)
-        assert.equal(metaCalls.length, 2)
+        assert.equal(metaCalls.length, 3)
 
-        const messengerPayload = JSON.parse(metaCalls[0].body)
+        const whatsappPayload = JSON.parse(metaCalls[0].body)
+        assert.equal(whatsappPayload.data[0].event_name, 'LeadSubmitted')
+        assert.equal(whatsappPayload.data[0].action_source, 'business_messaging')
+        assert.equal(whatsappPayload.data[0].messaging_channel, 'whatsapp')
+        assert.equal(whatsappPayload.data[0].user_data.ctwa_clid, 'ctwa-appointment-direct-789')
+        assert.equal(whatsappPayload.data[0].user_data.page_id, 'page-calendar-fallback')
+        assert.equal(whatsappPayload.data[0].user_data.whatsapp_business_account_id, 'direct-waba-calendar-789')
+
+        const messengerPayload = JSON.parse(metaCalls[1].body)
         assert.equal(messengerPayload.data[0].event_name, 'LeadSubmitted')
         assert.equal(messengerPayload.data[0].action_source, 'business_messaging')
         assert.equal(messengerPayload.data[0].messaging_channel, 'messenger')
@@ -1290,7 +1318,7 @@ test('calendar appointment Business Messaging events support Messenger and Insta
         assert.equal(messengerPayload.data[0].custom_data.messaging_channel, 'messenger')
         assert.equal(messengerPayload.data[0].custom_data.appointment_id, 'appointment_msg_123')
 
-        const instagramPayload = JSON.parse(metaCalls[1].body)
+        const instagramPayload = JSON.parse(metaCalls[2].body)
         assert.equal(instagramPayload.data[0].event_name, 'LeadSubmitted')
         assert.equal(instagramPayload.data[0].action_source, 'business_messaging')
         assert.equal(instagramPayload.data[0].messaging_channel, 'instagram')
@@ -1305,6 +1333,7 @@ test('calendar appointment Business Messaging events support Messenger and Insta
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await deletePaymentMetaTestContact(whatsappContactId)
     await deletePaymentMetaTestContact(messengerContactId)
     await deletePaymentMetaTestContact(instagramContactId)
   }

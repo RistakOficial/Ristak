@@ -120,6 +120,7 @@ export interface MetaOAuthFinalizeResult {
   subscription?: unknown
   socialHistoryBackfill?: unknown
   adsSync?: { syncStarted?: boolean }
+  conversionEvents?: { enabled?: boolean; reason?: string }
 }
 
 async function requestMetaOAuth<T>(url: string, init?: RequestInit): Promise<T> {

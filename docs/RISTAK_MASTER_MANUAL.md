@@ -3592,6 +3592,12 @@ vuelve a revisar la feature del recurso (`payments`, `payment_plans`,
 `integrations`, etc.). Un token generado antes de un downgrade no conserva
 acceso a modulos que el plan actual ya no incluye.
 
+Las tablas `meta_oauth_integrations` y `meta_oauth_integration_sessions` estan
+bloqueadas completamente en el CRUD generico de `/api/external` y en las
+herramientas de datos MCP. No se pueden listar, consultar, editar ni borrar por
+esas superficies aunque el token tenga `developers` y `campaigns`; el ciclo de
+vida OAuth solo se modifica mediante sus endpoints dedicados.
+
 ## App movil
 
 Ristak tiene tres rutas moviles activas:

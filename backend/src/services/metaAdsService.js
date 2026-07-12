@@ -601,6 +601,14 @@ export async function getMetaSocialConfig() {
   return mergeMetaSocialOAuthConfig(legacy, social)
 }
 
+export async function getMetaWhatsAppBusinessAccountId() {
+  const [legacyWabaId, metaDirectWabaId] = await Promise.all([
+    getAppConfig('meta_whatsapp_business_account_id'),
+    getAppConfig('whatsapp_meta_direct_waba_id')
+  ])
+  return normalizeId(legacyWabaId) || normalizeId(metaDirectWabaId)
+}
+
 /**
  * Guarda el User Token humano que Meta exige para enviar Messenger a personas
  * externas a la app. Vive separado del System User Token: CAPI, anuncios e
@@ -1119,12 +1127,15 @@ export async function saveMetaConfig(
 
     logger.success(`Configuración de Meta guardada en BD local (${connectionMode} + Pixel)`)
 
-    await syncMetaSocialChannelDefaults({
-      previousPageId: existingMetaConfig?.page_id,
-      nextPageId: pageId,
-      previousInstagramAccountId: existingMetaConfig?.instagram_account_id,
-      nextInstagramAccountId: instagramAccountId
-    })
+    const activeSplitSocial = await getActiveMetaOAuthIntegration('social')
+    if (!activeSplitSocial) {
+      await syncMetaSocialChannelDefaults({
+        previousPageId: existingMetaConfig?.page_id,
+        nextPageId: pageId,
+        previousInstagramAccountId: existingMetaConfig?.instagram_account_id,
+        nextInstagramAccountId: instagramAccountId
+      })
+    }
 
     const conversionEventsResult = await ensureMetaConversionEventsEnabledForConnectedPixel({
       accessToken: normalizedAccessToken,
@@ -1511,17 +1522,18 @@ export async function updateRecentAds() {
       return { success: false, message: 'Sync completo en progreso' }
     }
 
-    // (META-009) Al desconectar Meta se marca meta_config_disconnected=1 en app_config,
-    // pero getMetaConfig no consulta ese flag, así que el cron seguía sincronizando
-    // (y revalidando el token) sobre una cuenta que el usuario ya desconectó. Aquí —el
-    // punto de entrada del cron— respetamos el estado "desconectado" y no hacemos nada.
+    const config = await getMetaConfig()
+
+    // (META-009) El flag pertenece exclusivamente al contrato legacy. Una
+    // conexión OAuth Ads separada sigue siendo operativa aunque el usuario haya
+    // eliminado su fallback manual/combinado.
     const metaDisconnected = String(await getAppConfig('meta_config_disconnected') || '').trim() === '1'
-    if (metaDisconnected) {
+    const hasSplitAdsConnection = config?.oauth_integration_kind === 'ads'
+    if (metaDisconnected && !hasSplitAdsConnection) {
       logger.info('Meta Ads está marcado como desconectado: saltando actualización automática de ads recientes')
       return { success: false, message: 'Meta desconectado' }
     }
 
-    const config = await getMetaConfig()
     if (!config?.ad_account_id || !config?.access_token) {
       logger.warn('No hay cuenta publicitaria de Meta conectada. Saltando actualización de ads recientes.')
       syncProgress = {

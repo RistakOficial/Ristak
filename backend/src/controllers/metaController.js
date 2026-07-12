@@ -10,6 +10,7 @@ import {
   getMetaConfig,
   getLegacyMetaConfig,
   getMetaSocialConfig,
+  getMetaWhatsAppBusinessAccountId,
   getMetaDeveloperSetup,
   enableMetaSocialChannelsForConnectedProfiles,
   resolveMetaCapiAccessToken,
@@ -1113,12 +1114,18 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
  */
 export const sendMetaTestEvent = async (req, res) => {
   try {
-    const [adsConfig, socialConfig] = await Promise.all([
+    const [adsConfig, socialConfig, whatsappBusinessAccountId] = await Promise.all([
       getMetaConfig(),
-      getMetaSocialConfig().catch(() => null)
+      getMetaSocialConfig().catch(() => null),
+      getMetaWhatsAppBusinessAccountId().catch(() => '')
     ]);
     const metaConfig = adsConfig
-      ? { ...adsConfig, page_id: socialConfig?.page_id || null, instagram_account_id: socialConfig?.instagram_account_id || null }
+      ? {
+          ...adsConfig,
+          page_id: socialConfig?.page_id || null,
+          instagram_account_id: socialConfig?.instagram_account_id || null,
+          whatsapp_business_account_id: whatsappBusinessAccountId || null
+        }
       : adsConfig;
     const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getActiveMetaTestEventCode()).replace(/\s+/g, '');
     const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);

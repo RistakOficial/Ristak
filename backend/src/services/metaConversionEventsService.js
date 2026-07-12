@@ -2,7 +2,12 @@ import fetch from 'node-fetch'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
-import { getMetaConfig, getMetaSocialConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
+import {
+  getMetaConfig,
+  getMetaSocialConfig,
+  getMetaWhatsAppBusinessAccountId,
+  resolveMetaCapiAccessToken
+} from './metaAdsService.js'
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
@@ -26,8 +31,7 @@ const CONFIG_KEYS = {
   purchaseEnabled: 'meta_whatsapp_purchase_enabled',
   scheduleEventName: 'meta_whatsapp_schedule_event_name',
   purchaseEventName: 'meta_whatsapp_purchase_event_name',
-  paymentPurchaseEventConfig: 'meta_payment_purchase_event_config',
-  whatsappBusinessAccountId: 'meta_whatsapp_business_account_id'
+  paymentPurchaseEventConfig: 'meta_payment_purchase_event_config'
 }
 
 const EVENT_TYPES = {
@@ -1130,7 +1134,7 @@ async function getMetaCapiConfig() {
   )
 
   const whatsappBusinessAccountId = cleanString(
-    await getAppConfig(CONFIG_KEYS.whatsappBusinessAccountId) ||
+    await getMetaWhatsAppBusinessAccountId() ||
     process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID ||
     process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ||
     process.env.META_WABA_ID ||

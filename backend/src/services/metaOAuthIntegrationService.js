@@ -25,6 +25,7 @@ import {
 } from './metaOAuthIntegrationConfigService.js'
 import {
   enableMetaSocialChannelsForConnectedProfiles,
+  ensureMetaConversionEventsEnabledForConnectedPixel,
   getMetaConfig,
   getMetaSocialConfig,
   normalizeMetaConnectionMode,
@@ -52,6 +53,7 @@ const defaultCentralClient = {
   updateWebhookSubscription: updateCentralMetaWebhookSubscription
 }
 const defaultRuntimeClient = {
+  enableConversionEvents: ensureMetaConversionEventsEnabledForConnectedPixel,
   enableSocialChannels: enableMetaSocialChannelsForConnectedProfiles,
   ensurePageSubscription: ensureMetaPageMessagingSubscription,
   removePageSubscription: removeMetaPageMessagingSubscription,
@@ -278,6 +280,7 @@ async function runPostActivationRuntimeEffects({ kind, payload, selected, previo
       runtimeWarnings.push(`version-cron: ${error.message}`)
     })
     return {
+      conversionEvents: { enabled: false, reason: 'social_connection' },
       socialChannels,
       socialHistoryBackfill,
       adsSync: { syncStarted: false },
@@ -285,6 +288,15 @@ async function runPostActivationRuntimeEffects({ kind, payload, selected, previo
     }
   }
 
+  const conversionEvents = selected.pixelId
+    ? await runtimeClient.enableConversionEvents({
+        accessToken: payload.accessToken,
+        pixelId: selected.pixelId
+      }).catch(error => {
+        runtimeWarnings.push(`conversion-events: ${error.message}`)
+        return { enabled: false, reason: 'runtime_error' }
+      })
+    : { enabled: false, reason: 'dataset_not_selected' }
   await runtimeClient.syncCrons('meta-ads', { reason: 'meta-ads-oauth-connected' }).catch(error => {
     runtimeWarnings.push(`crons: ${error.message}`)
   })
@@ -294,6 +306,7 @@ async function runPostActivationRuntimeEffects({ kind, payload, selected, previo
   Promise.resolve(runtimeClient.updateRecentAds())
     .catch(error => logger.warn(`Meta Ads OAuth: sincronización inicial falló: ${error.message}`))
   return {
+    conversionEvents,
     socialChannels: {},
     socialHistoryBackfill: { syncStarted: false, started: [], skipped: [] },
     adsSync: { syncStarted: true },
@@ -797,6 +810,7 @@ async function finalizeUnlocked({
       : { subscribed: false, pageId: '' },
     ...(runtimeEffects || {
       socialChannels: {},
+      conversionEvents: { enabled: false, reason: 'runtime-effects-not-run' },
       socialHistoryBackfill: { syncStarted: false, started: [], skipped: [] },
       adsSync: { syncStarted: false },
       runtimeWarnings: ['runtime-effects: not-run']

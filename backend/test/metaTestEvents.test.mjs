@@ -137,6 +137,12 @@ test('sendMetaTestEvent posts WhatsApp LeadSubmitted as business_messaging', asy
     await initializeMasterKey()
     await db.run('DELETE FROM meta_config')
     await db.run('DELETE FROM app_config WHERE config_key = ?', ['meta_test_event_code'])
+    await db.run(
+      `DELETE FROM app_config WHERE config_key IN (?, ?, ?)`,
+      ['meta_whatsapp_business_account_id', 'whatsapp_meta_direct_waba_id', 'whatsapp_api_provider']
+    )
+    await setAppConfig('whatsapp_api_provider', 'meta_direct')
+    await setAppConfig('whatsapp_meta_direct_waba_id', 'direct-waba-123')
     await db.run(`
       INSERT INTO meta_config (
         ad_account_id, access_token, pixel_id,
@@ -209,6 +215,7 @@ test('sendMetaTestEvent posts WhatsApp LeadSubmitted as business_messaging', asy
     assert.equal(payload.data[0].event_source_url, undefined)
     assert.equal(payload.data[0].user_data.ctwa_clid, 'AfghPKzHPYknB7A_wzcLuy2YRb0_x89LmCfBkaFRDDqXe2AtJPwqOCkdzUutPbEzk09QAkEtfddmEN7c-P1gLEXv-_4Rv3igOnEPWww4P_cq8cQG')
     assert.equal(payload.data[0].user_data.page_id, '104840954631643')
+    assert.equal(payload.data[0].user_data.whatsapp_business_account_id, 'direct-waba-123')
     assert.equal(payload.data[0].custom_data.value, 100)
     assert.equal(payload.data[0].custom_data.currency, 'USD')
     assert.equal(payload.data[0].custom_data.ctwa_clid, undefined)
@@ -220,6 +227,10 @@ test('sendMetaTestEvent posts WhatsApp LeadSubmitted as business_messaging', asy
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
     await db.run('DELETE FROM meta_config').catch(() => undefined)
     await db.run('DELETE FROM app_config WHERE config_key = ?', ['meta_test_event_code']).catch(() => undefined)
+    await db.run(
+      `DELETE FROM app_config WHERE config_key IN (?, ?, ?)`,
+      ['meta_whatsapp_business_account_id', 'whatsapp_meta_direct_waba_id', 'whatsapp_api_provider']
+    ).catch(() => undefined)
   }
 })
 

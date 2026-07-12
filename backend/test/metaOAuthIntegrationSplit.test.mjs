@@ -7,7 +7,8 @@ import { encrypt, initializeMasterKey, isEncrypted } from '../src/utils/encrypti
 import {
   getMetaConfig,
   getMetaSocialConfig,
-  resolveMetaCapiAccessToken
+  resolveMetaCapiAccessToken,
+  updateRecentAds
 } from '../src/services/metaAdsService.js'
 import {
   completeMetaOAuthIntegration,
@@ -214,8 +215,13 @@ test('OAuth Social y Ads aíslan scopes, activos, runtime, rollback y desconexi�
     const cronProviders = []
     const socialChannelDefaults = []
     const enabledSocialConfigs = []
+    const enabledConversionEvents = []
     let adsSyncRuns = 0
     setMetaOAuthIntegrationRuntimeClientForTest({
+      enableConversionEvents: async input => {
+        enabledConversionEvents.push(input)
+        return { enabled: true, scheduleEnabled: true, purchaseEnabled: true }
+      },
       ensurePageSubscription: async ({ config }) => {
         subscriptions.push(config)
         return { subscribed: true }
@@ -356,6 +362,8 @@ test('OAuth Social y Ads aíslan scopes, activos, runtime, rollback y desconexi�
     assert.equal(adsResult.capabilities.adsRead, true)
     assert.equal(adsResult.capabilities.capiEnabled, false)
     assert.equal(adsResult.capabilities.campaignPublishing, false)
+    assert.equal(adsResult.conversionEvents.enabled, false)
+    assert.equal(enabledConversionEvents.length, 0, 'sin Dataset no se activan defaults de CAPI')
     assert.equal(subscriptions.length, subscriptionsBeforeAds, 'Ads jamás suscribe Page')
     assert.equal(centralCalls.some(call => call.type === 'finalize' && call.integrationKind === 'ads'), true)
     assert.equal((await getMetaConfig()).access_token, 'ads-token')
@@ -429,6 +437,11 @@ test('OAuth Social y Ads aíslan scopes, activos, runtime, rollback y desconexi�
       datasetId: 'dataset-1'
     })
     assert.equal(adsWithDataset.capabilities.capiEnabled, true)
+    assert.equal(adsWithDataset.conversionEvents.enabled, true)
+    assert.deepEqual(enabledConversionEvents.at(-1), {
+      accessToken: 'ads-token-2',
+      pixelId: 'dataset-1'
+    })
     const adsConfig = await getMetaConfig()
     assert.equal(adsConfig.access_token, 'ads-token-2')
     assert.equal(adsConfig.pixel_id, 'dataset-1')
@@ -726,5 +739,23 @@ test('custom-values expone sólo el método heredado y nunca convierte el token 
     assert.equal(response.body?.data?.pageId, 'legacy-page')
     assert.equal(response.body?.data?.instagramAccountId, 'legacy-ig')
     assert.equal(response.body?.data?.connectionMode, 'manual_system_user')
+  })
+})
+
+test('el flag de desconexión legacy no apaga el runtime de OAuth Ads separado', async () => {
+  await initializeMasterKey()
+  await withIsolatedSplitMeta(async () => {
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token, validated, connected_at
+       ) VALUES ('ads-without-selection', 'ads', 'active', 'ads-without-selection-connection', ?, 1, CURRENT_TIMESTAMP)`,
+      [encrypt('split-ads-token')]
+    )
+    await setAppConfig('meta_config_disconnected', '1')
+
+    const result = await updateRecentAds()
+    assert.equal(result.message, 'No config', 'OAuth Ads ignora el flag legacy y llega a validar su propia selección')
+
+    await setAppConfig('meta_config_disconnected', '0')
   })
 })
