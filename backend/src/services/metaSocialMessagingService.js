@@ -1027,12 +1027,13 @@ async function cacheDeletedSocialPost(comment, error = null) {
   })
 }
 
-async function fetchAndCacheSocialPost(comment, accessToken, baseUrl = '') {
+async function fetchAndCacheSocialPost(comment, accessToken, baseUrl = '', config = null) {
   const platform = comment.platform
   const postId = platform === 'instagram' ? cleanString(comment.mediaId) : cleanString(comment.postId)
   if (!postId || !accessToken) return
-  const existing = await db.get('SELECT id FROM meta_social_posts WHERE id = ?', [postId]).catch(() => null)
-  if (existing) return
+  const existing = await db.get('SELECT id, image_url FROM meta_social_posts WHERE id = ?', [postId]).catch(() => null)
+  const existingImageUrl = cleanString(existing?.image_url)
+  if (existing && existingImageUrl && !isMetaHostedMediaUrl(existingImageUrl)) return
 
   try {
     const graphBaseUrl = cleanString(baseUrl) || getMetaSocialGraphBaseUrl(platform)
@@ -1041,9 +1042,28 @@ async function fetchAndCacheSocialPost(comment, accessToken, baseUrl = '') {
       : 'message,permalink_url,created_time,full_picture'
     const data = await metaSocialGraphRequest(`/${encodeURIComponent(postId)}`, { token: accessToken, baseUrl: graphBaseUrl, query: { fields } })
     const message = platform === 'instagram' ? cleanString(data?.caption) : cleanString(data?.message)
-    const imageUrl = platform === 'instagram'
+    const graphImageUrl = platform === 'instagram'
       ? cleanString(data?.thumbnail_url || data?.media_url)
       : cleanString(data?.full_picture)
+    const rehostedImage = graphImageUrl
+      ? await rehostMetaSocialMedia({
+        socialMessage: {
+          platform,
+          messageType: 'image',
+          mediaType: 'image',
+          mediaUrl: graphImageUrl,
+          mediaMimeType: '',
+          metaMessageId: postId
+        },
+        config,
+        accessToken,
+        existingMediaUrl: existingImageUrl
+      }).catch(error => {
+        logger.warn(`No se pudo persistir la imagen de la publicación ${postId}: ${error.message}`)
+        return null
+      })
+      : null
+    const imageUrl = rehostedImage?.mediaUrl || graphImageUrl
     const permalink = cleanString(data?.permalink || data?.permalink_url)
     const postType = platform === 'instagram' ? cleanString(data?.media_type) || 'media' : 'post'
 
@@ -4084,7 +4104,7 @@ export { isMetaHostedMediaUrl, normalizeSocialMediaType }
 
 // Descarga la media de Meta y la sube a Bunny. Devuelve { mediaUrl, mediaMimeType } con
 // la URL persistida, o null si no aplica / falla (en cuyo caso se conserva la URL de Meta).
-export async function rehostMetaSocialMedia({ socialMessage, config, existingMediaUrl = '' }) {
+export async function rehostMetaSocialMedia({ socialMessage, config, accessToken = '', existingMediaUrl = '' }) {
   const sourceUrl = cleanString(socialMessage.mediaUrl)
   if (!sourceUrl || !isMetaHostedMediaUrl(sourceUrl)) return null
 
@@ -4099,7 +4119,7 @@ export async function rehostMetaSocialMedia({ socialMessage, config, existingMed
   const messageType = normalizeSocialMediaType(socialMessage.mediaType || socialMessage.messageType)
   const limitBytes = getSocialMediaLimitBytes(messageType)
 
-  const token = await resolveMetaSocialGraphToken(socialMessage.platform, config, { safe: true })
+  const token = cleanString(accessToken) || await resolveMetaSocialGraphToken(socialMessage.platform, config, { safe: true })
   const { buffer, mimeType: downloadedMime } = await socialMediaDownloader(sourceUrl, token)
   if (!buffer?.length) throw new Error('Meta devolvió un adjunto vacío')
   if (buffer.length > limitBytes) {
@@ -4646,7 +4666,7 @@ export async function processMetaSocialWebhook({
           if (comment.direction === 'inbound' && savedComment.isNew !== false) {
             // Cachear el contenido de la publicación comentada (no bloquea el flujo).
             resolveMetaSocialGraphCredentials(comment.platform, config, { safe: true })
-              .then(credentials => fetchAndCacheSocialPost(comment, credentials.token, credentials.baseUrl))
+              .then(credentials => fetchAndCacheSocialPost(comment, credentials.token, credentials.baseUrl, config))
               .catch(error => logger.warn(`[Comentario] publicación no cacheada: ${error.message}`))
 
             // Automatizaciones de comentarios: evento AISLADO 'comment-received'.

@@ -69,6 +69,7 @@ async function cleanup(contactId, phone, extraPhones = []) {
   }
   await db.run('DELETE FROM appointment_confirmation_windows WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -1313,6 +1314,71 @@ test('contact conversation includes appointment confirmation cards without full 
     })
 
     assert.deepEqual(olderJourney.map(event => event.type), ['whatsapp_message'])
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('chat activity journey returns only payment and appointment markers', async () => {
+  const id = randomUUID()
+  const contactId = `journey_chat_activity_${id}`
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente con actividad',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2026-06-20T08:00:00.000Z',
+      updated_at: '2026-06-20T08:00:00.000Z'
+    })
+    await insertRow('appointments', {
+      id: `appointment_activity_${id}`,
+      calendar_id: `calendar_activity_${id}`,
+      contact_id: contactId,
+      title: 'Diagnóstico',
+      status: 'confirmed',
+      appointment_status: 'confirmed',
+      start_time: '2026-06-21T16:00:00.000Z',
+      end_time: '2026-06-21T17:00:00.000Z',
+      date_added: '2026-06-20T09:00:00.000Z',
+      date_updated: '2026-06-20T09:00:00.000Z'
+    })
+    await insertRow('payments', {
+      id: `payment_activity_${id}`,
+      contact_id: contactId,
+      amount: 1250,
+      currency: 'USD',
+      status: 'paid',
+      payment_method: 'card',
+      payment_provider: 'manual',
+      payment_mode: 'live',
+      title: 'Anticipo',
+      date: '2026-06-20T10:00:00.000Z',
+      created_at: '2026-06-20T10:00:00.000Z',
+      updated_at: '2026-06-20T10:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_activity_${id}`,
+      contact_id: contactId,
+      phone,
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Este mensaje no debe venir',
+      message_timestamp: '2026-06-20T11:00:00.000Z',
+      created_at: '2026-06-20T11:00:00.000Z'
+    })
+
+    const activity = await readJourney(contactId, { chatActivityOnly: 'true' })
+
+    assert.deepEqual(activity.map(event => event.type), ['appointment', 'payment'])
+    assert.equal(activity[0].data.id, `appointment_activity_${id}`)
+    assert.equal(activity[1].data.currency, 'USD')
+    assert.equal(activity.some(event => event.type === 'whatsapp_message'), false)
   } finally {
     await cleanup(contactId, phone)
   }

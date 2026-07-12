@@ -4878,6 +4878,75 @@
   box-shadow: none;
 }
 
+.conversationActivityMarkerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  margin: 5px 0;
+}
+
+.conversationActivityMarkerLine {
+  flex: 1 1 auto;
+  min-width: 16px;
+  height: 1px;
+  background: var(--phone-chat-border);
+  opacity: 0.78;
+}
+
+.conversationActivityMarkerPill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: min(82%, 420px);
+  padding: 6px 9px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 94%, transparent);
+  color: var(--phone-chat-muted);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--phone-chat-border) 54%, transparent);
+}
+
+.conversationActivityMarkerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-primary) 14%, var(--phone-chat-surface) 86%);
+  color: var(--phone-chat-primary);
+}
+
+.conversationActivityMarkerCopy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.conversationActivityMarkerCopy strong,
+.conversationActivityMarkerCopy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversationActivityMarkerCopy strong {
+  color: var(--phone-chat-text);
+  font-size: 11px;
+  font-weight: 820;
+}
+
+.conversationActivityMarkerCopy small {
+  color: var(--phone-chat-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
 .agentCompletionMessageRow {
   display: flex;
   justify-content: flex-start;
@@ -5199,13 +5268,12 @@
 }
 
 .messageImage {
+  position: absolute;
+  inset: 0;
   display: block;
-  align-self: flex-start;
-  width: auto;
-  max-width: min(252px, 62vw);
-  height: auto;
-  max-height: min(318px, 58vh);
-  margin: 0 0 5px;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   border-radius: 8px;
   object-fit: contain;
   background: transparent;
@@ -5216,17 +5284,29 @@
 }
 
 .messageMediaButton {
+  position: relative;
   display: inline-flex;
   align-self: flex-start;
-  max-width: min(252px, 62vw);
+  width: min(252px, 62vw);
+  aspect-ratio: 4 / 3;
   margin: 0 0 5px;
   padding: 0;
   border: 0;
   border-radius: 8px;
-  background: transparent;
+  overflow: hidden;
+  background: var(--phone-chat-surface-soft);
   cursor: zoom-in;
   font: inherit;
   line-height: 0;
+}
+
+.messageMediaPlaceholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--phone-chat-muted);
+  background: color-mix(in srgb, var(--phone-chat-border) 36%, var(--phone-chat-surface));
 }
 
 .messageMediaButton .messageImage {
@@ -11972,6 +12052,9 @@
 }
 
 .commentPostThumb {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
   width: 100%;
   max-width: 100%;

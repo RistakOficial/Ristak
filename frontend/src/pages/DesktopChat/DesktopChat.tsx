@@ -4391,28 +4391,34 @@ export const DesktopChat: React.FC = () => {
     setMessagesError('')
     let messagesLoaded = false
     const activityJourneyPromise = shouldRefreshActivityJourney
-      ? contactsService.getContactJourney(contactId, { refreshExternalStatuses: false, throwOnError: true })
+      ? contactsService.getContactJourney(contactId, {
+        refreshExternalStatuses: false,
+        throwOnError: true,
+        chatActivityOnly: true
+      })
         .then((events) => ({ events, loaded: true }))
         .catch(() => ({ events: [] as JourneyEvent[], loaded: false }))
       : Promise.resolve({ events: [] as JourneyEvent[], loaded: false })
+    const scheduledMessagesPromise = whatsappApiService.getScheduledMessages(contactId).catch(() => [])
     try {
-      const [journey, scheduledMessages] = await Promise.all([
-        contactsService.getContactConversation(contactId, {
-          refreshExternalStatuses: false,
-          messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
-        }),
-        whatsappApiService.getScheduledMessages(contactId).catch(() => [])
-      ])
+      // La conversación es la ruta crítica. Programados, perfil, agente y
+      // marcadores se hidratan después sin retener el primer paint.
+      const journey = await contactsService.getContactConversation(contactId, {
+        refreshExternalStatuses: false,
+        messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
+        throwOnError: true
+      })
       if (!isCurrentConversationLoad()) return
 
       const receivedFullPage = journey.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT
       conversationHasOlderMessagesRef.current = receivedFullPage &&
         conversationHistoryExhaustedContactIdRef.current !== contactId
+      const cachedActivityEvents = contactJourneyRef.current.filter(isChatActivityEvent)
       const nextJourney = silent
         ? mergeJourneyEvents(contactJourneyRef.current, journey)
-        : journey
+        : mergeJourneyEvents(journey, cachedActivityEvents)
       contactJourneyRef.current = nextJourney
-      const nextMessages = buildConversationMessages(nextJourney, scheduledMessages)
+      const nextMessages = buildConversationMessages(nextJourney, [])
       setContactJourney((current) => (
         areJourneyEventsEquivalent(current, nextJourney) ? current : nextJourney
       ))
@@ -4432,7 +4438,8 @@ export const DesktopChat: React.FC = () => {
       })
       void contactsService.markChatRead(contactId).catch(() => undefined)
 
-      const [details, contactAgentStates, agentCompletions, activityJourney] = await Promise.all([
+      const [scheduledMessages, details, contactAgentStates, agentCompletions, activityJourney] = await Promise.all([
+        scheduledMessagesPromise,
         contactsService.getContactDetails(contactId, {
           warmProfilePictures: false,
           refreshExternalAppointments: false
@@ -4451,9 +4458,7 @@ export const DesktopChat: React.FC = () => {
             activityEvents
           )
         : nextJourney
-      const canonicalMessages = activityJourney.loaded
-        ? buildConversationMessages(canonicalJourney, scheduledMessages)
-        : nextMessages
+      const canonicalMessages = buildConversationMessages(canonicalJourney, scheduledMessages)
       if (shouldRefreshActivityJourney) conversationActivityLoadedAtRef.current = Date.now()
       contactJourneyRef.current = canonicalJourney
       setAgentCompletionEvents(agentCompletions)
@@ -8182,6 +8187,16 @@ export const DesktopChat: React.FC = () => {
       const progressPercent = durationSeconds > 0 ? Math.max(0, Math.min(100, (currentSeconds / durationSeconds) * 100)) : 0
       const isPlaying = playingAudioId === message.id
       const audioTitle = attachment.name && attachment.name !== 'Mensaje de voz' ? attachment.name : 'Mensaje de voz'
+      const routePhone = message.direction === 'outbound'
+        ? getMessageBusinessPhone(message, whatsappStatus) || selectedBusinessPhone
+        : null
+      const audioAvatarUrl = message.direction === 'outbound'
+        ? String(routePhone?.profile_picture_url || '').trim()
+        : getContactProfilePhoto(activeContact)
+      const audioAvatarName = message.direction === 'outbound'
+        ? getBusinessPhoneLabel(routePhone)
+        : getContactName(activeContact)
+      const audioAvatarInitials = audioAvatarName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'R'
 
       return (
         <div
@@ -8226,8 +8241,19 @@ export const DesktopChat: React.FC = () => {
             })}
             <span className={styles.audioProgressDot} />
           </span>
-          <span className={styles.audioAvatar} aria-hidden="true">
-            <Mic size={17} />
+          <span className={styles.audioAvatar} aria-label={`Foto de ${audioAvatarName}`}>
+            <span className={styles.audioAvatarFallback}>{audioAvatarInitials}</span>
+            {audioAvatarUrl ? (
+              <img
+                src={audioAvatarUrl}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                referrerPolicy="no-referrer"
+                onError={(event) => { event.currentTarget.hidden = true }}
+              />
+            ) : null}
+            <span className={styles.audioAvatarMicBadge} aria-hidden="true"><Mic size={11} /></span>
           </span>
           <span className={styles.audioAttachmentBody}>
             <strong>{audioTitle}</strong>
@@ -8254,7 +8280,16 @@ export const DesktopChat: React.FC = () => {
           onClick={openAttachmentFocus}
           aria-label={attachment.name || (attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}
         >
-          <img src={attachmentSrc} alt={attachment.name || (attachment.isGif ? 'GIF enviado' : 'Foto enviada')} loading="lazy" />
+          <span className={styles.mediaAttachmentPlaceholder} aria-hidden="true"><ImageIcon size={28} /></span>
+          <img
+            src={attachmentSrc}
+            alt={attachment.name || (attachment.isGif ? 'GIF enviado' : 'Foto enviada')}
+            loading="lazy"
+            decoding="async"
+            width={360}
+            height={270}
+            onError={(event) => { event.currentTarget.hidden = true }}
+          />
         </button>
       )
     }
@@ -8333,7 +8368,6 @@ export const DesktopChat: React.FC = () => {
         {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} /> : null}
         {scheduled ? <Clock size={13} /> : null}
         {sending ? <Loader2 size={13} className={styles.spin} aria-label="Enviando" /> : null}
-        {failed ? <CircleAlert size={13} /> : null}
       </span>
     )
   }
@@ -8348,8 +8382,9 @@ export const DesktopChat: React.FC = () => {
   }
 
   const renderMessageErrorBadge = (message: DesktopChatMessage) => {
-    const errorText = String(message.errorReason || '').trim()
-    if (!errorText) return null
+    const failed = FAILED_MESSAGE_STATUSES.has(String(message.status || '').trim().toLowerCase()) || Boolean(message.errorReason)
+    if (!failed) return null
+    const errorText = String(message.errorReason || '').trim() || 'No se pudo enviar este mensaje.'
     return (
       <button
         type="button"
@@ -9020,9 +9055,9 @@ export const DesktopChat: React.FC = () => {
                             key={item.id}
                             className={`${styles.messageRow} ${message.direction === 'outbound' ? styles.messageRowOutbound : message.direction === 'system' ? styles.messageRowSystem : styles.messageRowInbound}`}
                           >
-                            {renderMessageErrorBadge(message)}
                             <div className={styles.messageStack}>
                               <div className={styles.messageBubbleWrap}>
+                                {message.direction === 'outbound' ? renderMessageErrorBadge(message) : null}
                                 {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                                 <article
                                   className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
@@ -9055,11 +9090,17 @@ export const DesktopChat: React.FC = () => {
                                           }
                                           const postInner = (
                                             <>
+                                              <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
                                               {message.commentPost.imageUrl ? (
-                                                <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-                                              ) : (
-                                                <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
-                                              )}
+                                                <img
+                                                  src={message.commentPost.imageUrl}
+                                                  alt=""
+                                                  className={styles.commentPostThumb}
+                                                  loading="lazy"
+                                                  decoding="async"
+                                                  onError={(event) => { event.currentTarget.hidden = true }}
+                                                />
+                                              ) : null}
                                               <span className={styles.commentPostMeta}>
                                                 <span className={styles.commentPostKind}>{message.commentPost.deleted ? 'Publicación eliminada' : 'Publicación'}</span>
                                                 {visiblePostMessage ? (
@@ -9116,6 +9157,7 @@ export const DesktopChat: React.FC = () => {
                                   {renderScheduledMessageActions(message)}
                                 </article>
                                 {message.direction === 'outbound' ? renderAgentSideMarker(message) : null}
+                                {message.direction !== 'outbound' ? renderMessageErrorBadge(message) : null}
                               </div>
                               {renderMessageReactions(message)}
                               {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}

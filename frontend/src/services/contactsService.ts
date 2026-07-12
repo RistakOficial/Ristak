@@ -28,12 +28,14 @@ export interface JourneyEvent {
 interface ContactJourneyOptions {
   refreshExternalStatuses?: boolean
   throwOnError?: boolean
+  chatActivityOnly?: boolean
 }
 
 interface ContactConversationOptions {
   refreshExternalStatuses?: boolean
   messageLimit?: number
   beforeMessageDate?: string
+  throwOnError?: boolean
 }
 
 interface ContactDetailsOptions {
@@ -447,6 +449,7 @@ export const contactsService = {
     try {
       const params: Record<string, string> = {}
       if (options.refreshExternalStatuses === false) params.refreshExternalStatuses = 'false'
+      if (options.chatActivityOnly) params.chatActivityOnly = 'true'
 
       const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
         params: Object.keys(params).length > 0 ? params : undefined
@@ -476,6 +479,7 @@ export const contactsService = {
       return normalizeJourneyEvents(data)
     } catch (error) {
       // TODO: Implement proper logging service
+      if (options.throwOnError) throw error
       return []
     }
   },

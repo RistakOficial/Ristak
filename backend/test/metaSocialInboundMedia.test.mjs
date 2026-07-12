@@ -172,3 +172,33 @@ test('rehostMetaSocialMedia usa mediaType para rehospedar la foto de un comentar
     setMetaSocialMediaTransportForTest({})
   }
 })
+
+test('rehostMetaSocialMedia reutiliza el token ya resuelto al persistir previews de publicaciones', async () => {
+  let receivedToken = ''
+  setMetaSocialMediaTransportForTest({
+    downloader: async (_url, token) => {
+      receivedToken = token
+      return { buffer: Buffer.from('preview-publicacion'), mimeType: 'image/jpeg' }
+    },
+    uploader: async () => ({ id: 'post-preview', publicUrl: BUNNY_URL, mimeType: 'image/jpeg' })
+  })
+
+  try {
+    const result = await rehostMetaSocialMedia({
+      socialMessage: {
+        platform: 'instagram',
+        messageType: 'image',
+        mediaType: 'image',
+        mediaUrl: META_SCONTENT_URL,
+        metaMessageId: 'post_123'
+      },
+      config: {},
+      accessToken: 'page-token-resuelto'
+    })
+
+    assert.equal(result.mediaUrl, BUNNY_URL)
+    assert.equal(receivedToken, 'page-token-resuelto')
+  } finally {
+    setMetaSocialMediaTransportForTest({})
+  }
+})

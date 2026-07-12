@@ -543,6 +543,23 @@ texto o agregar mas archivos.
 El correo queda fuera de este flujo hasta que su manejo de adjuntos se cierre en
 la superficie de email.
 
+La apertura de una conversacion prioriza siempre `GET /contacts/:id/conversation`:
+en cuanto llegan los ultimos 50 mensajes se pinta el hilo y se fija el ultimo
+mensaje sin animacion. Mensajes programados, perfil, estados/resumenes del agente
+y marcadores de negocio se hidratan despues y no pueden retener ese primer paint.
+Pagos/citas usan `GET /contacts/:id/journey?chatActivityOnly=true`, una lectura
+ligera que consulta en paralelo solo pagos, citas y confirmaciones; no recorre
+sesiones, video, atribucion ni el historial de mensajes. El resultado se conserva
+en la cache diaria de la conversacion y se reconcilia en refresh silenciosos.
+
+El layout de media del timeline es estable antes de descargar: imagenes usan un
+cuadro 4:3 reservado, videos 16:9 y audios/archivos alturas fijas. La miniatura se
+ajusta dentro de ese espacio y el original se abre en el visor interno. `/chat` y
+`/movil` desactivan el scroll anchoring automatico del navegador y mantienen el
+anclaje inferior mientras se hidrata el chat; un gesto real del usuario hacia
+arriba libera el anclaje inmediatamente. Cargar fuentes, fotos, audio o previews
+no debe cambiar la posicion visible ni disparar correcciones temporizadas.
+
 Los mensajes de correo dentro del historial del chat desktop, el modal de
 contacto y el chat movil `/movil` deben renderizarse como globo desplegable de
 email, no como texto plano mezclado con WhatsApp/Meta. El resumen muestra icono
@@ -2339,6 +2356,12 @@ Ristak usa Meta en varias areas:
   `Comentario eliminado`. El contexto de la publicacion comentada se cachea en
   `meta_social_posts`; si Graph ya no expone el post/media, el chip del globo
   queda como `Publicacion eliminada` sin borrar el hilo.
+  La foto del comentario y la imagen de contexto de la publicacion se rehospedan
+  en el storage de chat cuando Meta entrega una URL temporal. Si una fila legacy
+  todavia apunta a `fbcdn`, `scontent` o `cdninstagram`, el siguiente evento que
+  vuelva a enriquecer esa publicacion intenta reemplazarla por la URL persistente.
+  Mientras una imagen no esta disponible o falla, `/chat` y `/movil` conservan el
+  tamaño del preview y muestran placeholder; nunca el icono roto del navegador.
 - El enriquecimiento de contactos Meta usa el mismo contrato de Page token:
   Messenger lee perfil/conversaciones por Facebook Graph con Page token;
   Instagram lee perfiles de DMs y autores de comentarios con las mismas
