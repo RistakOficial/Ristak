@@ -25,6 +25,9 @@ import { getAccountCurrency } from '../src/utils/accountLocale.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
 import { updateConversationalAgent } from '../src/services/conversationalAgentService.js'
 import { withConversationalAgentTestMutationLock } from '../src/services/conversationalAgentTestMutationLockService.js'
+import { runVersionedMigrations } from '../src/startup/runMigrations.js'
+
+await runVersionedMigrations()
 
 function mockResponse() {
   return {
