@@ -204,6 +204,7 @@ export interface WhatsAppMetaDirectConnectUrlResponse {
 
 export interface WhatsAppMetaEmbeddedSignupSession {
   state: string
+  connectUrl: string
   expiresAt?: string
   status: string
   appId: string

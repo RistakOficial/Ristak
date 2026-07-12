@@ -196,13 +196,13 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
 ## Embedded Signup centralizado
 
 La pantalla `Configuración > WhatsApp` prepara el onboarding con Ristak
-Installer por llamadas backend-to-backend y ejecuta `FB.login` dentro del tenant.
-Así el clic abre una sola ventana, la oficial de Meta, sin navegar primero por
-`www.ristak.com`. La instalación crea un `state` firmado con su licencia y TTL de
-15 minutos; el navegador recibe únicamente ese state, App ID, Config ID y
-versiones públicas del SDK. Nunca recibe tokens ni App Secret. La pantalla
-central `/meta/whatsapp/connect` permanece como fallback compatible para
-instalaciones anteriores, no como el camino principal.
+Installer por llamadas backend-to-backend. El botón navega la misma pestaña a
+`/meta/whatsapp/connect` en el dominio central autorizado; ahí se ejecuta el SDK
+y se abre únicamente la ventana oficial de Meta. Al terminar, la pestaña regresa
+a la instalación original. El SDK nunca corre desde dominios variables como
+`*.onrender.com`, por lo que no depende de registrar cada cliente como dominio
+JSSDK en la app de Meta. La instalación crea un `state` firmado con su licencia y
+TTL de 15 minutos; el navegador no recibe tokens ni App Secret.
 
 Installer es dueño de `meta_app_id`, `meta_app_secret`,
 `whatsapp_business_login_config_id` y del webhook central. El JavaScript SDK usa

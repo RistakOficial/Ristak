@@ -517,7 +517,9 @@ presentarse como proveedor de API oficial.
 
 En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece dos conexiones
 separadas: **Conectar con Meta** precarga el Embedded Signup desde el backend del
-tenant y abre directamente una sola ventana oficial de Meta con Coexistence;
+tenant, usa la misma pestaña para pasar por el dominio central autorizado y abre
+una sola ventana oficial de Meta con Coexistence; al terminar regresa a la cuenta
+del cliente sin ejecutar el JSSDK desde su dominio Render;
 **YCloud** conserva su formulario de API key. La página intermedia de Installer
 queda sólo como fallback para clientes anteriores. Meta valida el WABA y el
 número, guarda el token cifrado sólo en la base de esa instalación y activa

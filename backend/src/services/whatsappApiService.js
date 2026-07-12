@@ -9194,6 +9194,7 @@ export async function prepareMetaDirectEmbeddedSignup({ appUrl } = {}) {
   }
   return {
     state,
+    connectUrl: connection.url,
     expiresAt: connection.expiresAt,
     status: cleanString(session.status) || 'pending',
     appId: cleanString(session.appId),
