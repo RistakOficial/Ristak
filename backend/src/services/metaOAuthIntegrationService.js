@@ -1026,11 +1026,16 @@ async function disconnectUnlocked(integrationKind) {
   await runtimeClient.syncCrons('meta', { reason: 'meta-oauth-disconnected' }).catch(error => {
     runtimeWarnings.push(`version-cron: ${error.message}`)
   })
+  const fallbackLegacy = Boolean(
+    cleanString(fallback?.access_token) && cleanString(
+      kind === 'ads' ? fallback?.ad_account_id : fallback?.page_id
+    )
+  )
   return {
     integrationKind: kind,
     disconnected: true,
-    fallbackLegacy: Boolean(fallback?.access_token),
-    restoredLegacy: Boolean(fallback?.access_token),
+    fallbackLegacy,
+    restoredLegacy: fallbackLegacy,
     runtimeWarning: runtimeWarnings[0] || null,
     runtimeWarnings
   }

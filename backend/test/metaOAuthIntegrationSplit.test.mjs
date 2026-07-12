@@ -29,11 +29,13 @@ import {
   isMetaAdsConnected,
   isMetaSocialConnected
 } from '../src/services/integrationConnectionStateService.js'
+import { getMetaCustomValues } from '../src/controllers/metaController.js'
 
 const TABLES = [
   'meta_config',
   'meta_oauth_integrations',
-  'meta_oauth_integration_sessions'
+  'meta_oauth_integration_sessions',
+  'highlevel_config'
 ]
 
 async function snapshotTable(table) {
@@ -490,6 +492,7 @@ test('OAuth Social y Ads aíslan scopes, activos, runtime, rollback y desconexi�
 
     const disconnectedSocial = await disconnectMetaOAuthIntegration('social')
     assert.equal(disconnectedSocial.disconnected, true)
+    assert.equal(disconnectedSocial.restoredLegacy, true)
     assert.equal((await getMetaConfig()).access_token, 'ads-token-4', 'desconectar Social no toca Ads')
     assert.equal((await getMetaSocialConfig()).access_token, 'legacy-token', 'Social cae al manual combinado')
     assert.equal(subscriptions.at(-1)?.access_token, 'legacy-token', 'fallback manual vuelve a suscribir su Page')
@@ -500,6 +503,7 @@ test('OAuth Social y Ads aíslan scopes, activos, runtime, rollback y desconexi�
 
     const disconnectedAds = await disconnectMetaOAuthIntegration('ads')
     assert.equal(disconnectedAds.disconnected, true)
+    assert.equal(disconnectedAds.restoredLegacy, true)
     assert.equal((await getMetaConfig()).access_token, 'legacy-token')
     assert.equal(await isMetaSocialConnected(), true, 'el fallback manual Social permanece conectado')
     assert.equal(cronProviders.includes('meta-social'), true)
@@ -635,5 +639,92 @@ test('cleanup y disconnect Social preservan fallback OAuth de la misma Page y re
     await disconnectMetaOAuthIntegration('social')
     assert.deepEqual(removedPages, ['split-only-page'], 'una Page sin fallback sí se desuscribe')
     assert.equal(ensuredFallbacks.at(-1)?.page_id, 'legacy-page')
+  })
+})
+
+test('disconnect sólo reporta fallback restaurado cuando el método heredado tiene su activo obligatorio', async () => {
+  await initializeMasterKey()
+  await withIsolatedSplitMeta(async () => {
+    await db.run(
+      `INSERT INTO meta_config (access_token, connection_mode)
+       VALUES (?, 'manual_system_user')`,
+      [encrypt('legacy-token-without-assets')]
+    )
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token, page_id, validated, connected_at
+       ) VALUES ('social-active', 'social', 'active', 'social-connection', ?, 'split-page', 1, CURRENT_TIMESTAMP)`,
+      [encrypt('social-token')]
+    )
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token, ad_account_id, validated, connected_at
+       ) VALUES ('ads-active', 'ads', 'active', 'ads-connection', ?, 'act_123', 1, CURRENT_TIMESTAMP)`,
+      [encrypt('ads-token')]
+    )
+
+    setMetaOAuthIntegrationCentralClientForTest({
+      updateWebhookSubscription: async () => ({ registered: false }),
+      disconnect: async () => ({ disconnected: true })
+    })
+    setMetaOAuthIntegrationRuntimeClientForTest({
+      removePageSubscription: async () => ({ unsubscribed: true }),
+      syncSocialChannelDefaults: async () => undefined,
+      syncCrons: async () => undefined
+    })
+
+    const social = await disconnectMetaOAuthIntegration('social')
+    assert.equal(social.restoredLegacy, false, 'un token sin Page no restaura Social')
+
+    const ads = await disconnectMetaOAuthIntegration('ads')
+    assert.equal(ads.restoredLegacy, false, 'un token sin Ad Account no restaura Ads')
+  })
+})
+
+test('custom-values expone sólo el método heredado y nunca convierte el token Social en token manual Ads', async () => {
+  await initializeMasterKey()
+  await withIsolatedSplitMeta(async () => {
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token,
+         page_id, instagram_account_id, validated, connected_at
+       ) VALUES ('social-only', 'social', 'active', 'social-only-connection', ?, 'split-page', 'split-ig', 1, CURRENT_TIMESTAMP)`,
+      [encrypt('social-only-token')]
+    )
+
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) {
+        this.statusCode = code
+        return this
+      },
+      json(body) {
+        this.body = body
+        return this
+      }
+    }
+    await getMetaCustomValues({}, response)
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.body?.success, true)
+    assert.equal(response.body?.data?.accessToken, '')
+    assert.equal(response.body?.data?.adAccountId, '')
+    assert.equal(response.body?.data?.pageId, '')
+    assert.equal(response.body?.data?.instagramAccountId, '')
+
+    await db.run(
+      `INSERT INTO meta_config (
+         ad_account_id, access_token, connection_mode, pixel_id, page_id, instagram_account_id
+       ) VALUES ('legacy-ad', ?, 'manual_system_user', 'legacy-dataset', 'legacy-page', 'legacy-ig')`,
+      [encrypt('legacy-manual-token')]
+    )
+    await getMetaCustomValues({}, response)
+
+    assert.match(response.body?.data?.accessToken || '', /^\*\*\*/)
+    assert.equal(response.body?.data?.adAccountId, 'legacy-ad')
+    assert.equal(response.body?.data?.pageId, 'legacy-page')
+    assert.equal(response.body?.data?.instagramAccountId, 'legacy-ig')
+    assert.equal(response.body?.data?.connectionMode, 'manual_system_user')
   })
 })

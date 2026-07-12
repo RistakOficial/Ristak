@@ -582,6 +582,7 @@ function hasUsableLocalMetaConfig(metaConfig) {
 function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = '', socialConfig = null) {
   const social = socialConfig || metaConfig
   return {
+    connectionMode: cleanString(metaConfig.connection_mode) || null,
     adAccountId: normalizeMetaAdAccountId(metaConfig.ad_account_id),
     accessToken: maskSecret(metaConfig.access_token),
     pixelId: cleanString(metaConfig.pixel_id),
@@ -3320,13 +3321,17 @@ export const getMetaCustomValues = async (req, res) => {
     logger.info('Obteniendo configuración de Meta desde HighLevel o DB local...');
 
     const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-    const [localMetaConfig, localSocialConfig] = await Promise.all([
+    const [localMetaConfig, localSocialConfig, localLegacyConfig] = await Promise.all([
       getMetaConfig().catch(error => {
         logger.warn(`No se pudo leer Meta Ads local: ${error.message}`);
         return null;
       }),
       getMetaSocialConfig().catch(error => {
         logger.warn(`No se pudo leer Meta Social local: ${error.message}`);
+        return null;
+      }),
+      getLegacyMetaConfig().catch(error => {
+        logger.warn(`No se pudo leer el método heredado de Meta: ${error.message}`);
         return null;
       })
     ]);
@@ -3355,9 +3360,10 @@ export const getMetaCustomValues = async (req, res) => {
       logger.info(`Reconciliación Meta/HighLevel al cargar Settings: ${reconciliation.action} - ${reconciliation.message}`);
 
       const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
-      const [refreshedLocalConfig, refreshedSocialConfig] = await Promise.all([
+      const [refreshedLocalConfig, refreshedSocialConfig, refreshedLegacyConfig] = await Promise.all([
         getMetaConfig().catch(() => null),
-        getMetaSocialConfig().catch(() => null)
+        getMetaSocialConfig().catch(() => null),
+        getLegacyMetaConfig().catch(() => null)
       ]);
 
       // PRIORIDAD: si ya existe configuración de Meta en Ristak, usarla siempre.
@@ -3371,9 +3377,9 @@ export const getMetaCustomValues = async (req, res) => {
         return res.json({
           success: true,
           data: toMaskedMetaCredentials(
-            refreshedLocalConfig || refreshedSocialConfig,
+            refreshedLegacyConfig || {},
             whatsappBusinessAccountId?.config_value,
-            refreshedSocialConfig
+            refreshedLegacyConfig
           ),
           source: 'local',
           reconciliation
@@ -3406,9 +3412,9 @@ export const getMetaCustomValues = async (req, res) => {
       return res.json({
         success: true,
         data: toMaskedMetaCredentials(
-          localMetaConfig || localSocialConfig,
+          localLegacyConfig || {},
           whatsappBusinessAccountId?.config_value,
-          localSocialConfig
+          localLegacyConfig
         ),
         source: 'local',
         reconciliation: {
