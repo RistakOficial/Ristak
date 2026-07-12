@@ -39,7 +39,7 @@ test('Agent v2 desactiva tool calls paralelas para serializar mutaciones', () =>
   assert.equal(typeof agent.toolUseBehavior, 'function')
 })
 
-test('una mutación live confirmada cierra la vuelta y evita ejecutar otra tool después', async () => {
+test('una mutación confirmada y una oferta estructurada de preview cierran la vuelta', async () => {
   const liveAgent = createToolCallingV2Agent({
     model: 'gpt-4.1-mini',
     instructions: 'Prueba',
@@ -65,7 +65,24 @@ test('una mutación live confirmada cierra la vuelta y evita ejecutar otra tool 
     tools: [],
     dryRun: true
   })
-  assert.equal(previewAgent.toolUseBehavior, 'run_llm_again')
+  assert.equal(typeof previewAgent.toolUseBehavior, 'function')
+  const previewOffer = await previewAgent.toolUseBehavior(null, [{
+    tool: { name: 'offer_appointment_slot' },
+    output: {
+      ok: true,
+      simulated: true,
+      actionCompleted: false,
+      terminal: true,
+      visibleReply: 'Tengo disponible el martes a las 4:00 p. m. ¿Te funciona ese horario?'
+    }
+  }])
+  assert.equal(previewOffer.isFinalOutput, true)
+  assert.equal(previewOffer.finalOutput, 'Tengo disponible el martes a las 4:00 p. m. ¿Te funciona ese horario?')
+  const previewRead = await previewAgent.toolUseBehavior(null, [{
+    tool: { name: 'get_free_slots' },
+    output: { ok: true, simulated: true, actionCompleted: false }
+  }])
+  assert.equal(previewRead.isFinalOutput, false)
 })
 
 test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silencio o descarte', () => {
@@ -83,6 +100,7 @@ test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silen
   }).map((candidate) => candidate.name)
 
   assert.ok(names.includes('get_free_slots'))
+  assert.ok(names.includes('offer_appointment_slot'))
   assert.ok(names.includes('book_appointment'))
   for (const forbidden of [
     'create_payment_link',
@@ -128,7 +146,7 @@ test('bookingOwner human reemplaza agendar por la solicitud humana estructurada'
   const request = tools.find((candidate) => candidate.name === 'request_human_booking')
   assert.deepEqual(
     Object.keys(request.parameters.properties).sort(),
-    ['attendeeContext', 'attendeeName', 'guests', 'notes', 'primaryAttendee', 'startTime', 'title']
+    ['attendeeContext', 'attendeeName', 'guests', 'notes', 'primaryAttendee', 'selectionEvidence', 'startTime', 'title']
   )
 })
 
@@ -629,6 +647,8 @@ test('runtime v2 ejecuta sólo el agente principal con el transcript real y nunc
 
   assert.equal(mainRuns, 1)
   assert.deepEqual(receivedMessages, messages)
+  assert.deepEqual(ctx.conversationMessages, messages)
+  assert.deepEqual(ctx.conversationMessages.at(-1), messages.at(-1))
   assert.equal(receivedMessages.some((message) => String(message.content).startsWith('[Contexto interno de Ristak:')), false)
   assert.equal(result.modelCallCount, 2)
   assert.equal(result.historyTelemetry.includedMessages, 200)

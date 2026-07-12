@@ -3079,8 +3079,11 @@ Publicar vuelve a comprobar que la pasarela elegida esté conectada y en modo
 otra pasarela. Los meses disponibles se filtran por proveedor, monto y moneda;
 HighLevel no ofrece MSI y maneja una fecha límite de invoice, por lo que su UI
 sólo permite 24 horas o 7 días y no promete una hora exacta. Si un monto perdería
-centavos al persistirse en el `REAL` histórico de `payments`, se rechaza antes de
-llamar al proveedor. El ledger nuevo usa `NUMERIC(20,6)`.
+precisión antes de hablar con el proveedor, el runtime falla cerrado. En
+PostgreSQL, la migración `041_payments_amount_numeric.postgres.sql` convierte el
+ledger a `NUMERIC(20,6)` con un `lock_timeout` local; SQLite conserva `REAL` para
+desarrollo. Los contratos HTTP/MCP serializan el decimal de PostgreSQL como
+número JSON para no cambiar la API pública.
 
 El bloque **Control y datos** agrega tres contratos guardados dentro de
 `capabilities_config` schema 2:
@@ -3378,7 +3381,33 @@ nunca un booleano escrito por el modelo.
 
 - Citas: v2 fija el calendario en servidor, consulta slots reales y vuelve a
   comprobar que el horario exista y siga libre. La llamada nativa reemplaza el
-  detector textual de confirmacion. `get_free_slots` entrega el instante UTC que
+  detector textual de confirmacion. Voluntad y seleccion son contratos
+  distintos: decir que quiere agendar, que quiere ir o que ya acepto atenderse
+  nunca autoriza al modelo a escoger el primer hueco. Incluso si el cliente
+  propone dia y hora exactos, el agente debe consultar `get_free_slots` y llamar
+  `offer_appointment_slot` con un solo `startTime`. Esta tool vuelve a validar el
+  slot, guarda `appointment_slot_offer_created` y construye el unico texto visible
+  de la oferta. El modelo no escribe, reformula ni agrega horarios; live y preview
+  terminan la vuelta y entregan esa oferta en un solo globo, sin pasarla por el
+  divisor de mensajes. Una oferta nueva invalida las anteriores del contacto.
+  `book_appointment` y `request_human_booking` exigen `selectionEvidence`
+  estructurada con el mismo `startTime`, el mensaje completo y literal mas
+  reciente del cliente y exactamente el texto de la ultima oferta estructurada
+  dentro del mensaje del agente inmediatamente anterior. El servidor sólo
+  comprueba identidad, orden y
+  coincidencia literal contra el hilo; no usa regex ni reglas de palabras para
+  adivinar intención. La
+  interpretacion de lenguaje natural sigue perteneciendo al modelo principal.
+  Una evidencia ausente, parafraseada, tomada de otro turno o ligada a otro slot
+  falla antes de producir `ctx.actions`; Modo test vuelve a exigir la marca
+  verificada antes de convertir una simulacion en cita temporal real. En vivo,
+  la seleccion sólo se sella despues de volver a comprobar que el horario existe
+  y sigue libre, mediante el evento durable
+  `appointment_slot_selection_verified`, ligado a agente, contacto, calendario,
+  `startTime`, ejecucion y los IDs de la oferta y confirmacion. Al sellar la
+  seleccion, la oferta queda `accepted`; un retry exacto la puede reproducir,
+  pero nunca revivir despues de que otra seleccion la sustituyo.
+  `get_free_slots` entrega el instante UTC que
   debe copiarse sin cambios a `book_appointment` y, por separado, fecha, hora y
   etiqueta visibles ya calculadas con la zona horaria del negocio; el modelo no
   convierte UTC ni adivina el horario que debe decirle a la persona. La
@@ -3396,6 +3425,9 @@ nunca un booleano escrito por el modelo.
   duplicarla. Una cita ajena o de otro calendario nunca se adopta como exito del
   agente. El ID local/GHL se canonicaliza al calendario local activo. Un fallo de
   calendario o disponibilidad cierra en seguro.
+  La opcion blindada `allowOverlaps` se aplica igual en consulta, oferta,
+  validacion previa al cobro, confirmacion automatica y solicitud humana; apagada
+  exige slot libre y encendida permite el empalme sin saltarse horas de atencion.
   El contacto solicitante de la cita es siempre el contacto canonico del hilo.
   `appointment_participants` conserva snapshots separados para `requester`,
   `primary_attendee` y cualquier cantidad acotada de `guest`; nombre es el unico
@@ -3425,7 +3457,15 @@ nunca un booleano escrito por el modelo.
   conectada y en `live`, nunca cae a otra ni entrega un link sandbox. Para estas
   pasarelas la recuperacion usa `public_payment_id`; la URL visible sale siempre
   de la fila canonica y no de un valor suelto devuelto por el proveedor. MSI,
-  vencimiento y accion posterior forman parte del hash; una combinacion sin
+  minutos de vencimiento y accion posterior forman parte del hash; el instante
+  absoluto de expiracion lo decide una sola vez la corrida ganadora y los retries
+  concurrentes o secuenciales reutilizan el valor del resultado/ledger canonico.
+  Cuando el cobro es el anticipo de una cita, la seleccion abre primero un intento
+  durable y la fuente exacta lo reclama antes de llamar al proveedor. El mismo
+  mensaje puede reentrar despues de un crash con ese intento ya `collecting` o
+  `source_bound`: vuelve a pedir `create_payment_link` y recupera el mismo link,
+  ledger y evento, sin crear un segundo cobro ni dejar el turno varado.
+  Una combinacion sin
   soporte falla cerrada en vez de degradarse en silencio. HighLevel no promete
   MSI porque su API de invoices no permite fijar ese maximo.
   `request_json` debe conservar su hash original; una mutacion de proposito, monto
@@ -3441,7 +3481,8 @@ nunca un booleano escrito por el modelo.
   contacto, monto y concepto se parezcan; su dedupe fuerte queda ligado a agente,
   capacidad, producto/precio y mensaje. Un supuesto comprobante del modelo no
   sirve como evidencia.
-- Anticipos: se cobran por los metodos configurados. Con `paymentLink`, el agente
+- Anticipos y comprobantes: se cobran por los metodos configurados. Con
+  `paymentLink`, el agente
   puede mandar `create_payment_link` aunque su cierre sea una cita. Con
   `bankTransfer`, comparte los datos configurados y, al recibir la foto o PDF del
   comprobante, ejecuta `register_deposit_payment_proof`: la tool lee el
@@ -3458,9 +3499,18 @@ nunca un booleano escrito por el modelo.
   revisor/fecha y reanuda el mismo Agent/Runner; rechazar guarda el motivo y nunca
   reanuda. La edicion generica, `record-payment` y el borrado no pueden brincar ni
   eliminar esta revision ya auditada.
+  El mismo contrato permite comprobantes de un pago completo (`purchase`) o de
+  un anticipo independiente (`deposit`) aunque no exista agenda: ambos quedan
+  pendientes y sólo `approve-transfer-proof` puede convertirlos en pago real y
+  completar la compra una vez.
   Si el anticipo aprobado pertenecia a una cita, el runner recibe el pago como
-  contexto factual interno, recupera el hilo completo y vuelve a comprobar el
-  slot antes de agendar; antes de crearla reserva esa evidencia para un request de
+  contexto factual interno. El evento fuente del cobro conserva el ID y snapshot
+  exactos de la seleccion durable que existia antes de crear el enlace o registrar
+  el comprobante. La reanudacion sólo puede reutilizar esa seleccion si la
+  reconciliacion apunta a ese mismo evento fuente y si agente, contacto,
+  calendario y `startTime` siguen coincidiendo; una seleccion posterior o ajena
+  falla cerrada. Despues vuelve a comprobar el slot antes de agendar y reserva la
+  evidencia de pago para un request de
   cita concreto con `claimToken` y lease. El controller vuelve a bloquear y validar
   ese fencing token, el pago y la reconciliacion dentro de la misma transaccion que
   inserta la cita; un proceso viejo no puede despertar y crear otra cita despues de
@@ -3469,9 +3519,18 @@ nunca un booleano escrito por el modelo.
   consume el contrato de anticipo congelado en el intento, aunque luego cambie la
   configuracion. Otro request no puede gastar de nuevo el mismo anticipo. No fabrica
   un mensaje del cliente ni espera otro inbound.
-  El equipo recibe push para auditar el comprobante. Un
-  comprobante ilegible, con monto distinto u otra moneda se rechaza y el agente
-  pide una foto clara o transfiere. En v2, pago y evento se guardan en una sola
+  El equipo recibe push para auditar el comprobante. Una imagen ilegible, sin
+  monto, con monto distinto u otra moneda no se descarta ni fabrica una fila de
+  pago: se sella una sola vez como `payment_proof_manual_review_required`, con la
+  media, proposito, expectativa y causa, `ledgerPaymentId=null`, sin permiso de
+  aprobar ni reanudar. Caso y estado `human/ready_for_human` se confirman juntos;
+  si la persona asignada ya no sirve, el chat queda con el equipo general. Si la
+  lectura habia tomado el claim de un anticipo, se libera por CAS despues de
+  sellar el caso para permitir una foto correcta posterior. Un comprobante valido
+  pero viejo, ambiguo o enviado despues de que el mismo anticipo ya genero un
+  link conserva `appointment_deposit`, crea ledger pendiente, bloquea autoagenda,
+  deja el source original intacto y pasa el chat a revision humana antes de
+  registrar ese ledger. En v2, pago y evento se guardan en una sola
   transaccion y quedan ligados al contacto, canal y mensaje/media exactos, no al
   agente que alcanzo a procesarlo. Repetir el mismo comprobante incluso desde otro
   agente devuelve el mismo ledger, mientras cambiar importe, proposito o archivo
@@ -3489,6 +3548,10 @@ nunca un booleano escrito por el modelo.
   omitio su URL, el servidor la agrega completa y una sola vez despues de
   sanitizar el mensaje. Los nombres de tools, IDs, payloads y codigos internos no
   se entregan al contacto; v2 tampoco dispone de una tool capaz de quedarse mudo.
+  Las ofertas estructuradas de horario siempre salen como un solo globo. Al
+  recibir cualquier comprobante, el fallback visible aclara que quedo pendiente
+  de revision y que el pago todavia no esta confirmado, incluso si el handoff
+  propio ya cambio el estado del chat a humano.
 - Confirmaciones posteriores: webhooks reales de pago o integraciones externas
   pueden cerrar una meta pendiente. Reutilizan el resumen factual, no levantan
   otra IA y no aplican asignaciones, etiquetas ni campos ajenos a las capacidades

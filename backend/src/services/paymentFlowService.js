@@ -1663,6 +1663,16 @@ export async function registerAgentTransferPaymentProofForReview({
   const cleanBindingChannel = String(binding?.channel || 'whatsapp').trim().toLowerCase()
   const paymentPurpose = String(binding?.paymentPurpose || '').trim().toLowerCase()
   const appointmentDeposit = binding?.appointmentDeposit === true
+  const manualReviewOnly = binding?.manualReviewOnly === true
+  const autoResumeAllowed = binding?.autoResumeAllowed !== false
+  const appointmentSelectionEventId = String(binding?.appointmentSelectionEventId || '').trim()
+  const appointmentSelectionCalendarId = String(binding?.appointmentSelectionCalendarId || '').trim()
+  const appointmentSelectionStartTime = String(binding?.appointmentSelectionStartTime || '').trim()
+  const appointmentSelectionVerifiedAt = String(binding?.appointmentSelectionVerifiedAt || '').trim()
+  const appointmentDepositIntentEventId = String(binding?.appointmentDepositIntentEventId || '').trim()
+  const appointmentDepositIntentClaimKey = String(binding?.appointmentDepositIntentClaimKey || '').trim()
+  const appointmentDepositIntentClaimToken = String(binding?.appointmentDepositIntentClaimToken || '').trim()
+  const receiptIntentBindingEventId = String(binding?.receiptIntentBindingEventId || '').trim()
   const bindingEventId = binding
     ? `cae_transfer_proof_${createHash('sha256').update([
         cleanContactId,
@@ -1675,13 +1685,27 @@ export async function registerAgentTransferPaymentProofForReview({
     ? appointmentDeposit
     : paymentPurpose === 'deposit'
       ? !appointmentDeposit
-      : false
+      : paymentPurpose === 'purchase'
+        ? !appointmentDeposit
+        : false
   if (
     binding && (
       !cleanAgentId ||
       !cleanBindingKey ||
       !/^[a-z][a-z0-9_-]{0,39}$/.test(cleanBindingChannel) ||
-      !purposeConsistent
+      !purposeConsistent ||
+      (appointmentDeposit && !manualReviewOnly && (
+        !appointmentSelectionEventId ||
+        !appointmentSelectionCalendarId ||
+        !appointmentSelectionStartTime ||
+        !appointmentSelectionVerifiedAt ||
+        !appointmentDepositIntentEventId ||
+        !appointmentDepositIntentClaimKey ||
+        !appointmentDepositIntentClaimToken ||
+        !receiptIntentBindingEventId ||
+        appointmentDepositIntentClaimKey !== receiptIntentBindingEventId
+      )) ||
+      (manualReviewOnly && (!appointmentDeposit || paymentPurpose !== 'appointment_deposit' || autoResumeAllowed))
     )
   ) {
     throw new Error('Falta la identidad durable del comprobante conversacional')
@@ -1714,7 +1738,17 @@ export async function registerAgentTransferPaymentProofForReview({
             channel: cleanBindingChannel,
             paymentPurpose,
             appointmentDeposit,
-            executionId: String(binding.executionId || '').trim() || null
+            manualReviewOnly,
+            autoResumeAllowed,
+            executionId: String(binding.executionId || '').trim() || null,
+            appointmentSelectionEventId: appointmentSelectionEventId || null,
+            appointmentSelectionCalendarId: appointmentSelectionCalendarId || null,
+            appointmentSelectionStartTime: appointmentSelectionStartTime || null,
+            appointmentSelectionVerifiedAt: appointmentSelectionVerifiedAt || null,
+            appointmentDepositIntentEventId: appointmentDepositIntentEventId || null,
+            appointmentDepositIntentClaimKey: appointmentDepositIntentClaimKey || null,
+            appointmentDepositIntentClaimToken: appointmentDepositIntentClaimToken || null,
+            receiptIntentBindingEventId: receiptIntentBindingEventId || null
           }
         : {})
     }
@@ -1746,15 +1780,54 @@ export async function registerAgentTransferPaymentProofForReview({
 
   const payment = binding
     ? await db.transaction(async () => {
+        let appointmentDepositIntent = null
+        let appointmentDepositIntentDetail = null
+        if (appointmentDeposit && appointmentDepositIntentEventId && appointmentDepositIntentClaimKey && appointmentDepositIntentClaimToken) {
+          appointmentDepositIntent = await db.get(
+            `SELECT id, contact_id, agent_id, event_type, detail_json
+             FROM conversational_agent_events WHERE id = ?`,
+            [appointmentDepositIntentEventId]
+          )
+          appointmentDepositIntentDetail = safeJsonParse(appointmentDepositIntent?.detail_json, {})
+          const intentCollecting = (
+            String(appointmentDepositIntentDetail.status || '') === 'collecting' &&
+            String(appointmentDepositIntentDetail.collectionMethod || '') === 'bankTransfer' &&
+            String(appointmentDepositIntentDetail.claimKey || '') === appointmentDepositIntentClaimKey &&
+            String(appointmentDepositIntentDetail.claimToken || '') === appointmentDepositIntentClaimToken
+          )
+          const intentAlreadyBound = (
+            String(appointmentDepositIntentDetail.status || '') === 'source_bound' &&
+            String(appointmentDepositIntentDetail.sourceEventId || '') === bindingEventId
+          )
+          if (
+            appointmentDepositIntent?.event_type !== 'appointment_deposit_intent_pending' ||
+            String(appointmentDepositIntent?.contact_id || '') !== cleanContactId ||
+            String(appointmentDepositIntent?.agent_id || '') !== cleanAgentId ||
+            String(appointmentDepositIntentDetail.selectionEventId || '') !== appointmentSelectionEventId ||
+            !intentCollecting && !intentAlreadyBound
+          ) {
+            throw new Error('El intento durable del anticipo no coincide con este comprobante')
+          }
+        }
         const reservationDetail = {
           status: 'binding',
           agentId: cleanAgentId,
           channel: cleanBindingChannel,
           runtimeMode: 'tool_calling_v2',
-          paymentMode: 'deposit',
+          paymentMode: appointmentDeposit || paymentPurpose === 'deposit' ? 'deposit' : 'full_payment',
           paymentPurpose,
           appointmentDeposit,
+          manualReviewOnly,
+          autoResumeAllowed,
           executionId: String(binding.executionId || '').trim() || null,
+          appointmentSelectionEventId: appointmentSelectionEventId || null,
+          appointmentSelectionCalendarId: appointmentSelectionCalendarId || null,
+          appointmentSelectionStartTime: appointmentSelectionStartTime || null,
+          appointmentSelectionVerifiedAt: appointmentSelectionVerifiedAt || null,
+          appointmentDepositIntentEventId: appointmentDepositIntentEventId || null,
+          appointmentDepositIntentClaimKey: appointmentDepositIntentClaimKey || null,
+          appointmentDepositIntentClaimToken: appointmentDepositIntentClaimToken || null,
+          receiptIntentBindingEventId: receiptIntentBindingEventId || null,
           mediaMessageId: String(mediaMessageId || '').trim() || null
         }
         const reserved = await db.run(
@@ -1781,7 +1854,17 @@ export async function registerAgentTransferPaymentProofForReview({
             String(existingDetail.channel || 'whatsapp').trim().toLowerCase() !== cleanBindingChannel ||
             existingDetail.paymentPurpose !== paymentPurpose ||
             existingDetail.appointmentDeposit !== appointmentDeposit ||
+            existingDetail.manualReviewOnly !== manualReviewOnly ||
+            existingDetail.autoResumeAllowed !== autoResumeAllowed ||
             String(existingDetail.executionId || '').trim() !== expectedExecutionId ||
+            String(existingDetail.appointmentSelectionEventId || '').trim() !== appointmentSelectionEventId ||
+            String(existingDetail.appointmentSelectionCalendarId || '').trim() !== appointmentSelectionCalendarId ||
+            String(existingDetail.appointmentSelectionStartTime || '').trim() !== appointmentSelectionStartTime ||
+            String(existingDetail.appointmentSelectionVerifiedAt || '').trim() !== appointmentSelectionVerifiedAt ||
+            String(existingDetail.appointmentDepositIntentEventId || '').trim() !== appointmentDepositIntentEventId ||
+            String(existingDetail.appointmentDepositIntentClaimKey || '').trim() !== appointmentDepositIntentClaimKey ||
+            String(existingDetail.appointmentDepositIntentClaimToken || '').trim() !== appointmentDepositIntentClaimToken ||
+            String(existingDetail.receiptIntentBindingEventId || '').trim() !== receiptIntentBindingEventId ||
             String(existingDetail.mediaMessageId || '').trim() !== expectedMediaMessageId ||
             Math.abs(Number(existingDetail.amount) - normalizedAmount) >= 0.005 ||
             String(existingDetail.currency || '').trim().toUpperCase() !== paymentCurrency ||
@@ -1828,6 +1911,21 @@ export async function registerAgentTransferPaymentProofForReview({
         )
         if (Number(finalized?.changes || 0) !== 1) {
           throw new Error('No se pudo sellar el vínculo durable del comprobante')
+        }
+        if (appointmentDepositIntent && String(appointmentDepositIntentDetail.status || '') === 'collecting') {
+          const closedIntent = await db.run(
+            `UPDATE conversational_agent_events SET detail_json = ?
+             WHERE id = ? AND detail_json = ?`,
+            [JSON.stringify({
+              ...appointmentDepositIntentDetail,
+              status: 'source_bound',
+              sourceEventId: bindingEventId,
+              sourceBoundAt: new Date().toISOString()
+            }), appointmentDepositIntentEventId, appointmentDepositIntent.detail_json]
+          )
+          if (Number(closedIntent?.changes ?? closedIntent?.rowCount ?? 0) !== 1) {
+            throw new Error('El intento durable del anticipo cambió antes de sellar el comprobante')
+          }
         }
         return { row: insertedPayment, alreadyRegistered: false }
       })

@@ -23,29 +23,15 @@ function cleanString(value) {
 }
 
 /**
- * PostgreSQL devuelve las columnas `timestamp without time zone` como Date en
- * node-postgres. Ese Date contiene los componentes del timestamp guardado
- * interpretados en la zona del proceso, no necesariamente el instante UTC que
- * representa nuestro contrato de almacenamiento. Recuperamos esos
- * componentes locales y los rehidratamos explícitamente como UTC.
- *
- * Las columnas de citas/reminders se normalizan a UTC antes de persistirse, por
- * eso esta función es sólo para leer esos timestamps naive sin moverlos seis
- * horas (o el offset que tenga el proceso).
+ * Las fechas guardadas por citas y recordatorios son instantes UTC. El
+ * adaptador PostgreSQL ya interpreta `timestamp without time zone` como UTC en
+ * el borde de base de datos, así que un Date se trata con su semántica normal:
+ * un instante absoluto. SQLite entrega strings y se leen explícitamente en UTC.
  */
 export function parseStoredUtcDateTime(value) {
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null
-    const local = DateTime.fromJSDate(value)
-    return DateTime.utc(
-      local.year,
-      local.month,
-      local.day,
-      local.hour,
-      local.minute,
-      local.second,
-      local.millisecond
-    )
+    return DateTime.fromJSDate(value, { zone: 'utc' })
   }
 
   const text = cleanString(value)

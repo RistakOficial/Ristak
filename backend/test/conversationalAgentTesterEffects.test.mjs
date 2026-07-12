@@ -480,6 +480,14 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
       startTime: slot.toUTC().toISO(),
       endTime: slot.plus({ hours: 1 }).toUTC().toISO(),
       title: 'Cita para Paty Jiménez',
+      confirmationEvidence: {
+        evidenceVerified: true,
+        nativeToolDecision: true,
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime: slot.toUTC().toISO(),
+        customerQuote: 'el martes tipo 10',
+        assistantOfferQuote: 'martes a las 10:00'
+      },
       participants: [
         { role: 'requester', contactId, name: 'Contacto elegido', phone: contactPhone, email: '', relation: '' },
         { role: 'primary_attendee', contactId: null, name: 'Paty Jiménez', phone: '', email: '', relation: 'mamá' }
@@ -493,11 +501,33 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
     assert.equal(first.length, 1)
     assert.equal(first[0].status, 'recorded')
     assert.equal(first[0].payload.appointmentCreated, true)
+    assert.equal(first[0].payload.confirmationEvidence.evidenceVerified, true)
+    assert.equal(first[0].payload.confirmationEvidence.customerQuote, 'el martes tipo 10')
     appointmentEffectId = first[0].id
     assert.equal(Number((await db.get(
       'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
       [contactId]
     )).total), 1)
+
+    const missingEvidenceRun = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: `message_appointment_without_selection_${suffix}`,
+      agentId,
+      requestedByUserId: userId,
+      contactId,
+      effects
+    })
+    const { confirmationEvidence: _missingEvidence, ...appointmentWithoutEvidence } = appointmentAction
+    const blockedWithoutEvidence = await recordConversationalAgentPreviewEffects({
+      runContext: missingEvidenceRun,
+      actions: [appointmentWithoutEvidence]
+    })
+    assert.equal(blockedWithoutEvidence[0].status, 'failed')
+    assert.match(blockedWithoutEvidence[0].summary, /selección verificable/i)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+      [contactId]
+    )).total), 1, 'el segundo candado del tester no debe materializar una acción sin evidencia')
 
     const replay = await recordConversationalAgentPreviewEffects({
       runContext: appointmentRun,
@@ -605,7 +635,7 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
       runContext: paymentRun,
       actions: [stalePaymentAction]
     })
-    assert.equal(payment[0].status, 'prepared')
+    assert.equal(payment[0].status, 'prepared', JSON.stringify(payment[0], null, 2))
     assert.equal(payment[0].payload.paymentCreated, true)
     assert.equal(payment[0].payload.linkSent, true)
     assert.match(payment[0].payload.paymentUrl, /^https:\/\/payments\.example\.test\//)

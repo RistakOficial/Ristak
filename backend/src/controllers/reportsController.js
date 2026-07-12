@@ -18,6 +18,7 @@ import {
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
+import { serializePaymentAmount } from '../utils/paymentAmountSerialization.js'
 // (ACL-002) Excluir contactos ocultos en la lista de transacciones de reportes (LEFT JOIN expone PII).
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
@@ -415,6 +416,7 @@ export const getTransactionsList = async (req, res) => {
       const { metadata_json: _metadataJson, ...publicRow } = row
       return {
         ...publicRow,
+        amount: serializePaymentAmount(row.amount),
         payment_method_category: display.paymentMethodCategory,
         payment_method_category_id: display.paymentMethodCategoryId,
         payment_type: display.paymentType,

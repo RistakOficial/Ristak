@@ -271,7 +271,12 @@ export async function createConversationalAgentLivePaymentLink({
   const normalizedAmount = normalizeAmount(amount, normalizedCurrency)
   const normalizedInstallments = normalizeInstallments(installments)
   const normalizedExpirationMinutes = normalizeExpirationMinutes(expirationMinutes)
-  const expiresAt = buildExpirationIso(normalizedExpirationMinutes, now)
+  // HighLevel necesita la fecha antes de entrar a su flujo propio. Para las
+  // demás pasarelas, sólo el ganador de la reserva idempotente la calcula; los
+  // reintentos recuperan el vencimiento canónico ya guardado en el resultado.
+  const expiresAt = selectedGateway === 'highlevel'
+    ? buildExpirationIso(normalizedExpirationMinutes, now)
+    : null
   const requestKey = cleanString(idempotencyKey, 180)
   if (!requestKey) {
     throw serviceError('Falta la llave durable de este cobro.', 400, 'live_payment_idempotency_missing')
@@ -327,7 +332,6 @@ export async function createConversationalAgentLivePaymentLink({
     concept: cleanString(concept, 300) || 'Pago',
     installments: normalizedInstallments,
     expirationMinutes: normalizedExpirationMinutes,
-    expiresAt,
     afterPayment: afterPayment === 'handoff' ? 'handoff' : 'continue'
   }
 
@@ -351,6 +355,7 @@ export async function createConversationalAgentLivePaymentLink({
       idempotencyKey: requestKey,
       payload: durablePayload,
       create: async () => {
+        const canonicalExpiresAt = buildExpirationIso(normalizedExpirationMinutes, now)
         const gateConfig = dependencies.normalizePaymentGateConfig({
           enabled: true,
           gateway: selectedGateway,
@@ -377,13 +382,13 @@ export async function createConversationalAgentLivePaymentLink({
           source,
           applyTax: false,
           paymentLinkRequestKey: requestKey,
-          expiresAt,
+          expiresAt: canonicalExpiresAt,
           metadata: {
             paymentMode: 'live',
             conversationalAgent: {
               idempotencyKey: requestKey,
               afterPayment: durablePayload.afterPayment,
-              expiresAt
+              expiresAt: canonicalExpiresAt
             }
           }
         })
@@ -396,7 +401,7 @@ export async function createConversationalAgentLivePaymentLink({
           paymentMode: cleanString(created?.payment?.paymentMode, 40).toLowerCase(),
           amount: Number(created?.payment?.amount),
           currency: cleanString(created?.payment?.currency, 3).toUpperCase(),
-          expiresAt
+          expiresAt: canonicalExpiresAt
         }
       }
     })
@@ -408,6 +413,9 @@ export async function createConversationalAgentLivePaymentLink({
     idempotencyKey: requestKey,
     result
   })
+  const replayExpiresAt = Number.isFinite(Date.parse(result?.expiresAt || ''))
+    ? result.expiresAt
+    : expiresAt
   return {
     ...assertExactLiveLedger({
       ledger,
@@ -417,7 +425,7 @@ export async function createConversationalAgentLivePaymentLink({
       amount: normalizedAmount,
       currency: normalizedCurrency,
       idempotencyKey: requestKey,
-      expiresAt
+      expiresAt: replayExpiresAt
     }),
     reused: result?.reused === true,
     durableReplay: result?.durableReplay === true,

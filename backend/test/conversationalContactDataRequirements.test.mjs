@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { db, databaseReady } from '../src/config/database.js'
 import {
   __conversationalToolsTestHooks,
+  buildNativeFreeSlotDays,
   createConversationalTools,
   setNativeHandoffAfterAssignmentHookForTest,
   setPreventiveMutationFenceHookForTest
@@ -16,6 +17,7 @@ import {
 } from '../src/services/conversationalAgentSafetyService.js'
 import { getConversationState } from '../src/services/conversationalAgentService.js'
 import { ensureToolCallingV2VisibleReply } from '../src/agents/conversational/runner.js'
+import { getAccountTimezone } from '../src/utils/dateUtils.js'
 
 await databaseReady
 
@@ -337,6 +339,13 @@ test('prompt blindado respeta titular distinto apagado y límite de invitados si
 
 test('tools de agenda rechazan titular distinto y exceso de invitados antes de cualquier cita', async () => {
   const calendarId = `calendar_participant_policy_${randomUUID()}`
+  const selectedStartTime = '2026-08-01T18:00:00.000Z'
+  const timezone = await getAccountTimezone()
+  const localLabel = buildNativeFreeSlotDays([{
+    date: '2026-08-01',
+    timezone,
+    slots: [selectedStartTime]
+  }], timezone)[0].options[0].localLabel
   const baseCapabilities = {
     schemaVersion: 2,
     safetyPolicy: { enabled: false },
@@ -366,14 +375,20 @@ test('tools de agenda rechazan titular distinto y exceso de invitados antes de c
     [calendarId]
   )
   try {
-    const buildTools = (capabilitiesConfig) => createConversationalTools({
+    const buildTools = (capabilitiesConfig) => {
+      const executionId = `message_participant_policy_${randomUUID()}`
+      return createConversationalTools({
       runtimeMode: 'tool_calling_v2',
       contactId: `virtual_contact_${randomUUID()}`,
       agentId: `agent_participant_policy_${randomUUID()}`,
-      executionId: `message_participant_policy_${randomUUID()}`,
+      executionId,
       dryRun: true,
       followUpMode: false,
       actions: [],
+      conversationMessages: [
+        { id: `offer_participant_policy_${randomUUID()}`, role: 'assistant', content: `Te ofrezco ${localLabel}.` },
+        { id: executionId, role: 'user', content: 'sí, ese horario está bien' }
+      ],
       virtualContact: {
         fullName: 'Raúl Gómez',
         phone: '+526561111111',
@@ -381,12 +396,19 @@ test('tools de agenda rechazan titular distinto y exceso de invitados antes de c
       },
       capabilitiesConfig,
       config: { runtimeMode: 'tool_calling_v2', capabilitiesConfig }
-    })
+      })
+    }
 
     const book = buildTools(baseCapabilities).find((tool) => tool.name === 'book_appointment')
     assert.ok(book)
     const forbiddenPrimary = await book.invoke(null, JSON.stringify({
-      startTime: '2026-08-01T18:00:00.000Z',
+      startTime: selectedStartTime,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime,
+        customerQuote: 'sí, ese horario está bien',
+        assistantOfferQuote: localLabel
+      },
       title: null,
       notes: null,
       attendeeName: null,
@@ -398,7 +420,13 @@ test('tools de agenda rechazan titular distinto y exceso de invitados antes de c
     assert.match(forbiddenPrimary.error, /no permite agendar para un titular distinto/i)
 
     const tooManyGuests = await book.invoke(null, JSON.stringify({
-      startTime: '2026-08-01T18:00:00.000Z',
+      startTime: selectedStartTime,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime,
+        customerQuote: 'sí, ese horario está bien',
+        assistantOfferQuote: localLabel
+      },
       title: null,
       notes: null,
       attendeeName: null,
@@ -421,7 +449,13 @@ test('tools de agenda rechazan titular distinto y exceso de invitados antes de c
     const requestHuman = buildTools(humanCapabilities).find((tool) => tool.name === 'request_human_booking')
     assert.ok(requestHuman)
     const forbiddenHumanPrimary = await requestHuman.invoke(null, JSON.stringify({
-      startTime: '2026-08-01T18:00:00.000Z',
+      startTime: selectedStartTime,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime,
+        customerQuote: 'sí, ese horario está bien',
+        assistantOfferQuote: localLabel
+      },
       title: null,
       notes: null,
       attendeeName: 'Paty Jiménez',

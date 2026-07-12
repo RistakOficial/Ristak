@@ -1,5 +1,6 @@
 import { db } from '../config/database.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { normalizeToUtcIso } from '../utils/dateUtils.js'
 
 function cleanString(value) {
   return String(value ?? '').trim()
@@ -21,6 +22,13 @@ function json(value) {
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function optionalUtcIso(value) {
+  if (value === null || value === undefined || value === '') return null
+  const normalized = normalizeToUtcIso(value, 'UTC')
+  const parsed = new Date(normalized)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
 function requireTestIdentity(context = {}) {
@@ -85,7 +93,7 @@ export async function claimAppointmentTestAction(context = {}, action = {}) {
     idempotencyKey,
     cleanString(action.detail) || null,
     json(action.request),
-    cleanString(context.testExpiresAt || context.test_expires_at) || null
+    optionalUtcIso(context.testExpiresAt || context.test_expires_at)
   ])
   const receipt = normalizeReceipt(await db.get(
     'SELECT * FROM conversational_appointment_test_automation_receipts WHERE idempotency_key = ?',
@@ -143,7 +151,7 @@ export async function recordSimulatedAppointmentTestAction(context = {}, action 
     cleanString(action.detail) || 'Efecto irreversible simulado en Modo test.',
     json(action.request),
     json(action.response),
-    cleanString(context.testExpiresAt || context.test_expires_at) || null
+    optionalUtcIso(context.testExpiresAt || context.test_expires_at)
   ])
   return normalizeReceipt(await db.get(
     'SELECT * FROM conversational_appointment_test_automation_receipts WHERE idempotency_key = ?',

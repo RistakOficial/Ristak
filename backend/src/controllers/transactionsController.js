@@ -37,6 +37,7 @@ import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLo
 import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
+import { serializePaymentAmount } from '../utils/paymentAmountSerialization.js'
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 import { completeConversationalAgentSalePaymentFromInvoice } from '../services/conversationalAgentService.js'
 
@@ -101,7 +102,8 @@ const TRANSFER_PROOF_PENDING_SOURCE = 'conversational_agent_transfer_proof_pendi
 const createLocalId = (prefix) => createRistakPaymentEntityId(prefix)
 
 export const __transactionsControllerTestHooks = {
-  paymentTimestampSortExpression: timestampSortExpression
+  paymentTimestampSortExpression: timestampSortExpression,
+  paymentAmountForResponse: serializePaymentAmount
 }
 
 // (PAY-007) Idempotencia del registro manual de pago: un reintento de red NO debe
@@ -483,7 +485,7 @@ const mapTransactionRow = (t, baseUrl = '') => ({
   contactName: t.contact_name || '',
   email: t.contact_email || '',
   phone: t.contact_phone || '',
-  amount: t.amount,
+  amount: serializePaymentAmount(t.amount),
   currency: t.currency,
   method: t.payment_method || 'other',
   status: normalizeStatus(t.status),
@@ -1095,7 +1097,7 @@ export const getTransactionById = async (req, res) => {
       contactName: transaction.contact_name || '',
       email: transaction.contact_email || '',
       phone: transaction.contact_phone || '',
-      amount: transaction.amount,
+      amount: serializePaymentAmount(transaction.amount),
       currency: transaction.currency,
       method: transaction.payment_method || 'other',
       status: normalizeStatus(transaction.status),
@@ -1807,7 +1809,8 @@ export const approveTransferProof = async (req, res) => {
         paymentMode: approved.payment_mode,
         reference: approved.reference || ''
       })
-      conversationResumePending = Boolean(conversationResume?.processing || (
+      const manualReviewResolved = conversationResume?.manualReviewRequired === true || conversationResume?.needsNewSlot === true
+      conversationResumePending = !manualReviewResolved && Boolean(conversationResume?.processing || (
         conversationResume?.matched && !conversationResume?.resumed && !conversationResume?.alreadyCompleted &&
         conversationResume?.signal !== 'purchase_completed'
       ))

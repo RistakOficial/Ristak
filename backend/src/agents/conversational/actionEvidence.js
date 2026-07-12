@@ -1,4 +1,6 @@
+import { DateTime } from 'luxon'
 import { canRecoverConversationalAppointmentDepositReservation } from '../../services/conversationalAgentService.js'
+import { resolveTimezone } from '../../utils/dateUtils.js'
 
 export const SUCCESS_PAYMENT_STATUSES = new Set([
   'paid',
@@ -89,6 +91,213 @@ function parseJsonObject(value) {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
   } catch {
     return {}
+  }
+}
+
+function conversationRole(message = {}) {
+  const role = String(message?.role || message?.direction || '').trim().toLowerCase()
+  if (role === 'assistant' || role === 'outbound') return 'assistant'
+  if (role === 'user' || role === 'inbound') return 'user'
+  return ''
+}
+
+function conversationText(message = {}) {
+  return String(message?.content ?? message?.text ?? message?.message_text ?? '').trim()
+}
+
+function extractCanonicalAppointmentLabels(text = '') {
+  const pattern = /\b(?:lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\s+\d{1,2}\s+de\s+[\p{L}]+\s+de\s+\d{4}\s+a\s+las\s+\d{1,2}:\d{2}\s+(?:a\.\s?m\.|p\.\s?m\.)(?:\s+\(UTC[+-]\d{2}:\d{2}\))?/giu
+  return [...String(text || '').matchAll(pattern)].map((match) => match[0].trim())
+}
+
+export function buildCanonicalAppointmentSlotOption(startTime = '', timezone = '') {
+  const dayTimezone = resolveTimezone(timezone)
+  const local = DateTime.fromISO(String(startTime || ''), { setZone: true })
+    .setZone(dayTimezone)
+    .setLocale('es-MX')
+  if (!local.isValid) return null
+  const localKey = local.toFormat('yyyy-MM-dd HH:mm')
+  const repeatedLocalTime = [local.minus({ minutes: 60 }), local.plus({ minutes: 60 })]
+    .some((candidate) => candidate.toFormat('yyyy-MM-dd HH:mm') === localKey && candidate.offset !== local.offset)
+  const baseLabel = local.toFormat("cccc d 'de' LLLL 'de' yyyy 'a las' h:mm a")
+  return {
+    startTime: String(startTime),
+    localDate: local.toISODate(),
+    localTime: local.toFormat('HH:mm'),
+    localLabel: repeatedLocalTime ? `${baseLabel} (UTC${local.toFormat('ZZ')})` : baseLabel,
+    timezone: dayTimezone
+  }
+}
+
+/**
+ * Valida el comprobante estructurado que el MISMO modelo principal adjunta a
+ * book_appointment/request_human_booking. No intenta interpretar lenguaje ni
+ * decidir intención con regex: sólo comprueba hechos mecánicos del hilo.
+ *
+ * El modelo conserva el trabajo semántico (entender "va, el martes tipo 10"),
+ * pero debe señalar de forma auditable:
+ *   - la cita literal del último mensaje del cliente que eligió/aceptó el slot;
+ *   - y, cuando aceptó una propuesta, la cita literal de la respuesta del agente
+ *     inmediatamente anterior a ese mensaje.
+ *
+ * Esto impide que "sí quiere ir" se convierta en permiso para escoger el primer
+ * hueco del calendario y también evita reutilizar una oferta vieja después de
+ * que el cliente cambió de tema. Las reanudaciones por pago no pasan por esta
+ * función: recuperan únicamente el evento durable de selección que quedó
+ * ligado al evento fuente exacto del cobro reconciliado.
+ */
+export function verifyNativeAppointmentSelectionEvidence({
+  messages = [],
+  startTime = '',
+  timezone = '',
+  executionId = '',
+  evidence = null
+} = {}) {
+  const selectedStartTime = String(startTime || '').trim()
+  const selectionMode = String(evidence?.selectionMode || '').trim()
+  const evidenceStartTime = String(evidence?.selectedStartTime || '').trim()
+  const customerQuote = String(evidence?.customerQuote || '').trim()
+  const assistantOfferQuote = evidence?.assistantOfferQuote == null
+    ? ''
+    : String(evidence.assistantOfferQuote).trim()
+
+  if (!selectedStartTime || Number.isNaN(new Date(selectedStartTime).getTime())) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      invalidSlot: true,
+      error: 'No se pudo comprobar el horario elegido porque startTime no es válido. No se agendó nada.'
+    }
+  }
+  if (!evidence || selectionMode !== 'accepted_prior_offer') {
+    return {
+      ok: false,
+      actionCompleted: false,
+      confirmationRequired: true,
+      error: 'Falta una confirmación de una oferta canónica previa. No se agendó nada: incluso si la persona propuso un horario, primero revalídalo, ofrécelo con la etiqueta devuelta por el servidor y espera su respuesta en otro turno.'
+    }
+  }
+  if (evidenceStartTime !== selectedStartTime) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      confirmationRequired: true,
+      error: 'El horario de la evidencia no coincide exactamente con el slot solicitado. No se agendó nada.'
+    }
+  }
+
+  const history = (Array.isArray(messages) ? messages : [])
+    .map((message, index) => ({
+      message,
+      index,
+      role: conversationRole(message),
+      text: conversationText(message)
+    }))
+    .filter((message) => message.role && message.text)
+  let customerIndex = -1
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index].role === 'user') {
+      customerIndex = index
+      break
+    }
+  }
+  let customerBatchStart = customerIndex
+  while (customerBatchStart > 0 && history[customerBatchStart - 1]?.role === 'user') {
+    customerBatchStart -= 1
+  }
+  const customerBatch = customerIndex >= 0
+    ? history.slice(customerBatchStart, customerIndex + 1)
+    : []
+  const customerMessage = customerBatch.find((item) => item.text.trim() === customerQuote) || null
+  const latestCustomerMessage = customerBatch.at(-1) || null
+  const latestCustomerMessageId = String(latestCustomerMessage?.message?.id || '').trim()
+  const expectedExecutionId = String(executionId || '').trim()
+  if (!customerMessage) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      confirmationRequired: true,
+      error: 'customerQuote debe ser un mensaje completo y literal del último bloque recibido de la persona. No se agendó nada: espera su confirmación real del horario.'
+    }
+  }
+  if (expectedExecutionId && latestCustomerMessageId !== expectedExecutionId) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      confirmationRequired: true,
+      error: 'El último mensaje del bloque confirmado no pertenece a la ejecución actual. No se agendó nada.'
+    }
+  }
+
+  const canonicalSlot = buildCanonicalAppointmentSlotOption(selectedStartTime, timezone)
+  if (!canonicalSlot) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      invalidSlot: true,
+      error: 'No se pudo construir la etiqueta canónica del horario. No se agendó nada.'
+    }
+  }
+  const offerTurnEnd = customerBatchStart - 1
+  let offerTurnStart = offerTurnEnd
+  while (offerTurnStart > 0 && history[offerTurnStart - 1]?.role === 'assistant') {
+    offerTurnStart -= 1
+  }
+  const offerTurn = offerTurnEnd >= 0 && history[offerTurnEnd]?.role === 'assistant'
+    ? history.slice(offerTurnStart, offerTurnEnd + 1)
+    : []
+  const canonicalLabelsInOfferTurn = [...new Set(
+    offerTurn.flatMap((item) => extractCanonicalAppointmentLabels(item.text))
+  )]
+  if (canonicalLabelsInOfferTurn.length > 1) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      confirmationRequired: true,
+      code: 'ambiguous_slot_selection',
+      error: 'El turno anterior ofreció más de un horario canónico. Un “sí” no identifica cuál eligió; ofrece un solo localLabel y espera otra respuesta.'
+    }
+  }
+  const offerMessage = offerTurn.find((item) => item.text.includes(canonicalSlot.localLabel)) || null
+  if (assistantOfferQuote !== canonicalSlot.localLabel || !offerMessage) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      confirmationRequired: true,
+      error: 'El turno de globitos del agente inmediatamente anterior no contiene la etiqueta canónica de ESTE horario. No se agendó nada: revalida el slot, ofrece su localLabel exacto y espera otra respuesta.'
+    }
+  }
+
+  const customerMessageIds = customerBatch
+    .map((item) => String(item.message?.id || '').trim())
+    .filter(Boolean)
+  const offerTurnMessageIds = offerTurn
+    .map((item) => String(item.message?.id || '').trim())
+    .filter(Boolean)
+  const offerTurnId = String(
+    offerMessage.message?.turnId ||
+    offerMessage.message?.turn_id ||
+    offerMessage.message?.executionId ||
+    offerMessage.message?.execution_id ||
+    ''
+  ).trim() || `assistant-turn:${offerTurnMessageIds.join(',')}`
+
+  return {
+    ok: true,
+    evidenceVerified: true,
+    nativeToolDecision: true,
+    selectionMode,
+    selectedStartTime,
+    customerQuote,
+    customerMessageId: customerMessage.message?.id || null,
+    customerMessageIds,
+    latestCustomerMessageId: latestCustomerMessage?.message?.id || null,
+    assistantOfferQuote: canonicalSlot.localLabel,
+    localLabel: canonicalSlot.localLabel,
+    timezone: canonicalSlot.timezone,
+    offerMessageId: offerMessage?.message?.id || null,
+    offerTurnId,
+    offerTurnMessageIds
   }
 }
 
@@ -250,6 +459,7 @@ export async function findVerifiedPaymentEvidence({
     if (!completed && !exactProcessingResume) continue
     if (purpose !== cleanRequiredPurpose) continue
     if (cleanRequiredPurpose === 'appointment_deposit' && detail.appointmentDeposit !== true) continue
+    if (cleanRequiredPurpose === 'appointment_deposit' && detail.autoResumeAllowed === false) continue
     if (String(detail.paymentEnvironment || '').trim().toLowerCase() !== 'live') continue
     if (!cleanReconciliationId && eventTimestamp < evidenceStartMs) continue
 

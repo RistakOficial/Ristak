@@ -2141,6 +2141,9 @@ export async function bindConversationalPaymentSourceEvent({
   const ledgerPaymentId = String(detail.ledgerPaymentId || '').trim()
   const paymentPurpose = String(detail.paymentPurpose || '').trim().toLowerCase()
   const paymentMode = String(detail.paymentMode || '').trim().toLowerCase()
+  const appointmentDepositIntentEventId = String(detail.appointmentDepositIntentEventId || '').trim()
+  const appointmentDepositIntentClaimKey = String(detail.appointmentDepositIntentClaimKey || '').trim()
+  const appointmentDepositIntentClaimToken = String(detail.appointmentDepositIntentClaimToken || '').trim()
   const purposeConsistent = (
     paymentPurpose === 'appointment_deposit'
       ? paymentMode === 'deposit' && detail.appointmentDeposit === true
@@ -2151,11 +2154,49 @@ export async function bindConversationalPaymentSourceEvent({
           : false
   )
   const allowedEventTypes = new Set(['payment_link_created', 'payment_link_reused'])
-  if (!cleanEventId || !cleanContactId || !cleanAgentId || !ledgerPaymentId || !allowedEventTypes.has(eventType) || !purposeConsistent) {
+  if (
+    !cleanEventId || !cleanContactId || !cleanAgentId || !ledgerPaymentId ||
+    !allowedEventTypes.has(eventType) || !purposeConsistent ||
+    (detail.appointmentDeposit === true && (
+      !appointmentDepositIntentEventId ||
+      !appointmentDepositIntentClaimKey ||
+      !appointmentDepositIntentClaimToken ||
+      appointmentDepositIntentClaimKey !== cleanEventId
+    ))
+  ) {
     throw new Error('Falta la identidad durable del cobro conversacional')
   }
 
   return db.transaction(async () => {
+    let appointmentDepositIntent = null
+    let appointmentDepositIntentDetail = null
+    if (detail.appointmentDeposit === true) {
+      appointmentDepositIntent = await db.get(
+        `SELECT id, contact_id, agent_id, event_type, detail_json
+         FROM conversational_agent_events WHERE id = ?`,
+        [appointmentDepositIntentEventId]
+      )
+      appointmentDepositIntentDetail = parseJsonField(appointmentDepositIntent?.detail_json, {})
+      const intentCollecting = (
+        String(appointmentDepositIntentDetail.status || '') === 'collecting' &&
+        String(appointmentDepositIntentDetail.collectionMethod || '') === 'paymentLink' &&
+        String(appointmentDepositIntentDetail.claimKey || '') === cleanEventId &&
+        String(appointmentDepositIntentDetail.claimToken || '') === appointmentDepositIntentClaimToken
+      )
+      const intentAlreadyBound = (
+        String(appointmentDepositIntentDetail.status || '') === 'source_bound' &&
+        String(appointmentDepositIntentDetail.sourceEventId || '') === cleanEventId
+      )
+      if (
+        appointmentDepositIntent?.event_type !== 'appointment_deposit_intent_pending' ||
+        String(appointmentDepositIntent?.contact_id || '') !== cleanContactId ||
+        String(appointmentDepositIntent?.agent_id || '') !== cleanAgentId ||
+        String(appointmentDepositIntentDetail.selectionEventId || '') !== String(detail.appointmentSelectionEventId || '') ||
+        !intentCollecting && !intentAlreadyBound
+      ) {
+        throw new Error('El intento durable del anticipo no coincide con el link')
+      }
+    }
     const ledger = await db.get(
       `SELECT id, contact_id, amount, currency, payment_mode, payment_provider,
               ghl_invoice_id, public_payment_id
@@ -2209,7 +2250,14 @@ export async function bindConversationalPaymentSourceEvent({
       'productId',
       'priceId',
       'paymentProvider',
-      'publicPaymentId'
+      'publicPaymentId',
+      'appointmentSelectionEventId',
+      'appointmentSelectionCalendarId',
+      'appointmentSelectionStartTime',
+      'appointmentSelectionVerifiedAt',
+      'appointmentDepositIntentEventId',
+      'appointmentDepositIntentClaimKey',
+      'appointmentDepositIntentClaimToken'
     ]
     const mismatch = comparableKeys.some((key) => {
       if (key === 'amount') return Number(storedDetail[key]) !== Number(detail[key])
@@ -2252,6 +2300,13 @@ export async function bindConversationalPaymentSourceEvent({
       String(requestDetail.contactId || '') !== cleanContactId ||
       String(requestDetail.executionId || '') !== String(detail.executionId || '') ||
       String(requestDetail.paymentPurpose || '') !== String(detail.paymentPurpose || '') ||
+      String(requestDetail.appointmentSelectionEventId || '') !== String(detail.appointmentSelectionEventId || '') ||
+      String(requestDetail.appointmentSelectionCalendarId || '') !== String(detail.appointmentSelectionCalendarId || '') ||
+      String(requestDetail.appointmentSelectionStartTime || '') !== String(detail.appointmentSelectionStartTime || '') ||
+      String(requestDetail.appointmentSelectionVerifiedAt || '') !== String(detail.appointmentSelectionVerifiedAt || '') ||
+      String(requestDetail.appointmentDepositIntentEventId || '') !== String(detail.appointmentDepositIntentEventId || '') ||
+      String(requestDetail.appointmentDepositIntentClaimKey || '') !== String(detail.appointmentDepositIntentClaimKey || '') ||
+      String(requestDetail.appointmentDepositIntentClaimToken || '') !== String(detail.appointmentDepositIntentClaimToken || '') ||
       Number(requestDetail.amount) !== Number(detail.amount) ||
       normalizeVerifiedCurrency(requestDetail.currency) !== normalizeVerifiedCurrency(detail.currency)
     ) {
@@ -2264,6 +2319,22 @@ export async function bindConversationalPaymentSourceEvent({
        WHERE binding_event_id = ? AND status = 'completed'`,
       [boundAt, boundAt, cleanEventId]
     )
+    if (appointmentDepositIntent && String(appointmentDepositIntentDetail.status || '') === 'collecting') {
+      const nextIntentDetail = {
+        ...appointmentDepositIntentDetail,
+        status: 'source_bound',
+        sourceEventId: cleanEventId,
+        sourceBoundAt: boundAt
+      }
+      const closed = await db.run(
+        `UPDATE conversational_agent_events SET detail_json = ?
+         WHERE id = ? AND detail_json = ?`,
+        [JSON.stringify(nextIntentDetail), appointmentDepositIntentEventId, appointmentDepositIntent.detail_json]
+      )
+      if (Number(closed?.changes ?? closed?.rowCount ?? 0) !== 1) {
+        throw new Error('El intento durable del anticipo cambió antes de sellar el link')
+      }
+    }
     return { bound: true, eventType: stored.event_type, detail: storedDetail }
   })
 }
@@ -2412,6 +2483,13 @@ export async function recoverPendingConversationalPaymentSourceBindings({
         priceId: request.priceId || null,
         paymentPurpose,
         appointmentDeposit,
+        appointmentSelectionEventId: request.appointmentSelectionEventId || null,
+        appointmentSelectionCalendarId: request.appointmentSelectionCalendarId || null,
+        appointmentSelectionStartTime: request.appointmentSelectionStartTime || null,
+        appointmentSelectionVerifiedAt: request.appointmentSelectionVerifiedAt || null,
+        appointmentDepositIntentEventId: request.appointmentDepositIntentEventId || null,
+        appointmentDepositIntentClaimKey: request.appointmentDepositIntentClaimKey || null,
+        appointmentDepositIntentClaimToken: request.appointmentDepositIntentClaimToken || null,
         executionId: String(request.executionId),
         status: response.status || null,
         recoveredBinding: true
@@ -2595,7 +2673,13 @@ async function checkpointConversationalPaymentReconciliation(eventId, claimToken
 function resolveConversationalPaymentPurpose(matchedDetail = {}) {
   const paymentPurpose = String(matchedDetail.paymentPurpose || '').trim().toLowerCase()
   if (paymentPurpose === 'appointment_deposit') {
-    return { paymentPurpose, paymentMode: 'deposit', appointmentDeposit: true }
+    return {
+      paymentPurpose,
+      paymentMode: 'deposit',
+      appointmentDeposit: true,
+      autoResumeAllowed: matchedDetail.autoResumeAllowed !== false,
+      manualReviewOnly: matchedDetail.manualReviewOnly === true
+    }
   }
   if (paymentPurpose === 'deposit') {
     return { paymentPurpose, paymentMode: 'deposit', appointmentDeposit: false }
@@ -2659,6 +2743,7 @@ async function assertConversationalAppointmentDepositEvidence({
     String(reconciliation?.agent_id || '') !== cleanAgentId ||
     reconciliationDetail.paymentPurpose !== 'appointment_deposit' ||
     reconciliationDetail.appointmentDeposit !== true ||
+    reconciliationDetail.autoResumeAllowed === false ||
     String(reconciliationDetail.ledgerPaymentId || '') !== cleanPaymentId ||
     !ledger ||
     !VERIFIED_CONVERSATIONAL_PAYMENT_STATUSES.has(normalizeVerifiedPaymentStatus(ledger.status)) ||
@@ -3321,6 +3406,8 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
         paymentEnvironment: ledgerEnvironment,
         paymentPurpose: purpose.paymentPurpose,
         appointmentDeposit: purpose.appointmentDeposit,
+        autoResumeAllowed: purpose.autoResumeAllowed !== false,
+        manualReviewOnly: purpose.manualReviewOnly === true,
         channel: state?.channel || 'whatsapp',
         reportedStatus
       }
@@ -3335,6 +3422,42 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     try {
       let progress = claim.detail
       if (purpose.appointmentDeposit) {
+        if (purpose.autoResumeAllowed === false || purpose.manualReviewOnly === true) {
+          if (!progress.manualReviewEventAppliedAt) {
+            await recordConversationalAgentEvent({
+              eventId: `${reconciliationId}_manual_review`,
+              contactId: cleanContactId,
+              eventType: 'appointment_deposit_manual_review_required',
+              detail: {
+                agentId,
+                sourceEventId: matchedSourceEvent.id,
+                ledgerPaymentId: ledger.id,
+                amount: Number(ledger.amount),
+                currency: ledgerCurrency,
+                reconciliationId,
+                autoResumeAllowed: false,
+                needsNewSlot: true
+              },
+              throwOnError: true
+            })
+            progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+              manualReviewEventAppliedAt: new Date().toISOString()
+            })
+          }
+          const result = {
+            matched: true,
+            signal: 'appointment_deposit_manual_review_required',
+            objectiveCompleted: false,
+            resumed: false,
+            queued: false,
+            manualReviewRequired: true,
+            needsNewSlot: true,
+            agentId,
+            invoiceId: cleanInvoiceId
+          }
+          await settleConversationalPaymentReconciliation(reconciliationId, claim.claimToken, { result })
+          return result
+        }
         const [currentAppointmentState, completedResumeEvent] = await Promise.all([
           getConversationState(cleanContactId, { agentId, channel: state?.channel || 'whatsapp' }).catch(() => null),
           db.get(

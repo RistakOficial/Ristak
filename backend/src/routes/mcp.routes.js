@@ -17,6 +17,7 @@ import { getHighLevelConfig } from '../config/database.js'
 import { verifyOAuthAccessToken } from '../utils/oauthTokens.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { serializePaymentRowAmount } from '../utils/paymentAmountSerialization.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { logger } from '../utils/logger.js'
 
@@ -561,7 +562,7 @@ async function getContact(args = {}) {
       totalPaid: Number(contact.total_paid || 0),
       purchases: Number(contact.purchases_count || 0),
       createdAt: contact.created_at,
-      payments,
+      payments: payments.map(serializePaymentRowAmount),
       appointments
     }
   }
@@ -606,7 +607,7 @@ async function listTransactions(args = {}) {
     [...params, limit]
   )
 
-  return { transactions: rows }
+  return { transactions: rows.map(serializePaymentRowAmount) }
 }
 
 function assertConfirmed(args = {}, action) {

@@ -24,6 +24,7 @@ const __dirname = dirname(__filename)
 
 const DATABASE_URL = process.env.DATABASE_URL
 const usePostgres = !!DATABASE_URL
+export const databaseDialect = usePostgres ? 'postgres' : 'sqlite'
 
 let db
 const databaseTransactionContext = new AsyncLocalStorage()
@@ -94,6 +95,27 @@ const POSTGRES_CLIENT_ERROR_LISTENER = Symbol('ristakPostgresClientErrorListener
 const POSTGRES_CLIENT_CONNECTION_ERROR = Symbol('ristakPostgresClientConnectionError')
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+// PostgreSQL OID 1114 (`timestamp without time zone`) representa en este
+// proyecto un instante UTC guardado como hora de pared. node-postgres lo
+// interpreta por defecto en la zona horaria del proceso de Node, aunque la
+// sesion SQL este en UTC. En una cuenta UTC-6 eso convierte silenciosamente
+// `16:00` en un Date de `22:00Z` al leerlo.
+//
+// La base ya normaliza todos los instantes a UTC antes de persistirlos; por eso
+// la lectura simetrica correcta es agregar UTC de forma explicita. Se conserva
+// Date como tipo de retorno para no romper consumidores del adaptador, pero el
+// Date ahora representa el instante almacenado, no la zona de la computadora.
+export function parsePostgresTimestampWithoutTimezoneAsUtc(value) {
+  if (value === null || value === undefined || value === '') return value
+  const text = String(value).trim()
+  const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)
+  const normalized = hasExplicitZone
+    ? text
+    : `${text.includes('T') ? text : text.replace(' ', 'T')}Z`
+  const parsed = new Date(normalized)
+  return Number.isNaN(parsed.getTime()) ? value : parsed
+}
 
 function databaseAdvisoryLockBusyError(lockName) {
   const error = new Error(`El candado distribuido ${String(lockName || '').slice(0, 160)} está ocupado.`)
@@ -308,9 +330,12 @@ if (usePostgres) {
   logger.info('Usando PostgreSQL')
 
   const pg = await import('pg')
+  const postgresTypes = new pg.default.TypeOverrides()
+  postgresTypes.setTypeParser(1114, parsePostgresTimestampWithoutTimezoneAsUtc)
   const pool = new pg.default.Pool({
     connectionString: DATABASE_URL,
     options: '-c timezone=UTC',
+    types: postgresTypes,
     keepAlive: true,
     connectionTimeoutMillis: 5000,
     ssl: {
@@ -3330,7 +3355,7 @@ async function initTables() {
       CREATE TABLE IF NOT EXISTS payments (
         id TEXT PRIMARY KEY,
         contact_id TEXT,
-        amount REAL,
+        amount ${usePostgres ? 'NUMERIC(20, 6)' : 'REAL'},
         currency TEXT DEFAULT 'MXN',
         status TEXT,
         payment_method TEXT,

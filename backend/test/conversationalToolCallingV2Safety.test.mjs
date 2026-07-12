@@ -7,15 +7,20 @@ import { db } from '../src/config/database.js'
 import {
   buildNativeFreeSlotDays,
   createConversationalTools,
-  setNativeHandoffAfterAssignmentHookForTest
+  setNativeHandoffAfterAssignmentHookForTest,
+  setNativePaymentReceiptAnalysisHookForTest
 } from '../src/agents/conversational/tools.js'
 import {
   ensureToolCallingV2VisibleReply,
   resumeToolCallingV2AfterVerifiedPayment
 } from '../src/agents/conversational/runner.js'
-import { findVerifiedPaymentEvidence } from '../src/agents/conversational/actionEvidence.js'
+import {
+  findVerifiedPaymentEvidence,
+  verifyNativeAppointmentSelectionEvidence
+} from '../src/agents/conversational/actionEvidence.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import { registerAgentTransferPaymentProofForReview } from '../src/services/paymentFlowService.js'
+import { setConversationalAgentLivePaymentDependenciesForTests } from '../src/services/conversationalAgentLivePaymentService.js'
 import {
   completeConversationalAgentSalePaymentFromInvoice,
   consumeConversationalAppointmentDepositEvidence,
@@ -69,6 +74,105 @@ function v2Context(items, overrides = {}) {
   }
 }
 
+function confirmedAppointmentSelection(ctx, startTime, timezone, customerQuote = 'sí, ese horario está bien') {
+  const selectedStartTime = String(startTime)
+  const localLabel = buildNativeFreeSlotDays([{
+    date: DateTime.fromISO(selectedStartTime, { setZone: true }).setZone(timezone).toISODate(),
+    timezone,
+    slots: [selectedStartTime]
+  }], timezone)[0].options[0].localLabel
+  const executionId = String(ctx.executionId || `message_selection_${randomUUID()}`)
+  ctx.executionId = executionId
+  ctx.conversationMessages = [
+    { id: `offer_${randomUUID()}`, role: 'assistant', content: `Te ofrezco ${localLabel}.` },
+    { id: executionId, role: 'user', content: customerQuote }
+  ]
+  return {
+    selectionMode: 'accepted_prior_offer',
+    selectedStartTime,
+    customerQuote,
+    assistantOfferQuote: localLabel
+  }
+}
+
+async function authorizeAppointmentOffer(ctx, startTime, timezone, customerQuote = 'sí, ese horario está bien') {
+  const confirmationExecutionId = String(ctx.executionId || `message_confirmation_${randomUUID()}`)
+  ctx.executionId = `${confirmationExecutionId}_offer`
+  const offered = await createConversationalTools(ctx)
+    .find((item) => item.name === 'offer_appointment_slot')
+    .invoke(null, JSON.stringify({ startTime }))
+  assert.equal(offered.ok, true, JSON.stringify(offered))
+  const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
+  ctx.executionId = confirmationExecutionId
+  ctx.conversationMessages = [
+    { id: `offer_visible_${randomUUID()}`, role: 'assistant', content: offered.visibleReply },
+    { id: confirmationExecutionId, role: 'user', content: customerQuote }
+  ]
+  return {
+    selectionMode: 'accepted_prior_offer',
+    selectedStartTime: String(startTime),
+    customerQuote,
+    assistantOfferQuote: localLabel
+  }
+}
+
+async function createLiveDepositSelection({ calendarId, contactId, agentId, startTime, timezone, executionId }) {
+  const currency = await getAccountCurrency()
+  const capabilities = [
+    { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false },
+    {
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'deposit',
+      deposit: {
+        enabled: true,
+        mode: 'fixed',
+        amount: 500,
+        currency,
+        methods: { paymentLink: true, bankTransfer: true }
+      }
+    }
+  ]
+  const ctx = v2Context(capabilities, {
+    contactId,
+    agentId,
+    dryRun: false,
+    executionId: `${executionId}_offer`,
+    accountLocale: { currency }
+  })
+  ctx.config.id = agentId
+  const offerResult = await createConversationalTools(ctx)
+    .find((item) => item.name === 'offer_appointment_slot')
+    .invoke(null, JSON.stringify({ startTime }))
+  assert.equal(offerResult.ok, true, JSON.stringify(offerResult))
+  const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
+  ctx.executionId = executionId
+  ctx.conversationMessages = [
+    { id: `offer_visible_${executionId}`, role: 'assistant', content: offerResult.visibleReply },
+    { id: executionId, role: 'user', content: 'sí, ese horario está bien' }
+  ]
+  const result = await createConversationalTools(ctx)
+    .find((item) => item.name === 'book_appointment')
+    .invoke(null, JSON.stringify({
+      startTime,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime: startTime,
+        customerQuote: 'sí, ese horario está bien',
+        assistantOfferQuote: localLabel
+      },
+      title: null,
+      notes: null,
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: null,
+      guests: []
+    }))
+  assert.equal(result.ok, false, JSON.stringify(result))
+  assert.equal(result.paymentEvidenceRequired, true)
+  return { ctx, capabilities, currency }
+}
+
 test('v2 presenta la hora local del servidor y conserva el startTime UTC sin recalcularlo', () => {
   const startTime = '2026-07-14T22:00:00.000Z'
   const [day] = buildNativeFreeSlotDays([{
@@ -85,6 +189,105 @@ test('v2 presenta la hora local del servidor y conserva el startTime UTC sin rec
   assert.match(option.localLabel, /martes 14 de julio de 2026/)
   assert.match(option.localLabel, /4:00/)
   assert.doesNotMatch(option.localLabel, /5:00/)
+})
+
+test('la hora repetida por DST incluye offset y la evidencia no puede cruzar ambos instantes', () => {
+  const timezone = 'America/Ciudad_Juarez'
+  const firstStart = '2026-11-01T07:30:00.000Z'
+  const secondStart = '2026-11-01T08:30:00.000Z'
+  const options = buildNativeFreeSlotDays([{
+    date: '2026-11-01',
+    timezone,
+    slots: [firstStart, secondStart]
+  }], timezone)[0].options
+
+  assert.notEqual(options[0].localLabel, options[1].localLabel)
+  assert.match(options[0].localLabel, /UTC-06:00/)
+  assert.match(options[1].localLabel, /UTC-07:00/)
+  const result = verifyNativeAppointmentSelectionEvidence({
+    messages: [
+      { id: 'offer_dst_first', role: 'assistant', content: `Te ofrezco ${options[0].localLabel}` },
+      { id: 'customer_dst', role: 'user', content: 'sí, esa' }
+    ],
+    startTime: secondStart,
+    timezone,
+    executionId: 'customer_dst',
+    evidence: {
+      selectionMode: 'accepted_prior_offer',
+      selectedStartTime: secondStart,
+      customerQuote: 'sí, esa',
+      assistantOfferQuote: options[0].localLabel
+    }
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.error, /etiqueta canónica/i)
+})
+
+test('la confirmación acepta globitos contiguos y un batch inbound, pero nunca cruza otro turno del cliente', () => {
+  const timezone = 'America/Ciudad_Juarez'
+  const startTime = '2026-10-20T22:00:00.000Z'
+  const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
+  const messages = [
+    { id: 'offer_bubble_1', role: 'assistant', content: `Tengo ${localLabel}` },
+    { id: 'offer_bubble_2', role: 'assistant', content: '¿te funciona?' },
+    { id: 'customer_batch_1', role: 'user', content: 'el martes' },
+    { id: 'customer_batch_2', role: 'user', content: 'a las 4, por favor' }
+  ]
+  const accepted = verifyNativeAppointmentSelectionEvidence({
+    messages,
+    startTime,
+    timezone,
+    executionId: 'customer_batch_2',
+    evidence: {
+      selectionMode: 'accepted_prior_offer',
+      selectedStartTime: startTime,
+      customerQuote: 'el martes',
+      assistantOfferQuote: localLabel
+    }
+  })
+  assert.equal(accepted.ok, true, JSON.stringify(accepted))
+  assert.deepEqual(accepted.customerMessageIds, ['customer_batch_1', 'customer_batch_2'])
+  assert.deepEqual(accepted.offerTurnMessageIds, ['offer_bubble_1', 'offer_bubble_2'])
+  assert.equal(accepted.offerMessageId, 'offer_bubble_1')
+
+  const crossed = verifyNativeAppointmentSelectionEvidence({
+    messages: [
+      { id: 'old_offer', role: 'assistant', content: localLabel },
+      { id: 'intervening_customer', role: 'user', content: 'déjame pensarlo' },
+      { id: 'new_assistant', role: 'assistant', content: 'claro' },
+      { id: 'new_customer', role: 'user', content: 'sí' }
+    ],
+    startTime,
+    timezone,
+    executionId: 'new_customer',
+    evidence: {
+      selectionMode: 'accepted_prior_offer',
+      selectedStartTime: startTime,
+      customerQuote: 'sí',
+      assistantOfferQuote: localLabel
+    }
+  })
+  assert.equal(crossed.ok, false)
+
+  const secondStart = '2026-10-20T23:00:00.000Z'
+  const secondLabel = buildNativeFreeSlotDays([{ timezone, slots: [secondStart] }], timezone)[0].options[0].localLabel
+  const ambiguous = verifyNativeAppointmentSelectionEvidence({
+    messages: [
+      { id: 'two_offers', role: 'assistant', content: `Tengo ${localLabel} o ${secondLabel}` },
+      { id: 'ambiguous_yes', role: 'user', content: 'sí' }
+    ],
+    startTime,
+    timezone,
+    executionId: 'ambiguous_yes',
+    evidence: {
+      selectionMode: 'accepted_prior_offer',
+      selectedStartTime: startTime,
+      customerQuote: 'sí',
+      assistantOfferQuote: localLabel
+    }
+  })
+  assert.equal(ambiguous.ok, false)
+  assert.equal(ambiguous.code, 'ambiguous_slot_selection')
 })
 
 test('get_contact_profile usa identidad virtual estable en preview y falla cerrado en vivo', async () => {
@@ -231,6 +434,844 @@ test('todas las tools v2 conservan JSON Schema estricto y todos sus campos son r
   assert.equal('dueDate' in paymentTool.parameters.properties, false, 'v2 no debe permitir que el modelo invente fecha límite')
 })
 
+test('agenda v2 no convierte "sí quiere ir" en un slot y sí acepta "el martes tipo 10" sobre la oferta anterior', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_selection_evidence_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 21 }).startOf('day')
+  const nextTuesday = baseDay.plus({ days: (2 - baseDay.weekday + 7) % 7 })
+  const slot = nextTuesday.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
+  const startTime = slot.toUTC().toISO()
+  const canonicalLabel = buildNativeFreeSlotDays([{
+    date: slot.toISODate(),
+    timezone,
+    slots: [startTime]
+  }], timezone)[0].options[0].localLabel
+  const initialMessage = 'Hola, quiero agendar una cita de prueba para mi mamá Paty Jiménez. Es primera vez, le duele la rodilla diario desde hace 6 meses y ya confirmó que sí quiere ir. Yo soy quien escribe desde este contacto.'
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'location_selection_evidence',
+      name: 'Agenda con selección explícita',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        { daysOfTheWeek: [2], hours: [{ openHour: 9, openMinute: 0, closeHour: 12, closeMinute: 0 }] }
+      ]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
+    ], {
+      conversationMessages: [{ role: 'user', content: initialMessage }]
+    })
+    const book = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
+    const basePayload = {
+      startTime,
+      title: 'Valoración de rodilla',
+      notes: 'Dolor diario desde hace seis meses',
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: {
+        name: 'Paty Jiménez',
+        phone: null,
+        email: null,
+        relation: 'Mamá del contacto'
+      },
+      guests: []
+    }
+
+    const premature = await book.invoke(null, JSON.stringify({
+      ...basePayload,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime: startTime,
+        customerQuote: 'ya confirmó que sí quiere ir',
+        assistantOfferQuote: 'martes a las 10:00'
+      }
+    }))
+    assert.equal(premature.ok, false, JSON.stringify(premature))
+    assert.equal(premature.confirmationRequired, true)
+    assert.match(premature.error, /mensaje completo|etiqueta canónica/i)
+    assert.equal(ctx.actions.length, 0, 'sin selección no debe producir una acción que Modo test pueda materializar')
+
+    ctx.conversationMessages = [
+      { role: 'assistant', content: 'con gusto' },
+      { role: 'user', content: 'sí' }
+    ]
+    const arbitraryYes = await book.invoke(null, JSON.stringify({
+      ...basePayload,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime: startTime,
+        customerQuote: 'sí',
+        assistantOfferQuote: canonicalLabel
+      }
+    }))
+    assert.equal(arbitraryYes.ok, false)
+    assert.equal(arbitraryYes.confirmationRequired, true)
+    assert.equal(ctx.actions.length, 0)
+
+    ctx.conversationMessages = [{ role: 'user', content: 'sí quiero agendar' }]
+    const arbitraryIntent = await book.invoke(null, JSON.stringify({
+      ...basePayload,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime: startTime,
+        customerQuote: 'sí quiero agendar',
+        assistantOfferQuote: canonicalLabel
+      }
+    }))
+    assert.equal(arbitraryIntent.ok, false)
+    assert.equal(arbitraryIntent.confirmationRequired, true)
+    assert.equal(ctx.actions.length, 0)
+
+    ctx.conversationMessages = [
+      { role: 'user', content: initialMessage },
+      { role: 'assistant', content: `Tengo ${canonicalLabel}. ¿Te funciona?` },
+      { role: 'user', content: 'el martes tipo 10' }
+    ]
+    const confirmed = await book.invoke(null, JSON.stringify({
+      ...basePayload,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime: startTime,
+        customerQuote: 'el martes tipo 10',
+        assistantOfferQuote: canonicalLabel
+      }
+    }))
+    assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+    assert.equal(confirmed.simulated, true)
+    assert.equal(ctx.actions.length, 1)
+    assert.equal(ctx.actions[0]?.confirmationEvidence?.evidenceVerified, true)
+    assert.equal(ctx.actions[0]?.confirmationEvidence?.selectedStartTime, startTime)
+    assert.equal(ctx.actions[0]?.confirmationEvidence?.customerQuote, 'el martes tipo 10')
+    assert.equal(ctx.actions[0]?.confirmationEvidence?.assistantOfferQuote, canonicalLabel)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('una oferta canónica de un slot ya ocupado no crea selección durable ni permite cobrar anticipo', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_occupied_selection_${suffix}`
+  const contactId = `contact_occupied_selection_${suffix}`
+  const competitorId = `contact_occupied_competitor_${suffix}`
+  const agentId = `agent_occupied_selection_${suffix}`
+  const timezone = await getAccountTimezone()
+  const currency = await getAccountCurrency()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 25 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const slot = monday.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
+  const startTime = slot.toUTC().toISO()
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_${suffix}`,
+      name: 'Agenda ocupada para evidencia',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 12, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto que agenda', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+              (?, 'Contacto que ocupó el slot', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, competitorId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time
+       ) VALUES (?, ?, ?, 'Cita existente', 'confirmed', 'confirmed', ?, ?)`,
+      [`appointment_occupied_${suffix}`, calendarId, competitorId, startTime, slot.plus({ hours: 1 }).toUTC().toISO()]
+    )
+
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false },
+      {
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'deposit',
+        chargeType: 'deposit',
+        gateway: 'stripe',
+        currency,
+        deposit: { enabled: true, mode: 'fixed', amount: 500, currency, methods: { paymentLink: true } }
+      }
+    ], {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `message_occupied_${suffix}`,
+      accountLocale: { currency }
+    })
+    ctx.config.id = agentId
+    const blocked = await createConversationalTools(ctx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime }))
+    assert.equal(blocked.ok, false)
+    assert.equal(blocked.invalidSlot, true)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_selection_verified'`,
+      [contactId, agentId]
+    )).total), 0)
+
+    const payment = createConversationalTools(ctx).find((item) => item.name === 'create_payment_link')
+    const paymentBlocked = await payment.invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+    assert.equal(paymentBlocked.ok, false)
+    assert.equal(paymentBlocked.code, 'appointment_deposit_intent_required')
+    assert.equal(ctx.actions.filter((action) => action.type === 'create_payment_link').length, 0)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactId, competitorId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('una oferta estructurada adulterada con otro horario jamás autoriza la cita', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_offer_adulterated_${suffix}`
+  const contactId = `contact_offer_adulterated_${suffix}`
+  const agentId = `agent_offer_adulterated_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 26 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const slot = monday.set({ hour: 16, minute: 0, second: 0, millisecond: 0 })
+  const startTime = slot.toUTC().toISO()
+  const confirmationId = `message_offer_adulterated_${suffix}`
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_offer_adulterated_${suffix}`,
+      name: 'Agenda oferta estructurada',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 16, openMinute: 0, closeHour: 18, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto oferta adulterada', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
+    ], { contactId, agentId, dryRun: false, executionId: `${confirmationId}_offer` })
+    ctx.config.id = agentId
+    const tools = createConversationalTools(ctx)
+    const offered = await tools.find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+    const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
+    ctx.executionId = confirmationId
+    ctx.conversationMessages = [
+      { id: `offer_visible_${suffix}`, role: 'assistant', content: `${offered.visibleReply} También podría ser a las 5:00 p. m.` },
+      { id: confirmationId, role: 'user', content: 'sí, ese horario' }
+    ]
+    const result = await tools.find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify({
+        startTime,
+        selectionEvidence: {
+          selectionMode: 'accepted_prior_offer',
+          selectedStartTime: startTime,
+          customerQuote: 'sí, ese horario',
+          assistantOfferQuote: localLabel
+        },
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.equal(result.code, 'appointment_offer_mismatch')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'appointment_slot_selection_verified'`,
+      [contactId]
+    )).total), 0)
+    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 0)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('allowOverlaps aplica igual al ofrecer y al confirmar una cita', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_overlap_contract_${suffix}`
+  const contactId = `contact_overlap_contract_${suffix}`
+  const competitorId = `contact_overlap_competitor_${suffix}`
+  const agentId = `agent_overlap_contract_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 27 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const slot = monday.set({ hour: 11, minute: 0, second: 0, millisecond: 0 })
+  const startTime = slot.toUTC().toISO()
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_overlap_contract_${suffix}`,
+      name: 'Agenda con empalme autorizado',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 10, openMinute: 0, closeHour: 13, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto con empalme', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+              (?, 'Contacto que ya ocupa horario', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, competitorId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time
+       ) VALUES (?, ?, ?, 'Cita ya existente', 'confirmed', 'confirmed', ?, ?)`,
+      [`appointment_overlap_competitor_${suffix}`, calendarId, competitorId, startTime, slot.plus({ hours: 1 }).toUTC().toISO()]
+    )
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: true }
+    ], { contactId, agentId, dryRun: false, executionId: `message_overlap_${suffix}` })
+    ctx.config.id = agentId
+    const book = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
+    const result = await book.invoke(null, JSON.stringify({
+      startTime,
+      selectionEvidence: await authorizeAppointmentOffer(ctx, startTime, timezone),
+      title: null,
+      notes: null,
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: null,
+      guests: []
+    }))
+
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND start_time = ?',
+      [calendarId, startTime]
+    )).total), 2)
+  } finally {
+    await db.run(
+      `DELETE FROM appointment_creation_requests
+       WHERE appointment_id IN (SELECT id FROM appointments WHERE calendar_id = ?)`,
+      [calendarId]
+    ).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactId, competitorId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('un anticipo no puede iniciar con selección vieja, pasada u ocupada', async () => {
+  const suffix = randomUUID()
+  const timezone = await getAccountTimezone()
+  const calendarId = `calendar_deposit_stale_${suffix}`
+  const agentId = `agent_deposit_stale_${suffix}`
+  const contacts = ['old', 'past', 'occupied'].map((kind) => `contact_deposit_${kind}_${suffix}`)
+  const base = DateTime.now().setZone(timezone).plus({ days: 35 }).startOf('day')
+  const monday = base.plus({ days: (1 - base.weekday + 7) % 7 })
+  const slots = [14, 15, 16].map((hour) => monday.set({ hour, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO())
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_deposit_stale_${suffix}`,
+      name: 'Agenda anticipo vigente',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 14, openMinute: 0, closeHour: 17, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    for (const contactId of contacts) {
+      await db.run(
+        `INSERT INTO contacts (id, full_name, created_at, updated_at)
+         VALUES (?, 'Contacto anticipo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [contactId]
+      )
+    }
+
+    for (let index = 0; index < contacts.length; index += 1) {
+      const contactId = contacts[index]
+      const { ctx } = await createLiveDepositSelection({
+        calendarId,
+        contactId,
+        agentId,
+        startTime: slots[index],
+        timezone,
+        executionId: `message_deposit_${index}_${suffix}`
+      })
+      const selectionRow = await db.get(
+        `SELECT id, detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_selection_verified'
+         ORDER BY created_at DESC LIMIT 1`,
+        [contactId, agentId]
+      )
+      const intentRow = await db.get(
+        `SELECT id, detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_deposit_intent_pending'
+         ORDER BY created_at DESC LIMIT 1`,
+        [contactId, agentId]
+      )
+      assert.ok(selectionRow?.id && intentRow?.id)
+      const selection = JSON.parse(selectionRow.detail_json)
+      const intent = JSON.parse(intentRow.detail_json)
+
+      if (index === 0) {
+        selection.verifiedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString()
+        intent.selectionVerifiedAt = selection.verifiedAt
+      } else if (index === 1) {
+        const past = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+        selection.startTime = past
+        intent.startTime = past
+      } else {
+        await db.run(
+          `INSERT INTO appointments (
+             id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time
+           ) VALUES (?, ?, ?, 'Competencia', 'confirmed', 'confirmed', ?, ?)`,
+          [`appointment_deposit_occupied_${suffix}`, calendarId, contacts[0], slots[index], new Date(Date.parse(slots[index]) + 3600000).toISOString()]
+        )
+      }
+      await db.run('UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?', [JSON.stringify(selection), selectionRow.id])
+      await db.run('UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?', [JSON.stringify(intent), intentRow.id])
+
+      const blocked = await createConversationalTools(ctx)
+        .find((item) => item.name === 'create_payment_link')
+        .invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+      assert.equal(blocked.ok, false)
+      assert.ok([
+        'appointment_deposit_selection_stale',
+        'appointment_deposit_slot_unavailable'
+      ].includes(blocked.code), JSON.stringify(blocked))
+      assert.equal(ctx.actions.some((action) => action.type === 'create_payment_link'), false)
+    }
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM payments WHERE contact_id IN (?, ?, ?)`,
+      contacts
+    )).total), 0)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id IN (?, ?, ?)', contacts).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?, ?)', contacts).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('A→B y replay A dejan sólo B activa y jamás reviven el intento anterior', async () => {
+  const suffix = randomUUID()
+  const timezone = await getAccountTimezone()
+  const calendarId = `calendar_selection_change_${suffix}`
+  const contactId = `contact_selection_change_${suffix}`
+  const agentId = `agent_selection_change_${suffix}`
+  const base = DateTime.now().setZone(timezone).plus({ days: 36 }).startOf('day')
+  const monday = base.plus({ days: (1 - base.weekday + 7) % 7 })
+  const startA = monday.set({ hour: 14 }).toUTC().toISO()
+  const startB = monday.set({ hour: 15 }).toUTC().toISO()
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_selection_change_${suffix}`,
+      name: 'Agenda cambio A B',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 14, openMinute: 0, closeHour: 16, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto cambio de horario', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    const selectionA = await createLiveDepositSelection({
+      calendarId, contactId, agentId, startTime: startA, timezone, executionId: `message_A_${suffix}`
+    })
+    await createLiveDepositSelection({
+      calendarId, contactId, agentId, startTime: startB, timezone, executionId: `message_B_${suffix}`
+    })
+    const replayA = await createConversationalTools(selectionA.ctx)
+      .find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify({
+        startTime: startA,
+        selectionEvidence: {
+          selectionMode: 'accepted_prior_offer',
+          selectedStartTime: startA,
+          customerQuote: selectionA.ctx.conversationMessages.at(-1).content,
+          assistantOfferQuote: buildNativeFreeSlotDays([{ timezone, slots: [startA] }], timezone)[0].options[0].localLabel
+        },
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(replayA.ok, false)
+    assert.equal(replayA.code, 'appointment_selection_event_conflict')
+    const selections = await db.all(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_selection_verified'`,
+      [contactId, agentId]
+    )
+    const details = selections.map((row) => JSON.parse(row.detail_json))
+    assert.equal(details.filter((detail) => detail.status === 'active').length, 1)
+    assert.equal(details.find((detail) => detail.status === 'active').startTime, new Date(startB).toISOString())
+    assert.equal(details.find((detail) => detail.startTime === new Date(startA).toISOString()).status, 'superseded')
+
+    const concurrent = await Promise.allSettled([
+      createLiveDepositSelection({
+        calendarId, contactId, agentId, startTime: startA, timezone, executionId: `message_concurrent_A_${suffix}`
+      }),
+      createLiveDepositSelection({
+        calendarId, contactId, agentId, startTime: startB, timezone, executionId: `message_concurrent_B_${suffix}`
+      })
+    ])
+    assert.ok(concurrent.some((result) => result.status === 'fulfilled'))
+    const afterRace = (await db.all(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_selection_verified'`,
+      [contactId, agentId]
+    )).map((row) => JSON.parse(row.detail_json))
+    assert.equal(afterRace.filter((detail) => detail.status === 'active').length, 1)
+    const afterRaceIntents = (await db.all(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_deposit_intent_pending'`,
+      [contactId, agentId]
+    )).map((row) => JSON.parse(row.detail_json))
+    assert.equal(afterRaceIntents.filter((detail) => detail.status === 'pending').length, 1)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('replay del turno y retry concurrente/secuencial del link reutilizan proveedor, ledger, evento e intent source_bound', async () => {
+  const suffix = randomUUID()
+  const timezone = await getAccountTimezone()
+  const currency = await getAccountCurrency()
+  const calendarId = `calendar_payment_link_retry_${suffix}`
+  const contactId = `contact_payment_link_retry_${suffix}`
+  const agentId = `agent_payment_link_retry_${suffix}`
+  const paymentId = `payment_link_retry_${suffix}`
+  const publicPaymentId = `public_link_retry_${suffix}`
+  const paymentUrl = `https://app.example/pay/${publicPaymentId}`
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 39 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const startTime = monday.set({ hour: 15, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO()
+  let providerCalls = 0
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_payment_link_retry_${suffix}`,
+      name: 'Agenda retry de link',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 15, openMinute: 0, closeHour: 17, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto retry de link', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    const { ctx } = await createLiveDepositSelection({
+      calendarId,
+      contactId,
+      agentId,
+      startTime,
+      timezone,
+      executionId: `message_payment_link_retry_${suffix}`
+    })
+    const paymentCapability = ctx.config.capabilitiesConfig.items.find((item) => item.id === 'collect_payment')
+    paymentCapability.gateway = 'conekta'
+    paymentCapability.expirationMinutes = 60
+
+    setConversationalAgentLivePaymentDependenciesForTests({
+      getPaymentGateCheckoutKeys: async (gateway) => ({ provider: gateway, configured: true, paymentMode: 'live' }),
+      normalizePaymentGateConfig: (input) => ({ ...input, gateway: 'conekta', billingType: 'single' }),
+      createPaymentGateLink: async (config, options) => {
+        providerCalls += 1
+        await db.run(
+          `INSERT INTO payments (
+            id, contact_id, amount, currency, status, payment_mode, payment_provider,
+            public_payment_id, payment_url, payment_link_request_key, due_date, sent_at,
+            created_at, updated_at
+           ) VALUES (?, ?, ?, ?, 'sent', 'live', 'conekta', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [paymentId, contactId, config.amount, currency, publicPaymentId, paymentUrl, options.paymentLinkRequestKey, options.expiresAt]
+        )
+        return {
+          publicPaymentId,
+          paymentUrl,
+          payment: {
+            id: paymentId,
+            publicPaymentId,
+            amount: config.amount,
+            currency,
+            paymentMode: 'live'
+          }
+        }
+      },
+      loadExactPaymentLedger: async ({ idempotencyKey }) => db.get(
+        `SELECT id, contact_id, amount, currency, status, payment_mode, payment_provider,
+                ghl_invoice_id, public_payment_id, payment_url, payment_link_request_key,
+                due_date, sent_at
+         FROM payments WHERE id = ? AND contact_id = ? AND payment_link_request_key = ?`,
+        [paymentId, contactId, idempotencyKey]
+      )
+    })
+
+    const paymentTool = createConversationalTools(ctx).find((item) => item.name === 'create_payment_link')
+    const [first, concurrentReplay] = await Promise.all([
+      paymentTool.invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null })),
+      paymentTool.invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+    ])
+    const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
+    const replayedBookingTurn = await createConversationalTools(ctx)
+      .find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify({
+        startTime,
+        selectionEvidence: {
+          selectionMode: 'accepted_prior_offer',
+          selectedStartTime: startTime,
+          customerQuote: 'sí, ese horario está bien',
+          assistantOfferQuote: localLabel
+        },
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    const second = await paymentTool.invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+
+    assert.equal(first.ok, true, JSON.stringify(first))
+    assert.equal(concurrentReplay.ok, true, JSON.stringify(concurrentReplay))
+    assert.equal(replayedBookingTurn.ok, false, JSON.stringify(replayedBookingTurn))
+    assert.equal(replayedBookingTurn.paymentEvidenceRequired, true)
+    assert.match(replayedBookingTurn.error, /create_payment_link/)
+    assert.equal(second.ok, true, JSON.stringify(second))
+    assert.equal(first.paymentLink, paymentUrl)
+    assert.equal(concurrentReplay.paymentLink, paymentUrl)
+    assert.equal(second.paymentLink, paymentUrl)
+    assert.equal(providerCalls, 1)
+    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?', [contactId])).total), 1)
+    const sourceEvents = await db.all(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type IN ('payment_link_created', 'payment_link_reused')`,
+      [contactId]
+    )
+    assert.equal(sourceEvents.length, 1)
+    const intentRow = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'appointment_deposit_intent_pending'
+       ORDER BY created_at DESC LIMIT 1`,
+      [contactId]
+    )
+    const intent = JSON.parse(intentRow.detail_json)
+    assert.equal(intent.status, 'source_bound')
+    assert.equal(intent.collectionMethod, 'paymentLink')
+    assert.equal(intent.sourceEventId, sourceEvents[0].id)
+    assert.ok(intent.claimToken)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'appointment_deposit_intent_pending'`,
+      [contactId]
+    )).total), 1)
+    const linkActions = ctx.actions.filter((action) => action.type === 'create_payment_link')
+    assert.equal(linkActions.length, 3)
+    assert.ok(linkActions.filter((action) => action.outcome?.reused === true).length >= 2)
+    assert.ok(linkActions.filter((action) => action.outcome?.priorEquivalentLinkFound === true).length >= 2)
+  } finally {
+    setConversationalAgentLivePaymentDependenciesForTests(null)
+    await db.run('DELETE FROM conversational_payment_link_requests WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('un comprobante posterior a un link queda en revisión sin reemplazar la fuente del anticipo', async () => {
+  const suffix = randomUUID()
+  const timezone = await getAccountTimezone()
+  const currency = await getAccountCurrency()
+  const calendarId = `calendar_alternate_receipt_${suffix}`
+  const contactId = `contact_alternate_receipt_${suffix}`
+  const agentId = `agent_alternate_receipt_${suffix}`
+  const uncertainReceiptMessageId = `message_uncertain_receipt_${suffix}`
+  const receiptMessageId = `message_alternate_receipt_${suffix}`
+  const originalSourceEventId = `cae_existing_payment_link_${suffix}`
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 38 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const startTime = monday.set({ hour: 14, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO()
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_alternate_receipt_${suffix}`,
+      name: 'Agenda comprobante alterno',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 14, openMinute: 0, closeHour: 16, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto comprobante alterno', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    const { ctx } = await createLiveDepositSelection({
+      calendarId,
+      contactId,
+      agentId,
+      startTime,
+      timezone,
+      executionId: `message_alternate_selection_${suffix}`
+    })
+    const intentRow = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_deposit_intent_pending'
+       ORDER BY created_at DESC LIMIT 1`,
+      [contactId, agentId]
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_messages (
+        id, contact_id, direction, message_type, media_url, media_mime_type,
+        message_timestamp, created_at, updated_at
+       ) VALUES (?, ?, 'inbound', 'image', 'https://example.com/unreadable-proof.jpg', 'image/jpeg', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [uncertainReceiptMessageId, contactId, new Date(Date.now() + 500).toISOString()]
+    )
+    setNativePaymentReceiptAnalysisHookForTest(async () => ({ ok: false, reason: 'analysis_failed' }))
+    const uncertain = await createConversationalTools(ctx)
+      .find((item) => item.name === 'register_deposit_payment_proof')
+      .invoke(null, JSON.stringify({ montoIndicado: 500, referencia: null }))
+    assert.equal(uncertain.ok, true, JSON.stringify(uncertain))
+    assert.equal(uncertain.manualReviewRequired, true)
+    assert.equal(uncertain.paymentConfirmed, false)
+    const releasedIntent = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [intentRow.id]
+    )).detail_json)
+    assert.equal(releasedIntent.status, 'pending')
+    assert.equal('claimToken' in releasedIntent, false)
+    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?', [contactId])).total), 0)
+
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify({
+        ...releasedIntent,
+        status: 'source_bound',
+        collectionMethod: 'paymentLink',
+        sourceEventId: originalSourceEventId,
+        boundAt: new Date().toISOString()
+      }), intentRow.id]
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_messages (
+        id, contact_id, direction, message_type, media_url, media_mime_type,
+        message_timestamp, created_at, updated_at
+       ) VALUES (?, ?, 'inbound', 'image', 'https://example.com/alternate-proof.jpg', 'image/jpeg', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [receiptMessageId, contactId, new Date(Date.now() + 1000).toISOString()]
+    )
+    setNativePaymentReceiptAnalysisHookForTest(async () => ({
+      ok: true,
+      isPaymentReceipt: true,
+      amount: 500,
+      currency,
+      date: new Date().toISOString(),
+      bank: 'Banco de prueba',
+      reference: `ALT-${suffix}`,
+      recipientHint: null,
+      confidence: 0.99
+    }))
+
+    const proofTool = createConversationalTools(ctx)
+      .find((item) => item.name === 'register_deposit_payment_proof')
+    await db.exec(`
+      CREATE TRIGGER fail_escalated_proof_ledger_${suffix.replaceAll('-', '_')}
+      BEFORE INSERT ON payments
+      WHEN NEW.contact_id = '${contactId}'
+      BEGIN
+        SELECT RAISE(FAIL, 'fallo ledger inyectado tras handoff');
+      END;
+    `)
+    const failedLedger = await proofTool
+      .invoke(null, JSON.stringify({ montoIndicado: 500, referencia: null }))
+    assert.equal(failedLedger.ok, true, JSON.stringify(failedLedger))
+    assert.equal(failedLedger.paymentRecorded, false)
+    assert.equal(failedLedger.transferredToHuman, true)
+    assert.equal(
+      ensureToolCallingV2VisibleReply('', [ctx.actions.at(-1)]),
+      'recibí el comprobante y quedó pendiente de revisión; todavía no confirma el pago'
+    )
+    await db.exec(`DROP TRIGGER IF EXISTS fail_escalated_proof_ledger_${suffix.replaceAll('-', '_')}`)
+
+    const result = await proofTool.invoke(null, JSON.stringify({ montoIndicado: 500, referencia: null }))
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.paymentConfirmed, false)
+    assert.equal(result.payment.status, 'pending_review')
+    const finalIntent = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [intentRow.id]
+    )).detail_json)
+    assert.equal(finalIntent.status, 'source_bound')
+    assert.equal(finalIntent.collectionMethod, 'paymentLink')
+    assert.equal(finalIntent.sourceEventId, originalSourceEventId)
+    const proofEvent = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'deposit_transfer_pending_review'
+       ORDER BY created_at DESC LIMIT 1`,
+      [contactId]
+    )
+    const proofDetail = JSON.parse(proofEvent.detail_json)
+    assert.equal(proofDetail.paymentPurpose, 'appointment_deposit')
+    assert.equal(proofDetail.manualReviewOnly, true)
+    assert.equal(proofDetail.autoResumeAllowed, false)
+    const state = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [contactId, agentId]
+    )
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )).total), 0)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type IN ('priority_push_notification', 'priority_push_notification_failed')`,
+      [contactId]
+    )).total), 2)
+  } finally {
+    setNativePaymentReceiptAnalysisHookForTest(null)
+    await db.exec(`DROP TRIGGER IF EXISTS fail_escalated_proof_ledger_${suffix.replaceAll('-', '_')}`).catch(() => {})
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id IN (?, ?)', [uncertainReceiptMessageId, receiptMessageId]).catch(() => {})
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
 test('v2 agenda una frase natural sin pasar por el detector léxico legacy', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_v2_natural_${suffix}`
@@ -257,7 +1298,11 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     const ctx = v2Context([
       { id: 'schedule_appointment', enabled: true, calendarId: ghlCalendarId, allowOverlaps: false }
     ], {
-      conversationMessages: [{ role: 'user', content: 'Va, el martes tipo tardecita.' }]
+      conversationMessages: [
+        { role: 'user', content: 'Quiero ver horarios para el martes.' },
+        { role: 'assistant', content: 'Voy a revisar el calendario.' },
+        { role: 'user', content: 'Va, el martes tipo tardecita.' }
+      ]
     })
     const getFreeSlots = createConversationalTools(ctx).find((item) => item.name === 'get_free_slots')
     const availability = await getFreeSlots.invoke(null, JSON.stringify({
@@ -274,10 +1319,21 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     assert.equal(returnedSlot.startTime, slot.toUTC().toISO())
     assert.match(returnedSlot.localLabel, /4:00/)
     assert.equal(availability.slots[0]?.timezone, timezone)
-    assert.match(availability.note, /localLabel/)
+    assert.match(availability.note, /offer_appointment_slot/)
+    ctx.conversationMessages = [
+      { role: 'user', content: 'Quiero ver horarios para el martes.' },
+      { role: 'assistant', content: `Tengo ${returnedSlot.localLabel}.` },
+      { role: 'user', content: 'Va, el martes tipo tardecita.' }
+    ]
     const book = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
     const result = await book.invoke(null, JSON.stringify({
       startTime: returnedSlot.startTime,
+      selectionEvidence: {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime: returnedSlot.startTime,
+        customerQuote: 'Va, el martes tipo tardecita.',
+        assistantOfferQuote: returnedSlot.localLabel
+      },
       title: null,
       notes: null,
       attendeeName: null,
@@ -291,6 +1347,7 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     assert.match(ctx.actions[0]?.clientRequestId, /^conv-v2-attempt:/)
     assert.equal(ctx.actions[0]?.calendarId, calendarId)
     assert.equal(ctx.actions[0]?.confirmationEvidence?.nativeToolDecision, true)
+    assert.equal(ctx.actions[0]?.confirmationEvidence?.evidenceVerified, true)
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
@@ -353,6 +1410,7 @@ test('agenda humana revalida, asigna y transfiere sin crear cita ni cerrar conve
     assert.ok(request)
     const payload = {
       startTime: slot.toUTC().toISO(),
+      selectionEvidence: await authorizeAppointmentOffer(ctx, slot.toUTC().toISO(), timezone),
       title: 'Valoración de rodilla',
       notes: 'Dolor diario desde hace seis meses',
       attendeeName: null,
@@ -395,12 +1453,12 @@ test('agenda humana revalida, asigna y transfiere sin crear cita ni cerrar conve
     assert.equal(detail.attendeeName, 'Paty Jiménez')
     assert.match(detail.notes, /Raúl Gómez/)
     assert.match(detail.notes, /Mamá del contacto/)
-    assert.equal(ctx.actions[0]?.outcome?.objectiveCompleted, false)
+    assert.equal(ctx.actions.find((action) => action.type === 'request_human_booking')?.outcome?.objectiveCompleted, false)
 
     const replay = await request.invoke(null, JSON.stringify(payload))
     assert.equal(replay.ok, true, JSON.stringify(replay))
     assert.equal(replay.appointmentCreated, false)
-    assert.equal(ctx.actions[1]?.outcome?.replayed, true)
+    assert.equal(ctx.actions.filter((action) => action.type === 'request_human_booking').at(-1)?.outcome?.replayed, true)
     assert.equal(Number((await db.get(
       `SELECT COUNT(*) AS total FROM conversational_agent_events
        WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
@@ -479,14 +1537,9 @@ test('agenda humana rechaza un slot ocupado y no usa la asignación del handoff 
       executionId: `message_human_stale_${suffix}`
     })
     ctx.config.id = agentId
-    const request = createConversationalTools(ctx).find((item) => item.name === 'request_human_booking')
-    const result = await request.invoke(null, JSON.stringify({
-      startTime: slot.toUTC().toISO(),
-      title: 'Valoración',
-      notes: null,
-      attendeeName: null,
-      attendeeContext: null
-    }))
+    const result = await createConversationalTools(ctx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO() }))
 
     assert.equal(result.ok, false)
     assert.equal(result.invalidSlot, true)
@@ -556,6 +1609,7 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     const book = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
     const payload = {
       startTime: slot.toUTC().toISO(),
+      selectionEvidence: await authorizeAppointmentOffer(ctx, slot.toUTC().toISO(), timezone),
       title: 'Valoración inicial',
       notes: 'Requiere valoración',
       attendeeName: null,
@@ -569,7 +1623,7 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
       guests: []
     }
     const first = await book.invoke(null, JSON.stringify(payload))
-    clientRequestId = ctx.actions[0]?.clientRequestId || ''
+    clientRequestId = ctx.actions.find((action) => action.type === 'book_appointment')?.clientRequestId || ''
     const replay = await book.invoke(null, JSON.stringify({
       ...payload,
       title: 'Título cosmético distinto'
@@ -580,7 +1634,7 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     assert.deepEqual(replay.appointment, first.appointment)
     assert.equal('id' in first.appointment, false)
     assert.match(clientRequestId, /^conv-v2-attempt:/)
-    assert.equal(ctx.actions[1]?.clientRequestId, clientRequestId)
+    assert.equal(ctx.actions.filter((action) => action.type === 'book_appointment').at(-1)?.clientRequestId, clientRequestId)
     const rows = await db.all(
       `SELECT id, title, notes FROM appointments
        WHERE calendar_id = ? AND contact_id = ? AND start_time = ?`,
@@ -603,9 +1657,10 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     assert.equal(movedReplay.existingAppointment.startTime, movedSlot.toUTC().toISO())
     assert.equal(movedReplay.existingAppointment.endTime, movedSlot.plus({ hours: 1 }).toUTC().toISO())
     assert.match(movedReplay.error, /ya fue reprogramada/i)
-    assert.equal(ctx.actions[2]?.clientRequestId, clientRequestId)
-    assert.equal(ctx.actions[2]?.outcome?.status, 'error')
-    assert.equal(ctx.actions[2]?.outcome?.appointmentRescheduled, true)
+    const movedReplayAction = ctx.actions.filter((action) => action.type === 'book_appointment').at(-1)
+    assert.equal(movedReplayAction?.clientRequestId, clientRequestId)
+    assert.equal(movedReplayAction?.outcome?.status, 'error')
+    assert.equal(movedReplayAction?.outcome?.appointmentRescheduled, true)
     const contact = await db.get('SELECT assigned_user_id FROM contacts WHERE id = ?', [contactId])
     assert.equal(contact.assigned_user_id, null)
     const signalEvent = await db.get(
@@ -676,7 +1731,14 @@ test('book_appointment v2 nunca adopta como propia una cita futura de otro calen
     ctx.config.id = agentId
     const result = await createConversationalTools(ctx)
       .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({ startTime: targetSlot.toUTC().toISO(), title: null, notes: null, attendeeName: null, attendeeContext: null }))
+      .invoke(null, JSON.stringify({
+        startTime: targetSlot.toUTC().toISO(),
+        selectionEvidence: await authorizeAppointmentOffer(ctx, targetSlot.toUTC().toISO(), timezone),
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null
+      }))
 
     assert.equal(result.ok, true, JSON.stringify(result))
     assert.equal(result.alreadyBooked, undefined)
@@ -1456,6 +2518,103 @@ test('anticipo de cita v2 conserva la conversación activa y reanuda una sola ve
   }
 })
 
+test('un comprobante ambiguo conserva propósito de cita pero jamás autoagenda ni cierra una venta', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_manual_appointment_deposit_${suffix}`
+  const paymentId = `payment_manual_appointment_deposit_${suffix}`
+  let agent = null
+  let resumeCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente comprobante ambiguo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    agent = await createConversationalAgent({
+      name: `Anticipo manual ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      objective: 'citas',
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [
+          { id: 'schedule_appointment', enabled: true, calendarId: `calendar_manual_${suffix}` },
+          { id: 'collect_payment', enabled: true, paymentMode: 'deposit', deposit: { enabled: true, mode: 'fixed', amount: 300, currency: 'MXN' } }
+        ]
+      }
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'deposit_transfer_pending_review',
+      detail: {
+        agentId: agent.id,
+        ledgerPaymentId: paymentId,
+        amount: 300,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        manualReviewOnly: true,
+        autoResumeAllowed: false,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_method, payment_mode,
+         payment_provider, paid_at, created_at, updated_at
+       ) VALUES (?, ?, 300, 'MXN', 'paid', 'bank_transfer', 'live', 'manual', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      return { resumed: true }
+    })
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 300,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(result.signal, 'appointment_deposit_manual_review_required')
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(result.resumed, false)
+    assert.equal(resumeCalls, 0)
+    assert.equal((await findVerifiedPaymentEvidence({
+      database: db,
+      contactId,
+      agentId: agent.id,
+      requiredPurpose: 'appointment_deposit'
+    })).ok, false)
+    const purchaseSignals = await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'signal_set' AND detail_json LIKE '%purchase_completed%'`,
+      [contactId]
+    )
+    assert.equal(Number(purchaseSignals.total), 0)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
 test('recovery después de book_appointment no borra appointment_booked ni reenvía la respuesta', async () => {
   const suffix = randomUUID()
   const contactId = `contact_deposit_recovery_${suffix}`
@@ -2019,6 +3178,296 @@ test('un comprobante v2 queda pending_review/manual_review y no cuenta como pago
   }
 })
 
+test('comprobantes inciertos crean un solo caso manual, alertan una vez y nunca inventan pagos', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_uncertain_proofs_${suffix}`
+  const agentId = `agent_uncertain_proofs_${suffix}`
+  const currency = await getAccountCurrency()
+  const cases = [
+    { failureReason: 'analysis_failed', analysis: { ok: false, reason: 'analysis_failed' } },
+    { failureReason: 'amount_missing', analysis: { ok: true, isPaymentReceipt: true, amount: null, currency } },
+    { failureReason: 'currency_mismatch', analysis: { ok: true, isPaymentReceipt: true, amount: 1200, currency: currency === 'USD' ? 'MXN' : 'USD' } },
+    { failureReason: 'amount_mismatch', analysis: { ok: true, isPaymentReceipt: true, amount: 999, currency } }
+  ]
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto comprobantes inciertos', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    const ctx = v2Context([{
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'full_payment',
+      chargeType: 'direct',
+      direct: { amount: 1200, currency, concept: 'Consulta inicial' },
+      receiptProof: { enabled: true }
+    }], {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `message_uncertain_proofs_${suffix}`,
+      accountLocale: { currency }
+    })
+    ctx.config.id = agentId
+
+    for (let index = 0; index < cases.length; index += 1) {
+      const current = cases[index]
+      const mediaMessageId = `message_uncertain_${index}_${suffix}`
+      await db.run(
+        `INSERT INTO whatsapp_api_messages (
+          id, contact_id, direction, message_type, media_url, media_mime_type,
+          message_timestamp, created_at, updated_at
+         ) VALUES (?, ?, 'inbound', 'image', ?, 'image/jpeg', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [mediaMessageId, contactId, `https://example.com/uncertain-${index}.jpg`, new Date(Date.now() + (index + 1) * 1000).toISOString()]
+      )
+      setNativePaymentReceiptAnalysisHookForTest(async () => current.analysis)
+      const proof = createConversationalTools(ctx).find((item) => item.name === 'register_deposit_payment_proof')
+      const first = await proof.invoke(null, JSON.stringify({ montoIndicado: null, referencia: null }))
+      assert.equal(first.ok, true, JSON.stringify(first))
+      assert.equal(first.manualReviewRequired, true)
+      assert.equal(first.paymentConfirmed, false)
+      const reply = ensureToolCallingV2VisibleReply('', [ctx.actions.at(-1)])
+      assert.equal(reply, 'recibí el comprobante y quedó pendiente de revisión; todavía no confirma el pago')
+      assert.doesNotMatch(reply, /tool|cae_|message_uncertain/i)
+
+      if (index === 0) {
+        await db.run(
+          `UPDATE conversational_agent_state
+           SET status = 'active', signal = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE contact_id = ? AND agent_id = ?`,
+          [contactId, agentId]
+        )
+      }
+      const retry = await proof.invoke(null, JSON.stringify({ montoIndicado: null, referencia: null }))
+      assert.equal(retry.ok, true, JSON.stringify(retry))
+      assert.equal(retry.alreadyRegistered, true)
+      assert.equal(retry.signal, 'ready_for_human')
+      const event = await db.get(
+        `SELECT detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'payment_proof_manual_review_required'
+           AND detail_json LIKE ?`,
+        [contactId, `%${mediaMessageId}%`]
+      )
+      const detail = JSON.parse(event.detail_json)
+      assert.equal(detail.failureReason, current.failureReason)
+      assert.equal(detail.paymentPurpose, 'purchase')
+      assert.equal(detail.ledgerPaymentId, null)
+      assert.equal(detail.approvalAllowed, false)
+      assert.equal(detail.autoResumeAllowed, false)
+    }
+
+    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?', [contactId])).total), 0)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_proof_manual_review_required'`,
+      [contactId]
+    )).total), cases.length)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type IN ('priority_push_notification', 'priority_push_notification_failed')`,
+      [contactId]
+    )).total), cases.length)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )).total), 0)
+    const state = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [contactId, agentId]
+    )
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+  } finally {
+    setNativePaymentReceiptAnalysisHookForTest(null)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('comprobantes válidos registran purchase y anticipo independiente como pending_review', async () => {
+  const suffix = randomUUID()
+  const currency = await getAccountCurrency()
+  const variants = [
+    {
+      kind: 'purchase',
+      amount: 1200,
+      capability: {
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'full_payment',
+        chargeType: 'direct',
+        direct: { amount: 1200, currency, concept: 'Consulta inicial' },
+        receiptProof: { enabled: true }
+      },
+      expectedPaymentMode: 'full_payment'
+    },
+    {
+      kind: 'deposit',
+      amount: 300,
+      capability: {
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'deposit',
+        deposit: {
+          enabled: true,
+          mode: 'fixed',
+          amount: 300,
+          currency,
+          methods: { paymentLink: false, bankTransfer: true }
+        },
+        receiptProof: { enabled: true }
+      },
+      expectedPaymentMode: 'deposit'
+    }
+  ]
+  const createdAgents = []
+
+  try {
+    for (let index = 0; index < variants.length; index += 1) {
+      const variant = variants[index]
+      const contactId = `contact_valid_proof_${variant.kind}_${suffix}`
+      const mediaMessageId = `message_valid_proof_${variant.kind}_${suffix}`
+      const agent = await createConversationalAgent({
+        name: `Agente comprobante ${variant.kind} ${suffix}`,
+        enabled: false,
+        runtimeMode: 'tool_calling_v2',
+        objective: 'ventas',
+        capabilitiesConfig: { schemaVersion: 1, items: [variant.capability] }
+      })
+      createdAgents.push(agent)
+      const agentId = agent.id
+      await db.run(
+        `INSERT INTO contacts (id, full_name, created_at, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [contactId, `Contacto comprobante ${variant.kind}`]
+      )
+      await db.run(
+        `INSERT INTO whatsapp_api_messages (
+          id, contact_id, direction, message_type, media_url, media_mime_type,
+          message_timestamp, created_at, updated_at
+         ) VALUES (?, ?, 'inbound', 'image', ?, 'image/jpeg', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [mediaMessageId, contactId, `https://example.com/valid-${variant.kind}.jpg`, new Date(Date.now() + (index + 1) * 1000).toISOString()]
+      )
+      await db.run(
+        `INSERT OR REPLACE INTO conversational_agent_state (
+          contact_id, agent_id, channel, status, signal, updated_at
+         ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+        [contactId, agentId]
+      )
+      setNativePaymentReceiptAnalysisHookForTest(async () => ({
+        ok: true,
+        isPaymentReceipt: true,
+        amount: variant.amount,
+        currency,
+        date: new Date().toISOString(),
+        bank: 'Banco válido',
+        reference: `VALID-${variant.kind}-${suffix}`,
+        confidence: 0.99
+      }))
+      const ctx = v2Context([variant.capability], {
+        contactId,
+        agentId,
+        dryRun: false,
+        executionId: `message_valid_proof_execution_${variant.kind}_${suffix}`,
+        accountLocale: { currency }
+      })
+      ctx.config.id = agentId
+      const result = await createConversationalTools(ctx)
+        .find((item) => item.name === 'register_deposit_payment_proof')
+        .invoke(null, JSON.stringify({ montoIndicado: variant.amount, referencia: null }))
+      assert.equal(result.ok, true, JSON.stringify(result))
+      assert.equal(result.paymentConfirmed, false)
+      assert.equal(result.payment.status, 'pending_review')
+      const payment = await db.get(
+        `SELECT id, status, payment_mode, paid_at FROM payments
+         WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1`,
+        [contactId]
+      )
+      assert.equal(payment.status, 'pending_review')
+      assert.equal(payment.payment_mode, 'manual_review')
+      assert.equal(payment.paid_at, null)
+      const event = await db.get(
+        `SELECT detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'deposit_transfer_pending_review'
+         ORDER BY created_at DESC LIMIT 1`,
+        [contactId]
+      )
+      const detail = JSON.parse(event.detail_json)
+      assert.equal(detail.paymentPurpose, variant.kind)
+      assert.equal(detail.paymentMode, variant.expectedPaymentMode)
+      assert.equal(detail.appointmentDeposit, false)
+      assert.equal(detail.manualReviewOnly, false)
+      assert.equal(detail.autoResumeAllowed, true)
+      assert.equal(detail.ledgerPaymentId, payment.id)
+      assert.equal(Number((await db.get(
+        `SELECT COUNT(*) AS total FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type IN ('payment_reconciliation_v2', 'signal_set')`,
+        [contactId]
+      )).total), 0)
+
+      const approveRes = mockResponse()
+      await approveTransferProof({
+        params: { id: payment.id },
+        body: { reference: `APPROVED-${variant.kind}` },
+        user: { id: 'reviewer-valid-proof' },
+        headers: {},
+        protocol: 'https',
+        get: () => ''
+      }, approveRes)
+      assert.equal(approveRes.statusCode, 200, JSON.stringify(approveRes.body))
+      assert.equal(approveRes.body.success, true)
+      assert.equal(approveRes.body.conversationResume.signal, 'purchase_completed')
+      assert.equal(approveRes.body.conversationResumePending, false)
+      const completedState = await db.get(
+        `SELECT status, signal FROM conversational_agent_state
+         WHERE contact_id = ? AND agent_id = ?`,
+        [contactId, agentId]
+      )
+      assert.equal(completedState.status, 'completed')
+      assert.equal(completedState.signal, 'purchase_completed')
+      assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 0)
+
+      const approveRetryRes = mockResponse()
+      await approveTransferProof({
+        params: { id: payment.id },
+        body: {},
+        user: { id: 'reviewer-valid-proof' },
+        headers: {},
+        protocol: 'https',
+        get: () => ''
+      }, approveRetryRes)
+      assert.equal(approveRetryRes.statusCode, 200)
+      assert.equal(approveRetryRes.body.alreadyApproved, true)
+      assert.equal(approveRetryRes.body.conversationResumePending, false)
+      assert.equal(Number((await db.get(
+        `SELECT COUNT(*) AS total FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+        [contactId]
+      )).total), 1)
+    }
+  } finally {
+    setNativePaymentReceiptAnalysisHookForTest(null)
+    for (const variant of variants) {
+      const contactId = `contact_valid_proof_${variant.kind}_${suffix}`
+      await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => {})
+      await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+      await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+      await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    }
+    for (const agent of createdAgents) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+  }
+})
+
 test('evidencia v2 exige reconciliación y ledger exactos, respeta la reserva y no recicla el anticipo consumido', async () => {
   const suffix = randomUUID()
   const contactId = `contact_bound_evidence_${suffix}`
@@ -2445,6 +3894,15 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
   const baseDay = DateTime.now().setZone(timezone).plus({ days: 42 }).startOf('day')
   const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
   const slot = monday.set({ hour: 16, minute: 0, second: 0, millisecond: 0 })
+  const capabilities = [
+    { id: 'schedule_appointment', enabled: true, calendarId },
+    {
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'deposit',
+      deposit: { enabled: true, mode: 'fixed', amount: 500, currency, methods: { paymentLink: true } }
+    }
+  ]
 
   try {
     await upsertLocalCalendar({
@@ -2468,12 +3926,60 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
        ) VALUES (?, ?, 500, ?, 'paid', 'live', 'manual', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [paymentId, contactId, currency]
     )
+    const selectionCtx = v2Context(capabilities, {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `message_select_before_payment_${suffix}`,
+      accountLocale: { currency }
+    })
+    selectionCtx.config.id = agentId
+    const selectionAttempt = await createConversationalTools(selectionCtx)
+      .find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify({
+        startTime: slot.toUTC().toISO(),
+        selectionEvidence: await authorizeAppointmentOffer(selectionCtx, slot.toUTC().toISO(), timezone),
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(selectionAttempt.ok, false)
+    assert.equal(selectionAttempt.paymentEvidenceRequired, true)
+    const selectionEvent = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_selection_verified'
+       ORDER BY created_at DESC LIMIT 1`,
+      [contactId, agentId]
+    )
+    assert.ok(selectionEvent?.id)
+    const selectionDetail = JSON.parse(selectionEvent.detail_json)
+    const sourceEventId = `cae_payment_source_${suffix}`
+    await recordConversationalAgentEvent({
+      eventId: sourceEventId,
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId,
+        ledgerPaymentId: paymentId,
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        appointmentSelectionEventId: selectionEvent.id,
+        appointmentSelectionCalendarId: selectionDetail.calendarId,
+        appointmentSelectionStartTime: selectionDetail.startTime,
+        appointmentSelectionVerifiedAt: selectionDetail.verifiedAt
+      },
+      throwOnError: true
+    })
     await recordConversationalAgentEvent({
       eventId: reconciliationId,
       contactId,
       eventType: 'payment_reconciliation_v2',
       detail: {
         agentId,
+        sourceEventId,
         status: 'completed',
         ledgerPaymentId: paymentId,
         amount: 500,
@@ -2498,27 +4004,30 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
     expired.leaseUntilAt = '2000-01-01T00:00:00.000Z'
     await db.run('UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?', [JSON.stringify(expired), reservationId])
 
-    const ctx = v2Context([
-      { id: 'schedule_appointment', enabled: true, calendarId },
-      {
-        id: 'collect_payment',
-        enabled: true,
-        paymentMode: 'deposit',
-        deposit: { enabled: true, mode: 'fixed', amount: 500, currency, methods: { paymentLink: true } }
-      }
-    ], {
+    const ctx = v2Context(capabilities, {
       contactId,
       agentId,
       dryRun: false,
-      executionId: `message_deposit_fence_${suffix}`,
+      executionId: `payment-resume:${reconciliationId}`,
       accountLocale: { currency }
     })
     ctx.config.id = agentId
     const result = await createConversationalTools(ctx)
       .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO(), title: null, notes: null, attendeeName: null, attendeeContext: null }))
+      .invoke(null, JSON.stringify({
+        startTime: slot.toUTC().toISO(),
+        selectionEvidence: null,
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
 
     assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(ctx.actions[0]?.confirmationEvidence?.reusedForPaymentResume, true)
+    assert.equal(ctx.actions[0]?.confirmationEvidence?.selectionEventId, selectionEvent.id)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 1)
     const finalReservation = JSON.parse((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
@@ -2565,8 +4074,8 @@ test('binding de comprobante v2 es atómico, idempotente por mensaje y falla cer
       conversationalBinding: {
         bindingKey: mediaMessageId,
         executionId: `message_${suffix}`,
-        paymentPurpose: 'appointment_deposit',
-        appointmentDeposit: true,
+        paymentPurpose: 'deposit',
+        appointmentDeposit: false,
         confidence: 0.99
       }
     }
@@ -2672,7 +4181,14 @@ test('si el cierre de una cita v2 falla, el siguiente inbound repara la cita exi
     firstCtx.config.id = agentId
     const first = await createConversationalTools(firstCtx)
       .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO(), title: null, notes: null, attendeeName: null, attendeeContext: null }))
+      .invoke(null, JSON.stringify({
+        startTime: slot.toUTC().toISO(),
+        selectionEvidence: await authorizeAppointmentOffer(firstCtx, slot.toUTC().toISO(), timezone),
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null
+      }))
     assert.equal(first.ok, true, JSON.stringify(first))
     assert.equal(first.completionSyncWarning, true)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 1)
@@ -2690,7 +4206,14 @@ test('si el cierre de una cita v2 falla, el siguiente inbound repara la cita exi
     retryCtx.config.id = agentId
     const retry = await createConversationalTools(retryCtx)
       .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({ startTime: slot.plus({ weeks: 1 }).toUTC().toISO(), title: null, notes: null, attendeeName: null, attendeeContext: null }))
+      .invoke(null, JSON.stringify({
+        startTime: slot.plus({ weeks: 1 }).toUTC().toISO(),
+        selectionEvidence: await authorizeAppointmentOffer(retryCtx, slot.plus({ weeks: 1 }).toUTC().toISO(), timezone),
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null
+      }))
     assert.equal(retry.ok, true, JSON.stringify(retry))
     assert.equal(retry.alreadyBooked, true)
     assert.equal(retry.appointment.startTime, slot.toUTC().toISO())

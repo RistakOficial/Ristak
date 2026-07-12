@@ -79,7 +79,7 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       bookingOwner: 'ai',
       handoffUserId: '',
       handoffUserName: '',
-      allowOverlaps: false
+      allowOverlaps: true
     },
     {
       id: 'handoff_human',

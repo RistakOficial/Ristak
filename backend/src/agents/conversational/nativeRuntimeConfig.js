@@ -334,9 +334,9 @@ function normalizeCapabilityItem(input) {
       bookingOwner,
       handoffUserId: bookingOwner === 'human' ? cleanId(input.handoffUserId, 160) : '',
       handoffUserName: bookingOwner === 'human' ? cleanText(input.handoffUserName, 180) : '',
-      // La agenda nativa verifica disponibilidad real siempre. Un valor
-      // almacenado en goalWorkflow nunca habilita traslapes en la capacidad.
-      allowOverlaps: false
+      // Sólo esta capacidad blindada puede autorizar empalmes; goalWorkflow y
+      // el texto editable nunca amplían por sí mismos la política del calendario.
+      allowOverlaps: toBoolean(input.allowOverlaps)
     }
   }
 

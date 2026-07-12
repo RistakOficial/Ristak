@@ -16,6 +16,7 @@ import {
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { serializePaymentAmount, serializePaymentRowAmount } from '../utils/paymentAmountSerialization.js'
 import { buildContactSearchClause, buildContactSearchRank, isPhoneSearchText, normalizePhoneDigits } from '../utils/searchText.js'
 import { coalescedTimestampSortExpression, parseSortableTimestamp, timestampSortExpression, timestampSortParameterExpression } from '../utils/sqlTimestampSort.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
@@ -3830,7 +3831,7 @@ ${CONTACT_META_PROFILE_SELECT},
       customFields: parseContactCustomFields(contact.custom_fields),
       tags: parseContactTags(contact.tags),
       notes: '',
-      payments,
+      payments: payments.map(serializePaymentRowAmount),
       appointments: appointmentsOrdered,
       firstAppointmentDate,
       nextAppointmentDate,
@@ -5551,7 +5552,7 @@ export const getContactJourney = async (req, res) => {
           date: payment.date || payment.created_at,
           data: {
             id: payment.id,
-            amount: payment.amount,
+            amount: serializePaymentAmount(payment.amount),
             currency: payment.currency,
             status: payment.status,
             title: payment.title,
@@ -6348,7 +6349,7 @@ export const getContactJourney = async (req, res) => {
         date: payment.date,
         data: {
           id: payment.id,
-          amount: payment.amount,
+          amount: serializePaymentAmount(payment.amount),
           currency: payment.currency,
           status: payment.status,
           title: payment.title,

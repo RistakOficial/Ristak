@@ -108,6 +108,7 @@ export const TOOL_CALLING_V2_MODEL_SETTINGS = Object.freeze({
 })
 const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
   'apply_safety_measure',
+  'offer_appointment_slot',
   'book_appointment',
   'request_human_booking',
   'mark_ready_to_advance',
@@ -118,6 +119,19 @@ const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
 ])
 
 function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
+  const structuredOffer = (Array.isArray(toolResults) ? toolResults : []).find((result) => (
+    String(result?.tool?.name || '').trim() === 'offer_appointment_slot' &&
+    result?.output?.ok === true &&
+    result?.output?.terminal === true &&
+    String(result?.output?.visibleReply || '').trim()
+  ))
+  if (structuredOffer) {
+    return {
+      isFinalOutput: true,
+      isInterrupted: undefined,
+      finalOutput: String(structuredOffer.output.visibleReply).trim()
+    }
+  }
   const mustStop = (Array.isArray(toolResults) ? toolResults : []).some((result) => {
     const toolName = String(result?.tool?.name || '').trim()
     if (toolName === 'apply_safety_measure') {
@@ -1437,6 +1451,14 @@ function nativeActionFailed(action = {}) {
   return outcome.status === 'error' || outcome.ok === false || action?.ok === false || Boolean(action?.error || outcome?.error)
 }
 
+function hasStructuredAppointmentOffer(actions = []) {
+  return (Array.isArray(actions) ? actions : []).some((action) => (
+    action?.type === 'offer_appointment_slot' &&
+    !nativeActionFailed(action) &&
+    String(action?.outcome?.visibleReply || action?.visibleReply || '').trim()
+  ))
+}
+
 function nativeActionVisibleUrl(action = {}) {
   const candidates = [
     action?.outcome?.sentUrl,
@@ -1458,6 +1480,14 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
     action?.outcome?.terminal === true
   ))
   if (preventiveSuppression) return ''
+  const structuredOffer = (Array.isArray(actions) ? actions : []).find((action) => (
+    action?.type === 'offer_appointment_slot' &&
+    !nativeActionFailed(action) &&
+    String(action?.outcome?.visibleReply || action?.visibleReply || '').trim()
+  ))
+  if (structuredOffer) {
+    return String(structuredOffer?.outcome?.visibleReply || structuredOffer?.visibleReply).trim()
+  }
   let visible = sanitizeToolCallingV2Reply(reply)
   const contactIdentityUnavailable = (Array.isArray(actions) ? actions : [])
     .some((action) => action?.type === 'contact_identity_unavailable')
@@ -1468,6 +1498,7 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   if (!visible) {
     if (confirmed?.type === 'book_appointment') visible = 'listo, la cita quedó confirmada'
     else if (confirmed?.type === 'request_human_booking') visible = 'el horario seguía disponible y ya dejé la solicitud con el equipo para que te confirme la cita'
+    else if (confirmed?.type === 'register_deposit_payment_proof') visible = 'recibí el comprobante y quedó pendiente de revisión; todavía no confirma el pago'
     else if (confirmed?.type === 'create_payment_link') visible = 'listo, ya preparé el enlace de pago. el pago seguirá pendiente hasta que el sistema lo confirme'
     else if (confirmed?.type === 'send_goal_url' || confirmed?.type === 'send_trigger_link') {
       const sentUrl = nativeActionVisibleUrl(confirmed)
@@ -1504,7 +1535,7 @@ export function createToolCallingV2Agent({ model, instructions, tools = [], dryR
     modelSettings: { ...TOOL_CALLING_V2_MODEL_SETTINGS },
     instructions,
     tools,
-    toolUseBehavior: dryRun ? 'run_llm_again' : stopAfterCommittedLiveMutation
+    toolUseBehavior: stopAfterCommittedLiveMutation
   })
 }
 
@@ -2132,6 +2163,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       externalIdPrefix: `convagent_followup${followUpIndex}`,
       dependencies: {
         splitter: splitMessageIntoBubbles,
+        forceSingleMessage: hasStructuredAppointmentOffer(ctx.actions),
         markReplyComplete: async ({ contactId: doneContactId, latest: doneLatest }) => {
           await db.run(`
             UPDATE conversational_agent_state
@@ -2280,6 +2312,7 @@ export async function sendReplyParts({
     recordEvent = recordConversationalAgentEvent,
     markReplyComplete = null,
     replyDeliveryLedger = sendTextMessage ? null : DEFAULT_REPLY_DELIVERY_LEDGER,
+    forceSingleMessage = false,
     loadPreventiveMeasure = sendTextMessage
       ? async () => null
       : getActiveConversationalAgentPreventiveMeasure,
@@ -2320,7 +2353,9 @@ export async function sendReplyParts({
 
   if (!splitResult) {
     try {
-      splitResult = isEmailConversationalChannel(normalizedChannel)
+      splitResult = forceSingleMessage
+        ? { messages: [fallbackReply].filter(Boolean), source: 'structured_offer', reason: 'server_single_message' }
+        : isEmailConversationalChannel(normalizedChannel)
         ? { messages: [fallbackReply].filter(Boolean), source: 'email', reason: 'email_single_message' }
         : await splitter({
           text: fallbackReply,
@@ -2633,7 +2668,10 @@ function toolCallingV2OwnsTerminalState(actions = []) {
     'request_human_booking'
   ])
   return (Array.isArray(actions) ? actions : []).some((action) => (
-    stateChangingTools.has(String(action?.type || '')) && nativeActionSucceeded(action)
+    (
+      stateChangingTools.has(String(action?.type || '')) ||
+      (action?.type === 'register_deposit_payment_proof' && action?.outcome?.transferredToHuman === true)
+    ) && nativeActionSucceeded(action)
   ))
 }
 
@@ -2771,6 +2809,7 @@ async function handleToolCallingV2InboundTurn({
     channel: normalizedChannel,
     dependencies: {
       splitter: splitMessageIntoBubbles,
+      forceSingleMessage: hasStructuredAppointmentOffer(ctx.actions),
       markReplyComplete: async () => {
         await settleActiveClaim({ status: 'completed', answered: true })
       }
@@ -2999,6 +3038,7 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       externalIdPrefix: 'convagent_payment_resume',
       dependencies: {
         splitter: splitMessageIntoBubbles,
+        forceSingleMessage: hasStructuredAppointmentOffer(ctx.actions),
         loadNewerInbound: () => loadNewerInboundMessage(cleanContactId, latest.id, normalizedChannel),
         recordEvent: (event) => recordEvent({
           ...event,
@@ -3823,11 +3863,22 @@ export async function runConversationalAgentPreview({
       const hasAttachments = Array.isArray(message.attachments) && message.attachments.length
       return hasText || hasAttachments
     })
-    .map((message) => ({
+    .map((message, index) => ({
+      id: /^[A-Za-z0-9:_-]{1,180}$/.test(String(message.id || '').trim())
+        ? String(message.id).trim()
+        : `preview_message_${index}`,
       role: message.role === 'assistant' ? 'assistant' : 'user',
       content: typeof message.content === 'string' ? message.content.trim() : '',
       attachments: Array.isArray(message.attachments) ? message.attachments : []
     }))
+
+  if (executionId) {
+    for (let index = cleanMessages.length - 1; index >= 0; index -= 1) {
+      if (cleanMessages[index].role !== 'user') continue
+      cleanMessages[index] = { ...cleanMessages[index], id: String(executionId) }
+      break
+    }
+  }
 
   if (!cleanMessages.length) {
     const error = new Error('Envía al menos un mensaje para simular la conversación')
@@ -3877,7 +3928,9 @@ export async function runConversationalAgentPreview({
     historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages },
     runtimeEventContext: String(runtimeEventContext || '').trim()
   })
-  const splitResult = isEmailConversationalChannel(previewChannel)
+  const splitResult = hasStructuredAppointmentOffer(turn.ctx.actions)
+    ? { messages: [turn.reply].filter(Boolean), source: 'structured_offer', reason: 'server_single_message' }
+    : isEmailConversationalChannel(previewChannel)
     ? { messages: [turn.reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
     : await splitMessageIntoBubbles({
         text: turn.reply,

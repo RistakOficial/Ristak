@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import { db } from '../src/config/database.js'
+import {
+  db,
+  parsePostgresTimestampWithoutTimezoneAsUtc
+} from '../src/config/database.js'
 import { dispatchAppointmentAutomationEvent } from '../src/services/appointmentAutomationService.js'
 import {
   buildAppointmentTestActionKey,
@@ -14,10 +17,17 @@ import {
   processDueAppointmentReminders
 } from '../src/services/appointmentRemindersService.js'
 import { cleanupConversationalTestAppointment } from '../src/services/conversationalAppointmentTestCleanupService.js'
+import { getLocalAppointment } from '../src/services/localCalendarService.js'
 
 function unique(prefix) {
   return `${prefix}_${randomUUID()}`
 }
+
+test('PostgreSQL interpreta timestamp without time zone con el contrato UTC del CRM', () => {
+  const parsed = parsePostgresTimestampWithoutTimezoneAsUtc('2026-07-13 16:00:00.123456')
+  assert.ok(parsed instanceof Date)
+  assert.equal(parsed.toISOString(), '2026-07-13T16:00:00.123Z')
+})
 
 async function insertUser(suffix, label = 'Dueño prueba') {
   const username = `${suffix}@example.com`
@@ -317,14 +327,17 @@ test('recordatorios de cita test llegan sólo como copia interna y el cron jamá
       ) VALUES (?, 'Aviso inmediato', 1, 'reminder', 0, 'whatsapp', 'contact',
         'direct', 'after_booking', 0, 'seconds', 'Hola {{contact.first_name}}, tu cita quedó lista.', 0, 9999)
     `, [reminderId])
-    const appointment = {
-      id: fixture.appointmentId,
-      isTest: true,
-      testRunId: fixture.runId,
-      testEffectId: fixture.effectId,
-      testExpiresAt: '2099-07-12T18:05:00.000Z'
-    }
-    const first = await executeSafeTestAppointmentReminders(appointment)
+    const appointment = await getLocalAppointment(fixture.appointmentId)
+    assert.equal(appointment.startTime, '2099-07-12T18:00:00.000Z')
+    assert.equal(appointment.endTime, '2099-07-12T19:00:00.000Z')
+    assert.equal(appointment.testExpiresAt, '2099-07-12T18:05:00.000Z')
+    // Los servicios internos tambien pueden recibir Date desde el driver. La
+    // auditoria debe persistir un ISO UTC, nunca String(Date) dependiente del
+    // locale del proceso.
+    const first = await executeSafeTestAppointmentReminders({
+      ...appointment,
+      testExpiresAt: new Date(appointment.testExpiresAt)
+    })
     const second = await executeSafeTestAppointmentReminders(appointment)
     assert.equal(first.executed, true)
     assert.equal(first.sentCount, 1)
@@ -357,6 +370,13 @@ test('recordatorios de cita test llegan sólo como copia interna y el cron jamá
       { action_type: 'reminder-external-message', execution_mode: 'simulated', status: 'simulated' },
       { action_type: 'reminder-test-notification', execution_mode: 'real', status: 'sent' }
     ])
+    const persistedExpiry = await db.get(
+      `SELECT cleanup_due_at
+       FROM conversational_appointment_test_automation_receipts
+       WHERE test_effect_id = ? AND node_id = ? AND action_type = 'reminder-test-notification'`,
+      [fixture.effectId, reminderId]
+    )
+    assert.equal(new Date(persistedExpiry.cleanup_due_at).toISOString(), '2099-07-12T18:05:00.000Z')
   } finally {
     await deleteTestFixture({ fixture, reminderId, userIds: [ownerUserId] })
   }

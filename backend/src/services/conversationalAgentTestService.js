@@ -449,6 +449,22 @@ async function verifyTestAppointmentAction(action, scheduleCapability) {
   const calendarId = cleanString(action?.calendarId)
   const startTime = cleanString(action?.startTime)
   const start = new Date(startTime)
+  const confirmationEvidence = action?.confirmationEvidence && typeof action.confirmationEvidence === 'object'
+    ? action.confirmationEvidence
+    : null
+  const selectionVerified = Boolean(
+    confirmationEvidence?.evidenceVerified === true &&
+    confirmationEvidence?.nativeToolDecision === true &&
+    cleanString(confirmationEvidence?.selectedStartTime) === startTime &&
+    cleanString(confirmationEvidence?.customerQuote)
+  )
+  if (!selectionVerified) {
+    throw testError(
+      'La conversación de prueba no contiene una selección verificable de ese día y hora. No se creó ninguna cita; ofrece horarios y espera a que la persona elija uno.',
+      409,
+      'test_appointment_selection_required'
+    )
+  }
   const configuredCalendarId = cleanString(scheduleCapability?.calendarId)
   const calendar = configuredCalendarId
     ? await db.get(
@@ -661,6 +677,7 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         endTime: cleanString(action.endTime),
         title: cleanString(action.title),
         bookingOwner: cleanString(action.type) === 'request_human_booking' ? 'human' : 'ai',
+        confirmationEvidence: action.confirmationEvidence,
         participants: Array.isArray(action.participants) ? action.participants : []
       }
     : effectType === 'payment'

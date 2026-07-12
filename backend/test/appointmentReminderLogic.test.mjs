@@ -88,10 +88,10 @@ test('renderMessageText sustituye variables de contacto y cita en la zona horari
   assert.equal(normalized, 'Hola Ana, tu cita "Valoración" es el lunes 15 de junio a las 12:00 p. m. (lunes, 15 de junio de 2026 12:00).')
 })
 
-test('timestamps Date de PostgreSQL conservan sus componentes UTC en recordatorios', () => {
-  // node-postgres parsea `timestamp without time zone` como Date en la zona del
-  // proceso. La lectura debe recuperar 18:00 como 18:00 UTC, sin desplazarla.
-  const postgresTimestamp = new Date(2026, 5, 15, 18, 0, 0, 0)
+test('timestamps Date de PostgreSQL conservan el instante UTC en recordatorios', () => {
+  // El adaptador de base ya interpreta los timestamp naive como UTC. Date
+  // conserva su semántica de instante y no se rehidrata con la zona del proceso.
+  const postgresTimestamp = new Date('2026-06-15T18:00:00.000Z')
   const parsed = parseStoredUtcDateTime(postgresTimestamp)
   assert.equal(parsed?.toISO(), '2026-06-15T18:00:00.000Z')
 

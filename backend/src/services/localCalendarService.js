@@ -4152,6 +4152,8 @@ export async function ensureDefaultLocalCalendar() {
 }
 
 function appointmentRowToApi(row = {}) {
+  const startTime = normalizeToUtcIso(row.start_time, 'UTC')
+  const endTime = normalizeToUtcIso(row.end_time || row.start_time, 'UTC')
   return {
     id: row.id,
     ghlAppointmentId: row.ghl_appointment_id || null,
@@ -4165,22 +4167,22 @@ function appointmentRowToApi(row = {}) {
     assignedUserId: row.assigned_user_id || undefined,
     notes: row.notes || '',
     address: row.address || '',
-    startTime: row.start_time,
-    endTime: row.end_time || row.start_time,
-    dateAdded: row.date_added || row.created_at || row.start_time,
-    dateUpdated: row.date_updated || undefined,
+    startTime,
+    endTime,
+    dateAdded: normalizeToUtcIso(row.date_added || row.created_at || row.start_time, 'UTC'),
+    dateUpdated: normalizeToUtcIso(row.date_updated, 'UTC') || undefined,
     source: row.source || 'ristak',
     bookingChannel: normalizeAppointmentBookingChannel(row.booking_channel),
     syncStatus: row.sync_status || 'pending',
     syncError: row.sync_error || null,
-    syncedAt: row.synced_at || null,
+    syncedAt: normalizeToUtcIso(row.synced_at, 'UTC') || null,
     googleSyncStatus: row.google_sync_status || null,
     googleSyncError: row.google_sync_error || null,
-    googleSyncedAt: row.google_synced_at || null,
+    googleSyncedAt: normalizeToUtcIso(row.google_synced_at, 'UTC') || null,
     isTest: Number(row.is_test || 0) === 1,
     testRunId: row.test_run_id || null,
     testEffectId: row.test_effect_id || null,
-    testExpiresAt: row.test_expires_at || null,
+    testExpiresAt: normalizeToUtcIso(row.test_expires_at, 'UTC') || null,
     contactName: row.contact_name || '',
     contactEmail: row.contact_email || '',
     contactPhone: row.contact_phone || ''
