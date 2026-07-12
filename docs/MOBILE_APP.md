@@ -212,6 +212,22 @@ mientras esta en foreground: solo un `401` o `license_blocked` definitivo elimin
 sesion/cache; timeout, offline y `5xx` conservan temporalmente la ultima ACL
 valida.
 
+Cuando una cuenta todavia no tiene snapshot local de bandeja ni marca de
+bootstrap completado, `mobile/` e `ios/app` cubren la pagina principal con un
+progreso inicial visible y determinista. La barra solo avanza al completar
+trabajo real: cuenta conectada, configuracion/catalogos, directorio inicial de
+contactos, primera pagina de conversaciones y escritura de la copia local. Cada
+etapa muestra su nombre y cantidades obtenidas cuando aplican; no usa un timer
+para inventar porcentaje. Un fallo conserva la etapa exacta y ofrece
+`Reintentar`. Al completar se guarda `mobile:first-sync:completed` dentro del
+namespace de esa cuenta, por lo que los siguientes arranques pintan cache y
+revalidan en silencio. Una cuenta con cero chats tambien puede completar. Logout
+o cambio de cuenta limpia la marca junto con sus snapshots.
+
+Este bootstrap prepara el directorio y el indice reciente de conversaciones;
+no descarga todos los mensajes de todos los hilos. El historial detallado se
+pagina al abrir cada chat, como exige el limite de almacenamiento y privacidad.
+
 Regla de dueño unico del teclado: en cada ruta visible solo puede haber UN
 keyboard avoider habilitado. Dos `KeyboardAvoidingView` apilados (p. ej. el
 `AppFrame` de una pantalla host mas el `AppFrame` de una ruta overlay montada

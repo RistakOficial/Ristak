@@ -64,6 +64,7 @@ final class InboxViewModel {
     private weak var shell: ShellState?
     private var namespace: String?
     private var directoryPrewarmNamespace: String?
+    private var directoryPrewarmTask: Task<[ChatContact]?, Never>?
     private var configured = false
 
     // MARK: Estado de datos
@@ -225,8 +226,12 @@ final class InboxViewModel {
         guard directoryPrewarmNamespace != newNamespace else { return }
         directoryPrewarmNamespace = newNamespace
         let directoryService = contactsService
-        Task(priority: .utility) { [weak self] in
-            guard let contacts = try? await directoryService.fetchPickerContacts() else { return }
+        let task = Task(priority: .utility) {
+            try? await directoryService.fetchPickerContacts(limit: 100)
+        }
+        directoryPrewarmTask = task
+        Task { [weak self] in
+            guard let contacts = await task.value else { return }
             self?.indexDirectoryContacts(contacts, validatesDestinations: true)
         }
     }
@@ -262,6 +267,8 @@ final class InboxViewModel {
         tagsCatalog = []
         tagsLoaded = false
         directoryPrewarmNamespace = nil
+        directoryPrewarmTask?.cancel()
+        directoryPrewarmTask = nil
     }
 
     var isConfigured: Bool { configured }
@@ -307,8 +314,11 @@ final class InboxViewModel {
 
     // MARK: - Carga inicial
 
-    func initialLoad() async {
-        guard rows.isEmpty || isShowingCachedData else { return }
+    @discardableResult
+    func initialLoad(
+        firstSyncProgress: ((MobileFirstSyncProgress) -> Void)? = nil
+    ) async -> Bool {
+        guard rows.isEmpty || isShowingCachedData else { return true }
         let performanceSpan = RistakObservability.begin(.chatInboxLoad)
         let hadVisibleRows = !rows.isEmpty
         if hadVisibleRows {
@@ -318,8 +328,71 @@ final class InboxViewModel {
         loadErrorMessage = nil
         isAccessDenied = false
 
+        if let firstSyncProgress {
+            firstSyncProgress(.init(
+                stage: .settings,
+                detail: "Consultando preferencias, etiquetas y canales conectados."
+            ))
+            await loadSatelliteContext()
+
+            firstSyncProgress(.init(
+                stage: .contacts,
+                detail: "Descargando el directorio inicial de contactos."
+            ))
+            let directoryContacts: [ChatContact]?
+            if let directoryPrewarmTask {
+                directoryContacts = await directoryPrewarmTask.value
+            } else {
+                directoryContacts = try? await contactsService.fetchPickerContacts(limit: 100)
+            }
+            guard let directoryContacts else {
+                let message = "No se pudieron cargar los contactos. Revisa tu conexión e intenta de nuevo."
+                loadErrorMessage = message
+                isInitialLoading = false
+                firstSyncProgress(.init(
+                    stage: .contacts,
+                    detail: "La descarga se interrumpió.",
+                    errorMessage: message
+                ))
+                performanceSpan.finish(outcome: .failed, itemCount: rows.count)
+                return false
+            }
+            indexDirectoryContacts(directoryContacts, validatesDestinations: true)
+
+            firstSyncProgress(.init(
+                stage: .conversations,
+                detail: directoryContacts.isEmpty
+                    ? "El directorio está listo. Buscando conversaciones."
+                    : "\(directoryContacts.count) contactos listos. Cargando la bandeja y el historial reciente."
+            ))
+            let loaded = await reloadFromServer(showSpinner: rows.isEmpty)
+            guard loaded else {
+                let message = loadErrorMessage ?? "No se pudieron cargar las conversaciones."
+                firstSyncProgress(.init(
+                    stage: .conversations,
+                    detail: "La descarga se interrumpió.",
+                    errorMessage: message
+                ))
+                performanceSpan.finish(outcome: .failed, itemCount: rows.count)
+                return false
+            }
+
+            firstSyncProgress(.init(
+                stage: .localCopy,
+                detail: "\(rows.count) conversaciones preparadas. Guardando la copia para próximos arranques."
+            ))
+            RistakSnapshotCache.shared.store(true, for: ChatSnapshotKey.firstSyncCompleted)
+            firstSyncProgress(.init(
+                stage: .complete,
+                detail: "Tus contactos y conversaciones ya están listos."
+            ))
+            performanceSpan.finish(outcome: .success, itemCount: rows.count)
+            restorePersistedPhoneFilter()
+            return true
+        }
+
         async let contextTask: Void = loadSatelliteContext()
-        await reloadFromServer(showSpinner: rows.isEmpty)
+        let loaded = await reloadFromServer(showSpinner: rows.isEmpty)
         if !hadVisibleRows {
             let outcome: RistakPerformanceOutcome
             if Task.isCancelled {
@@ -335,6 +408,7 @@ final class InboxViewModel {
         }
         await contextTask
         restorePersistedPhoneFilter()
+        return loaded
     }
 
     /// Contexto satélite: números, labels, integraciones, flags de comentarios
@@ -426,7 +500,8 @@ final class InboxViewModel {
     }
 
     /// Recarga completa (primera página) respetando query y filtro de número.
-    private func reloadFromServer(showSpinner: Bool) async {
+    @discardableResult
+    private func reloadFromServer(showSpinner: Bool) async -> Bool {
         let startingActivityRevision = activityRevision
         if showSpinner {
             isInitialLoading = true
@@ -450,7 +525,7 @@ final class InboxViewModel {
             let page = try await fetchPage(offset: 0, warmProfilePictures: shouldWarmPictures)
             // Si el usuario cambió query/número mientras esta carga volaba,
             // descartar el lote (llega otro reload con los params nuevos).
-            guard fetchKey == currentFetchKey else { return }
+            guard fetchKey == currentFetchKey else { return false }
             validateStoredDestinations(in: page)
             let isReplace = rows.isEmpty || isShowingCachedData || loadedFetchKey != fetchKey
             if isReplace {
@@ -494,6 +569,7 @@ final class InboxViewModel {
             if startingActivityRevision != activityRevision {
                 requestSilentRefresh()
             }
+            return true
         } catch let error as RistakAPIError {
             isAccessDenied = error.isAccessDenied
             if rows.isEmpty {
@@ -501,10 +577,12 @@ final class InboxViewModel {
                     ? nil
                     : "No se pudieron cargar los chats."
             }
+            return false
         } catch {
             if rows.isEmpty {
                 loadErrorMessage = "No se pudieron cargar los chats."
             }
+            return false
         }
     }
 

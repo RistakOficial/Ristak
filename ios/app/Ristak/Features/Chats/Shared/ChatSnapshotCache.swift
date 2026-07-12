@@ -10,6 +10,10 @@ enum ChatSnapshotKey {
     /// Bandeja completa (vista por defecto, sin búsqueda ni filtro de número).
     static let inbox = "chat:inbox"
 
+    /// Marca namespaceada de que el bootstrap móvil terminó. Es independiente
+    /// de la bandeja porque una cuenta legítimamente puede tener cero chats.
+    static let firstSyncCompleted = "mobile:first-sync:completed"
+
     /// Últimos mensajes del hilo de un contacto.
     static func thread(_ contactID: String) -> String { "chat:thread:\(contactID)" }
 

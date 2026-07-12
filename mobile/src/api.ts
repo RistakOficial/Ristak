@@ -622,6 +622,15 @@ export class RistakApiClient {
     });
   }
 
+  getPickerContacts(limit = 100) {
+    return this.request<ChatContact[]>('/contacts/search', {
+      params: {
+        picker: true,
+        limit,
+      },
+    });
+  }
+
   createContact(payload: {
     name?: string;
     full_name?: string;

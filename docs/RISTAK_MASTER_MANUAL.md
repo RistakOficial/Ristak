@@ -923,6 +923,17 @@ ultimos 50 mensajes combinados del hilo (`messageLimit`) y conserva el historial
 ya visible durante refresh silenciosos. Si el usuario sube al inicio de la
 conversacion, la UI pide otro bloque anterior usando `beforeMessageDate`; no
 debe precargar el historial completo de todas las conversaciones de la bandeja.
+En la primera conexion de `ios/app` o `mobile/`, si esa cuenta todavia no tiene
+snapshot local ni la marca namespaceada `mobile:first-sync:completed`, la pagina
+principal muestra una barra de bootstrap por etapas reales: sesion conectada,
+configuracion/catalogos, directorio inicial de contactos, primer lote de
+conversaciones y escritura de la copia local. El porcentaje cambia unicamente
+cuando termina la operacion correspondiente, muestra cantidades obtenidas y se
+queda en la etapa fallida con `Reintentar`; nunca avanza por un timer. Tras
+completar —incluso con cero chats— la marca evita repetir el overlay mientras
+exista esa cache. Logout o cambio de cuenta elimina snapshots y marca, asi que la
+nueva descarga vuelve a ser visible. Este flujo no contradice la paginacion: no
+descarga todos los mensajes de todos los hilos al dispositivo.
 Al entrar a un chat nuevo, desktop, `/movil`, `mobile/` e iOS presentan el
 timeline en el ultimo mensaje disponible. Ese anclaje inicial se mantiene
 mientras termina la hidratacion de caché, mensajes, media y actividad; no usa

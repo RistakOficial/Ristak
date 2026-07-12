@@ -98,7 +98,8 @@ solo en capa flotante; copy en español.
   → Más acciones (agente, cita, pago, programar, etiqueta, leído, archivar),
   swipe nativo por fila: izquierda **Más → Archivar/Restaurar** y derecha
   **No leído → Fijar/Desfijar**, con fijados arriba y estado local persistente,
-  cache en disco para arranque en frío, SSE + polling 20s, badge de no leídos.
+  cache en disco para arranque en frío, progreso real por etapas durante la
+  primera conexión sin snapshot, SSE + polling 20s, badge de no leídos.
   Conversación: todos los tipos de mensaje (texto, foto, video, nota de voz,
   documento, ubicación, email desplegable, comentarios FB/IG, sistema), texto
   con formato WhatsApp en globos y previews (`*negrita*`, `_italica_`,

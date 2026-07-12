@@ -21,6 +21,9 @@ Service extensions, or Apple native code in this folder. Apple work belongs in
 - Native push registration for Android, notification tap handling, and
   device-level alert activation from Settings.
 - Chat inbox from `/api/contacts/chats`.
+- First connection without a local snapshot shows real, retryable progress for
+  account setup, configuration, contacts, conversations, and local cache; later
+  launches paint the cached state and revalidate silently.
 - Native chat inbox parity pass for `/movil`: same high-level header, search,
   quick filter chips, unread emphasis, contact avatar ring/channel badge, and
   last-message preview rules.

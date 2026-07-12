@@ -260,6 +260,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   - Avance: una falla silenciosa conserva filas cacheadas; una respuesta fresca
     corta o vacia retira fantasmas, y la cache canonica no se contamina con una
     busqueda o bandeja filtrada por numero.
+  - Primer arranque sin cache: iOS y Android muestran una barra por etapas reales
+    (cuenta, configuracion, contactos, conversaciones y copia local), conservan
+    el paso exacto ante error y permiten reintentar. Con snapshot valido no se
+    muestra y la revalidacion sigue silenciosa.
 - [ ] Validar visualmente contra `/movil` en telefono.
 
 ### 2. Conversacion

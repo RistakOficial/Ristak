@@ -134,7 +134,7 @@ import {
   writeAuthToken,
   writeJsonValue,
 } from './storage';
-import { hasCachedValue, peekCache, preloadCache, readCache, writeCache, clearAllCache, setCacheNamespace } from './cache';
+import { hasCachedValue, peekCache, preloadCache, readCache, writeCache, writeCacheNow, clearAllCache, setCacheNamespace } from './cache';
 import {
   analyticsChartCacheKey,
   analyticsFunnelCacheKey,
@@ -180,6 +180,11 @@ import {
   type CalendarSlotSelection,
 } from './calendarState';
 import { shouldRotatePaymentAttemptAfterError } from './paymentSafety';
+import {
+  MOBILE_FIRST_SYNC_STAGES,
+  getMobileFirstSyncStage,
+  type MobileFirstSyncProgress,
+} from './firstSyncProgress';
 import {
   configureNativePushTokenRefresh,
   configureNativeNotificationListeners,
@@ -2681,6 +2686,8 @@ function ChatScreen({
   const hasCanonicalInboxSnapshot = canUseCanonicalInboxCache && (
     Boolean(nativeInboxCache.get(api)?.length) || hasCachedValue(NATIVE_INBOX_CACHE_KEY)
   );
+  const firstSyncWasCompleted = hasCanonicalInboxSnapshot
+    || hasCachedValue(MOBILE_CACHE_KEYS.firstSyncCompleted);
   // Hidratar desde la caché en memoria: ChatScreen se desmonta al cambiar de
   // sección y sin esto cada regreso pinta vacío -> spinner -> lista (flash).
   const [chats, setChats] = useState<ChatContact[]>(() => cachedCanonicalInbox);
@@ -2693,6 +2700,11 @@ function ChatScreen({
   const [accountCurrencyReady, setAccountCurrencyReady] = useState(Boolean(initialCurrency));
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(() => !hasCanonicalInboxSnapshot);
+  const [firstSyncProgress, setFirstSyncProgress] = useState<MobileFirstSyncProgress | null>(() => (
+    firstSyncWasCompleted
+      ? null
+      : { stage: 'account', detail: 'La sesión está conectada. Iniciando la descarga segura.' }
+  ));
   const [chatsLoadingMore, setChatsLoadingMore] = useState(false);
   const [chatsHasMore, setChatsHasMore] = useState(true);
   const [chatListOffset, setChatListOffset] = useState(0);
@@ -2715,6 +2727,8 @@ function ChatScreen({
   const chatRealtimeRefreshInFlightRef = useRef(false);
   const chatRealtimeRefreshQueuedRef = useRef(false);
   const chatListRequestAbortRef = useRef<AbortController | null>(null);
+  const firstSyncRunningRef = useRef(false);
+  const skipNextStandardLoadRef = useRef(false);
   const scheduleIntentRef = useRef<{ signature: string; scheduledId: string } | null>(null);
   useEffect(() => {
     chatsRef.current = chats;
@@ -2811,7 +2825,7 @@ function ChatScreen({
     setConversationClosing(true);
   }, [conversationClosing, selected]);
 
-  const loadChats = useCallback(async (silent = false) => {
+  const loadChats = useCallback(async (silent = false): Promise<ChatContact[] | null> => {
     const requestQuery = query.trim();
     const requestScopeKey = currentChatListScopeKey;
     const generation = chatListGenerationRef.current + 1;
@@ -2857,8 +2871,8 @@ function ChatScreen({
         warmProfilePictures: silent ? false : chatListPhoneFilterParams.warmProfilePictures,
         signal: controller.signal,
       });
-      if (!chatMountedRef.current) return;
-      if (generation !== chatListGenerationRef.current) return;
+      if (!chatMountedRef.current) return null;
+      if (generation !== chatListGenerationRef.current) return null;
       chatListLoadedQueryRef.current = requestQuery;
       chatListLoadedScopeRef.current = requestScopeKey;
       const nextChats = Array.isArray(data) ? data : [];
@@ -2887,9 +2901,10 @@ function ChatScreen({
         setChatListOffset(nextChats.length);
         setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
       }
+      return nextChats;
     } catch (err) {
       console.warn('[RistakNative][chat] loadChats failed', err);
-      if (!chatMountedRef.current) return;
+      if (!chatMountedRef.current) return null;
       if (generation === chatListGenerationRef.current) {
         const hasVisibleCache = !scopeChanged && chatsRef.current.length > 0;
         if (!silent && !hasVisibleCache) {
@@ -2898,6 +2913,7 @@ function ChatScreen({
             : err instanceof Error ? err.message : 'No se pudo cargar la bandeja.');
         }
       }
+      return null;
     } finally {
       clearTimeout(requestTimeout);
       if (chatListRequestAbortRef.current === controller) chatListRequestAbortRef.current = null;
@@ -2907,6 +2923,80 @@ function ChatScreen({
       }
     }
   }, [api, canonicalInboxScopeKey, chatListPhoneFilterParams, currentChatListScopeKey, query]);
+
+  const runFirstSync = useCallback(async () => {
+    if (firstSyncRunningRef.current || !chatMountedRef.current) return;
+    firstSyncRunningRef.current = true;
+    setFirstSyncProgress({
+      stage: 'settings',
+      detail: 'Consultando preferencias y configuración de la cuenta.',
+    });
+
+    try {
+      await api.getConfig(['account_timezone', 'account_currency', 'mobile_chat_sort_mode']);
+      if (!chatMountedRef.current) return;
+
+      setFirstSyncProgress({
+        stage: 'contacts',
+        detail: 'Descargando el directorio inicial de contactos.',
+      });
+      const contacts = await api.getPickerContacts(100);
+      const directory = Array.isArray(contacts) ? contacts : [];
+      await writeCacheNow(MOBILE_CACHE_KEYS.firstSyncContacts, directory);
+      if (!chatMountedRef.current) return;
+
+      setFirstSyncProgress({
+        stage: 'conversations',
+        detail: directory.length
+          ? `${directory.length} contactos listos. Cargando la bandeja y el historial reciente.`
+          : 'El directorio está listo. Buscando conversaciones.',
+      });
+      const loadedChats = await loadChats(false);
+      if (!loadedChats) throw new Error('No se pudieron cargar las conversaciones.');
+      if (!chatMountedRef.current) return;
+
+      setFirstSyncProgress({
+        stage: 'localCopy',
+        detail: `${loadedChats.length} conversaciones preparadas. Guardando la copia para próximos arranques.`,
+      });
+      await writeCacheNow(NATIVE_INBOX_CACHE_KEY, loadedChats.slice(0, NATIVE_INBOX_CACHE_LIMIT));
+      await writeCacheNow(MOBILE_CACHE_KEYS.firstSyncCompleted, true);
+      if (!chatMountedRef.current) return;
+
+      skipNextStandardLoadRef.current = true;
+      setFirstSyncProgress({
+        stage: 'complete',
+        detail: 'Tus contactos y conversaciones ya están listos.',
+      });
+      setTimeout(() => {
+        if (chatMountedRef.current) setFirstSyncProgress(null);
+      }, 450);
+    } catch (syncError) {
+      if (!chatMountedRef.current) return;
+      const message = syncError instanceof Error
+        ? syncError.message
+        : 'La descarga se interrumpió. Revisa tu conexión e intenta de nuevo.';
+      setFirstSyncProgress((current) => ({
+        stage: current?.stage || 'settings',
+        detail: 'La descarga se interrumpió.',
+        error: message,
+      }));
+    } finally {
+      firstSyncRunningRef.current = false;
+    }
+  }, [api, loadChats]);
+
+  useEffect(() => {
+    if (hasCanonicalInboxSnapshot && !hasCachedValue(MOBILE_CACHE_KEYS.firstSyncCompleted)) {
+      void writeCacheNow(MOBILE_CACHE_KEYS.firstSyncCompleted, true);
+    }
+  }, [hasCanonicalInboxSnapshot]);
+
+  useEffect(() => {
+    if (!inboxCacheHydrated || !firstSyncProgress || firstSyncProgress.error) return;
+    if (firstSyncProgress.stage !== 'account') return;
+    void runFirstSync();
+  }, [firstSyncProgress, inboxCacheHydrated, runFirstSync]);
 
   const requestSilentInboxRefresh = useCallback(() => {
     if (!chatMountedRef.current) return;
@@ -3042,11 +3132,16 @@ function ChatScreen({
 
   useEffect(() => {
     if (!inboxCacheHydrated) return undefined;
+    if (firstSyncProgress) return undefined;
+    if (skipNextStandardLoadRef.current && !query.trim()) {
+      skipNextStandardLoadRef.current = false;
+      return undefined;
+    }
     const timer = setTimeout(() => {
       void loadChats();
     }, query.trim() ? 240 : 0);
     return () => clearTimeout(timer);
-  }, [inboxCacheHydrated, loadChats, query]);
+  }, [firstSyncProgress, inboxCacheHydrated, loadChats, query]);
 
  useEffect(() => {
     let cancelled = false;
@@ -4540,7 +4635,80 @@ function ChatScreen({
         onSubmit={contactPickerSheet === 'cameraShare' ? sendCameraShare : undefined}
       />
       {footer}
+      {firstSyncProgress ? (
+        <FirstSyncProgressOverlay
+          progress={firstSyncProgress}
+          onRetry={() => { void runFirstSync(); }}
+        />
+      ) : null}
     </AppFrame>
+  );
+}
+
+function FirstSyncProgressOverlay({
+  progress,
+  onRetry,
+}: {
+  progress: MobileFirstSyncProgress;
+  onRetry: () => void;
+}) {
+  const current = getMobileFirstSyncStage(progress.stage);
+  const currentIndex = MOBILE_FIRST_SYNC_STAGES.findIndex((stage) => stage.id === progress.stage);
+  const visibleStages = MOBILE_FIRST_SYNC_STAGES.filter((stage) => stage.id !== 'complete');
+
+  return (
+    <View accessibilityLabel="Sincronización inicial de Ristak" style={styles.firstSyncOverlay}>
+      <View style={styles.firstSyncContent}>
+        <View style={styles.firstSyncIcon}>
+          <Activity color={COLORS.accent} size={31} strokeWidth={2.2} />
+        </View>
+        <Text style={styles.firstSyncTitle}>Preparando Ristak por primera vez</Text>
+        <Text style={styles.firstSyncCopy}>
+          Mantén la app abierta. Este proceso solo aparece cuando todavía no existe una copia local de tu cuenta.
+        </Text>
+
+        <View style={styles.firstSyncProgressTrack}>
+          <View style={[styles.firstSyncProgressFill, { width: `${Math.round(current.fraction * 100)}%` }]} />
+        </View>
+        <View style={styles.firstSyncProgressHeader}>
+          <Text style={styles.firstSyncStageTitle}>{current.title}</Text>
+          <Text style={styles.firstSyncPercent}>{Math.round(current.fraction * 100)}%</Text>
+        </View>
+        <Text style={[styles.firstSyncDetail, progress.error && styles.firstSyncError]}>
+          {progress.error || progress.detail}
+        </Text>
+
+        <View style={styles.firstSyncStageList}>
+          {visibleStages.map((stage, index) => {
+            const completed = currentIndex > index || progress.stage === 'complete';
+            const active = currentIndex === index;
+            return (
+              <View key={stage.id} style={styles.firstSyncStageRow}>
+                <View style={[
+                  styles.firstSyncStageDot,
+                  (completed || active) && styles.firstSyncStageDotActive,
+                ]}>
+                  {completed ? <Check color={COLORS.white} size={12} strokeWidth={3} /> : null}
+                </View>
+                <Text style={[styles.firstSyncStageText, active && styles.firstSyncStageTextActive]}>
+                  {stage.title}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+
+        {progress.error ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={onRetry}
+            style={({ pressed }) => [styles.firstSyncRetry, pressed && styles.pressed]}
+          >
+            <Text style={styles.firstSyncRetryText}>Reintentar</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
   );
 }
 
@@ -27590,6 +27758,125 @@ function createAppStyles() {
   screenErrorButtonText: {
     color: COLORS.white,
     fontSize: 14,
+    fontWeight: '900',
+  },
+  firstSyncOverlay: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    backgroundColor: COLORS.bg,
+  },
+  firstSyncContent: {
+    width: '100%',
+    maxWidth: 520,
+    gap: 10,
+  },
+  firstSyncIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+    backgroundColor: COLORS.accentSoft,
+  },
+  firstSyncTitle: {
+    color: COLORS.text,
+    fontSize: 25,
+    lineHeight: 30,
+    fontWeight: '900',
+  },
+  firstSyncCopy: {
+    color: COLORS.muted,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  firstSyncProgressTrack: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    backgroundColor: COLORS.panelSoft,
+  },
+  firstSyncProgressFill: {
+    height: '100%',
+    borderRadius: 4,
+    backgroundColor: COLORS.accent,
+  },
+  firstSyncProgressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  firstSyncStageTitle: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  firstSyncPercent: {
+    color: COLORS.accent,
+    fontSize: 15,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  firstSyncDetail: {
+    color: COLORS.muted,
+    minHeight: 38,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  firstSyncError: {
+    color: COLORS.danger,
+  },
+  firstSyncStageList: {
+    gap: 11,
+    marginTop: 4,
+  },
+  firstSyncStageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  firstSyncStageDot: {
+    width: 21,
+    height: 21,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+  },
+  firstSyncStageDotActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accent,
+  },
+  firstSyncStageText: {
+    color: COLORS.muted,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  firstSyncStageTextActive: {
+    color: COLORS.text,
+    fontWeight: '900',
+  },
+  firstSyncRetry: {
+    minHeight: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    backgroundColor: COLORS.accent,
+  },
+  firstSyncRetryText: {
+    color: COLORS.white,
+    fontSize: 15,
     fontWeight: '900',
   },
   conversationRouteLayer: {
