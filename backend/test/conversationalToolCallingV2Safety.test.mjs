@@ -355,8 +355,15 @@ test('agenda humana revalida, asigna y transfiere sin crear cita ni cerrar conve
       startTime: slot.toUTC().toISO(),
       title: 'Valoración de rodilla',
       notes: 'Dolor diario desde hace seis meses',
-      attendeeName: 'Paty Jiménez',
-      attendeeContext: 'Mamá del contacto'
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: {
+        name: 'Paty Jiménez',
+        phone: null,
+        email: null,
+        relation: 'Mamá del contacto'
+      },
+      guests: []
     }
     const result = await request.invoke(null, JSON.stringify(payload))
 
@@ -551,8 +558,15 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
       startTime: slot.toUTC().toISO(),
       title: 'Valoración inicial',
       notes: 'Requiere valoración',
-      attendeeName: 'Paty Jiménez',
-      attendeeContext: 'Mamá del contacto con dolor de rodilla'
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: {
+        name: 'Paty Jiménez',
+        phone: null,
+        email: null,
+        relation: 'Mamá del contacto con dolor de rodilla'
+      },
+      guests: []
     }
     const first = await book.invoke(null, JSON.stringify(payload))
     clientRequestId = ctx.actions[0]?.clientRequestId || ''

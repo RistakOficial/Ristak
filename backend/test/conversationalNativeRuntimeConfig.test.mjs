@@ -68,7 +68,9 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       { id: 'handoff_human', enabled: true }
     ]
   })
-  assert.equal(capabilities.schemaVersion, 1)
+  assert.equal(capabilities.schemaVersion, 2)
+  assert.equal(capabilities.safetyPolicy.enabled, true)
+  assert.equal(capabilities.testMode.enabled, false)
   assert.deepEqual(capabilities.items, [
     {
       id: 'schedule_appointment',
@@ -88,6 +90,53 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       pastClientsToHuman: false
     }
   ])
+})
+
+test('Datos requeridos conserva sólo condiciones estructuradas que el servidor puede comprobar', () => {
+  const capabilities = normalizeConversationalCapabilitiesConfig({
+    dataRequirements: {
+      enabled: true,
+      fields: [
+        {
+          field: 'email',
+          level: 'conditional',
+          scope: 'any_action',
+          condition: {
+            fact: 'appointment.primary_attendee_is_different',
+            operator: 'is_true',
+            value: true
+          }
+        },
+        {
+          field: 'phone',
+          level: 'conditional',
+          scope: 'payment',
+          condition: 'si parece necesario'
+        }
+      ],
+      participants: {
+        enabled: true,
+        guestFields: []
+      }
+    }
+  })
+
+  assert.deepEqual(capabilities.dataRequirements.fields[0], {
+    field: 'email',
+    level: 'conditional',
+    scope: 'appointment',
+    condition: {
+      fact: 'appointment.primary_attendee_is_different',
+      operator: 'is_true',
+      value: true
+    }
+  })
+  assert.deepEqual(capabilities.dataRequirements.fields[1], {
+    field: 'phone',
+    level: 'optional',
+    scope: 'payment'
+  })
+  assert.deepEqual(capabilities.dataRequirements.participants.guestFields, [])
 })
 
 test('agendar normaliza quién termina la cita y el manifest expone ese contrato', () => {
@@ -269,7 +318,10 @@ test('campos viejos nunca habilitan capacidades nativas', () => {
       attention: { pastClientsToHuman: true }
     }
   })
-  assert.deepEqual(capabilities, { schemaVersion: 1, items: [] })
+  assert.equal(capabilities.schemaVersion, 2)
+  assert.deepEqual(capabilities.items, [])
+  assert.equal(capabilities.safetyPolicy.enabled, true)
+  assert.equal(capabilities.testMode.enabled, false)
 })
 
 test('los filtros por palabras del mensaje se descartan y no pueden silenciar al agente', async () => {
@@ -333,7 +385,7 @@ test('agente nuevo nace con plantilla materializada, capacidades nativas y sin s
     )
     assert.equal(row.runtime_mode, 'tool_calling_v2')
     assert.equal(JSON.parse(row.prompt_config).editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
-    assert.equal(JSON.parse(row.capabilities_config).schemaVersion, 1)
+    assert.equal(JSON.parse(row.capabilities_config).schemaVersion, 2)
   } finally {
     await removeAgent(agent?.id)
   }
@@ -423,7 +475,10 @@ test('entradas obsoletas de runtime y migración se ignoran y nunca alteran la c
     assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
     assert.equal(Object.hasOwn(agent, 'migrationCapabilitiesConfig'), false)
     assert.equal(agent.capabilitiesConfig.items.some((item) => item.id === 'forged'), false)
-    assert.deepEqual(agent.capabilitiesConfig, { schemaVersion: 1, items: [] })
+    assert.equal(agent.capabilitiesConfig.schemaVersion, 2)
+    assert.deepEqual(agent.capabilitiesConfig.items, [])
+    assert.equal(agent.capabilitiesConfig.safetyPolicy.enabled, true)
+    assert.equal(agent.capabilitiesConfig.testMode.enabled, false)
 
     const storedBeforeUpdate = await db.get(
       'SELECT runtime_mode FROM conversational_agents WHERE id = ?',
@@ -536,7 +591,10 @@ test('fila existente sin configuración materializada no revive capacidades ante
     assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
     assert.equal(Object.hasOwn(agent, 'migrationCapabilitiesConfig'), false)
     assert.equal(agent.promptConfig.editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
-    assert.deepEqual(agent.capabilitiesConfig, { schemaVersion: 1, items: [] })
+    assert.equal(agent.capabilitiesConfig.schemaVersion, 2)
+    assert.deepEqual(agent.capabilitiesConfig.items, [])
+    assert.equal(agent.capabilitiesConfig.safetyPolicy.enabled, true)
+    assert.equal(agent.capabilitiesConfig.testMode.enabled, false)
 
     const manifest = buildConversationalCapabilityManifest(agent)
     assert.equal(manifest.every((item) => item.enabled === false), true)
@@ -733,14 +791,36 @@ test('validación real cruza producto-precio, trigger link y moneda del anticipo
   const username = `native_handoff_${suffix}`
   let userId = null
   let paymentAgent = null
+  let highLevelConfigSnapshot = null
+  let insertedHighLevelConfigId = null
   const accountCurrency = String(await getAccountCurrency()).toUpperCase()
   const foreignCurrency = accountCurrency === 'USD' ? 'MXN' : 'USD'
   const config = (items) => ({
     enabled: true,
-    capabilitiesConfig: { schemaVersion: 1, items }
+    capabilitiesConfig: {
+      schemaVersion: 1,
+      items: items.map((item) => item.id === 'collect_payment'
+        ? { gateway: 'highlevel', expirationMinutes: 1440, ...item }
+        : item)
+    }
   })
 
   try {
+    highLevelConfigSnapshot = await db.get(
+      'SELECT id, location_id, api_token, ghl_invoice_mode FROM highlevel_config LIMIT 1'
+    )
+    if (highLevelConfigSnapshot) {
+      await db.run(
+        "UPDATE highlevel_config SET location_id = ?, api_token = ?, ghl_invoice_mode = 'live' WHERE id = ?",
+        [`location_native_${suffix}`, `token_native_${suffix}`, highLevelConfigSnapshot.id]
+      )
+    } else {
+      const inserted = await db.run(
+        "INSERT INTO highlevel_config (location_id, api_token, ghl_invoice_mode) VALUES (?, ?, 'live')",
+        [`location_native_${suffix}`, `token_native_${suffix}`]
+      )
+      insertedHighLevelConfigId = inserted.lastID
+    }
     await db.run(
       `INSERT INTO products (id, name, currency, is_active)
        VALUES (?, ?, ?, 0), (?, ?, ?, 1)`,
@@ -796,7 +876,9 @@ test('validación real cruza producto-precio, trigger link y moneda del anticipo
           enabled: true,
           productId,
           priceId,
-          paymentMode: 'full_payment'
+          paymentMode: 'full_payment',
+          gateway: 'highlevel',
+          expirationMinutes: 1440
         }]
       },
       filters: uniqueTagFilters(`full-payment-${suffix}`)
@@ -963,6 +1045,19 @@ test('validación real cruza producto-precio, trigger link y moneda del anticipo
     await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLinkId]).catch(() => undefined)
     await db.run('DELETE FROM product_prices WHERE id = ?', [priceId]).catch(() => undefined)
     await db.run('DELETE FROM products WHERE id IN (?, ?)', [productId, otherProductId]).catch(() => undefined)
+    if (highLevelConfigSnapshot) {
+      await db.run(
+        'UPDATE highlevel_config SET location_id = ?, api_token = ?, ghl_invoice_mode = ? WHERE id = ?',
+        [
+          highLevelConfigSnapshot.location_id,
+          highLevelConfigSnapshot.api_token,
+          highLevelConfigSnapshot.ghl_invoice_mode,
+          highLevelConfigSnapshot.id
+        ]
+      ).catch(() => undefined)
+    } else if (insertedHighLevelConfigId) {
+      await db.run('DELETE FROM highlevel_config WHERE id = ?', [insertedHighLevelConfigId]).catch(() => undefined)
+    }
   }
 })
 

@@ -3975,7 +3975,18 @@ async function upsertMetaSocialContact({ contactId, socialMessage, profile, incr
     messageCountIncrement
   ])
 
-  return socialContactId
+  // El perfil puede existir desde una importación o versión anterior con un id
+  // distinto al hash canónico actual. En ese caso el ON CONFLICT actualiza esa
+  // fila, pero `socialContactId` sigue apuntando al id candidato que nunca se
+  // insertó. Devolverlo rompe la FK de meta_social_messages justo cuando un echo
+  // saliente intenta reconciliarse con una reserva local. Siempre regresamos el
+  // id que realmente quedó persistido.
+  const persisted = await db.get(
+    'SELECT id FROM meta_social_contacts WHERE platform = ? AND sender_id = ? LIMIT 1',
+    [socialMessage.platform, socialMessage.senderId]
+  )
+
+  return cleanString(persisted?.id) || socialContactId
 }
 
 // ─── Rehospedaje de media entrante de Messenger/Instagram ───

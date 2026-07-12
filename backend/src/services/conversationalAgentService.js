@@ -15,6 +15,7 @@ import {
 import { getConversationalAgentMaxAgents } from './licenseService.js'
 import {
   conversationalPaymentRequestHash,
+  getHighLevelPaymentLinkMode,
   recoverProcessingConversationalPaymentRequest
 } from './paymentFlowService.js'
 import {
@@ -22,11 +23,16 @@ import {
   buildLegacyConversationalEditableText,
   getConversationalCapabilitiesConfig,
   getEnabledConversationalCapabilities,
+  getConversationalTestMode,
   getConversationalNativeRuntimeValidationErrors,
   getConversationalPromptConfig,
   normalizeConversationalCapabilitiesConfig,
   normalizeConversationalPromptConfig
 } from '../agents/conversational/nativeRuntimeConfig.js'
+import { getPaymentGateCheckoutKeys } from './publicPaymentGateService.js'
+import { withConversationalAgentTestMutationLock } from './conversationalAgentTestMutationLockService.js'
+import { isHighLevelConnected } from './integrationConnectionStateService.js'
+import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
 
 /**
  * Servicio del agente conversacional: runtime interno, estado por
@@ -2151,15 +2157,22 @@ export async function bindConversationalPaymentSourceEvent({
 
   return db.transaction(async () => {
     const ledger = await db.get(
-      `SELECT id, contact_id, amount, currency, payment_mode, ghl_invoice_id
+      `SELECT id, contact_id, amount, currency, payment_mode, payment_provider,
+              ghl_invoice_id, public_payment_id
        FROM payments WHERE id = ? AND contact_id = ?`,
       [ledgerPaymentId, cleanContactId]
     )
     const expectedCurrency = normalizeVerifiedCurrency(detail.currency)
     const ledgerCurrency = normalizeVerifiedCurrency(ledger?.currency)
+    const expectedProvider = String(detail.paymentProvider || 'highlevel').trim().toLowerCase()
+    const ledgerProvider = String(ledger?.payment_provider || '').trim().toLowerCase()
+    const ledgerExternalId = expectedProvider === 'highlevel'
+      ? String(ledger?.ghl_invoice_id || '')
+      : String(ledger?.public_payment_id || '')
     if (
       !ledger ||
-      String(ledger.ghl_invoice_id || '') !== String(detail.invoiceId || '') ||
+      ledgerProvider !== expectedProvider ||
+      ledgerExternalId !== String(detail.invoiceId || '') ||
       amountInCurrencyMinorUnits(ledger.amount, ledgerCurrency) !== amountInCurrencyMinorUnits(detail.amount, expectedCurrency) ||
       ledgerCurrency !== expectedCurrency ||
       normalizeVerifiedPaymentEnvironment(ledger.payment_mode) !== normalizeVerifiedPaymentEnvironment(detail.paymentEnvironment)
@@ -2194,7 +2207,9 @@ export async function bindConversationalPaymentSourceEvent({
       'appointmentDeposit',
       'executionId',
       'productId',
-      'priceId'
+      'priceId',
+      'paymentProvider',
+      'publicPaymentId'
     ]
     const mismatch = comparableKeys.some((key) => {
       if (key === 'amount') return Number(storedDetail[key]) !== Number(detail[key])
@@ -2266,13 +2281,14 @@ export async function recoverPendingConversationalPaymentSourceBindings({
      WHERE status IN ('completed', 'processing') AND COALESCE(binding_status, 'pending') != 'bound'
        AND (? = '' OR contact_id = ?)
        AND (? = '' OR invoice_id = ? OR idempotency_key IN (
-         SELECT payment_link_request_key FROM payments WHERE ghl_invoice_id = ?
+         SELECT payment_link_request_key FROM payments WHERE ghl_invoice_id = ? OR public_payment_id = ?
        ))
      ORDER BY updated_at ASC
      LIMIT ?`,
     [
       cleanContactId,
       cleanContactId,
+      cleanInvoiceId,
       cleanInvoiceId,
       cleanInvoiceId,
       cleanInvoiceId,
@@ -2353,12 +2369,20 @@ export async function recoverPendingConversationalPaymentSourceBindings({
         throw new Error('El ledger pendiente no conserva todos los datos para reparar su vínculo')
       }
       const ledgers = await db.all(
-        `SELECT id, contact_id, amount, currency, status, payment_mode, ghl_invoice_id
+        `SELECT id, contact_id, amount, currency, status, payment_mode, payment_provider,
+                ghl_invoice_id, public_payment_id
          FROM payments
-         WHERE contact_id = ? AND (id = ? OR ghl_invoice_id = ?)
-         ORDER BY CASE WHEN ghl_invoice_id = ? THEN 0 ELSE 1 END
+         WHERE contact_id = ? AND (id = ? OR ghl_invoice_id = ? OR public_payment_id = ?)
+         ORDER BY CASE WHEN id = ? THEN 0 WHEN ghl_invoice_id = ? THEN 1 ELSE 2 END
          LIMIT 2`,
-        [requestContactId, responseInvoiceId, responseInvoiceId, responseInvoiceId]
+        [
+          requestContactId,
+          response.ledgerPaymentId || responseInvoiceId,
+          responseInvoiceId,
+          response.publicPaymentId || responseInvoiceId,
+          response.ledgerPaymentId || responseInvoiceId,
+          responseInvoiceId
+        ]
       )
       if (ledgers.length !== 1) throw new Error('El invoice pendiente no tiene un único ledger canónico')
       const ledger = ledgers[0]
@@ -2382,6 +2406,8 @@ export async function recoverPendingConversationalPaymentSourceBindings({
         runtimeMode: 'tool_calling_v2',
         ledgerPaymentId: ledger.id,
         paymentEnvironment: normalizeVerifiedPaymentEnvironment(ledger.payment_mode),
+        paymentProvider: String(ledger.payment_provider || request.gateway || 'highlevel').trim().toLowerCase(),
+        publicPaymentId: ledger.public_payment_id || null,
         productId: request.productId || null,
         priceId: request.priceId || null,
         paymentPurpose,
@@ -3209,6 +3235,8 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     const ledgerStatus = normalizeVerifiedPaymentStatus(ledger.status)
     const ledgerCurrency = normalizeVerifiedCurrency(ledger.currency)
     const ledgerAmountMinor = amountInCurrencyMinorUnits(ledger.amount, ledgerCurrency)
+    const expectedProvider = String(matchedDetail.paymentProvider || '').trim().toLowerCase()
+    const ledgerProvider = String(ledger.payment_provider || '').trim().toLowerCase()
     const expectedEnvironment = normalizeVerifiedPaymentEnvironment(matchedDetail.paymentEnvironment)
     const reportedEnvironment = normalizeVerifiedPaymentEnvironment(paymentMode)
     const ledgerEnvironment = normalizeVerifiedPaymentEnvironment(ledger.payment_mode)
@@ -3230,6 +3258,14 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
         agentId,
         sourceEventId: matchedSourceEvent?.id,
         reason: ledgerCurrency !== expectedCurrency ? 'payment_ledger_currency_mismatch' : 'payment_ledger_amount_mismatch'
+      })
+    }
+    if (expectedProvider && ledgerProvider !== expectedProvider) {
+      return rejectConversationalPaymentReconciliation({
+        contactId: cleanContactId,
+        agentId,
+        sourceEventId: matchedSourceEvent?.id,
+        reason: 'payment_provider_mismatch'
       })
     }
     if (!expectedEnvironment || !reportedEnvironment || !ledgerEnvironment) {
@@ -3756,7 +3792,7 @@ export async function getConversationalNativeRuntimeResourceValidationErrors(nex
 
   const payment = capabilities.find((item) => item.id === 'collect_payment')
   if (payment) {
-    const usesDeposit = payment.paymentMode === 'deposit' || payment.deposit?.enabled
+    const usesDeposit = payment.chargeType === 'deposit' || payment.paymentMode === 'deposit' || payment.deposit?.enabled
     if (usesDeposit) {
       const deposit = payment.deposit || {}
       const validFixedAmount = deposit.mode !== 'range' && Number(deposit.amount) > 0
@@ -3786,6 +3822,34 @@ export async function getConversationalNativeRuntimeResourceValidationErrors(nex
           'collect_payment',
           'capabilitiesConfig.items.collect_payment.deposit.currency',
           `La moneda del anticipo es ${depositCurrency}, pero la cuenta cobra en ${accountCurrency}. Corrígela antes de publicar.`
+        ))
+      }
+    } else if (payment.chargeType === 'direct') {
+      const accountCurrency = String(await getAccountCurrency() || '').trim().toUpperCase()
+      const directAmount = Number(payment.direct?.amount)
+      const directCurrency = String(payment.direct?.currency || '').trim().toUpperCase()
+      if (!(directAmount > 0)) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_DIRECT_PAYMENT_AMOUNT_INVALID',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.direct.amount',
+          'El cobro directo necesita un monto mayor a cero.'
+        ))
+      }
+      if (!String(payment.direct?.concept || '').trim()) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_DIRECT_PAYMENT_CONCEPT_REQUIRED',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.direct.concept',
+          'Escribe el concepto del cobro directo antes de publicar.'
+        ))
+      }
+      if (accountCurrency && directCurrency !== accountCurrency) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_DIRECT_PAYMENT_CURRENCY_MISMATCH',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.direct.currency',
+          `El cobro directo usa ${directCurrency || 'una moneda inválida'}, pero la cuenta cobra en ${accountCurrency}.`
         ))
       }
     } else if (payment.productId && payment.priceId) {
@@ -3869,6 +3933,146 @@ export async function getConversationalNativeRuntimeResourceValidationErrors(nex
             `El precio guardado usa ${effectiveCurrency || 'una moneda inválida'}, pero la cuenta cobra en ${accountCurrency}. Corrige el catálogo antes de publicar.`
           ))
         }
+      }
+    }
+
+    const gateway = String(payment.gateway || 'highlevel').trim().toLowerCase()
+    const testMode = getConversationalTestMode(next)
+    const installmentsEnabled = payment.installments?.enabled === true && Number(payment.installments?.maxInstallments) > 1
+    if (installmentsEnabled) {
+      if (usesDeposit) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_DEPOSIT_MSI_UNSUPPORTED',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.installments',
+          'Los meses sin intereses no se aplican a anticipos. Desactívalos o cambia el tipo de cobro.'
+        ))
+      } else if (gateway === 'highlevel') {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_HIGHLEVEL_MSI_UNSUPPORTED',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.installments',
+          'HighLevel no permite fijar un máximo real de meses sin intereses en sus invoices. Desactívalos o elige otra pasarela.'
+        ))
+      } else {
+        const accountCurrency = String(await getAccountCurrency() || '').trim().toUpperCase()
+        let configuredAmount = 0
+        let configuredCurrency = accountCurrency
+        if (payment.chargeType === 'direct') {
+          configuredAmount = Number(payment.direct?.amount) || 0
+          configuredCurrency = String(payment.direct?.currency || accountCurrency).trim().toUpperCase()
+        } else if (payment.priceId) {
+          const configuredPrice = await db.get(
+            `SELECT pp.amount, pp.currency AS price_currency, p.currency AS product_currency
+             FROM product_prices pp
+             LEFT JOIN products p ON p.id = pp.product_id OR p.ghl_product_id = pp.ghl_product_id
+             WHERE pp.id = ? OR pp.ghl_price_id = ?
+             LIMIT 1`,
+            [payment.priceId, payment.priceId]
+          )
+          configuredAmount = Number(configuredPrice?.amount) || 0
+          configuredCurrency = String(
+            configuredPrice?.price_currency || configuredPrice?.product_currency || accountCurrency
+          ).trim().toUpperCase()
+        }
+        if (configuredAmount > 0 && configuredCurrency) {
+          const eligibility = msiEligibility({
+            gateway,
+            currency: configuredCurrency,
+            amount: configuredAmount,
+            msi: payment.installments
+          })
+          const supported = Boolean(
+            eligibility.insideElement ||
+            eligibility.insideBrick ||
+            eligibility.hostedRedirect ||
+            eligibility.standaloneMonths?.length
+          ) && (
+            gateway !== 'conekta' ||
+            eligibility.standaloneMonths?.includes(Number(payment.installments?.maxInstallments))
+          )
+          if (!supported) {
+            errors.push(nativeResourceValidationItem(
+              'CONVERSATIONAL_CAPABILITY_PAYMENT_MSI_NOT_ELIGIBLE',
+              'collect_payment',
+              'capabilitiesConfig.items.collect_payment.installments',
+              `La pasarela ${gateway}, el monto o la moneda configurados no permiten esos meses sin intereses.`
+            ))
+          }
+        }
+      }
+    }
+    if (gateway === 'highlevel') {
+      const highLevelConnected = await isHighLevelConnected().catch(() => false)
+      if (!highLevelConnected) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_GATEWAY_NOT_CONFIGURED',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.gateway',
+          'HighLevel no está conectado para crear invoices. Conéctalo o elige otra pasarela.'
+        ))
+      }
+      const highLevelMode = await getHighLevelPaymentLinkMode().catch(() => '')
+      if (highLevelConnected && highLevelMode !== 'live') {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_GATEWAY_NOT_LIVE',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.gateway',
+          'HighLevel está en modo prueba. Cámbialo a vivo antes de publicar el agente.'
+        ))
+      }
+      if (Number(payment.expirationMinutes) < 24 * 60) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_HIGHLEVEL_EXPIRATION_INVALID',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.expirationMinutes',
+          'HighLevel maneja vencimiento por fecha, no por minutos. Elige 24 horas o 7 días.'
+        ))
+      }
+      if (testMode.enabled) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_TEST_GATEWAY_UNSUPPORTED',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.gateway',
+          'HighLevel no puede forzar sandbox por una sola prueba. Elige Stripe, Conekta, Mercado Pago, CLIP o Rebill, o apaga Modo test.'
+        ))
+      }
+    } else {
+      try {
+        const liveConfig = await getPaymentGateCheckoutKeys(gateway)
+        if (!liveConfig?.configured) {
+          errors.push(nativeResourceValidationItem(
+            'CONVERSATIONAL_CAPABILITY_PAYMENT_GATEWAY_NOT_CONFIGURED',
+            'collect_payment',
+            'capabilitiesConfig.items.collect_payment.gateway',
+            `La pasarela ${gateway} no está conectada para crear enlaces de pago.`
+          ))
+        } else if (String(liveConfig.paymentMode || '').trim().toLowerCase() !== 'live') {
+          errors.push(nativeResourceValidationItem(
+            'CONVERSATIONAL_CAPABILITY_PAYMENT_GATEWAY_NOT_LIVE',
+            'collect_payment',
+            'capabilitiesConfig.items.collect_payment.gateway',
+            `La pasarela ${gateway} está en modo prueba. Cámbiala a vivo antes de publicar el agente.`
+          ))
+        }
+        if (testMode.enabled) {
+          const testConfig = await getPaymentGateCheckoutKeys(gateway, 'test')
+          if (!testConfig?.configured || String(testConfig.paymentMode || '').toLowerCase() !== 'test') {
+            errors.push(nativeResourceValidationItem(
+              'CONVERSATIONAL_CAPABILITY_PAYMENT_TEST_GATEWAY_NOT_CONFIGURED',
+              'collect_payment',
+              'capabilitiesConfig.items.collect_payment.gateway',
+              `Conecta las credenciales de prueba de ${gateway} antes de publicar con Modo test activo.`
+            ))
+          }
+        }
+      } catch (error) {
+        errors.push(nativeResourceValidationItem(
+          'CONVERSATIONAL_CAPABILITY_PAYMENT_GATEWAY_UNAVAILABLE',
+          'collect_payment',
+          'capabilitiesConfig.items.collect_payment.gateway',
+          `No se pudo validar la pasarela ${gateway}: ${String(error.message || 'configuración no disponible')}`
+        ))
       }
     }
   }
@@ -4819,7 +5023,8 @@ export async function updateConversationalAgent(agentId, input = {}) {
   if (shouldValidateEntry) {
     await assertConversationalAgentEntryDoesNotConflict({ ...next, id: agentId }, { excludeAgentId: agentId })
   }
-  await db.run(`
+  const persistAgentUpdate = async () => db.transaction(async () => {
+    await db.run(`
     UPDATE conversational_agents
     SET name = ?, enabled = ?, ai_provider = ?, model = ?,
         runtime_mode = ?, prompt_config = ?, capabilities_config = ?,
@@ -4849,7 +5054,27 @@ export async function updateConversationalAgent(agentId, input = {}) {
     next.contactScope, next.contactScopeCutoffAt,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
     agentId
-  ])
+    ])
+    if (input?.capabilitiesConfig !== undefined) {
+      // Un run conserva la revisión exacta con la que empezó. Cualquier cambio
+      // de capacidades —incluido apagar Modo test— lo revoca antes de que una
+      // respuesta lenta del modelo pueda ejecutar efectos reales obsoletos.
+      await db.run(
+        `UPDATE conversational_agent_test_runs
+         SET status = 'revoked', updated_at = CURRENT_TIMESTAMP
+         WHERE agent_id = ? AND status = 'active'`,
+        [agentId]
+      )
+    }
+  })
+  if (input?.capabilitiesConfig !== undefined) {
+    await withConversationalAgentTestMutationLock({
+      agentId,
+      purpose: 'agent_capabilities_update'
+    }, persistAgentUpdate)
+  } else {
+    await persistAgentUpdate()
+  }
   if (shouldRefreshAssignedStates) {
     const refreshedCount = await refreshAssignedConversationStatesForAgent(agentId)
     if (refreshedCount > 0) {

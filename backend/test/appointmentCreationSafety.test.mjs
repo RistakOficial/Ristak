@@ -269,6 +269,11 @@ test('un retry del mismo intento v2 devuelve la cita canónica reprogramada y no
   let executions = 0
 
   try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto reprogramado v2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [payload.contactId]
+    )
     await runIdempotentAppointmentCreation({
       clientRequestId: key,
       payload,
@@ -319,6 +324,7 @@ test('un retry del mismo intento v2 devuelve la cita canónica reprogramada y no
   } finally {
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     await cleanup(key)
+    await db.run('DELETE FROM contacts WHERE id = ?', [payload.contactId]).catch(() => {})
   }
 })
 
@@ -339,6 +345,11 @@ test('una lease v2 vencida recupera la cita real y el dueño anterior no pisa el
   let retryExecutions = 0
 
   try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto lease v2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [payload.contactId]
+    )
     const firstPromise = runIdempotentAppointmentCreation({
       clientRequestId: key,
       payload,
@@ -397,6 +408,7 @@ test('una lease v2 vencida recupera la cita real y el dueño anterior no pisa el
     unblockFirst?.()
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     await cleanup(key)
+    await db.run('DELETE FROM contacts WHERE id = ?', [payload.contactId]).catch(() => {})
   }
 })
 

@@ -12,6 +12,7 @@ import { sendPaymentNotification } from './pushNotificationsService.js'
 import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
+import { shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
@@ -612,13 +613,17 @@ export async function createClipPaymentLink(input = {}, { baseUrl, mode = '' } =
     ...(clipInstallments ? { clipInstallments } : {}),
     ...(tax ? { tax } : {})
   }
+  const conversationalTestEffectId = cleanString(input.source) === 'conversational_agent_test'
+    ? cleanString(metadata?.conversationalAgentTest?.testEffectId) || null
+    : null
 
   await db.run(
     `INSERT INTO payments (
       id, contact_id, amount, currency, status, payment_method, payment_mode,
       payment_provider, reference, title, description, date, due_date, sent_at,
-      public_payment_id, payment_url, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      public_payment_id, payment_url, payment_link_request_key, conversational_test_effect_id,
+      metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       id,
       contact.id || null,
@@ -636,6 +641,8 @@ export async function createClipPaymentLink(input = {}, { baseUrl, mode = '' } =
       now,
       publicPaymentId,
       paymentUrl,
+      cleanString(input.paymentLinkRequestKey, 180) || null,
+      conversationalTestEffectId,
       JSON.stringify(metadata)
     ]
   )
@@ -1012,7 +1019,8 @@ async function updatePaymentFromClipPayment(clipPayment) {
   if (linkedContactId && !updated?.contact_id) {
     updated = await findPaymentById(row.id)
   }
-  if (updated?.id && !ignorePendingRegression) {
+  const suppressProductionEffects = shouldSuppressProductionPaymentEffects(updated)
+  if (updated?.id && !ignorePendingRegression && !suppressProductionEffects) {
     dispatchProductPostWebhooksForPaymentInBackground(updated.id, {
       status: persistedStatus,
       previousStatus: row.status || ''
@@ -1027,7 +1035,7 @@ async function updatePaymentFromClipPayment(clipPayment) {
   await activateSubscriptionStartIfNeeded(updated, persistedStatus)
   await syncClipPaymentPlanFromLocalPayment(updated)
 
-  if (updated?.contact_id && nextStatus === 'paid') {
+  if (updated?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
     registerGigstackPaymentForTransactionInBackground(updated.id)
     updateSingleContactStats(updated.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago CLIP ${row.id}: ${error.message}`)

@@ -18,6 +18,7 @@ import {
 } from '../../../shared/sites/paymentGateContract.js'
 
 const PAID_STATUSES = new Set(['paid', 'succeeded', 'success', 'completed', 'complete', 'fulfilled'])
+const CHECKOUT_BLOCKED_STATUSES = new Set(['deleted', 'void', 'voided', 'refunded', 'cancelled', 'canceled', 'expired'])
 
 function cleanString(value, maxLength = 300) {
   return String(value ?? '').trim().slice(0, maxLength)
@@ -219,7 +220,11 @@ export async function createPaymentGateLink(configInput = {}, {
   baseUrl = '',
   contact = {},
   metadata = {},
-  source = 'ristak_payment_gate'
+  source = 'ristak_payment_gate',
+  forceTestMode = false,
+  paymentLinkRequestKey = '',
+  expiresAt = '',
+  applyTax
 } = {}) {
   const config = normalizePaymentGateConfig(configInput)
   if (!isPaymentGateEnabled(config)) {
@@ -230,7 +235,7 @@ export async function createPaymentGateLink(configInput = {}, {
 
   // Modo forzado por el bloque: '' = hereda el global (comportamiento por defecto),
   // 'test' = fuerza modo prueba. Nunca puede forzar live (lo garantiza normalizeGateMode).
-  const forcedMode = config.mode === 'test' ? 'test' : ''
+  const forcedMode = forceTestMode === true || config.mode === 'test' ? 'test' : ''
 
   // MSI: Conekta / Mercado Pago / Rebill lo aceptan en link/checkout hospedado.
   // Stripe tambien lo soporta con prepare/confirm
@@ -263,6 +268,9 @@ export async function createPaymentGateLink(configInput = {}, {
     email: cleanString(contact.email, 180),
     phone: cleanString(contact.phone, 80),
     source,
+    paymentLinkRequestKey: cleanString(paymentLinkRequestKey, 180),
+    dueDate: cleanString(expiresAt, 80) || null,
+    ...(typeof applyTax === 'boolean' ? { applyTax } : {}),
     ...(installments ? { installments } : {}),
     lineItems: [
       {
@@ -284,7 +292,8 @@ export async function createPaymentGateLink(configInput = {}, {
         amount: config.amount,
         currency: config.currency,
         productName: config.productName,
-        mode: config.mode,
+        mode: forcedMode === 'test' ? 'test' : config.mode,
+        ...(cleanString(expiresAt, 80) ? { expiresAt: cleanString(expiresAt, 80) } : {}),
         ...(config.billingType === 'subscription' ? { subscription: config.subscription } : {}),
         ...(installments ? { msi: installments } : {})
       }
@@ -317,7 +326,7 @@ export async function getPaymentGateStatus(publicPaymentId) {
 
   const row = await db.get(
     `SELECT id, amount, currency, status, payment_provider, public_payment_id, payment_url,
-            paid_at, metadata_json, updated_at, created_at
+            payment_mode, paid_at, metadata_json, updated_at, created_at
        FROM payments
       WHERE public_payment_id = ?
       LIMIT 1`,
@@ -333,6 +342,7 @@ export async function getPaymentGateStatus(publicPaymentId) {
     publicPaymentId: row.public_payment_id,
     paymentUrl: hostedPaymentUrl || row.payment_url || '',
     provider: row.payment_provider || '',
+    paymentMode: row.payment_mode || '',
     amount: Number(row.amount) || 0,
     currency: row.currency || 'MXN',
     status,
@@ -357,11 +367,13 @@ export async function getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUr
     status: status.status,
     paid: status.paid,
     amount: status.amount,
-    currency: status.currency
+    currency: status.currency,
+    paymentMode: status.paymentMode,
+    blocked: CHECKOUT_BLOCKED_STATUSES.has(status.status)
   }
 
   // Si ya está pagado no montamos SDK: el runtime salta directo a la acción de éxito.
-  if (status.paid) return base
+  if (status.paid || base.blocked) return base
 
   if (status.provider === 'stripe') {
     // El checkout de sitio SI guarda la tarjeta (Stripe activa setup_future_usage

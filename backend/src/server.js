@@ -18,6 +18,10 @@ import { startScheduledChatMessagesCron } from './jobs/scheduledChatMessages.cro
 import { startContactBulkActionsCron } from './jobs/contactBulkActions.cron.js'
 import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.js'
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
+import { startConversationalAgentSafetyNotificationsCron } from './jobs/conversationalAgentSafetyNotifications.cron.js'
+import { startConversationalAgentTestPaymentsCleanup } from './jobs/conversationalAgentTestPaymentsCleanup.js'
+import { startConversationalAppointmentTestCleanupCron } from './jobs/conversationalAppointmentTestCleanup.cron.js'
+import { startConversationalAgentTestAssignmentsCleanup } from './jobs/conversationalAgentTestAssignmentsCleanup.js'
 import { syncRegisteredIntegrationCrons } from './jobs/integrationCronRegistry.js'
 import { isMetaConnected } from './services/integrationConnectionStateService.js'
 import { initializeVersion } from './services/metaVersionService.js'
@@ -614,6 +618,10 @@ async function startRuntimeServices() {
     startContactBulkActionsCron()    // Ejecuta lotes masivos de contactos programados o en goteo
     startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
     startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
+    startConversationalAgentSafetyNotificationsCron() // Reintenta avisos preventivos auditables
+    startConversationalAgentTestPaymentsCleanup() // Invalida y limpia links sandbox vencidos del tester
+    startConversationalAppointmentTestCleanupCron() // Elimina citas reales de prueba tras cinco minutos
+    startConversationalAgentTestAssignmentsCleanup() // Restaura asignaciones temporales y respeta cambios humanos posteriores
     startConversationGoalEffectsRecoveryScheduler() // Recupera leases/fallos de metas sin depender de un reinicio
     await syncRegisteredIntegrationCrons({ reason: 'startup' }) // Integraciones: sólo si están conectadas
   }

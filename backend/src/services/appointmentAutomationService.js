@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js'
+import { executeSafeTestAppointmentReminders } from './appointmentRemindersService.js'
 
 const CANCELLED_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'deleted'])
 
@@ -30,6 +31,10 @@ function buildEventData(appointment = {}, extra = {}) {
     endTime: appointmentValue(appointment, 'endTime', 'end_time'),
     source: appointment.source || null,
     bookingChannel: appointmentValue(appointment, 'bookingChannel', 'booking_channel'),
+    isTest: Boolean(appointmentValue(appointment, 'isTest', 'is_test')),
+    testRunId: appointmentValue(appointment, 'testRunId', 'test_run_id'),
+    testEffectId: appointmentValue(appointment, 'testEffectId', 'test_effect_id'),
+    testExpiresAt: appointmentValue(appointment, 'testExpiresAt', 'test_expires_at'),
     ...extra
   }
 }
@@ -44,6 +49,19 @@ export async function dispatchAppointmentAutomationEvent(eventType, appointment 
 
   try {
     const engine = await import('./automationEngine.js')
+    if (eventData.isTest) {
+      const execution = await engine.executeTestAutomationEvent(eventType, eventData)
+      return {
+        dispatched: Number(execution.realActionCount || 0) > 0,
+        executed: true,
+        testMode: true,
+        isolated: true,
+        execution,
+        // Alias temporal para consumidores ya desplegados. El contenido ya no
+        // es un preview: incluye la traza real/simulada y recibos auditables.
+        preview: execution
+      }
+    }
     await engine.handleAutomationEvent(eventType, eventData)
     return { dispatched: true }
   } catch (error) {
@@ -63,5 +81,11 @@ export async function dispatchAppointmentCreatedAutomations(appointment = {}) {
 
   const booked = await dispatchAppointmentAutomationEvent('appointment-booked', appointment)
   const statusEvent = await dispatchAppointmentAutomationEvent('appointment-status', appointment)
-  return { booked, status: statusEvent }
+  const reminders = Boolean(appointmentValue(appointment, 'isTest', 'is_test'))
+    ? await executeSafeTestAppointmentReminders(appointment).catch((error) => {
+        logger.warn(`[Recordatorios] No se pudo ejecutar la prueba segura para la cita ${appointment.id || 'sin_id'}: ${error.message}`)
+        return { executed: false, reason: 'engine_error', error: error.message, reminders: [] }
+      })
+    : null
+  return { booked, status: statusEvent, reminders }
 }

@@ -78,6 +78,10 @@ import {
   getConversationalPromptConfig
 } from './nativeRuntimeConfig.js'
 import { buildNativeConversationalInstructions } from './nativePrompt.js'
+import {
+  getActiveConversationalAgentPreventiveMeasure,
+  withConversationalAgentSafetyLock
+} from '../../services/conversationalAgentSafetyService.js'
 
 const HISTORY_LIMIT = 20
 export const TOOL_CALLING_V2_HISTORY_BYTE_BUDGET = 64 * 1024
@@ -86,6 +90,7 @@ export const TOOL_CALLING_V2_HISTORY_TOOL_PAGE_LIMIT = 30
 export const TOOL_CALLING_V2_HISTORY_TOOL_BYTE_BUDGET = 16 * 1024
 export const TOOL_CALLING_V2_STORED_MEDIA_BYTE_RESERVE = 16 * 1024
 const MAX_TURNS = 10
+const PREVENTIVE_DELIVERY_INTERRUPTION_ID = 'preventive_measure'
 const DEFAULT_MODEL = process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || DEFAULT_OPENAI_MODEL
 const MAX_REPLY_CHARS = 1000
 const DEBOUNCE_MS = 4000
@@ -101,6 +106,30 @@ export const CONVERSATIONAL_PREVIEW_CONTACT_NAME = 'Contacto de prueba'
 export const TOOL_CALLING_V2_MODEL_SETTINGS = Object.freeze({
   parallelToolCalls: false
 })
+const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
+  'apply_safety_measure',
+  'book_appointment',
+  'request_human_booking',
+  'mark_ready_to_advance',
+  'create_payment_link',
+  'send_goal_url',
+  'send_to_human',
+  'register_deposit_payment_proof'
+])
+
+function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
+  const mustStop = (Array.isArray(toolResults) ? toolResults : []).some((result) => {
+    const toolName = String(result?.tool?.name || '').trim()
+    if (toolName === 'apply_safety_measure') {
+      return result?.output?.suppressReply === true &&
+        result?.output?.terminal === true
+    }
+    return LIVE_MUTATION_TERMINAL_TOOLS.has(toolName) && result?.output?.actionCompleted === true
+  })
+  return mustStop
+    ? { isFinalOutput: true, isInterrupted: undefined, finalOutput: '' }
+    : { isFinalOutput: false, isInterrupted: undefined }
+}
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
 const pendingContactReruns = new Map()
@@ -166,7 +195,7 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
 export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email']
 
 // Identificadores internos que jamás deben llegar al cliente final.
-const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|update_closing_context|register_deposit_payment_proof)\b/gi
+const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
 
 export function normalizeConversationalChannel(value = 'whatsapp') {
   const raw = String(value || '').trim().toLowerCase()
@@ -1423,6 +1452,12 @@ function nativeActionVisibleUrl(action = {}) {
 }
 
 export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
+  const preventiveSuppression = (Array.isArray(actions) ? actions : []).some((action) => (
+    action?.type === 'apply_safety_measure' &&
+    action?.outcome?.suppressReply === true &&
+    action?.outcome?.terminal === true
+  ))
+  if (preventiveSuppression) return ''
   let visible = sanitizeToolCallingV2Reply(reply)
   const contactIdentityUnavailable = (Array.isArray(actions) ? actions : [])
     .some((action) => action?.type === 'contact_identity_unavailable')
@@ -1462,13 +1497,14 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   return visible
 }
 
-export function createToolCallingV2Agent({ model, instructions, tools = [] } = {}) {
+export function createToolCallingV2Agent({ model, instructions, tools = [], dryRun = false } = {}) {
   return new Agent({
     name: 'Ristak · Agente conversacional nativo',
     model,
     modelSettings: { ...TOOL_CALLING_V2_MODEL_SETTINGS },
     instructions,
-    tools
+    tools,
+    toolUseBehavior: dryRun ? 'run_llm_again' : stopAfterCommittedLiveMutation
   })
 }
 
@@ -1557,7 +1593,7 @@ async function buildToolCallingV2AgentForRun({
     ? `${baseInstructions}\n\n## Estado factual verificado por Ristak\n${cleanRuntimeEventContext}\n- Este bloque es contexto interno del sistema, no un mensaje del cliente. No lo cites, no muestres IDs ni expliques la maquinaria interna.`
     : baseInstructions
 
-  const agent = createToolCallingV2Agent({ model, instructions, tools })
+  const agent = createToolCallingV2Agent({ model, instructions, tools, dryRun })
 
   return {
     agent,
@@ -1963,6 +1999,12 @@ async function sendConversationalChannelTextMessage({
 async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp', agentId = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
 
+  const preventiveMeasure = await getActiveConversationalAgentPreventiveMeasure({
+    contactId,
+    channel: normalizedChannel
+  })
+  if (preventiveMeasure) return
+
   // (AI-002) Los seguimientos también ejecutan el responder (consume tokens):
   // sin entitlement de 'conversational_ai' no deben dispararse.
   if (!(await hasFeature('conversational_ai'))) return
@@ -2109,6 +2151,24 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       }
     })
 
+    if (delivery.suppressedByPreventiveMeasure) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'follow_up_suppressed',
+        detail: {
+          agentId: agentConfig.id,
+          baseMessageId,
+          followUpIndex,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: 'preventive_measure_before_delivery',
+          safetyCaseId: delivery.preventiveMeasure?.id || null,
+          sentParts: delivery.sentParts
+        }
+      }).catch(() => {})
+      return
+    }
+
     if (delivery.interruptedBy) {
       await recordConversationalAgentEvent({
         contactId,
@@ -2219,7 +2279,20 @@ export async function sendReplyParts({
     loadNewerInbound = null,
     recordEvent = recordConversationalAgentEvent,
     markReplyComplete = null,
-    replyDeliveryLedger = sendTextMessage ? null : DEFAULT_REPLY_DELIVERY_LEDGER
+    replyDeliveryLedger = sendTextMessage ? null : DEFAULT_REPLY_DELIVERY_LEDGER,
+    loadPreventiveMeasure = sendTextMessage
+      ? async () => null
+      : getActiveConversationalAgentPreventiveMeasure,
+    withSafetyDeliveryLock = sendTextMessage
+      ? async (callback) => callback()
+      : (callback) => withConversationalAgentSafetyLock({
+          contactId,
+          channel: normalizeConversationalChannel(channel || latest?.channel),
+          // La entrega no necesita candados internos. Mantener sus consultas en
+          // la sesión que posee el advisory lock permite detectar la pérdida de
+          // esa conexión antes de declarar la parte como enviada.
+          pinConnection: true
+        }, callback)
   } = dependencies || {}
 
   const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
@@ -2359,6 +2432,17 @@ export async function sendReplyParts({
     }
     if (deliveryClaim.interrupted || durablePlan.status === 'interrupted') {
       const interruptedById = durablePlan.interruptedByMessageId || null
+      if (interruptedById === PREVENTIVE_DELIVERY_INTERRUPTION_ID) {
+        return {
+          parts,
+          sentParts: alreadyAttempted,
+          interruptedBy: null,
+          delaySchedule,
+          durableStatus: 'interrupted',
+          resumed: true,
+          suppressedByPreventiveMeasure: true
+        }
+      }
       const newerInbound = await Promise.resolve(loadNewerInbound
         ? loadNewerInbound(contactId, latest.id)
         : loadNewerInboundMessage(contactId, latest.id, normalizedChannel)).catch(() => null)
@@ -2431,31 +2515,79 @@ export async function sendReplyParts({
         return { parts, sentParts, interruptedBy: newerInbound, delaySchedule, durableStatus: 'interrupted' }
       }
 
-      if (durableLedger) {
-        const checkpoint = await durableLedger.checkpoint(durablePlan.id, deliveryClaim.claimToken, {
-          partIndex: index,
-          status: 'sending'
+      const deliveryAttempt = await withSafetyDeliveryLock(async () => {
+        // La cuarentena y la entrega comparten el mismo fence distribuido. Se
+        // vuelve a consultar dentro del candado justo antes de CADA globo para
+        // que otra instancia no pueda activar una medida entre el chequeo y el
+        // envío ni durante las pausas humanizadas.
+        const activePreventiveMeasure = await loadPreventiveMeasure({
+          contactId,
+          channel: normalizedChannel
         })
-        durablePlan = checkpoint.plan
-      }
+        if (activePreventiveMeasure) {
+          return { suppressed: true, preventiveMeasure: activePreventiveMeasure }
+        }
 
-      const sendResult = await sendMessage({
-        channel: normalizedChannel,
-        to: phone || latest.phone,
-        from: latest.business_phone || undefined,
-        phoneNumberId: latest.business_phone_number_id || undefined,
-        text: parts[index],
-        externalId: durablePart?.externalId || `${externalIdPrefix}_${latest.id}_${index + 1}`.slice(0, 120),
-        agentId: agentConfig.id || null
+        if (durableLedger) {
+          const checkpoint = await durableLedger.checkpoint(durablePlan.id, deliveryClaim.claimToken, {
+            partIndex: index,
+            status: 'sending'
+          })
+          durablePlan = checkpoint.plan
+        }
+
+        const sendResult = await sendMessage({
+          channel: normalizedChannel,
+          to: phone || latest.phone,
+          from: latest.business_phone || undefined,
+          phoneNumberId: latest.business_phone_number_id || undefined,
+          text: parts[index],
+          externalId: durablePart?.externalId || `${externalIdPrefix}_${latest.id}_${index + 1}`.slice(0, 120),
+          agentId: agentConfig.id || null
+        })
+
+        if (durableLedger) {
+          const checkpoint = await durableLedger.checkpoint(durablePlan.id, deliveryClaim.claimToken, {
+            partIndex: index,
+            status: 'sent',
+            providerMessageId: getConversationalProviderMessageId(sendResult)
+          })
+          durablePlan = checkpoint.plan
+        }
+        return { suppressed: false, sendResult }
       })
 
-      if (durableLedger) {
-        const checkpoint = await durableLedger.checkpoint(durablePlan.id, deliveryClaim.claimToken, {
-          partIndex: index,
-          status: 'sent',
-          providerMessageId: getConversationalProviderMessageId(sendResult)
+      if (deliveryAttempt?.suppressed) {
+        if (durableLedger) {
+          const settled = await durableLedger.settle(durablePlan.id, deliveryClaim.claimToken, {
+            status: 'interrupted',
+            interruptedByMessageId: PREVENTIVE_DELIVERY_INTERRUPTION_ID
+          })
+          durablePlan = settled.plan
+        }
+        await recordDeliveryEvent({
+          contactId,
+          eventType: 'reply_suppressed',
+          detail: {
+            messageId: latest.id,
+            agentId: agentConfig.id || null,
+            channel: normalizedChannel,
+            reason: 'preventive_measure_before_delivery',
+            safetyCaseId: deliveryAttempt.preventiveMeasure?.id || null,
+            category: deliveryAttempt.preventiveMeasure?.category || null,
+            partIndex: index + 1,
+            sentParts
+          }
         })
-        durablePlan = checkpoint.plan
+        return {
+          parts,
+          sentParts,
+          interruptedBy: null,
+          delaySchedule,
+          durableStatus: 'interrupted',
+          suppressedByPreventiveMeasure: true,
+          preventiveMeasure: deliveryAttempt.preventiveMeasure || null
+        }
       }
       sentParts += 1
 
@@ -2552,6 +2684,29 @@ async function handleToolCallingV2InboundTurn({
     }
   }).catch(() => {})
 
+  const preventiveSuppression = ctx.actions.find((action) => (
+    action?.type === 'apply_safety_measure' &&
+    action?.outcome?.suppressReply === true &&
+    action?.outcome?.terminal === true
+  ))
+  if (preventiveSuppression) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'reply_suppressed',
+      detail: {
+        messageId: latest.id,
+        agentId: agentConfig.id || null,
+        channel: normalizedChannel,
+        runtimeMode: turn.runtimeMode,
+        reason: 'preventive_measure',
+        category: preventiveSuppression.category || null,
+        severity: preventiveSuppression.severity || null
+      }
+    })
+    await settleActiveClaim({ status: 'completed', answered: false })
+    return { sent: false, reason: 'preventive_measure', turn }
+  }
+
   // Un estado que cambió fuera de las tools de esta misma corrida manda sobre el
   // borrador: takeover humano, pausa o cierre externo son hechos reales.
   const postState = await getConversationState(contactId, {
@@ -2621,6 +2776,11 @@ async function handleToolCallingV2InboundTurn({
       }
     }
   })
+
+  if (delivery.suppressedByPreventiveMeasure) {
+    await settleActiveClaim({ status: 'completed', answered: false })
+    return { sent: false, reason: 'preventive_measure_before_delivery', turn, delivery }
+  }
 
   if (delivery.interruptedBy) {
     await recordConversationalAgentEvent({
@@ -3101,6 +3261,45 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
   }
   try {
     if (!contactId || !messageId) return
+
+    const preventiveMeasure = await getActiveConversationalAgentPreventiveMeasure({
+      contactId,
+      channel: normalizedChannel
+    })
+    if (preventiveMeasure) {
+      let inboundSettled = false
+      const preventiveAgentId = String(preventiveMeasure.latestAgentId || '').trim()
+      if (preventiveAgentId) {
+        const claim = await claimConversationInboundMessage(contactId, messageId, {
+          agentId: preventiveAgentId,
+          channel: normalizedChannel
+        }).catch(() => null)
+        if (claim?.claimed) {
+          const completed = await completeConversationInboundMessage(contactId, messageId, {
+            agentId: preventiveAgentId,
+            channel: normalizedChannel,
+            claimToken: claim.claimToken,
+            answered: false
+          }).catch(() => null)
+          inboundSettled = completed?.completed === true
+        } else {
+          inboundSettled = ['already_completed', 'already_answered'].includes(String(claim?.reason || ''))
+        }
+      }
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'run_suppressed_preventive_measure',
+        detail: {
+          messageId,
+          channel: normalizedChannel,
+          safetyCaseId: preventiveMeasure.id,
+          category: preventiveMeasure.category,
+          blockedUntil: preventiveMeasure.blockedUntil,
+          inboundSettled
+        }
+      }).catch(() => {})
+      return
+    }
 
     const runtimeDefaults = await getConversationalAgentConfig()
 
@@ -3604,7 +3803,8 @@ export async function runConversationalAgentPreview({
   configOverride = null,
   agentId = null,
   previewContact = null,
-  executionId = ''
+  executionId = '',
+  runtimeEventContext = ''
 }, dependencies = {}) {
   const resolvePreviewConfig = dependencies.resolvePreviewRuntimeConfig || resolveConversationalAgentPreviewRuntimeConfig
   const resolveAIRuntime = dependencies.resolveAIRuntime || resolveConversationalAIRuntime
@@ -3674,7 +3874,8 @@ export async function runConversationalAgentPreview({
     traceMessage: latestPreviewText,
     executionId: String(executionId || '').trim(),
     conversationModel: runtimeConfig.model || runtimeDefaults.model,
-    historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages }
+    historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages },
+    runtimeEventContext: String(runtimeEventContext || '').trim()
   })
   const splitResult = isEmailConversationalChannel(previewChannel)
     ? { messages: [turn.reply].filter(Boolean), source: 'email', reason: 'email_single_message' }

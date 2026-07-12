@@ -484,11 +484,11 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
     assert.equal(requests[1].path, '/api/license/google-calendar/refresh-token')
 
     assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'PATCH', 'DELETE', 'GET'])
-    assert.match(googleRequests[0].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events$/)
+    assert.match(googleRequests[0].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\?sendUpdates=all$/)
     assert.equal(googleRequests[0].body.start.dateTime, '2026-06-15T18:00:00.000Z')
-    assert.match(googleRequests[1].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created$/)
+    assert.match(googleRequests[1].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created\?sendUpdates=all$/)
     assert.equal(googleRequests[1].body.start.dateTime, '2026-06-16T20:00:00.000Z')
-    assert.match(googleRequests[2].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created$/)
+    assert.match(googleRequests[2].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created\?sendUpdates=all$/)
     assert.match(googleRequests[3].path, /showDeleted=true/)
 
     const finalAppointment = await localCalendarService.getLocalAppointment(appointmentId)

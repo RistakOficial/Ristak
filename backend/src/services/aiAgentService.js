@@ -9214,7 +9214,10 @@ async function upsertAgentAppointmentMirror(rawAppointment = {}, fallback = {}) 
 
 async function deleteAgentAppointmentMirror(appointmentId) {
   if (!appointmentId) return false
-  await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+  await db.transaction(async () => {
+    await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [appointmentId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+  })
   return true
 }
 

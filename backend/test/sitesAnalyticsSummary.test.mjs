@@ -118,6 +118,11 @@ test('sites analytics summary deduplicates visitors by contact identity', async 
       'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
       [siteId, 'Landing identidad', `landing-identity-${suffix}`, 'landing_page', 'published']
     )
+    await db.run(
+      `INSERT INTO contacts (id, full_name, source, created_at, updated_at)
+       VALUES (?, 'Contacto analiticas', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
 
     await db.run(`
       INSERT INTO sessions (
@@ -165,6 +170,7 @@ test('sites analytics summary deduplicates visitors by contact identity', async 
     assert.equal(summary.bySiteId[siteId].sessions, 3)
   } finally {
     await db.run('DELETE FROM sessions WHERE session_id LIKE ?', [`session_${suffix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
   }
 })

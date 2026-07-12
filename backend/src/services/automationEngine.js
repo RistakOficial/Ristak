@@ -19,6 +19,11 @@ import {
 } from './contactIdentityService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { normalizeContactNameFields } from '../utils/contactNameFormatter.js'
+import {
+  claimAppointmentTestAction,
+  completeAppointmentTestAction,
+  recordSimulatedAppointmentTestAction
+} from './conversationalAppointmentTestAutomationAuditService.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -2894,6 +2899,69 @@ function hasWebhookHeader(headers, name) {
   return Object.keys(headers || {}).some((key) => key.toLowerCase() === expected)
 }
 
+function deleteWebhookHeader(headers, name) {
+  const expected = cleanString(name).toLowerCase()
+  Object.keys(headers || {}).forEach((key) => {
+    if (key.toLowerCase() === expected) delete headers[key]
+  })
+}
+
+function webhookAppointmentTestContext(ctx = {}) {
+  if (ctx.testMode !== true) return null
+  const testEffectId = cleanString(ctx.testEffectId || ctx.test_effect_id)
+  const testRunId = cleanString(ctx.testRunId || ctx.test_run_id)
+  const appointmentId = cleanString(ctx.appointmentId || ctx.appointment_id)
+  if (!testEffectId || !testRunId || !appointmentId) return null
+  return {
+    testMode: true,
+    source: 'ristak_conversational_agent_test',
+    testRunId,
+    testEffectId,
+    appointmentId,
+    eventType: cleanString(ctx.eventType || ctx.event_type || 'appointment-test'),
+    automationId: cleanString(ctx.automationId),
+    automationName: cleanString(ctx.automationName),
+    nodeId: cleanString(ctx.automationNodeId),
+    idempotencyKey: cleanString(ctx.testActionIdempotencyKey),
+    expiresAt: cleanString(ctx.testExpiresAt || ctx.test_expires_at)
+  }
+}
+
+function addAppointmentTestWebhookHeaders(headers, testContext) {
+  if (!testContext) return
+  headers['X-Ristak-Test-Mode'] = 'true'
+  headers['X-Ristak-Test-Run-Id'] = testContext.testRunId
+  headers['X-Ristak-Test-Effect-Id'] = testContext.testEffectId
+  headers['X-Ristak-Test-Appointment-Id'] = testContext.appointmentId
+  headers['X-Ristak-Test-Event-Type'] = testContext.eventType
+  if (testContext.idempotencyKey) {
+    headers['X-Ristak-Test-Idempotency-Key'] = testContext.idempotencyKey
+    if (!hasWebhookHeader(headers, 'idempotency-key')) {
+      headers['Idempotency-Key'] = testContext.idempotencyKey
+    }
+  }
+}
+
+function addAppointmentTestWebhookPayload(body, testContext) {
+  if (!testContext) return body
+  let originalPayload = null
+  if (body.text) {
+    try {
+      originalPayload = JSON.parse(body.text)
+    } catch {
+      originalPayload = body.text
+    }
+  }
+  const payload = isPlainObject(originalPayload)
+    ? { ...originalPayload }
+    : originalPayload === null
+      ? {}
+      : { payload: originalPayload }
+  payload.testMode = true
+  payload.ristakTest = testContext
+  return { text: JSON.stringify(payload), json: true }
+}
+
 function webhookBodyModeFromConfig(config = {}) {
   const mode = cleanString(config.bodyMode).toLowerCase()
   if (mode === 'fields' || mode === 'json') return mode
@@ -2940,7 +3008,7 @@ function webhookBodyFromConfig(config = {}, ctx = {}) {
 
 async function runWebhookRequestFromConfig(config = {}, ctx = {}) {
   const method = (str(config.method) || 'POST').toUpperCase()
-  const url = renderTemplate(str(config.url), ctx, { preserveUnknown: true }).trim()
+  let url = renderTemplate(str(config.url), ctx, { preserveUnknown: true }).trim()
   const onError = str(config.onError) || 'continue'
   const timeoutMs = Math.max(1, Number(config.timeout) || 15) * 1000
 
@@ -2961,8 +3029,25 @@ async function runWebhookRequestFromConfig(config = {}, ctx = {}) {
     })
   }
 
+  const testContext = webhookAppointmentTestContext(ctx)
   const headers = webhookHeadersFromConfig(config, ctx)
-  const body = webhookBodyFromConfig(config, ctx)
+  addAppointmentTestWebhookHeaders(headers, testContext)
+  let body = webhookBodyFromConfig(config, ctx)
+  if (testContext && ['GET', 'HEAD'].includes(method)) {
+    try {
+      const parsedUrl = new URL(url)
+      parsedUrl.searchParams.set('testMode', 'true')
+      parsedUrl.searchParams.set('ristakTestEffectId', testContext.testEffectId)
+      parsedUrl.searchParams.set('ristakTestRunId', testContext.testRunId)
+      url = parsedUrl.toString()
+    } catch {
+      // La validación normal del fetch reportará una URL inválida. Nunca se
+      // degrada a un request sin las cabeceras inequívocas de Modo test.
+    }
+  } else if (testContext) {
+    body = addAppointmentTestWebhookPayload(body, testContext)
+    deleteWebhookHeader(headers, 'content-length')
+  }
   const init = { method, headers }
   if (!['GET', 'HEAD'].includes(method) && body.text) {
     init.body = body.text
@@ -5858,6 +5943,496 @@ async function enrollMatching(automations, eventType, baseCtx) {
       enrollment.status = 'exited'
       await saveEnrollment(enrollment)
     }
+  }
+}
+
+function testReceiptResult(receipt, fallbackDetail = '') {
+  const response = receipt?.response && typeof receipt.response === 'object' ? receipt.response : {}
+  return {
+    handle: cleanString(response.handle) || 'out',
+    stop: Boolean(response.stop),
+    detail: cleanString(receipt?.detail || response.detail || fallbackDetail),
+    testMode: true,
+    idempotent: true,
+    auditReceiptId: receipt?.id || null,
+    auditStatus: receipt?.status || 'unknown'
+  }
+}
+
+function testActionAuditContext(ctx = {}) {
+  return {
+    testMode: true,
+    testRunId: ctx.testRunId,
+    testEffectId: ctx.testEffectId,
+    appointmentId: ctx.appointmentId,
+    eventType: ctx.eventType,
+    testExpiresAt: ctx.testExpiresAt
+  }
+}
+
+function testActionAuditNode(ctx = {}, node = {}, actionType, request = {}) {
+  return {
+    automationId: ctx.automationId,
+    automationName: ctx.automationName,
+    nodeId: node.id,
+    nodeType: node.type,
+    actionType,
+    request
+  }
+}
+
+async function executeAppointmentTestWebhook(node, ctx) {
+  const auditContext = testActionAuditContext(ctx)
+  const action = testActionAuditNode(ctx, node, 'webhook', {
+    method: cleanString(node.config?.method || 'POST').toUpperCase(),
+    configured: Boolean(cleanString(node.config?.url)),
+    testMode: true
+  })
+  const claim = await claimAppointmentTestAction(auditContext, action)
+  if (!claim.claimed) {
+    if (claim.receipt?.status === 'dispatching') {
+      return {
+        handle: 'out',
+        stop: true,
+        detail: 'Webhook de prueba con resultado incierto; no se reenvió para evitar duplicarlo.',
+        testMode: true,
+        idempotent: true,
+        auditReceiptId: claim.receipt?.id || null,
+        auditStatus: 'dispatching'
+      }
+    }
+    return testReceiptResult(claim.receipt, 'Webhook de prueba ya procesado; no se duplicó.')
+  }
+
+  const webhookCtx = {
+    ...ctx,
+    automationNodeId: node.id,
+    testActionIdempotencyKey: claim.idempotencyKey
+  }
+  let result
+  try {
+    result = await executeWebhookAction(node, webhookCtx)
+  } catch (error) {
+    const receipt = await completeAppointmentTestAction(claim.receipt.id, {
+      status: 'failed',
+      detail: `Webhook de prueba falló: ${error.message}`,
+      response: { handle: 'out', stop: true, detail: error.message, error: true }
+    })
+    return {
+      handle: 'out',
+      stop: true,
+      detail: receipt?.detail || `Webhook de prueba falló: ${error.message}`,
+      testMode: true,
+      auditReceiptId: receipt?.id || claim.receipt.id,
+      auditStatus: 'failed'
+    }
+  }
+
+  const ok = result.output?.status === 'ok'
+  const receipt = await completeAppointmentTestAction(claim.receipt.id, {
+    status: ok ? 'sent' : 'failed',
+    detail: result.detail || (ok ? 'Webhook de prueba enviado.' : 'Webhook de prueba falló.'),
+    response: {
+      handle: result.handle || 'out',
+      stop: Boolean(result.stop),
+      detail: result.detail || '',
+      status: result.output?.status || (ok ? 'ok' : 'error'),
+      statusCode: Number(result.output?.status_code || 0)
+    }
+  })
+  return {
+    ...result,
+    testMode: true,
+    auditReceiptId: receipt?.id || claim.receipt.id,
+    auditStatus: receipt?.status || (ok ? 'sent' : 'failed')
+  }
+}
+
+async function executeAppointmentTestSystemNotification(node, ctx) {
+  const config = node.config || {}
+  const delivery = resolveNotificationDelivery(config)
+  const auditContext = testActionAuditContext(ctx)
+  const action = testActionAuditNode(ctx, node, 'internal-notification', {
+    configuredRecipientMode: cleanString(config.recipientMode || 'all'),
+    delivery,
+    testMode: true
+  })
+
+  if (!delivery.bell && !delivery.push && !delivery.email) {
+    const receipt = await recordSimulatedAppointmentTestAction(auditContext, {
+      ...action,
+      detail: 'Notificación omitida: el paso no tiene canales seleccionados.'
+    })
+    return {
+      handle: 'out',
+      detail: receipt?.detail || 'Notificación omitida: no hay canales seleccionados.',
+      testMode: true,
+      simulated: true,
+      auditReceiptId: receipt?.id || null,
+      auditStatus: 'simulated'
+    }
+  }
+
+  const claim = await claimAppointmentTestAction(auditContext, action)
+  if (!claim.claimed) {
+    if (claim.receipt?.status === 'dispatching') {
+      return {
+        handle: 'out',
+        stop: true,
+        detail: 'Notificación de prueba con resultado incierto; no se duplicó.',
+        testMode: true,
+        idempotent: true,
+        auditReceiptId: claim.receipt?.id || null,
+        auditStatus: 'dispatching'
+      }
+    }
+    return testReceiptResult(claim.receipt, 'Notificación de prueba ya enviada; no se duplicó.')
+  }
+
+  const requestedByUserId = cleanString(ctx.requestedByUserId)
+  const rawTitle = renderedConfigValue(config.pushTitle || config.title, ctx).slice(0, 110)
+  const rawMessage = renderedConfigValue(config.pushBody || config.body, ctx).slice(0, 650)
+  const title = `Prueba · ${rawTitle || 'Notificación interna'}`
+  const message = `${rawMessage || 'La automatización llegó a este paso.'}\n\nModo test: se envió únicamente a quien inició la prueba.`
+  const actionUrl = notificationClickUrl(config, ctx)
+  const actionLabel = notificationActionLabel(config)
+
+  try {
+    const notification = delivery.bell || delivery.push
+      ? await createInternalNotification({
+          recipientUserIds: [requestedByUserId],
+          source: 'Automatizaciones · Modo test',
+          severity: 'info',
+          title,
+          message,
+          actionUrl,
+          actionLabel,
+          category: 'automation_test',
+          contactId: ctx.contact?.id || '',
+          automationId: ctx.automationId,
+          automationNodeId: node.id,
+          metadata: {
+            testMode: true,
+            testRunId: ctx.testRunId,
+            testEffectId: ctx.testEffectId,
+            appointmentId: ctx.appointmentId,
+            eventType: ctx.eventType,
+            configuredRecipientMode: cleanString(config.recipientMode || 'all'),
+            routedOnlyToTestOwner: true
+          },
+          pushTitle: title,
+          pushBody: message,
+          createBellNotification: delivery.bell,
+          sendPushNotification: delivery.push
+        })
+      : { created: 0, ids: [], push: { sent: 0, skipped: true, reason: 'disabled' } }
+    const email = delivery.email
+      ? await sendInternalNotificationEmails({
+          recipientUserIds: [requestedByUserId],
+          title,
+          message,
+          actionUrl,
+          actionLabel
+        })
+      : { sent: 0, skipped: true, reason: 'disabled' }
+    const response = {
+      handle: 'out',
+      stop: false,
+      bellCreated: Number(notification.created || 0),
+      pushSent: Number(notification.push?.sent || 0),
+      emailSent: Number(email.sent || 0),
+      routedOnlyToTestOwner: true
+    }
+    const delivered = response.bellCreated + response.pushSent + response.emailSent
+    const detail = delivered > 0
+      ? `Notificación de prueba enviada al dueño de la prueba (${delivered} entrega${delivered === 1 ? '' : 's'}).`
+      : 'La notificación de prueba se ejecutó, pero ningún transporte estaba disponible.'
+    const receipt = await completeAppointmentTestAction(claim.receipt.id, {
+      status: delivered > 0 ? 'sent' : 'failed',
+      detail,
+      response
+    })
+    return {
+      handle: 'out',
+      detail,
+      testMode: true,
+      auditReceiptId: receipt?.id || claim.receipt.id,
+      auditStatus: receipt?.status || (delivered > 0 ? 'sent' : 'failed')
+    }
+  } catch (error) {
+    const receipt = await completeAppointmentTestAction(claim.receipt.id, {
+      status: 'failed',
+      detail: `No se pudo enviar la notificación de prueba: ${error.message}`,
+      response: { handle: 'out', stop: false, error: true }
+    })
+    return {
+      handle: 'out',
+      detail: receipt?.detail || error.message,
+      testMode: true,
+      auditReceiptId: receipt?.id || claim.receipt.id,
+      auditStatus: 'failed'
+    }
+  }
+}
+
+async function simulateAppointmentTestNode(node, ctx, detail) {
+  const receipt = await recordSimulatedAppointmentTestAction(
+    testActionAuditContext(ctx),
+    {
+      ...testActionAuditNode(ctx, node, 'irreversible-node', { testMode: true }),
+      detail
+    }
+  )
+  return {
+    handle: 'out',
+    detail: receipt?.detail || detail,
+    testMode: true,
+    simulated: true,
+    auditReceiptId: receipt?.id || null,
+    auditStatus: 'simulated'
+  }
+}
+
+function isReadOnlyTestNode(node = {}) {
+  return ['logic-condition', 'randomizer', 'logic-goal'].includes(node.type)
+}
+
+async function runAppointmentTestFlow(flow, automation, startNodeId, baseCtx) {
+  let currentId = startNodeId
+  let steps = 0
+  const trace = []
+  const ctx = {
+    ...baseCtx,
+    automationId: automation.id,
+    automationName: automation.name
+  }
+
+  while (currentId && steps < MAX_STEPS) {
+    steps += 1
+    const node = getNode(flow, currentId)
+    if (!node) {
+      trace.push({ nodeId: currentId, status: 'error', mode: 'validation', detail: 'El paso ya no existe.' })
+      break
+    }
+
+    let result
+    try {
+      await assertAutomationNodeFeatureAccess(node)
+      if (node.type === 'action-webhook') {
+        result = await executeAppointmentTestWebhook(node, ctx)
+      } else if (node.type === 'action-system-notification') {
+        result = await executeAppointmentTestSystemNotification(node, ctx)
+      } else if (isReadOnlyTestNode(node)) {
+        result = await executeNode(node, ctx, { automationId: automation.id, id: '' })
+      } else if (node.type === 'logic-wait' || node.type === 'logic-drip') {
+        result = await simulateAppointmentTestNode(
+          node,
+          ctx,
+          'Espera simulada: el Modo test continuó inmediatamente sin crear una inscripción pendiente.'
+        )
+      } else {
+        result = await simulateAppointmentTestNode(
+          node,
+          ctx,
+          'Efecto irreversible simulado: no se enviaron mensajes externos ni se modificó el contacto.'
+        )
+      }
+    } catch (error) {
+      trace.push({
+        nodeId: node.id,
+        nodeType: node.type,
+        label: nodeLabel(node),
+        status: 'error',
+        mode: 'validation',
+        detail: error.message
+      })
+      break
+    }
+
+    if (result?.output) exposeNodeOutput(ctx, node, result)
+    const status = result.auditStatus === 'failed' || result.auditStatus === 'dispatching'
+      ? 'error'
+      : result.simulated
+        ? 'simulated'
+        : 'ok'
+    trace.push({
+      nodeId: node.id,
+      nodeType: node.type,
+      label: nodeLabel(node),
+      status,
+      mode: result.simulated ? 'simulated' : (isReadOnlyTestNode(node) ? 'read_only' : 'real'),
+      detail: result.detail || '',
+      auditReceiptId: result.auditReceiptId || null,
+      idempotent: Boolean(result.idempotent)
+    })
+
+    if (result.stop) break
+    const edge = edgesFrom(flow, node.id, result.handle)[0]
+    if (!edge) break
+    currentId = edge.targetNodeId
+  }
+
+  if (steps >= MAX_STEPS) {
+    trace.push({ nodeId: currentId, status: 'error', mode: 'validation', detail: 'Límite de pasos alcanzado.' })
+  }
+  return trace
+}
+
+/**
+ * Ejecuta una cita de Modo test sobre el flujo publicado sin crear una
+ * inscripción productiva. Sólo los webhooks inequívocamente marcados como test
+ * y las notificaciones internas dirigidas al dueño de la prueba salen de
+ * verdad. Todo lo demás se recorre y se registra como simulación auditable.
+ */
+export async function executeTestAutomationEvent(eventType, data = {}) {
+  if (!(await canRunBackgroundJob('automations'))) {
+    return { executed: false, reason: 'feature_unavailable', matched: [] }
+  }
+
+  const eventData = data && typeof data === 'object' ? data : {}
+  const testRunId = cleanString(eventData.testRunId || eventData.test_run_id)
+  const testEffectId = cleanString(eventData.testEffectId || eventData.test_effect_id)
+  const appointmentId = cleanString(eventData.appointmentId || eventData.appointment_id)
+  if (!testRunId || !testEffectId || !appointmentId || eventData.isTest !== true) {
+    const error = new Error('El motor seguro sólo acepta citas autenticadas de Modo test.')
+    error.code = 'test_automation_identity_required'
+    throw error
+  }
+  const run = await db.get(
+    'SELECT requested_by_user_id FROM conversational_agent_test_runs WHERE id = ? AND status IN (\'active\', \'expired\')',
+    [testRunId]
+  )
+  if (!run?.requested_by_user_id) {
+    const error = new Error('La corrida de Modo test ya no existe o no tiene dueño.')
+    error.code = 'test_automation_run_not_found'
+    throw error
+  }
+
+  const contact = await loadContact(eventData.contactId, {
+    phone: eventData.phone,
+    name: eventData.contactName
+  })
+  const ctx = withContactChangeContext(eventType, {
+    ...eventData,
+    contact,
+    messageText: eventData.messageText || '',
+    channel: normalizeConversationChannel(eventData.channel || ''),
+    testMode: true,
+    testRunId,
+    testEffectId,
+    appointmentId,
+    eventType,
+    requestedByUserId: cleanString(run.requested_by_user_id)
+  })
+  const automations = await listPublishedAutomations()
+  const matched = []
+
+  for (const automation of automations) {
+    const flow = automation.flow
+    const startNode = getStartNode(flow)
+    if (!startNode) continue
+    const trigger = getTriggers(startNode).find((candidate) => triggerMatches(candidate, eventType, ctx))
+    if (!trigger) continue
+    const edge = edgesFrom(flow, startNode.id)[0]
+    if (!edge) {
+      matched.push({ id: automation.id, name: automation.name, valid: false, trace: [], errors: ['El disparador no está conectado a ningún paso.'] })
+      continue
+    }
+    const trace = await runAppointmentTestFlow(flow, automation, edge.targetNodeId, ctx)
+    matched.push({
+      id: automation.id,
+      name: automation.name,
+      valid: !trace.some((step) => step.status === 'error'),
+      trace,
+      errors: trace.filter((step) => step.status === 'error').map((step) => step.detail)
+    })
+  }
+
+  const flatTrace = matched.flatMap((automation) => automation.trace || [])
+  return {
+    executed: true,
+    testMode: true,
+    isolated: true,
+    eventType,
+    matched,
+    matchedCount: matched.length,
+    validCount: matched.filter((automation) => automation.valid).length,
+    invalidCount: matched.filter((automation) => !automation.valid).length,
+    realActionCount: flatTrace.filter((step) => step.mode === 'real' && step.status === 'ok').length,
+    simulatedActionCount: flatTrace.filter((step) => step.mode === 'simulated').length,
+    failedActionCount: flatTrace.filter((step) => step.status === 'error').length
+  }
+}
+
+/**
+ * Valida qué automatizaciones responderían a un evento de Modo test sin crear
+ * inscripciones ni ejecutar mensajes, webhooks, tags, oportunidades o cambios
+ * de contacto. Es deliberadamente read-only: esos efectos no se pueden
+ * "deshacer" cinco minutos después y por eso no pertenecen a una prueba
+ * aislada. La cita y su push de prueba sí recorren sus integraciones propias.
+ */
+export async function previewAutomationEvent(eventType, data = {}) {
+  if (!(await canRunBackgroundJob('automations'))) {
+    return { previewed: false, reason: 'feature_unavailable', matched: [] }
+  }
+
+  const eventData = data && typeof data === 'object' ? data : {}
+  let contact = await loadContact(eventData.contactId, {
+    phone: eventData.phone,
+    name: eventData.contactName
+  })
+  if (!contact.id && (eventData.phone || eventData.email)) {
+    const row = await db.get(
+      'SELECT id FROM contacts WHERE (phone = ? AND ? != \'\') OR (email = ? AND ? != \'\') LIMIT 1',
+      [eventData.phone || '', eventData.phone || '', eventData.email || '', eventData.email || '']
+    )
+    if (row) contact = await loadContact(row.id)
+  }
+
+  const ctx = withContactChangeContext(eventType, {
+    ...eventData,
+    contact,
+    messageText: eventData.messageText || '',
+    channel: normalizeConversationChannel(eventData.channel || '')
+  })
+  const automations = await listPublishedAutomations()
+  const matched = []
+
+  for (const automation of automations) {
+    const flow = automation.flow
+    const startNode = getStartNode(flow)
+    if (!startNode) continue
+    const trigger = getTriggers(startNode).find((candidate) => triggerMatches(candidate, eventType, ctx))
+    if (!trigger) continue
+
+    const errors = []
+    if (!edgesFrom(flow, startNode.id).length) {
+      errors.push('El disparador no está conectado a ningún paso.')
+    }
+    for (const node of Array.isArray(flow?.nodes) ? flow.nodes : []) {
+      if (!node || node.id === startNode.id || node.type === 'start') continue
+      try {
+        await assertAutomationNodeFeatureAccess(node)
+      } catch (error) {
+        errors.push(`${nodeLabel(node) || node.type || 'Paso'}: ${error.message}`)
+      }
+    }
+    matched.push({
+      id: automation.id,
+      name: automation.name,
+      valid: errors.length === 0,
+      errors
+    })
+  }
+
+  return {
+    previewed: true,
+    isolated: true,
+    eventType,
+    matched,
+    matchedCount: matched.length,
+    validCount: matched.filter((automation) => automation.valid).length,
+    invalidCount: matched.filter((automation) => !automation.valid).length
   }
 }
 

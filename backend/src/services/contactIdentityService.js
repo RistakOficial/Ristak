@@ -5,6 +5,7 @@ import { createRistakId } from '../utils/idGenerator.js'
 // (CNT-002) Para no perder custom_fields al fusionar.
 import { mergeContactCustomFields, serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.js'
 import { formatContactName, normalizeContactNameFields } from '../utils/contactNameFormatter.js'
+import { mergeConversationalAgentSafetyContactReferences } from '../utils/conversationalAgentSafetyMerge.js'
 
 // (CNT-002) Parser tolerante de tags almacenados como JSON array (o null/legacy).
 function parseStoredTags(raw) {
@@ -77,8 +78,14 @@ function normalizeContactPhone(value) {
 
 async function updateContactReferences(fromId, toId) {
   const references = await getContactReferenceTables()
+  await mergeConversationalAgentSafetyContactReferences({
+    connection: db,
+    fromContactId: fromId,
+    toContactId: toId
+  })
 
   for (const reference of references) {
+    if (reference.mergeStrategy === 'conversational_agent_safety') continue
     try {
       await db.run(
         `UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`,

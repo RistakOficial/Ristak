@@ -1,5 +1,5 @@
 const PROMPT_SCHEMA_VERSION = 2
-const CAPABILITIES_SCHEMA_VERSION = 1
+const CAPABILITIES_SCHEMA_VERSION = 2
 
 export const DEFAULT_CONVERSATIONAL_PROMPT_TEMPLATE_VERSION = 'ristak-conversational-v2'
 
@@ -49,11 +49,66 @@ export const CONVERSATIONAL_CAPABILITY_IDS = Object.freeze([
 
 const CAPABILITY_ID_SET = new Set(CONVERSATIONAL_CAPABILITY_IDS)
 const PAYMENT_MODES = new Set(['full_payment', 'deposit'])
+const PAYMENT_CHARGE_TYPES = new Set(['product', 'direct', 'deposit'])
+const PAYMENT_GATEWAYS = new Set(['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
+const PAYMENT_AFTER_ACTIONS = new Set(['continue', 'handoff'])
+const PAYMENT_INSTALLMENT_CHOICES = new Set([3, 6, 9, 12, 18, 24])
 const BOOKING_OWNERS = new Set(['ai', 'human'])
 const DEPOSIT_MODES = new Set(['fixed', 'range'])
 const LINK_KINDS = new Set(['trigger', 'verified_goal'])
 const CUSTOM_GOAL_COMPLETIONS = new Set(['handoff', 'send_link'])
 const CUSTOM_GOAL_SEND_LINK_REQUIRED_MESSAGE = 'Activa y configura la capacidad Mandar enlace para completar este objetivo.'
+const SAFETY_ACTIONS = new Set(['stop_and_review', 'handoff_and_review'])
+const REQUIRED_DATA_FIELDS = new Set([
+  'first_name',
+  'full_name',
+  'phone',
+  'alternate_phone',
+  'email',
+  'company',
+  'address',
+  'custom'
+])
+const REQUIRED_DATA_LEVELS = new Set(['required', 'optional', 'conditional'])
+const REQUIRED_DATA_SCOPES = new Set(['any_action', 'appointment', 'payment'])
+const REQUIRED_DATA_CONDITION_FACT_SCOPES = new Map([
+  ['appointment.primary_attendee_is_different', 'appointment'],
+  ['appointment.has_guests', 'appointment'],
+  ['payment.is_deposit', 'payment'],
+  ['payment.is_full_payment', 'payment']
+])
+const CONTACT_UPDATE_POLICIES = new Set(['fill_missing', 'replace_placeholders', 'confirm_changes'])
+const PARTICIPANT_FIELDS = new Set(['name', 'phone', 'email', 'relation'])
+
+export const DEFAULT_CONVERSATIONAL_SAFETY_POLICY = Object.freeze({
+  enabled: true,
+  action: 'stop_and_review',
+  durationMinutes: 24 * 60,
+  notify: true,
+  notifyUserId: '',
+  notifyUserName: ''
+})
+
+export const DEFAULT_CONVERSATIONAL_TEST_MODE = Object.freeze({
+  enabled: false,
+  cleanupAfterMinutes: 5,
+  notify: true
+})
+
+export const DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS = Object.freeze({
+  enabled: false,
+  fields: [],
+  updateContact: {
+    enabled: true,
+    policy: 'replace_placeholders'
+  },
+  participants: {
+    enabled: false,
+    allowPrimaryAttendeeDifferentFromRequester: true,
+    guestFields: [],
+    maxGuests: 10
+  }
+})
 
 const CAPABILITY_META = {
   schedule_appointment: {
@@ -147,6 +202,123 @@ function normalizeDeposit(input = {}, fallbackCurrency = '') {
   }
 }
 
+function normalizeInstallments(input = {}) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const requested = Number(raw.maxInstallments ?? raw.max_installments ?? raw.months)
+  const allowed = [...PAYMENT_INSTALLMENT_CHOICES].filter((value) => value <= requested)
+  const maxInstallments = allowed.length ? allowed[allowed.length - 1] : 0
+  return {
+    enabled: toBoolean(raw.enabled) && maxInstallments > 1,
+    maxInstallments
+  }
+}
+
+function normalizeDirectPayment(input = {}, fallbackCurrency = '') {
+  const raw = input && typeof input === 'object' ? input : {}
+  const currency = normalizeCurrency(raw.currency || fallbackCurrency)
+  return {
+    amount: normalizePositiveAmount(raw.amount, currency),
+    currency,
+    concept: cleanText(raw.concept || raw.title, 180),
+    description: cleanText(raw.description, 600)
+  }
+}
+
+function normalizeSafetyPolicy(input = {}) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const duration = Number(raw.durationMinutes)
+  return {
+    enabled: raw.enabled === undefined ? DEFAULT_CONVERSATIONAL_SAFETY_POLICY.enabled : toBoolean(raw.enabled),
+    action: SAFETY_ACTIONS.has(raw.action) ? raw.action : DEFAULT_CONVERSATIONAL_SAFETY_POLICY.action,
+    durationMinutes: Number.isFinite(duration)
+      ? Math.min(30 * 24 * 60, Math.max(15, Math.round(duration)))
+      : DEFAULT_CONVERSATIONAL_SAFETY_POLICY.durationMinutes,
+    notify: raw.notify === undefined ? DEFAULT_CONVERSATIONAL_SAFETY_POLICY.notify : toBoolean(raw.notify),
+    notifyUserId: cleanId(raw.notifyUserId, 160),
+    notifyUserName: cleanText(raw.notifyUserName, 180)
+  }
+}
+
+function normalizeTestMode(input = {}) {
+  const raw = input && typeof input === 'object' ? input : {}
+  return {
+    enabled: toBoolean(raw.enabled),
+    // El TTL operativo es deliberadamente fijo. El frontend puede explicarlo,
+    // pero no ampliar silenciosamente cuánto vive una prueba real.
+    cleanupAfterMinutes: DEFAULT_CONVERSATIONAL_TEST_MODE.cleanupAfterMinutes,
+    notify: raw.notify === undefined ? DEFAULT_CONVERSATIONAL_TEST_MODE.notify : toBoolean(raw.notify)
+  }
+}
+
+function normalizeRequirementField(input) {
+  const raw = typeof input === 'string' ? { field: input } : input
+  if (!raw || typeof raw !== 'object') return null
+  const field = cleanId(raw.field || raw.id, 80)
+  if (!REQUIRED_DATA_FIELDS.has(field)) return null
+  let level = REQUIRED_DATA_LEVELS.has(raw.level) ? raw.level : 'required'
+  let scope = REQUIRED_DATA_SCOPES.has(raw.scope) ? raw.scope : 'any_action'
+  const label = field === 'custom' ? cleanText(raw.label, 120) : ''
+  if (field === 'custom' && !label) return null
+  const rawCondition = raw.condition && typeof raw.condition === 'object' && !Array.isArray(raw.condition)
+    ? raw.condition
+    : null
+  const conditionFact = cleanId(rawCondition?.fact, 100)
+  const conditionScope = REQUIRED_DATA_CONDITION_FACT_SCOPES.get(conditionFact)
+  const condition = conditionScope && rawCondition?.operator === 'is_true' && rawCondition?.value === true
+    ? { fact: conditionFact, operator: 'is_true', value: true }
+    : null
+  // Una condición libre o incompleta jamás debe convertirse en un bloqueo
+  // implícito. Sólo los hechos estructurados que el servidor puede comprobar
+  // mantienen el nivel condicional.
+  if (level === 'conditional' && !condition) level = 'optional'
+  if (condition) scope = conditionScope
+  return {
+    field,
+    level,
+    scope,
+    ...(label ? { label } : {}),
+    ...(level === 'conditional' ? { condition } : {})
+  }
+}
+
+function normalizeDataRequirements(input = {}) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const updateContact = raw.updateContact && typeof raw.updateContact === 'object' ? raw.updateContact : {}
+  const participants = raw.participants && typeof raw.participants === 'object' ? raw.participants : {}
+  const fields = []
+  const seen = new Set()
+  for (const source of Array.isArray(raw.fields) ? raw.fields : []) {
+    const field = normalizeRequirementField(source)
+    const key = field ? `${field.field}:${field.label || ''}:${field.scope}` : ''
+    if (!field || seen.has(key)) continue
+    seen.add(key)
+    fields.push(field)
+    if (fields.length >= 20) break
+  }
+  const guestFields = [...new Set(
+    (Array.isArray(participants.guestFields) ? participants.guestFields : [])
+      .map((value) => cleanId(value, 40))
+      .filter((value) => PARTICIPANT_FIELDS.has(value))
+  )]
+  const maxGuests = Number(participants.maxGuests)
+  return {
+    enabled: raw.enabled === undefined ? fields.length > 0 || toBoolean(participants.enabled) : toBoolean(raw.enabled),
+    fields,
+    updateContact: {
+      enabled: updateContact.enabled === undefined ? true : toBoolean(updateContact.enabled),
+      policy: CONTACT_UPDATE_POLICIES.has(updateContact.policy) ? updateContact.policy : 'replace_placeholders'
+    },
+    participants: {
+      enabled: toBoolean(participants.enabled),
+      allowPrimaryAttendeeDifferentFromRequester: participants.allowPrimaryAttendeeDifferentFromRequester === undefined
+        ? true
+        : toBoolean(participants.allowPrimaryAttendeeDifferentFromRequester),
+      guestFields,
+      maxGuests: Number.isFinite(maxGuests) ? Math.min(20, Math.max(1, Math.round(maxGuests))) : 10
+    }
+  }
+}
+
 function normalizeCapabilityItem(input) {
   if (!input || typeof input !== 'object') return null
   const id = cleanId(input.id, 80)
@@ -178,21 +350,42 @@ function normalizeCapabilityItem(input) {
     const paymentMode = PAYMENT_MODES.has(requestedMode)
       ? requestedMode
       : (deposit.enabled ? 'deposit' : 'full_payment')
+    const requestedChargeType = cleanId(input.chargeType, 40)
+    const chargeType = PAYMENT_CHARGE_TYPES.has(requestedChargeType)
+      ? requestedChargeType
+      : (paymentMode === 'deposit' ? 'deposit' : 'product')
+    const gateway = cleanId(input.gateway, 40).toLowerCase()
+    const direct = normalizeDirectPayment(input.direct, input.currency)
+    const expirationMinutes = Number(input.expirationMinutes ?? input.expiration?.minutes)
     return {
       id,
       enabled,
       productId: cleanId(input.productId, 160),
       priceId: cleanId(input.priceId, 160),
-      paymentMode,
+      paymentMode: chargeType === 'deposit' ? 'deposit' : 'full_payment',
+      chargeType,
       amount: normalizePositiveAmount(input.amount, input.currency),
       currency: normalizeCurrency(input.currency),
+      gateway: PAYMENT_GATEWAYS.has(gateway) ? gateway : 'highlevel',
+      direct,
+      installments: chargeType === 'deposit'
+        ? { enabled: false, maxInstallments: 0 }
+        : normalizeInstallments(input.installments),
+      expirationMinutes: Number.isFinite(expirationMinutes)
+        ? Math.min(7 * 24 * 60, Math.max(5, Math.round(expirationMinutes)))
+        : 60,
+      afterPayment: PAYMENT_AFTER_ACTIONS.has(input.afterPayment) ? input.afterPayment : 'continue',
+      receiptProof: {
+        enabled: input.receiptProof?.enabled === undefined ? true : toBoolean(input.receiptProof.enabled),
+        disposition: 'pending_review'
+      },
       deposit: {
         ...deposit,
         // paymentMode es la fuente de verdad. Antes un residuo legacy con
         // full_payment + deposit.enabled=true escondía el campo de anticipo en
         // la UI, pero seguía bloqueando Publicar por un monto invisible.
-        enabled: paymentMode === 'deposit',
-        methods: paymentMode === 'deposit' &&
+        enabled: chargeType === 'deposit',
+        methods: chargeType === 'deposit' &&
           rawDepositMethods.paymentLink === undefined &&
           rawDepositMethods.bankTransfer === undefined
           ? { ...deposit.methods, paymentLink: true }
@@ -283,6 +476,9 @@ export function normalizeConversationalCapabilitiesConfig(input) {
   }
   return {
     schemaVersion: CAPABILITIES_SCHEMA_VERSION,
+    safetyPolicy: normalizeSafetyPolicy(raw?.safetyPolicy),
+    testMode: normalizeTestMode(raw?.testMode),
+    dataRequirements: normalizeDataRequirements(raw?.dataRequirements),
     items: CONVERSATIONAL_CAPABILITY_IDS
       .map((id) => byId.get(id))
       .filter(Boolean)
@@ -295,6 +491,18 @@ export function getConversationalPromptConfig(config = {}) {
 
 export function getConversationalCapabilitiesConfig(config = {}) {
   return normalizeConversationalCapabilitiesConfig(config.capabilitiesConfig)
+}
+
+export function getConversationalSafetyPolicy(config = {}) {
+  return getConversationalCapabilitiesConfig(config).safetyPolicy
+}
+
+export function getConversationalTestMode(config = {}) {
+  return getConversationalCapabilitiesConfig(config).testMode
+}
+
+export function getConversationalDataRequirements(config = {}) {
+  return getConversationalCapabilitiesConfig(config).dataRequirements
 }
 
 export function getConversationalCapability(config = {}, capabilityId = '') {
@@ -315,7 +523,7 @@ function getCapabilityMissingConfiguration(item) {
   }
 
   if (item.id === 'collect_payment') {
-    const usesDeposit = item.paymentMode === 'deposit' || item.deposit?.enabled
+    const usesDeposit = item.chargeType === 'deposit' || item.paymentMode === 'deposit' || item.deposit?.enabled
     if (usesDeposit) {
       const deposit = item.deposit || {}
       const validFixed = deposit.mode !== 'range' && Number(deposit.amount) > 0
@@ -327,9 +535,14 @@ function getCapabilityMissingConfiguration(item) {
       if (deposit.methods?.bankTransfer && !deposit.bankTransferDetails) {
         missing.push('Escribe los datos de transferencia del anticipo.')
       }
+    } else if (item.chargeType === 'direct') {
+      if (!(Number(item.direct?.amount) > 0)) missing.push('Configura un monto válido para el cobro directo.')
+      if (!item.direct?.currency) missing.push('Define la moneda del cobro directo.')
+      if (!item.direct?.concept) missing.push('Escribe el concepto del cobro directo.')
     } else if (!item.productId || !item.priceId) {
       missing.push('Selecciona un producto y un precio verificables.')
     }
+    if (!item.gateway) missing.push('Selecciona una pasarela de pago.')
   }
 
   if (item.id === 'send_link') {

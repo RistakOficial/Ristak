@@ -49,8 +49,26 @@ export interface CollectPaymentCapability extends ConversationalCapabilityBase {
   productId: string
   priceId: string
   paymentMode: AgentSalesPaymentMode
+  chargeType: 'product' | 'direct' | 'deposit'
   amount: number | null
   currency: string
+  gateway: 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
+  direct: {
+    amount: number | null
+    currency: string
+    concept: string
+    description: string
+  }
+  installments: {
+    enabled: boolean
+    maxInstallments: number
+  }
+  expirationMinutes: number
+  afterPayment: 'continue' | 'handoff'
+  receiptProof: {
+    enabled: boolean
+    disposition: 'pending_review'
+  }
   deposit: AgentGoalWorkflowConfig['deposit']
 }
 
@@ -83,8 +101,65 @@ export type ConversationalCapabilityItem =
   | HandoffHumanCapability
   | CustomGoalCapability
 
+export type ConversationalSafetyAction = 'stop_and_review' | 'handoff_and_review'
+export type ConversationalRequiredDataField = 'first_name' | 'full_name' | 'phone' | 'alternate_phone' | 'email' | 'company' | 'address' | 'custom'
+export type ConversationalRequiredDataLevel = 'required' | 'optional' | 'conditional'
+export type ConversationalRequiredDataScope = 'any_action' | 'appointment' | 'payment'
+export type ConversationalRequiredDataConditionFact =
+  | 'appointment.primary_attendee_is_different'
+  | 'appointment.has_guests'
+  | 'payment.is_deposit'
+  | 'payment.is_full_payment'
+
+export interface ConversationalRequiredDataCondition {
+  fact: ConversationalRequiredDataConditionFact
+  operator: 'is_true'
+  value: true
+}
+
+export interface ConversationalSafetyPolicy {
+  enabled: boolean
+  action: ConversationalSafetyAction
+  durationMinutes: number
+  notify: boolean
+  notifyUserId: string
+  notifyUserName: string
+}
+
+export interface ConversationalTestModeConfig {
+  enabled: boolean
+  cleanupAfterMinutes: 5
+  notify: boolean
+}
+
+export interface ConversationalRequiredDataItem {
+  field: ConversationalRequiredDataField
+  level: ConversationalRequiredDataLevel
+  scope: ConversationalRequiredDataScope
+  label?: string
+  condition?: ConversationalRequiredDataCondition
+}
+
+export interface ConversationalDataRequirements {
+  enabled: boolean
+  fields: ConversationalRequiredDataItem[]
+  updateContact: {
+    enabled: boolean
+    policy: 'fill_missing' | 'replace_placeholders' | 'confirm_changes'
+  }
+  participants: {
+    enabled: boolean
+    allowPrimaryAttendeeDifferentFromRequester: boolean
+    guestFields: Array<'name' | 'phone' | 'email' | 'relation'>
+    maxGuests: number
+  }
+}
+
 export interface ConversationalCapabilitiesConfig {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
+  safetyPolicy: ConversationalSafetyPolicy
+  testMode: ConversationalTestModeConfig
+  dataRequirements: ConversationalDataRequirements
   items: ConversationalCapabilityItem[]
 }
 
@@ -416,17 +491,32 @@ export interface ConversationalAgentTestEffects {
   enabled: boolean
   scheduleAppointment: boolean
   collectPayment: boolean
+  assignUser: boolean
   notifyOwner: boolean
 }
 
 export interface ConversationalAgentTestEffectResult {
+  id?: string
   type: string
   status?: 'simulated' | 'executed' | 'skipped' | 'failed' | string
   summary?: string
   message?: string
   notificationStatus?: string | null
   notificationError?: string | null
+  payload?: Record<string, unknown>
   [key: string]: unknown
+}
+
+export interface ConversationalAgentTestRunHistory {
+  id: string
+  agentId: string
+  contactId: string
+  status: string
+  createdAt: string | null
+  updatedAt: string | null
+  expiresAt: string | null
+  cleanedAt: string | null
+  effects: ConversationalAgentTestEffectResult[]
 }
 
 export interface ConversationalAgentTestCleanupResult {
@@ -626,6 +716,49 @@ export const DEFAULT_AGENT_ATTENTION: AgentAttentionConfig = {
   pastClientsToHuman: false
 }
 
+export const DEFAULT_CONVERSATIONAL_SAFETY_POLICY: ConversationalSafetyPolicy = {
+  enabled: true,
+  action: 'stop_and_review',
+  durationMinutes: 24 * 60,
+  notify: true,
+  notifyUserId: '',
+  notifyUserName: ''
+}
+
+export const DEFAULT_CONVERSATIONAL_TEST_MODE: ConversationalTestModeConfig = {
+  enabled: false,
+  cleanupAfterMinutes: 5,
+  notify: true
+}
+
+export const DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS: ConversationalDataRequirements = {
+  enabled: false,
+  fields: [],
+  updateContact: { enabled: true, policy: 'replace_placeholders' },
+  participants: {
+    enabled: false,
+    allowPrimaryAttendeeDifferentFromRequester: true,
+    guestFields: [],
+    maxGuests: 10
+  }
+}
+
+export const DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG: ConversationalCapabilitiesConfig = {
+  schemaVersion: 2,
+  safetyPolicy: { ...DEFAULT_CONVERSATIONAL_SAFETY_POLICY },
+  testMode: { ...DEFAULT_CONVERSATIONAL_TEST_MODE },
+  dataRequirements: {
+    ...DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS,
+    fields: [],
+    updateContact: { ...DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS.updateContact },
+    participants: {
+      ...DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS.participants,
+      guestFields: [...DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS.participants.guestFields]
+    }
+  },
+  items: []
+}
+
 export const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
@@ -787,15 +920,45 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
       ? raw.deposit as Partial<AgentGoalWorkflowConfig['deposit']>
       : {}
     const methods = deposit.methods && typeof deposit.methods === 'object' ? deposit.methods : {}
-    const paymentMode: AgentSalesPaymentMode = raw.paymentMode === 'deposit' ? 'deposit' : 'full_payment'
+    const requestedChargeType = String(raw.chargeType || '').trim()
+    const chargeType: CollectPaymentCapability['chargeType'] = requestedChargeType === 'direct'
+      ? 'direct'
+      : (requestedChargeType === 'deposit' || raw.paymentMode === 'deposit' ? 'deposit' : 'product')
+    const paymentMode: AgentSalesPaymentMode = chargeType === 'deposit' ? 'deposit' : 'full_payment'
+    const direct = raw.direct && typeof raw.direct === 'object' ? raw.direct as Record<string, unknown> : {}
+    const installments = raw.installments && typeof raw.installments === 'object' ? raw.installments as Record<string, unknown> : {}
+    const gateway = String(raw.gateway || 'highlevel').trim().toLowerCase() as CollectPaymentCapability['gateway']
+    const validGateway = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'].includes(gateway) ? gateway : 'highlevel'
     return {
       id,
       enabled,
       productId: String(raw.productId || '').trim().slice(0, 160),
       priceId: String(raw.priceId || '').trim().slice(0, 160),
       paymentMode,
+      chargeType,
       amount: Number(raw.amount) > 0 ? Number(raw.amount) : null,
       currency: String(raw.currency || '').trim().toUpperCase().slice(0, 12),
+      gateway: validGateway,
+      direct: {
+        amount: Number(direct.amount) > 0 ? Number(direct.amount) : null,
+        currency: String(direct.currency || raw.currency || '').trim().toUpperCase().slice(0, 12),
+        concept: String(direct.concept || '').slice(0, 180),
+        description: String(direct.description || '').slice(0, 600)
+      },
+      installments: {
+        enabled: normalizeCapabilityEnabled(installments.enabled),
+        maxInstallments: [3, 6, 9, 12, 18, 24].includes(Number(installments.maxInstallments))
+          ? Number(installments.maxInstallments)
+          : 0
+      },
+      expirationMinutes: Math.min(7 * 24 * 60, Math.max(5, Number(raw.expirationMinutes) || 60)),
+      afterPayment: raw.afterPayment === 'handoff' ? 'handoff' : 'continue',
+      receiptProof: {
+        enabled: (raw.receiptProof as Record<string, unknown> | undefined)?.enabled === undefined
+          ? true
+          : normalizeCapabilityEnabled((raw.receiptProof as Record<string, unknown>).enabled),
+        disposition: 'pending_review'
+      },
       deposit: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit,
         ...deposit,
@@ -838,16 +1001,87 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
   }
 }
 
+const REQUIRED_DATA_CONDITION_SCOPES: Record<ConversationalRequiredDataConditionFact, ConversationalRequiredDataScope> = {
+  'appointment.primary_attendee_is_different': 'appointment',
+  'appointment.has_guests': 'appointment',
+  'payment.is_deposit': 'payment',
+  'payment.is_full_payment': 'payment'
+}
+
+function normalizeRequiredDataCondition(value: unknown): ConversationalRequiredDataCondition | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Partial<ConversationalRequiredDataCondition>
+  const fact = String(raw.fact || '') as ConversationalRequiredDataConditionFact
+  if (!(fact in REQUIRED_DATA_CONDITION_SCOPES) || raw.operator !== 'is_true' || raw.value !== true) return null
+  return { fact, operator: 'is_true', value: true }
+}
+
 function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilitiesConfig {
   const raw = value && typeof value === 'object' ? value as Partial<ConversationalCapabilitiesConfig> : null
-  if (!raw || !Array.isArray(raw.items)) return { schemaVersion: 1, items: [] }
+  const rawSafety = raw?.safetyPolicy && typeof raw.safetyPolicy === 'object' ? raw.safetyPolicy : DEFAULT_CONVERSATIONAL_SAFETY_POLICY
+  const rawTestMode = raw?.testMode && typeof raw.testMode === 'object' ? raw.testMode : DEFAULT_CONVERSATIONAL_TEST_MODE
+  const rawRequirements = raw?.dataRequirements && typeof raw.dataRequirements === 'object' ? raw.dataRequirements : DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS
+  const rawFields = Array.isArray(rawRequirements.fields) ? rawRequirements.fields : []
+  const normalizedBase = {
+    schemaVersion: 2 as const,
+    safetyPolicy: {
+      enabled: rawSafety.enabled !== false,
+      action: rawSafety.action === 'handoff_and_review' ? 'handoff_and_review' as const : 'stop_and_review' as const,
+      durationMinutes: Math.min(30 * 24 * 60, Math.max(15, Number(rawSafety.durationMinutes) || 24 * 60)),
+      notify: rawSafety.notify !== false,
+      notifyUserId: String(rawSafety.notifyUserId || '').trim().slice(0, 160),
+      notifyUserName: String(rawSafety.notifyUserName || '').trim().slice(0, 180)
+    },
+    testMode: {
+      enabled: rawTestMode.enabled === true,
+      cleanupAfterMinutes: 5 as const,
+      notify: rawTestMode.notify !== false
+    },
+    dataRequirements: {
+      enabled: rawRequirements.enabled === true,
+      fields: rawFields.flatMap((field) => {
+        if (!field || typeof field !== 'object') return []
+        const rawField = field as ConversationalRequiredDataItem
+        const validFields: ConversationalRequiredDataField[] = ['first_name', 'full_name', 'phone', 'alternate_phone', 'email', 'company', 'address', 'custom']
+        if (!validFields.includes(rawField.field)) return []
+        const condition = normalizeRequiredDataCondition(rawField.condition)
+        const level: ConversationalRequiredDataLevel = rawField.level === 'conditional'
+          ? (condition ? 'conditional' : 'optional')
+          : (rawField.level === 'optional' ? 'optional' : 'required')
+        const scope: ConversationalRequiredDataScope = condition
+          ? REQUIRED_DATA_CONDITION_SCOPES[condition.fact]
+          : (['appointment', 'payment'].includes(rawField.scope) ? rawField.scope : 'any_action')
+        return [{
+          field: rawField.field,
+          level,
+          scope,
+          ...(rawField.label ? { label: String(rawField.label).slice(0, 120) } : {}),
+          ...(level === 'conditional' && condition ? { condition } : {})
+        } as ConversationalRequiredDataItem]
+      }),
+      updateContact: {
+        enabled: rawRequirements.updateContact?.enabled !== false,
+        policy: ['fill_missing', 'confirm_changes'].includes(String(rawRequirements.updateContact?.policy))
+          ? rawRequirements.updateContact!.policy
+          : 'replace_placeholders'
+      },
+      participants: {
+        enabled: rawRequirements.participants?.enabled === true,
+        allowPrimaryAttendeeDifferentFromRequester: rawRequirements.participants?.allowPrimaryAttendeeDifferentFromRequester !== false,
+        guestFields: (Array.isArray(rawRequirements.participants?.guestFields) ? rawRequirements.participants!.guestFields : [])
+          .filter((field): field is 'name' | 'phone' | 'email' | 'relation' => ['name', 'phone', 'email', 'relation'].includes(field)),
+        maxGuests: Math.min(20, Math.max(1, Number(rawRequirements.participants?.maxGuests) || 10))
+      }
+    }
+  }
+  if (!raw || !Array.isArray(raw.items)) return { ...normalizedBase, items: [] }
   const byId = new Map<ConversationalCapabilityId, ConversationalCapabilityItem>()
   raw.items.forEach((item) => {
     const normalized = normalizeCapabilityItem(item)
     if (normalized) byId.set(normalized.id, normalized)
   })
   return {
-    schemaVersion: 1,
+    ...normalizedBase,
     items: CONVERSATIONAL_CAPABILITY_IDS.map((id) => byId.get(id)).filter((item): item is ConversationalCapabilityItem => Boolean(item))
   }
 }
@@ -1385,6 +1619,11 @@ export const conversationalAgentService = {
 
   listTestRunEffects(testRunId: string): Promise<ConversationalAgentTestEffectResult[]> {
     return request<ConversationalAgentTestEffectResult[]>(`/test-runs/${encodeURIComponent(testRunId)}/effects`)
+  },
+
+  listAgentTestRuns(agentId: string, limit = 10): Promise<ConversationalAgentTestRunHistory[]> {
+    const safeLimit = Math.min(20, Math.max(1, Math.round(Number(limit) || 10)))
+    return request<ConversationalAgentTestRunHistory[]>(`/agents/${encodeURIComponent(agentId)}/test-runs?limit=${safeLimit}`)
   },
 
   cleanupTestRun(testRunId: string): Promise<ConversationalAgentTestCleanupResult> {

@@ -224,3 +224,66 @@ test('resolvePaymentContactForGatewayPayment crea contacto nuevo desde payload d
     await cleanup({ paymentId, email })
   }
 })
+
+test('un webhook sandbox del agente nunca enriquece ni crea identidad del contacto real', async () => {
+  const id = suffix()
+  const contactId = `contact-payment-test-isolated-${id}`
+  const paymentId = `payment-test-isolated-${id}`
+  const effectId = `catfx-payment-test-isolated-${id}`
+
+  await cleanup({ contactId, paymentId })
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, source, created_at, updated_at)
+       VALUES (?, 'Contacto original', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_method, payment_mode,
+         payment_provider, public_payment_id, conversational_test_effect_id,
+         metadata_json, date, created_at, updated_at
+       ) VALUES (?, ?, 500, 'MXN', 'paid', 'stripe', 'test', 'stripe', ?, ?, ?,
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        paymentId,
+        contactId,
+        `pub-${paymentId}`,
+        effectId,
+        JSON.stringify({
+          conversationalAgentTest: {
+            testEffectId: effectId,
+            testRunId: `session-${id}`
+          }
+        })
+      ]
+    )
+
+    const row = await db.get('SELECT * FROM payments WHERE id = ?', [paymentId])
+    const linkedContactId = await resolvePaymentContactForGatewayPayment(row, {
+      provider: 'stripe',
+      providerPayload: {
+        receipt_email: `attacker-${id}@example.test`,
+        payment_method: {
+          billing_details: {
+            name: 'Nombre del checkout sandbox',
+            phone: '+52 656 742 6699'
+          }
+        }
+      }
+    })
+
+    assert.equal(linkedContactId, contactId)
+    const contact = await db.get('SELECT full_name, email, phone FROM contacts WHERE id = ?', [contactId])
+    assert.deepEqual(contact, { full_name: 'Contacto original', email: null, phone: null })
+    assert.equal(
+      Number((await db.get('SELECT COUNT(*) AS total FROM contact_phone_numbers WHERE contact_id = ?', [contactId])).total),
+      0
+    )
+    const unexpected = await db.get('SELECT id FROM contacts WHERE email = ?', [`attacker-${id}@example.test`])
+    assert.equal(unexpected, null)
+  } finally {
+    await cleanup({ contactId, paymentId })
+  }
+})

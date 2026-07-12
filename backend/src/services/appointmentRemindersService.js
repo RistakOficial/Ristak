@@ -13,6 +13,12 @@ import {
 } from './metaSocialMessagingService.js'
 import { ensureDefaultAppointmentMessageTemplates } from './messageTemplatesService.js'
 import { logger } from '../utils/logger.js'
+import { createInternalNotification } from './notificationsService.js'
+import {
+  claimAppointmentTestAction,
+  completeAppointmentTestAction,
+  recordSimulatedAppointmentTestAction
+} from './conversationalAppointmentTestAutomationAuditService.js'
 import {
   DEFAULT_REMINDER_TEXT,
   DEFAULT_CONFIRMATION_TEXT,
@@ -1382,6 +1388,188 @@ async function finalizeSend({ reminder, appointment, status, sentMessageId = '',
 }
 
 /**
+ * Valida los recordatorios de una cita de Modo test sin mandar mensajes al
+ * contacto. Cada recordatorio configurado se renderiza y se entrega realmente
+ * como notificación interna/push sólo al usuario que inició la prueba. El canal
+ * externo queda registrado como simulación porque WhatsApp, email o DM no se
+ * pueden retirar cinco minutos después.
+ */
+export async function executeSafeTestAppointmentReminders(appointment = {}) {
+  const isTest = Boolean(appointment.isTest ?? appointment.is_test)
+  const testRunId = cleanString(appointment.testRunId || appointment.test_run_id)
+  const testEffectId = cleanString(appointment.testEffectId || appointment.test_effect_id)
+  const appointmentId = cleanString(appointment.id)
+  if (!isTest || !testRunId || !testEffectId || !appointmentId) {
+    return { executed: false, reason: 'not_test_appointment', reminders: [] }
+  }
+
+  const run = await db.get(
+    'SELECT requested_by_user_id FROM conversational_agent_test_runs WHERE id = ?',
+    [testRunId]
+  )
+  if (!run?.requested_by_user_id) {
+    return { executed: false, reason: 'test_run_not_found', reminders: [] }
+  }
+
+  const storedAppointment = await db.get(`
+    SELECT a.*, c.phone, c.email, c.first_name, c.last_name, c.full_name,
+      c.preferred_whatsapp_phone_number_id
+    FROM appointments a
+    LEFT JOIN contacts c ON c.id = a.contact_id
+    WHERE a.id = ? AND a.is_test = 1 AND a.test_effect_id = ?
+  `, [appointmentId, testEffectId])
+  if (!storedAppointment) {
+    return { executed: false, reason: 'test_appointment_not_found', reminders: [] }
+  }
+
+  const timezone = await getAccountTimezone()
+  const rows = await db.all('SELECT * FROM appointment_reminders WHERE enabled = 1 ORDER BY position ASC, created_at ASC')
+  const reminders = rows.map(normalizeReminderRow).filter(Boolean)
+  const results = []
+
+  for (const reminder of reminders) {
+    const auditContext = {
+      testMode: true,
+      testRunId,
+      testEffectId,
+      appointmentId,
+      eventType: 'appointment-reminder',
+      testExpiresAt: appointment.testExpiresAt || appointment.test_expires_at
+    }
+    const baseAction = {
+      nodeId: reminder.id,
+      nodeType: 'appointment-reminder',
+      request: {
+        reminderId: reminder.id,
+        reminderName: reminder.name,
+        configuredChannel: reminder.channel,
+        messageType: reminder.messageType,
+        testMode: true
+      }
+    }
+
+    const status = cleanString(storedAppointment.appointment_status || storedAppointment.status).toLowerCase()
+    if (reminder.messageType === 'confirmation' && status === 'confirmed') {
+      const receipt = await recordSimulatedAppointmentTestAction(auditContext, {
+        ...baseAction,
+        actionType: 'reminder-not-applicable',
+        detail: 'Confirmación simulada como omitida: la cita de prueba ya está confirmada.'
+      })
+      results.push({ reminderId: reminder.id, status: 'simulated', detail: receipt?.detail || '' })
+      continue
+    }
+
+    let renderedText = ''
+    let validationError = getMissingReminderTarget(reminder, storedAppointment)
+    if (!validationError) {
+      try {
+        renderedText = await getReminderPlainText(reminder, storedAppointment, timezone)
+      } catch (error) {
+        validationError = error.message
+      }
+    }
+    const externalReceipt = await recordSimulatedAppointmentTestAction(auditContext, {
+      ...baseAction,
+      actionType: 'reminder-external-message',
+      detail: validationError
+        ? `Recordatorio externo no enviado: ${validationError}`
+        : `Recordatorio externo por ${getReminderChannelLabel(reminder)} simulado para no dejar un mensaje permanente.`,
+      response: { valid: !validationError, routedOnlyToTestOwner: true }
+    })
+    if (validationError) {
+      results.push({
+        reminderId: reminder.id,
+        status: 'invalid',
+        detail: externalReceipt?.detail || validationError
+      })
+      continue
+    }
+
+    const claim = await claimAppointmentTestAction(auditContext, {
+      ...baseAction,
+      actionType: 'reminder-test-notification',
+      detail: 'Notificación de prueba del recordatorio.'
+    })
+    if (!claim.claimed) {
+      results.push({
+        reminderId: reminder.id,
+        status: claim.receipt?.status || 'unknown',
+        idempotent: true,
+        detail: claim.receipt?.detail || 'Recordatorio de prueba ya procesado; no se duplicó.'
+      })
+      continue
+    }
+
+    try {
+      const channelLabel = getReminderChannelLabel(reminder)
+      const notification = await createInternalNotification({
+        recipientUserIds: [cleanString(run.requested_by_user_id)],
+        source: 'Recordatorios · Modo test',
+        severity: 'info',
+        title: `Prueba · ${getAppointmentReminderSubject(reminder)}`.slice(0, 120),
+        message: `[Canal configurado: ${channelLabel}]\n${renderedText}\n\nNo se envió al contacto; esta copia llegó sólo a quien inició la prueba.`.slice(0, 900),
+        actionUrl: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
+        actionLabel: 'Abrir cita de prueba',
+        category: 'appointment_reminder_test',
+        contactId: cleanString(storedAppointment.contact_id),
+        metadata: {
+          testMode: true,
+          testRunId,
+          testEffectId,
+          appointmentId,
+          reminderId: reminder.id,
+          configuredChannel: reminder.channel,
+          routedOnlyToTestOwner: true,
+          externalDeliverySimulated: true
+        }
+      })
+      const delivered = Number(notification.created || 0) + Number(notification.push?.sent || 0)
+      const receipt = await completeAppointmentTestAction(claim.receipt.id, {
+        status: delivered > 0 ? 'sent' : 'failed',
+        detail: delivered > 0
+          ? `Recordatorio de prueba entregado al dueño por notificación interna/push (${delivered}).`
+          : 'El recordatorio se renderizó, pero no había transporte interno/push disponible.',
+        response: {
+          bellCreated: Number(notification.created || 0),
+          pushSent: Number(notification.push?.sent || 0),
+          routedOnlyToTestOwner: true,
+          externalDeliverySimulated: true
+        }
+      })
+      results.push({
+        reminderId: reminder.id,
+        status: receipt?.status || (delivered > 0 ? 'sent' : 'failed'),
+        detail: receipt?.detail || '',
+        auditReceiptId: receipt?.id || claim.receipt.id
+      })
+    } catch (error) {
+      const receipt = await completeAppointmentTestAction(claim.receipt.id, {
+        status: 'failed',
+        detail: `No se pudo entregar la copia segura del recordatorio: ${error.message}`,
+        response: { error: true, routedOnlyToTestOwner: true }
+      })
+      results.push({
+        reminderId: reminder.id,
+        status: 'failed',
+        detail: receipt?.detail || error.message,
+        auditReceiptId: receipt?.id || claim.receipt.id
+      })
+    }
+  }
+
+  return {
+    executed: true,
+    testMode: true,
+    isolated: true,
+    reminders: results,
+    configuredCount: reminders.length,
+    sentCount: results.filter((result) => result.status === 'sent').length,
+    simulatedCount: results.filter((result) => result.status === 'simulated').length,
+    failedCount: results.filter((result) => ['failed', 'invalid'].includes(result.status)).length
+  }
+}
+
+/**
  * Revisa las citas próximas y envía los mensajes automáticos que ya tocan.
  * Idempotente: cada par (recordatorio, cita) se envía una sola vez.
  */
@@ -1430,6 +1618,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
     FROM appointments a
     JOIN contacts c ON c.id = a.contact_id
     WHERE a.deleted_at IS NULL
+      AND COALESCE(a.is_test, 0) = 0
       AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled', 'noshow', 'invalid')
       AND (${clauses.join(' OR ')})
   `, params)

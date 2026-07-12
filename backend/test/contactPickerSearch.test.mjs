@@ -125,7 +125,14 @@ test('el modo picker no vuelve a meter agregados ni calentamiento externo', () =
 test('el directorio limita una búsqueda de dos mil contactos sin inflar el payload', async () => {
   const suffix = randomUUID().replace(/-/g, '')
   const idPrefix = `picker_load_${suffix}_`
-  const commonTerm = `CargaDirectorio${suffix.slice(0, 10)}`
+  // Este caso mide límite y orden del directorio, no ranking telefónico. Un
+  // UUID hexadecimal puede contener siete dígitos y convertir accidentalmente
+  // el término mixto en coincidencia parcial de teléfono, haciendo que la
+  // prueba dependa del UUID aleatorio de esa corrida.
+  const alphabeticSuffix = suffix
+    .slice(0, 10)
+    .replace(/[0-9]/g, digit => String.fromCharCode(103 + Number(digit)))
+  const commonTerm = `CargaDirectorio${alphabeticSuffix}`
   const total = 2_000
 
   const cleanup = () => db.run('DELETE FROM contacts WHERE id LIKE ?', [`${idPrefix}%`])

@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon';
 import { logger } from '../utils/logger.js';
 import { getAccountTimezone, resolveTimezone } from '../utils/dateUtils.js';
+import crypto from 'node:crypto';
 
 /**
  * Servicio para interactuar con la API de Calendarios de HighLevel
@@ -50,6 +51,52 @@ function mapAppointmentStatus(status) {
     'rescheduled': 'confirmed' // rescheduled no existe en GHL, usar confirmed
   };
   return statusMap[status] || 'confirmed';
+}
+
+function cleanString(value) {
+  return String(value ?? '').trim();
+}
+
+export function highLevelTestAppointmentMarker(testEffectId) {
+  const effectId = cleanString(testEffectId);
+  if (!effectId) throw new Error('La cita de prueba no tiene testEffectId para generar su marcador HighLevel');
+  return `[RISTAK-TEST:${crypto.createHash('sha256').update(effectId).digest('hex')}]`;
+}
+
+export function appendHighLevelTestAppointmentMarker(notes, testEffectId) {
+  const marker = highLevelTestAppointmentMarker(testEffectId);
+  const description = cleanString(notes);
+  return description.includes(marker) ? description : [description, marker].filter(Boolean).join('\n');
+}
+
+function exactRemoteInstant(left, right) {
+  const leftMs = new Date(left).getTime();
+  const rightMs = new Date(right).getTime();
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
+}
+
+export function findHighLevelTestAppointmentByCommand(events = [], command = {}) {
+  const marker = cleanString(command.marker);
+  const calendarId = cleanString(command.calendarId);
+  const contactId = cleanString(command.contactId);
+  if (!marker || !calendarId || !contactId || !command.startTime || !command.endTime) return null;
+
+  for (const event of (Array.isArray(events) ? events : [])) {
+    const remote = event?.appointment || event || {};
+    const description = cleanString(remote.description || remote.notes);
+    const matches = description.includes(marker)
+      && cleanString(remote.calendarId || remote.calendar_id) === calendarId
+      && cleanString(remote.contactId || remote.contact_id) === contactId
+      && exactRemoteInstant(remote.startTime || remote.start_time, command.startTime)
+      && exactRemoteInstant(remote.endTime || remote.end_time, command.endTime);
+    if (matches) return remote;
+  }
+  return null;
+}
+
+export function isAmbiguousHighLevelAppointmentWriteError(error) {
+  const status = Number(error?.status || 0);
+  return !status || status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
 /**
@@ -209,7 +256,9 @@ export async function getCalendarEvents(locationId, startTime, endTime, accessTo
     if (!response.ok) {
       const errorText = await response.text();
       logger.error(`[HighLevel Calendar] Error al obtener eventos: ${response.status} - ${errorText}`);
-      throw new Error(`Error al obtener eventos: ${response.status}`);
+      const error = new Error(`Error al obtener eventos: ${response.status}`);
+      error.status = response.status;
+      throw error;
     }
 
     const data = await response.json();
@@ -628,7 +677,9 @@ export async function createAppointment(appointmentData, locationId, accessToken
       // Campos requeridos por la API
       ignoreFreeSlotValidation: true, // Permite agendar incluso en horarios no disponibles
       ignoreDateRange: true, // Intenta bypasear restricción TOOFAR (fecha fuera de rango)
-      toNotify: false, // No enviar notificaciones automáticas
+      // En Modo test queremos recorrer exactamente el carril real de avisos.
+      // Fuera del tester conservamos el comportamiento histórico silencioso.
+      toNotify: Boolean(appointmentData.isTest || appointmentData.is_test),
       meetingLocationType: appointmentData.address ? 'custom' : 'zoom',
       title: appointmentData.title || 'Nueva cita',
       // Mapear status del frontend al formato de HighLevel
@@ -669,7 +720,11 @@ export async function createAppointment(appointmentData, locationId, accessToken
     }
 
     if (appointmentData.notes) {
-      payload.description = appointmentData.notes; // HighLevel usa 'description' no 'notes'
+      payload.description = appointmentData.isTest || appointmentData.is_test
+        ? appendHighLevelTestAppointmentMarker(appointmentData.notes, appointmentData.testEffectId || appointmentData.test_effect_id)
+        : appointmentData.notes; // HighLevel usa 'description' no 'notes'
+    } else if (appointmentData.isTest || appointmentData.is_test) {
+      payload.description = appendHighLevelTestAppointmentMarker('', appointmentData.testEffectId || appointmentData.test_effect_id);
     }
 
     const response = await fetchWithTimeout(
@@ -689,7 +744,9 @@ export async function createAppointment(appointmentData, locationId, accessToken
     if (!response.ok) {
       const errorText = await response.text();
       logger.error(`[HighLevel Calendar] Error al crear cita: ${response.status} - ${errorText}`);
-      throw new Error(`Error al crear cita: ${response.status} - ${errorText}`);
+      const error = new Error(`Error al crear cita: ${response.status} - ${errorText}`);
+      error.status = response.status;
+      throw error;
     }
 
     const data = await response.json();

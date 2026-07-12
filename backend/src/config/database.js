@@ -3,6 +3,8 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { DateTime } from 'luxon'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { tmpdir } from 'os'
+import { mkdirSync } from 'fs'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
@@ -12,6 +14,10 @@ import {
   shouldReplaceWhatsAppApiContactName
 } from '../utils/whatsappContactProfile.js'
 import { DEFAULT_OPENAI_MODEL } from './openAIModels.js'
+import {
+  isConversationalAgentSafetyReferenceTable,
+  mergeConversationalAgentSafetyContactReferences
+} from '../utils/conversationalAgentSafetyMerge.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -21,6 +27,7 @@ const usePostgres = !!DATABASE_URL
 
 let db
 const databaseTransactionContext = new AsyncLocalStorage()
+const databaseConnectionContext = new AsyncLocalStorage()
 
 const DEFAULT_REPORT_TABLE_COLUMN_CONFIG = [
   ['date', true],
@@ -87,6 +94,23 @@ const POSTGRES_CLIENT_ERROR_LISTENER = Symbol('ristakPostgresClientErrorListener
 const POSTGRES_CLIENT_CONNECTION_ERROR = Symbol('ristakPostgresClientConnectionError')
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+function databaseAdvisoryLockBusyError(lockName) {
+  const error = new Error(`El candado distribuido ${String(lockName || '').slice(0, 160)} está ocupado.`)
+  error.code = 'DATABASE_ADVISORY_LOCK_BUSY'
+  return error
+}
+
+function postgresAdvisoryLockKey(lockName) {
+  // PostgreSQL recibe un bigint firmado. SHA-256 mantiene estable la llave entre
+  // procesos/hosts sin depender del hash aleatorio del runtime de Node.
+  return crypto
+    .createHash('sha256')
+    .update(`ristak:${String(lockName || '')}`)
+    .digest()
+    .readBigInt64BE(0)
+    .toString()
+}
 
 export function isTransientPostgresConnectionError(error) {
   const code = String(error?.code || '').trim()
@@ -447,10 +471,90 @@ if (usePostgres) {
     }
   }
 
+  async function withPostgresAdvisoryLock(lockName, callback, options = {}) {
+    if (typeof callback !== 'function') {
+      throw Object.assign(new Error('El candado distribuido necesita una operación.'), {
+        code: 'DATABASE_ADVISORY_LOCK_CALLBACK_REQUIRED'
+      })
+    }
+    if (databaseTransactionContext.getStore() || databaseConnectionContext.getStore()) {
+      throw Object.assign(new Error('No se puede abrir un candado distribuido dentro de otra transacción.'), {
+        code: 'DATABASE_ADVISORY_LOCK_NESTED'
+      })
+    }
+
+    // Los advisory locks de PostgreSQL pertenecen a la sesión. Esta conexión
+    // queda dedicada hasta que callback termina; jamás se devuelve al pool con
+    // el candado puesto ni se depende de una fila con lease que pueda caducar.
+    const client = await connectWithRetry()
+    const clientDb = createPostgresAdapter(client)
+    const lockKey = postgresAdvisoryLockKey(lockName)
+    let acquired = false
+    let result
+    let operationError = null
+    let unlockError = null
+    let releaseError = null
+
+    try {
+      const lockResult = await client.query(
+        'SELECT pg_try_advisory_lock($1::bigint) AS acquired',
+        [lockKey]
+      )
+      acquired = lockResult.rows[0]?.acquired === true
+      if (!acquired) throw databaseAdvisoryLockBusyError(lockName)
+
+      // Algunos fences de dominio (p. ej. seguridad conversacional) deben
+      // abarcar servicios que ya toman sus propios advisory locks. En ese caso
+      // el candado externo conserva esta sesión dedicada, pero no enruta todas
+      // las consultas del callback por ella para permitir candados internos en
+      // conexiones independientes.
+      result = options?.pinConnection === false
+        ? await callback(clientDb)
+        : await databaseConnectionContext.run({ client, db: clientDb }, () => callback(clientDb))
+    } catch (error) {
+      operationError = error
+    }
+
+    if (acquired) {
+      try {
+        const unlockResult = await client.query(
+          'SELECT pg_advisory_unlock($1::bigint) AS released',
+          [lockKey]
+        )
+        if (unlockResult.rows[0]?.released !== true) {
+          throw Object.assign(new Error(`PostgreSQL perdió el candado distribuido ${String(lockName).slice(0, 160)}.`), {
+            code: 'DATABASE_ADVISORY_LOCK_LOST'
+          })
+        }
+      } catch (error) {
+        unlockError = error
+      }
+    }
+
+    releaseError = getPostgresClientConnectionError(client)
+    try {
+      client.release(releaseError || unlockError || undefined)
+    } catch (error) {
+      releaseError = releaseError || error
+    }
+
+    if (operationError) {
+      if (unlockError || releaseError) {
+        operationError.lockReleaseError = unlockError || releaseError
+      }
+      throw operationError
+    }
+    if (unlockError) throw unlockError
+    if (releaseError) throw releaseError
+    return result
+  }
+
   db = {
     run: async (sql, params = []) => {
       const activeTransaction = databaseTransactionContext.getStore()
       if (activeTransaction) return activeTransaction.run(sql, params)
+      const pinnedConnection = databaseConnectionContext.getStore()
+      if (pinnedConnection) return pinnedConnection.db.run(sql, params)
       return withPostgresClient((clientDb) => clientDb.run(sql, params), {
         label: 'escritura'
       })
@@ -459,6 +563,8 @@ if (usePostgres) {
     get: async (sql, params = []) => {
       const activeTransaction = databaseTransactionContext.getStore()
       if (activeTransaction) return activeTransaction.get(sql, params)
+      const pinnedConnection = databaseConnectionContext.getStore()
+      if (pinnedConnection) return pinnedConnection.db.get(sql, params)
       return withPostgresClient((clientDb) => clientDb.get(sql, params), {
         retryTransientRead: true,
         label: 'lectura get'
@@ -468,6 +574,8 @@ if (usePostgres) {
     all: async (sql, params = []) => {
       const activeTransaction = databaseTransactionContext.getStore()
       if (activeTransaction) return activeTransaction.all(sql, params)
+      const pinnedConnection = databaseConnectionContext.getStore()
+      if (pinnedConnection) return pinnedConnection.db.all(sql, params)
       return withPostgresClient((clientDb) => clientDb.all(sql, params), {
         retryTransientRead: true,
         label: 'lectura all'
@@ -477,6 +585,8 @@ if (usePostgres) {
     exec: async (sql) => {
       const activeTransaction = databaseTransactionContext.getStore()
       if (activeTransaction) return activeTransaction.exec(sql)
+      const pinnedConnection = databaseConnectionContext.getStore()
+      if (pinnedConnection) return pinnedConnection.db.exec(sql)
       return withPostgresClient((clientDb) => clientDb.exec(sql), {
         label: 'exec'
       })
@@ -485,8 +595,10 @@ if (usePostgres) {
     transaction: async (callback) => {
       const activeTransaction = databaseTransactionContext.getStore()
       if (activeTransaction) return callback(activeTransaction)
-      const client = await connectWithRetry()
-      const txDb = createPostgresAdapter(client)
+      const pinnedConnection = databaseConnectionContext.getStore()
+      const client = pinnedConnection?.client || await connectWithRetry()
+      const txDb = pinnedConnection?.db || createPostgresAdapter(client)
+      const ownsConnection = !pinnedConnection
       let releaseError = null
       try {
         await client.query('BEGIN')
@@ -504,9 +616,11 @@ if (usePostgres) {
         throw error
       } finally {
         releaseError = releaseError || getPostgresClientConnectionError(client)
-        client.release(releaseError || undefined)
+        if (ownsConnection) client.release(releaseError || undefined)
       }
-    }
+    },
+
+    withAdvisoryLock: withPostgresAdvisoryLock
   }
 
   logger.success('Conectado a PostgreSQL')
@@ -561,10 +675,86 @@ if (usePostgres) {
   })
 
   const sqliteAdapter = createSqliteAdapter(sqliteDb)
+  const sqliteAdvisoryLockDir = join(
+    tmpdir(),
+    `ristak-sqlite-advisory-${crypto.createHash('sha256').update(dbPath).digest('hex').slice(0, 20)}`
+  )
+  mkdirSync(sqliteAdvisoryLockDir, { recursive: true })
+  // SQLite trae las FK apagadas por conexión. Las migraciones y el esquema base
+  // usan RESTRICT/CASCADE/SET NULL como parte del contrato de integridad, así que
+  // no puede depender de que una migración legacy haya encendido este PRAGMA.
+  await sqliteAdapter.run('PRAGMA foreign_keys = ON')
   const routeSqliteOperation = (method) => (...args) => {
     const activeTransaction = databaseTransactionContext.getStore()
     return (activeTransaction || sqliteAdapter)[method](...args)
   }
+
+  async function withSqliteAdvisoryLock(lockName, callback) {
+    if (typeof callback !== 'function') {
+      throw Object.assign(new Error('El candado local necesita una operación.'), {
+        code: 'DATABASE_ADVISORY_LOCK_CALLBACK_REQUIRED'
+      })
+    }
+    const activeTransaction = databaseTransactionContext.getStore()
+    // Todas las transacciones SQLite del adaptador empiezan con BEGIN IMMEDIATE;
+    // si ya estamos dentro de una, la exclusión física global ya está vigente.
+    if (activeTransaction) return callback(activeTransaction)
+
+    // SQLite no tiene advisory locks por llave. Cada llave obtiene un archivo
+    // SQLite mínimo propio y conserva BEGIN IMMEDIATE durante todo el callback.
+    // Así dos procesos chocan para el mismo agente, agentes distintos no se
+    // bloquean entre sí y el SO libera el file lock al morir el proceso.
+    const lockFileName = `${crypto.createHash('sha256').update(String(lockName)).digest('hex')}.sqlite`
+    const lockConnection = new sqlite3.Database(join(sqliteAdvisoryLockDir, lockFileName))
+    lockConnection.configure('busyTimeout', 0)
+    const lockDb = createSqliteAdapter(lockConnection)
+    let began = false
+    let result
+    let operationError = null
+    let cleanupError = null
+
+    try {
+      try {
+        await lockDb.run('BEGIN IMMEDIATE')
+        began = true
+      } catch (error) {
+        if (error?.code === 'SQLITE_BUSY' || error?.code === 'SQLITE_LOCKED') {
+          throw databaseAdvisoryLockBusyError(lockName)
+        }
+        throw error
+      }
+      // El archivo auxiliar sólo sostiene la exclusión. Las operaciones del
+      // callback siguen usando la base principal y conservan sus transacciones.
+      result = await callback()
+      await lockDb.run('COMMIT')
+      began = false
+    } catch (error) {
+      operationError = error
+      if (began) {
+        try {
+          await lockDb.run('ROLLBACK')
+          began = false
+        } catch (rollbackError) {
+          cleanupError = rollbackError
+        }
+      }
+    }
+
+    await new Promise((resolve) => {
+      lockConnection.close((error) => {
+        cleanupError = cleanupError || error || null
+        resolve()
+      })
+    })
+
+    if (operationError) {
+      if (cleanupError) operationError.lockReleaseError = cleanupError
+      throw operationError
+    }
+    if (cleanupError) throw cleanupError
+    return result
+  }
+
   db = {
     run: routeSqliteOperation('run'),
     get: routeSqliteOperation('get'),
@@ -581,6 +771,10 @@ if (usePostgres) {
       transactionConnection.configure('busyTimeout', 10_000)
       const txDb = createSqliteAdapter(transactionConnection)
       try {
+        // El PRAGMA es por conexión y debe ejecutarse antes de BEGIN. Sin esto,
+        // las transacciones dedicadas se comportan distinto a Postgres y dejan
+        // huérfanos aunque la conexión SQLite principal sí tenga FK activas.
+        await txDb.run('PRAGMA foreign_keys = ON')
         await txDb.run('BEGIN IMMEDIATE')
         const result = await databaseTransactionContext.run(txDb, () => callback(txDb))
         await txDb.run('COMMIT')
@@ -596,7 +790,9 @@ if (usePostgres) {
           })
         })
       }
-    }
+    },
+
+    withAdvisoryLock: withSqliteAdvisoryLock
   }
 }
 
@@ -614,7 +810,9 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'payment_flows', column: 'contact_id' },
   { table: 'sessions', column: 'contact_id' },
   { table: 'video_playback_sessions', column: 'contact_id' },
-  { table: 'video_playback_events', column: 'contact_id' }
+  { table: 'video_playback_events', column: 'contact_id' },
+  { table: 'conversational_agent_safety_cases', column: 'contact_id', mergeStrategy: 'conversational_agent_safety' },
+  { table: 'conversational_agent_safety_events', column: 'contact_id', mergeStrategy: 'conversational_agent_safety' }
 ]
 
 // Tablas que NO referencian contacts.id aunque tengan columna contact_id propia
@@ -652,13 +850,18 @@ export async function getContactReferenceTables() {
     logger.warn(`No se pudieron descubrir tablas con contact_id, usando lista estática: ${err.message}`)
     return CONTACT_PHONE_REFERENCE_TABLES.map(reference => ({
       table: reference.table,
-      deleteOnConflict: Boolean(reference.deleteOnConflict)
+      deleteOnConflict: Boolean(reference.deleteOnConflict),
+      mergeStrategy: reference.mergeStrategy || null
     }))
   }
 
   contactReferenceTablesCache = names
     .filter(name => name !== 'contacts')
-    .map(name => ({ table: name, deleteOnConflict: name === 'appointment_attendance_signals' }))
+    .map(name => ({
+      table: name,
+      deleteOnConflict: name === 'appointment_attendance_signals',
+      mergeStrategy: isConversationalAgentSafetyReferenceTable(name) ? 'conversational_agent_safety' : null
+    }))
 
   return contactReferenceTablesCache
 }
@@ -692,8 +895,15 @@ function pickContactPhoneWinner(contacts = [], canonicalPhone = '') {
 
 async function updateContactReferences(fromId, toId) {
   const references = await getContactReferenceTables()
+  await mergeConversationalAgentSafetyContactReferences({
+    connection: db,
+    fromContactId: fromId,
+    toContactId: toId,
+    usePostgres
+  })
 
   for (const reference of references) {
+    if (reference.mergeStrategy === 'conversational_agent_safety') continue
     try {
       await db.run(
         `UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`,
@@ -899,7 +1109,15 @@ async function migrateWhatsAppContactIdsToRistak() {
         values
       )
 
+      await mergeConversationalAgentSafetyContactReferences({
+        connection: db,
+        fromContactId: legacy.id,
+        toContactId: newId,
+        usePostgres
+      })
+
       for (const reference of referenceTables) {
+        if (reference.mergeStrategy === 'conversational_agent_safety') continue
         try {
           await db.run(`UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`, [newId, legacy.id])
         } catch (err) {
@@ -1006,7 +1224,14 @@ async function mergeSplitSocialCommentContacts() {
         if (fromContact !== toContact) {
           // chat_read_states primero (colisión de PK), luego el repunte genérico.
           await mergeChatReadStatesForContact(fromContact, toContact)
+          await mergeConversationalAgentSafetyContactReferences({
+            connection: db,
+            fromContactId: fromContact,
+            toContactId: toContact,
+            usePostgres
+          })
           for (const reference of referenceTables) {
+            if (reference.mergeStrategy === 'conversational_agent_safety') continue
             try {
               await db.run(`UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`, [toContact, fromContact])
             } catch (err) {
@@ -2843,6 +3068,7 @@ async function initTables() {
         stripe_customer_id TEXT,
         conekta_customer_id TEXT,
         assigned_user_id TEXT,
+        assignment_test_effect_id TEXT,
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -2858,6 +3084,17 @@ async function initTables() {
         throw err
       }
     }
+
+    // Marca CAS de una asignación temporal hecha por el tester. Cualquier
+    // asignación real la borra antes de que el barrido intente restaurar.
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN assignment_test_effect_id TEXT')
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        throw err
+      }
+    }
+    await db.run("CREATE INDEX IF NOT EXISTS idx_contacts_assignment_test_effect ON contacts(assignment_test_effect_id) WHERE assignment_test_effect_id IS NOT NULL AND assignment_test_effect_id != ''")
 
     try {
       await db.run('ALTER TABLE contacts ADD COLUMN preferred_whatsapp_phone_number_id TEXT')
@@ -3105,6 +3342,7 @@ async function initTables() {
         public_payment_id TEXT,
         payment_url TEXT,
         payment_link_request_key TEXT,
+        conversational_test_effect_id TEXT,
         stripe_payment_intent_id TEXT,
         stripe_charge_id TEXT,
         mercadopago_payment_id TEXT,
@@ -3131,7 +3369,13 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(date)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)')
     await db.run('ALTER TABLE payments ADD COLUMN payment_link_request_key TEXT').catch(() => {})
+    await db.run('ALTER TABLE payments ADD COLUMN conversational_test_effect_id TEXT').catch(() => {})
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_payment_link_request_key ON payments(payment_link_request_key)')
+    await db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_conversational_test_effect
+      ON payments(conversational_test_effect_id)
+      WHERE conversational_test_effect_id IS NOT NULL AND conversational_test_effect_id != ''
+    `)
 
     // Reserva durable de links creados por el agente conversacional v2. La fila
     // nace antes de llamar al proveedor para cerrar reintentos y carreras sin
@@ -3377,6 +3621,10 @@ async function initTables() {
         start_time DATETIME,
         end_time DATETIME,
         booking_channel TEXT,
+        is_test INTEGER NOT NULL DEFAULT 0,
+        test_run_id TEXT,
+        test_effect_id TEXT,
+        test_expires_at DATETIME,
         confirmation_badge_until DATETIME,
         date_added DATETIME,
         date_updated DATETIME,
@@ -3390,6 +3638,26 @@ async function initTables() {
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_contact ON appointments(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_start_time ON appointments(start_time)')
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS appointment_participants (
+        id TEXT PRIMARY KEY,
+        appointment_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        contact_id TEXT,
+        name_snapshot TEXT,
+        phone_snapshot TEXT,
+        email_snapshot TEXT,
+        relation_snapshot TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+        UNIQUE(appointment_id, role, position)
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_participants_appointment ON appointment_participants(appointment_id, role, position)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_participants_contact ON appointment_participants(contact_id)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS appointment_creation_requests (
@@ -3494,7 +3762,11 @@ async function initTables() {
       ['google_sync_status', 'TEXT'],
       ['google_sync_error', 'TEXT'],
       ['google_synced_at', 'DATETIME'],
-      ['booking_channel', 'TEXT']
+      ['booking_channel', 'TEXT'],
+      ['is_test', 'INTEGER NOT NULL DEFAULT 0'],
+      ['test_run_id', 'TEXT'],
+      ['test_effect_id', 'TEXT'],
+      ['test_expires_at', 'DATETIME']
     ]) {
       try {
         await db.run(`ALTER TABLE appointments ADD COLUMN ${columnName} ${columnType}`)
@@ -3510,6 +3782,8 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_google ON appointments(google_event_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_google_sync_status ON appointments(google_sync_status)')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_google_unique ON appointments(google_event_id) WHERE google_event_id IS NOT NULL AND google_event_id != ''")
+      await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_test_cleanup ON appointments(test_expires_at) WHERE is_test = 1')
+      await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_test_effect_unique ON appointments(test_effect_id) WHERE test_effect_id IS NOT NULL AND test_effect_id != ''")
     } catch (err) {
       logger.warn('Advertencia al crear índices de sync de appointments:', err.message)
     }
@@ -6193,6 +6467,204 @@ async function initTables() {
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_test_effect_identity ON conversational_agent_test_effects(run_id, message_id, effect_type)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_effect_run ON conversational_agent_test_effects(run_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_effect_entity ON conversational_agent_test_effects(effect_type, entity_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_test_effect_run_identity ON conversational_agent_test_effects(id, run_id)')
+
+    // Recibos durables de los eventos externos creados por una cita de prueba.
+    // Se escriben inmediatamente después de que el proveedor devuelve su ID, de
+    // modo que la limpieza no dependa de que el upsert posterior de la cita logre
+    // guardar google_event_id/ghl_appointment_id.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_appointment_test_provider_receipts (
+        id TEXT PRIMARY KEY,
+        test_effect_id TEXT NOT NULL,
+        test_run_id TEXT NOT NULL,
+        appointment_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        command_key TEXT,
+        idempotency_marker TEXT,
+        command_json TEXT,
+        remote_status TEXT NOT NULL DEFAULT 'created',
+        remote_error TEXT,
+        remote_attempt_count INTEGER NOT NULL DEFAULT 0,
+        remote_reconciled_at DATETIME,
+        calendar_id TEXT,
+        cleanup_due_at DATETIME NOT NULL,
+        cleanup_status TEXT NOT NULL DEFAULT 'pending',
+        cleanup_error TEXT,
+        cleanup_attempt_count INTEGER NOT NULL DEFAULT 0,
+        cleaned_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (test_effect_id, test_run_id) REFERENCES conversational_agent_test_effects(id, run_id) ON DELETE RESTRICT,
+        FOREIGN KEY (test_run_id) REFERENCES conversational_agent_test_runs(id) ON DELETE RESTRICT
+      )
+    `)
+    await ensureTableColumns('conversational_appointment_test_provider_receipts', [
+      ['command_key', 'TEXT'],
+      ['idempotency_marker', 'TEXT'],
+      ['command_json', 'TEXT'],
+      ['remote_status', "TEXT NOT NULL DEFAULT 'created'"],
+      ['remote_error', 'TEXT'],
+      ['remote_attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
+      ['remote_reconciled_at', 'DATETIME']
+    ])
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_appt_test_receipt_external ON conversational_appointment_test_provider_receipts(provider, external_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_appt_test_receipt_effect_provider ON conversational_appointment_test_provider_receipts(test_effect_id, provider)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_appt_test_receipt_cleanup ON conversational_appointment_test_provider_receipts(cleanup_status, cleanup_due_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_appt_test_receipt_appointment ON conversational_appointment_test_provider_receipts(appointment_id, provider)')
+
+    // Bitácora idempotente de automatizaciones y recordatorios evaluados por una
+    // cita de Modo test. Sólo webhooks y avisos internos se ejecutan de verdad;
+    // las mutaciones no reversibles se registran como simuladas.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_appointment_test_automation_receipts (
+        id TEXT PRIMARY KEY,
+        test_effect_id TEXT NOT NULL,
+        test_run_id TEXT NOT NULL,
+        appointment_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        automation_id TEXT,
+        automation_name TEXT,
+        node_id TEXT,
+        node_type TEXT,
+        action_type TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        execution_mode TEXT NOT NULL,
+        status TEXT NOT NULL,
+        detail TEXT,
+        request_json TEXT,
+        response_json TEXT,
+        cleanup_due_at DATETIME,
+        completed_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (test_effect_id, test_run_id) REFERENCES conversational_agent_test_effects(id, run_id) ON DELETE RESTRICT,
+        FOREIGN KEY (test_run_id) REFERENCES conversational_agent_test_runs(id) ON DELETE RESTRICT
+      )
+    `)
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_appt_test_automation_receipt_key ON conversational_appointment_test_automation_receipts(idempotency_key)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_appt_test_automation_receipt_effect ON conversational_appointment_test_automation_receipts(test_effect_id, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_appt_test_automation_receipt_appointment ON conversational_appointment_test_automation_receipts(appointment_id, created_at)')
+
+    // Asignaciones reales pero temporales del Modo test. La tabla conserva a
+    // quién estaba asignado el contacto para restaurarlo sin pisar cambios
+    // humanos posteriores.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_test_assignments (
+        effect_id TEXT PRIMARY KEY,
+        test_run_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        requested_by_user_id TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        target_user_id TEXT NOT NULL,
+        previous_user_id TEXT,
+        status TEXT NOT NULL DEFAULT 'assigning',
+        cleanup_due_at DATETIME NOT NULL,
+        assigned_at DATETIME,
+        notification_status TEXT NOT NULL DEFAULT 'pending',
+        notification_error TEXT,
+        notification_sent_at DATETIME,
+        claim_token TEXT,
+        lease_until_at DATETIME,
+        cleanup_attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        cleaned_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (effect_id, test_run_id) REFERENCES conversational_agent_test_effects(id, run_id) ON DELETE RESTRICT,
+        FOREIGN KEY (test_run_id) REFERENCES conversational_agent_test_runs(id) ON DELETE RESTRICT
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_assignment_cleanup ON conversational_agent_test_assignments(status, cleanup_due_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_assignment_run ON conversational_agent_test_assignments(test_run_id, updated_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_assignment_contact ON conversational_agent_test_assignments(contact_id, updated_at)')
+
+    // Cuarentena reversible para riesgos detectados por el agente. El caso es
+    // global por contacto+canal; los eventos y la auditoría son inmutables. No
+    // se elimina ni modifica el contacto y tampoco se bloquea en el proveedor.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_safety_cases (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        category TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        block_mode TEXT NOT NULL,
+        blocked_until DATETIME,
+        policy_json TEXT NOT NULL,
+        event_count INTEGER NOT NULL DEFAULT 0,
+        opened_at DATETIME NOT NULL,
+        latest_event_id TEXT,
+        latest_agent_id TEXT,
+        latest_source_message_id TEXT,
+        latest_reason TEXT,
+        resolved_at DATETIME,
+        resolved_by TEXT,
+        resolution_reason TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_safety_events (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        source_message_id TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        category TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        policy_json TEXT NOT NULL,
+        block_mode TEXT NOT NULL,
+        blocked_until DATETIME,
+        notification_status TEXT NOT NULL DEFAULT 'pending',
+        notification_attempts INTEGER NOT NULL DEFAULT 0,
+        notification_claim_token TEXT,
+        notification_lease_until DATETIME,
+        notification_next_retry_at DATETIME,
+        notification_last_error TEXT,
+        notification_receipt_json TEXT,
+        notification_sent_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (case_id) REFERENCES conversational_agent_safety_cases(id) ON DELETE RESTRICT
+      )
+    `)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_safety_audit (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        event_id TEXT,
+        action TEXT NOT NULL,
+        actor_type TEXT NOT NULL,
+        actor_id TEXT,
+        detail_json TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (case_id) REFERENCES conversational_agent_safety_cases(id) ON DELETE RESTRICT,
+        FOREIGN KEY (event_id) REFERENCES conversational_agent_safety_events(id) ON DELETE RESTRICT
+      )
+    `)
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_safety_case_identity ON conversational_agent_safety_cases(contact_id, channel)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_safety_case_active ON conversational_agent_safety_cases(status, blocked_until, updated_at)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_safety_event_identity ON conversational_agent_safety_events(agent_id, contact_id, channel, source_message_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_safety_event_case ON conversational_agent_safety_events(case_id, created_at)')
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_conv_agent_safety_event_notification
+      ON conversational_agent_safety_events(
+        notification_status,
+        notification_next_retry_at,
+        notification_lease_until,
+        updated_at
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_safety_audit_case ON conversational_agent_safety_audit(case_id, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_safety_audit_event ON conversational_agent_safety_audit(event_id, created_at)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS conversational_agent_goal_links (

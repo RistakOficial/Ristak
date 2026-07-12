@@ -951,6 +951,11 @@ test('cambiar a silenciar aplica sobre conversaciones ya asignadas y mantiene el
       hideAttendedNotifications: false,
       defaultCalendarId: 'cal_runtime_test'
     })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto de modo editable', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
 
     await assignAgentToConversation(contactId, agent.id, {
       activationSource: 'automatic',
@@ -981,6 +986,7 @@ test('cambiar a silenciar aplica sobre conversaciones ya asignadas y mantiene el
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
     if (agent?.id) {
       await db.run('DELETE FROM conversational_agent_events WHERE detail_json LIKE ?', [`%${agent.id}%`]).catch(() => undefined)
       await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
@@ -1378,6 +1384,74 @@ test('si el contacto interrumpe entre globos se detienen los restantes y se devu
     'event:reply_part_wait_started',
     'wait:2000'
   ])
+})
+
+test('una cuarentena activa justo antes de entregar bloquea el primer globo', async () => {
+  const sent = []
+  let safetyLockEntries = 0
+  const result = await sendReplyParts({
+    contactId: 'contacto-safety-antes',
+    phone: '+526561111111',
+    latest: { id: 'mensaje-safety-antes', phone: '+526561111111' },
+    agentConfig: {
+      id: 'agente-safety-antes',
+      replyDelivery: { mode: 'split', splitMessagesEnabled: true, minParts: 2, maxParts: 3 }
+    },
+    reply: 'globo uno\n\nglobo dos',
+    channel: 'whatsapp',
+    dependencies: {
+      splitter: async () => ({ messages: ['globo uno', 'globo dos'], source: 'test', reason: 'ok' }),
+      wait: async () => undefined,
+      loadNewerInbound: async () => null,
+      withSafetyDeliveryLock: async (callback) => {
+        safetyLockEntries += 1
+        return callback()
+      },
+      loadPreventiveMeasure: async () => ({ id: 'safety-case-before', category: 'phishing' }),
+      sendTextMessage: async ({ text }) => sent.push(text),
+      recordEvent: async () => undefined
+    }
+  })
+
+  assert.equal(result.suppressedByPreventiveMeasure, true)
+  assert.equal(result.sentParts, 0)
+  assert.equal(safetyLockEntries, 1)
+  assert.deepEqual(sent, [])
+})
+
+test('si otra instancia activa cuarentena entre globos no sale el resto', async () => {
+  const sent = []
+  let checks = 0
+  const result = await sendReplyParts({
+    contactId: 'contacto-safety-entre',
+    phone: '+526561111111',
+    latest: { id: 'mensaje-safety-entre', phone: '+526561111111' },
+    agentConfig: {
+      id: 'agente-safety-entre',
+      replyDelivery: { mode: 'split', splitMessagesEnabled: true, minParts: 2, maxParts: 3 }
+    },
+    reply: 'globo uno\n\nglobo dos\n\nglobo tres',
+    channel: 'whatsapp',
+    dependencies: {
+      splitter: async () => ({ messages: ['globo uno', 'globo dos', 'globo tres'], source: 'test', reason: 'ok' }),
+      wait: async () => undefined,
+      loadNewerInbound: async () => null,
+      withSafetyDeliveryLock: async (callback) => callback(),
+      loadPreventiveMeasure: async () => {
+        checks += 1
+        return checks === 1 ? null : { id: 'safety-case-between', category: 'threat' }
+      },
+      sendTextMessage: async ({ text }) => {
+        sent.push(text)
+        return { id: `provider-${sent.length}` }
+      },
+      recordEvent: async () => undefined
+    }
+  })
+
+  assert.equal(result.suppressedByPreventiveMeasure, true)
+  assert.equal(result.sentParts, 1)
+  assert.deepEqual(sent, ['globo uno'])
 })
 
 test('correo sale como una sola respuesta aunque el agente tenga globitos activos', async () => {

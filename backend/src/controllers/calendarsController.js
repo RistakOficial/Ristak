@@ -46,6 +46,7 @@ import {
   dispatchAppointmentAutomationEvent,
   dispatchAppointmentCreatedAutomations
 } from '../services/appointmentAutomationService.js';
+import { INTERNAL_CONTROLLER_CONTEXT } from '../agents/invokeController.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -2056,6 +2057,22 @@ export async function createAppointment(req, res) {
       depositReservationAgentId,
       ...appointmentData
     } = req.body;
+    const carriesTestMetadata = Boolean(
+      appointmentData.isTest || appointmentData.is_test ||
+      appointmentData.testRunId || appointmentData.test_run_id ||
+      appointmentData.testEffectId || appointmentData.test_effect_id ||
+      appointmentData.testExpiresAt || appointmentData.test_expires_at
+    );
+    if (
+      carriesTestMetadata &&
+      req[INTERNAL_CONTROLLER_CONTEXT]?.conversationalAgentTestAppointment !== true
+    ) {
+      return res.status(403).json({
+        success: false,
+        code: 'test_appointment_internal_only',
+        error: 'Las marcas de una cita de prueba sólo pueden crearse desde el tester interno.'
+      });
+    }
     const strictAvailabilityCheck = appointmentData.strictAvailabilityCheck === true
       || appointmentData.source === 'conversational_agent_v2';
     const depositFenceProvided = Boolean(
@@ -2171,28 +2188,44 @@ export async function createAppointment(req, res) {
     if (context.locationId && context.accessToken && (localCalendar?.ghlCalendarId || !localCalendar)) {
       try {
         const localContactId = appointment.contactId || appointmentData.contactId || appointmentData.contact_id;
-        const ghlContactId = await localCalendarService.ensureHighLevelContactForAppointment(
-          new GHLClient(context.accessToken, context.locationId),
-          { ...appointment, contactId: localContactId }
-        );
-        const remote = await calendarService.createAppointment(
-          {
-            ...localAppointmentData,
-            calendarId: localCalendar?.ghlCalendarId || appointmentData.calendarId,
-            contactId: ghlContactId || localContactId || localAppointmentData.contactId || localAppointmentData.contact_id
-          },
-          context.locationId,
-          context.accessToken
-        );
+        const highLevelClient = new GHLClient(context.accessToken, context.locationId);
+        const ghlContactId = appointment.isTest
+          ? await localCalendarService.resolveExistingHighLevelContactForTestAppointment(
+              highLevelClient,
+              { ...appointment, contactId: localContactId }
+            )
+          : await localCalendarService.ensureHighLevelContactForAppointment(
+              highLevelClient,
+              { ...appointment, contactId: localContactId }
+            );
+        const remoteCalendarId = localCalendar?.ghlCalendarId || appointmentData.calendarId;
+        const remoteContactId = ghlContactId || localContactId || localAppointmentData.contactId || localAppointmentData.contact_id;
+        const remotePayload = {
+          ...localAppointmentData,
+          calendarId: remoteCalendarId,
+          contactId: remoteContactId
+        };
+        const remote = appointment.isTest
+          ? await localCalendarService.createConversationalTestHighLevelAppointment({
+              appointment,
+              appointmentData: remotePayload,
+              locationId: context.locationId,
+              remoteCalendarId,
+              contactId: remoteContactId,
+              apiToken: context.accessToken
+            })
+          : await calendarService.createAppointment(remotePayload, context.locationId, context.accessToken);
+        const remoteAppointmentId = remote.appointment?.id || remote.id;
         appointment = await localCalendarService.upsertLocalAppointment(keepLocalContactOnRemoteAppointment(remote, localContactId), {
           id: appointment.id,
           source: appointment.source || 'ristak',
-          ghlAppointmentId: remote.appointment?.id || remote.id,
+          ghlAppointmentId: remoteAppointmentId,
           calendarId: appointment.calendarId,
           locationId: context.locationId,
           syncStatus: 'synced'
         });
       } catch (error) {
+        if (appointment?.isTest) throw error;
         logger.warn(`[Calendars Controller] Cita guardada local, sync GHL pendiente: ${error.message}`);
       }
     }
@@ -2203,14 +2236,26 @@ export async function createAppointment(req, res) {
         appointment = googleResult.appointment;
       }
     } catch (error) {
+      if (appointment?.isTest) throw error;
       logger.warn(`[Calendars Controller] Cita guardada local, sync Google pendiente/error: ${error.message}`);
     }
 
-    await dispatchAppointmentCreatedAutomations(appointment);
+    const automationResult = await dispatchAppointmentCreatedAutomations(appointment);
+    if (appointment?.isTest) {
+      appointment = {
+        ...appointment,
+        testAutomationExecution: automationResult,
+        testAutomationPreview: automationResult
+      };
+    }
 
     const contactId = appointmentData.contactId || appointmentData.contact_id || appointment?.contactId || appointment?.contact_id;
 
-    if (contactId) {
+    // Las citas de prueba recorren calendario, push, webhooks marcados como test
+    // y avisos internos dirigidos al dueño de la prueba. Mensajes externos,
+    // etiquetas y mutaciones no reversibles sólo se simulan y auditan. JAMÁS
+    // cuentan como conversión Meta/CAPI.
+    if (contactId && !appointment?.isTest) {
       const customEvents = localCalendarService.normalizeCalendarCustomEventsConfig(localCalendar?.customEvents || {});
       // Cita creada desde el admin: la superficie se detecta por la última
       // conversación del contacto (WhatsApp/Messenger/IG) o web como fallback.
@@ -2250,7 +2295,11 @@ export async function createAppointment(req, res) {
     await sendCalendarAppointmentNotification(appointment, {
       calendarId: appointment?.calendarId || appointmentData.calendarId || appointmentData.calendar_id,
       calendarName: localCalendar?.name || appointmentData.calendarName || 'Calendario',
-      source: 'admin_calendar'
+      source: 'admin_calendar',
+      isTest: Boolean(appointment?.isTest),
+      testRunId: appointment?.testRunId || null,
+      testEffectId: appointment?.testEffectId || null,
+      testExpiresAt: appointment?.testExpiresAt || null
     }).catch(error => {
       logger.warn(`[Calendars Controller] No se pudo enviar push de cita: ${error.message}`);
     });

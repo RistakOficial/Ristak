@@ -315,6 +315,10 @@ function eventPath(calendarId, eventId = '') {
   return eventId ? `${base}/${encodeURIComponent(eventId)}` : base
 }
 
+function eventWritePath(calendarId, eventId = '') {
+  return `${eventPath(calendarId, eventId)}?sendUpdates=all`
+}
+
 function calendarListPath(pageToken = '') {
   const params = new URLSearchParams({
     maxResults: '250',
@@ -483,6 +487,15 @@ async function getGoogleEvent(eventId, { config = null, calendarId = null } = {}
   const activeConfig = config || await getGoogleCalendarConfig({ includeCredentials: true })
   if (!activeConfig) return null
   return googleRequest(activeConfig, eventPath(calendarId || activeConfig.calendarId, eventId))
+}
+
+export function googleTestEventIdForEffect(testEffectId) {
+  const effectId = cleanString(testEffectId)
+  if (!effectId) throw new Error('La cita de prueba no tiene testEffectId para generar su ID de Google')
+  // Google permite IDs client-side de 5..1024 caracteres usando base32hex
+  // (0-9, a-v). SHA-256 hexadecimal es un subconjunto válido y evita depender
+  // de la respuesta del POST para saber qué evento limpiar.
+  return `ristaktest${crypto.createHash('sha256').update(effectId).digest('hex')}`
 }
 
 function mapGoogleEventStatus(event = {}) {
@@ -860,19 +873,49 @@ export async function syncGoogleEventsForDateRange({ startDate, endDate, timezon
   return syncGoogleEventsToLocal({ startTime: start, endTime: end, calendarId })
 }
 
-function buildGoogleEventPayload(appointment = {}, timezone = 'UTC') {
+function buildGoogleAttendees(participants = []) {
+  const attendees = []
+  const seenEmails = new Set()
+
+  for (const participant of Array.isArray(participants) ? participants : []) {
+    const email = cleanString(participant?.email || participant?.emailSnapshot || participant?.email_snapshot).toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || seenEmails.has(email)) continue
+    seenEmails.add(email)
+
+    const displayName = cleanString(
+      participant?.name || participant?.nameSnapshot || participant?.name_snapshot
+    )
+    attendees.push({
+      email,
+      ...(displayName ? { displayName } : {})
+    })
+  }
+
+  return attendees
+}
+
+export function buildGoogleEventPayload(appointment = {}, timezone = 'UTC') {
   const status = cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
   const title = cleanString(appointment.title) || 'Cita'
+  const isTest = Boolean(appointment.isTest || appointment.is_test)
   const privateProperties = {
     ristakAppointmentId: cleanString(appointment.id),
     ristakCalendarId: cleanString(appointment.calendarId),
-    source: 'ristak'
+    source: isTest ? 'ristak_test' : 'ristak',
+    ...(isTest
+      ? {
+          ristakTestRunId: cleanString(appointment.testRunId || appointment.test_run_id),
+          ristakTestEffectId: cleanString(appointment.testEffectId || appointment.test_effect_id),
+          ristakTestExpiresAt: cleanString(appointment.testExpiresAt || appointment.test_expires_at)
+        }
+      : {})
   }
 
   return {
     summary: title,
     description: cleanString(appointment.notes || appointment.description),
     location: cleanString(appointment.address),
+    attendees: buildGoogleAttendees(appointment.participants),
     start: {
       dateTime: normalizeToUtcIso(appointment.startTime, timezone),
       timeZone: timezone
@@ -920,9 +963,30 @@ async function markGoogleSyncSuccess(appointmentId, eventId) {
 }
 
 async function resolveAppointment(appointmentOrId) {
-  return typeof appointmentOrId === 'string'
-    ? localCalendarService.getLocalAppointment(appointmentOrId)
-    : appointmentOrId
+  if (typeof appointmentOrId === 'string') {
+    return localCalendarService.getLocalAppointment(appointmentOrId)
+  }
+
+  if (!appointmentOrId?.id || Array.isArray(appointmentOrId.participants)) {
+    return appointmentOrId
+  }
+
+  const participants = await localCalendarService.getAppointmentParticipants(appointmentOrId.id)
+  return { ...appointmentOrId, participants }
+}
+
+function isAmbiguousGoogleWriteError(error) {
+  const status = Number(error?.status || 0)
+  return !status || status === 408 || status === 409 || status === 429 || status >= 500
+}
+
+async function findGoogleEventAfterAmbiguousWrite({ config, calendarId, eventId }) {
+  try {
+    return await getGoogleEvent(eventId, { config, calendarId })
+  } catch (error) {
+    if (error.status === 404 || error.status === 410) return null
+    throw error
+  }
 }
 
 export async function syncAppointmentToGoogle(appointmentOrId) {
@@ -961,10 +1025,58 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
     const payload = buildGoogleEventPayload(appointment, timezone)
     let eventId = appointment.googleEventId
     let remote
+    let testReceipt = null
 
-    if (eventId) {
+    if (appointment.isTest) {
+      eventId = googleTestEventIdForEffect(appointment.testEffectId)
+      testReceipt = await localCalendarService.prepareConversationalTestAppointmentProviderCommand({
+        appointmentId: appointment.id,
+        testEffectId: appointment.testEffectId,
+        testRunId: appointment.testRunId,
+        provider: 'google',
+        externalId: eventId,
+        commandKey: `google:${appointment.testEffectId}:${targetGoogleCalendarId}`,
+        idempotencyMarker: eventId,
+        commandPayload: {
+          providerCalendarId: targetGoogleCalendarId,
+          localCalendarId: appointment.calendarId,
+          eventId,
+          startTime: appointment.startTime,
+          endTime: appointment.endTime,
+          contactId: appointment.contactId
+        },
+        calendarId: appointment.calendarId,
+        cleanupDueAt: appointment.testExpiresAt
+      })
+
+      // Todo reintento comienza reconciliando el ID determinista. Aunque el
+      // proceso anterior muriera tras POST, GET recupera el evento sin duplicarlo.
       try {
-        remote = await googleRequest(config, eventPath(targetGoogleCalendarId, eventId), {
+        remote = await findGoogleEventAfterAmbiguousWrite({
+          config,
+          calendarId: targetGoogleCalendarId,
+          eventId
+        })
+        await localCalendarService.markConversationalTestAppointmentProviderRemoteStatus({
+          receiptId: testReceipt.id,
+          externalId: eventId,
+          remoteStatus: remote ? 'created' : 'absent',
+          reconciled: true
+        })
+      } catch (reconcileError) {
+        await localCalendarService.markConversationalTestAppointmentProviderRemoteStatus({
+          receiptId: testReceipt.id,
+          remoteStatus: 'remote_outcome_unknown',
+          remoteError: reconcileError.message,
+          reconciled: true
+        })
+        throw new Error(`No se pudo reconciliar el evento determinista de Google: ${reconcileError.message}`, { cause: reconcileError })
+      }
+    }
+
+    if (eventId && !appointment.isTest) {
+      try {
+        remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId), {
           method: 'PATCH',
           body: JSON.stringify(payload)
         })
@@ -974,16 +1086,55 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
       }
     }
 
-    if (!eventId) {
-      remote = await googleRequest(config, eventPath(targetGoogleCalendarId), {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      })
-      eventId = remote?.id
+    if (!remote && (!eventId || appointment.isTest)) {
+      const requestedEventId = appointment.isTest ? eventId : ''
+      try {
+        remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId), {
+          method: 'POST',
+          body: JSON.stringify(requestedEventId ? { id: requestedEventId, ...payload } : payload)
+        })
+        eventId = remote?.id || requestedEventId
+      } catch (writeError) {
+        if (!appointment.isTest || !isAmbiguousGoogleWriteError(writeError)) throw writeError
+        try {
+          remote = await findGoogleEventAfterAmbiguousWrite({
+            config,
+            calendarId: targetGoogleCalendarId,
+            eventId: requestedEventId
+          })
+        } catch (reconcileError) {
+          await localCalendarService.markConversationalTestAppointmentProviderRemoteStatus({
+            receiptId: testReceipt.id,
+            remoteStatus: 'remote_outcome_unknown',
+            remoteError: `${writeError.message} | reconcile: ${reconcileError.message}`,
+            reconciled: true
+          })
+          throw new Error(`Google no confirmó si creó la cita de prueba: ${reconcileError.message}`, { cause: writeError })
+        }
+        if (!remote) {
+          await localCalendarService.markConversationalTestAppointmentProviderRemoteStatus({
+            receiptId: testReceipt.id,
+            remoteStatus: 'absent',
+            remoteError: writeError.message,
+            reconciled: true
+          })
+          throw writeError
+        }
+        eventId = remote.id || requestedEventId
+      }
     }
 
     if (!eventId) {
       throw new Error('Google Calendar no devolvio ID de evento')
+    }
+
+    if (appointment.isTest) {
+      await localCalendarService.markConversationalTestAppointmentProviderRemoteStatus({
+        receiptId: testReceipt.id,
+        externalId: eventId,
+        remoteStatus: 'created',
+        reconciled: true
+      })
     }
 
     const updated = await markGoogleSyncSuccess(appointment.id, eventId)
@@ -1138,12 +1289,14 @@ export async function deleteGoogleEventForAppointment(appointmentOrId) {
 
   try {
     const localCalendar = await localCalendarService.getLocalCalendar(appointment.calendarId)
-    const targetGoogleCalendarId = googleCalendarIdFromLocalCalendar(localCalendar) || cleanString(config.calendarId)
+    const targetGoogleCalendarId = cleanString(appointment.googleProviderCalendarId)
+      || googleCalendarIdFromLocalCalendar(localCalendar)
+      || cleanString(config.calendarId)
     if (!targetGoogleCalendarId) {
       return { enabled: false, deleted: false, reason: 'calendar_not_linked' }
     }
 
-    await googleRequest(config, eventPath(targetGoogleCalendarId, appointment.googleEventId), {
+    await googleRequest(config, eventWritePath(targetGoogleCalendarId, appointment.googleEventId), {
       method: 'DELETE'
     })
   } catch (error) {

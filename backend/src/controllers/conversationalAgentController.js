@@ -25,13 +25,16 @@ import {
 } from '../services/conversationalAIProviderService.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
 import {
+  buildConversationalAgentTestRuntimeEventContext,
   cleanupConversationalAgentTestRun,
   listConversationalAgentTestEffects,
+  listRecentConversationalAgentTestRuns,
   normalizeConversationalAgentTestEffects,
   prepareConversationalAgentTestRun,
   recordConversationalAgentPreviewEffects
 } from '../services/conversationalAgentTestService.js'
 import { hasUserAccess } from '../utils/userAccess.js'
+import { resolveConversationalAgentPreventiveMeasuresForContact } from '../services/conversationalAgentSafetyService.js'
 
 function assertConversationalTesterAccess(user, effects) {
   if (!effects?.enabled) return
@@ -39,6 +42,12 @@ function assertConversationalTesterAccess(user, effects) {
     const error = new Error('Necesitas acceso a Contactos para usar un contacto real en esta prueba.')
     error.statusCode = 403
     error.code = 'test_contacts_access_required'
+    throw error
+  }
+  if (effects.assignUser && !hasUserAccess(user, 'contacts', 'write')) {
+    const error = new Error('Necesitas permiso para editar Contactos antes de probar una asignación temporal.')
+    error.statusCode = 403
+    error.code = 'test_contacts_write_required'
     throw error
   }
   if (effects.scheduleAppointment && !hasUserAccess(user, 'appointments', 'write')) {
@@ -270,6 +279,19 @@ export async function updateState(req, res) {
       }
     }
 
+    // Reactivar/reanudar es la salida humana visible de una cuarentena
+    // preventiva. Se resuelve primero: si la auditoría falla, no dejamos la UI
+    // diciendo "activo" mientras el runtime todavía mantiene el hilo mudo.
+    if (action === 'activate' || action === 'resume') {
+      await resolveConversationalAgentPreventiveMeasuresForContact({
+        contactId,
+        resolvedBy: String(req.user?.userId || 'authenticated_user'),
+        reason: action === 'activate'
+          ? 'El usuario reactivó manualmente el agente para este contacto.'
+          : 'El usuario reanudó manualmente la conversación.'
+      })
+    }
+
     let state = await setConversationStatus(contactId, mapped.status, {
       updatedBy: 'user',
       clearSignal: mapped.clearSignal,
@@ -326,20 +348,40 @@ export async function testAgent(req, res) {
       })
     }
 
+    const runtimeEventContext = runContext
+      ? await buildConversationalAgentTestRuntimeEventContext({ runContext })
+      : ''
     const result = await runConversationalAgentPreview({
       messages: req.body?.messages,
       configOverride,
       agentId: agentId || null,
       previewContact: runContext?.contact || null,
-      executionId: runContext?.executionId || ''
+      executionId: runContext?.executionId || '',
+      runtimeEventContext
     })
     const testEffects = runContext
       ? await recordConversationalAgentPreviewEffects({ runContext, actions: result.actions })
       : []
+    const paymentLinks = testEffects
+      .filter((effect) => effect?.type === 'payment' && /^https?:\/\//i.test(effect?.payload?.paymentUrl || ''))
+      .map((effect) => effect.payload.paymentUrl)
+    const uniquePaymentLinks = [...new Set(paymentLinks)]
+    const testPaymentMessages = uniquePaymentLinks.map((url) => `Aquí está el enlace sandbox de esta prueba: ${url}`)
+    const visibleResult = testPaymentMessages.length
+      ? {
+          ...result,
+          reply: [result.reply, ...testPaymentMessages].filter(Boolean).join('\n\n'),
+          replyParts: [...(Array.isArray(result.replyParts) ? result.replyParts : [result.reply].filter(Boolean)), ...testPaymentMessages],
+          replyPartDelaysMs: [
+            ...(Array.isArray(result.replyPartDelaysMs) ? result.replyPartDelaysMs : []),
+            ...testPaymentMessages.map(() => 0)
+          ]
+        }
+      : result
     res.json({
       success: true,
       data: {
-        ...result,
+        ...visibleResult,
         ...(runContext ? { testRunId: runContext.id, testEffects } : {})
       }
     })
@@ -360,6 +402,19 @@ export async function getTestRunEffects(req, res) {
       requestedByUserId: req.user?.userId
     })
     res.json({ success: true, data: effects })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ success: false, code: error.code, error: error.message })
+  }
+}
+
+export async function listAgentTestRuns(req, res) {
+  try {
+    const runs = await listRecentConversationalAgentTestRuns({
+      agentId: req.params?.agentId,
+      requestedByUserId: req.user?.userId,
+      limit: req.query?.limit
+    })
+    res.json({ success: true, data: runs })
   } catch (error) {
     res.status(error.statusCode || 500).json({ success: false, code: error.code, error: error.message })
   }

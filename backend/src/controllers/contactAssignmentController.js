@@ -68,7 +68,10 @@ export const setContactAssignment = async (req, res) => {
     }
 
     await db.run(
-      'UPDATE contacts SET assigned_user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      `UPDATE contacts
+       SET assigned_user_id = ?, assignment_test_effect_id = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
       [userId || null, contactId]
     )
     res.json({ success: true, assignedUserId: userId || null })

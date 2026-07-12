@@ -935,7 +935,19 @@ async function clearAllData() {
     // huérfano apuntando a una instalación que ya perdió su metadata.
 
     try {
-      await db.run("DELETE FROM appointments WHERE COALESCE(source, 'ghl') = 'ghl' AND COALESCE(ghl_appointment_id, '') != ''");
+      await db.transaction(async () => {
+        // Defensa explícita además del ON DELETE CASCADE: instalaciones SQLite
+        // antiguas pudieron abrirse alguna vez con foreign_keys apagado.
+        await db.run(`
+          DELETE FROM appointment_participants
+          WHERE appointment_id IN (
+            SELECT id FROM appointments
+            WHERE COALESCE(source, 'ghl') = 'ghl'
+              AND COALESCE(ghl_appointment_id, '') != ''
+          )
+        `);
+        await db.run("DELETE FROM appointments WHERE COALESCE(source, 'ghl') = 'ghl' AND COALESCE(ghl_appointment_id, '') != ''");
+      });
       await db.run(`
         UPDATE appointments
         SET location_id = NULL,

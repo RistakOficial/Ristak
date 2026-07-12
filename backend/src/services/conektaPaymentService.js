@@ -12,7 +12,7 @@ import { dispatchProductPostWebhooksForPaymentInBackground } from './productPost
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
-import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   assertExactPaymentPlanTotal,
@@ -1980,7 +1980,8 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
   if (linkedContactId && !updated?.contact_id) {
     updated = await findPaymentById(row.id)
   }
-  if (updated?.id && statusChanged) {
+  const suppressProductionEffects = shouldSuppressProductionPaymentEffects(updated)
+  if (updated?.id && statusChanged && !suppressProductionEffects) {
     dispatchProductPostWebhooksForPaymentInBackground(updated.id, {
       status: nextStatus,
       previousStatus: row.status || ''
@@ -1989,7 +1990,7 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
       logger.warn(`No se pudo enviar push de pago Conekta ${updated.id}: ${error.message}`)
     })
   }
-  if (updated?.contact_id && nextStatus === 'paid') {
+  if (updated?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
     updateSingleContactStats(updated.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Conekta ${updated.id}: ${error.message}`)
     })
@@ -2079,13 +2080,17 @@ export async function createConektaPaymentLink(input = {}, { baseUrl, mode = '' 
     ...(conektaInstallments ? { conektaInstallments } : {}),
     ...(tax ? { tax } : {})
   }
+  const conversationalTestEffectId = cleanString(input.source) === 'conversational_agent_test'
+    ? cleanString(metadata?.conversationalAgentTest?.testEffectId) || null
+    : null
 
   await db.run(
     `INSERT INTO payments (
       id, contact_id, amount, currency, status, payment_method, payment_mode,
       payment_provider, reference, title, description, date, due_date, sent_at,
-      public_payment_id, payment_url, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      public_payment_id, payment_url, payment_link_request_key, conversational_test_effect_id,
+      metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       id,
       contactId,
@@ -2103,6 +2108,8 @@ export async function createConektaPaymentLink(input = {}, { baseUrl, mode = '' 
       now,
       publicPaymentId,
       paymentUrl,
+      cleanString(input.paymentLinkRequestKey, 180) || null,
+      conversationalTestEffectId,
       JSON.stringify(metadata)
     ]
   )
@@ -2359,7 +2366,7 @@ export async function createPublicConektaSubscription(publicPaymentId, input = {
     status: conektaSubscription.status || 'active',
     payment_provider: 'conekta'
   }, { previousStatus: subscription.status })
-  if (refreshed?.contact_id) {
+  if (refreshed?.contact_id && !shouldSuppressProductionPaymentEffects(refreshed)) {
     triggerMetaPaymentPurchaseEvent(refreshed.contact_id, { ...refreshed, status: 'paid' })
       .catch((error) => {
         logger.warn(`No se pudo enviar Purchase a Meta para inicio de suscripción Conekta ${refreshed.id}: ${error.message}`)

@@ -180,6 +180,7 @@ test('activar una conversación con agentId asigna ese agente al estado', async 
   let agentId = ''
 
   try {
+    await seedContact(contactId)
     await seedReadyBusinessProfile()
     const agent = await createConversationalAgent({
       defaultCalendarId: 'cal_state_test',
@@ -213,6 +214,7 @@ test('la asignación automática marca la conversación como activada por el age
   let agentId = ''
 
   try {
+    await seedContact(contactId)
     const agent = await createConversationalAgent({
       defaultCalendarId: 'cal_state_test',
       name: 'Agente automático test',
@@ -241,6 +243,7 @@ test('omitir una conversación conserva el estado en la lista de omitidos', asyn
   const contactId = `conversation_agent_skipped_state_${randomUUID()}`
 
   try {
+    await seedContact(contactId)
     const res = createMockResponse()
     await updateState({
       params: { contactId },
@@ -787,6 +790,7 @@ test('pausar una conversación desde el controller guarda la ventana enviada por
   const pausedUntilAt = new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
 
   try {
+    await seedContact(contactId)
     const res = createMockResponse()
     await updateState({
       params: { contactId },
@@ -817,6 +821,10 @@ test('reinicia las omisiones de contactos de un agente sin tocar otros estados',
   let otherAgentId = ''
 
   try {
+    await seedContact(skippedContactA)
+    await seedContact(skippedContactB)
+    await seedContact(pausedContact)
+    await seedContact(otherAgentContact)
     const agent = await createConversationalAgent({
       defaultCalendarId: 'cal_state_test',
       name: 'Agente omisiones test',
@@ -1123,6 +1131,9 @@ test('los resúmenes de cierre solo salen cuando el agente asignado completa el 
   let agentId = ''
 
   try {
+    await seedContact(assignedContactId)
+    await seedContact(unassignedContactId)
+    await seedContact(humanContactId)
     const agent = await createConversationalAgent({
       defaultCalendarId: 'cal_state_test',
       name: 'Agente resumen test',

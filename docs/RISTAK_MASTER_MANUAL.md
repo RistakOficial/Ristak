@@ -2960,15 +2960,19 @@ La API conserva endpoints separados:
 
 Todos los agentes conversacionales usan un solo runtime nativo de tool calling.
 No existe selector, fallback ni ruta de ejecucion del motor anterior. El editor
-deja plantillas utiles por defecto y separa tres piezas visibles:
+deja plantillas utiles por defecto y separa las piezas que el dueño sí controla:
 
 - Estrategia y capacitacion: conocimiento, objetivo, guion y proceso del negocio.
 - Personalidad: tono, vocabulario, formalidad, humor, emojis y estilo del agente.
   Si queda vacia, la voz general del negocio funciona como respaldo.
-- Zona blindada: manifiesto derivado por el servidor para las capacidades
-  `schedule_appointment`, `collect_payment`, `send_link`, `handoff_human` y
-  `custom_goal`. Se muestra en la interfaz, pero nunca se acepta desde el cliente
-  como fuente de permisos ni se mezcla con el texto editable.
+- Capacidades: agenda, cobro, enlace, traspaso y objetivo propio, cada una con su
+  configuracion operativa.
+
+La zona blindada existe solamente en servidor y no se muestra como un bloque
+editable ni como "Proteccion de Ristak". Se deriva del manifiesto validado de
+`schedule_appointment`, `collect_payment`, `send_link`, `handoff_human` y
+`custom_goal`; nunca se acepta desde el cliente como fuente de permisos ni se
+mezcla con el texto del dueño.
 
 Los dos campos editables aceptan el texto completo sin recortes silenciosos y
 pueden abrirse en un editor enfocado grande sin crear una copia temporal del
@@ -2998,14 +3002,57 @@ asignarse un usuario activo concreto o avisarse al equipo sin asignacion. La
 asignacion generica de `handoff_human` no se hereda silenciosamente cuando
 Agenda dice "sin asignar".
 
-En la capacidad Cobrar, `paymentMode` es la fuente de verdad: pago completo
-apaga cualquier configuracion vieja de anticipo y anticipo la activa. Los montos
-se editan con el simbolo derivado de `account_currency` y respetan los decimales
-de esa moneda. Publicar permanece accionable aun cuando falte configuracion: al
-intentarlo, la interfaz muestra el requisito exacto dentro de Cobrar y junto al
-boton, en vez de dejar un boton deshabilitado sin explicacion. Si el catalogo no
-puede cargarse, el selector tambien informa el error en lugar de aparentar que
-no existen productos.
+En la capacidad Cobrar, `chargeType` distingue producto/precio, cobro directo y
+anticipo. El dueño elige pasarela, meses cuando apliquen, vencimiento, que ocurre
+despues de la confirmacion y si acepta comprobantes. La IA sólo puede crear y
+compartir un enlace hospedado; nunca captura tarjeta en el chat. Una foto de
+comprobante se registra como `pending_review` y no prueba fondos. `paymentMode`
+se conserva como contrato compatible: pago completo apaga residuos de anticipo
+y anticipo los activa. Los montos se editan con el simbolo derivado de
+`account_currency` y respetan los decimales de esa moneda. Publicar permanece
+accionable aun cuando falte configuracion: al intentarlo, la interfaz muestra el
+requisito exacto dentro de Cobrar y junto al boton, en vez de dejar un boton
+deshabilitado sin explicacion. Si el catalogo no puede cargarse, el selector
+tambien informa el error en lugar de aparentar que no existen productos.
+Publicar vuelve a comprobar que la pasarela elegida esté conectada y en modo
+`live`; el runtime repite ese guard justo antes de crear el link y nunca cae a
+otra pasarela. Los meses disponibles se filtran por proveedor, monto y moneda;
+HighLevel no ofrece MSI y maneja una fecha límite de invoice, por lo que su UI
+sólo permite 24 horas o 7 días y no promete una hora exacta. Si un monto perdería
+centavos al persistirse en el `REAL` histórico de `payments`, se rechaza antes de
+llamar al proveedor. El ledger nuevo usa `NUMERIC(20,6)`.
+
+El bloque **Control y datos** agrega tres contratos guardados dentro de
+`capabilities_config` schema 2:
+
+- `safetyPolicy`: medidas preventivas reversibles ante phishing, enlaces
+  maliciosos, fraude, spam persistente, acoso sexual, amenazas, abuso severo o
+  manipulacion del prompt.
+- `testMode`: habilita efectos reales de prueba, siempre aislados y con limpieza
+  fija a los cinco minutos.
+- `dataRequirements`: define exactamente que datos puede solicitar, si son
+  obligatorios, opcionales o condicionales, para que accion aplican, como se
+  actualiza el contacto y que campos se piden a titulares distintos o invitados.
+
+Sin `dataRequirements` activo, el agente usa la identidad del hilo y no insiste
+por nombre, telefono, correo, apellido ni otra ficha. `save_contact_data` sólo se
+expone cuando esa configuracion lo autoriza, aplica una allowlist en servidor,
+valida telefono/correo y nunca usa datos de un invitado para sobrescribir al
+solicitante. Los campos marcados `required` se vuelven una precondicion real de
+servidor antes de cita, cobro o cualquier accion con alcance `any_action`; no
+basta con que el modelo diga que ya los obtuvo. Los opcionales no bloquean y los
+condicionales conservan su condicion explicita para que el modelo los solicite
+cuando corresponda. Un nombre, telefono o correo valido que ya sea distinto no
+se reemplaza por un booleano emitido por la IA: se conserva como dato alternativo
+para revision. Vacios y nombres provisionales sí pueden completarse segun la
+politica configurada. Nombres automaticos de canal como `Usuario de WhatsApp`,
+`WhatsApp User`, sus equivalentes de Instagram/Facebook/Messenger y valores que
+son solamente un telefono se consideran provisionales: no satisfacen
+`full_name` requerido y `replace_placeholders` puede sustituirlos por el nombre
+confirmado. Cuando la cita es para otra persona, `primaryAttendee` es tambien la
+fuente canonica del nombre y relacion usados en titulo/notas, tanto para
+`book_appointment` como para `request_human_booking`; los campos legacy pueden
+venir en `null` sin perder a la persona titular.
 
 El boton `Nuevo agente` crea directamente un borrador con la plantilla y abre
 este mismo editor; ya no existe un wizard paralelo basado en objetivo, intención
@@ -3017,6 +3064,9 @@ valor viejo de `runtime_mode` se normaliza a `tool_calling_v2` y nunca seleccion
 otra implementacion. Una fila sin `capabilities_config` queda sin capacidades;
 `success_action`, `goal_workflow_config` y otros campos anteriores no se
 convierten ni pueden habilitar tools por debajo.
+Escritorio y celular crean el mismo borrador sin capacidades operativas
+preactivadas: el dueño debe elegir calendario, cobro, enlace o traspaso de forma
+explícita, en vez de recibir una tool distinta según la pantalla usada.
 
 Requisitos duros al publicar (`enabled=true`, validados en
 `assertAgentGoalRequirements` de `conversationalAgentService.js` y espejados en
@@ -3092,7 +3142,10 @@ despues de iniciar un envio pero antes de confirmar su resultado, el plan queda
 ese punto. Si entra un mensaje nuevo, el plan viejo queda `interrupted` y sus
 partes pendientes no reviven. `parallelToolCalls=false` impide
 mutaciones paralelas en una misma vuelta del modelo y las acciones conservan
-idempotencia en servidor. Agendar, completar un objetivo o transferir reutiliza
+idempotencia en servidor. Ademas, una medida preventiva toma prioridad antes de
+cualquier tool mutable y cada mutacion vuelve a consultar la cuarentena justo
+antes de tocar estado. Una mutacion live confirmada termina esa vuelta del
+Runner; el modelo no puede encadenar otra tool despues del commit. Agendar, completar un objetivo o transferir reutiliza
 directamente el resumen factual estructurado de la tool: no levanta otra
 instancia de IA para releer el chat. El unico saneamiento textual final redacta
 identificadores internos para que no lleguen al cliente; no decide intención ni
@@ -3119,6 +3172,22 @@ El prompt se arma en servidor con el texto editable, contexto real recuperado
 y la zona blindada al final. El texto del dueño puede cambiar personalidad y
 conocimiento, pero no agregar tools, cambiar calendario/producto/monto/moneda ni
 convertir un resultado pendiente o fallido en exito.
+
+La proteccion preventiva tampoco usa regex ni detectores de palabras. El mismo
+modelo principal puede decidir `apply_safety_measure` sólo con contexto claro,
+confianza alta y severidad alta o critica. La tool crea un caso global por
+contacto+canal, una cuarentena temporal reversible, auditoria y notificacion; no
+borra el contacto ni bloquea cuentas del proveedor. Sólo un resultado durable
+exitoso puede suprimir la respuesta de esa vuelta. Los inbounds recibidos durante
+la cuarentena quedan completados sin respuesta para que no revivan al vencer, y
+el job de sistema reintenta avisos fallidos con claim y lease. La medida es
+reversible: una deteccion automatica nunca borra el contacto ni ejecuta un veto
+permanente que dependa solamente del juicio del modelo.
+El dueño puede dirigir el aviso a los administradores o a un usuario activo
+concreto. La entrega visible comparte el mismo candado distribuido y vuelve a
+leer la cuarentena inmediatamente antes de cada globo: una respuesta partida no
+continúa después de activarse la medida. Reactivar o reanudar manualmente el
+contacto resuelve todos sus casos activos con actor y motivo auditables.
 
 El conocimiento base de la cuenta proviene de `ai_business_profile` y su
 `source_context`; productos, precios, calendarios y slots se consultan en sus
@@ -3161,32 +3230,82 @@ el turno mas reciente antes de enviar contenido viejo.
 
 El tester usa por defecto un contacto virtual estable. `get_contact_profile` lo
 reconoce como la identidad del hilo, sin inventar que falta una ficha, pedir otro
-telefono ni marcarlo como cliente anterior. En **Mas opciones de prueba** el
-usuario puede activar validaciones controladas, elegir un contacto existente y
-habilitar por separado agenda, cobro y notificacion. Elegir contacto nunca crea
-uno nuevo. En ese modo el servidor conserva `dryRun=true` para todas las tools,
-recarga las capacidades guardadas del agente e ignora cualquier calendario,
-producto, precio, monto o moneda enviados como override por el navegador.
+telefono ni marcarlo como cliente anterior. Con **Modo test apagado**, todas las
+tools conservan `dryRun=true`: el telefono muestra decisiones y respuestas, pero
+no crea citas, pagos, asignaciones ni notificaciones.
 
-Las validaciones se guardan de forma aislada en
-`conversational_agent_test_runs` y `conversational_agent_test_effects`, ligadas
-al usuario, agente, contacto, sesion y mensaje. Requieren acceso de lectura a
-Contactos y permiso de escritura en Citas o Pagos segun corresponda; otro
+**Modo test** se guarda en las capacidades del agente. Al activarlo, el usuario
+elige un contacto existente y el servidor vuelve a cargar la configuracion
+persistida; nunca confia en calendario, usuario, producto, precio, pasarela,
+monto o moneda enviados como override por el navegador. La decision del modelo
+sigue ocurriendo primero en `dryRun`; sólo la accion estructurada exacta que tuvo
+exito se convierte despues en un efecto real, aislado y marcado como prueba.
+
+Los efectos se guardan en `conversational_agent_test_runs` y
+`conversational_agent_test_effects`, con ledgers especializados para links
+sandbox y asignaciones temporales. Quedan ligados a usuario, agente, contacto,
+sesion y mensaje. Requieren lectura de Contactos, escritura de Contactos para
+asignar, escritura de Citas para agendar y escritura de Pagos para cobrar. Otro
 usuario no puede leer ni limpiar la corrida. Cada efecto usa hash, llave
-idempotente, claim token y lease: reintentar el mismo mensaje no duplica la
-evidencia ni la notificacion. Al reiniciar, cambiar contacto, apagar el modo o
-cerrar el editor, el frontend pide limpiar la corrida; el servidor la cierra por
-compare-and-swap antes de limpiar para bloquear efectos tardios.
+idempotente, claim token y lease; reintentar el mismo mensaje no duplica la cita,
+el link, la asignacion ni la notificacion. La corrida guarda tambien el hash de
+la revision de capacidades. Si Modo test se apaga o cualquier capacidad cambia
+mientras el modelo responde, el servidor revoca la corrida y vuelve a comprobar
+esa revision antes de cada mutacion; una respuesta vieja no puede crear efectos.
+Un advisory lock de sesion de PostgreSQL, sostenido en una conexion dedicada,
+serializa por agente los cambios de capacidades contra citas, cobros o
+asignaciones externas. No usa una fila con TTL que pueda caducar a mitad de una
+llamada al proveedor: el motor conserva el candado hasta que termina el callback
+y lo libera tambien si muere la conexion. SQLite usa `BEGIN IMMEDIATE` sobre un
+archivo auxiliar por agente durante todo el callback como fallback local
+multiproceso, sin bloquear pruebas de agentes distintos. Si un efecto ya está
+terminando, el guardado responde ocupado y el frontend lo reintenta en vez de
+apagar Modo test a mitad del proveedor; si el guardado gana primero, el efecto
+ve la revision revocada antes de mutar.
 
-La validacion de agenda vuelve a consultar el calendario estricto y registra el
-horario probado, pero no inserta una cita real, no cambia el chat y no cuenta una
-conversion. La validacion de cobro vuelve a cruzar capacidad, catalogo, cantidad,
-monto y `account_currency`, pero no crea pago ni link, no llama al proveedor, no
-envia nada al contacto y nunca simula un pago confirmado. Es una prueba de la
-decision y de la autoridad de datos de Ristak, no una prueba sandbox de la
-pasarela. Si se activa **Notificarme al validar**, la campana/push se dirige solo
-al usuario que inicio la prueba; el estado de envio queda durable y un fallo se
-muestra como pendiente en lugar de afirmar que se notifico.
+- Agenda: vuelve a comprobar el slot dentro del candado real, crea una cita con
+  `is_test=1`, participantes y prefijo visible de prueba, ejecuta sincronizacion
+  de calendario y push reales marcados como test, y suprime Meta/CAPI productivo.
+  El despachador de automatizaciones de prueba manda webhooks reales con headers
+  `X-Ristak-Test-*`, payload `testMode/ristakTest` e idempotencia; las
+  notificaciones y recordatorios llegan como copia interna real al usuario que
+  inició la prueba. Mensajes externos al contacto, tags, campos, asignaciones e
+  inscripciones productivas se simulan y auditan porque no se pueden deshacer de
+  forma confiable. `conversational_appointment_test_automation_receipts` conserva
+  cada resultado y nunca reenvía un webhook ambiguo. A
+  los cinco minutos elimina Google/HighLevel cuando apliquen, recordatorios,
+  confirmaciones, participantes y fila local usando `appointment_id +
+  test_effect_id`; nunca acepta borrar una cita real. La API normal rechaza las
+  marcas `is_test/test_*`: sólo el contexto interno del tester puede llegar al
+  flujo y aun así debe coincidir con run, effect, claim, contacto, calendario,
+  participantes y payload durables. Los IDs creados en Google o HighLevel se
+  guardan inmediatamente en `conversational_appointment_test_provider_receipts`
+  antes del upsert local, con fallback y compensacion remota; la limpieza puede
+  recuperar esos recibos aunque se haya perdido la fila local. En HighLevel,
+  Modo test sólo reutiliza un contacto ya ligado o una coincidencia exacta y
+  única de solo lectura; nunca crea ni vincula una ficha remota para poder probar.
+- Cobro: vuelve a cruzar capacidad, catalogo o monto directo y
+  `account_currency`, fuerza credenciales `test` de Stripe, Conekta, Mercado
+  Pago, CLIP o Rebill y falla cerrado si no existen. Nunca cae a live. El link
+  se muestra en el telefono, el webhook actualiza el efecto a `paid_test` y el
+  frontend lo sondea para reanudar al mismo agente con contexto factual, sin
+  fabricar otro mensaje del cliente. A los cinco minutos expira/invalida el
+  checkout y elimina o sanea únicamente la fila financiera marcada como test.
+  `payments.conversational_test_effect_id` liga el pago directamente al efecto y
+  permite recuperarlo si el proceso cae entre crear el proveedor y cerrar el
+  ledger. Mercado Pago no marca la limpieza como exitosa si no pudo confirmar la
+  expiracion: bloquea el checkout local, conserva los IDs y reintenta.
+  El webhook sandbox queda ligado al contacto ya autorizado por la corrida y no
+  crea, busca ni enriquece otra ficha de contacto.
+- Asignacion: cambia de verdad al usuario configurado, manda notificacion/push
+  `[PRUEBA]`, conserva al responsable anterior y lo restaura a los cinco minutos.
+  La fila del contacto lleva una marca CAS; una reasignacion humana o handoff live
+  la elimina, por lo que la limpieza nunca deshace una decision posterior.
+
+Los jobs de sistema barren efectos vencidos y reintentan limpiezas o avisos. Si
+el usuario reinicia manualmente la practica puede pedir limpieza inmediata; si
+cierra la pantalla, la limpieza durable de cinco minutos sigue siendo la fuente
+de verdad y no depende de que el navegador permanezca abierto.
 
 ### Herramientas y verdad operativa
 
@@ -3217,11 +3336,13 @@ nunca un booleano escrito por el modelo.
   duplicarla. Una cita ajena o de otro calendario nunca se adopta como exito del
   agente. El ID local/GHL se canonicaliza al calendario local activo. Un fallo de
   calendario o disponibilidad cierra en seguro.
-  El contacto de la cita es siempre el contacto canonico del hilo. Si quien
-  asistira es un familiar o tercero, el modelo manda `attendeeName` y
-  `attendeeContext`; Ristak conserva al remitente como contacto y guarda el nombre
-  y contexto del asistente en titulo/notas, sin buscar otra ficha ni insistir con
-  otro telefono. Cuando `bookingOwner=human`, `request_human_booking` comparte la
+  El contacto solicitante de la cita es siempre el contacto canonico del hilo.
+  `appointment_participants` conserva snapshots separados para `requester`,
+  `primary_attendee` y cualquier cantidad acotada de `guest`; nombre es el unico
+  dato base y telefono, correo o relacion sólo se exigen cuando el dueño los
+  activo. Google deduplica invitados por correo y envia updates reales. Un
+  familiar o tercero nunca reemplaza silenciosamente la ficha del solicitante.
+  Cuando `bookingOwner=human`, `request_human_booking` comparte la
   misma revalidacion estricta y el mismo slot UTC, pero sella una solicitud humana
   idempotente en lugar de llamar al controller de creacion. Un retry exacto no
   duplica el aviso y un slot ocupado no cambia estado, asignacion ni notificaciones.
@@ -3237,6 +3358,16 @@ nunca un booleano escrito por el modelo.
   completa. Si el proveedor alcanzo a crear el link pero el proceso cayo antes de
   sellar ese vinculo, el recovery de arranque o webhook reconstruye primero la
   fila `processing` desde el invoice/ledger exactos y despues sella el source event.
+  La pasarela elegida tambien es parte inmutable del request. HighLevel conserva
+  compatibilidad por invoice; Stripe, Conekta, Mercado Pago, CLIP y Rebill usan
+  `createPaymentGateLink` y guardan la misma llave durable desde el INSERT de la
+  fila `payments`. El runtime live exige que la pasarela seleccionada este
+  conectada y en `live`, nunca cae a otra ni entrega un link sandbox. Para estas
+  pasarelas la recuperacion usa `public_payment_id`; la URL visible sale siempre
+  de la fila canonica y no de un valor suelto devuelto por el proveedor. MSI,
+  vencimiento y accion posterior forman parte del hash; una combinacion sin
+  soporte falla cerrada en vez de degradarse en silencio. HighLevel no promete
+  MSI porque su API de invoices no permite fijar ese maximo.
   `request_json` debe conservar su hash original; una mutacion de proposito, monto
   o identidad bloquea el cobro. Los filtros persistidos de contacto e invoice
   permiten reparar el webhook objetivo sin quedar detras de otros pendientes.

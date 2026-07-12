@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 
 import { db } from '../src/config/database.js'
 import {
@@ -69,9 +70,15 @@ test('requireOpenAIApiKey bloquea funciones de IA cuando falta el token', async 
 test('deleteAIAgentToken borra solo el token y conserva el contexto del agente', async () => {
   const previousConfig = await getStoredAIAgentConfigRow()
   const previousBusinessProfile = await getStoredBusinessProfileRow()
-  const userId = 987654
+  const username = `ai_agent_openai_gate_${randomUUID()}`
+  let userId = null
 
   try {
+    await db.run(
+      'INSERT INTO users (username, password_hash, full_name, is_active) VALUES (?, ?, ?, 1)',
+      [username, 'test-hash', 'Usuario prueba OpenAI gate']
+    )
+    userId = Number((await db.get('SELECT id FROM users WHERE username = ?', [username])).id)
     await db.run('DELETE FROM ai_agent_config')
     await db.run('DELETE FROM ai_business_profile WHERE id = 1').catch(() => undefined)
     await db.run('DELETE FROM ai_agent_user_preferences WHERE user_id = ?', [userId]).catch(() => undefined)
@@ -106,8 +113,11 @@ test('deleteAIAgentToken borra solo el token y conserva el contexto del agente',
     assert.equal(row.openai_api_key_encrypted, null)
     assert.equal(row.business_context, 'Clinica dental')
   } finally {
-    await db.run('DELETE FROM ai_agent_user_preferences WHERE user_id = ?', [userId]).catch(() => undefined)
+    if (userId) {
+      await db.run('DELETE FROM ai_agent_user_preferences WHERE user_id = ?', [userId]).catch(() => undefined)
+    }
     await restoreAIAgentConfigRow(previousConfig)
     await restoreBusinessProfileRow(previousBusinessProfile)
+    await db.run('DELETE FROM users WHERE username = ?', [username]).catch(() => undefined)
   }
 })

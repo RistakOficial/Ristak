@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, LockKeyhole, Pause, PauseCircle, Play, Plus, RotateCcw, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, FlaskConical, Image as ImageIcon, KeyRound, Link2, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldAlert, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
 import { Badge, Button, Card, ContactSearchInput, CustomSelect, ExpandableTextareaField, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
 import type { ContactSearchInputContact } from '@/components/common/ContactSearchInput/ContactSearchInput'
 import {
@@ -31,6 +31,7 @@ import {
   buildConversationalLegacyEditableText,
   isConversationalAgentEntryConflictError,
   DEFAULT_AGENT_DEPOSIT_METHODS,
+  DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
   type AgentFilterOptions,
   type AgentFollowUpConfig,
@@ -50,6 +51,9 @@ import {
   type ConversationalCapabilityId,
   type ConversationalCapabilityItem,
   type ConversationalCapabilityManifestItem,
+  type ConversationalRequiredDataConditionFact,
+  type ConversationalRequiredDataField,
+  type ConversationalRequiredDataItem,
   type ConversationalAgentMetrics,
   type ConversationalContactScope,
   type ConversationalAgentTestAttachment,
@@ -57,6 +61,7 @@ import {
   type ConversationalAgentTestEffects,
   type ConversationalAgentTestMessage,
   type ConversationalAgentTestResult,
+  type ConversationalAgentTestRunHistory,
 } from '@/services/conversationalAgentService'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { userAccessService, type TeamUser } from '@/services/userAccessService'
@@ -67,6 +72,7 @@ import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
 import styles from './AIAgentSettings.module.css'
 import { describeConversationalPreviewAction } from './conversationalPreviewAction'
+import { MSI_INSTALLMENT_CHOICES, msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
 
 const AUTOSAVE_DELAY_MS = 900
 const DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE = '/ai-agent/conversational'
@@ -315,10 +321,23 @@ function createTestTrackingId(prefix: 'session' | 'message') {
   return `agent-test-${prefix}-${randomPart}`
 }
 
+const RETRYABLE_TEST_RUN_CODES = new Set([
+  'test_run_closed',
+  'test_run_expired',
+  'test_run_not_found'
+])
+
+export function shouldRotateClosedTestRun(error: unknown) {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code || '').trim()
+    : ''
+  return RETRYABLE_TEST_RUN_CODES.has(code)
+}
+
 function describeTestEffectResult(effect: ConversationalAgentTestEffectResult) {
   const explicitSummary = String(effect.summary || effect.message || '').trim()
   const notificationWarning = effect.notificationStatus === 'pending' && effect.notificationError
-    ? ' La acción sí se validó, pero la notificación quedó pendiente; puedes reintentar desde esta prueba.'
+    ? ' La acción quedó registrada, pero la notificación sigue pendiente; el sistema la reintentará.'
     : ''
   if (explicitSummary) return `${explicitSummary}${notificationWarning}`
   const status = String(effect.status || '').trim().toLowerCase()
@@ -329,6 +348,9 @@ function describeTestEffectResult(effect: ConversationalAgentTestEffectResult) {
     collect_payment: 'cobro de prueba',
     collectPayment: 'cobro de prueba',
     payment: 'cobro de prueba',
+    assignment: 'asignación de prueba',
+    assign_user: 'asignación de prueba',
+    assignUser: 'asignación de prueba',
     notify_owner: 'notificación de prueba',
     notifyOwner: 'notificación de prueba'
   }
@@ -337,6 +359,19 @@ function describeTestEffectResult(effect: ConversationalAgentTestEffectResult) {
   if (status === 'failed') return `No se pudo registrar: ${label}.`
   if (status === 'skipped') return `No se ejecutó: ${label}.`
   return `Prueba: ${label}.`
+}
+
+function getTestEffectHistoryState(effect: ConversationalAgentTestEffectResult) {
+  const status = String(effect.status || '').trim().toLowerCase()
+  const cleanupStatus = String(effect.cleanupStatus || '').trim().toLowerCase()
+  const notificationStatus = String(effect.notificationStatus || '').trim().toLowerCase()
+  if (status === 'failed' || status === 'skipped' || cleanupStatus === 'failed') {
+    return { label: 'Fallido', variant: 'error' as const }
+  }
+  if (status === 'processing' || status === 'pending' || notificationStatus === 'pending') {
+    return { label: 'Pendiente', variant: 'warning' as const }
+  }
+  return { label: 'Exitoso', variant: 'success' as const }
 }
 
 type TestAttachment = ConversationalAgentTestAttachment & PhoneChatPreviewAttachment & {
@@ -350,6 +385,7 @@ type TestMessage = {
   content: string
   attachments?: TestAttachment[]
   internal?: boolean
+  deliveryKey?: string
 }
 
 function createTestMediaCacheKey(id: string) {
@@ -799,6 +835,30 @@ function getCurrencyInputStep(currency: string) {
   return 10 ** -getCurrencyFractionDigits(currency)
 }
 
+function getConversationalPaymentMsiMonths(
+  item: Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>,
+  accountCurrency = ''
+) {
+  const isDeposit = item.chargeType === 'deposit' || item.paymentMode === 'deposit' || item.deposit?.enabled
+  if (isDeposit || item.gateway === 'highlevel') return []
+  const amount = item.chargeType === 'direct'
+    ? Number(item.direct?.amount) || 0
+    : Number(item.amount) || 0
+  const currency = normalizeCurrencyCode(
+    item.chargeType === 'direct' ? item.direct?.currency : (item.currency || accountCurrency)
+  )
+  const eligibility = msiEligibility({
+    gateway: item.gateway,
+    currency,
+    amount,
+    msi: { enabled: true, maxInstallments: 24 }
+  })
+  if (eligibility.standaloneMonths?.length) return eligibility.standaloneMonths
+  return eligibility.insideElement || eligibility.insideBrick || eligibility.hostedRedirect
+    ? [...MSI_INSTALLMENT_CHOICES]
+    : []
+}
+
 function getNativeCapabilityItemError(
   item: ConversationalCapabilityItem,
   allItems: ConversationalCapabilityItem[],
@@ -807,7 +867,9 @@ function getNativeCapabilityItemError(
   if (!item.enabled) return ''
   if (item.id === 'schedule_appointment' && !item.calendarId) return 'Selecciona el calendario de la capacidad para agendar.'
   if (item.id === 'collect_payment') {
-    if (item.paymentMode === 'deposit' || item.deposit?.enabled) {
+    if (!item.gateway) return 'Selecciona la pasarela que generará el enlace.'
+    const isDeposit = item.chargeType === 'deposit' || item.paymentMode === 'deposit' || item.deposit?.enabled
+    if (isDeposit) {
       const deposit = item.deposit || defaultNativeDeposit
       const validFixed = deposit.mode !== 'range' && Number(deposit.amount) > 0
       const validRange = deposit.mode === 'range' && Number(deposit.minAmount) > 0 && Number(deposit.maxAmount) >= Number(deposit.minAmount)
@@ -822,8 +884,23 @@ function getNativeCapabilityItemError(
       }
       if (!deposit.methods?.paymentLink && !deposit.methods?.bankTransfer) return 'Activa un método para cobrar el anticipo.'
       if (deposit.methods?.bankTransfer && !String(deposit.bankTransferDetails || '').trim()) return 'Escribe los datos de transferencia.'
+    } else if (item.chargeType === 'direct') {
+      if (!(Number(item.direct?.amount) > 0)) return 'Escribe un monto mayor a cero para el cobro directo.'
+      if (!String(item.direct?.concept || '').trim()) return 'Escribe el concepto del cobro directo.'
+      const directCurrency = normalizeCurrencyCode(item.direct?.currency)
+      const expectedCurrency = normalizeCurrencyCode(accountCurrency)
+      if (expectedCurrency && directCurrency !== expectedCurrency) return `El cobro directo debe usar ${expectedCurrency}.`
     } else if (!item.productId || !item.priceId) {
       return 'Selecciona el producto y precio reales de la capacidad para cobrar.'
+    }
+    if (isDeposit && item.installments?.enabled) return 'Los meses sin intereses no aplican a anticipos.'
+    if (item.gateway === 'highlevel' && item.installments?.enabled) return 'HighLevel no permite fijar meses sin intereses en invoices.'
+    if (item.gateway === 'highlevel' && Number(item.expirationMinutes) < 1440) return 'HighLevel requiere una fecha límite de al menos 24 horas.'
+    if (item.installments?.enabled) {
+      const availableMonths = getConversationalPaymentMsiMonths(item, accountCurrency)
+      if (!availableMonths.includes(Number(item.installments.maxInstallments))) {
+        return 'El monto, la moneda o la pasarela no permiten el máximo de meses configurado.'
+      }
     }
   }
   if (item.id === 'send_link') {
@@ -1078,8 +1155,20 @@ function buildNativeCapabilityFromAgent(
       productId: '',
       priceId: '',
       paymentMode: 'full_payment',
+      chargeType: 'product',
       amount: null,
       currency: accountCurrency,
+      gateway: 'stripe',
+      direct: {
+        amount: null,
+        currency: accountCurrency,
+        concept: '',
+        description: ''
+      },
+      installments: { enabled: false, maxInstallments: 0 },
+      expirationMinutes: 60,
+      afterPayment: 'continue',
+      receiptProof: { enabled: true, disposition: 'pending_review' },
       deposit: {
         ...defaultNativeDeposit,
         currency: accountCurrency,
@@ -1141,7 +1230,8 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   onFlushSave
 }) => {
   const { showToast } = useNotification()
-  const capabilities = agent.capabilitiesConfig || { schemaVersion: 1, items: [] }
+  const capabilities = agent.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
+  const [paymentSettingsOpen, setPaymentSettingsOpen] = useState(false)
   const promptConfig = agent.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG
   const strategyText = promptConfig.strategyText ?? promptConfig.editableText ?? ''
   const personalityText = promptConfig.personalityText ?? ''
@@ -1169,11 +1259,21 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       ? capabilities.items.map((item) => (item.id === next.id ? next : item))
       : [...capabilities.items, next]
     onChange({
-      capabilitiesConfig: { schemaVersion: 1, items },
+      capabilitiesConfig: { ...capabilities, schemaVersion: 2, items },
       ...(pause && agent.enabled ? { enabled: false } : {})
     })
     if (pause && agent.enabled) {
       showToast('info', 'Agente en pausa', 'Configura y prueba la nueva capacidad antes de volver a publicarlo.')
+    }
+  }
+
+  const updateCapabilitiesConfig = (patch: Partial<ConversationalCapabilitiesConfig>, { pause = true } = {}) => {
+    onChange({
+      capabilitiesConfig: { ...capabilities, ...patch, schemaVersion: 2 },
+      ...(pause && agent.enabled ? { enabled: false } : {})
+    })
+    if (pause && agent.enabled) {
+      showToast('info', 'Agente en pausa', 'Guarda y prueba esta configuración antes de volver a publicarlo.')
     }
   }
 
@@ -1194,6 +1294,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   const currencySymbol = getCurrencyInputSymbol(depositCurrency)
   const currencyStep = getCurrencyInputStep(accountCurrency)
   const currencyFractionDigits = getCurrencyFractionDigits(accountCurrency)
+  const paymentMsiMonths = paymentCapability
+    ? getConversationalPaymentMsiMonths(paymentCapability, accountCurrency)
+    : []
   const moneyPrefixStyle = {
     '--money-prefix-space': `${Math.max(30, 20 + Array.from(currencySymbol).length * 8)}px`
   } as React.CSSProperties
@@ -1270,21 +1373,51 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       id: 'collect_payment',
       item: paymentCapability,
       settings: paymentCapability?.enabled ? (
-        <div className={styles.nativeCapabilitySettings}>
+        <>
+          <div className={styles.nativeCapabilitySettings}>
+            <p className={styles.helper}>
+              {paymentCapability.chargeType === 'direct'
+                ? `${paymentCapability.direct.concept || 'Cobro directo'} · ${paymentCapability.direct.amount ? formatCurrency(paymentCapability.direct.amount, paymentCapability.direct.currency || accountCurrency) : 'falta monto'}`
+                : (paymentCapability.chargeType === 'deposit'
+                    ? 'Anticipo configurado'
+                    : (selectedProduct?.name || 'Falta elegir producto'))}
+              {' · '}{paymentCapability.gateway === 'highlevel' ? 'HighLevel' : paymentCapability.gateway}
+            </p>
+            <Button variant="secondary" onClick={() => setPaymentSettingsOpen(true)} leftIcon={<CreditCard size={16} />}>
+              Configurar cobro
+            </Button>
+          </div>
+          <Modal
+            isOpen={paymentSettingsOpen}
+            onClose={() => {
+              setPaymentSettingsOpen(false)
+              flushPromptSave()
+            }}
+            title="Cómo va a cobrar la IA"
+            subtitle="Sólo crea y comparte enlaces seguros. Nunca pide ni captura datos de tarjeta en el chat."
+            size="lg"
+          >
+          <div className={styles.nativeCapabilitySettings}>
           <label className={styles.label}>Tipo de cobro</label>
           <CustomSelect
-            value={paymentCapability.paymentMode}
-            onChange={(event) => updateCapability({
-              ...paymentCapability,
-              paymentMode: event.target.value === 'deposit' ? 'deposit' : 'full_payment',
-              deposit: { ...paymentCapability.deposit, enabled: event.target.value === 'deposit', currency: accountCurrency }
-            })}
+            value={paymentCapability.chargeType}
+            onChange={(event) => {
+              const chargeType = event.target.value === 'deposit' ? 'deposit' : (event.target.value === 'direct' ? 'direct' : 'product')
+              updateCapability({
+                ...paymentCapability,
+                chargeType,
+                paymentMode: chargeType === 'deposit' ? 'deposit' : 'full_payment',
+                deposit: { ...paymentCapability.deposit, enabled: chargeType === 'deposit', currency: accountCurrency },
+                installments: { enabled: false, maxInstallments: 0 }
+              })
+            }}
             portal
           >
-            <option value="full_payment">Pago completo de un producto</option>
+            <option value="product">Pago único de un producto</option>
+            <option value="direct">Pago único sin producto</option>
             <option value="deposit">Anticipo</option>
           </CustomSelect>
-          {paymentCapability.paymentMode === 'full_payment' ? (
+          {paymentCapability.chargeType === 'product' ? (
             <>
               <div className={styles.nativeInlineFields}>
                 <div className={styles.field}>
@@ -1296,7 +1429,8 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                     productId: event.target.value,
                     priceId: '',
                     amount: null,
-                    currency: accountCurrency
+                    currency: accountCurrency,
+                    installments: { enabled: false, maxInstallments: 0 }
                   })}
                   disabled={productsLoading}
                   portal
@@ -1315,7 +1449,8 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                       ...paymentCapability,
                       priceId: getPriceId(price),
                       amount: price ? getPriceAmount(price) : null,
-                      currency: normalizeCurrencyCode(price?.currency || selectedProduct?.currency || accountCurrency)
+                      currency: normalizeCurrencyCode(price?.currency || selectedProduct?.currency || accountCurrency),
+                      installments: { enabled: false, maxInstallments: 0 }
                     })
                   }}
                   disabled={!selectedProduct}
@@ -1338,6 +1473,47 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
               ) : (!productsLoading && products.length === 0 ? (
                 <p className={styles.helper}>No hay productos con precios disponibles. Crea uno en Pagos o cambia el tipo de cobro a Anticipo.</p>
               ) : null)}
+            </>
+          ) : paymentCapability.chargeType === 'direct' ? (
+            <>
+              <label className={styles.label}>Concepto del cobro</label>
+              <input
+                className={styles.input}
+                value={paymentCapability.direct.concept}
+                placeholder="Ejemplo: Consulta inicial"
+                onChange={(event) => updateCapability({
+                  ...paymentCapability,
+                  direct: { ...paymentCapability.direct, concept: event.target.value, currency: accountCurrency }
+                })}
+              />
+              <label className={styles.label}>Monto ({accountCurrency})</label>
+              <div className={styles.moneyInputWrap} style={moneyPrefixStyle}>
+                <span className={styles.moneyPrefix} title={accountCurrency} aria-hidden="true">{getCurrencyInputSymbol(accountCurrency)}</span>
+                <NumberInput
+                  className={styles.moneyInput}
+                  value={paymentCapability.direct.amount || ''}
+                  min={0}
+                  step={currencyStep}
+                  maxFractionDigits={currencyFractionDigits}
+                  aria-label={`Monto del cobro en ${accountCurrency}`}
+                  onValueChange={(amount) => updateCapability({
+                    ...paymentCapability,
+                    direct: { ...paymentCapability.direct, amount, currency: accountCurrency },
+                    installments: { enabled: false, maxInstallments: 0 }
+                  })}
+                />
+              </div>
+              <label className={styles.label}>Descripción (opcional)</label>
+              <textarea
+                className={styles.textarea}
+                value={paymentCapability.direct.description}
+                rows={2}
+                placeholder="Qué incluye o por qué se cobra"
+                onChange={(event) => updateCapability({
+                  ...paymentCapability,
+                  direct: { ...paymentCapability.direct, description: event.target.value }
+                })}
+              />
             </>
           ) : (
             <>
@@ -1464,7 +1640,113 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
               <p className={styles.helper}>Una foto de comprobante queda pendiente de revisión; jamás se toma como dinero confirmado por sí sola.</p>
             </>
           )}
-        </div>
+          <label className={styles.label}>Pasarela para crear el enlace</label>
+          <CustomSelect
+            value={paymentCapability.gateway}
+            onChange={(event) => {
+              const gateway = event.target.value as typeof paymentCapability.gateway
+              updateCapability({
+                ...paymentCapability,
+                gateway,
+                installments: { enabled: false, maxInstallments: 0 },
+                ...(gateway === 'highlevel'
+                  ? {
+                      expirationMinutes: Math.max(1440, Number(paymentCapability.expirationMinutes) || 1440)
+                    }
+                  : {})
+              })
+            }}
+            portal
+          >
+            <option value="stripe">Stripe</option>
+            <option value="conekta">Conekta</option>
+            <option value="mercadopago">Mercado Pago</option>
+            <option value="clip">CLIP</option>
+            <option value="rebill">Rebill</option>
+            <option value="highlevel">HighLevel (compatibilidad)</option>
+          </CustomSelect>
+          {paymentCapability.gateway === 'highlevel' && (
+            <p className={styles.helper}>HighLevel conserva el modo global y no puede hacer override sandbox. Para probar un pago desde el tester elige Stripe, Conekta, Mercado Pago, CLIP o Rebill con credenciales de prueba.</p>
+          )}
+          {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && paymentMsiMonths.length > 0 && (
+            <div className={styles.nativePaymentMethods}>
+              <label>
+                <Switch
+                  checked={paymentCapability.installments.enabled}
+                  onChange={(enabled) => updateCapability({
+                    ...paymentCapability,
+                    installments: { enabled, maxInstallments: enabled ? (paymentCapability.installments.maxInstallments || 3) : 0 }
+                  })}
+                  aria-label="Ofrecer meses sin intereses"
+                />
+                Ofrecer meses sin intereses
+              </label>
+              {paymentCapability.installments.enabled && (
+                <CustomSelect
+                  value={String(paymentCapability.installments.maxInstallments || 3)}
+                  onChange={(event) => updateCapability({
+                    ...paymentCapability,
+                    installments: { enabled: true, maxInstallments: Number(event.target.value) }
+                  })}
+                  portal
+                  aria-label="Máximo de meses sin intereses"
+                >
+                  {paymentMsiMonths.map((months) => <option key={months} value={months}>Hasta {months} meses</option>)}
+                </CustomSelect>
+              )}
+            </div>
+          )}
+          {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && paymentMsiMonths.length === 0 && (
+            <p className={styles.helper}>Esta combinación de pasarela, monto y moneda no permite meses sin intereses.</p>
+          )}
+          <div className={styles.nativeInlineFields}>
+            <div className={styles.field}>
+              <label className={styles.label}>{paymentCapability.gateway === 'highlevel' ? 'Fecha límite de la invoice' : 'El enlace vence en'}</label>
+              <CustomSelect
+                value={String(paymentCapability.expirationMinutes)}
+                onChange={(event) => updateCapability({ ...paymentCapability, expirationMinutes: Number(event.target.value) })}
+                portal
+              >
+                {paymentCapability.gateway !== 'highlevel' && <option value="30">30 minutos</option>}
+                {paymentCapability.gateway !== 'highlevel' && <option value="60">1 hora</option>}
+                {paymentCapability.gateway !== 'highlevel' && <option value="360">6 horas</option>}
+                <option value="1440">24 horas</option>
+                <option value="10080">7 días</option>
+              </CustomSelect>
+              {paymentCapability.gateway === 'highlevel' && <p className={styles.helper}>HighLevel guarda una fecha límite, no una hora exacta.</p>}
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Después del pago confirmado</label>
+              <CustomSelect
+                value={paymentCapability.afterPayment}
+                onChange={(event) => updateCapability({ ...paymentCapability, afterPayment: event.target.value === 'handoff' ? 'handoff' : 'continue' })}
+                portal
+              >
+                <option value="continue">Continuar con el objetivo</option>
+                <option value="handoff">Pasar al equipo</option>
+              </CustomSelect>
+            </div>
+          </div>
+          <div className={styles.nativePaymentMethods}>
+            <label>
+              <Switch
+                checked={paymentCapability.receiptProof.enabled}
+                onChange={(enabled) => updateCapability({
+                  ...paymentCapability,
+                  receiptProof: { enabled, disposition: 'pending_review' }
+                })}
+                aria-label="Aceptar comprobantes de pago"
+              />
+              Aceptar foto de comprobante
+            </label>
+          </div>
+          <p className={styles.helper}>Los comprobantes siempre quedan pendientes de revisión. La IA jamás captura tarjeta ni da por pagado algo sólo por ver una imagen.</p>
+            <div className={styles.agentTestOptionsActions}>
+              <Button variant="primary" onClick={() => setPaymentSettingsOpen(false)}>Guardar configuración</Button>
+            </div>
+          </div>
+          </Modal>
+        </>
       ) : null
     },
     {
@@ -1580,6 +1862,52 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       }
     })
 
+  const safetyPolicy = capabilities.safetyPolicy || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.safetyPolicy
+  const testMode = capabilities.testMode || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.testMode
+  const dataRequirements = capabilities.dataRequirements || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.dataRequirements
+  const requiredDataOptions: Array<{ field: ConversationalRequiredDataField; label: string }> = [
+    { field: 'first_name', label: 'Nombre' },
+    { field: 'full_name', label: 'Nombre completo' },
+    { field: 'phone', label: 'Teléfono principal' },
+    { field: 'alternate_phone', label: 'Otro teléfono' },
+    { field: 'email', label: 'Correo' },
+    { field: 'company', label: 'Empresa' },
+    { field: 'address', label: 'Dirección' },
+    { field: 'custom', label: 'Dato personalizado' }
+  ]
+  const requiredDataConditionOptions: Array<{
+    fact: ConversationalRequiredDataConditionFact
+    scope: ConversationalRequiredDataItem['scope']
+    label: string
+  }> = [
+    { fact: 'appointment.primary_attendee_is_different', scope: 'appointment', label: 'Cuando la cita sea para otra persona' },
+    { fact: 'appointment.has_guests', scope: 'appointment', label: 'Cuando la cita incluya invitados' },
+    { fact: 'payment.is_deposit', scope: 'payment', label: 'Cuando el cobro sea un anticipo' },
+    { fact: 'payment.is_full_payment', scope: 'payment', label: 'Cuando el cobro sea pago completo' }
+  ]
+  const updateRequiredDataItem = (field: ConversationalRequiredDataField, patch: Partial<ConversationalRequiredDataItem> | null) => {
+    const existing = dataRequirements.fields.find((item) => item.field === field)
+    const fields = patch === null
+      ? dataRequirements.fields.filter((item) => item.field !== field)
+      : [
+          ...dataRequirements.fields.filter((item) => item.field !== field),
+          {
+            field,
+            level: existing?.level || 'required',
+            scope: existing?.scope || 'any_action',
+            ...existing,
+            ...patch
+          } as ConversationalRequiredDataItem
+        ]
+    updateCapabilitiesConfig({
+      dataRequirements: {
+        ...dataRequirements,
+        enabled: fields.length > 0 || dataRequirements.participants.enabled,
+        fields
+      }
+    })
+  }
+
   return (
     <>
       <div className={styles.nativeRuntimeHeader}>
@@ -1618,7 +1946,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
             onExpandedClose={flushPromptSave}
           />
         </div>
-        <p className={styles.helper}>Ristak guarda ambos textos completos. Aunque borres los dos, las herramientas, validaciones y datos reales siguen protegidos.</p>
+        <p className={styles.helper}>Ambos textos se guardan completos. Aunque borres los dos, las capacidades activadas conservan sus validaciones internas.</p>
       </div>
 
       <div className={styles.agentSection}>
@@ -1661,32 +1989,340 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
         </div>
       </div>
 
-      <div className={`${styles.agentSection} ${styles.nativeLockedZone}`}>
-        <div className={styles.nativeLockedTitle}>
-          <LockKeyhole size={18} />
-          <div>
-            <h3 className={styles.sectionTitle}>Protección de Ristak</h3>
-            <p className={styles.agentSectionHint}>Zona blindada · visible, pero no editable.</p>
-          </div>
-        </div>
-        <div className={styles.nativeManifestList}>
-          {enabledManifest.length ? enabledManifest.map((item) => (
-            <div key={item.id} className={styles.nativeManifestItem}>
-              <CheckCircle2 size={16} />
+      <div className={styles.agentSection}>
+        <h3 className={styles.sectionTitle}>3. Control y datos</h3>
+        <p className={styles.agentSectionHint}>Define qué pasa con conversaciones riesgosas, cómo pruebas acciones reales y qué datos sí debe solicitar.</p>
+        <div className={styles.nativeCapabilityList}>
+          <div className={styles.nativeCapabilityRow} data-enabled={safetyPolicy.enabled ? 'true' : undefined}>
+            <div className={styles.nativeCapabilityHeading}>
+              <span className={styles.nativeCapabilityIcon}><ShieldAlert size={18} /></span>
               <div>
-                <strong>{item.label}</strong>
-                <span>{item.summary}</span>
-                {item.missingConfiguration.map((message) => <small key={message}>{message}</small>)}
+                <strong>Medidas preventivas</strong>
+                <span>Detecta riesgo grave por contexto, detiene el chat y deja el caso marcado para revisión.</span>
               </div>
-              <Badge variant={!item.ready ? 'warning' : (agent.enabled ? 'success' : 'info')}>
-                {!item.ready
-                  ? 'Falta configurar'
-                  : (agent.enabled ? 'Validada al publicar' : 'Lista para validar')}
-              </Badge>
+              <Switch
+                checked={safetyPolicy.enabled}
+                onChange={(enabled) => updateCapabilitiesConfig({ safetyPolicy: { ...safetyPolicy, enabled } })}
+                aria-label="Activar medidas preventivas"
+              />
             </div>
-          )) : (
-            <p className={styles.helper}>Activa una capacidad para ver aquí sus protecciones operativas.</p>
-          )}
+            {safetyPolicy.enabled && (
+              <div className={styles.nativeCapabilitySettings}>
+                <label className={styles.label}>Qué hacer cuando el riesgo es claro</label>
+                <CustomSelect
+                  value={safetyPolicy.action}
+                  onChange={(event) => updateCapabilitiesConfig({
+                    safetyPolicy: { ...safetyPolicy, action: event.target.value === 'handoff_and_review' ? 'handoff_and_review' : 'stop_and_review' }
+                  })}
+                  portal
+                >
+                  <option value="stop_and_review">Dejar de responder y marcar para revisión</option>
+                  <option value="handoff_and_review">Pasar al equipo y marcar para revisión</option>
+                </CustomSelect>
+                <label className={styles.label}>Duración de la pausa</label>
+                <CustomSelect
+                  value={String(safetyPolicy.durationMinutes)}
+                  onChange={(event) => updateCapabilitiesConfig({ safetyPolicy: { ...safetyPolicy, durationMinutes: Number(event.target.value) } })}
+                  portal
+                >
+                  <option value="60">1 hora</option>
+                  <option value="360">6 horas</option>
+                  <option value="1440">24 horas</option>
+                  <option value="10080">7 días</option>
+                  <option value="43200">30 días</option>
+                </CustomSelect>
+                <div className={styles.nativePaymentMethods}>
+                  <label>
+                    <Switch
+                      checked={safetyPolicy.notify}
+                      onChange={(notify) => updateCapabilitiesConfig({ safetyPolicy: { ...safetyPolicy, notify } })}
+                      aria-label="Notificar una medida preventiva"
+                    />
+                    Avisar al equipo
+                  </label>
+                </div>
+                {safetyPolicy.notify && (
+                  <>
+                    <label className={styles.label}>Quién recibe el aviso</label>
+                    <CustomSelect
+                      value={safetyPolicy.notifyUserId}
+                      onChange={(event) => {
+                        const user = teamUsers.find((item) => String(item.id) === event.target.value) || null
+                        updateCapabilitiesConfig({
+                          safetyPolicy: {
+                            ...safetyPolicy,
+                            notifyUserId: user ? String(user.id) : '',
+                            notifyUserName: getTeamUserDisplayName(user)
+                          }
+                        })
+                      }}
+                      disabled={teamUsersLoading}
+                      portal
+                    >
+                      <option value="">Administradores del negocio</option>
+                      {teamUsers.map((user) => (
+                        <option key={user.id} value={String(user.id)}>{getTeamUserDisplayName(user)}</option>
+                      ))}
+                    </CustomSelect>
+                  </>
+                )}
+                <p className={styles.helper}>No se borra el contacto. La medida es reversible y queda con categoría, motivo, fecha y evidencia para auditoría.</p>
+              </div>
+            )}
+          </div>
+
+          <div className={styles.nativeCapabilityRow} data-enabled={testMode.enabled ? 'true' : undefined}>
+            <div className={styles.nativeCapabilityHeading}>
+              <span className={styles.nativeCapabilityIcon}><FlaskConical size={18} /></span>
+              <div>
+                <strong>Modo test</strong>
+                <span>En el teléfono de prueba ejecuta sólo las acciones activadas, las marca como prueba y las limpia después de 5 minutos.</span>
+              </div>
+              <Switch
+                checked={testMode.enabled}
+                onChange={(enabled) => updateCapabilitiesConfig({ testMode: { ...testMode, enabled, cleanupAfterMinutes: 5 } }, { pause: false })}
+                aria-label="Activar modo test"
+              />
+            </div>
+            {testMode.enabled && (
+              <div className={styles.nativeCapabilitySettings}>
+                <p className={styles.helper}>Citas: se crean en el calendario elegido y luego se eliminan. Pagos: se fuerza sandbox aunque la pasarela esté en vivo. Asignaciones: notifican al usuario y después restauran el responsable anterior.</p>
+                <div className={styles.nativePaymentMethods}>
+                  <label>
+                    <Switch
+                      checked={testMode.notify}
+                      onChange={(notify) => updateCapabilitiesConfig({
+                        testMode: { ...testMode, notify, cleanupAfterMinutes: 5 }
+                      }, { pause: false })}
+                      aria-label="Enviar notificaciones de prueba"
+                    />
+                    Enviar notificaciones y webhooks de prueba
+                  </label>
+                </div>
+                <p className={styles.nativeCapabilityError}><AlertTriangle size={15} />Si una pasarela no tiene credenciales de prueba, el tester se detiene; jamás cae al modo en vivo.</p>
+              </div>
+            )}
+          </div>
+
+          <div className={styles.nativeCapabilityRow} data-enabled={dataRequirements.enabled ? 'true' : undefined}>
+            <div className={styles.nativeCapabilityHeading}>
+              <span className={styles.nativeCapabilityIcon}><UserCheck size={18} /></span>
+              <div>
+                <strong>Datos requeridos</strong>
+                <span>Elige exactamente qué información puede pedir antes de agendar o cobrar.</span>
+              </div>
+              <Switch
+                checked={dataRequirements.enabled}
+                onChange={(enabled) => updateCapabilitiesConfig({ dataRequirements: { ...dataRequirements, enabled } })}
+                aria-label="Activar datos requeridos"
+              />
+            </div>
+            {dataRequirements.enabled && (
+              <div className={styles.nativeCapabilitySettings}>
+                {requiredDataOptions.map((option) => {
+                  const requirement = dataRequirements.fields.find((item) => item.field === option.field)
+                  return (
+                    <div key={option.field} className={styles.nativeInlineFields}>
+                      <div className={styles.nativePaymentMethods}>
+                        <label>
+                          <Switch
+                            checked={Boolean(requirement)}
+                            onChange={(enabled) => updateRequiredDataItem(
+                              option.field,
+                              enabled ? (option.field === 'custom' ? { label: 'Dato personalizado' } : {}) : null
+                            )}
+                            aria-label={`Solicitar ${option.label}`}
+                          />
+                          {option.label}
+                        </label>
+                      </div>
+                      {requirement && (
+                        <>
+                          <CustomSelect
+                            value={requirement.level}
+                            onChange={(event) => {
+                              const level = event.target.value as ConversationalRequiredDataItem['level']
+                              if (level !== 'conditional') {
+                                updateRequiredDataItem(option.field, { level, condition: undefined })
+                                return
+                              }
+                              const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
+                              updateRequiredDataItem(option.field, {
+                                level,
+                                scope: selected.scope,
+                                condition: { fact: selected.fact, operator: 'is_true', value: true }
+                              })
+                            }}
+                            portal
+                            aria-label={`Obligación de ${option.label}`}
+                          >
+                            <option value="required">Obligatorio</option>
+                            <option value="optional">Opcional</option>
+                            <option value="conditional">Condicional</option>
+                          </CustomSelect>
+                          {requirement.level !== 'conditional' && (
+                            <CustomSelect
+                              value={requirement.scope}
+                              onChange={(event) => updateRequiredDataItem(option.field, { scope: event.target.value as ConversationalRequiredDataItem['scope'] })}
+                              portal
+                              aria-label={`Cuándo pedir ${option.label}`}
+                            >
+                              <option value="any_action">Antes de cualquier acción</option>
+                              <option value="appointment">Sólo para citas</option>
+                              <option value="payment">Sólo para cobros</option>
+                            </CustomSelect>
+                          )}
+                          {option.field === 'custom' && (
+                            <input
+                              className={styles.input}
+                              value={requirement.label || ''}
+                              placeholder="Ejemplo: Número de expediente"
+                              aria-label="Nombre del dato personalizado"
+                              onChange={(event) => updateRequiredDataItem('custom', { label: event.target.value })}
+                            />
+                          )}
+                          {requirement.level === 'conditional' && (
+                            <CustomSelect
+                              value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
+                              aria-label={`Condición para ${option.label}`}
+                              onChange={(event) => {
+                                const fact = event.target.value as ConversationalRequiredDataConditionFact
+                                const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
+                                updateRequiredDataItem(option.field, {
+                                  scope: selected.scope,
+                                  condition: { fact: selected.fact, operator: 'is_true', value: true }
+                                })
+                              }}
+                              portal
+                            >
+                              {requiredDataConditionOptions.map((item) => (
+                                <option key={item.fact} value={item.fact}>{item.label}</option>
+                              ))}
+                            </CustomSelect>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
+                <div className={styles.nativePaymentMethods}>
+                  <label>
+                    <Switch
+                      checked={dataRequirements.updateContact.enabled}
+                      onChange={(enabled) => updateCapabilitiesConfig({
+                        dataRequirements: { ...dataRequirements, updateContact: { ...dataRequirements.updateContact, enabled } }
+                      })}
+                      aria-label="Actualizar el contacto con datos confirmados"
+                    />
+                    Actualizar la ficha con datos confirmados
+                  </label>
+                </div>
+                {dataRequirements.updateContact.enabled && (
+                  <CustomSelect
+                    value={dataRequirements.updateContact.policy}
+                    onChange={(event) => updateCapabilitiesConfig({
+                      dataRequirements: {
+                        ...dataRequirements,
+                        updateContact: { ...dataRequirements.updateContact, policy: event.target.value as typeof dataRequirements.updateContact.policy }
+                      }
+                    })}
+                    portal
+                    aria-label="Política para actualizar el contacto"
+                  >
+                    <option value="replace_placeholders">Llenar vacíos y reemplazar nombres provisionales</option>
+                    <option value="fill_missing">Sólo llenar datos vacíos</option>
+                    <option value="confirm_changes">Conservar distintos como alternativos para revisión</option>
+                  </CustomSelect>
+                )}
+                <p className={styles.helper}>Si el dato ya existe y está confirmado en la ficha, la IA lo reutiliza y no vuelve a pedirlo.</p>
+                <div className={styles.nativePaymentMethods}>
+                  <label>
+                    <Switch
+                      checked={dataRequirements.participants.enabled}
+                      onChange={(enabled) => updateCapabilitiesConfig({
+                        dataRequirements: {
+                          ...dataRequirements,
+                          enabled: enabled || dataRequirements.fields.length > 0,
+                          participants: { ...dataRequirements.participants, enabled }
+                        }
+                      })}
+                      aria-label="Pedir datos de invitados"
+                    />
+                    Configurar datos del titular distinto e invitados
+                  </label>
+                </div>
+                {dataRequirements.participants.enabled && (
+                  <>
+                    <div className={styles.nativePaymentMethods}>
+                      <label>
+                        <Switch
+                          checked={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester}
+                          onChange={(enabled) => updateCapabilitiesConfig({
+                            dataRequirements: {
+                              ...dataRequirements,
+                              participants: {
+                                ...dataRequirements.participants,
+                                allowPrimaryAttendeeDifferentFromRequester: enabled
+                              }
+                            }
+                          })}
+                          aria-label="Permitir que la cita sea para otra persona"
+                        />
+                        Permitir que la cita sea para otra persona
+                      </label>
+                    </div>
+                    <label className={styles.label}>Máximo de invitados por cita</label>
+                    <CustomSelect
+                      value={String(dataRequirements.participants.maxGuests)}
+                      onChange={(event) => updateCapabilitiesConfig({
+                        dataRequirements: {
+                          ...dataRequirements,
+                          participants: {
+                            ...dataRequirements.participants,
+                            maxGuests: Number(event.target.value)
+                          }
+                        }
+                      })}
+                      portal
+                      aria-label="Máximo de invitados por cita"
+                    >
+                      {[1, 2, 3, 5, 10, 20].map((value) => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                    </CustomSelect>
+                    <div className={styles.nativePaymentMethods}>
+                      {(['name', 'phone', 'email', 'relation'] as const).map((field) => (
+                        <label key={field}>
+                          <Switch
+                            checked={dataRequirements.participants.guestFields.includes(field)}
+                            onChange={(enabled) => updateCapabilitiesConfig({
+                              dataRequirements: {
+                                ...dataRequirements,
+                                participants: {
+                                  ...dataRequirements.participants,
+                                  guestFields: enabled
+                                    ? [...new Set([...dataRequirements.participants.guestFields, field])]
+                                    : dataRequirements.participants.guestFields.filter((item) => item !== field)
+                                }
+                              }
+                            })}
+                            aria-label={`Pedir ${field} del titular distinto e invitado`}
+                          />
+                          {{ name: 'Nombre', phone: 'Teléfono', email: 'Correo', relation: 'Relación' }[field]}
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <p className={styles.helper}>
+                  {dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester
+                    ? 'Los datos marcados aplican igual al titular distinto y a cada invitado.'
+                    : 'El contacto del hilo siempre será también el titular; la IA no puede agendar a nombre de otra persona.'}
+                  {' '}Si no marcas ningún dato, la IA usa sólo lo que ya compartieron y no insiste por teléfono, correo ni apellido.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </>
@@ -1710,11 +2346,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testEmojiPickerOpen, setTestEmojiPickerOpen] = useState(false)
   const [testPracticeExpired, setTestPracticeExpired] = useState(false)
   const [testOptionsOpen, setTestOptionsOpen] = useState(false)
-  const [testEffectsEnabled, setTestEffectsEnabled] = useState(false)
   const [testContact, setTestContact] = useState<ContactSearchInputContact | null>(null)
-  const [testScheduleAppointment, setTestScheduleAppointment] = useState(false)
-  const [testCollectPayment, setTestCollectPayment] = useState(false)
-  const [testNotifyOwner, setTestNotifyOwner] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testVoiceRecording, setTestVoiceRecording] = useState(false)
   const [testVoiceProcessing, setTestVoiceProcessing] = useState(false)
@@ -1724,6 +2356,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testVoiceBars, setTestVoiceBars] = useState(() => createTestVoiceBars())
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([])
   const [teamUsersLoading, setTeamUsersLoading] = useState(false)
+  const [testRunHistory, setTestRunHistory] = useState<ConversationalAgentTestRunHistory[]>([])
+  const [testRunHistoryLoading, setTestRunHistoryLoading] = useState(false)
   const testComposerInputRef = useRef<HTMLInputElement | null>(null)
   const testPhotoInputRef = useRef<HTMLInputElement | null>(null)
   const testFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -1743,24 +2377,82 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const testVoiceDiscardRef = useRef(false)
   const testVoiceAudioRef = useRef<HTMLAudioElement | null>(null)
   const testPracticeExpiredRef = useRef(false)
+  const testingRef = useRef(false)
+  const testMessagesRef = useRef<TestMessage[]>([])
   const testSessionIdRef = useRef(createTestTrackingId('session'))
   const activeTestRunIdRef = useRef<string | null>(null)
+  const handledTestPaymentEventsRef = useRef<Set<string>>(new Set())
+  const announcedTestPaymentEventsRef = useRef<Set<string>>(new Set())
+  const testPaymentResumeMessageIdsRef = useRef<Map<string, string>>(new Map())
+  const testPaymentResumeTranscriptsRef = useRef<Map<string, TestMessage[]>>(new Map())
+  const testPaymentResumeErrorsRef = useRef<Set<string>>(new Set())
+  const testPaymentResumeInFlightRef = useRef(false)
+  const testRunHistoryRequestRef = useRef(0)
+  const testAgentRef = useRef(agent)
+  testAgentRef.current = agent
+
+  const refreshTestRunHistory = useCallback(async ({ loading = false }: { loading?: boolean } = {}) => {
+    const requestId = testRunHistoryRequestRef.current + 1
+    testRunHistoryRequestRef.current = requestId
+    if (loading) setTestRunHistoryLoading(true)
+    try {
+      const runs = await conversationalAgentService.listAgentTestRuns(agent.id, 10)
+      if (testRunHistoryRequestRef.current !== requestId) return
+      setTestRunHistory(runs)
+    } catch {
+      // El historial no bloquea el tester. Conservamos la última lectura visible.
+    } finally {
+      if (loading && testRunHistoryRequestRef.current === requestId) setTestRunHistoryLoading(false)
+    }
+  }, [agent.id])
+
+  const rotateTestSessionIdentity = useCallback(() => {
+    const nextSessionId = createTestTrackingId('session')
+    activeTestRunIdRef.current = null
+    testSessionIdRef.current = nextSessionId
+    handledTestPaymentEventsRef.current.clear()
+    announcedTestPaymentEventsRef.current.clear()
+    testPaymentResumeMessageIdsRef.current.clear()
+    testPaymentResumeTranscriptsRef.current.clear()
+    testPaymentResumeErrorsRef.current.clear()
+    return nextSessionId
+  }, [])
 
   const cleanupActiveTestRun = useCallback(() => {
     const testRunId = activeTestRunIdRef.current
     activeTestRunIdRef.current = null
+    handledTestPaymentEventsRef.current.clear()
+    announcedTestPaymentEventsRef.current.clear()
+    testPaymentResumeMessageIdsRef.current.clear()
+    testPaymentResumeTranscriptsRef.current.clear()
+    testPaymentResumeErrorsRef.current.clear()
     if (!testRunId) return
-    void conversationalAgentService.cleanupTestRun(testRunId).catch(() => undefined)
-  }, [])
+    void conversationalAgentService.cleanupTestRun(testRunId)
+      .then(() => refreshTestRunHistory())
+      .catch(() => undefined)
+  }, [refreshTestRunHistory])
+
+  useEffect(() => {
+    void refreshTestRunHistory({ loading: true })
+    const timer = window.setInterval(() => void refreshTestRunHistory(), 5000)
+    return () => window.clearInterval(timer)
+  }, [refreshTestRunHistory])
 
   useEffect(() => () => {
     cleanupTestVoiceRecorder()
-    cleanupActiveTestRun()
-  }, [cleanupActiveTestRun])
+  }, [])
 
   useEffect(() => {
     testPracticeExpiredRef.current = testPracticeExpired
   }, [testPracticeExpired])
+
+  useEffect(() => {
+    testingRef.current = testing
+  }, [testing])
+
+  useEffect(() => {
+    testMessagesRef.current = testMessages
+  }, [testMessages])
 
   useEffect(() => {
     void clearExpiredTestMediaCache().catch(() => undefined)
@@ -1817,14 +2509,35 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const followUpError = getFollowUpError(followUp)
   const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
   const hasTestConversation = testPracticeExpired || testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
-  const testScheduleCapabilityEnabled = Boolean(getNativeCapability(agent.capabilitiesConfig, 'schedule_appointment')?.enabled)
   const testPaymentCapabilityEnabled = Boolean(getNativeCapability(agent.capabilitiesConfig, 'collect_payment')?.enabled)
+  const testHandoffCapability = getNativeCapability(agent.capabilitiesConfig, 'handoff_human')
+  const testScheduleCapability = getNativeCapability(agent.capabilitiesConfig, 'schedule_appointment')
+  const testAiScheduleCapabilityEnabled = Boolean(
+    testScheduleCapability?.enabled && testScheduleCapability.bookingOwner !== 'human'
+  )
+  const testHumanScheduleCapabilityEnabled = Boolean(
+    testScheduleCapability?.enabled && testScheduleCapability.bookingOwner === 'human'
+  )
+  const testAssignmentCapabilityEnabled = Boolean(
+    (testHandoffCapability?.enabled && testHandoffCapability.userId) ||
+    (testHumanScheduleCapabilityEnabled && testScheduleCapability?.handoffUserId)
+  )
+  const testEffectsEnabled = Boolean(agent.capabilitiesConfig?.testMode?.enabled)
   const effectiveTestEffects: ConversationalAgentTestEffects = {
     enabled: testEffectsEnabled,
-    scheduleAppointment: testEffectsEnabled && testScheduleCapabilityEnabled && testScheduleAppointment,
-    collectPayment: testEffectsEnabled && testPaymentCapabilityEnabled && testCollectPayment,
-    notifyOwner: testEffectsEnabled && testNotifyOwner
+    scheduleAppointment: testEffectsEnabled && testAiScheduleCapabilityEnabled,
+    collectPayment: testEffectsEnabled && testPaymentCapabilityEnabled,
+    assignUser: testEffectsEnabled && testAssignmentCapabilityEnabled,
+    notifyOwner: testEffectsEnabled && agent.capabilitiesConfig?.testMode?.notify !== false
   }
+  const expectsTestRun = Boolean(
+    effectiveTestEffects.scheduleAppointment ||
+    effectiveTestEffects.collectPayment ||
+    effectiveTestEffects.assignUser
+  )
+  const recentTestEffects = testRunHistory
+    .flatMap((run) => [...run.effects].reverse().map((effect) => ({ runId: run.id, effect })))
+    .slice(0, 20)
 
   useEffect(() => {
     if (!testVoicePanelActive && !testing) return
@@ -2051,11 +2764,66 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     return () => window.clearTimeout(timer)
   }, [expireTestPracticeMedia, testAttachments, testMessages, testPracticeExpired, testVoiceDraft])
 
+  async function renderTestAgentResult(
+    result: ConversationalAgentTestResult,
+    {
+      includeResponseDelay = true,
+      shouldContinue,
+      messageKeyPrefix = ''
+    }: { includeResponseDelay?: boolean; shouldContinue?: () => boolean; messageKeyPrefix?: string } = {}
+  ) {
+    const canContinue = () => !testPracticeExpiredRef.current && (shouldContinue ? shouldContinue() : true)
+    const appendMessage = (message: TestMessage, suffix: string) => {
+      const deliveryKey = messageKeyPrefix ? `${messageKeyPrefix}:${suffix}` : ''
+      setTestMessages((current) => (
+        deliveryKey && current.some((item) => item.deliveryKey === deliveryKey)
+          ? current
+          : [...current, { ...message, ...(deliveryKey ? { deliveryKey } : {}) }]
+      ))
+    }
+    const responseDelayMs = includeResponseDelay ? normalizeTestResponseDelay(result.responseDelayMs) : 0
+    if (responseDelayMs > 0) await waitForTestReplyDelay(responseDelayMs)
+    if (!canContinue()) return false
+
+    for (const [index, action] of (result.actions || []).entries()) {
+      if (!canContinue()) return false
+      appendMessage(
+        { role: 'assistant', content: describeConversationalPreviewAction(action), internal: true },
+        `action-${index}`
+      )
+    }
+
+    for (const [index, effect] of (result.testEffects || []).entries()) {
+      if (!canContinue()) return false
+      appendMessage(
+        { role: 'assistant', content: describeTestEffectResult(effect), internal: true },
+        `effect-${effect.id || index}`
+      )
+    }
+
+    const visibleReplies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])
+    if (visibleReplies.length) {
+      for (let index = 0; index < visibleReplies.length; index += 1) {
+        const delayMs = normalizeTestReplyDelay(result.replyPartDelaysMs?.[index])
+        if (index > 0 && delayMs > 0) await waitForTestReplyDelay(delayMs)
+        if (!canContinue()) return false
+        appendMessage({ role: 'assistant', content: visibleReplies[index] }, `reply-${index}`)
+      }
+      return true
+    }
+    if (!canContinue()) return false
+    appendMessage(
+      { role: 'assistant', content: '⚠︎ La prueba no devolvió una respuesta válida. Vuelve a intentarlo.', internal: true },
+      'invalid-reply'
+    )
+    return true
+  }
+
   async function submitTestMessage(input: { content?: string; attachments?: TestAttachment[]; clearComposer?: boolean }) {
     const content = String(input.content ?? '').trim()
     const attachments = input.attachments || []
     if (testPracticeExpired || testing || (!content && attachments.length === 0)) return
-    if (testEffectsEnabled && !testContact?.id) {
+    if (expectsTestRun && !testContact?.id) {
       setTestOptionsOpen(true)
       showToast('warning', 'Elige un contacto de prueba', 'Lo necesitamos para ligar las validaciones al hilo correcto sin adivinar identidades.')
       return
@@ -2086,58 +2854,39 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     try {
       const agentForTest = await onFlushSave()
       const effectiveAgent = agentForTest || agent
-      const expectsTestRun = effectiveTestEffects.scheduleAppointment || effectiveTestEffects.collectPayment
-      if (expectsTestRun) activeTestRunIdRef.current = testSessionIdRef.current
-      const result: ConversationalAgentTestResult = await conversationalAgentService.testAgent(
-        nextMessages.map(toTestPayloadMessage),
+      const payloadMessages = nextMessages.map(toTestPayloadMessage)
+      const runTestRequest = (testSessionId: string, testMessageId: string) => conversationalAgentService.testAgent(
+        payloadMessages,
         {
           config: agentToInput(effectiveAgent),
           agentId: effectiveAgent.id,
-          testSessionId: testSessionIdRef.current,
-          testMessageId: createTestTrackingId('message'),
-          ...(testEffectsEnabled && testContact?.id ? { contactId: testContact.id } : {}),
+          testSessionId,
+          testMessageId,
+          ...(expectsTestRun && testContact?.id ? { contactId: testContact.id } : {}),
           effects: effectiveTestEffects
         }
       )
+      let requestSessionId = testSessionIdRef.current
+      let requestMessageId = createTestTrackingId('message')
+      if (expectsTestRun) activeTestRunIdRef.current = requestSessionId
+      let result: ConversationalAgentTestResult
+      try {
+        result = await runTestRequest(requestSessionId, requestMessageId)
+      } catch (error) {
+        if (!expectsTestRun || !shouldRotateClosedTestRun(error)) throw error
+        // El cleanup automático cerró una corrida anterior. Repetimos una sola
+        // vez el MISMO transcript y configuración, pero con identidades nuevas,
+        // para no perder ni duplicar el mensaje visible del usuario.
+        requestSessionId = rotateTestSessionIdentity()
+        requestMessageId = createTestTrackingId('message')
+        activeTestRunIdRef.current = requestSessionId
+        result = await runTestRequest(requestSessionId, requestMessageId)
+      }
       if (result.testRunId) activeTestRunIdRef.current = result.testRunId
       else if (expectsTestRun) activeTestRunIdRef.current = null
 
-      const responseDelayMs = normalizeTestResponseDelay(result.responseDelayMs)
-      if (responseDelayMs > 0) {
-        await waitForTestReplyDelay(responseDelayMs)
-      }
-      if (testPracticeExpiredRef.current) return
-
-      for (const action of result.actions || []) {
-        if (testPracticeExpiredRef.current) return
-        setTestMessages((current) => [
-          ...current,
-          { role: 'assistant', content: describeConversationalPreviewAction(action), internal: true }
-        ])
-      }
-
-      for (const effect of result.testEffects || []) {
-        if (testPracticeExpiredRef.current) return
-        setTestMessages((current) => [
-          ...current,
-          { role: 'assistant', content: describeTestEffectResult(effect), internal: true }
-        ])
-      }
-
-      const visibleReplies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])
-      if (visibleReplies.length) {
-        for (let index = 0; index < visibleReplies.length; index += 1) {
-          const delayMs = normalizeTestReplyDelay(result.replyPartDelaysMs?.[index])
-          if (index > 0 && delayMs > 0) {
-            await waitForTestReplyDelay(delayMs)
-          }
-          if (testPracticeExpiredRef.current) return
-          setTestMessages((current) => [...current, { role: 'assistant', content: visibleReplies[index] }])
-        }
-      } else {
-        if (testPracticeExpiredRef.current) return
-        setTestMessages((current) => [...current, { role: 'assistant', content: '⚠︎ La prueba no devolvió una respuesta válida. Vuelve a intentarlo.', internal: true }])
-      }
+      await renderTestAgentResult(result)
+      if (result.testRunId || result.testEffects?.length) void refreshTestRunHistory()
     } catch (error: any) {
       if (activeTestRunIdRef.current === testSessionIdRef.current) {
         cleanupActiveTestRun()
@@ -2152,6 +2901,103 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       }
     }
   }
+
+  useEffect(() => {
+    if (!testEffectsEnabled || !effectiveTestEffects.collectPayment || testPracticeExpired) return
+    let cancelled = false
+
+    const pollVerifiedPayment = async () => {
+      const testRunId = activeTestRunIdRef.current
+      if (!testRunId || testingRef.current || testPaymentResumeInFlightRef.current || !testContact?.id) return
+      let claimedPaymentEffectId = ''
+      try {
+        const effects = await conversationalAgentService.listTestRunEffects(testRunId)
+        setTestRunHistory((current) => current.map((run) => (
+          run.id === testRunId ? { ...run, effects } : run
+        )))
+        const paidEffects = effects.filter((effect) => (
+          effect.type === 'payment' && effect.status === 'paid_test' && effect.id
+        ))
+        const pendingEffect = paidEffects.find((effect) => (
+          typeof effect.id === 'string' && !handledTestPaymentEventsRef.current.has(effect.id)
+        ))
+        if (!pendingEffect || cancelled) return
+
+        claimedPaymentEffectId = String(pendingEffect.id)
+        testPaymentResumeInFlightRef.current = true
+        setTesting(true)
+        if (!announcedTestPaymentEventsRef.current.has(claimedPaymentEffectId)) {
+          announcedTestPaymentEventsRef.current.add(claimedPaymentEffectId)
+          setTestMessages((current) => [
+            ...current,
+            { role: 'assistant', content: 'Pago sandbox confirmado por webhook. La IA continúa desde ese hecho real.', internal: true }
+          ])
+        }
+
+        const transcript = testPaymentResumeTranscriptsRef.current.get(claimedPaymentEffectId) ||
+          testMessagesRef.current.filter((message) => !message.internal)
+        if (!transcript.length) return
+        testPaymentResumeTranscriptsRef.current.set(claimedPaymentEffectId, transcript)
+        const resumeMessageId = testPaymentResumeMessageIdsRef.current.get(claimedPaymentEffectId) ||
+          `agent-test-message-payment-resume-${claimedPaymentEffectId}`.slice(0, 160)
+        testPaymentResumeMessageIdsRef.current.set(claimedPaymentEffectId, resumeMessageId)
+        const effectiveAgent = testAgentRef.current
+        const result = await conversationalAgentService.testAgent(
+          transcript.map(toTestPayloadMessage),
+          {
+            config: agentToInput(effectiveAgent),
+            agentId: effectiveAgent.id,
+            testSessionId: testRunId,
+            testMessageId: resumeMessageId,
+            contactId: testContact.id,
+            effects: effectiveTestEffects
+          }
+        )
+        if (cancelled) return
+        if (result.testRunId) activeTestRunIdRef.current = result.testRunId
+        const rendered = await renderTestAgentResult(result, {
+          includeResponseDelay: false,
+          shouldContinue: () => !cancelled,
+          messageKeyPrefix: `payment-resume-${claimedPaymentEffectId}`
+        })
+        if (!rendered || cancelled || testPracticeExpiredRef.current) return
+        handledTestPaymentEventsRef.current.add(claimedPaymentEffectId)
+        testPaymentResumeErrorsRef.current.delete(claimedPaymentEffectId)
+        void refreshTestRunHistory()
+      } catch (error: any) {
+        if (
+          claimedPaymentEffectId &&
+          !cancelled &&
+          !testPaymentResumeErrorsRef.current.has(claimedPaymentEffectId)
+        ) {
+          testPaymentResumeErrorsRef.current.add(claimedPaymentEffectId)
+          showToast('error', 'Continuación pendiente', error?.message || 'El pago sí quedó detectado. Reconciliamos la misma continuación sin duplicarla.')
+        }
+      } finally {
+        testPaymentResumeInFlightRef.current = false
+        if (!cancelled && !testPracticeExpiredRef.current) setTesting(false)
+      }
+    }
+
+    void pollVerifiedPayment()
+    const timer = window.setInterval(() => void pollVerifiedPayment(), 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [
+    agent.id,
+    effectiveTestEffects.assignUser,
+    effectiveTestEffects.collectPayment,
+    effectiveTestEffects.enabled,
+    effectiveTestEffects.notifyOwner,
+    effectiveTestEffects.scheduleAppointment,
+    showToast,
+    refreshTestRunHistory,
+    testContact?.id,
+    testEffectsEnabled,
+    testPracticeExpired
+  ])
 
   const handleSendTestMessage = () => {
     if (testPracticeExpired) return
@@ -2832,7 +3678,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           <PhoneChatPreview
             className={styles.agentTestPhonePreview}
             title="Mi negocio"
-            subtitle={testEffectsEnabled ? 'Registro de prueba activo' : 'Simulación segura'}
+            subtitle={expectsTestRun ? 'Registro de prueba activo' : 'Simulación segura'}
             avatarLabel="Mi negocio"
             messages={testPreviewMessages}
             emptyText={testPracticeExpired ? TEST_MEDIA_EXPIRED_NOTICE : `Escribe como ${leadLowerLabel} y revisa si contesta como debe.`}
@@ -2956,38 +3802,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             isOpen={testOptionsOpen}
             onClose={() => setTestOptionsOpen(false)}
             title="Opciones de la prueba"
-            subtitle="El chat sigue siendo una simulación hasta que tú permitas registrar acciones."
+            subtitle={expectsTestRun
+              ? 'Modo test activo: las tools configuradas se ejecutan de forma real y aislada.'
+              : 'El teléfono sólo simula esta conversación y no modifica nada.'}
             size="md"
           >
             <div className={styles.agentTestOptions}>
-              <div className={styles.agentTestModeSummary} data-effects-enabled={testEffectsEnabled ? 'true' : undefined}>
-                <strong>{testEffectsEnabled ? 'Registro controlado' : 'Simulación segura'}</strong>
-                <span>{testEffectsEnabled
-                  ? 'Sólo se validan las acciones que actives abajo y siempre contra el contacto elegido.'
+              <div className={styles.agentTestModeSummary} data-effects-enabled={expectsTestRun ? 'true' : undefined}>
+                <strong>{expectsTestRun ? 'Registro controlado' : 'Simulación segura'}</strong>
+                <span>{expectsTestRun
+                  ? 'Las acciones se marcan como prueba y se limpian automáticamente después de 5 minutos.'
                   : 'La IA conversa y muestra lo que haría, pero no crea citas, cobros ni notificaciones.'}</span>
               </div>
 
-              <label className={styles.agentTestOptionSwitch}>
-                <span>
-                  <strong>Registrar validaciones de prueba</strong>
-                  <small>Apagado por defecto. Enciéndelo cuando quieras comprobar datos reales sin crear citas ni cobros.</small>
-                </span>
-                <Switch
-                  checked={testEffectsEnabled}
-                  onChange={(enabled) => {
-                    setTestEffectsEnabled(enabled)
-                    if (!enabled) {
-                      cleanupActiveTestRun()
-                      setTestScheduleAppointment(false)
-                      setTestCollectPayment(false)
-                      setTestNotifyOwner(false)
-                    }
-                  }}
-                  aria-label="Registrar validaciones de prueba"
-                />
-              </label>
-
-              {testEffectsEnabled && (
+              {expectsTestRun && (
                 <>
                   <ContactSearchInput
                     value={testContact}
@@ -3004,51 +3832,90 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   />
 
                   <div className={styles.agentTestEffectList}>
-                    {testScheduleCapabilityEnabled && (
-                      <label className={styles.agentTestOptionSwitch}>
+                    {testAiScheduleCapabilityEnabled && (
+                      <div className={styles.agentTestOptionSwitch}>
                         <span>
-                          <strong>Validar cita de prueba</strong>
-                          <small>Revalida el horario y registra la evidencia de prueba, sin crear una cita real ni tocar el chat.</small>
+                          <strong>Cita real de prueba</strong>
+                          <small>La IA agenda en el calendario elegido, dispara notificaciones y la cita se elimina después de 5 minutos.</small>
                         </span>
-                        <Switch
-                          checked={testScheduleAppointment}
-                          onChange={setTestScheduleAppointment}
-                          aria-label="Validar cita de prueba"
-                        />
-                      </label>
+                        <Badge variant="info">Activa</Badge>
+                      </div>
+                    )}
+
+                    {testHumanScheduleCapabilityEnabled && (
+                      <div className={styles.agentTestOptionSwitch}>
+                        <span>
+                          <strong>Agenda confirmada por humano</strong>
+                          <small>La IA consulta horarios y entrega la fecha elegida al equipo; no crea ni promete la cita.</small>
+                        </span>
+                        <Badge variant={testScheduleCapability?.handoffUserId ? 'info' : 'neutral'}>
+                          {testScheduleCapability?.handoffUserId ? 'Asignación activa' : 'Sin asignar'}
+                        </Badge>
+                      </div>
                     )}
 
                     {testPaymentCapabilityEnabled && (
-                      <label className={styles.agentTestOptionSwitch}>
+                      <div className={styles.agentTestOptionSwitch}>
                         <span>
-                          <strong>Validar cobro de prueba</strong>
-                          <small>Comprueba producto, monto y moneda. No crea ni envía un enlace y jamás finge un pago confirmado.</small>
+                          <strong>Pago sandbox</strong>
+                          <small>Genera un enlace de prueba, escucha el webhook y nunca usa credenciales en vivo como respaldo.</small>
                         </span>
-                        <Switch
-                          checked={testCollectPayment}
-                          onChange={setTestCollectPayment}
-                          aria-label="Validar cobro de prueba"
-                        />
-                      </label>
+                        <Badge variant="info">Activo</Badge>
+                      </div>
                     )}
 
-                    <label className={styles.agentTestOptionSwitch}>
+                    {testAssignmentCapabilityEnabled && !testHumanScheduleCapabilityEnabled && (
+                    <div className={styles.agentTestOptionSwitch}>
                       <span>
-                        <strong>Notificarme al validar</strong>
-                        <small>Recibe una notificación interna para comprobar que la validación sí quedó registrada.</small>
+                        <strong>Asignación y aviso</strong>
+                        <small>Asigna temporalmente, notifica a la persona elegida y restaura al responsable anterior.</small>
                       </span>
-                      <Switch
-                        checked={testNotifyOwner}
-                        onChange={setTestNotifyOwner}
-                        aria-label="Notificarme al validar una acción de prueba"
-                      />
-                    </label>
+                      <Badge variant="info">Activa</Badge>
+                    </div>
+                    )}
                   </div>
                 </>
               )}
 
+              <div className={styles.agentTestEffectList} aria-label="Historial reciente de pruebas">
+                <div className={styles.agentTestOptionSwitch}>
+                  <span>
+                    <strong>Historial reciente</strong>
+                    <small>Se carga desde el registro real del servidor y conserva hasta las últimas 20 acciones de este agente.</small>
+                  </span>
+                  {testRunHistoryLoading ? <Badge variant="neutral">Cargando</Badge> : null}
+                </div>
+                {recentTestEffects.length ? recentTestEffects.map(({ runId, effect }) => {
+                  const state = getTestEffectHistoryState(effect)
+                  return (
+                    <div key={`${runId}-${effect.id || effect.type}`} className={styles.agentTestOptionSwitch}>
+                      <span>
+                        <strong>{describeTestEffectResult(effect)}</strong>
+                        <small>{effect.cleanupStatus === 'cleaned' || effect.status === 'cleaned'
+                          ? 'La limpieza automática de 5 minutos ya terminó.'
+                          : 'Registro persistido de la ejecución de prueba.'}</small>
+                      </span>
+                      <Badge variant={state.variant}>{state.label}</Badge>
+                    </div>
+                  )
+                }) : (
+                  <p className={styles.helper}>{testRunHistoryLoading ? 'Consultando pruebas anteriores…' : 'Todavía no hay acciones de prueba registradas para este agente.'}</p>
+                )}
+              </div>
+
+              {!testEffectsEnabled && (
+                <p className={styles.helper}>Activa “Modo test” dentro de Capacidades si quieres comprobar citas, pagos y asignaciones reales de prueba.</p>
+              )}
+              {testEffectsEnabled && !expectsTestRun && (
+                <p className={styles.helper}>
+                  {testHumanScheduleCapabilityEnabled
+                    ? 'La agenda la termina una persona. Sin responsable asignado, el tester muestra el handoff pero no crea citas ni hace una asignación real.'
+                    : 'Modo test está activo, pero este agente no tiene citas automáticas, cobros ni asignaciones habilitadas. Esta conversación sigue siendo una simulación.'}
+                </p>
+              )}
+
               <div className={styles.agentTestOptionsActions}>
-                <Button variant="primary" onClick={() => setTestOptionsOpen(false)} disabled={testEffectsEnabled && !testContact}>
+                <Button variant="primary" onClick={() => setTestOptionsOpen(false)} disabled={expectsTestRun && !testContact}>
                   Listo
                 </Button>
               </div>
@@ -3105,6 +3972,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const saveRevisionsRef = useRef<Map<string, number>>(new Map())
   const agentMutationVersionsRef = useRef<Map<string, number>>(new Map())
   const dirtyAgentIdsRef = useRef<Set<string>>(new Set())
+  const pendingEnabledOverridesRef = useRef<Map<string, boolean>>(new Map())
   const deletedAgentIdsRef = useRef<Set<string>>(new Set())
   const mountedRef = useRef(true)
   const saveAgentNowRef = useRef<(
@@ -3251,22 +4119,34 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
 
     const queues = saveQueuesRef.current
     const queued = queues.get(agentId)
-    if (!dirtyAgentIdsRef.current.has(agentId) && options.enabled === undefined) {
+    if (
+      !dirtyAgentIdsRef.current.has(agentId) &&
+      options.enabled === undefined &&
+      !pendingEnabledOverridesRef.current.has(agentId)
+    ) {
       return queued || Promise.resolve(agentsRef.current.find((item) => item.id === agentId) || null)
     }
 
     const operation = (queued || Promise.resolve(null))
       .catch(() => null)
       .then(async () => {
-        if (!dirtyAgentIdsRef.current.has(agentId) && options.enabled === undefined) {
+        if (
+          !dirtyAgentIdsRef.current.has(agentId) &&
+          options.enabled === undefined &&
+          !pendingEnabledOverridesRef.current.has(agentId)
+        ) {
           return agentsRef.current.find((item) => item.id === agentId) || null
         }
 
         const currentAgent = agentsRef.current.find((item) => item.id === agentId)
-        if (!currentAgent) return null
-        const agent = options.enabled === undefined
+        if (!currentAgent) {
+          pendingEnabledOverridesRef.current.delete(agentId)
+          return null
+        }
+        const effectiveEnabled = options.enabled ?? pendingEnabledOverridesRef.current.get(agentId)
+        const agent = effectiveEnabled === undefined
           ? currentAgent
-          : ({ ...currentAgent, enabled: options.enabled } as ConversationalAgentDef)
+          : ({ ...currentAgent, enabled: effectiveEnabled } as ConversationalAgentDef)
         const requestRevision = saveRevisionsRef.current.get(agentId) || 0
         const validationError = getAgentValidationError(agent)
         if (validationError) {
@@ -3276,7 +4156,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           // Publicar puede fallar porque el borrador todavía está incompleto,
           // pero ese borrador sí debe persistirse en pausa. Lo encolamos detrás
           // de este intento antes de devolver el error visible.
-          if (options.enabled !== undefined && dirtyAgentIdsRef.current.has(agentId)) {
+          if (effectiveEnabled !== undefined && dirtyAgentIdsRef.current.has(agentId)) {
             void saveAgentNowRef.current(agentId, { notify: false }).catch(() => undefined)
           }
           throw new Error(validationError)
@@ -3291,6 +4171,9 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           const revisionUnchanged = (saveRevisionsRef.current.get(agentId) || 0) === requestRevision
           if (revisionUnchanged) {
             dirtyAgentIdsRef.current.delete(agentId)
+            if (pendingEnabledOverridesRef.current.get(agentId) === effectiveEnabled) {
+              pendingEnabledOverridesRef.current.delete(agentId)
+            }
             const pendingRetry = timers.get(agentId)
             if (pendingRetry) window.clearTimeout(pendingRetry)
             timers.delete(agentId)
@@ -3300,7 +4183,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           const latestAgent = latestAgents.find((item) => item.id === agentId)
           const localNext = revisionUnchanged
             ? next
-            : (options.enabled === undefined
+            : (effectiveEnabled === undefined
                 ? latestAgent
                 : ({ ...next, ...latestAgent, enabled: next.enabled } as ConversationalAgentDef))
           if (localNext) {
@@ -3397,11 +4280,13 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
 
   const handleAgentChange = (agentId: string, patch: ConversationalAgentDefInput) => {
     const currentAgent = agentsRef.current.find((agent) => agent.id === agentId)
+    const patchKeysBesidesEnabled = Object.keys(patch).filter((key) => key !== 'enabled')
+    const includesDraftChanges = patchKeysBesidesEnabled.length > 0
 
     // Publicar o pausar nunca se refleja de forma optimista: primero debe
     // confirmarlo backend. Así el badge no miente si
     // falla una validación factual de calendario, producto, precio o enlace.
-    if (currentAgent && patch.enabled !== undefined) {
+    if (currentAgent && patch.enabled !== undefined && !includesDraftChanges) {
       void saveAgentNow(agentId, { enabled: patch.enabled }).catch(() => undefined)
       return
     }
@@ -3409,11 +4294,25 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     saveRevisionsRef.current.set(agentId, (saveRevisionsRef.current.get(agentId) || 0) + 1)
     agentMutationVersionsRef.current.set(agentId, (agentMutationVersionsRef.current.get(agentId) || 0) + 1)
     dirtyAgentIdsRef.current.add(agentId)
+    const { enabled: requestedEnabled, ...draftPatch } = patch
+    if (requestedEnabled !== undefined) {
+      pendingEnabledOverridesRef.current.set(agentId, requestedEnabled)
+    }
     const nextAgents = agentsRef.current.map((agent) => (
-      agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent
+      agent.id === agentId ? { ...agent, ...draftPatch } as ConversationalAgentDef : agent
     ))
     agentsRef.current = nextAgents
     setAgents(nextAgents)
+
+    if (requestedEnabled !== undefined) {
+      // Al editar una capacidad de un agente vivo, el mismo guardado debe
+      // persistir el cambio Y pausarlo. La UI conserva el estado confirmado por
+      // backend mientras el override pendiente también se reutiliza en cada
+      // reintento, así no miente ni publica por accidente la capacidad nueva.
+      void saveAgentNow(agentId, { enabled: requestedEnabled }).catch(() => undefined)
+      return
+    }
+
     scheduleAgentSave(agentId)
   }
 
@@ -3530,7 +4429,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     void runCreateAgent({
       enabled: false,
       contactScope: 'all',
-      capabilitiesConfig: { schemaVersion: 1, items: [] }
+      capabilitiesConfig: DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
     })
   }
 
@@ -3740,6 +4639,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     return (
       <div className={rootClassName}>
         <AgentCard
+          key={selectedAgent.id}
           agent={selectedAgent}
           aiProviders={aiProviders}
           calendars={calendars}

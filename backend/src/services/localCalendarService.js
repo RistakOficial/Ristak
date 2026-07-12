@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon'
+import crypto from 'node:crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
@@ -29,6 +30,7 @@ import { isPaymentGateEnabled, normalizePaymentGateConfig } from './publicPaymen
 import { hasConnectedMetaDatasetConfig } from './metaAdsService.js'
 import { createEntityId, generateShortId } from '../utils/idGenerator.js'
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
+import { getConversationalTestMode } from '../agents/conversational/nativeRuntimeConfig.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -38,6 +40,9 @@ const DEFAULT_CALENDAR_META_EVENT_NAME = 'Schedule'
 const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
 const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp', 'messenger', 'instagram', 'smart'])
 const APPOINTMENT_BOOKING_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'messenger', 'instagram', 'email'])
+const APPOINTMENT_PARTICIPANT_ROLES = new Set(['requester', 'primary_attendee', 'guest'])
+const TEST_APPOINTMENT_PROVIDER_RECEIPT_PROVIDERS = new Set(['google', 'highlevel'])
+const MAX_APPOINTMENT_PARTICIPANTS = 25
 const CALENDAR_BOOKING_LAYOUTS = new Set(['classic', 'compact', 'stacked'])
 const CALENDAR_BOOKING_FONT_FAMILIES = new Set(['system', 'modern', 'serif', 'mono'])
 const CALENDAR_BOOKING_WIDGET_THEMES = new Set(['ristak', 'night', 'agenda', 'minimal'])
@@ -107,6 +112,100 @@ function makeId(prefix) {
 
 function cleanString(value) {
   return String(value ?? '').trim()
+}
+
+function cleanSnapshot(value, maxLength) {
+  return cleanString(value).slice(0, maxLength)
+}
+
+function normalizeParticipantEmail(value) {
+  const email = cleanSnapshot(value, 254).toLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+}
+
+function normalizeTestFlag(value) {
+  if (value === true || value === 1) return true
+  return ['1', 'true', 'yes', 'si', 'sí', 'on'].includes(cleanString(value).toLowerCase())
+}
+
+function validateAppointmentParticipantInputs(participants = []) {
+  if (!Array.isArray(participants)) return
+  if (participants.length > MAX_APPOINTMENT_PARTICIPANTS) {
+    const error = new Error(`Una cita admite hasta ${MAX_APPOINTMENT_PARTICIPANTS} participantes`)
+    error.status = 400
+    error.code = 'too_many_appointment_participants'
+    throw error
+  }
+
+  const singularRoles = new Set()
+  for (const raw of participants) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const role = cleanString(raw.role || raw.participantRole || raw.participant_role).toLowerCase()
+    if (!APPOINTMENT_PARTICIPANT_ROLES.has(role)) {
+      const error = new Error('El rol de un participante no es válido')
+      error.status = 400
+      error.code = 'invalid_appointment_participant_role'
+      throw error
+    }
+    if (role !== 'guest') {
+      if (singularRoles.has(role)) {
+        const error = new Error(`La cita sólo admite un participante con rol ${role}`)
+        error.status = 400
+        error.code = 'duplicate_appointment_participant_role'
+        throw error
+      }
+      singularRoles.add(role)
+    }
+
+    const rawEmail = cleanString(raw.email)
+    if (rawEmail && !normalizeParticipantEmail(rawEmail)) {
+      const error = new Error('El correo de un participante no es válido')
+      error.status = 400
+      error.code = 'invalid_appointment_participant_email'
+      throw error
+    }
+  }
+}
+
+export function normalizeAppointmentParticipants(participants = []) {
+  if (!Array.isArray(participants)) return []
+
+  const rolePositions = new Map()
+  const seenByRole = new Set()
+  const normalized = []
+
+  for (const raw of participants.slice(0, MAX_APPOINTMENT_PARTICIPANTS)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+
+    const role = cleanString(raw.role || raw.participantRole || raw.participant_role).toLowerCase()
+    if (!APPOINTMENT_PARTICIPANT_ROLES.has(role)) continue
+    if (role !== 'guest' && normalized.some(participant => participant.role === role)) continue
+
+    const contactId = cleanSnapshot(raw.contactId || raw.contact_id, 160) || null
+    const name = cleanSnapshot(raw.name || raw.fullName || raw.full_name || raw.displayName, 200)
+    const phone = cleanSnapshot(raw.phone || raw.phoneNumber || raw.phone_number, 50)
+    const email = normalizeParticipantEmail(raw.email)
+    const relation = cleanSnapshot(raw.relation || raw.relationship, 120)
+    if (!contactId && !name && !phone && !email) continue
+
+    const identity = `${role}:${contactId || ''}:${email}:${phone}:${name.toLowerCase()}`
+    if (seenByRole.has(identity)) continue
+    seenByRole.add(identity)
+
+    const position = rolePositions.get(role) || 0
+    rolePositions.set(role, position + 1)
+    normalized.push({
+      role,
+      position,
+      contactId,
+      name,
+      phone,
+      email,
+      relation
+    })
+  }
+
+  return normalized
 }
 
 function normalizeAppointmentBookingChannel(value) {
@@ -4005,8 +4104,29 @@ export async function deleteLocalCalendar(calendarId) {
   const existing = await getLocalCalendar(calendarId)
   if (!existing) return null
 
-  await db.run('DELETE FROM appointments WHERE calendar_id = ?', [existing.id])
-  await db.run('DELETE FROM calendars WHERE id = ?', [existing.id])
+  const affectedContacts = await db.all(`
+    SELECT contact_id
+    FROM appointments
+    WHERE calendar_id = ? AND contact_id IS NOT NULL
+    UNION
+    SELECT ap.contact_id
+    FROM appointment_participants ap
+    INNER JOIN appointments a ON a.id = ap.appointment_id
+    WHERE a.calendar_id = ? AND ap.contact_id IS NOT NULL
+  `, [existing.id, existing.id])
+
+  await db.transaction(async () => {
+    await db.run(`
+      DELETE FROM appointment_participants
+      WHERE appointment_id IN (SELECT id FROM appointments WHERE calendar_id = ?)
+    `, [existing.id])
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [existing.id])
+    await db.run('DELETE FROM calendars WHERE id = ?', [existing.id])
+  })
+
+  for (const row of affectedContacts) {
+    if (row.contact_id) await updateContactAppointmentDate(row.contact_id)
+  }
 
   return existing
 }
@@ -4057,6 +4177,10 @@ function appointmentRowToApi(row = {}) {
     googleSyncStatus: row.google_sync_status || null,
     googleSyncError: row.google_sync_error || null,
     googleSyncedAt: row.google_synced_at || null,
+    isTest: Number(row.is_test || 0) === 1,
+    testRunId: row.test_run_id || null,
+    testEffectId: row.test_effect_id || null,
+    testExpiresAt: row.test_expires_at || null,
     contactName: row.contact_name || '',
     contactEmail: row.contact_email || '',
     contactPhone: row.contact_phone || ''
@@ -4070,6 +4194,16 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
   const googleEventId = cleanString(options.googleEventId || appointment.googleEventId || appointment.google_event_id || (source === 'google' ? appointment.id : '')) || null
   const appointmentStatus = cleanString(appointment.appointmentStatus || appointment.appointment_status || appointment.status || 'confirmed') || 'confirmed'
   const id = cleanString(options.id || appointment.localId || appointment.local_id || appointment.id) || makeId(LOCAL_APPOINTMENT_PREFIX)
+  const isTest = normalizeTestFlag(options.isTest ?? options.is_test ?? appointment.isTest ?? appointment.is_test)
+  const testRunId = isTest
+    ? cleanString(options.testRunId || options.test_run_id || appointment.testRunId || appointment.test_run_id) || null
+    : null
+  const testEffectId = isTest
+    ? cleanString(options.testEffectId || options.test_effect_id || appointment.testEffectId || appointment.test_effect_id) || null
+    : null
+  const testExpiresAt = isTest
+    ? (options.testExpiresAt || options.test_expires_at || appointment.testExpiresAt || appointment.test_expires_at || null)
+    : null
 
   return {
     id,
@@ -4098,11 +4232,665 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
     syncStatus: options.syncStatus || appointment.syncStatus || appointment.sync_status || (source === 'ghl' ? 'synced' : 'pending'),
     syncError: options.syncError || appointment.syncError || appointment.sync_error || null,
     googleSyncStatus: options.googleSyncStatus || appointment.googleSyncStatus || appointment.google_sync_status || (source === 'google' ? 'synced' : null),
-    googleSyncError: options.googleSyncError || appointment.googleSyncError || appointment.google_sync_error || null
+    googleSyncError: options.googleSyncError || appointment.googleSyncError || appointment.google_sync_error || null,
+    isTest,
+    testRunId,
+    testEffectId,
+    testExpiresAt
   }
 }
 
+function testAppointmentAuthorityError(message, code, status = 409) {
+  const error = new Error(message)
+  error.code = code
+  error.status = status
+  error.statusCode = status
+  return error
+}
+
+function parseDatabaseUtcInstant(value) {
+  const text = cleanString(value)
+  if (!text) return NaN
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)
+    ? `${text.replace(' ', 'T')}Z`
+    : text
+  return Date.parse(normalized)
+}
+
+function sameExactInstant(left, right) {
+  const leftMs = parseDatabaseUtcInstant(left)
+  const rightMs = parseDatabaseUtcInstant(right)
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) && Math.abs(leftMs - rightMs) < 1000
+}
+
+function participantAuthoritySnapshot(value) {
+  return normalizeAppointmentParticipants(value).map((participant) => ({
+    role: participant.role,
+    position: participant.position,
+    contactId: participant.contactId || null,
+    name: participant.name || '',
+    phone: participant.phone || '',
+    email: participant.email || '',
+    relation: participant.relation || ''
+  }))
+}
+
+async function loadTestAppointmentAuthority(testEffectId) {
+  const lockSuffix = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  return db.get(`
+    SELECT e.id, e.run_id, e.effect_type, e.status AS effect_status,
+           e.entity_id, e.payload_json, e.claim_token, e.lease_until_at,
+           r.agent_id, r.requested_by_user_id, r.contact_id,
+           r.status AS run_status, r.expires_at,
+           a.capabilities_config
+    FROM conversational_agent_test_effects e
+    INNER JOIN conversational_agent_test_runs r ON r.id = e.run_id
+    INNER JOIN conversational_agents a ON a.id = r.agent_id
+    WHERE e.id = ?
+    LIMIT 1${lockSuffix}
+  `, [testEffectId])
+}
+
+/**
+ * La marca de cita de prueba no se autoriza con campos del request. Su autoridad
+ * es el efecto durable que el tester reservó antes de llamar al controller.
+ */
+async function assertConversationalTestAppointmentAuthority({ normalized, appointmentPayload }) {
+  const effectId = cleanString(normalized.testEffectId)
+  const runId = cleanString(normalized.testRunId)
+  const authority = await loadTestAppointmentAuthority(effectId)
+  if (!authority || cleanString(authority.effect_type) !== 'appointment') {
+    throw testAppointmentAuthorityError(
+      'La cita de prueba no tiene un efecto durable autorizado.',
+      'test_appointment_effect_required',
+      403
+    )
+  }
+  if (cleanString(authority.run_id) !== runId) {
+    throw testAppointmentAuthorityError('La cita y la sesión de prueba no coinciden.', 'test_appointment_run_mismatch', 403)
+  }
+
+  const existing = await db.get(
+    'SELECT id, is_test, test_run_id, test_effect_id, contact_id FROM appointments WHERE id = ?',
+    [normalized.id]
+  )
+  if (existing) {
+    if (
+      Number(existing.is_test || 0) !== 1 ||
+      cleanString(existing.test_run_id) !== runId ||
+      cleanString(existing.test_effect_id) !== effectId ||
+      cleanString(existing.contact_id) !== cleanString(authority.contact_id)
+    ) {
+      throw testAppointmentAuthorityError(
+        'Una cita existente no puede convertirse ni cambiarse a otra identidad de prueba.',
+        'test_appointment_existing_identity_mismatch',
+        403
+      )
+    }
+    if (authority.entity_id && cleanString(authority.entity_id) !== cleanString(existing.id)) {
+      throw testAppointmentAuthorityError('El efecto durable pertenece a otra cita.', 'test_appointment_entity_mismatch', 403)
+    }
+    return authority
+  }
+
+  if (
+    cleanString(authority.run_status) !== 'active' ||
+    parseDatabaseUtcInstant(authority.expires_at) <= Date.now() ||
+    cleanString(authority.effect_status) !== 'processing' ||
+    !cleanString(authority.claim_token)
+  ) {
+    throw testAppointmentAuthorityError(
+      'La reserva durable de esta cita de prueba ya no está activa.',
+      'test_appointment_effect_not_active',
+      409
+    )
+  }
+  if (!getConversationalTestMode({ capabilitiesConfig: authority.capabilities_config }).enabled) {
+    throw testAppointmentAuthorityError(
+      'Modo test fue desactivado antes de crear la cita.',
+      'test_appointment_mode_disabled',
+      409
+    )
+  }
+  if (cleanString(normalized.contactId) !== cleanString(authority.contact_id)) {
+    throw testAppointmentAuthorityError(
+      'La cita de prueba sólo puede usar el contacto ligado a su sesión.',
+      'test_appointment_contact_mismatch',
+      403
+    )
+  }
+  if (authority.entity_id && cleanString(authority.entity_id) !== cleanString(normalized.id)) {
+    throw testAppointmentAuthorityError('El efecto durable ya pertenece a otra cita.', 'test_appointment_entity_mismatch', 403)
+  }
+
+  const request = parseJson(authority.payload_json, {})
+  const requestedParticipants = participantAuthoritySnapshot(request.participants)
+  const actualParticipants = participantAuthoritySnapshot(appointmentPayload.participants)
+  if (
+    cleanString(request.bookingOwner) !== 'ai' ||
+    cleanString(request.calendarId) !== cleanString(normalized.calendarId) ||
+    !sameExactInstant(request.startTime, normalized.startTime) ||
+    !sameExactInstant(request.endTime, normalized.endTime) ||
+    JSON.stringify(requestedParticipants) !== JSON.stringify(actualParticipants)
+  ) {
+    throw testAppointmentAuthorityError(
+      'Los datos de la cita no coinciden con la acción que reservó el tester.',
+      'test_appointment_payload_mismatch',
+      403
+    )
+  }
+  return authority
+}
+
+async function assertTestAppointmentProviderCommandAuthority({
+  appointmentId,
+  testEffectId,
+  testRunId,
+  provider,
+  calendarId = '',
+  cleanupDueAt = ''
+} = {}) {
+  const cleanAppointmentId = cleanString(appointmentId)
+  const cleanEffectId = cleanString(testEffectId)
+  const cleanRunId = cleanString(testRunId)
+  const cleanProvider = cleanString(provider).toLowerCase()
+  if (!cleanAppointmentId || !cleanEffectId || !cleanRunId || !TEST_APPOINTMENT_PROVIDER_RECEIPT_PROVIDERS.has(cleanProvider)) {
+    throw testAppointmentAuthorityError('El recibo externo de la cita de prueba está incompleto.', 'test_appointment_provider_receipt_invalid', 400)
+  }
+
+  const [authority, appointment] = await Promise.all([
+    loadTestAppointmentAuthority(cleanEffectId),
+    db.get(`
+      SELECT id, calendar_id, contact_id, is_test, test_run_id, test_effect_id, test_expires_at
+      FROM appointments WHERE id = ?
+    `, [cleanAppointmentId])
+  ])
+  if (
+    !authority || cleanString(authority.effect_type) !== 'appointment' ||
+    cleanString(authority.run_id) !== cleanRunId ||
+    cleanString(authority.contact_id) !== cleanString(appointment?.contact_id) ||
+    !appointment || Number(appointment.is_test || 0) !== 1 ||
+    cleanString(appointment.test_run_id) !== cleanRunId ||
+    cleanString(appointment.test_effect_id) !== cleanEffectId
+  ) {
+    throw testAppointmentAuthorityError(
+      'El proveedor devolvió un evento sin una cita de prueba durable que lo autorice.',
+      'test_appointment_provider_receipt_authority_mismatch',
+      403
+    )
+  }
+  if (authority.entity_id && cleanString(authority.entity_id) !== cleanAppointmentId) {
+    throw testAppointmentAuthorityError('El efecto durable apunta a otra cita.', 'test_appointment_entity_mismatch', 403)
+  }
+
+  const dueAt = cleanupDueAt || appointment.test_expires_at
+  if (!Number.isFinite(parseDatabaseUtcInstant(dueAt))) {
+    throw testAppointmentAuthorityError('El recibo externo no tiene una fecha de limpieza válida.', 'test_appointment_provider_receipt_expiry_invalid', 409)
+  }
+  return {
+    appointment,
+    authority,
+    appointmentId: cleanAppointmentId,
+    testEffectId: cleanEffectId,
+    testRunId: cleanRunId,
+    provider: cleanProvider,
+    calendarId: cleanString(calendarId || appointment.calendar_id) || null,
+    cleanupDueAt: new Date(parseDatabaseUtcInstant(dueAt)).toISOString()
+  }
+}
+
+/**
+ * Outbox durable para citas externas de Modo test. Se crea ANTES del POST remoto:
+ * si el proceso pierde la respuesta, cleanup/retry todavía sabe exactamente qué
+ * comando reconciliar y jamás depende de una excepción en memoria.
+ */
+export async function prepareConversationalTestAppointmentProviderCommand({
+  appointmentId,
+  testEffectId,
+  testRunId,
+  provider,
+  externalId,
+  commandKey,
+  idempotencyMarker = '',
+  commandPayload = {},
+  calendarId = '',
+  cleanupDueAt = ''
+} = {}) {
+  const identity = await assertTestAppointmentProviderCommandAuthority({
+    appointmentId,
+    testEffectId,
+    testRunId,
+    provider,
+    calendarId,
+    cleanupDueAt
+  })
+  const cleanExternalId = cleanString(externalId)
+  const cleanCommandKey = cleanString(commandKey)
+  if (!cleanExternalId || !cleanCommandKey) {
+    throw testAppointmentAuthorityError(
+      'El comando externo de la cita de prueba necesita identidad durable.',
+      'test_appointment_provider_command_invalid',
+      400
+    )
+  }
+
+  await db.run(`
+    INSERT INTO conversational_appointment_test_provider_receipts (
+      id, test_effect_id, test_run_id, appointment_id, provider, external_id,
+      command_key, idempotency_marker, command_json, remote_status,
+      calendar_id, cleanup_due_at, cleanup_status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'command_pending', ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(test_effect_id, provider) DO NOTHING
+  `, [
+    createEntityId('conv_appt_test_receipt'),
+    identity.testEffectId,
+    identity.testRunId,
+    identity.appointmentId,
+    identity.provider,
+    cleanExternalId,
+    cleanCommandKey,
+    cleanString(idempotencyMarker) || null,
+    JSON.stringify(commandPayload && typeof commandPayload === 'object' ? commandPayload : {}),
+    identity.calendarId,
+    identity.cleanupDueAt
+  ])
+  const receipt = await db.get(`
+    SELECT * FROM conversational_appointment_test_provider_receipts
+    WHERE test_effect_id = ? AND provider = ?
+  `, [identity.testEffectId, identity.provider])
+  if (
+    !receipt || cleanString(receipt.test_run_id) !== identity.testRunId ||
+    cleanString(receipt.appointment_id) !== identity.appointmentId ||
+    (cleanString(receipt.command_key) && cleanString(receipt.command_key) !== cleanCommandKey)
+  ) {
+    throw testAppointmentAuthorityError(
+      'El comando externo ya estaba ligado a otra cita o payload.',
+      'test_appointment_provider_receipt_conflict',
+      409
+    )
+  }
+  return receipt
+}
+
+export async function markConversationalTestAppointmentProviderRemoteStatus({
+  receiptId,
+  testEffectId,
+  provider,
+  externalId = '',
+  remoteStatus,
+  remoteError = null,
+  reconciled = false
+} = {}) {
+  const allowed = new Set(['command_pending', 'posting', 'created', 'remote_outcome_unknown', 'failed', 'absent'])
+  const status = cleanString(remoteStatus).toLowerCase()
+  if (!allowed.has(status)) {
+    throw testAppointmentAuthorityError('Estado remoto de cita de prueba inválido.', 'test_appointment_provider_remote_status_invalid', 400)
+  }
+  const cleanReceiptId = cleanString(receiptId)
+  const cleanEffectId = cleanString(testEffectId)
+  const cleanProvider = cleanString(provider).toLowerCase()
+  if (!cleanReceiptId && (!cleanEffectId || !TEST_APPOINTMENT_PROVIDER_RECEIPT_PROVIDERS.has(cleanProvider))) {
+    throw testAppointmentAuthorityError('Falta la identidad del comando remoto.', 'test_appointment_provider_receipt_invalid', 400)
+  }
+
+  const where = cleanReceiptId ? 'id = ?' : 'test_effect_id = ? AND provider = ?'
+  const whereParams = cleanReceiptId ? [cleanReceiptId] : [cleanEffectId, cleanProvider]
+  const result = await db.run(`
+    UPDATE conversational_appointment_test_provider_receipts
+    SET external_id = CASE WHEN ? != '' THEN ? ELSE external_id END,
+        remote_status = ?, remote_error = ?,
+        remote_attempt_count = remote_attempt_count + 1,
+        remote_reconciled_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE remote_reconciled_at END,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE ${where}
+  `, [
+    cleanString(externalId),
+    cleanString(externalId),
+    status,
+    remoteError ? cleanString(remoteError).slice(0, 1200) : null,
+    reconciled ? 1 : 0,
+    ...whereParams
+  ])
+  if (Number(result?.changes ?? result?.rowCount ?? 0) !== 1) {
+    throw testAppointmentAuthorityError('No existe el comando remoto que se intentó actualizar.', 'test_appointment_provider_receipt_missing', 404)
+  }
+  return db.get(`SELECT * FROM conversational_appointment_test_provider_receipts WHERE ${where}`, whereParams)
+}
+
+function testHighLevelCommandFromAppointment({ appointment, locationId, remoteCalendarId, contactId }) {
+  const marker = highlevelCalendarService.highLevelTestAppointmentMarker(appointment.testEffectId)
+  return {
+    marker,
+    locationId: cleanString(locationId),
+    calendarId: cleanString(remoteCalendarId),
+    contactId: cleanString(contactId),
+    startTime: appointment.startTime,
+    endTime: appointment.endTime
+  }
+}
+
+async function reconcileHighLevelTestAppointment({ command, apiToken }) {
+  const startMs = new Date(command.startTime).getTime()
+  const endMs = new Date(command.endTime).getTime()
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    throw testAppointmentAuthorityError('El comando HighLevel tiene fechas inválidas.', 'test_appointment_provider_command_invalid', 400)
+  }
+  const events = await highlevelCalendarService.getCalendarEvents(
+    command.locationId,
+    startMs - 5 * 60_000,
+    endMs + 5 * 60_000,
+    apiToken,
+    command.calendarId
+  )
+  return highlevelCalendarService.findHighLevelTestAppointmentByCommand(events, command)
+}
+
+/**
+ * HighLevel no ofrece idempotency-key al crear citas. El sustituto seguro es un
+ * outbox previo con marcador único y reconciliación EXACTA antes de cada POST.
+ */
+export async function createConversationalTestHighLevelAppointment({
+  appointment,
+  appointmentData = {},
+  locationId,
+  remoteCalendarId,
+  contactId,
+  apiToken
+} = {}) {
+  if (!appointment?.isTest) {
+    throw testAppointmentAuthorityError('Esta ruta sólo acepta citas reales de Modo test.', 'test_appointment_provider_command_invalid', 400)
+  }
+  const command = testHighLevelCommandFromAppointment({ appointment, locationId, remoteCalendarId, contactId })
+  if (!command.locationId || !command.calendarId || !command.contactId) {
+    throw testAppointmentAuthorityError(
+      'HighLevel necesita ubicación, calendario y contacto para reconciliar la cita de prueba.',
+      'test_appointment_highlevel_identity_incomplete',
+      409
+    )
+  }
+  const commandKey = `highlevel:${appointment.testEffectId}:${command.calendarId}:${command.contactId}`
+  const placeholderId = `outbox${crypto.createHash('sha256').update(commandKey).digest('hex')}`
+  const receipt = await prepareConversationalTestAppointmentProviderCommand({
+    appointmentId: appointment.id,
+    testEffectId: appointment.testEffectId,
+    testRunId: appointment.testRunId,
+    provider: 'highlevel',
+    externalId: placeholderId,
+    commandKey,
+    idempotencyMarker: command.marker,
+    commandPayload: command,
+    calendarId: appointment.calendarId,
+    cleanupDueAt: appointment.testExpiresAt
+  })
+
+  // Antes de cualquier POST, incluso el primero, buscamos el marcador. Esto
+  // cierra la ventana crash-después-de-POST/antes-de-guardar-respuesta.
+  let existingRemote
+  try {
+    existingRemote = await reconcileHighLevelTestAppointment({ command, apiToken })
+  } catch (reconcileError) {
+    await markConversationalTestAppointmentProviderRemoteStatus({
+      receiptId: receipt.id,
+      remoteStatus: 'remote_outcome_unknown',
+      remoteError: `Reconciliación previa: ${reconcileError.message}`,
+      reconciled: true
+    })
+    throw Object.assign(new Error(`HighLevel no permitió reconciliar la cita de prueba: ${reconcileError.message}`, { cause: reconcileError }), {
+      code: 'test_appointment_remote_outcome_unknown',
+      status: 503
+    })
+  }
+  if (existingRemote?.id) {
+    await markConversationalTestAppointmentProviderRemoteStatus({
+      receiptId: receipt.id,
+      externalId: existingRemote.id,
+      remoteStatus: 'created',
+      reconciled: true
+    })
+    return existingRemote
+  }
+
+  const priorRemoteStatus = cleanString(receipt.remote_status).toLowerCase() || 'command_pending'
+  if (priorRemoteStatus !== 'command_pending') {
+    if (priorRemoteStatus === 'posting') {
+      await markConversationalTestAppointmentProviderRemoteStatus({
+        receiptId: receipt.id,
+        remoteStatus: 'remote_outcome_unknown',
+        remoteError: 'El proceso anterior quedó entre el POST y su confirmación; no se reintentará a ciegas.',
+        reconciled: true
+      })
+    }
+    throw Object.assign(new Error(
+      priorRemoteStatus === 'failed'
+        ? 'El intento HighLevel anterior falló de forma definitiva; crea una prueba nueva para reintentarlo.'
+        : 'HighLevel todavía no permite confirmar si la cita de prueba existe; no se enviará otro POST.'
+    ), {
+      code: priorRemoteStatus === 'failed'
+        ? 'test_appointment_provider_failed'
+        : 'test_appointment_remote_outcome_unknown',
+      status: priorRemoteStatus === 'failed' ? 409 : 503
+    })
+  }
+
+  try {
+    // Este checkpoint se persiste ANTES del POST. Si el proceso muere justo al
+    // recibir HighLevel el comando, el siguiente intento verá `posting`,
+    // reconciliará y nunca repetirá el POST por intuición.
+    await markConversationalTestAppointmentProviderRemoteStatus({
+      receiptId: receipt.id,
+      remoteStatus: 'posting'
+    })
+    const response = await highlevelCalendarService.createAppointment({
+      ...appointment,
+      ...appointmentData,
+      calendarId: command.calendarId,
+      contactId: command.contactId,
+      locationId: command.locationId,
+      isTest: true,
+      testEffectId: appointment.testEffectId,
+      notes: appointmentData.notes ?? appointment.notes
+    }, command.locationId, apiToken)
+    const remote = response?.appointment || response
+    if (!remote?.id) throw Object.assign(new Error('HighLevel no devolvió ID de cita; se requiere reconciliación.'), { remoteOutcomeAmbiguous: true })
+    await markConversationalTestAppointmentProviderRemoteStatus({
+      receiptId: receipt.id,
+      externalId: remote.id,
+      remoteStatus: 'created'
+    })
+    return response
+  } catch (writeError) {
+    if (!highlevelCalendarService.isAmbiguousHighLevelAppointmentWriteError(writeError) && !writeError.remoteOutcomeAmbiguous) {
+      await markConversationalTestAppointmentProviderRemoteStatus({
+        receiptId: receipt.id,
+        remoteStatus: 'failed',
+        remoteError: writeError.message
+      })
+      throw writeError
+    }
+
+    try {
+      existingRemote = await reconcileHighLevelTestAppointment({ command, apiToken })
+    } catch (reconcileError) {
+      await markConversationalTestAppointmentProviderRemoteStatus({
+        receiptId: receipt.id,
+        remoteStatus: 'remote_outcome_unknown',
+        remoteError: `${writeError.message} | reconcile: ${reconcileError.message}`,
+        reconciled: true
+      })
+      throw Object.assign(new Error(`HighLevel no confirmó si creó la cita de prueba: ${reconcileError.message}`, { cause: writeError }), {
+        code: 'test_appointment_remote_outcome_unknown',
+        status: 503
+      })
+    }
+    if (!existingRemote?.id) {
+      await markConversationalTestAppointmentProviderRemoteStatus({
+        receiptId: receipt.id,
+        remoteStatus: 'remote_outcome_unknown',
+        remoteError: writeError.message,
+        reconciled: true
+      })
+      throw Object.assign(new Error(
+        'HighLevel no devolvió la cita tras un resultado ambiguo; no se repetirá el POST a ciegas.',
+        { cause: writeError }
+      ), {
+        code: 'test_appointment_remote_outcome_unknown',
+        status: 503
+      })
+    }
+    await markConversationalTestAppointmentProviderRemoteStatus({
+      receiptId: receipt.id,
+      externalId: existingRemote.id,
+      remoteStatus: 'created',
+      reconciled: true
+    })
+    return existingRemote
+  }
+}
+
+/** Guarda un ID ya confirmado; compatibilidad para rutas que no necesitan outbox previo. */
+export async function recordConversationalTestAppointmentProviderReceipt(input = {}) {
+  const receipt = await prepareConversationalTestAppointmentProviderCommand({
+    ...input,
+    commandKey: input.commandKey || `confirmed:${cleanString(input.testEffectId)}:${cleanString(input.provider).toLowerCase()}`,
+    commandPayload: input.commandPayload || {}
+  })
+  return markConversationalTestAppointmentProviderRemoteStatus({
+    receiptId: receipt.id,
+    externalId: input.externalId,
+    remoteStatus: 'created'
+  })
+}
+
+async function hydrateAppointmentParticipantSnapshots(participants = []) {
+  const contactIds = [...new Set(participants.map(participant => participant.contactId).filter(Boolean))]
+  const contacts = new Map()
+
+  if (contactIds.length) {
+    const placeholders = contactIds.map(() => '?').join(', ')
+    const rows = await db.all(`
+      SELECT id, full_name, first_name, last_name, phone, email
+      FROM contacts
+      WHERE id IN (${placeholders})
+    `, contactIds)
+    for (const row of rows) contacts.set(cleanString(row.id), row)
+  }
+
+  return participants.map(participant => {
+    const contact = participant.contactId ? contacts.get(participant.contactId) : null
+    const contactName = cleanString(contact?.full_name)
+      || [cleanString(contact?.first_name), cleanString(contact?.last_name)].filter(Boolean).join(' ')
+    return {
+      ...participant,
+      name: participant.name || cleanSnapshot(contactName, 200),
+      phone: participant.phone || cleanSnapshot(contact?.phone, 50),
+      email: participant.email || normalizeParticipantEmail(contact?.email)
+    }
+  })
+}
+
+async function assertAppointmentParticipantContactsExist(participants = []) {
+  const contactIds = [...new Set(
+    normalizeAppointmentParticipants(participants).map(participant => participant.contactId).filter(Boolean)
+  )]
+  if (!contactIds.length) return
+
+  const placeholders = contactIds.map(() => '?').join(', ')
+  const rows = await db.all(
+    `SELECT id FROM contacts WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+    contactIds
+  )
+  const found = new Set(rows.map(row => cleanString(row.id)))
+  const missing = contactIds.filter(contactId => !found.has(contactId))
+  if (!missing.length) return
+
+  const error = new Error('Uno de los contactos ligados a los participantes ya no existe')
+  error.status = 409
+  error.code = 'appointment_participant_contact_not_found'
+  throw error
+}
+
+export async function replaceAppointmentParticipants(appointmentId, participants = []) {
+  const normalizedAppointmentId = cleanString(appointmentId)
+  if (!normalizedAppointmentId) throw new Error('appointmentId requerido para guardar participantes')
+  validateAppointmentParticipantInputs(participants)
+
+  const normalized = await hydrateAppointmentParticipantSnapshots(
+    normalizeAppointmentParticipants(participants)
+  )
+
+  await db.transaction(async () => {
+    await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [normalizedAppointmentId])
+    for (const participant of normalized) {
+      await db.run(`
+        INSERT INTO appointment_participants (
+          id, appointment_id, role, position, contact_id,
+          name_snapshot, phone_snapshot, email_snapshot, relation_snapshot,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        makeId('appointment_participant'),
+        normalizedAppointmentId,
+        participant.role,
+        participant.position,
+        participant.contactId,
+        participant.name || null,
+        participant.phone || null,
+        participant.email || null,
+        participant.relation || null
+      ])
+    }
+  })
+
+  return getAppointmentParticipants(normalizedAppointmentId)
+}
+
+export async function getAppointmentParticipants(appointmentId) {
+  const normalizedAppointmentId = cleanString(appointmentId)
+  if (!normalizedAppointmentId) return []
+
+  const rows = await db.all(`
+    SELECT id, appointment_id, role, position, contact_id,
+      name_snapshot, phone_snapshot, email_snapshot, relation_snapshot,
+      created_at, updated_at
+    FROM appointment_participants
+    WHERE appointment_id = ?
+    ORDER BY
+      CASE role WHEN 'requester' THEN 0 WHEN 'primary_attendee' THEN 1 ELSE 2 END,
+      position ASC,
+      created_at ASC
+  `, [normalizedAppointmentId])
+
+  return rows.map(row => ({
+    id: row.id,
+    appointmentId: row.appointment_id,
+    role: row.role,
+    position: Number(row.position || 0),
+    contactId: row.contact_id || null,
+    name: row.name_snapshot || '',
+    phone: row.phone_snapshot || '',
+    email: row.email_snapshot || '',
+    relation: row.relation_snapshot || '',
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }))
+}
+
+// Alias explícitos para consumidores que sólo necesitan el contrato crear/cargar.
+export async function createAppointmentParticipants(appointmentId, participants = []) {
+  return replaceAppointmentParticipants(appointmentId, participants)
+}
+
+export async function loadAppointmentParticipants(appointmentId) {
+  return getAppointmentParticipants(appointmentId)
+}
+
 export async function upsertLocalAppointment(raw = {}, options = {}) {
+  const appointmentPayload = raw.appointment && typeof raw.appointment === 'object' ? raw.appointment : raw
+  const participantsProvided = Array.isArray(appointmentPayload.participants)
+  if (participantsProvided) {
+    validateAppointmentParticipantInputs(appointmentPayload.participants)
+    await assertAppointmentParticipantContactsExist(appointmentPayload.participants)
+  }
   const normalized = normalizeAppointmentRecord(raw, options)
 
   // (GCAL-003/GHL-003) Last-write-wins: cuando el upsert viene de un PULL de sincronización
@@ -4121,6 +4909,9 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
   normalized.endTime = normalizeToUtcIso(normalized.endTime, accountZone)
   normalized.dateAdded = normalizeToUtcIso(normalized.dateAdded, accountZone)
   normalized.dateUpdated = normalizeToUtcIso(normalized.dateUpdated, accountZone)
+  normalized.testExpiresAt = normalized.isTest
+    ? normalizeToUtcIso(normalized.testExpiresAt, accountZone)
+    : null
 
   const existingByGhl = normalized.ghlAppointmentId
     ? await db.get('SELECT id FROM appointments WHERE ghl_appointment_id = ?', [normalized.ghlAppointmentId])
@@ -4138,13 +4929,18 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     normalized.id = existingByGoogle.id
   }
 
+  if (normalized.isTest) {
+    await assertConversationalTestAppointmentAuthority({ normalized, appointmentPayload })
+  }
+
   await db.run(`
     INSERT INTO appointments (
       id, ghl_appointment_id, google_event_id, calendar_id, contact_id, location_id, title, status,
       appointment_status, assigned_user_id, notes, address, start_time, end_time,
       date_added, date_updated, source, booking_channel, sync_status, sync_error, synced_at,
-      google_sync_status, google_sync_error, google_synced_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      google_sync_status, google_sync_error, google_synced_at,
+      is_test, test_run_id, test_effect_id, test_expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       ghl_appointment_id = COALESCE(excluded.ghl_appointment_id, appointments.ghl_appointment_id),
       google_event_id = COALESCE(excluded.google_event_id, appointments.google_event_id),
@@ -4169,6 +4965,10 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
       google_sync_status = COALESCE(excluded.google_sync_status, appointments.google_sync_status),
       google_sync_error = excluded.google_sync_error,
       google_synced_at = CASE WHEN excluded.google_sync_status = 'synced' THEN CURRENT_TIMESTAMP ELSE appointments.google_synced_at END,
+      is_test = CASE WHEN appointments.is_test = 1 THEN 1 ELSE excluded.is_test END,
+      test_run_id = COALESCE(appointments.test_run_id, excluded.test_run_id),
+      test_effect_id = COALESCE(appointments.test_effect_id, excluded.test_effect_id),
+      test_expires_at = COALESCE(appointments.test_expires_at, excluded.test_expires_at),
       deleted_at = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status = 'pending_delete' OR appointments.date_updated >= excluded.date_updated) THEN appointments.deleted_at ELSE NULL END
   `, [
     normalized.id,
@@ -4194,11 +4994,23 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     normalized.syncStatus === 'synced' ? new Date().toISOString() : null,
     normalized.googleSyncStatus,
     normalized.googleSyncError,
-    normalized.googleSyncStatus === 'synced' ? new Date().toISOString() : null
+    normalized.googleSyncStatus === 'synced' ? new Date().toISOString() : null,
+    normalized.isTest ? 1 : 0,
+    normalized.testRunId,
+    normalized.testEffectId,
+    normalized.testExpiresAt
   ])
 
-  if (normalized.contactId) {
-    await updateContactAppointmentDate(normalized.contactId)
+  const persistedParticipants = participantsProvided
+    ? await replaceAppointmentParticipants(normalized.id, appointmentPayload.participants)
+    : []
+
+  const affectedContactIds = [...new Set([
+    normalized.contactId,
+    ...persistedParticipants.map(participant => participant.contactId)
+  ].filter(Boolean))]
+  for (const contactId of affectedContactIds) {
+    await updateContactAppointmentDate(contactId)
   }
 
   const row = await getLocalAppointment(normalized.id)
@@ -4217,8 +5029,31 @@ export async function createLocalAppointment(appointmentData = {}, { locationId 
     throw new Error('La fecha de fin debe ser posterior al inicio')
   }
 
+  const isTest = normalizeTestFlag(appointmentData.isTest ?? appointmentData.is_test)
+  const testRunId = cleanString(appointmentData.testRunId || appointmentData.test_run_id)
+  const testEffectId = cleanString(appointmentData.testEffectId || appointmentData.test_effect_id)
+  const testExpiresAt = appointmentData.testExpiresAt || appointmentData.test_expires_at
+
+  if (isTest && (!testRunId || !testEffectId || !testExpiresAt)) {
+    throw new Error('Una cita de prueba requiere testRunId, testEffectId y testExpiresAt')
+  }
+  if (isTest && Number.isNaN(new Date(testExpiresAt).getTime())) {
+    throw new Error('La fecha de expiración de la cita de prueba no es válida')
+  }
+
+  const contactId = cleanString(appointmentData.contactId || appointmentData.contact_id)
+  const participants = Array.isArray(appointmentData.participants)
+    ? appointmentData.participants
+    : (contactId
+        ? [
+            { role: 'requester', contactId },
+            { role: 'primary_attendee', contactId }
+          ]
+        : [])
+
   return upsertLocalAppointment({
     ...appointmentData,
+    participants,
     id: appointmentData.id || makeId(LOCAL_APPOINTMENT_PREFIX),
     locationId: appointmentData.locationId || appointmentData.location_id || locationId,
     source: appointmentData.source || 'ristak'
@@ -4242,7 +5077,10 @@ export async function getLocalAppointment(appointmentId) {
     LIMIT 1
   `, [appointmentId, appointmentId, appointmentId])
 
-  return row ? appointmentRowToApi(row) : null
+  if (!row) return null
+  const appointment = appointmentRowToApi(row)
+  appointment.participants = await getAppointmentParticipants(appointment.id)
+  return appointment
 }
 
 export async function listLocalAppointments({ startTime, endTime, calendarId } = {}) {
@@ -4323,6 +5161,11 @@ export async function deleteLocalAppointment(appointmentId, { markPendingDelete 
   const existing = await getLocalAppointment(appointmentId)
   if (!existing) return false
 
+  const affectedContactIds = [...new Set([
+    existing.contactId,
+    ...(Array.isArray(existing.participants) ? existing.participants.map(participant => participant.contactId) : [])
+  ].filter(Boolean))]
+
   if (markPendingDelete && existing.ghlAppointmentId) {
     await db.run(`
       UPDATE appointments
@@ -4334,11 +5177,17 @@ export async function deleteLocalAppointment(appointmentId, { markPendingDelete 
       WHERE id = ?
     `, [existing.id])
   } else {
-    await db.run('DELETE FROM appointments WHERE id = ?', [existing.id])
+    // SQLite local puede correr con foreign_keys desactivado. Borramos los
+    // participantes explícitamente y dentro de la misma transacción para no
+    // dejar snapshots huérfanos.
+    await db.transaction(async () => {
+      await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [existing.id])
+      await db.run('DELETE FROM appointments WHERE id = ?', [existing.id])
+    })
   }
 
-  if (existing.contactId) {
-    await updateContactAppointmentDate(existing.contactId)
+  for (const contactId of affectedContactIds) {
+    await updateContactAppointmentDate(contactId)
   }
 
   return true
@@ -4370,14 +5219,21 @@ export async function updateContactAppointmentDate(contactId) {
   if (!contactId) return
 
   const row = await db.get(`
-    SELECT MIN(start_time) AS appointment_date
-    FROM appointments
-    WHERE contact_id = ?
-      AND deleted_at IS NULL
-      AND COALESCE(sync_status, '') != 'pending_delete'
+    SELECT MIN(a.start_time) AS appointment_date
+    FROM appointments a
+    WHERE (
+        a.contact_id = ?
+        OR EXISTS (
+          SELECT 1
+          FROM appointment_participants ap
+          WHERE ap.appointment_id = a.id AND ap.contact_id = ?
+        )
+      )
+      AND a.deleted_at IS NULL
+      AND COALESCE(a.sync_status, '') != 'pending_delete'
       -- APT-010: excluir 'noshow' además de cancelladas/invalid para no fijar appointment_date sobre una cita a la que el contacto no asistió
-      AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'noshow', 'invalid')
-  `, [contactId])
+      AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled', 'noshow', 'invalid')
+  `, [contactId, contactId])
 
   await db.run(
     'UPDATE contacts SET appointment_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -4996,6 +5852,63 @@ export async function ensureHighLevelContactForAppointment(client, appointment =
   return null
 }
 
+/**
+ * Modo test nunca crea ni liga contactos en HighLevel: esa mutación sobreviviría
+ * a la limpieza de cinco minutos. Sólo reutiliza una identidad remota que ya
+ * estaba ligada o una coincidencia exacta y no ambigua encontrada en lectura.
+ */
+export async function resolveExistingHighLevelContactForTestAppointment(client, appointment = {}) {
+  if (!appointment.contactId) return null
+
+  const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [appointment.contactId])
+  if (!contact) {
+    if (!isRistakContactId(appointment.contactId)) return appointment.contactId
+    const error = new Error('El contacto de prueba no existe en Ristak.')
+    error.status = 409
+    error.code = 'test_appointment_highlevel_contact_missing'
+    throw error
+  }
+
+  if (String(contact.ghl_contact_id || '').trim()) return String(contact.ghl_contact_id).trim()
+  if (!isRistakContactId(contact.id)) return contact.id
+
+  const expectedEmail = String(contact.email || '').trim().toLowerCase()
+  const expectedPhone = normalizePhoneForStorage(contact.phone) || String(contact.phone || '').trim()
+  const candidateIds = new Set()
+
+  const collectExactMatches = async (search, predicate) => {
+    const result = await client.searchContacts({ ...search, limit: 10 }).catch(() => null)
+    for (const candidate of Array.isArray(result?.contacts) ? result.contacts : []) {
+      if (candidate?.id && predicate(candidate)) candidateIds.add(String(candidate.id).trim())
+    }
+  }
+
+  if (expectedEmail) {
+    await collectExactMatches({ email: expectedEmail }, (candidate) => (
+      String(candidate.email || candidate.emailAddress || '').trim().toLowerCase() === expectedEmail
+    ))
+  }
+  if (expectedPhone) {
+    await collectExactMatches({ phone: expectedPhone }, (candidate) => {
+      const candidatePhone = normalizePhoneForStorage(
+        candidate.phone || candidate.phoneNumber || candidate.mobile || ''
+      ) || String(candidate.phone || candidate.phoneNumber || candidate.mobile || '').trim()
+      return candidatePhone === expectedPhone
+    })
+  }
+
+  if (candidateIds.size === 1) return [...candidateIds][0]
+
+  const error = new Error(candidateIds.size > 1
+    ? 'La búsqueda encontró más de un contacto exacto en HighLevel. Liga el contacto manualmente antes de probar la agenda.'
+    : 'Este contacto todavía no está ligado a HighLevel. El Modo test no crea contactos productivos; sincronízalo primero o usa otro contacto.')
+  error.status = 409
+  error.code = candidateIds.size > 1
+    ? 'test_appointment_highlevel_contact_ambiguous'
+    : 'test_appointment_highlevel_contact_not_synced'
+  throw error
+}
+
 export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
   const rows = await db.all(`
     SELECT * FROM appointments
@@ -5055,7 +5968,7 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
       let response
       let ghlAppointmentId = appointment.ghlAppointmentId
 
-      if (!ghlAppointmentId) {
+      if (!ghlAppointmentId && !appointment.isTest) {
         const startMs = new Date(appointment.startTime).getTime()
         const endMs = new Date(appointment.endTime || appointment.startTime).getTime()
         const searchStart = Number.isFinite(startMs) ? startMs - 5 * 60000 : Date.now() - 5 * 60000
@@ -5090,7 +6003,16 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
         response = await highlevelCalendarService.updateAppointment(ghlAppointmentId, payload, apiToken)
         updated += 1
       } else {
-        response = await highlevelCalendarService.createAppointment(payload, locationId, apiToken)
+        response = appointment.isTest
+          ? await createConversationalTestHighLevelAppointment({
+              appointment,
+              appointmentData: payload,
+              locationId,
+              remoteCalendarId,
+              contactId,
+              apiToken
+            })
+          : await highlevelCalendarService.createAppointment(payload, locationId, apiToken)
         created += 1
       }
 
@@ -5099,6 +6021,48 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
 
       if (!ghlAppointmentId) {
         throw new Error('HighLevel no devolvió ID de cita; se detiene para evitar duplicados')
+      }
+
+      if (appointment.isTest && !cleanString((await db.get(
+        'SELECT command_key FROM conversational_appointment_test_provider_receipts WHERE test_effect_id = ? AND provider = ?',
+        [appointment.testEffectId, 'highlevel']
+      ))?.command_key)) {
+        try {
+          await recordConversationalTestAppointmentProviderReceipt({
+            appointmentId: appointment.id,
+            testEffectId: appointment.testEffectId,
+            testRunId: appointment.testRunId,
+            provider: 'highlevel',
+            externalId: ghlAppointmentId,
+            calendarId: appointment.calendarId,
+            cleanupDueAt: appointment.testExpiresAt
+          })
+        } catch (receiptError) {
+          const fallback = await db.run(`
+            UPDATE appointments
+            SET ghl_appointment_id = ?, sync_error = ?, date_updated = CURRENT_TIMESTAMP
+            WHERE id = ? AND is_test = 1 AND test_run_id = ? AND test_effect_id = ?
+          `, [
+            ghlAppointmentId,
+            `Recibo HighLevel pendiente: ${cleanString(receiptError.message).slice(0, 800)}`,
+            appointment.id,
+            appointment.testRunId,
+            appointment.testEffectId
+          ]).catch(() => null)
+          if (Number(fallback?.changes ?? fallback?.rowCount ?? 0) !== 1) {
+            try {
+              await highlevelCalendarService.deleteEvent(ghlAppointmentId, apiToken)
+            } catch (compensationError) {
+              const error = new Error(
+                `HighLevel creó ${ghlAppointmentId}, pero no se pudo guardar su recibo ni compensarlo: ${compensationError.message}`
+              )
+              error.cause = receiptError
+              throw error
+            }
+            throw receiptError
+          }
+          logger.warn(`[Calendario local] El recibo HighLevel ${ghlAppointmentId} se ancló en la cita ${appointment.id} como fallback durable.`)
+        }
       }
 
       await upsertLocalAppointment({

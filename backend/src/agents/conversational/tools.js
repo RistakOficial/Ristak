@@ -9,14 +9,20 @@ import { getLocalFreeSlots } from '../../services/localCalendarService.js'
 import { inspectChangedAppointmentCreationReplay } from '../../services/appointmentCreationSafetyService.js'
 import {
   buildConversationalPaymentLinkIdempotencyKey,
-  createSinglePaymentLink,
   registerAgentTransferPaymentProofForReview
 } from '../../services/paymentFlowService.js'
+import { createConversationalAgentLivePaymentLink } from '../../services/conversationalAgentLivePaymentService.js'
 import { getBusinessProfileSnapshot, getOpenAIApiKey } from '../../services/aiAgentService.js'
 import { analyzePaymentReceiptImage } from './mediaContext.js'
 import { getTriggerLink } from '../../services/triggerLinksService.js'
 import { getAccountTimezone, normalizeDateOnlyInTimezone, resolveTimezone } from '../../utils/dateUtils.js'
 import { getAccountCurrency } from '../../utils/accountLocale.js'
+import { normalizePhoneForStorage } from '../../utils/phoneUtils.js'
+import {
+  mergeContactCustomFields,
+  parseContactCustomFields,
+  serializeContactCustomFieldsForDb
+} from '../../utils/contactCustomFields.js'
 import {
   bindConversationalPaymentSourceEvent,
   completeConversationalAgentSalePaymentFromInvoice,
@@ -30,6 +36,14 @@ import {
 } from '../../services/conversationalAgentService.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 import { logger } from '../../utils/logger.js'
+import { getGHLClient } from '../../services/ghlClient.js'
+import { getGhlContactIdForLocalContact } from '../../services/contactIdentityService.js'
+import {
+  applyConversationalAgentPreventiveMeasure,
+  getActiveConversationalAgentPreventiveMeasure,
+  withConversationalAgentSafetyLock
+} from '../../services/conversationalAgentSafetyService.js'
+import { dispatchConversationalAgentSafetyNotification } from '../../services/conversationalAgentSafetyNotificationService.js'
 import {
   NON_LIVE_PAYMENT_MODES,
   SUCCESS_PAYMENT_STATUSES,
@@ -124,13 +138,21 @@ function missingThreadContactResult(ctx = {}, actionType = 'contact_identity_una
   }
 }
 
-function buildAppointmentParticipant({ contact, title, notes, attendeeName, attendeeContext } = {}) {
+function buildAppointmentParticipant({
+  contact,
+  title,
+  notes,
+  attendeeName,
+  attendeeContext,
+  primaryAttendee = null
+} = {}) {
   const threadContactLabel = cleanAppointmentText(
     contact?.full_name || contact?.phone || contact?.email || 'Contacto',
     180
   ) || 'Contacto'
-  const attendee = cleanAppointmentText(attendeeName, 180)
-  const context = cleanAppointmentText(attendeeContext, 1000)
+  const structuredPrimary = cleanParticipant(primaryAttendee)
+  const attendee = cleanAppointmentText(structuredPrimary?.name || attendeeName, 180)
+  const context = cleanAppointmentText(structuredPrimary?.relation || attendeeContext, 1000)
   const requestedTitle = cleanAppointmentText(title, 240)
   const requestedNotes = cleanAppointmentText(notes, 2000)
 
@@ -155,6 +177,410 @@ function buildAppointmentParticipant({ contact, title, notes, attendeeName, atte
   }
 }
 
+function cleanParticipant(input = {}) {
+  if (!input || typeof input !== 'object') return null
+  const name = cleanAppointmentText(input.name || input.fullName, 180)
+  const rawPhone = cleanAppointmentText(input.phone, 80)
+  const normalizedPhone = rawPhone ? normalizePhoneForStorage(rawPhone) : ''
+  const phoneDigits = normalizedPhone.replace(/\D/g, '')
+  const phoneValid = !rawPhone || (phoneDigits.length >= 7 && phoneDigits.length <= 15)
+  const phone = phoneValid ? normalizedPhone : ''
+  const email = cleanAppointmentText(input.email, 180).toLowerCase()
+  const relation = cleanAppointmentText(input.relation || input.context, 180)
+  if (!name && !rawPhone && !email && !relation) return null
+  return { name, phone, email, relation, phoneProvided: Boolean(rawPhone), phoneValid }
+}
+
+function publicAppointmentParticipant(participant = {}) {
+  const { phoneProvided: _phoneProvided, phoneValid: _phoneValid, ...publicParticipant } = participant
+  return publicParticipant
+}
+
+function buildAppointmentParticipants({
+  contact,
+  primaryAttendee = null,
+  guests = [],
+  attendeeName = '',
+  attendeeContext = '',
+  requirements = {}
+} = {}) {
+  const requesterRawPhone = cleanAppointmentText(contact?.phone, 80)
+  const requesterNormalizedPhone = requesterRawPhone ? normalizePhoneForStorage(requesterRawPhone) : ''
+  const requesterPhoneDigits = requesterNormalizedPhone.replace(/\D/g, '')
+  const requesterPhoneValid = !requesterRawPhone ||
+    (requesterPhoneDigits.length >= 7 && requesterPhoneDigits.length <= 15)
+  const requester = {
+    role: 'requester',
+    contactId: String(contact?.id || '').trim() || null,
+    name: cleanAppointmentText(contact?.full_name, 180),
+    phone: requesterPhoneValid ? requesterNormalizedPhone : '',
+    email: cleanAppointmentText(contact?.email, 180).toLowerCase(),
+    relation: ''
+  }
+  const legacyPrimary = attendeeName
+    ? { name: attendeeName, relation: attendeeContext }
+    : null
+  const requestedPrimary = cleanParticipant(primaryAttendee || legacyPrimary)
+  const allowDifferentPrimary = requirements?.participants?.allowPrimaryAttendeeDifferentFromRequester !== false
+  if (requestedPrimary && !allowDifferentPrimary) {
+    return {
+      ok: false,
+      error: 'Este agente no permite agendar para un titular distinto. Usa al contacto de este hilo como titular y envía primaryAttendee en null; si la cita debe quedar a nombre de otra persona, pasa el caso al equipo.'
+    }
+  }
+  const primary = requestedPrimary
+    ? { ...publicAppointmentParticipant(requestedPrimary), role: 'primary_attendee', contactId: null }
+    : { ...requester, role: 'primary_attendee' }
+  const maxGuests = Math.min(20, Math.max(1, Number(requirements?.participants?.maxGuests) || 10))
+  const rawGuests = Array.isArray(guests) ? guests : []
+  if (rawGuests.length > maxGuests) {
+    return {
+      ok: false,
+      error: `Esta agenda admite como máximo ${maxGuests} invitado${maxGuests === 1 ? '' : 's'}. Recibí ${rawGuests.length}; no se omitió ni truncó a nadie. Pide que reduzcan la lista antes de agendar.`
+    }
+  }
+  const requiredGuestFields = requirements?.participants?.enabled
+    ? new Set(Array.isArray(requirements.participants.guestFields) ? requirements.participants.guestFields : [])
+    : new Set()
+  if (!requestedPrimary && requesterRawPhone && !requesterPhoneValid) {
+    return {
+      ok: false,
+      error: 'El teléfono del titular debe tener entre 7 y 15 dígitos. Pide que lo confirme antes de agendar.'
+    }
+  }
+  if (requestedPrimary) {
+    if (requestedPrimary.phoneProvided && !requestedPrimary.phoneValid) {
+      return {
+        ok: false,
+        error: 'El teléfono del titular distinto debe tener entre 7 y 15 dígitos. Pide que lo confirme antes de agendar.'
+      }
+    }
+    const missing = [...requiredGuestFields].filter((field) => !requestedPrimary[field])
+    if (missing.length) {
+      return {
+        ok: false,
+        error: `Faltan datos configurados del titular distinto: ${missing.join(', ')}. Pide únicamente esos datos antes de agendar.`
+      }
+    }
+  }
+  const normalizedGuests = []
+  for (const rawGuest of rawGuests) {
+    const guest = cleanParticipant(rawGuest)
+    if (!guest) continue
+    if (guest.phoneProvided && !guest.phoneValid) {
+      return {
+        ok: false,
+        error: 'El teléfono de un invitado debe tener entre 7 y 15 dígitos. Pide que lo confirme antes de agendar.'
+      }
+    }
+    const missing = [...requiredGuestFields].filter((field) => !guest[field])
+    if (missing.length) {
+      return {
+        ok: false,
+        error: `Faltan datos configurados de un invitado: ${missing.join(', ')}. Pide únicamente esos datos antes de agendar.`
+      }
+    }
+    normalizedGuests.push({ ...publicAppointmentParticipant(guest), role: 'guest', contactId: null })
+  }
+  return {
+    ok: true,
+    requester,
+    primary,
+    guests: normalizedGuests,
+    all: [requester, primary, ...normalizedGuests]
+  }
+}
+
+function isPlaceholderContactName(value = '') {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+  if (!normalized) return true
+  if (/^(contacto|cliente|prospecto|lead|sin nombre|unknown|desconocid[oa]|contacto de prueba)(\s+\d+)?$/.test(normalized)) {
+    return true
+  }
+  if (/^(?:usuario(?: de)? (?:whatsapp|instagram|facebook|messenger)|(?:whatsapp|instagram|facebook|messenger) (?:user|usuario))$/.test(normalized)) {
+    return true
+  }
+  const phoneLike = normalized.replace(/(?:ext\.?|extension|x)\s*\d+$/i, '').trim()
+  return /\d/.test(phoneLike) && /^[+\d().\s-]+$/.test(phoneLike)
+}
+
+function splitConfirmedName(value = '') {
+  const parts = cleanAppointmentText(value, 240).split(/\s+/).filter(Boolean)
+  return {
+    fullName: parts.join(' '),
+    firstName: parts[0] || null,
+    lastName: parts.slice(1).join(' ') || null
+  }
+}
+
+function normalizeRequiredDataKey(value = '') {
+  return cleanAppointmentText(value, 120)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function requiredContactFieldValue(contact = {}, requirement = {}) {
+  const field = String(requirement?.field || '').trim()
+  const fullName = cleanAppointmentText(contact.full_name, 240)
+  if (field === 'first_name') {
+    const firstName = cleanAppointmentText(contact.first_name || fullName.split(/\s+/)[0], 120)
+    return firstName && !isPlaceholderContactName(fullName) ? firstName : ''
+  }
+  if (field === 'full_name') {
+    return fullName && !isPlaceholderContactName(fullName) && fullName.split(/\s+/).filter(Boolean).length >= 2
+      ? fullName
+      : ''
+  }
+  if (field === 'phone') {
+    const phone = normalizePhoneForStorage(contact.phone || '')
+    const digits = phone.replace(/\D/g, '')
+    return digits.length >= 7 && digits.length <= 15 ? phone : ''
+  }
+  if (field === 'email') {
+    const email = cleanAppointmentText(contact.email, 240).toLowerCase()
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+  }
+
+  const customFields = parseContactCustomFields(contact.custom_fields)
+  const expectedKeys = field === 'address'
+    ? ['address', 'address_1']
+    : field === 'custom'
+      ? [requirement.label]
+      : [field]
+  const normalizedKeys = new Set(expectedKeys.map(normalizeRequiredDataKey).filter(Boolean))
+  const match = customFields.find((item) => {
+    const identities = [item.key, item.fieldKey, item.id, item.label, item.name]
+      .map(normalizeRequiredDataKey)
+      .filter(Boolean)
+    return identities.some((identity) => normalizedKeys.has(identity)) && cleanAppointmentText(item.value, 1000)
+  })
+  return match ? cleanAppointmentText(match.value, 1000) : ''
+}
+
+function requirementConditionMatches(requirement = {}, facts = {}) {
+  const condition = requirement?.condition
+  if (
+    !condition || typeof condition !== 'object' || Array.isArray(condition) ||
+    condition.operator !== 'is_true' || condition.value !== true
+  ) return false
+  const fact = String(condition.fact || '').trim()
+  if (![
+    'appointment.primary_attendee_is_different',
+    'appointment.has_guests',
+    'payment.is_deposit',
+    'payment.is_full_payment'
+  ].includes(fact)) return false
+  return facts[fact] === true
+}
+
+function activeContactDataRequirements({ scope, dataRequirements, facts = {} } = {}) {
+  if (!dataRequirements?.enabled) return []
+  return (Array.isArray(dataRequirements.fields) ? dataRequirements.fields : [])
+    .filter((item) => item?.scope === 'any_action' || item?.scope === scope)
+    .filter((item) => (
+      item?.level === 'required' ||
+      (item?.level === 'conditional' && requirementConditionMatches(item, facts))
+    ))
+}
+
+function appointmentRequirementFacts({ contact, primaryAttendee, attendeeName, attendeeContext, guests } = {}) {
+  const legacyPrimary = attendeeName ? { name: attendeeName, relation: attendeeContext } : null
+  const primary = cleanParticipant(primaryAttendee || legacyPrimary)
+  const requesterName = cleanAppointmentText(contact?.full_name, 180).toLowerCase()
+  const requesterPhone = normalizePhoneForStorage(contact?.phone || '')
+  const requesterEmail = cleanAppointmentText(contact?.email, 180).toLowerCase()
+  const primaryIsDifferent = Boolean(primary) && Boolean(
+    (primary.name && primary.name.toLowerCase() !== requesterName) ||
+    (primary.phone && normalizePhoneForStorage(primary.phone) !== requesterPhone) ||
+    (primary.email && primary.email !== requesterEmail) ||
+    primary.relation
+  )
+  const guestCount = (Array.isArray(guests) ? guests : [])
+    .map((guest) => cleanParticipant(guest))
+    .filter(Boolean)
+    .length
+  return {
+    'appointment.primary_attendee_is_different': primaryIsDifferent,
+    'appointment.has_guests': guestCount > 0
+  }
+}
+
+function paymentRequirementFacts(paymentCapability = {}) {
+  const isDeposit = paymentCapability?.chargeType === 'deposit' ||
+    paymentCapability?.paymentMode === 'deposit' ||
+    paymentCapability?.deposit?.enabled === true
+  return {
+    'payment.is_deposit': isDeposit,
+    'payment.is_full_payment': !isDeposit
+  }
+}
+
+function assertRequiredContactData({ scope, contact, dataRequirements, facts = {} } = {}) {
+  if (!dataRequirements?.enabled) return { ok: true, missing: [] }
+  const requirements = activeContactDataRequirements({ scope, dataRequirements, facts })
+  if (!requirements.length) return { ok: true, missing: [] }
+
+  const labels = {
+    first_name: 'nombre',
+    full_name: 'nombre completo',
+    phone: 'teléfono',
+    alternate_phone: 'otro teléfono',
+    email: 'correo',
+    company: 'empresa',
+    address: 'dirección',
+    custom: 'dato personalizado'
+  }
+  const missing = requirements
+    .filter((requirement) => !requiredContactFieldValue(contact, requirement))
+    .map((requirement) => ({
+      field: requirement.field,
+      label: cleanAppointmentText(requirement.label, 120) || labels[requirement.field] || requirement.field
+    }))
+  if (!missing.length) return { ok: true, missing: [] }
+  return {
+    ok: false,
+    actionCompleted: false,
+    needsData: true,
+    requiredFields: missing,
+    error: `Antes de continuar faltan datos obligatorios confirmados en la ficha: ${missing.map((item) => item.label).join(', ')}. Pide únicamente esos datos y guárdalos con save_contact_data; no ejecutes la acción todavía.`
+  }
+}
+
+async function enforceRequiredContactData({ ctx, scope, dataRequirements, contact = null, facts = {} } = {}) {
+  const hasRequiredFields = activeContactDataRequirements({ scope, dataRequirements, facts }).length > 0
+  if (!hasRequiredFields) return null
+  const resolvedContact = contact || await getThreadContact(ctx)
+  if (!resolvedContact) return missingThreadContactResult(ctx)
+  const validation = assertRequiredContactData({ scope, contact: resolvedContact, dataRequirements, facts })
+  return validation.ok ? null : validation
+}
+
+async function guardMutationAgainstPreventiveMeasure(ctx = {}) {
+  // Da oportunidad a que apply_safety_measure, aunque venga en el mismo lote
+  // de tool calls de un proveedor compatible, establezca prioridad terminal.
+  await new Promise((resolve) => setImmediate(resolve))
+  if (ctx.preventiveSafetyRequested === true) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      terminal: true,
+      code: 'preventive_measure_wins',
+      error: 'La medida preventiva tiene prioridad. Esta acción no se ejecutó.'
+    }
+  }
+  if (ctx.dryRun) return null
+  try {
+    const active = await getActiveConversationalAgentPreventiveMeasure({
+      contactId: ctx.contactId,
+      channel: String(ctx.channel || 'whatsapp').trim().toLowerCase()
+    })
+    if (!active) return null
+    return {
+      ok: false,
+      actionCompleted: false,
+      terminal: true,
+      code: 'preventive_measure_active',
+      error: 'Este hilo tiene una medida preventiva activa. La acción no se ejecutó.'
+    }
+  } catch (error) {
+    logger.error(`[Agente conversacional] No se pudo comprobar la medida preventiva antes de mutar: ${error.message}`)
+    return {
+      ok: false,
+      actionCompleted: false,
+      terminal: true,
+      code: 'preventive_measure_check_failed',
+      error: 'No se pudo comprobar si el hilo está en revisión preventiva. La acción se bloqueó por seguridad.'
+    }
+  }
+}
+
+const PREVENTIVE_FENCED_MUTATION_TOOLS = new Set([
+  'save_contact_data',
+  'book_appointment',
+  'request_human_booking',
+  'mark_ready_to_advance',
+  'create_payment_link',
+  'send_goal_url',
+  'send_to_human',
+  'register_deposit_payment_proof'
+])
+
+let preventiveMutationFenceHookForTest = null
+
+export function setPreventiveMutationFenceHookForTest(hook = null) {
+  preventiveMutationFenceHookForTest = typeof hook === 'function' ? hook : null
+}
+
+function wrapMutableToolWithPreventiveFence(toolDefinition, ctx = {}) {
+  if (!toolDefinition || !PREVENTIVE_FENCED_MUTATION_TOOLS.has(toolDefinition.name)) return toolDefinition
+  const invoke = toolDefinition.invoke.bind(toolDefinition)
+  return {
+    ...toolDefinition,
+    invoke: async (...args) => {
+      if (ctx.dryRun) return invoke(...args)
+      const actionCountBeforeFence = Array.isArray(ctx.actions) ? ctx.actions.length : 0
+      try {
+        return await withConversationalAgentSafetyLock({
+          contactId: ctx.contactId,
+          channel: String(ctx.channel || 'whatsapp').trim().toLowerCase()
+        }, async () => {
+          // El chequeo y el efecto completo viven bajo el mismo candado. Así
+          // ninguna otra instancia puede confirmar cuarentena entre ambos.
+          const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+          if (safetyFence) return safetyFence
+          if (preventiveMutationFenceHookForTest) {
+            await preventiveMutationFenceHookForTest({
+              toolName: toolDefinition.name,
+              contactId: ctx.contactId,
+              channel: String(ctx.channel || 'whatsapp').trim().toLowerCase()
+            })
+          }
+          return invoke(...args)
+        })
+      } catch (error) {
+        // El wrapper sólo traduce fallos al adquirir/sostener el fence. Si la
+        // tool original lanzó, conserva exactamente el contrato de errores del
+        // SDK para que su manejo normal no cambie.
+        if (error?.conversationalSafetyLockCallbackStarted === true) throw error
+        logger.error(`[Agente conversacional] No se pudo sostener el fence preventivo para ${toolDefinition.name}: ${error.message}`)
+        const errorResult = {
+          ok: false,
+          actionCompleted: false,
+          terminal: true,
+          code: error?.code || 'preventive_measure_lock_unavailable',
+          error: 'No se pudo confirmar de forma segura el estado preventivo del hilo. La acción se bloqueó.'
+        }
+        if ((Array.isArray(ctx.actions) ? ctx.actions.length : 0) === actionCountBeforeFence) {
+          const action = pushAction(ctx, toolDefinition.name, { blockedByPreventiveFence: true })
+          settleAction(action, 'error', {
+            ok: false,
+            actionCompleted: false,
+            terminal: true,
+            code: errorResult.code,
+            error: errorResult.error
+          })
+        }
+        return errorResult
+      }
+    }
+  }
+}
+
+const appointmentPersonSchema = z.object({
+  name: z.string().nullable().describe('Nombre confirmado; null si no está disponible'),
+  phone: z.string().nullable().describe('Teléfono confirmado; null si no fue requerido ni proporcionado'),
+  email: z.string().nullable().describe('Correo confirmado; null si no fue requerido ni proporcionado'),
+  relation: z.string().nullable().describe('Relación o contexto breve; null si no aplica')
+})
+
 function getToolRuntimeConfig(ctx = {}, config = {}) {
   return {
     ...config,
@@ -170,7 +596,7 @@ function getNativeCapability(ctx = {}, config = {}, capabilityId = '') {
 function getNativePaymentPurpose(ctx = {}, config = {}) {
   const payment = getNativeCapability(ctx, config, 'collect_payment')
   if (!payment) return ''
-  if (payment.paymentMode === 'deposit' || payment.deposit?.enabled === true) {
+  if (payment.chargeType === 'deposit' || payment.paymentMode === 'deposit' || payment.deposit?.enabled === true) {
     return getNativeCapability(ctx, config, 'schedule_appointment')
       ? 'appointment_deposit'
       : 'deposit'
@@ -236,7 +662,7 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
     return { ok: false, actionCompleted: false, transferRequired: true, error: 'No se pudo leer la moneda configurada en la cuenta. No se creó ningún link.' }
   }
 
-  const usesDeposit = capability?.paymentMode === 'deposit' || capability?.deposit?.enabled === true
+  const usesDeposit = capability?.chargeType === 'deposit' || capability?.paymentMode === 'deposit' || capability?.deposit?.enabled === true
   if (usesDeposit) {
     const deposit = capability.deposit || {}
     if (boundedQuantity !== 1) {
@@ -299,7 +725,50 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
         quantity: 1,
         source: 'capability_deposit',
         productId: capability.productId || null,
-        priceId: capability.priceId || null
+        priceId: capability.priceId || null,
+        gateway: capability.gateway || 'highlevel',
+        installments: capability.installments || { enabled: false, maxInstallments: 0 },
+        expirationMinutes: capability.expirationMinutes || 60,
+        afterPayment: capability.afterPayment || 'continue'
+      }
+    }
+  }
+
+  if (capability?.chargeType === 'direct') {
+    if (boundedQuantity !== 1) {
+      return { ok: false, actionCompleted: false, error: 'Un cobro directo usa cantidad 1. No se creó ningún link.' }
+    }
+    const direct = capability.direct || {}
+    const currency = normalizeCurrencyCode(direct.currency || capability.currency || trustedAccountCurrency)
+    const amount = normalizedMoney(direct.amount, currency)
+    if (!amount || !String(direct.concept || '').trim()) {
+      return { ok: false, actionCompleted: false, transferRequired: true, error: 'El cobro directo no tiene monto y concepto válidos. No se creó ningún link.' }
+    }
+    if (currency !== trustedAccountCurrency) {
+      return { ok: false, actionCompleted: false, currencyMismatch: true, error: `El cobro configurado usa ${currency || 'una moneda inválida'} y la cuenta usa ${trustedAccountCurrency}. No se creó ningún link.` }
+    }
+    const explicitAgreedAmount = agreedAmount === null || agreedAmount === undefined
+      ? 0
+      : normalizedMoney(agreedAmount, trustedAccountCurrency)
+    if (explicitAgreedAmount && Math.abs(explicitAgreedAmount - amount) >= currencyComparisonTolerance(trustedAccountCurrency)) {
+      return { ok: false, actionCompleted: false, amountMismatch: true, error: `El monto indicado no coincide con el cobro configurado (${amount} ${trustedAccountCurrency}). No se creó ningún link.` }
+    }
+    return {
+      ok: true,
+      trusted: {
+        amount,
+        unitAmount: amount,
+        currency: trustedAccountCurrency,
+        concept: String(direct.concept).trim(),
+        description: String(direct.description || '').trim(),
+        quantity: 1,
+        source: 'capability_direct',
+        productId: null,
+        priceId: null,
+        gateway: capability.gateway || 'highlevel',
+        installments: capability.installments || { enabled: false, maxInstallments: 0 },
+        expirationMinutes: capability.expirationMinutes || 60,
+        afterPayment: capability.afterPayment || 'continue'
       }
     }
   }
@@ -368,7 +837,11 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
       quantity: boundedQuantity,
       source: 'product_price',
       productId: row.product_id,
-      priceId: row.price_id
+      priceId: row.price_id,
+      gateway: capability.gateway || 'highlevel',
+      installments: capability.installments || { enabled: false, maxInstallments: 0 },
+      expirationMinutes: capability.expirationMinutes || 60,
+      afterPayment: capability.afterPayment || 'continue'
     }
   }
 }
@@ -392,7 +865,10 @@ async function assignNativeHandoffUser({ contactId, capability } = {}) {
       throw error
     }
 
-    const contact = await db.get('SELECT id, assigned_user_id FROM contacts WHERE id = ?', [contactId])
+    const contact = await db.get(
+      'SELECT id, assigned_user_id, assignment_test_effect_id FROM contacts WHERE id = ?',
+      [contactId]
+    )
     if (!contact?.id) {
       const error = new Error('El contacto ya no existe. No se completó la transferencia.')
       error.status = 404
@@ -401,24 +877,35 @@ async function assignNativeHandoffUser({ contactId, capability } = {}) {
     }
 
     const assignedUserId = String(user.id)
-    let alreadyAssigned = String(contact.assigned_user_id || '') === assignedUserId
-    if (!alreadyAssigned) {
+    const hasTemporaryTestAssignment = Boolean(String(contact.assignment_test_effect_id || '').trim())
+    let alreadyAssigned = String(contact.assigned_user_id || '') === assignedUserId && !hasTemporaryTestAssignment
+    if (!alreadyAssigned || hasTemporaryTestAssignment) {
       const update = await db.run(
         `UPDATE contacts
-         SET assigned_user_id = ?, updated_at = CURRENT_TIMESTAMP
+         SET assigned_user_id = ?, assignment_test_effect_id = NULL,
+             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
-           AND (assigned_user_id IS NULL OR CAST(assigned_user_id AS TEXT) <> ?)`,
+           AND (
+             assigned_user_id IS NULL
+             OR CAST(assigned_user_id AS TEXT) <> ?
+             OR assignment_test_effect_id IS NOT NULL
+           )`,
         [assignedUserId, contactId, assignedUserId]
       )
       if (Number(update?.changes ?? update?.rowCount ?? 0) !== 1) {
-        const current = await db.get('SELECT assigned_user_id FROM contacts WHERE id = ?', [contactId])
-        alreadyAssigned = String(current?.assigned_user_id || '') === assignedUserId
-      }
-      if (!alreadyAssigned && Number(update?.changes ?? update?.rowCount ?? 0) !== 1) {
-        const error = new Error('No se pudo asignar el contacto a la persona configurada. No se completó la transferencia.')
-        error.status = 503
-        error.code = 'handoff_assignment_failed'
-        throw error
+        const current = await db.get(
+          'SELECT assigned_user_id, assignment_test_effect_id FROM contacts WHERE id = ?',
+          [contactId]
+        )
+        const committed = String(current?.assigned_user_id || '') === assignedUserId &&
+          !String(current?.assignment_test_effect_id || '').trim()
+        if (!committed) {
+          const error = new Error('No se pudo asignar el contacto a la persona configurada. No se completó la transferencia.')
+          error.status = 503
+          error.code = 'handoff_assignment_failed'
+          throw error
+        }
+        alreadyAssigned = true
       }
     }
 
@@ -667,6 +1154,7 @@ async function getPaymentContact(ctx = {}) {
   const contact = await getThreadContact(ctx)
   if (!contact) return null
   return {
+    ...contact,
     id: contact.id,
     name: contact.full_name,
     email: contact.email,
@@ -962,7 +1450,217 @@ export function createConversationalTools(ctx) {
   const linkCapability = getNativeCapability(ctx, config, 'send_link')
   const handoffCapability = getNativeCapability(ctx, config, 'handoff_human')
   const customCapability = getNativeCapability(ctx, config, 'custom_goal')
+  const dataRequirements = ctx.capabilitiesConfig?.dataRequirements || {}
+  const safetyPolicy = ctx.capabilitiesConfig?.safetyPolicy || {}
   const nativePaymentPurpose = getNativePaymentPurpose(ctx, config)
+
+  const failClosedPreventiveMeasureToHuman = async ({ action, category, reason, cause }) => {
+    try {
+      const committed = await withConversationalAgentSafetyLock({
+        contactId: ctx.contactId,
+        channel: String(ctx.channel || 'whatsapp').trim().toLowerCase()
+      }, () => commitNativeHandoff({
+        ctx,
+        config,
+        capability: handoffCapability,
+        signal: 'ready_for_human',
+        signalOptions: {
+          reason: 'Revisión preventiva (respaldo seguro)',
+          summary: `${category}: ${reason}`.slice(0, 1200),
+          status: 'human'
+        },
+        assignmentEventSource: 'safety_measure_fail_closed'
+      }))
+      await notifyHumanPriority(ctx, {
+        reason: 'Revisión preventiva urgente',
+        summary: `${category}: ${reason}`.slice(0, 1200),
+        signal: 'ready_for_human'
+      }).catch((notificationError) => {
+        logger.warn(`[Agente conversacional] El fallback preventivo quedó registrado, pero falló la notificación: ${notificationError.message}`)
+      })
+      settleAction(action, 'ok', {
+        actionCompleted: true,
+        quarantined: false,
+        fallbackHandoff: true,
+        suppressReply: true,
+        terminal: true,
+        transferredToHuman: true,
+        ...(committed?.assignment?.assignedUserId
+          ? { assignedUserId: committed.assignment.assignedUserId }
+          : {}),
+        warning: String(cause?.message || cause || 'preventive_measure_failed').slice(0, 800)
+      })
+      return {
+        ok: true,
+        actionCompleted: true,
+        quarantined: false,
+        fallbackHandoff: true,
+        transferredToHuman: true,
+        suppressReply: true,
+        terminal: true
+      }
+    } catch (fallbackError) {
+      logger.error(`[Agente conversacional] También falló el handoff preventivo de respaldo: ${fallbackError.message}`)
+      await Promise.allSettled([
+        notifyHumanPriority(ctx, {
+          reason: 'Fallo preventivo urgente',
+          summary: `${category}: ${reason}`.slice(0, 1200),
+          signal: 'safety_fail_closed'
+        }),
+        recordConversationalAgentEvent({
+          contactId: ctx.contactId,
+          eventType: 'preventive_measure_fail_closed',
+          detail: {
+            agentId: config.id || ctx.agentId || null,
+            channel: String(ctx.channel || 'whatsapp').trim().toLowerCase(),
+            category,
+            preventiveMeasureError: String(cause?.message || cause || '').slice(0, 800),
+            handoffError: String(fallbackError.message || fallbackError).slice(0, 800),
+            retryRequired: true
+          }
+        })
+      ])
+      settleAction(action, 'error', {
+        actionCompleted: false,
+        suppressReply: true,
+        terminal: true,
+        failClosed: true,
+        retryRequired: true,
+        error: fallbackError.message,
+        preventiveMeasureError: String(cause?.message || cause || '').slice(0, 800)
+      })
+      return {
+        ok: false,
+        actionCompleted: false,
+        suppressReply: true,
+        terminal: true,
+        failClosed: true,
+        retryRequired: true,
+        transferRequired: true,
+        error: 'No se pudo activar la prevención ni confirmar el traspaso. Este turno quedó silenciado por seguridad y requiere atención humana inmediata.'
+      }
+    }
+  }
+
+  const applySafetyMeasureTool = tool({
+    name: 'apply_safety_measure',
+    description: 'Activa una cuarentena reversible y revisión humana sólo ante riesgo claro de severidad alta o crítica. Nunca borra el contacto ni bloquea directamente una cuenta del proveedor.',
+    parameters: z.object({
+      category: z.enum(['phishing', 'malicious_link', 'fraud', 'spam', 'sexual_harassment', 'threat', 'severe_abuse', 'prompt_injection', 'other']),
+      severity: z.enum(['high', 'critical']),
+      confidence: z.enum(['high', 'certain']).describe('Usa la medida sólo con evidencia contextual clara'),
+      reason: z.string().min(8).max(800).describe('Motivo factual y breve, sin secretos ni instrucciones internas'),
+      evidenceSummary: z.string().min(4).max(1200).describe('Resumen de la evidencia observada en el hilo, sin copiar datos sensibles innecesarios')
+    }),
+    execute: async ({ category, severity, confidence, reason, evidenceSummary }) => {
+      // Se fija antes del primer await para ganar frente a cualquier otra tool
+      // mutable que un proveedor intentara ejecutar en el mismo lote.
+      ctx.preventiveSafetyRequested = true
+      const sourceMessageId = String(ctx.executionId || '').trim()
+      const action = pushAction(ctx, 'apply_safety_measure', {
+        category,
+        severity,
+        terminal: true,
+        suppressReply: true,
+        effect: {
+          liveEffect: 'PAUSARÍA respuestas y marcaría el contacto para revisión preventiva',
+          marksObjectiveCompleted: false
+        }
+      })
+      if (ctx.dryRun) {
+        settleAction(action, 'simulated', {
+          actionCompleted: false,
+          wouldQuarantine: true,
+          wouldNotifyHuman: safetyPolicy.notify !== false
+        })
+        return { ok: true, simulated: true, wouldQuarantine: true }
+      }
+      if (!sourceMessageId) {
+        const error = new Error('No se pudo identificar el mensaje que originó la medida preventiva.')
+        return failClosedPreventiveMeasureToHuman({ action, category, reason, cause: error })
+      }
+      try {
+        const preventivePayload = {
+          agentId: config.id || ctx.agentId || 'conversational-agent',
+          contactId: ctx.contactId,
+          channel: String(ctx.channel || 'whatsapp').trim().toLowerCase(),
+          sourceMessageId,
+          category,
+          severity,
+          reason,
+          evidence: { summary: evidenceSummary, confidence },
+          serverPolicy: {
+            id: 'conversational-default-prevention',
+            version: '2',
+            quarantine: {
+              mode: 'temporary',
+              durationMinutes: Math.min(30 * 24 * 60, Math.max(15, Number(safetyPolicy.durationMinutes) || 24 * 60))
+            },
+            notification: {
+              enabled: safetyPolicy.notify !== false,
+              audience: safetyPolicy.notifyUserId
+                ? 'specific_user'
+                : (safetyPolicy.action === 'handoff_and_review' ? 'human_review' : 'account_admins'),
+              ...(safetyPolicy.notifyUserId ? { userId: safetyPolicy.notifyUserId } : {})
+            }
+          }
+        }
+        let result = null
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            result = await applyConversationalAgentPreventiveMeasure(preventivePayload)
+            break
+          } catch (error) {
+            if (attempt === 2) throw error
+            logger.warn(`[Agente conversacional] Falló el primer intento de cuarentena; reintentando de forma idempotente: ${error.message}`)
+            await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+        }
+
+        let handoffWarning = null
+        if (safetyPolicy.action === 'handoff_and_review') {
+          try {
+            await withConversationalAgentSafetyLock({
+              contactId: ctx.contactId,
+              channel: String(ctx.channel || 'whatsapp').trim().toLowerCase()
+            }, () => commitNativeHandoff({
+              ctx,
+              config,
+              capability: handoffCapability,
+              signal: 'ready_for_human',
+              signalOptions: {
+                reason: 'Revisión preventiva',
+                summary: reason,
+                status: 'human'
+              },
+              assignmentEventSource: 'safety_measure'
+            }))
+          } catch (error) {
+            handoffWarning = error.message
+            logger.warn(`[Agente conversacional] La cuarentena preventiva quedó activa, pero falló el handoff: ${error.message}`)
+          }
+        }
+
+        if (result.event?.notificationStatus === 'pending') {
+          await dispatchConversationalAgentSafetyNotification(result.event.id).catch((error) => {
+            logger.warn(`[Agente conversacional] La cuarentena preventiva quedó activa, pero la notificación seguirá en reintento: ${error.message}`)
+          })
+        }
+        settleAction(action, 'ok', {
+          actionCompleted: true,
+          quarantined: true,
+          safetyCaseId: result.case?.id || null,
+          suppressReply: true,
+          terminal: true,
+          ...(handoffWarning ? { warnings: ['handoff'], handoffWarning } : {})
+        })
+        return { ok: true, actionCompleted: true, quarantined: true, suppressReply: true, terminal: true }
+      } catch (error) {
+        logger.error(`[Agente conversacional] No se pudo aplicar la medida preventiva: ${error.message}`)
+        return failClosedPreventiveMeasureToHuman({ action, category, reason, cause: error })
+      }
+    }
+  })
 
   const getConversationHistoryTool = tool({
     name: 'get_conversation_history',
@@ -1195,6 +1893,256 @@ export function createConversationalTools(ctx) {
     }
   })
 
+  const saveContactDataTool = tool({
+    name: 'save_contact_data',
+    description: 'Guarda sólo datos que quien escribe confirmó como propios para el contacto de este mismo hilo. Nunca guarda aquí datos del titular distinto o invitados. No busca ni crea otra ficha; el servidor protege datos existentes y sólo reemplaza cuando la política lo permite.',
+    parameters: z.object({
+      fullName: z.string().nullable().describe('Nombre completo confirmado; null si no se proporcionó'),
+      phone: z.string().nullable().describe('Teléfono principal confirmado; null si no se proporcionó'),
+      alternatePhone: z.string().nullable().describe('Otro teléfono confirmado; null si no aplica'),
+      email: z.string().nullable().describe('Correo confirmado; null si no se proporcionó'),
+      company: z.string().nullable().describe('Empresa confirmada; null si no aplica'),
+      address: z.string().nullable().describe('Dirección confirmada; null si no aplica'),
+      customValues: z.array(z.object({
+        key: z.string().min(1).max(120),
+        value: z.string().max(1000)
+      })).max(20).nullable().describe('Datos personalizados confirmados; null si no aplica'),
+      confirmedReplacement: z.boolean().describe('Compatibilidad: el servidor nunca usa este booleano como autorización suficiente para reemplazar una identidad existente')
+    }),
+    execute: async ({ fullName, phone, alternatePhone, email, company, address, customValues }) => {
+      if (!dataRequirements?.enabled || !dataRequirements?.updateContact?.enabled) {
+        return { ok: false, actionCompleted: false, error: 'La actualización automática del contacto no está habilitada.' }
+      }
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (safetyFence) return safetyFence
+      const configuredFields = Array.isArray(dataRequirements.fields) ? dataRequirements.fields : []
+      const allowedFields = new Set(configuredFields.map((item) => String(item?.field || '').trim()))
+      const normalizeCustomKey = (value) => cleanAppointmentText(value, 120)
+        .toLowerCase()
+        .replace(/[^a-z0-9_]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+      const allowedCustomFields = new Map(
+        configuredFields
+          .filter((item) => item?.field === 'custom' && item?.label)
+          .map((item) => [normalizeCustomKey(item.label), cleanAppointmentText(item.label, 120)])
+          .filter(([key]) => Boolean(key))
+      )
+      const unauthorizedFields = []
+      if (fullName && !allowedFields.has('full_name') && !allowedFields.has('first_name')) unauthorizedFields.push('name')
+      if (phone && !allowedFields.has('phone')) unauthorizedFields.push('phone')
+      if (alternatePhone && !allowedFields.has('alternate_phone')) unauthorizedFields.push('alternate_phone')
+      if (email && !allowedFields.has('email')) unauthorizedFields.push('email')
+      if (company && !allowedFields.has('company')) unauthorizedFields.push('company')
+      if (address && !allowedFields.has('address')) unauthorizedFields.push('address')
+      for (const item of Array.isArray(customValues) ? customValues : []) {
+        const key = normalizeCustomKey(item?.key)
+        if (!key || !allowedCustomFields.has(key)) unauthorizedFields.push(key || 'custom')
+      }
+      if (unauthorizedFields.length) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          error: `Estos datos no están autorizados en la configuración: ${[...new Set(unauthorizedFields)].join(', ')}.`
+        }
+      }
+      const cleanFullName = cleanAppointmentText(fullName, 240)
+      const cleanPhone = phone ? normalizePhoneForStorage(phone) : ''
+      const cleanAlternatePhone = alternatePhone ? normalizePhoneForStorage(alternatePhone) : ''
+      const cleanEmail = cleanAppointmentText(email, 240).toLowerCase()
+      if (phone && (cleanPhone.replace(/\D/g, '').length < 7 || cleanPhone.replace(/\D/g, '').length > 15)) {
+        return { ok: false, actionCompleted: false, error: 'El teléfono confirmado no tiene un formato válido.' }
+      }
+      if (alternatePhone && (cleanAlternatePhone.replace(/\D/g, '').length < 7 || cleanAlternatePhone.replace(/\D/g, '').length > 15)) {
+        return { ok: false, actionCompleted: false, error: 'El teléfono alterno confirmado no tiene un formato válido.' }
+      }
+      if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return { ok: false, actionCompleted: false, error: 'El correo confirmado no tiene un formato válido.' }
+      }
+      const contact = await getThreadContact(ctx)
+      if (!contact) return missingThreadContactResult(ctx)
+      const action = pushAction(ctx, 'save_contact_data', {
+        fields: [
+          fullName ? 'full_name' : '',
+          phone ? 'phone' : '',
+          alternatePhone ? 'alternate_phone' : '',
+          email ? 'email' : '',
+          company ? 'company' : '',
+          address ? 'address' : '',
+          ...(Array.isArray(customValues) ? customValues.map((item) => item?.key) : [])
+        ].filter(Boolean)
+      })
+      if (ctx.dryRun || contact.virtual) {
+        if (contact.virtual) {
+          const virtualCustomFields = parseContactCustomFields(ctx.virtualContact?.custom_fields)
+          const virtualUpdates = []
+          if (cleanAlternatePhone) virtualUpdates.push({ key: 'alternate_phone', label: 'Teléfono alterno', value: cleanAlternatePhone })
+          if (company) virtualUpdates.push({ key: 'company', label: 'Empresa', value: cleanAppointmentText(company, 400) })
+          if (address) virtualUpdates.push({ key: 'address_1', label: 'Dirección', value: cleanAppointmentText(address, 800) })
+          for (const item of Array.isArray(customValues) ? customValues : []) {
+            const key = normalizeCustomKey(item?.key)
+            if (key && allowedCustomFields.has(key)) {
+              virtualUpdates.push({ key, label: allowedCustomFields.get(key), value: cleanAppointmentText(item.value, 1000) })
+            }
+          }
+          ctx.virtualContact = {
+            ...(ctx.virtualContact || {}),
+            ...(cleanFullName ? { fullName: cleanFullName, full_name: cleanFullName } : {}),
+            ...(cleanPhone ? { phone: cleanPhone } : {}),
+            ...(cleanEmail ? { email: cleanEmail } : {}),
+            ...(virtualUpdates.length
+              ? { custom_fields: serializeContactCustomFieldsForDb(mergeContactCustomFields(virtualCustomFields, virtualUpdates)) }
+              : {})
+          }
+        }
+        settleAction(action, 'simulated', { actionCompleted: false, wouldUpdateThreadContact: true })
+        return { ok: true, simulated: true, wouldUpdateThreadContact: true }
+      }
+
+      const policy = String(dataRequirements?.updateContact?.policy || 'replace_placeholders')
+      const persistAgainstCurrentIdentity = () => db.transaction(async (tx) => {
+        // PostgreSQL bloquea la fila; SQLite entra a esta transacción con BEGIN
+        // IMMEDIATE. Toda decisión se recalcula con la identidad vigente, nunca
+        // con el snapshot que existía antes de esperar el candado.
+        const lockSuffix = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+        const current = await tx.get(
+          `SELECT id, full_name, first_name, last_name, phone, email, custom_fields
+           FROM contacts WHERE id = ? AND deleted_at IS NULL${lockSuffix}`,
+          [ctx.contactId]
+        )
+        if (!current) return { missing: true, changedFields: [], preservedFields: [] }
+
+        const updates = []
+        const params = []
+        const changedFields = []
+        const preservedFields = []
+        const customUpdates = []
+        if (cleanFullName) {
+          const mayReplace = !current.full_name ||
+            (policy === 'replace_placeholders' && isPlaceholderContactName(current.full_name)) ||
+            String(current.full_name).trim().toLowerCase() === cleanFullName.toLowerCase()
+          if (mayReplace) {
+            const name = splitConfirmedName(cleanFullName)
+            updates.push('full_name = ?', 'first_name = ?', 'last_name = ?')
+            params.push(name.fullName, name.firstName, name.lastName)
+            changedFields.push('full_name')
+          } else {
+            preservedFields.push('full_name')
+            customUpdates.push({ key: 'alternate_name', label: 'Nombre alternativo', value: cleanFullName })
+          }
+        }
+
+        if (cleanPhone) {
+          const currentPhone = current.phone ? normalizePhoneForStorage(current.phone) : ''
+          const mayReplace = !currentPhone || currentPhone === cleanPhone
+          if (mayReplace) {
+            const conflict = await tx.get(
+              `SELECT id FROM contacts
+               WHERE phone = ? AND id <> ? AND deleted_at IS NULL${lockSuffix}`,
+              [cleanPhone, ctx.contactId]
+            )
+            if (conflict) {
+              preservedFields.push('phone')
+              customUpdates.push({ key: 'alternate_phone', label: 'Teléfono alterno', value: cleanPhone })
+            } else {
+              updates.push('phone = ?')
+              params.push(cleanPhone)
+              changedFields.push('phone')
+            }
+          } else {
+            customUpdates.push({ key: 'alternate_phone', label: 'Teléfono alterno', value: cleanPhone })
+            preservedFields.push('phone')
+          }
+        }
+        if (cleanAlternatePhone) customUpdates.push({ key: 'alternate_phone', label: 'Teléfono alterno', value: cleanAlternatePhone })
+
+        if (cleanEmail) {
+          const currentEmail = String(current.email || '').trim().toLowerCase()
+          const mayReplace = !currentEmail || currentEmail === cleanEmail
+          if (mayReplace) {
+            const conflict = await tx.get(
+              `SELECT id FROM contacts
+               WHERE LOWER(email) = ? AND id <> ? AND deleted_at IS NULL${lockSuffix}`,
+              [cleanEmail, ctx.contactId]
+            )
+            if (conflict) {
+              preservedFields.push('email')
+              customUpdates.push({ key: 'alternate_email', label: 'Correo alterno', value: cleanEmail })
+            } else {
+              updates.push('email = ?')
+              params.push(cleanEmail)
+              changedFields.push('email')
+            }
+          } else {
+            customUpdates.push({ key: 'alternate_email', label: 'Correo alterno', value: cleanEmail })
+            preservedFields.push('email')
+          }
+        }
+        if (company) customUpdates.push({ key: 'company', label: 'Empresa', value: cleanAppointmentText(company, 400) })
+        if (address) customUpdates.push({ key: 'address_1', label: 'Dirección', value: cleanAppointmentText(address, 800) })
+        for (const item of Array.isArray(customValues) ? customValues : []) {
+          const key = normalizeCustomKey(item?.key)
+          if (key && allowedCustomFields.has(key)) {
+            customUpdates.push({ key, label: allowedCustomFields.get(key), value: cleanAppointmentText(item.value, 1000) })
+          }
+        }
+        if (customUpdates.length) {
+          const merged = mergeContactCustomFields(parseContactCustomFields(current.custom_fields), customUpdates)
+          updates.push(`custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}`)
+          params.push(serializeContactCustomFieldsForDb(merged))
+          changedFields.push(...customUpdates.map((item) => item.key))
+        }
+        if (!updates.length) return { missing: false, changedFields: [], preservedFields }
+
+        updates.push('updated_at = CURRENT_TIMESTAMP')
+        params.push(ctx.contactId)
+        const update = await tx.run(
+          `UPDATE contacts SET ${updates.join(', ')} WHERE id = ? AND deleted_at IS NULL`,
+          params
+        )
+        if (Number(update?.changes ?? update?.rowCount ?? 0) !== 1) {
+          const race = new Error('La identidad del contacto cambió antes de confirmar el guardado.')
+          race.code = 'contact_identity_update_race'
+          throw race
+        }
+        return { missing: false, changedFields, preservedFields }
+      })
+
+      let persisted
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          persisted = await persistAgainstCurrentIdentity()
+          break
+        } catch (error) {
+          const uniqueConflict = error?.code === '23505' ||
+            error?.code === 'SQLITE_CONSTRAINT' ||
+            error?.code === 'SQLITE_CONSTRAINT_UNIQUE'
+          if (!uniqueConflict || attempt === 2) throw error
+        }
+      }
+      if (persisted?.missing) return missingThreadContactResult(ctx)
+      const changedFields = persisted?.changedFields || []
+      const preservedFields = persisted?.preservedFields || []
+
+      // La base local es la autoridad del runtime. La sincronización de los
+      // campos estándar a HighLevel es best-effort y nunca revierte el guardado.
+      try {
+        const ghlContactId = await getGhlContactIdForLocalContact(ctx.contactId)
+        if (ghlContactId) {
+          const ghlClient = await getGHLClient()
+          const standard = {}
+          if (changedFields.includes('full_name')) standard.name = cleanFullName
+          if (changedFields.includes('phone')) standard.phone = cleanPhone
+          if (changedFields.includes('email')) standard.email = cleanEmail
+          if (Object.keys(standard).length) await ghlClient.updateContact(ghlContactId, standard)
+        }
+      } catch (error) {
+        logger.warn(`[Agente conversacional] Datos del contacto guardados localmente; sync HighLevel pendiente: ${error.message}`)
+      }
+      settleAction(action, 'ok', { actionCompleted: true, changedFields, preservedFields })
+      return { ok: true, actionCompleted: true, changedFields, preservedFields }
+    }
+  })
+
   const getFreeSlotsForAgentTool = tool({
     name: 'get_free_slots',
     description: [
@@ -1258,15 +2206,27 @@ export function createConversationalTools(ctx) {
       title: z.string().nullable().describe('Título corto de la cita; null usa el título seguro por defecto'),
       notes: z.string().nullable().describe('Resumen breve de lo que busca la persona; null usa una nota segura'),
       attendeeName: z.string().nullable().describe('Nombre de la persona que asistirá sólo cuando sea distinta del contacto del hilo; null si la cita es para quien escribe'),
-      attendeeContext: z.string().nullable().describe('Relación o contexto útil del asistente distinto, por ejemplo "mamá del contacto, dolor de rodilla"; null si no aplica')
+      attendeeContext: z.string().nullable().describe('Compatibilidad: relación o contexto del asistente distinto; null si primaryAttendee ya contiene el dato'),
+      primaryAttendee: z.preprocess(
+        (value) => value ?? null,
+        appointmentPersonSchema.nullable()
+      ).describe('Titular real de la cita cuando es distinto de quien escribe; null usa el contacto del hilo'),
+      guests: z.preprocess(
+        (value) => value ?? null,
+        z.array(appointmentPersonSchema).nullable()
+      ).describe('Invitados adicionales confirmados; null o [] si no hay')
     }),
     execute: async (args) => {
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (safetyFence) return safetyFence
       const {
         startTime,
         title,
         notes,
         attendeeName,
-        attendeeContext
+        attendeeContext,
+        primaryAttendee,
+        guests
       } = args || {}
       const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
       const calendarId = nativeCalendar?.id || null
@@ -1279,12 +2239,36 @@ export function createConversationalTools(ctx) {
       }
       const threadContact = await getThreadContact(ctx)
       if (!threadContact) return missingThreadContactResult(ctx)
+      const participants = buildAppointmentParticipants({
+        contact: threadContact,
+        primaryAttendee,
+        guests,
+        attendeeName,
+        attendeeContext,
+        requirements: dataRequirements
+      })
+      if (!participants.ok) return { ok: false, actionCompleted: false, error: participants.error }
+      const requiredDataError = await enforceRequiredContactData({
+        ctx,
+        scope: 'appointment',
+        dataRequirements,
+        contact: threadContact,
+        facts: appointmentRequirementFacts({
+          contact: threadContact,
+          primaryAttendee,
+          attendeeName,
+          attendeeContext,
+          guests
+        })
+      })
+      if (requiredDataError) return requiredDataError
       const participant = buildAppointmentParticipant({
         contact: threadContact,
         title,
         notes,
         attendeeName,
-        attendeeContext
+        attendeeContext,
+        primaryAttendee
       })
 
       const nativeExecutionId = String(ctx.executionId || '').trim()
@@ -1536,6 +2520,7 @@ export function createConversationalTools(ctx) {
       const finalTitle = participant.title
       const action = pushAction(ctx, 'book_appointment', {
         calendarId, startTime: start.toISOString(), endTime: end.toISOString(), title: finalTitle,
+        participants: participants.all,
         confirmationEvidence: { nativeToolDecision: true },
         ...(clientRequestId ? { clientRequestId } : {}),
         effect: { liveEffect: 'AGENDARÍA UNA CITA REAL y marcaría el objetivo como CUMPLIDO', marksObjectiveCompleted: true }
@@ -1657,6 +2642,7 @@ export function createConversationalTools(ctx) {
             startTime: start.toISOString(),
             endTime: end.toISOString(),
             notes: participant.notes,
+            participants: participants.all,
             clientRequestId,
             strictAvailabilityCheck: true,
             source: 'conversational_agent_v2',
@@ -1872,9 +2858,19 @@ export function createConversationalTools(ctx) {
       title: z.string().nullable().describe('Motivo corto de la cita; null usa un título seguro'),
       notes: z.string().nullable().describe('Resumen factual para la persona que terminará de agendar'),
       attendeeName: z.string().nullable().describe('Nombre de quien asistirá sólo si es distinto del contacto del hilo; null si es quien escribe'),
-      attendeeContext: z.string().nullable().describe('Relación o contexto útil del asistente distinto; null si no aplica')
+      attendeeContext: z.string().nullable().describe('Compatibilidad: relación o contexto del asistente distinto; null si primaryAttendee ya contiene el dato'),
+      primaryAttendee: z.preprocess(
+        (value) => value ?? null,
+        appointmentPersonSchema.nullable()
+      ).describe('Titular real de la cita cuando es distinto de quien escribe; null usa el contacto del hilo'),
+      guests: z.preprocess(
+        (value) => value ?? null,
+        z.array(appointmentPersonSchema).nullable()
+      ).describe('Invitados adicionales confirmados; null o [] si no hay')
     }),
-    execute: async ({ startTime, title, notes, attendeeName, attendeeContext }) => {
+    execute: async ({ startTime, title, notes, attendeeName, attendeeContext, primaryAttendee, guests }) => {
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (safetyFence) return safetyFence
       const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
       const calendarId = nativeCalendar?.id || null
       if (!calendarId) {
@@ -1887,12 +2883,36 @@ export function createConversationalTools(ctx) {
       }
       const threadContact = await getThreadContact(ctx)
       if (!threadContact) return missingThreadContactResult(ctx)
+      const participants = buildAppointmentParticipants({
+        contact: threadContact,
+        primaryAttendee,
+        guests,
+        attendeeName,
+        attendeeContext,
+        requirements: dataRequirements
+      })
+      if (!participants.ok) return { ok: false, actionCompleted: false, error: participants.error }
+      const requiredDataError = await enforceRequiredContactData({
+        ctx,
+        scope: 'appointment',
+        dataRequirements,
+        contact: threadContact,
+        facts: appointmentRequirementFacts({
+          contact: threadContact,
+          primaryAttendee,
+          attendeeName,
+          attendeeContext,
+          guests
+        })
+      })
+      if (requiredDataError) return requiredDataError
       const participant = buildAppointmentParticipant({
         contact: threadContact,
         title,
         notes,
         attendeeName,
-        attendeeContext
+        attendeeContext,
+        primaryAttendee
       })
 
       const durationMinutes = Number(nativeCalendar.slot_duration) > 0 ? Number(nativeCalendar.slot_duration) : 60
@@ -1924,6 +2944,7 @@ export function createConversationalTools(ctx) {
         endTime: end.toISOString(),
         title: participant.title,
         attendeeName: participant.attendeeName,
+        participants: participants.all,
         effect: {
           liveEffect: 'ENTREGARÍA el horario elegido al equipo sin crear una cita',
           marksObjectiveCompleted: false
@@ -1996,6 +3017,7 @@ export function createConversationalTools(ctx) {
               notes: participant.notes,
               attendeeName: participant.attendeeName,
               attendeeContext: participant.attendeeContext,
+              participants: participants.all,
               appointmentCreated: false,
               objectiveCompleted: false,
               sourceMessageId: executionId
@@ -2074,6 +3096,10 @@ export function createConversationalTools(ctx) {
       siguientePaso: z.string().nullable().describe('Siguiente paso recomendado para el equipo')
     }),
     execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso }) => {
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (safetyFence) return safetyFence
+      const requiredDataError = await enforceRequiredContactData({ ctx, scope: 'handoff', dataRequirements })
+      if (requiredDataError) return requiredDataError
       const resolvedUrgency = urgencia || 'media'
       const signal = 'ready_for_human'
       const action = pushAction(ctx, 'mark_ready_to_advance', {
@@ -2192,6 +3218,8 @@ export function createConversationalTools(ctx) {
       agreedAmount: z.number().positive().nullable().describe('Monto acordado dentro del rango del anticipo; null cuando el precio es fijo')
     }),
     execute: async ({ quantity, agreedAmount }) => {
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (safetyFence) return safetyFence
 
       // El link es el mecanismo para cobrar el pago completo o el anticipo. No exigimos
       // un comprobante previo para crearlo; sí amarramos el cobro al workflow/catálogo.
@@ -2230,6 +3258,14 @@ export function createConversationalTools(ctx) {
 
       const contact = await getPaymentContact(ctx)
       if (!contact) return { ok: false, actionCompleted: false, error: 'Contacto no encontrado. No se creó ni envió ningún link.' }
+      const requiredDataError = await enforceRequiredContactData({
+        ctx,
+        scope: 'payment',
+        dataRequirements,
+        contact,
+        facts: paymentRequirementFacts(paymentCapability)
+      })
+      if (requiredDataError) return requiredDataError
 
       const action = pushAction(ctx, 'create_payment_link', {
         amount: trustedPayment.amount,
@@ -2265,13 +3301,15 @@ export function createConversationalTools(ctx) {
       }
 
       try {
-        const result = await createSinglePaymentLink({
+        const result = await createConversationalAgentLivePaymentLink({
           contact,
+          gateway: paymentCapability?.gateway || 'highlevel',
           amount: trustedPayment.amount,
           currency: trustedPayment.currency,
-          description: trustedPayment.concept,
           concept: trustedPayment.concept,
-          title: trustedPayment.concept,
+          installments: paymentCapability?.installments,
+          expirationMinutes: paymentCapability?.expirationMinutes,
+          afterPayment: paymentCapability?.afterPayment,
           channels: buildPaymentChannels(deliveryChannel),
           source: 'conversational_agent_v2',
           idempotencyKey: paymentIdempotencyKey,
@@ -2290,25 +3328,34 @@ export function createConversationalTools(ctx) {
 
         const resultCurrency = String(result?.currency || '').trim().toUpperCase()
         const resultAmount = Number(result?.amount)
-        const paymentLedger = result?.invoiceId
+        const paymentLedger = result?.ledgerPaymentId
           ? await db.get(
-              `SELECT id, contact_id, amount, currency, status, payment_mode, ghl_invoice_id
+              `SELECT id, contact_id, amount, currency, status, payment_mode, payment_provider,
+                      ghl_invoice_id, public_payment_id, payment_link_request_key
                FROM payments
-               WHERE contact_id = ? AND (id = ? OR ghl_invoice_id = ?)
-               ORDER BY CASE WHEN ghl_invoice_id = ? THEN 0 ELSE 1 END
+               WHERE contact_id = ? AND id = ? AND payment_link_request_key = ?
                LIMIT 1`,
-              [ctx.contactId, result.invoiceId, result.invoiceId, result.invoiceId]
+              [ctx.contactId, result.ledgerPaymentId, paymentIdempotencyKey]
             ).catch(() => null)
           : null
         const ledgerCurrency = String(paymentLedger?.currency || '').trim().toUpperCase()
         const ledgerAmount = Number(paymentLedger?.amount)
         const ledgerEnvironment = String(paymentLedger?.payment_mode || '').trim().toLowerCase()
+        const ledgerProvider = String(paymentLedger?.payment_provider || '').trim().toLowerCase()
+        const expectedProvider = String(paymentCapability?.gateway || 'highlevel').trim().toLowerCase()
+        const externalIdentityMatches = expectedProvider === 'highlevel'
+          ? String(paymentLedger?.ghl_invoice_id || '').trim() === String(result?.invoiceId || '').trim()
+          : String(paymentLedger?.public_payment_id || '').trim() === String(result?.publicPaymentId || '').trim()
         const ledgerCanonicalMatch = Boolean(
           paymentLedger?.id &&
           Number.isFinite(ledgerAmount) &&
           Math.abs(ledgerAmount - trustedPayment.amount) < 0.005 &&
           ledgerCurrency === trustedPayment.currency &&
-          ['live', 'test'].includes(ledgerEnvironment)
+          ledgerEnvironment === 'live' &&
+          ledgerProvider === expectedProvider &&
+          externalIdentityMatches &&
+          String(result?.provider || '').trim().toLowerCase() === expectedProvider &&
+          String(result?.paymentMode || '').trim().toLowerCase() === 'live'
         )
         const sent = Boolean(result?.invoiceId && result?.paymentLink && result?.sendMethod !== 'none' && result?.status !== 'draft')
         const prepared = Boolean(result?.invoiceId && result?.paymentLink && paymentLedger?.id)
@@ -2328,7 +3375,9 @@ export function createConversationalTools(ctx) {
               actualCurrency: result?.currency || null,
               ledgerAmount: Number.isFinite(ledgerAmount) ? ledgerAmount : null,
               ledgerCurrency: ledgerCurrency || null,
-              ledgerEnvironment: ledgerEnvironment || null
+              ledgerEnvironment: ledgerEnvironment || null,
+              ledgerProvider: ledgerProvider || null,
+              expectedProvider
             }
           }).catch(() => undefined)
           const errorResult = {
@@ -2364,12 +3413,18 @@ export function createConversationalTools(ctx) {
             runtimeMode: 'tool_calling_v2',
             ledgerPaymentId: paymentLedger.id,
             paymentEnvironment: ledgerEnvironment,
+            paymentProvider: ledgerProvider,
+            publicPaymentId: result.publicPaymentId || null,
             productId: trustedPayment.productId || null,
             priceId: trustedPayment.priceId || null,
             paymentPurpose: nativePaymentPurpose,
             appointmentDeposit: nativePaymentPurpose === 'appointment_deposit',
             executionId: String(ctx.executionId || '').trim(),
             status: result.status,
+            expiresAt: result.expiresAt || null,
+            expirationMinutes: result.expirationMinutes || null,
+            installments: result.installments || null,
+            afterPayment: result.afterPayment || paymentCapability?.afterPayment || 'continue',
             ...(result.reused ? { reused: true } : {})
           }
           await bindConversationalPaymentSourceEvent({
@@ -2421,6 +3476,9 @@ export function createConversationalTools(ctx) {
         settleAction(action, 'ok', {
           invoiceId: result.invoiceId,
           paymentLink: result.paymentLink,
+          provider: result.provider,
+          publicPaymentId: result.publicPaymentId || null,
+          expiresAt: result.expiresAt || null,
           amount: result.amount,
           currency: result.currency,
           sendMethod: result.sendMethod,
@@ -2435,6 +3493,8 @@ export function createConversationalTools(ctx) {
           actionCompleted: true,
           paymentLink: result.paymentLink,
           sendMethod: result.sendMethod,
+          provider: result.provider,
+          expiresAt: result.expiresAt || null,
           amount: result.amount,
           currency: result.currency,
           status: 'pending',
@@ -2481,6 +3541,10 @@ export function createConversationalTools(ctx) {
       resumen: z.string().nullable().describe('Resumen breve para auditoría; null si no hace falta contexto extra')
     }),
     execute: async ({ intencionDetectada, resumen }) => {
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (safetyFence) return safetyFence
+      const requiredDataError = await enforceRequiredContactData({ ctx, scope: 'link', dataRequirements })
+      if (requiredDataError) return requiredDataError
       intencionDetectada = intencionDetectada || 'Solicitó el enlace'
       resumen = resumen || ''
 
@@ -2672,6 +3736,10 @@ export function createConversationalTools(ctx) {
       resumen: z.string().describe('Resumen breve de la situación')
     }),
     execute: async ({ motivo, resumen }) => {
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (safetyFence) return safetyFence
+      const requiredDataError = await enforceRequiredContactData({ ctx, scope: 'handoff', dataRequirements })
+      if (requiredDataError) return requiredDataError
       const action = pushAction(ctx, 'send_to_human', {
         motivo,
         effect: { liveEffect: 'PASARÍA el chat a un humano (el bot deja de responder). NO marca el objetivo como cumplido.', marksObjectiveCompleted: false }
@@ -2766,15 +3834,41 @@ export function createConversationalTools(ctx) {
       referencia: z.string().nullable().describe('Referencia o folio si la persona lo compartió en texto')
     }),
     execute: async ({ montoIndicado, referencia }) => {
-      const deposit = getDepositRequirementForRuntime(ctx, config)
-      if (!deposit) {
-        return { ok: false, actionCompleted: false, error: 'Este agente no tiene anticipo configurado; no hay nada que validar.' }
-      }
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (safetyFence) return safetyFence
+      const requiredDataError = await enforceRequiredContactData({
+        ctx,
+        scope: 'payment',
+        dataRequirements,
+        facts: paymentRequirementFacts(paymentCapability)
+      })
+      if (requiredDataError) return requiredDataError
+      const configuredDeposit = getDepositRequirementForRuntime(ctx, config)
       const methods = getDepositPaymentMethodsForRuntime(ctx, config)
-      if (!methods.bankTransfer) {
-        return { ok: false, actionCompleted: false, error: 'La transferencia bancaria no está habilitada para este anticipo. Usa el método configurado o manda a humano.' }
+      const receiptProofEnabled = paymentCapability?.receiptProof?.enabled === true
+      let deposit = configuredDeposit
+      let paymentLabel = configuredDeposit ? getDepositRequirementLabel(ctx, config) : 'pago'
+      if (!deposit && receiptProofEnabled) {
+        const accountCurrency = String(ctx.accountLocale?.currency || await getAccountCurrency().catch(() => '')).trim().toUpperCase()
+        const authority = await resolveNativePaymentAuthority({
+          capability: paymentCapability,
+          quantity: 1,
+          accountCurrency
+        })
+        if (!authority.ok) return authority
+        deposit = {
+          enabled: true,
+          mode: 'fixed',
+          amount: authority.trusted.amount,
+          currency: authority.trusted.currency
+        }
       }
-      const paymentLabel = getDepositRequirementLabel(ctx, config)
+      if (!deposit) {
+        return { ok: false, actionCompleted: false, error: 'Este agente no tiene un cobro verificable configurado.' }
+      }
+      if (!methods.bankTransfer && !receiptProofEnabled) {
+        return { ok: false, actionCompleted: false, error: 'La revisión de comprobantes no está habilitada para este cobro. Usa el enlace configurado o manda a humano.' }
+      }
       const expectedLabel = formatDepositRequirement(deposit, ctx.accountLocale)
 
       const action = pushAction(ctx, 'register_deposit_payment_proof', {
@@ -2921,13 +4015,26 @@ export function createConversationalTools(ctx) {
   )
   const nativeTools = [getBusinessProfileTool, listProductsTool, getContactProfileTool]
 
+  if (!ctx.followUpMode && safetyPolicy?.enabled !== false) {
+    nativeTools.push(applySafetyMeasureTool)
+  }
+
   if (
     Number(ctx.historyContext?.telemetry?.omittedMessages || 0) > 0 &&
     typeof ctx.loadConversationHistoryPage === 'function'
   ) {
     nativeTools.push(getConversationHistoryTool)
   }
-  if (!ctx.followUpMode && enabledCapabilities.has('handoff_human')) {
+  if (!ctx.followUpMode && dataRequirements?.enabled && dataRequirements?.updateContact?.enabled) {
+    nativeTools.push(saveContactDataTool)
+  }
+  if (
+    !ctx.followUpMode &&
+    (
+      enabledCapabilities.has('handoff_human') ||
+      (enabledCapabilities.has('collect_payment') && paymentCapability?.afterPayment === 'handoff')
+    )
+  ) {
     nativeTools.push(sendToHumanTool)
   }
   if (!ctx.followUpMode && enabledCapabilities.has('schedule_appointment')) {
@@ -2943,7 +4050,7 @@ export function createConversationalTools(ctx) {
     if (paymentCapability?.paymentMode !== 'deposit' || methods.paymentLink === true) {
       nativeTools.push(createPaymentLinkTool)
     }
-    if (paymentCapability?.deposit?.enabled && methods.bankTransfer === true) {
+    if ((paymentCapability?.deposit?.enabled && methods.bankTransfer === true) || paymentCapability?.receiptProof?.enabled === true) {
       nativeTools.push(registerDepositProofTool)
     }
   }
@@ -2957,5 +4064,14 @@ export function createConversationalTools(ctx) {
   ) {
     nativeTools.push(markReadyTool)
   }
-  return nativeTools
+  return nativeTools.map((toolDefinition) => wrapMutableToolWithPreventiveFence(toolDefinition, ctx))
 }
+
+export const __conversationalToolsTestHooks = Object.freeze({
+  assertRequiredContactData,
+  isPlaceholderContactName,
+  buildAppointmentParticipant,
+  buildAppointmentParticipants,
+  appointmentRequirementFacts,
+  paymentRequirementFacts
+})

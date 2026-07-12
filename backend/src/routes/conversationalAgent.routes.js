@@ -6,6 +6,7 @@ import {
   updateState,
   testAgent,
   getTestRunEffects,
+  listAgentTestRuns,
   cleanupTestRun,
   listEvents,
   listAgents,
@@ -42,6 +43,7 @@ router.get('/states', listStates)
 router.get('/states/:contactId', getState)
 router.post('/states/:contactId', updateState)
 router.post('/test', testAgent)
+router.get('/agents/:agentId/test-runs', listAgentTestRuns)
 router.get('/test-runs/:testRunId/effects', getTestRunEffects)
 router.delete('/test-runs/:testRunId', cleanupTestRun)
 router.get('/events', listEvents)

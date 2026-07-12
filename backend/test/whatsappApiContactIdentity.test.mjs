@@ -126,6 +126,13 @@ async function insertInboundMessageForOpenReplyWindow({
   messageAt = new Date().toISOString()
 } = {}) {
   await db.run(`
+    INSERT INTO contacts (
+      id, phone, full_name, first_name, source, created_at, updated_at
+    ) VALUES (?, ?, 'Cliente WhatsApp Test', 'Cliente', 'WhatsApp_API', ?, ?)
+    ON CONFLICT(id) DO NOTHING
+  `, [contactId, phone, messageAt, messageAt])
+
+  await db.run(`
     INSERT INTO whatsapp_api_messages (
       id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
       business_phone, business_phone_number_id, transport, direction, message_type,

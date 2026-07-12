@@ -95,6 +95,12 @@ export function isTestPaymentRecord(payment = {}) {
   )
 }
 
+export function shouldSuppressProductionPaymentEffects(payment = {}) {
+  if (!isTestPaymentRecord(payment)) return false
+  const metadata = parseJson(payment.metadata_json || payment.metadata, {})
+  return metadata?.suppressProductionEffects === true || Boolean(metadata?.conversationalAgentTest)
+}
+
 export function isDeletedPaymentRecord(payment = {}) {
   return DELETED_RECORD_STATUSES.has(normalizePaymentStatus(payment.status))
 }
@@ -328,6 +334,72 @@ export async function hardDeleteTestPaymentRecord(paymentId) {
       paymentIds: [cleanPaymentId]
     }
   })
+}
+
+/**
+ * Invalida y reduce a evidencia mínima un pago de prueba antes de borrarlo.
+ * Nunca toca pagos live: payment_mode/metadata deben demostrar modo test.
+ * Sirve como fallback seguro cuando una FK o una falla transitoria impide el
+ * hard delete; el checkout queda bloqueado aunque la fila sobreviva.
+ */
+export async function scrubTestPaymentRecordForCleanup(paymentId, {
+  reason = 'conversational_agent_test_cleanup',
+  cleanedAt = new Date().toISOString()
+} = {}) {
+  const cleanPaymentId = cleanString(paymentId)
+  if (!cleanPaymentId) return { scrubbed: false, reason: 'missing_payment_id' }
+
+  const payment = await db.get('SELECT * FROM payments WHERE id = ?', [cleanPaymentId])
+  if (!payment) return { scrubbed: false, reason: 'payment_not_found' }
+  if (!isTestPaymentRecord(payment)) {
+    return { scrubbed: false, reason: 'payment_not_test' }
+  }
+
+  const minimalMetadata = {
+    paymentMode: 'test',
+    testPaymentCleanup: {
+      reason: cleanString(reason).slice(0, 160),
+      cleanedAt: cleanString(cleanedAt).slice(0, 80)
+    }
+  }
+
+  await db.run('DELETE FROM payment_automation_dispatches WHERE payment_id = ?', [cleanPaymentId]).catch(() => undefined)
+  const result = await db.run(
+    `UPDATE payments
+     SET contact_id = NULL,
+         status = 'deleted',
+         payment_method = 'test_deleted',
+         payment_mode = 'test',
+         reference = NULL,
+         title = 'Prueba eliminada',
+         description = NULL,
+         public_payment_id = NULL,
+         payment_url = NULL,
+         payment_link_request_key = NULL,
+         stripe_payment_intent_id = NULL,
+         stripe_charge_id = NULL,
+         mercadopago_payment_id = NULL,
+         mercadopago_preference_id = NULL,
+         conekta_order_id = NULL,
+         conekta_charge_id = NULL,
+         conekta_payment_source_id = NULL,
+         clip_payment_id = NULL,
+         clip_receipt_no = NULL,
+         rebill_payment_id = NULL,
+         rebill_subscription_id = NULL,
+         rebill_customer_id = NULL,
+         rebill_card_id = NULL,
+         paid_at = NULL,
+         metadata_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND LOWER(COALESCE(payment_mode, '')) IN ('test', 'sandbox')`,
+    [JSON.stringify(minimalMetadata), cleanPaymentId]
+  )
+
+  return {
+    scrubbed: Number(result?.changes ?? result?.rowCount ?? 0) > 0,
+    paymentId: cleanPaymentId
+  }
 }
 
 export async function hardDeleteTestPaymentPlan(flowId) {

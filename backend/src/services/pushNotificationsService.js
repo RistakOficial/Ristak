@@ -2222,8 +2222,10 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
   const contactName = await getAppointmentContactName(appointment, options)
   const eventType = normalizeAppointmentEventType(options.eventType || 'booked')
   const eventKey = getAppointmentEventKey(eventType)
+  const isTest = Boolean(options.isTest ?? appointment.isTest ?? appointment.is_test)
+  const baseTitle = getAppointmentNotificationTitle(eventType)
   const payload = {
-    title: getAppointmentNotificationTitle(eventType),
+    title: isTest ? `Prueba · ${baseTitle}` : baseTitle,
     body: getAppointmentNotificationBody(appointment, options, { contactName }),
     tag: `calendar-${calendarId}`,
     threadId: `calendar-${calendarId}`,
@@ -2231,7 +2233,11 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
     category: eventKey,
     eventKey,
     contactName,
-    contactId: appointment.contactId || appointment.contact_id || ''
+    contactId: appointment.contactId || appointment.contact_id || '',
+    isTest,
+    testRunId: options.testRunId || appointment.testRunId || appointment.test_run_id || '',
+    testEffectId: options.testEffectId || appointment.testEffectId || appointment.test_effect_id || '',
+    testExpiresAt: options.testExpiresAt || appointment.testExpiresAt || appointment.test_expires_at || ''
   }
 
   // (MOB-006) enabledKey + calendarId => on/off y calendarios por usuario destinatario.

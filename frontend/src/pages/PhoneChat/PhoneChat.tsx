@@ -29,9 +29,9 @@ import {
   Languages,
   Link2,
   Loader2,
-  LockKeyhole,
   Mail,
   MapPin,
+  Maximize2,
   Megaphone,
   MessageCircle,
   Mic,
@@ -84,6 +84,7 @@ import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
 import { PhoneButton, PhoneDurationField, PhoneFilterChips, PhoneSheet, PhoneTextArea, PhoneTextField, PhoneTimeField, formatDurationLabel, formatTimeLabel } from '@/components/phone/ui'
+import { MSI_INSTALLMENT_CHOICES, msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
 import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
@@ -124,7 +125,9 @@ import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
   DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_AGENT_GOAL_WORKFLOW,
+  DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
+  buildConversationalLegacyEditableText,
   conversationalAgentService,
   readConversationalAgentLiveCache,
   type AgentFilterOptions,
@@ -148,6 +151,10 @@ import {
   type ConversationalCapabilityId,
   type ConversationalCapabilityItem,
   type ConversationalContactScope,
+  type ConversationalPromptConfig,
+  type ConversationalRequiredDataConditionFact,
+  type ConversationalRequiredDataField,
+  type ConversationalRequiredDataItem,
 } from '@/services/conversationalAgentService'
 import {
   conversationalAIProviderOptions,
@@ -225,6 +232,7 @@ const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const CHAT_REALTIME_PREVIEW_ID_PREFIX = 'realtime-preview-'
 const CHAT_REALTIME_PREVIEW_MAX_AGE_MS = 2 * 60 * 1000
 const CHAT_NOTIFICATION_PREVIEW_FALLBACK_TEXT = 'Mensaje nuevo'
+const PHONE_AGENT_AUTOSAVE_DELAY_MS = 900
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const PHONE_CHAT_APPOINTMENT_ENTRY_MODE_CONFIG_KEY = 'mobile_chat_appointment_entry_mode'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -409,7 +417,7 @@ type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointm
 type AppointmentEntryMode = 'form' | 'calendar'
 type WideSidebarMode = 'chats' | 'newChat' | 'appointment'
 type ChatMoreMode = 'default' | 'agentControls'
-type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'create_agent' | 'provider_key' | 'ready_human'
+type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'create_agent' | 'provider_key' | 'prompt_focus' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
 type PhoneChatFilterManagerMode = 'list' | 'editor'
 type PhoneChatCustomFilterMatchMode = 'all' | 'any'
@@ -948,16 +956,104 @@ function normalizePhoneCurrency(value?: string | null) {
   return String(value || '').trim().toUpperCase().slice(0, 12)
 }
 
+function getPhoneCurrencySymbol(currency: string) {
+  const normalized = normalizePhoneCurrency(currency)
+  try {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: normalized,
+      currencyDisplay: 'narrowSymbol'
+    }).formatToParts(0).find((part) => part.type === 'currency')?.value || normalized
+  } catch {
+    return normalized
+  }
+}
+
+function getPhoneConversationalPaymentMsiMonths(
+  item: Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>,
+  accountCurrency = ''
+) {
+  const isDeposit = item.chargeType === 'deposit' || item.paymentMode === 'deposit' || item.deposit?.enabled
+  if (isDeposit || item.gateway === 'highlevel') return []
+  const amount = item.chargeType === 'direct'
+    ? Number(item.direct?.amount) || 0
+    : Number(item.amount) || 0
+  const currency = normalizePhoneCurrency(
+    item.chargeType === 'direct' ? item.direct?.currency : (item.currency || accountCurrency)
+  )
+  const eligibility = msiEligibility({
+    gateway: item.gateway,
+    currency,
+    amount,
+    msi: { enabled: true, maxInstallments: 24 }
+  })
+  if (eligibility.standaloneMonths?.length) return eligibility.standaloneMonths
+  return eligibility.insideElement || eligibility.insideBrick || eligibility.hostedRedirect
+    ? [...MSI_INSTALLMENT_CHOICES]
+    : []
+}
+
 interface PhoneAgentCreateDraft {
   name: string
-  editableInstructions: string
+  strategyText: string
+  personalityText: string
   contactScope: ConversationalContactScope
+}
+
+type PhoneAgentPromptField = 'strategyText' | 'personalityText'
+
+interface PhoneAgentPromptFocus {
+  source: 'agent' | 'create'
+  field: PhoneAgentPromptField
+  agentId?: string
+  returnSection: 'agent_detail' | 'create_agent'
+}
+
+function updatePhonePromptConfig(
+  current: ConversationalPromptConfig | null | undefined,
+  field: PhoneAgentPromptField,
+  value: string
+): ConversationalPromptConfig {
+  const base = current || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG
+  const strategyText = field === 'strategyText'
+    ? value
+    : String(base.strategyText ?? base.editableText ?? '')
+  const personalityText = field === 'personalityText'
+    ? value
+    : String(base.personalityText ?? '')
+  return {
+    ...base,
+    schemaVersion: 2,
+    strategyText,
+    personalityText,
+    editableText: buildConversationalLegacyEditableText(strategyText, personalityText)
+  }
+}
+
+function phoneAgentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInput {
+  return {
+    name: agent.name,
+    enabled: agent.enabled,
+    aiProvider: agent.aiProvider,
+    model: agent.model,
+    position: agent.position,
+    promptConfig: agent.promptConfig,
+    capabilitiesConfig: agent.capabilitiesConfig,
+    hideAttended: agent.hideAttended,
+    hideAttendedNotifications: agent.hideAttendedNotifications,
+    contactScope: agent.contactScope,
+    responseDelay: agent.responseDelay,
+    replyDelivery: agent.replyDelivery,
+    followUp: agent.followUp,
+    filters: agent.filters
+  }
 }
 
 function buildPhoneAgentCreateDraft(defaultName: string): PhoneAgentCreateDraft {
   return {
     name: defaultName,
-    editableInstructions: DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.editableText,
+    strategyText: String(DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.strategyText || ''),
+    personalityText: String(DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.personalityText || ''),
     contactScope: 'new_only'
   }
 }
@@ -5284,6 +5380,7 @@ export const PhoneChat: React.FC = () => {
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
   const [agentCreating, setAgentCreating] = useState(false)
   const [agentCreateDraft, setAgentCreateDraft] = useState<PhoneAgentCreateDraft>(() => buildPhoneAgentCreateDraft('Agente 1'))
+  const [agentPromptFocus, setAgentPromptFocus] = useState<PhoneAgentPromptFocus | null>(null)
   const [aiProviders, setAIProviders] = useState<ConversationalAIProviderStatus[]>(() => initialAgentLiveCache?.config?.aiProviders || [])
   const [agentFilterOptions, setAgentFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [agentTeamUsers, setAgentTeamUsers] = useState<TeamUser[]>([])
@@ -5293,6 +5390,21 @@ export const PhoneChat: React.FC = () => {
   const [agentProviderKeyValue, setAgentProviderKeyValue] = useState('')
   const [agentProviderKeySaving, setAgentProviderKeySaving] = useState(false)
   const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
+  const agentDefsRef = useRef<ConversationalAgentDef[]>(initialAgentLiveCache?.agents || [])
+  const agentDirtyIdsRef = useRef<Set<string>>(new Set())
+  const agentMutationVersionsRef = useRef<Map<string, number>>(new Map())
+  const agentSaveRevisionsRef = useRef<Map<string, number>>(new Map())
+  const agentSaveTimersRef = useRef<Map<string, number>>(new Map())
+  const agentSaveQueuesRef = useRef<Map<string, Promise<ConversationalAgentDef | null>>>(new Map())
+  const agentPendingEnabledRef = useRef<Map<string, boolean>>(new Map())
+  const agentSavePendingCountRef = useRef(0)
+  const phoneAgentMountedRef = useRef(true)
+  const schedulePhoneAgentSaveRef = useRef<(agentId: string) => void>(() => undefined)
+  const savePhoneAgentNowRef = useRef<(
+    agentId: string,
+    options?: { notify?: boolean; enabled?: boolean }
+  ) => Promise<ConversationalAgentDef | null>>(async () => null)
+  agentDefsRef.current = agentDefs
   const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
   const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ManualAgentSendPrompt | null>(null)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
@@ -7493,19 +7605,46 @@ export const PhoneChat: React.FC = () => {
     void loadChats({ silent: true, append: true })
   }, [loadChats])
 
+  const applyServerAgentDefsPreservingDrafts = useCallback((
+    serverAgents: ConversationalAgentDef[],
+    versionsAtRequestStart: Map<string, number> | null = null
+  ) => {
+    const localById = new Map(agentDefsRef.current.map((agent) => [agent.id, agent]))
+    const serverIds = new Set(serverAgents.map((agent) => agent.id))
+    const merged = serverAgents.flatMap((agent) => {
+      const changedSinceRequest = agentDirtyIdsRef.current.has(agent.id) ||
+        agentPendingEnabledRef.current.has(agent.id) ||
+        (versionsAtRequestStart !== null &&
+          (agentMutationVersionsRef.current.get(agent.id) || 0) !== (versionsAtRequestStart.get(agent.id) || 0))
+      if (!changedSinceRequest) return [agent]
+      const local = localById.get(agent.id)
+      return local ? [local] : []
+    })
+    for (const [agentId, local] of localById) {
+      const changedSinceRequest = agentDirtyIdsRef.current.has(agentId) ||
+        agentPendingEnabledRef.current.has(agentId) ||
+        (versionsAtRequestStart !== null &&
+          (agentMutationVersionsRef.current.get(agentId) || 0) !== (versionsAtRequestStart.get(agentId) || 0))
+      if (changedSinceRequest && !serverIds.has(agentId)) merged.push(local)
+    }
+    agentDefsRef.current = merged
+    setAgentDefs(merged)
+  }, [])
+
   const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
     if (!cache || (!openAIConfigured && !openAILoading)) return
     setAgentConfig(cache.config)
-    setAgentDefs(cache.agents)
+    applyServerAgentDefsPreservingDrafts(cache.agents)
     setAgentStates(mapAgentStatesByContactId(cache.states))
     setAgentStateLists(mapAgentStateListsByContactId(cache.states))
-  }, [openAIConfigured, openAILoading])
+  }, [applyServerAgentDefsPreservingDrafts, openAIConfigured, openAILoading])
 
   const loadAgentData = useCallback(async (options: { includeDefinitions?: boolean } = {}) => {
     if (openAILoading) return
 
     if (!openAIConfigured) {
       setAgentConfig(null)
+      agentDefsRef.current = []
       setAgentDefs([])
       setAgentStates({})
       setAgentStateLists({})
@@ -7515,6 +7654,10 @@ export const PhoneChat: React.FC = () => {
     const requestGeneration = agentLoadGenerationRef.current + 1
     agentLoadGenerationRef.current = requestGeneration
     const includeDefinitions = options.includeDefinitions !== false
+    const versionsAtRequestStart = new Map(agentDefsRef.current.map((agent) => [
+      agent.id,
+      agentMutationVersionsRef.current.get(agent.id) || 0
+    ]))
 
     try {
       const [config, states, defs, providers] = await Promise.all([
@@ -7529,7 +7672,7 @@ export const PhoneChat: React.FC = () => {
       ])
       if (agentLoadGenerationRef.current !== requestGeneration) return
       setAgentConfig(config)
-      if (defs) setAgentDefs(defs)
+      if (defs) applyServerAgentDefsPreservingDrafts(defs, versionsAtRequestStart)
       if (providers) setAIProviders(config.aiProviders || providers)
       setAgentStates(mapAgentStatesByContactId(states))
       setAgentStateLists(mapAgentStateListsByContactId(states))
@@ -7537,7 +7680,7 @@ export const PhoneChat: React.FC = () => {
       // El agente conversacional puede no estar disponible (feature apagada);
       // el chat sigue funcionando normal sin él.
     }
-  }, [openAIConfigured, openAILoading])
+  }, [applyServerAgentDefsPreservingDrafts, openAIConfigured, openAILoading])
 
   const loadAgentEditorSupportData = useCallback(async () => {
     if (openAILoading || !openAIConfigured) return
@@ -7584,26 +7727,176 @@ export const PhoneChat: React.FC = () => {
   }, [applyAgentLiveCache])
 
   const updateAgentDraft = useCallback((agentId: string, patch: ConversationalAgentDefInput) => {
-    setAgentDefs((current) => current.map((agent) => (
+    agentSaveRevisionsRef.current.set(agentId, (agentSaveRevisionsRef.current.get(agentId) || 0) + 1)
+    agentMutationVersionsRef.current.set(agentId, (agentMutationVersionsRef.current.get(agentId) || 0) + 1)
+    agentDirtyIdsRef.current.add(agentId)
+    const nextAgents = agentDefsRef.current.map((agent) => (
       agent.id === agentId
         ? { ...agent, ...patch } as ConversationalAgentDef
         : agent
-    )))
+    ))
+    agentDefsRef.current = nextAgents
+    setAgentDefs(nextAgents)
+    schedulePhoneAgentSaveRef.current(agentId)
   }, [])
 
-  const saveAgentPatch = useCallback(async (agentId: string, patch: ConversationalAgentDefInput) => {
-    if (!agentId) return
-    updateAgentDraft(agentId, patch)
-    setAgentConfigSaving(true)
-    try {
-      const next = await conversationalAgentService.updateAgent(agentId, patch)
-      setAgentDefs((current) => current.map((agent) => (agent.id === next.id ? next : agent)))
-    } catch (error: any) {
-      showToast('error', 'Agente conversacional', error?.message || 'No se pudo guardar el cambio')
-    } finally {
-      setAgentConfigSaving(false)
+  const savePhoneAgentNow = useCallback((
+    agentId: string,
+    options: { notify?: boolean; enabled?: boolean } = {}
+  ): Promise<ConversationalAgentDef | null> => {
+    const timers = agentSaveTimersRef.current
+    const existingTimer = timers.get(agentId)
+    if (existingTimer) window.clearTimeout(existingTimer)
+    timers.delete(agentId)
+
+    const queues = agentSaveQueuesRef.current
+    const queued = queues.get(agentId)
+    if (
+      !agentDirtyIdsRef.current.has(agentId) &&
+      options.enabled === undefined &&
+      !agentPendingEnabledRef.current.has(agentId)
+    ) {
+      return queued || Promise.resolve(agentDefsRef.current.find((agent) => agent.id === agentId) || null)
     }
-  }, [showToast, updateAgentDraft])
+
+    const operation = (queued || Promise.resolve(null))
+      .catch(() => null)
+      .then(async () => {
+        if (
+          !agentDirtyIdsRef.current.has(agentId) &&
+          options.enabled === undefined &&
+          !agentPendingEnabledRef.current.has(agentId)
+        ) {
+          return agentDefsRef.current.find((agent) => agent.id === agentId) || null
+        }
+
+        const currentAgent = agentDefsRef.current.find((agent) => agent.id === agentId)
+        if (!currentAgent) {
+          agentPendingEnabledRef.current.delete(agentId)
+          return null
+        }
+        const effectiveEnabled = options.enabled ?? agentPendingEnabledRef.current.get(agentId)
+        const requestAgent = effectiveEnabled === undefined
+          ? currentAgent
+          : ({ ...currentAgent, enabled: effectiveEnabled } as ConversationalAgentDef)
+        const requestRevision = agentSaveRevisionsRef.current.get(agentId) || 0
+
+        agentSavePendingCountRef.current += 1
+        if (phoneAgentMountedRef.current) setAgentConfigSaving(true)
+        try {
+          const next = await conversationalAgentService.updateAgent(agentId, phoneAgentToInput(requestAgent))
+          agentMutationVersionsRef.current.set(agentId, (agentMutationVersionsRef.current.get(agentId) || 0) + 1)
+          const revisionUnchanged = (agentSaveRevisionsRef.current.get(agentId) || 0) === requestRevision
+          if (revisionUnchanged) {
+            agentDirtyIdsRef.current.delete(agentId)
+            if (agentPendingEnabledRef.current.get(agentId) === effectiveEnabled) {
+              agentPendingEnabledRef.current.delete(agentId)
+            }
+            const retryTimer = timers.get(agentId)
+            if (retryTimer) window.clearTimeout(retryTimer)
+            timers.delete(agentId)
+          }
+
+          const latestAgent = agentDefsRef.current.find((agent) => agent.id === agentId)
+          const localNext = revisionUnchanged
+            ? next
+            : (latestAgent ? ({ ...next, ...latestAgent, enabled: next.enabled } as ConversationalAgentDef) : next)
+          const nextAgents = agentDefsRef.current.map((agent) => (agent.id === agentId ? localNext : agent))
+          agentDefsRef.current = nextAgents
+          if (phoneAgentMountedRef.current) setAgentDefs(nextAgents)
+          return next
+        } catch (error: any) {
+          if (options.notify !== false && phoneAgentMountedRef.current) {
+            showToast(
+              'error',
+              'No se pudo guardar',
+              `${error?.message || 'Revisa la configuración del agente.'} El borrador sigue aquí y se reintentará sin recortar el texto.`
+            )
+          }
+          const stillPending = agentDirtyIdsRef.current.has(agentId) || agentPendingEnabledRef.current.has(agentId)
+          if (stillPending && phoneAgentMountedRef.current && !timers.has(agentId)) {
+            timers.set(agentId, window.setTimeout(() => {
+              timers.delete(agentId)
+              void savePhoneAgentNowRef.current(agentId, { notify: false }).catch(() => undefined)
+            }, PHONE_AGENT_AUTOSAVE_DELAY_MS * 2))
+          }
+          throw error
+        } finally {
+          agentSavePendingCountRef.current = Math.max(0, agentSavePendingCountRef.current - 1)
+          if (phoneAgentMountedRef.current) setAgentConfigSaving(agentSavePendingCountRef.current > 0)
+        }
+      })
+
+    queues.set(agentId, operation)
+    void operation.finally(() => {
+      if (queues.get(agentId) === operation) queues.delete(agentId)
+    }).catch(() => undefined)
+    return operation
+  }, [showToast])
+
+  savePhoneAgentNowRef.current = savePhoneAgentNow
+
+  const schedulePhoneAgentSave = useCallback((agentId: string) => {
+    const timers = agentSaveTimersRef.current
+    const existing = timers.get(agentId)
+    if (existing) window.clearTimeout(existing)
+    timers.set(agentId, window.setTimeout(() => {
+      timers.delete(agentId)
+      void savePhoneAgentNowRef.current(agentId).catch(() => undefined)
+    }, PHONE_AGENT_AUTOSAVE_DELAY_MS))
+  }, [])
+
+  schedulePhoneAgentSaveRef.current = schedulePhoneAgentSave
+
+  const saveAgentPatch = useCallback((agentId: string, patch: ConversationalAgentDefInput) => {
+    if (!agentId) return Promise.resolve(null)
+    const keysBesidesEnabled = Object.keys(patch).filter((key) => key !== 'enabled')
+    const hasDraftChanges = keysBesidesEnabled.length > 0
+    if (patch.enabled !== undefined && !hasDraftChanges) {
+      agentPendingEnabledRef.current.set(agentId, patch.enabled)
+      const operation = savePhoneAgentNow(agentId, { enabled: patch.enabled })
+      void operation.catch(() => undefined)
+      return operation
+    }
+
+    const { enabled: requestedEnabled, ...draftPatch } = patch
+    if (hasDraftChanges) updateAgentDraft(agentId, draftPatch)
+    if (requestedEnabled !== undefined) agentPendingEnabledRef.current.set(agentId, requestedEnabled)
+    const operation = savePhoneAgentNow(agentId, requestedEnabled === undefined ? {} : { enabled: requestedEnabled })
+    void operation.catch(() => undefined)
+    return operation
+  }, [savePhoneAgentNow, updateAgentDraft])
+
+  useEffect(() => {
+    phoneAgentMountedRef.current = true
+    return () => {
+      phoneAgentMountedRef.current = false
+      const timers = agentSaveTimersRef.current
+      const pendingAgentIds = new Set([
+        ...timers.keys(),
+        ...agentDirtyIdsRef.current,
+        ...agentPendingEnabledRef.current.keys()
+      ])
+      timers.forEach((timer) => window.clearTimeout(timer))
+      timers.clear()
+      pendingAgentIds.forEach((agentId) => {
+        void savePhoneAgentNowRef.current(agentId, { notify: false }).catch(() => undefined)
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (sheet === 'agentMenu' || !agentPromptFocus) return
+    if (agentPromptFocus.source === 'agent') {
+      const agent = agentDefs.find((item) => item.id === agentPromptFocus.agentId)
+      if (agent) {
+        void saveAgentPatch(agent.id, {
+          promptConfig: agent.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG
+        })
+      }
+    }
+    setAgentPromptFocus(null)
+  }, [agentDefs, agentPromptFocus, saveAgentPatch, sheet])
 
   const openAgentProviderKeyScreen = useCallback((providerId: ConversationalAIProviderId, agentId = '') => {
     const provider = getConversationalAIProviderOption(providerId)
@@ -7670,25 +7963,25 @@ export const PhoneChat: React.FC = () => {
         model: defaultModel,
         promptConfig: {
           ...DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
-          editableText: agentCreateDraft.editableInstructions
+          schemaVersion: 2,
+          strategyText: agentCreateDraft.strategyText,
+          personalityText: agentCreateDraft.personalityText,
+          editableText: buildConversationalLegacyEditableText(
+            agentCreateDraft.strategyText,
+            agentCreateDraft.personalityText
+          )
         },
-        capabilitiesConfig: {
-          schemaVersion: 1,
-          items: [{
-            id: 'handoff_human',
-            enabled: true,
-            rules: '',
-            userId: '',
-            userName: '',
-            pastClientsToHuman: false
-          }]
-        },
+        capabilitiesConfig: DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
         contactScope: agentCreateDraft.contactScope,
         filters: PHONE_AGENT_EMPTY_FILTERS,
         responseDelay: { ...DEFAULT_PHONE_AGENT_RESPONSE_DELAY },
         replyDelivery: { ...DEFAULT_PHONE_AGENT_REPLY_DELIVERY }
       })
-      setAgentDefs((current) => [...current, agent])
+      const nextAgents = agentDefsRef.current.some((item) => item.id === agent.id)
+        ? agentDefsRef.current.map((item) => (item.id === agent.id ? agent : item))
+        : [...agentDefsRef.current, agent]
+      agentDefsRef.current = nextAgents
+      setAgentDefs(nextAgents)
       setSelectedAgentId(agent.id)
       setAgentCreateDraft(buildPhoneAgentCreateDraft(`Agente ${agentDefs.length + 2}`))
       setAgentMenuSection('agent_detail')
@@ -7708,7 +8001,14 @@ export const PhoneChat: React.FC = () => {
         setAgentConfigSaving(true)
         try {
           await conversationalAgentService.deleteAgent(agent.id)
-          setAgentDefs((current) => current.filter((item) => item.id !== agent.id))
+          const nextAgents = agentDefsRef.current.filter((item) => item.id !== agent.id)
+          agentDefsRef.current = nextAgents
+          agentDirtyIdsRef.current.delete(agent.id)
+          agentPendingEnabledRef.current.delete(agent.id)
+          const saveTimer = agentSaveTimersRef.current.get(agent.id)
+          if (saveTimer) window.clearTimeout(saveTimer)
+          agentSaveTimersRef.current.delete(agent.id)
+          setAgentDefs(nextAgents)
           setSelectedAgentId((current) => {
             if (current !== agent.id) return current
             const nextAgent = agentDefs.find((item) => item.id !== agent.id)
@@ -8758,6 +9058,7 @@ export const PhoneChat: React.FC = () => {
     setAgentPickerOpen(false)
     setAgentMenuSection('menu')
     setAgentConfig(null)
+    agentDefsRef.current = []
     setAgentDefs([])
     setAgentStates({})
 
@@ -10539,20 +10840,10 @@ export const PhoneChat: React.FC = () => {
     }
 
     const nextAgentEnabled = !selectedAgent.enabled
-    const previousAgent = selectedAgent
-
-    updateAgentDraft(selectedAgent.id, { enabled: nextAgentEnabled })
-    setAgentConfigSaving(true)
-
     try {
-      const nextAgent = await conversationalAgentService.updateAgent(selectedAgent.id, { enabled: nextAgentEnabled })
-
-      setAgentDefs((current) => current.map((agent) => (agent.id === nextAgent.id ? nextAgent : agent)))
-    } catch (error: any) {
-      setAgentDefs((current) => current.map((agent) => (agent.id === previousAgent.id ? previousAgent : agent)))
-      showToast('error', 'Agente conversacional', error?.message || 'No se pudo cambiar el estado.')
-    } finally {
-      setAgentConfigSaving(false)
+      await saveAgentPatch(selectedAgent.id, { enabled: nextAgentEnabled })
+    } catch {
+      // saveAgentPatch conserva el estado confirmado y ya muestra/reintenta el error.
     }
   }
 
@@ -19746,6 +20037,72 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
+    if (agentMenuSection === 'prompt_focus' && agentPromptFocus) {
+      const focusedAgent = agentPromptFocus.source === 'agent'
+        ? agentDefs.find((agent) => agent.id === agentPromptFocus.agentId) || null
+        : null
+      const isStrategy = agentPromptFocus.field === 'strategyText'
+      const value = agentPromptFocus.source === 'create'
+        ? agentCreateDraft[agentPromptFocus.field]
+        : String(focusedAgent?.promptConfig?.[agentPromptFocus.field] || '')
+      const closeFocus = () => {
+        if (focusedAgent) {
+          void saveAgentPatch(focusedAgent.id, {
+            promptConfig: focusedAgent.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG
+          })
+        }
+        setAgentPromptFocus(null)
+        setAgentMenuSection(agentPromptFocus.returnSection)
+      }
+
+      return (
+        <>
+          <button type="button" className={styles.agentMenuBack} onClick={closeFocus}>
+            <X size={18} />
+            Cerrar editor
+          </button>
+          <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
+            <section className={styles.agentMenuSection} aria-label={isStrategy ? 'Editar estrategia y capacitación' : 'Editar personalidad del agente'}>
+              <div className={styles.agentMenuSectionHeader}>
+                <span>{isStrategy ? 'Estrategia y capacitación' : 'Personalidad del agente'}</span>
+                <small>Editor ampliado</small>
+              </div>
+              <p className={styles.agentMenuHint}>
+                {isStrategy
+                  ? 'Escribe todo lo que debe saber del negocio, qué debe conseguir y qué proceso debe seguir.'
+                  : 'Define tono, vocabulario, formalidad, humor, emojis y estilo de conversación.'}
+              </p>
+              <PhoneTextArea
+                label={isStrategy ? 'Capacitación completa' : 'Personalidad completa'}
+                value={value}
+                onChange={(nextValue) => {
+                  if (agentPromptFocus.source === 'create') {
+                    setAgentCreateDraft((current) => ({ ...current, [agentPromptFocus.field]: nextValue }))
+                    return
+                  }
+                  if (!focusedAgent) return
+                  updateAgentDraft(focusedAgent.id, {
+                    promptConfig: updatePhonePromptConfig(focusedAgent.promptConfig, agentPromptFocus.field, nextValue)
+                  })
+                }}
+                placeholder={isStrategy
+                  ? 'Describe el negocio, productos, proceso, respuestas, objetivos y forma de llevar la conversación.'
+                  : 'Ejemplo: cálido, directo, mexicano, breve y sin frases acartonadas.'}
+                rows={22}
+                autoFocus
+                disabled={agentConfigSaving}
+                hint="El texto se guarda completo, sin recortarlo."
+              />
+              <button type="button" className={styles.agentPublishButton} onClick={closeFocus}>
+                <Check size={16} />
+                Cerrar editor
+              </button>
+            </section>
+          </div>
+        </>
+      )
+    }
+
     if (agentMenuSection === 'create_agent') {
       const patchCreateDraft = (patch: Partial<PhoneAgentCreateDraft>) => setAgentCreateDraft((current) => ({ ...current, ...patch }))
 
@@ -19773,14 +20130,47 @@ export const PhoneChat: React.FC = () => {
                 autoFocus
               />
               <PhoneTextArea
-                label="Instrucciones editables"
-                value={agentCreateDraft.editableInstructions}
-                onChange={(editableInstructions) => patchCreateDraft({ editableInstructions })}
-                placeholder="Cómo debe atender, qué sabe del negocio y cómo quieres que hable."
+                label="Estrategia y capacitación"
+                value={agentCreateDraft.strategyText}
+                onChange={(strategyText) => patchCreateDraft({ strategyText })}
+                placeholder="Qué debe saber del negocio, qué debe conseguir y qué proceso debe seguir."
                 rows={10}
                 disabled={agentCreating}
-                hint="Puedes dejar la plantilla tal cual, editarla o borrarla. Las acciones seguirán protegidas."
+                hint="Puedes dejar la plantilla, editarla o borrarla completa."
               />
+              <button
+                type="button"
+                className={styles.agentDetailResetButton}
+                disabled={agentCreating}
+                onClick={() => {
+                  setAgentPromptFocus({ source: 'create', field: 'strategyText', returnSection: 'create_agent' })
+                  setAgentMenuSection('prompt_focus')
+                }}
+              >
+                <Maximize2 size={16} />
+                Expandir estrategia
+              </button>
+              <PhoneTextArea
+                label="Personalidad del agente"
+                value={agentCreateDraft.personalityText}
+                onChange={(personalityText) => patchCreateDraft({ personalityText })}
+                placeholder="Cómo debe hablar: tono, vocabulario, humor, formalidad y estilo."
+                rows={6}
+                disabled={agentCreating}
+                hint="Si lo dejas vacío, usará la voz general del negocio."
+              />
+              <button
+                type="button"
+                className={styles.agentDetailResetButton}
+                disabled={agentCreating}
+                onClick={() => {
+                  setAgentPromptFocus({ source: 'create', field: 'personalityText', returnSection: 'create_agent' })
+                  setAgentMenuSection('prompt_focus')
+                }}
+              >
+                <Maximize2 size={16} />
+                Expandir personalidad
+              </button>
               <label className={styles.agentMenuField}>
                 <span>A quién puede atender</span>
                 <PhoneSelect
@@ -19840,7 +20230,7 @@ export const PhoneChat: React.FC = () => {
       }))
     ]
     const normalizedAccountCurrency = normalizePhoneCurrency(accountCurrency)
-    const nativeCapabilities: ConversationalCapabilitiesConfig = selectedAgentDef?.capabilitiesConfig || { schemaVersion: 1, items: [] }
+    const nativeCapabilities: ConversationalCapabilitiesConfig = selectedAgentDef?.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
 
     function getSelectedNativeCapability<T extends ConversationalCapabilityItem['id']>(id: T) {
       return (nativeCapabilities.items.find((item) => item.id === id) || null) as Extract<ConversationalCapabilityItem, { id: T }> | null
@@ -19865,8 +20255,20 @@ export const PhoneChat: React.FC = () => {
           productId: '',
           priceId: '',
           paymentMode: 'full_payment',
+          chargeType: 'product',
           amount: null,
           currency: normalizedAccountCurrency,
+          gateway: 'stripe',
+          direct: {
+            amount: null,
+            currency: normalizedAccountCurrency,
+            concept: '',
+            description: ''
+          },
+          installments: { enabled: false, maxInstallments: 0 },
+          expirationMinutes: 60,
+          afterPayment: 'continue',
+          receiptProof: { enabled: true, disposition: 'pending_review' },
           deposit: {
             ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit,
             currency: normalizedAccountCurrency,
@@ -19908,7 +20310,7 @@ export const PhoneChat: React.FC = () => {
         ? nativeCapabilities.items.map((item) => (item.id === next.id ? next : item))
         : [...nativeCapabilities.items, next]
       saveSelectedAgentPatch({
-        capabilitiesConfig: { schemaVersion: 1, items },
+        capabilitiesConfig: { ...nativeCapabilities, schemaVersion: 2, items },
         ...(selectedAgentDef?.enabled ? { enabled: false } : {})
       })
     }
@@ -19920,7 +20322,7 @@ export const PhoneChat: React.FC = () => {
         ? nativeCapabilities.items.map((item) => (item.id === next.id ? next : item))
         : [...nativeCapabilities.items, next]
       updateAgentDraft(selectedAgentDef.id, {
-        capabilitiesConfig: { schemaVersion: 1, items }
+        capabilitiesConfig: { ...nativeCapabilities, schemaVersion: 2, items }
       })
     }
 
@@ -19939,6 +20341,9 @@ export const PhoneChat: React.FC = () => {
     const customCapability = getSelectedNativeCapability('custom_goal')
     const nativePaymentProduct = agentProducts.find((item) => getProductId(item) === paymentCapability?.productId) || null
     const nativePaymentPrices = nativePaymentProduct?.prices || []
+    const nativePaymentMsiMonths = paymentCapability
+      ? getPhoneConversationalPaymentMsiMonths(paymentCapability, normalizedAccountCurrency)
+      : []
     const enabledNativeCapabilities = nativeCapabilities.items.filter((item) => item.enabled)
     const nativeCapabilityOptions: Array<{ id: ConversationalCapabilityId; label: string; description: string }> = [
       { id: 'schedule_appointment', label: 'Agendar cita', description: 'Consulta horarios reales y crea la cita en el calendario elegido.' },
@@ -19951,6 +20356,90 @@ export const PhoneChat: React.FC = () => {
     const saveSelectedAgentPatch = (patch: ConversationalAgentDefInput) => {
       if (!selectedAgentDef) return
       void saveAgentPatch(selectedAgentDef.id, patch)
+    }
+
+    const safetyPolicy = nativeCapabilities.safetyPolicy || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.safetyPolicy
+    const testMode = nativeCapabilities.testMode || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.testMode
+    const dataRequirements = nativeCapabilities.dataRequirements || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.dataRequirements
+    const requiredDataOptions: Array<{ field: ConversationalRequiredDataField; label: string }> = [
+      { field: 'first_name', label: 'Nombre' },
+      { field: 'full_name', label: 'Nombre completo' },
+      { field: 'phone', label: 'Teléfono principal' },
+      { field: 'alternate_phone', label: 'Otro teléfono' },
+      { field: 'email', label: 'Correo' },
+      { field: 'company', label: 'Empresa' },
+      { field: 'address', label: 'Dirección' },
+      { field: 'custom', label: 'Dato personalizado' }
+    ]
+    const requiredDataConditionOptions: Array<{
+      fact: ConversationalRequiredDataConditionFact
+      scope: ConversationalRequiredDataItem['scope']
+      label: string
+    }> = [
+      { fact: 'appointment.primary_attendee_is_different', scope: 'appointment', label: 'Cuando la cita sea para otra persona' },
+      { fact: 'appointment.has_guests', scope: 'appointment', label: 'Cuando la cita tenga invitados' },
+      { fact: 'payment.is_deposit', scope: 'payment', label: 'Cuando el cobro sea un anticipo' },
+      { fact: 'payment.is_full_payment', scope: 'payment', label: 'Cuando el cobro sea pago completo' }
+    ]
+
+    const saveNativeCapabilitiesPatch = (
+      patch: Partial<ConversationalCapabilitiesConfig>,
+      { pauseAgent = true }: { pauseAgent?: boolean } = {}
+    ) => {
+      saveSelectedAgentPatch({
+        capabilitiesConfig: {
+          ...nativeCapabilities,
+          ...patch,
+          schemaVersion: 2
+        },
+        ...(pauseAgent && selectedAgentDef?.enabled ? { enabled: false } : {})
+      })
+    }
+
+    const updateRequiredDataItem = (
+      field: ConversationalRequiredDataField,
+      patch: Partial<ConversationalRequiredDataItem> | null
+    ) => {
+      const existing = dataRequirements.fields.find((item) => item.field === field)
+      const fields = patch === null
+        ? dataRequirements.fields.filter((item) => item.field !== field)
+        : [
+            ...dataRequirements.fields.filter((item) => item.field !== field),
+            {
+              field,
+              level: existing?.level || 'required',
+              scope: existing?.scope || 'any_action',
+              ...existing,
+              ...patch
+            } as ConversationalRequiredDataItem
+          ]
+      saveNativeCapabilitiesPatch({
+        dataRequirements: {
+          ...dataRequirements,
+          enabled: fields.length > 0 || dataRequirements.participants.enabled,
+          fields
+        }
+      })
+    }
+
+    const updateRequiredDataItemDraft = (
+      field: ConversationalRequiredDataField,
+      patch: Partial<ConversationalRequiredDataItem>
+    ) => {
+      if (!selectedAgentDef) return
+      const existing = dataRequirements.fields.find((item) => item.field === field)
+      if (!existing) return
+      const fields = [
+        ...dataRequirements.fields.filter((item) => item.field !== field),
+        { ...existing, ...patch }
+      ] as ConversationalRequiredDataItem[]
+      updateAgentDraft(selectedAgentDef.id, {
+        capabilitiesConfig: {
+          ...nativeCapabilities,
+          schemaVersion: 2,
+          dataRequirements: { ...dataRequirements, fields }
+        }
+      })
     }
 
     const updateResponseDelay = (patch: Partial<AgentResponseDelayConfig>) => {
@@ -20024,22 +20513,76 @@ export const PhoneChat: React.FC = () => {
     const renderNativeCapabilitySettings = (id: ConversationalCapabilityId) => {
       if (id === 'schedule_appointment' && scheduleCapability?.enabled) {
         return (
-          <label className={styles.agentMenuField}>
-            <span>Calendario real</span>
-            <PhoneSelect
-              value={scheduleCapability.calendarId}
-              onChange={(calendarId) => saveNativeCapability({ ...scheduleCapability, calendarId, allowOverlaps: false })}
-              options={[
-                { value: '', label: calendarsLoading ? '...' : 'Elegir calendario activo' },
-                ...calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }))
-              ]}
-              title="Calendario"
-              ariaLabel="Calendario protegido para agendar"
-              disabled={agentConfigSaving || calendarsLoading}
-              buttonClassName={styles.agentMenuSelectButton}
-            />
-            <small>Ristak vuelve a comprobar que el horario exista y siga libre antes de crear la cita.</small>
-          </label>
+          <>
+            <label className={styles.agentMenuField}>
+              <span>Calendario real</span>
+              <PhoneSelect
+                value={scheduleCapability.calendarId}
+                onChange={(calendarId) => saveNativeCapability({ ...scheduleCapability, calendarId, allowOverlaps: false })}
+                options={[
+                  { value: '', label: calendarsLoading ? '...' : 'Elegir calendario activo' },
+                  ...calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }))
+                ]}
+                title="Calendario"
+                ariaLabel="Calendario para consultar disponibilidad"
+                disabled={agentConfigSaving || calendarsLoading}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+            </label>
+            <label className={styles.agentMenuField}>
+              <span>¿Quién termina de agendar?</span>
+              <PhoneSelect
+                value={scheduleCapability.bookingOwner || 'ai'}
+                onChange={(bookingOwner) => saveNativeCapability({
+                  ...scheduleCapability,
+                  bookingOwner: bookingOwner === 'human' ? 'human' : 'ai',
+                  handoffUserId: bookingOwner === 'human' ? scheduleCapability.handoffUserId : '',
+                  handoffUserName: bookingOwner === 'human' ? scheduleCapability.handoffUserName : ''
+                })}
+                options={[
+                  { value: 'ai', label: 'La IA agenda y confirma' },
+                  { value: 'human', label: 'Una persona confirma y agenda' }
+                ]}
+                title="Responsable de agenda"
+                ariaLabel="Quién termina de agendar"
+                disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+            </label>
+            {scheduleCapability.bookingOwner === 'human' ? (
+              <>
+                <label className={styles.agentMenuField}>
+                  <span>Persona asignada (opcional)</span>
+                  <PhoneSelect
+                    value={scheduleCapability.handoffUserId}
+                    onChange={(handoffUserId) => {
+                      const teamUser = agentTeamUsers.find((item) => item.id === handoffUserId) || null
+                      saveNativeCapability({
+                        ...scheduleCapability,
+                        bookingOwner: 'human',
+                        handoffUserId: teamUser?.id || '',
+                        handoffUserName: getTeamUserDisplayName(teamUser)
+                      })
+                    }}
+                    options={[
+                      { value: '', label: 'Avisar al equipo sin asignar' },
+                      ...agentTeamUsers.map((teamUser) => ({
+                        value: teamUser.id,
+                        label: getTeamUserDisplayName(teamUser)
+                      }))
+                    ]}
+                    title="Persona responsable"
+                    ariaLabel="Persona responsable de confirmar la cita"
+                    disabled={agentConfigSaving || agentTeamUsersLoading}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+                <p className={styles.agentMenuHint}>La IA muestra horarios reales. Cuando el cliente elige uno, vuelve a comprobarlo y entrega el chat con esa fecha y hora; no crea ni promete la cita.</p>
+              </>
+            ) : (
+              <p className={styles.agentMenuHint}>La IA vuelve a comprobar el horario elegido, crea la cita y sólo entonces la confirma.</p>
+            )}
+          </>
         )
       }
 
@@ -20049,18 +20592,28 @@ export const PhoneChat: React.FC = () => {
             <label className={styles.agentMenuField}>
               <span>Tipo de cobro</span>
               <PhoneSelect
-                value={paymentCapability.paymentMode}
-                onChange={(value) => saveNativeCapability({
-                  ...paymentCapability,
-                  paymentMode: value === 'deposit' ? 'deposit' : 'full_payment',
-                  deposit: {
-                    ...paymentCapability.deposit,
-                    enabled: value === 'deposit',
-                    currency: normalizedAccountCurrency
-                  }
-                })}
+                value={paymentCapability.chargeType}
+                onChange={(value) => {
+                  const chargeType = value === 'direct' ? 'direct' : value === 'deposit' ? 'deposit' : 'product'
+                  saveNativeCapability({
+                    ...paymentCapability,
+                    chargeType,
+                    paymentMode: chargeType === 'deposit' ? 'deposit' : 'full_payment',
+                    direct: {
+                      ...paymentCapability.direct,
+                      currency: normalizedAccountCurrency
+                    },
+                    deposit: {
+                      ...paymentCapability.deposit,
+                      enabled: chargeType === 'deposit',
+                      currency: normalizedAccountCurrency
+                    },
+                    installments: { enabled: false, maxInstallments: 0 }
+                  })
+                }}
                 options={[
-                  { value: 'full_payment', label: 'Pago completo' },
+                  { value: 'product', label: 'Pago único de un producto' },
+                  { value: 'direct', label: 'Pago único sin producto' },
                   { value: 'deposit', label: 'Anticipo' }
                 ]}
                 title="Tipo de cobro"
@@ -20069,7 +20622,7 @@ export const PhoneChat: React.FC = () => {
                 buttonClassName={styles.agentMenuSelectButton}
               />
             </label>
-            {paymentCapability.paymentMode === 'full_payment' ? (
+            {paymentCapability.chargeType === 'product' ? (
               <>
                 <label className={styles.agentMenuField}>
                   <span>Producto real</span>
@@ -20080,7 +20633,8 @@ export const PhoneChat: React.FC = () => {
                       productId,
                       priceId: '',
                       amount: null,
-                      currency: normalizedAccountCurrency
+                      currency: normalizedAccountCurrency,
+                      installments: { enabled: false, maxInstallments: 0 }
                     })}
                     options={[
                       { value: '', label: agentProductsLoading ? '...' : 'Elegir producto' },
@@ -20102,7 +20656,8 @@ export const PhoneChat: React.FC = () => {
                         ...paymentCapability,
                         priceId: getPriceId(price),
                         amount: price ? getPriceAmount(price) : null,
-                        currency: normalizePhoneCurrency(price?.currency || nativePaymentProduct?.currency || normalizedAccountCurrency)
+                        currency: normalizePhoneCurrency(price?.currency || nativePaymentProduct?.currency || normalizedAccountCurrency),
+                        installments: { enabled: false, maxInstallments: 0 }
                       })
                     }}
                     options={[
@@ -20118,6 +20673,50 @@ export const PhoneChat: React.FC = () => {
                     buttonClassName={styles.agentMenuSelectButton}
                   />
                 </label>
+              </>
+            ) : paymentCapability.chargeType === 'direct' ? (
+              <>
+                <PhoneTextField
+                  label="Concepto del cobro"
+                  value={paymentCapability.direct.concept}
+                  onChange={(concept) => updateNativeCapabilityDraft({
+                    ...paymentCapability,
+                    direct: { ...paymentCapability.direct, concept, currency: normalizedAccountCurrency }
+                  })}
+                  onBlur={() => saveNativeCapability(paymentCapability)}
+                  placeholder="Ejemplo: Consulta inicial"
+                  disabled={agentConfigSaving}
+                />
+                <PhoneTextField
+                  label={`Monto (${normalizedAccountCurrency})`}
+                  type="number"
+                  inputMode="decimal"
+                  leading={<span aria-hidden="true">{getPhoneCurrencySymbol(normalizedAccountCurrency)}</span>}
+                  value={String(paymentCapability.direct.amount || '')}
+                  onChange={(value) => updateNativeCapabilityDraft({
+                    ...paymentCapability,
+                    direct: {
+                      ...paymentCapability.direct,
+                      amount: Number(value) || null,
+                      currency: normalizedAccountCurrency
+                    },
+                    installments: { enabled: false, maxInstallments: 0 }
+                  })}
+                  onBlur={() => saveNativeCapability(paymentCapability)}
+                  disabled={agentConfigSaving}
+                />
+                <PhoneTextArea
+                  label="Descripción (opcional)"
+                  value={paymentCapability.direct.description}
+                  onChange={(description) => updateNativeCapabilityDraft({
+                    ...paymentCapability,
+                    direct: { ...paymentCapability.direct, description, currency: normalizedAccountCurrency }
+                  })}
+                  onBlur={() => saveNativeCapability(paymentCapability)}
+                  placeholder="Qué incluye o por qué se cobra"
+                  rows={3}
+                  disabled={agentConfigSaving}
+                />
               </>
             ) : (
               <>
@@ -20150,6 +20749,7 @@ export const PhoneChat: React.FC = () => {
                       label={`Mínimo (${normalizedAccountCurrency})`}
                       type="number"
                       inputMode="decimal"
+                      leading={<span aria-hidden="true">{getPhoneCurrencySymbol(normalizedAccountCurrency)}</span>}
                       value={String(paymentCapability.deposit.minAmount || '')}
                       onChange={(value) => updateNativeCapabilityDraft({
                         ...paymentCapability,
@@ -20162,6 +20762,7 @@ export const PhoneChat: React.FC = () => {
                       label={`Máximo (${normalizedAccountCurrency})`}
                       type="number"
                       inputMode="decimal"
+                      leading={<span aria-hidden="true">{getPhoneCurrencySymbol(normalizedAccountCurrency)}</span>}
                       value={String(paymentCapability.deposit.maxAmount || '')}
                       onChange={(value) => updateNativeCapabilityDraft({
                         ...paymentCapability,
@@ -20176,6 +20777,7 @@ export const PhoneChat: React.FC = () => {
                     label={`Monto (${normalizedAccountCurrency})`}
                     type="number"
                     inputMode="decimal"
+                    leading={<span aria-hidden="true">{getPhoneCurrencySymbol(normalizedAccountCurrency)}</span>}
                     value={String(paymentCapability.deposit.amount || '')}
                     onChange={(value) => updateNativeCapabilityDraft({
                       ...paymentCapability,
@@ -20230,6 +20832,141 @@ export const PhoneChat: React.FC = () => {
                 )}
               </>
             )}
+            <label className={styles.agentMenuField}>
+              <span>Pasarela para crear el enlace</span>
+              <PhoneSelect
+                value={paymentCapability.gateway}
+                onChange={(gatewayValue) => {
+                  const gateway = (['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'].includes(gatewayValue)
+                    ? gatewayValue
+                    : 'highlevel') as typeof paymentCapability.gateway
+                  saveNativeCapability({
+                    ...paymentCapability,
+                    gateway,
+                    installments: { enabled: false, maxInstallments: 0 },
+                    ...(gateway === 'highlevel'
+                      ? {
+                          expirationMinutes: Math.max(1440, Number(paymentCapability.expirationMinutes) || 1440)
+                        }
+                      : {})
+                  })
+                }}
+                options={[
+                  { value: 'stripe', label: 'Stripe' },
+                  { value: 'conekta', label: 'Conekta' },
+                  { value: 'mercadopago', label: 'Mercado Pago' },
+                  { value: 'clip', label: 'CLIP' },
+                  { value: 'rebill', label: 'Rebill' },
+                  { value: 'highlevel', label: 'HighLevel (compatibilidad)' }
+                ]}
+                title="Pasarela"
+                ariaLabel="Pasarela para crear el enlace de pago"
+                disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+              {paymentCapability.gateway === 'highlevel' && (
+                <small>HighLevel usa su modo global. Para probar un pago sandbox elige otra pasarela con credenciales de prueba.</small>
+              )}
+            </label>
+            {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && nativePaymentMsiMonths.length > 0 && (
+              <>
+                <label className={`${styles.agentCompactToggle} ${paymentCapability.installments.enabled ? styles.agentCompactToggleActive : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={paymentCapability.installments.enabled}
+                    disabled={agentConfigSaving}
+                    onChange={(event) => saveNativeCapability({
+                      ...paymentCapability,
+                      installments: {
+                        enabled: event.target.checked,
+                        maxInstallments: event.target.checked ? (paymentCapability.installments.maxInstallments || 3) : 0
+                      }
+                    })}
+                  />
+                  <span><strong>Meses sin intereses</strong><small>Define el máximo que puede ofrecer el enlace.</small></span>
+                </label>
+                {paymentCapability.installments.enabled && (
+                  <label className={styles.agentMenuField}>
+                    <span>Máximo de meses</span>
+                    <PhoneSelect
+                      value={String(paymentCapability.installments.maxInstallments || 3)}
+                      onChange={(maxInstallments) => saveNativeCapability({
+                        ...paymentCapability,
+                        installments: { enabled: true, maxInstallments: Number(maxInstallments) }
+                      })}
+                      options={nativePaymentMsiMonths.map((months) => ({
+                        value: String(months),
+                        label: `Hasta ${months} meses`
+                      }))}
+                      title="Meses sin intereses"
+                      ariaLabel="Máximo de meses sin intereses"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                )}
+              </>
+            )}
+            {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && nativePaymentMsiMonths.length === 0 && (
+              <p className={styles.agentMenuHint}>Esta combinación de pasarela, monto y moneda no permite meses sin intereses.</p>
+            )}
+            <label className={styles.agentMenuField}>
+              <span>{paymentCapability.gateway === 'highlevel' ? 'Fecha límite de la invoice' : 'El enlace vence en'}</span>
+              <PhoneSelect
+                value={String(paymentCapability.expirationMinutes)}
+                onChange={(expirationMinutes) => saveNativeCapability({
+                  ...paymentCapability,
+                  expirationMinutes: Number(expirationMinutes)
+                })}
+                options={paymentCapability.gateway === 'highlevel'
+                  ? [
+                      { value: '1440', label: '24 horas' },
+                      { value: '10080', label: '7 días' }
+                    ]
+                  : [
+                      { value: '30', label: '30 minutos' },
+                      { value: '60', label: '1 hora' },
+                      { value: '360', label: '6 horas' },
+                      { value: '1440', label: '24 horas' },
+                      { value: '10080', label: '7 días' }
+                    ]}
+                title="Vigencia del enlace"
+                ariaLabel="Vigencia del enlace de pago"
+                disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+              {paymentCapability.gateway === 'highlevel' && <small>HighLevel guarda una fecha límite, no una hora exacta.</small>}
+            </label>
+            <label className={styles.agentMenuField}>
+              <span>Después del pago confirmado</span>
+              <PhoneSelect
+                value={paymentCapability.afterPayment}
+                onChange={(afterPayment) => saveNativeCapability({
+                  ...paymentCapability,
+                  afterPayment: afterPayment === 'handoff' ? 'handoff' : 'continue'
+                })}
+                options={[
+                  { value: 'continue', label: 'Continuar con el objetivo' },
+                  { value: 'handoff', label: 'Pasar al equipo' }
+                ]}
+                title="Después del pago"
+                ariaLabel="Qué hacer después del pago confirmado"
+                disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+            </label>
+            <label className={`${styles.agentCompactToggle} ${paymentCapability.receiptProof.enabled ? styles.agentCompactToggleActive : ''}`}>
+              <input
+                type="checkbox"
+                checked={paymentCapability.receiptProof.enabled}
+                disabled={agentConfigSaving}
+                onChange={(event) => saveNativeCapability({
+                  ...paymentCapability,
+                  receiptProof: { enabled: event.target.checked, disposition: 'pending_review' }
+                })}
+              />
+              <span><strong>Aceptar foto de comprobante</strong><small>Siempre queda pendiente de revisión; la IA no lo marca como pagado por sí sola.</small></span>
+            </label>
           </>
         )
       }
@@ -20323,27 +21060,61 @@ export const PhoneChat: React.FC = () => {
       if (!selectedAgentDef) return null
       return (
         <>
-          <section className={styles.agentMenuSection} aria-label="Instrucciones editables">
+          <section className={styles.agentMenuSection} aria-label="Capacitación y personalidad">
             <div className={styles.agentMenuSectionHeader}>
-              <span>1. Instrucciones</span>
-              <small>Zona editable</small>
+              <span>1. Capacitación y personalidad</span>
+              <small>Editable</small>
             </div>
-            <p className={styles.agentMenuHint}>Aquí mandas tú: tono, guion y conocimiento del negocio. Puedes dejar la plantilla, editarla o borrarla completa.</p>
+            <p className={styles.agentMenuHint}>Separamos lo que debe saber y hacer de la forma en que debe hablar. Puedes dejar las plantillas, editarlas o borrarlas completas.</p>
             <PhoneTextArea
-              label="Prompt del negocio"
-              value={selectedAgentDef.promptConfig?.editableText ?? ''}
-              onChange={(editableText) => updateAgentDraft(selectedAgentDef.id, {
-                promptConfig: {
-                  ...(selectedAgentDef.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG),
-                  editableText
-                }
+              label="Estrategia y capacitación"
+              value={String(selectedAgentDef.promptConfig?.strategyText || '')}
+              onChange={(strategyText) => updateAgentDraft(selectedAgentDef.id, {
+                promptConfig: updatePhonePromptConfig(selectedAgentDef.promptConfig, 'strategyText', strategyText)
               })}
               onBlur={() => saveSelectedAgentPatch({ promptConfig: selectedAgentDef.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG })}
-              placeholder="Cómo debe atender, qué sabe del negocio y cómo quieres que hable."
+              placeholder="Qué debe saber del negocio, qué debe conseguir y qué proceso debe seguir."
               rows={12}
               disabled={agentConfigSaving}
+              hint="Conocimiento, objetivo, guion y proceso del negocio."
             />
-            <p className={styles.agentMenuHint}>Aunque borres el texto, las acciones y sus validaciones reales siguen protegidas por Ristak.</p>
+            <button
+              type="button"
+              className={styles.agentDetailResetButton}
+              disabled={agentConfigSaving}
+              onClick={() => {
+                setAgentPromptFocus({ source: 'agent', field: 'strategyText', agentId: selectedAgentDef.id, returnSection: 'agent_detail' })
+                setAgentMenuSection('prompt_focus')
+              }}
+            >
+              <Maximize2 size={16} />
+              Expandir estrategia
+            </button>
+            <PhoneTextArea
+              label="Personalidad del agente"
+              value={String(selectedAgentDef.promptConfig?.personalityText || '')}
+              onChange={(personalityText) => updateAgentDraft(selectedAgentDef.id, {
+                promptConfig: updatePhonePromptConfig(selectedAgentDef.promptConfig, 'personalityText', personalityText)
+              })}
+              onBlur={() => saveSelectedAgentPatch({ promptConfig: selectedAgentDef.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG })}
+              placeholder="Cómo debe hablar: tono, vocabulario, humor, formalidad y estilo."
+              rows={7}
+              disabled={agentConfigSaving}
+              hint="Si queda vacío, usa la voz general del negocio."
+            />
+            <button
+              type="button"
+              className={styles.agentDetailResetButton}
+              disabled={agentConfigSaving}
+              onClick={() => {
+                setAgentPromptFocus({ source: 'agent', field: 'personalityText', agentId: selectedAgentDef.id, returnSection: 'agent_detail' })
+                setAgentMenuSection('prompt_focus')
+              }}
+            >
+              <Maximize2 size={16} />
+              Expandir personalidad
+            </button>
+            <p className={styles.agentMenuHint}>Los dos textos se guardan completos. Aunque los borres, las capacidades activadas conservan sus validaciones internas.</p>
           </section>
 
           <section className={styles.agentMenuSection} aria-label="Capacidades nativas">
@@ -20371,25 +21142,401 @@ export const PhoneChat: React.FC = () => {
             })}
           </section>
 
-          <section className={styles.agentMenuSection} aria-label="Zona blindada de capacidades">
+          <section className={styles.agentMenuSection} aria-label="Control y datos">
             <div className={styles.agentMenuSectionHeader}>
-              <span><LockKeyhole size={16} /> Protección de Ristak</span>
-              <small>Zona blindada</small>
+              <span>3. Control y datos</span>
+              <small>Seguridad y pruebas</small>
             </div>
-            <p className={styles.agentMenuHint}>Visible para que sepas qué ejecuta, pero el prompt no puede editar ni borrar esta maquinaria.</p>
-            {enabledNativeCapabilities.length ? enabledNativeCapabilities.map((item) => {
-              const option = nativeCapabilityOptions.find((candidate) => candidate.id === item.id)
-              const manifest = selectedAgentDef.capabilityManifest?.find((candidate) => candidate.id === item.id)
-              const missing = manifest?.missingConfiguration || []
-              return (
-                <div key={`locked-${item.id}`} className={styles.agentGoalPanel}>
-                  <strong>{manifest?.label || option?.label || item.id}</strong>
-                  <p className={styles.agentMenuHint}>{manifest?.summary || option?.description}</p>
-                  <small>{missing.length ? missing.join(' · ') : 'Ristak valida los datos reales antes de ejecutar.'}</small>
-                </div>
-              )
-            }) : <p className={styles.agentMenuHint}>Activa una capacidad para ver aquí sus protecciones operativas.</p>}
+            <p className={styles.agentMenuHint}>Configura qué hacer ante riesgo, cómo probar acciones reales y qué datos sí puede pedir.</p>
+
+            <div className={styles.agentGoalPanel}>
+              <label className={`${styles.agentCompactToggle} ${safetyPolicy.enabled ? styles.agentCompactToggleActive : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={safetyPolicy.enabled}
+                  disabled={agentConfigSaving}
+                  onChange={(event) => saveNativeCapabilitiesPatch({
+                    safetyPolicy: { ...safetyPolicy, enabled: event.target.checked }
+                  })}
+                />
+                <span>
+                  <strong>Medidas preventivas</strong>
+                  <small>Detecta phishing, fraude, amenazas, acoso, interacción sexual inapropiada, insultos graves y spam.</small>
+                </span>
+              </label>
+              {safetyPolicy.enabled && (
+                <>
+                  <label className={styles.agentMenuField}>
+                    <span>Qué hacer cuando el riesgo sea claro</span>
+                    <PhoneSelect
+                      value={safetyPolicy.action}
+                      onChange={(action) => saveNativeCapabilitiesPatch({
+                        safetyPolicy: {
+                          ...safetyPolicy,
+                          action: action === 'handoff_and_review' ? 'handoff_and_review' : 'stop_and_review'
+                        }
+                      })}
+                      options={[
+                        { value: 'stop_and_review', label: 'Dejar de responder y marcar para revisión' },
+                        { value: 'handoff_and_review', label: 'Pasar al equipo y marcar para revisión' }
+                      ]}
+                      title="Medida preventiva"
+                      ariaLabel="Acción ante una conversación riesgosa"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                  <label className={styles.agentMenuField}>
+                    <span>Duración de la pausa</span>
+                    <PhoneSelect
+                      value={String(safetyPolicy.durationMinutes)}
+                      onChange={(durationMinutes) => saveNativeCapabilitiesPatch({
+                        safetyPolicy: { ...safetyPolicy, durationMinutes: Number(durationMinutes) }
+                      })}
+                      options={[
+                        { value: '60', label: '1 hora' },
+                        { value: '360', label: '6 horas' },
+                        { value: '1440', label: '24 horas' },
+                        { value: '10080', label: '7 días' },
+                        { value: '43200', label: '30 días' }
+                      ]}
+                      title="Duración"
+                      ariaLabel="Duración de la medida preventiva"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                  <label className={`${styles.agentCompactToggle} ${safetyPolicy.notify ? styles.agentCompactToggleActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={safetyPolicy.notify}
+                      disabled={agentConfigSaving}
+                      onChange={(event) => saveNativeCapabilitiesPatch({
+                        safetyPolicy: { ...safetyPolicy, notify: event.target.checked }
+                      })}
+                    />
+                    <span><strong>Avisar al equipo</strong><small>Envía la categoría, motivo, fecha y evidencia para revisión.</small></span>
+                  </label>
+                  {safetyPolicy.notify && (
+                    <label className={styles.agentMenuField}>
+                      <span>Quién recibe el aviso</span>
+                      <PhoneSelect
+                        value={safetyPolicy.notifyUserId}
+                        onChange={(notifyUserId) => {
+                          const teamUser = agentTeamUsers.find((item) => String(item.id) === notifyUserId) || null
+                          saveNativeCapabilitiesPatch({
+                            safetyPolicy: {
+                              ...safetyPolicy,
+                              notifyUserId: teamUser ? String(teamUser.id) : '',
+                              notifyUserName: getTeamUserDisplayName(teamUser)
+                            }
+                          })
+                        }}
+                        options={[
+                          { value: '', label: 'Administradores del negocio' },
+                          ...agentTeamUsers.map((teamUser) => ({
+                            value: String(teamUser.id),
+                            label: getTeamUserDisplayName(teamUser)
+                          }))
+                        ]}
+                        title="Quién recibe el aviso"
+                        ariaLabel="Usuario que recibe la medida preventiva"
+                        disabled={agentConfigSaving || agentTeamUsersLoading}
+                        buttonClassName={styles.agentMenuSelectButton}
+                      />
+                    </label>
+                  )}
+                  <p className={styles.agentMenuHint}>La medida usa una herramienta nativa, deja de ejecutar acciones y pone el contacto en cuarentena reversible. Nunca lo borra definitivamente por decisión de la IA.</p>
+                </>
+              )}
+            </div>
+
+            <div className={styles.agentGoalPanel}>
+              <label className={`${styles.agentCompactToggle} ${testMode.enabled ? styles.agentCompactToggleActive : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={testMode.enabled}
+                  disabled={agentConfigSaving}
+                  onChange={(event) => saveNativeCapabilitiesPatch({
+                    testMode: { ...testMode, enabled: event.target.checked, cleanupAfterMinutes: 5 }
+                  }, { pauseAgent: false })}
+                />
+                <span>
+                  <strong>Modo test</strong>
+                  <small>Hace pruebas reales aisladas desde el teléfono de prueba y limpia sus efectos después de 5 minutos.</small>
+                </span>
+              </label>
+              {testMode.enabled && (
+                <>
+                  <p className={styles.agentMenuHint}>Citas: crea y elimina la cita del calendario elegido. Pagos: fuerza sandbox aunque la pasarela esté en vivo. Asignaciones: notifica y luego restaura al responsable anterior.</p>
+                  <label className={`${styles.agentCompactToggle} ${testMode.notify ? styles.agentCompactToggleActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={testMode.notify}
+                      disabled={agentConfigSaving}
+                      onChange={(event) => saveNativeCapabilitiesPatch({
+                        testMode: { ...testMode, notify: event.target.checked, cleanupAfterMinutes: 5 }
+                      }, { pauseAgent: false })}
+                    />
+                    <span><strong>Enviar notificaciones de prueba</strong><small>Sirve para validar push, webhooks y asignaciones como ocurrirían en vivo.</small></span>
+                  </label>
+                  <p className={styles.agentMenuHint}>Si una pasarela no tiene credenciales sandbox, la prueba se detiene. Nunca usa dinero real como alternativa.</p>
+                </>
+              )}
+            </div>
+
+            <div className={styles.agentGoalPanel}>
+              <label className={`${styles.agentCompactToggle} ${dataRequirements.enabled ? styles.agentCompactToggleActive : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={dataRequirements.enabled}
+                  disabled={agentConfigSaving}
+                  onChange={(event) => saveNativeCapabilitiesPatch({
+                    dataRequirements: { ...dataRequirements, enabled: event.target.checked }
+                  })}
+                />
+                <span>
+                  <strong>Datos requeridos</strong>
+                  <small>Elige exactamente qué puede pedir antes de agendar o cobrar. Si no marcas nada, no insiste.</small>
+                </span>
+              </label>
+              {dataRequirements.enabled && (
+                <>
+                  {requiredDataOptions.map((option) => {
+                    const requirement = dataRequirements.fields.find((item) => item.field === option.field)
+                    return (
+                      <div key={option.field} className={styles.agentExtraRow}>
+                        <label className={`${styles.agentCompactToggle} ${requirement ? styles.agentCompactToggleActive : ''}`}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(requirement)}
+                            disabled={agentConfigSaving}
+                            onChange={(event) => updateRequiredDataItem(
+                              option.field,
+                              event.target.checked ? (option.field === 'custom' ? { label: 'Dato personalizado' } : {}) : null
+                            )}
+                          />
+                          <span><strong>{option.label}</strong><small>{requirement ? 'Configura cuándo y con qué nivel pedirlo.' : 'No se solicita.'}</small></span>
+                        </label>
+                        {requirement && (
+                          <>
+                            <label className={styles.agentMenuField}>
+                              <span>Nivel</span>
+                              <PhoneSelect
+                                value={requirement.level}
+                                onChange={(level) => {
+                                  if (level !== 'conditional') {
+                                    updateRequiredDataItem(option.field, {
+                                      level: level === 'optional' ? 'optional' : 'required',
+                                      condition: undefined
+                                    })
+                                    return
+                                  }
+                                  const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
+                                  updateRequiredDataItem(option.field, {
+                                    level: 'conditional',
+                                    scope: selected.scope,
+                                    condition: { fact: selected.fact, operator: 'is_true', value: true }
+                                  })
+                                }}
+                                options={[
+                                  { value: 'required', label: 'Obligatorio' },
+                                  { value: 'optional', label: 'Opcional' },
+                                  { value: 'conditional', label: 'Condicional' }
+                                ]}
+                                title="Nivel del dato"
+                                ariaLabel={`Nivel de ${option.label}`}
+                                disabled={agentConfigSaving}
+                                buttonClassName={styles.agentMenuSelectButton}
+                              />
+                            </label>
+                            {requirement.level !== 'conditional' ? (
+                              <label className={styles.agentMenuField}>
+                                <span>Cuándo pedirlo</span>
+                                <PhoneSelect
+                                  value={requirement.scope}
+                                  onChange={(scope) => updateRequiredDataItem(option.field, {
+                                    scope: scope === 'appointment' || scope === 'payment' ? scope : 'any_action'
+                                  })}
+                                  options={[
+                                    { value: 'any_action', label: 'Antes de cualquier acción' },
+                                    { value: 'appointment', label: 'Sólo para citas' },
+                                    { value: 'payment', label: 'Sólo para cobros' }
+                                  ]}
+                                  title="Momento"
+                                  ariaLabel={`Cuándo pedir ${option.label}`}
+                                  disabled={agentConfigSaving}
+                                  buttonClassName={styles.agentMenuSelectButton}
+                                />
+                              </label>
+                            ) : (
+                              <label className={styles.agentMenuField}>
+                                <span>Condición</span>
+                                <PhoneSelect
+                                  value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
+                                  onChange={(factValue) => {
+                                    const fact = factValue as ConversationalRequiredDataConditionFact
+                                    const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
+                                    updateRequiredDataItem(option.field, {
+                                      scope: selected.scope,
+                                      condition: { fact: selected.fact, operator: 'is_true', value: true }
+                                    })
+                                  }}
+                                  options={requiredDataConditionOptions.map((item) => ({ value: item.fact, label: item.label }))}
+                                  title="Condición"
+                                  ariaLabel={`Condición para ${option.label}`}
+                                  disabled={agentConfigSaving}
+                                  buttonClassName={styles.agentMenuSelectButton}
+                                />
+                              </label>
+                            )}
+                            {option.field === 'custom' && (
+                              <PhoneTextField
+                                label="Nombre del dato"
+                                value={requirement.label || ''}
+                                onChange={(label) => updateRequiredDataItemDraft('custom', { label })}
+                                onBlur={() => saveSelectedAgentPatch({
+                                  capabilitiesConfig: selectedAgentDef.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
+                                })}
+                                placeholder="Ejemplo: Número de expediente"
+                                disabled={agentConfigSaving}
+                              />
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )
+                  })}
+
+                  <label className={`${styles.agentCompactToggle} ${dataRequirements.updateContact.enabled ? styles.agentCompactToggleActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={dataRequirements.updateContact.enabled}
+                      disabled={agentConfigSaving}
+                      onChange={(event) => saveNativeCapabilitiesPatch({
+                        dataRequirements: {
+                          ...dataRequirements,
+                          updateContact: { ...dataRequirements.updateContact, enabled: event.target.checked }
+                        }
+                      })}
+                    />
+                    <span><strong>Actualizar la ficha del contacto</strong><small>Reutiliza lo que ya está confirmado y guarda los datos nuevos.</small></span>
+                  </label>
+                  {dataRequirements.updateContact.enabled && (
+                    <label className={styles.agentMenuField}>
+                      <span>Cómo actualizar</span>
+                      <PhoneSelect
+                        value={dataRequirements.updateContact.policy}
+                        onChange={(policy) => saveNativeCapabilitiesPatch({
+                          dataRequirements: {
+                            ...dataRequirements,
+                            updateContact: {
+                              ...dataRequirements.updateContact,
+                              policy: policy === 'fill_missing' || policy === 'confirm_changes' ? policy : 'replace_placeholders'
+                            }
+                          }
+                        })}
+                        options={[
+                          { value: 'replace_placeholders', label: 'Llenar vacíos y reemplazar nombres provisionales' },
+                          { value: 'fill_missing', label: 'Sólo llenar datos vacíos' },
+                          { value: 'confirm_changes', label: 'Conservar distintos como alternativos para revisión' }
+                        ]}
+                        title="Actualización del contacto"
+                        ariaLabel="Cómo actualizar la ficha del contacto"
+                        disabled={agentConfigSaving}
+                        buttonClassName={styles.agentMenuSelectButton}
+                      />
+                    </label>
+                  )}
+                  <p className={styles.agentMenuHint}>Si un nombre, teléfono o correo ya existe y está confirmado, la IA lo reutiliza y no vuelve a pedirlo.</p>
+
+                  <label className={`${styles.agentCompactToggle} ${dataRequirements.participants.enabled ? styles.agentCompactToggleActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={dataRequirements.participants.enabled}
+                      disabled={agentConfigSaving}
+                      onChange={(event) => saveNativeCapabilitiesPatch({
+                        dataRequirements: {
+                          ...dataRequirements,
+                          enabled: event.target.checked || dataRequirements.fields.length > 0,
+                          participants: { ...dataRequirements.participants, enabled: event.target.checked }
+                        }
+                      })}
+                    />
+                    <span><strong>Titular distinto e invitados</strong><small>Guarda por separado a quien escribe, a la persona de la cita y a sus invitados.</small></span>
+                  </label>
+                  {dataRequirements.participants.enabled && (
+                    <>
+                      <label className={`${styles.agentCompactToggle} ${dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester ? styles.agentCompactToggleActive : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester}
+                          disabled={agentConfigSaving}
+                          onChange={(event) => saveNativeCapabilitiesPatch({
+                            dataRequirements: {
+                              ...dataRequirements,
+                              participants: {
+                                ...dataRequirements.participants,
+                                allowPrimaryAttendeeDifferentFromRequester: event.target.checked
+                              }
+                            }
+                          })}
+                        />
+                        <span><strong>Permitir que la cita sea para otra persona</strong><small>Quien escribe sigue siendo el contacto principal; el titular se guarda como asistente.</small></span>
+                      </label>
+                      <div className={styles.agentExtraRow}>
+                        <strong>Datos del titular distinto y de cada invitado</strong>
+                        {(['name', 'phone', 'email', 'relation'] as const).map((field) => {
+                          const labels = { name: 'Nombre', phone: 'Teléfono', email: 'Correo', relation: 'Relación' }
+                          const enabled = dataRequirements.participants.guestFields.includes(field)
+                          return (
+                            <label key={field} className={`${styles.agentCompactToggle} ${enabled ? styles.agentCompactToggleActive : ''}`}>
+                              <input
+                                type="checkbox"
+                                checked={enabled}
+                                disabled={agentConfigSaving}
+                                onChange={(event) => saveNativeCapabilitiesPatch({
+                                  dataRequirements: {
+                                    ...dataRequirements,
+                                    participants: {
+                                      ...dataRequirements.participants,
+                                      guestFields: event.target.checked
+                                        ? [...new Set([...dataRequirements.participants.guestFields, field])]
+                                        : dataRequirements.participants.guestFields.filter((item) => item !== field)
+                                    }
+                                  }
+                                })}
+                              />
+                              <span><strong>{labels[field]}</strong><small>{enabled ? 'Se solicita cuando falte.' : 'No se exige.'}</small></span>
+                            </label>
+                          )
+                        })}
+                        <label className={styles.agentMenuField}>
+                          <span>Máximo de invitados</span>
+                          <PhoneSelect
+                            value={String(dataRequirements.participants.maxGuests)}
+                            onChange={(maxGuests) => saveNativeCapabilitiesPatch({
+                              dataRequirements: {
+                                ...dataRequirements,
+                                participants: { ...dataRequirements.participants, maxGuests: Number(maxGuests) }
+                              }
+                            })}
+                            options={[1, 2, 3, 5, 10, 20].map((value) => ({ value: String(value), label: String(value) }))}
+                            title="Máximo de invitados"
+                            ariaLabel="Máximo de invitados por cita"
+                            disabled={agentConfigSaving}
+                            buttonClassName={styles.agentMenuSelectButton}
+                          />
+                        </label>
+                      </div>
+                    </>
+                  )}
+                  <p className={styles.agentMenuHint}>Si no marcas datos de invitados, usa sólo lo que compartan y no insiste por teléfono, correo ni apellido.</p>
+                </>
+              )}
+            </div>
           </section>
+
         </>
       )
     }
@@ -21808,6 +22955,8 @@ export const PhoneChat: React.FC = () => {
                           ? 'Lista de agentes'
                           : agentMenuSection === 'agent_detail'
                             ? 'Configurar agente'
+                            : agentMenuSection === 'prompt_focus'
+                              ? 'Editar instrucciones'
                             : 'Agente conversacional'
                     )}
                     {sheet === 'schedule' && (

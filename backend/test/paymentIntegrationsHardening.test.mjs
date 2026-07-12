@@ -41,6 +41,14 @@ function idsFor(name) {
   }
 }
 
+function phoneFor(value) {
+  let hash = 0n
+  for (const character of String(value)) {
+    hash = ((hash * 131n) + BigInt(character.codePointAt(0) || 0)) % 10_000_000_000n
+  }
+  return `+52${hash.toString().padStart(10, '0')}`
+}
+
 test('registro manual de invoice HighLevel persiste paymentDate como fecha local del pago', () => {
   const source = readFileSync(new URL('../src/controllers/highlevelController.js', import.meta.url), 'utf8')
   const start = source.indexOf('export const recordPayment = async')
@@ -78,8 +86,8 @@ async function cleanup(ids) {
     ]
   ).catch(() => undefined)
   await db.run(
-    'DELETE FROM contacts WHERE id = ? OR ghl_contact_id = ?',
-    [ids.contactId, ids.ghlContactId]
+    'DELETE FROM contacts WHERE id IN (?, ?) OR ghl_contact_id = ?',
+    [ids.contactId, ids.ghlContactId, ids.ghlContactId]
   ).catch(() => undefined)
 }
 
@@ -141,8 +149,17 @@ async function seedContact(ids) {
       ids.ghlContactId,
       'Cliente Payment Hardening',
       `${ids.contactId}@example.test`,
-      '+5215550001111'
+      phoneFor(ids.contactId)
     ]
+  )
+}
+
+async function seedLegacyHighLevelContactAlias(ids) {
+  await db.run(
+    `INSERT INTO contacts (id, full_name, source, created_at, updated_at)
+     VALUES (?, 'Alias legacy HighLevel', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     ON CONFLICT(id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
+    [ids.ghlContactId]
   )
 }
 
@@ -420,6 +437,7 @@ test('exportar manual a HighLevel liga espejo con contact_id legacy de GHL sin c
   await cleanup(ids)
   await seedContact(ids)
   await seedManualPayment(ids)
+  await seedLegacyHighLevelContactAlias(ids)
   await seedHighLevelMirror(ids, { contactId: ids.ghlContactId })
 
   let createInvoiceCalls = 0

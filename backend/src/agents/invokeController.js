@@ -7,7 +7,15 @@
  * notificaciones que la UI.
  */
 
-export async function invokeController(handler, { body = {}, params = {}, query = {}, user = null } = {}) {
+export const INTERNAL_CONTROLLER_CONTEXT = Symbol('ristak.internal.controller.context')
+
+export async function invokeController(handler, {
+  body = {},
+  params = {},
+  query = {},
+  user = null,
+  internalContext = null
+} = {}) {
   return new Promise((resolve, reject) => {
     const req = {
       body,
@@ -16,6 +24,9 @@ export async function invokeController(handler, { body = {}, params = {}, query 
       user,
       headers: {},
       is: () => false
+    }
+    if (internalContext && typeof internalContext === 'object') {
+      req[INTERNAL_CONTROLLER_CONTEXT] = Object.freeze({ ...internalContext })
     }
 
     let statusCode = 200

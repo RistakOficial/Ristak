@@ -4,7 +4,7 @@ import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
-import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
@@ -1506,13 +1506,17 @@ export async function createStripePaymentLink(input = {}, { baseUrl, mode = '' }
     ...(stripeInstallments ? { stripeInstallments } : {}),
     ...(tax ? { tax } : {})
   }
+  const conversationalTestEffectId = cleanString(input.source) === 'conversational_agent_test'
+    ? cleanString(metadata?.conversationalAgentTest?.testEffectId) || null
+    : null
 
   await db.run(
     `INSERT INTO payments (
       id, contact_id, amount, currency, status, payment_method, payment_mode,
       payment_provider, reference, title, description, date, due_date, sent_at,
-      public_payment_id, payment_url, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      public_payment_id, payment_url, payment_link_request_key, conversational_test_effect_id,
+      metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       id,
       contactId,
@@ -1530,6 +1534,8 @@ export async function createStripePaymentLink(input = {}, { baseUrl, mode = '' }
       now,
       publicPaymentId,
       paymentUrl,
+      cleanString(input.paymentLinkRequestKey, 180) || null,
+      conversationalTestEffectId,
       JSON.stringify(metadata)
     ]
   )
@@ -2050,7 +2056,8 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
       [whereValue]
     )
   }
-  if (row?.id && !ignorePendingRegression && statusChanged) {
+  const suppressProductionEffects = shouldSuppressProductionPaymentEffects(row)
+  if (row?.id && !ignorePendingRegression && statusChanged && !suppressProductionEffects) {
     dispatchProductPostWebhooksForPaymentInBackground(row.id, {
       status: persistedStatus,
       previousStatus: existingRow?.status || ''
@@ -2059,7 +2066,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
       logger.warn(`No se pudo enviar push de pago Stripe ${row.id}: ${error.message}`)
     })
   }
-  if (row?.contact_id && nextStatus === 'paid') {
+  if (row?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
     updateSingleContactStats(row.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Stripe ${whereValue}: ${error.message}`)
     })
@@ -2099,7 +2106,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     } catch (error) {
       logger.warn(`No se pudo guardar la tarjeta Stripe del pago ${whereValue}: ${error.message}`)
     }
-  } else if (row?.contact_id) {
+  } else if (row?.contact_id && !suppressProductionEffects) {
     try {
       const context = stripeContext || await getStripeClient()
       await syncStripePlanFromPayment(
@@ -2112,7 +2119,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     }
   }
 
-  if (row?.contact_id && nextStatus === 'paid') {
+  if (row?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
     registerGigstackPaymentForTransactionInBackground(row.id)
     queuePaymentAutomationMessage('receipt', { ...row, status: nextStatus, stripe_payment_intent_id: intent.id })
     triggerMetaPaymentPurchaseEvent(row.contact_id, {
@@ -2190,7 +2197,8 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
      WHERE p.${whereColumn} = ?`,
     [whereValue]
   )
-  if (row?.id) {
+  const suppressProductionEffects = shouldSuppressProductionPaymentEffects(row)
+  if (row?.id && !suppressProductionEffects) {
     dispatchProductPostWebhooksForPaymentInBackground(row.id, {
       status: nextStatus,
       previousStatus: existingRow?.status || ''
@@ -2201,13 +2209,13 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
       })
     }
   }
-  if (row?.contact_id && nextStatus === 'paid') {
+  if (row?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
     updateSingleContactStats(row.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por invoice Stripe ${whereValue}: ${error.message}`)
     })
   }
 
-  if (row?.contact_id && nextStatus === 'paid') {
+  if (row?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
     queuePaymentAutomationMessage('receipt', { ...row, status: nextStatus, stripe_payment_intent_id: paymentIntentId || row.stripe_payment_intent_id })
     triggerMetaPaymentPurchaseEvent(row.contact_id, {
       ...row,

@@ -9,6 +9,11 @@ test('session metrics deduplicate unique and returning visitors by contact ident
   const inRange = '2026-03-08T18:00:00.000Z'
 
   try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, source, created_at, updated_at)
+       VALUES (?, 'Contacto metricas', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
     await db.run(`
       INSERT INTO sessions (
         session_id,
@@ -49,5 +54,6 @@ test('session metrics deduplicate unique and returning visitors by contact ident
     assert.equal(metrics.returningUsers, 1)
   } finally {
     await db.run('DELETE FROM sessions WHERE session_id LIKE ?', [`session_${suffix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })

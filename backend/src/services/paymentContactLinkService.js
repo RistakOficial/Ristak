@@ -344,6 +344,24 @@ export async function resolvePaymentContactForGatewayPayment(row = {}, options =
   if (!row?.id) return ''
 
   try {
+    const storedMetadata = parseJson(row.metadata_json, {})
+    const conversationalTestMarker = storedMetadata?.conversationalAgentTest &&
+      typeof storedMetadata.conversationalAgentTest === 'object'
+      ? storedMetadata.conversationalAgentTest
+      : {}
+    const isConversationalAgentTestPayment = Boolean(
+      cleanString(row.conversational_test_effect_id, 180) ||
+      cleanString(conversationalTestMarker.testEffectId, 180)
+    )
+
+    // El webhook sandbox confirma el efecto del tester, pero nunca puede usar
+    // datos del checkout para enriquecer, crear o fusionar contactos reales.
+    // La identidad autorizada es exclusivamente el contacto que ya quedó
+    // sellado al crear el efecto de prueba.
+    if (isConversationalAgentTestPayment) {
+      return cleanString(row.contact_id, 180)
+    }
+
     const identity = extractPaymentContactIdentity({
       row,
       providerPayload: options.providerPayload || options.payload || {},
@@ -358,7 +376,7 @@ export async function resolvePaymentContactForGatewayPayment(row = {}, options =
     const contactId = cleanString(result.contactId, 180)
     if (!contactId) return cleanString(row.contact_id, 180)
 
-    const metadata = parseJson(row.metadata_json, {})
+    const metadata = storedMetadata
     const nextMetadata = {
       ...metadata,
       contactId: metadata.contactId || contactId,

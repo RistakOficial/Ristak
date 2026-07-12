@@ -569,6 +569,11 @@ async function getPaymentFlowConfig() {
   }
 }
 
+export async function getHighLevelPaymentLinkMode() {
+  const { liveMode } = await getPaymentFlowConfig()
+  return liveMode ? 'live' : 'test'
+}
+
 function getStoredGhlPaymentMethod(flow) {
   if (!flow?.ghl_customer_id || !flow?.ghl_payment_method_id) return null
 
@@ -1157,9 +1162,11 @@ export async function recoverProcessingConversationalPaymentRequest(database, ro
     )
   }
 
+  const requestedProvider = normalizeText(request.gateway || request.provider || 'highlevel')
   const ledger = await database.get(
     `SELECT id, contact_id, amount, currency, status, payment_mode, payment_provider,
-            ghl_invoice_id, invoice_number, payment_url, payment_link_request_key, sent_at
+            ghl_invoice_id, invoice_number, public_payment_id, payment_url,
+            payment_link_request_key, due_date, sent_at
      FROM payments
      WHERE payment_link_request_key = ?`,
     [row.idempotency_key]
@@ -1171,7 +1178,8 @@ export async function recoverProcessingConversationalPaymentRequest(database, ro
   const expectedCurrency = String(request.currency || '').trim().toUpperCase()
   const ledgerAmount = normalizeAmount(ledger.amount)
   const ledgerCurrency = String(ledger.currency || '').trim().toUpperCase()
-  const invoiceId = String(ledger.ghl_invoice_id || '').trim()
+  const isHighLevel = requestedProvider === 'highlevel'
+  const invoiceId = String(isHighLevel ? ledger.ghl_invoice_id : ledger.public_payment_id || '').trim()
   const paymentLink = String(ledger.payment_url || '').trim()
   const exactLedger = Boolean(
     expectedContactId &&
@@ -1181,28 +1189,37 @@ export async function recoverProcessingConversationalPaymentRequest(database, ro
     String(ledger.contact_id || '') === expectedContactId &&
     ledgerAmount === expectedAmount &&
     ledgerCurrency === expectedCurrency &&
-    String(ledger.payment_provider || '').trim().toLowerCase() === 'highlevel' &&
+    requestedProvider &&
+    String(ledger.payment_provider || '').trim().toLowerCase() === requestedProvider &&
+    String(ledger.payment_mode || '').trim().toLowerCase() === 'live' &&
     invoiceId &&
     paymentLink
   )
   if (!exactLedger) {
     throw paymentSafetyError(
-      'El invoice encontrado no coincide exactamente con la solicitud en proceso. No se llamará otra vez al proveedor.',
+      'El cobro encontrado no coincide exactamente con la solicitud en proceso. No se llamará otra vez al proveedor.',
       503,
       'payment_link_recovery_ledger_mismatch'
     )
   }
 
   const storedStatus = String(ledger.status || '').trim().toLowerCase()
-  const deliveryCommitted = Boolean(ledger.sent_at) && storedStatus !== 'draft'
+  const deliveryCommitted = isHighLevel
+    ? Boolean(ledger.sent_at) && storedStatus !== 'draft'
+    : storedStatus !== 'draft'
   const recoveredResponse = {
     invoiceId,
+    ledgerPaymentId: ledger.id,
+    publicPaymentId: ledger.public_payment_id || null,
     invoiceNumber: ledger.invoice_number || null,
     paymentLink,
-    sendMethod: deliveryCommitted ? 'recovered' : 'none',
+    sendMethod: deliveryCommitted ? (isHighLevel ? 'recovered' : 'chat_reply') : 'none',
     amount: ledgerAmount,
     currency: ledgerCurrency,
     status: deliveryCommitted ? (storedStatus || 'sent') : 'draft',
+    provider: requestedProvider,
+    paymentMode: 'live',
+    expiresAt: ledger.due_date || request.expiresAt || null,
     recovered: true
   }
   const completedAt = new Date().toISOString()

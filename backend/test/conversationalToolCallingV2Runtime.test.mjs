@@ -36,6 +36,36 @@ test('Agent v2 desactiva tool calls paralelas para serializar mutaciones', () =>
 
   assert.equal(TOOL_CALLING_V2_MODEL_SETTINGS.parallelToolCalls, false)
   assert.equal(agent.modelSettings.parallelToolCalls, false)
+  assert.equal(typeof agent.toolUseBehavior, 'function')
+})
+
+test('una mutación live confirmada cierra la vuelta y evita ejecutar otra tool después', async () => {
+  const liveAgent = createToolCallingV2Agent({
+    model: 'gpt-4.1-mini',
+    instructions: 'Prueba',
+    tools: [],
+    dryRun: false
+  })
+  const committed = await liveAgent.toolUseBehavior(null, [{
+    tool: { name: 'book_appointment' },
+    output: { ok: true, actionCompleted: true }
+  }])
+  assert.equal(committed.isFinalOutput, true)
+  assert.equal(committed.finalOutput, '')
+
+  const rejected = await liveAgent.toolUseBehavior(null, [{
+    tool: { name: 'book_appointment' },
+    output: { ok: false, actionCompleted: false }
+  }])
+  assert.equal(rejected.isFinalOutput, false)
+
+  const previewAgent = createToolCallingV2Agent({
+    model: 'gpt-4.1-mini',
+    instructions: 'Prueba',
+    tools: [],
+    dryRun: true
+  })
+  assert.equal(previewAgent.toolUseBehavior, 'run_llm_again')
 })
 
 test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silencio o descarte', () => {
@@ -98,7 +128,7 @@ test('bookingOwner human reemplaza agendar por la solicitud humana estructurada'
   const request = tools.find((candidate) => candidate.name === 'request_human_booking')
   assert.deepEqual(
     Object.keys(request.parameters.properties).sort(),
-    ['attendeeContext', 'attendeeName', 'notes', 'startTime', 'title']
+    ['attendeeContext', 'attendeeName', 'guests', 'notes', 'primaryAttendee', 'startTime', 'title']
   )
 })
 
@@ -356,6 +386,13 @@ test('búsqueda SQL real sólo consulta el tramo omitido del contacto y canal li
   const otherContactId = `history_search_other_${randomUUID()}`
   const insertedContacts = [contactId, otherContactId]
   try {
+    for (const id of insertedContacts) {
+      await db.run(
+        `INSERT INTO contacts (id, full_name, created_at, updated_at)
+         VALUES (?, 'Contacto historial', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [id]
+      )
+    }
     for (let index = 0; index < 40; index += 1) {
       const timestamp = new Date(Date.UTC(2026, 6, 10, 12, 0, index)).toISOString()
       const marker = index === 5 || index === 39 ? ' clave%_literal' : ''
@@ -402,6 +439,7 @@ test('búsqueda SQL real sólo consulta el tramo omitido del contacto y canal li
   } finally {
     for (const id of insertedContacts) {
       await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [id])
+      await db.run('DELETE FROM contacts WHERE id = ?', [id])
     }
   }
 })
@@ -474,7 +512,7 @@ test('prompt de agenda humana ofrece espacios pero prohíbe crear o confirmar la
   assert.match(instructions, /pausa cualquier guion, interrogatorio o pregunta de calificación/i)
   assert.match(instructions, /no la uses para sustituir ni adelantar este flujo de agenda/i)
   assert.match(instructions, /sus reglas tienen precedencia sobre el guion editable/i)
-  assert.match(instructions, /siempre el contacto de este hilo/i)
+  assert.match(instructions, /contacto solicitante siempre es el contacto de este hilo/i)
   assert.match(instructions, /no busques otra ficha ni pidas otro teléfono/i)
 })
 

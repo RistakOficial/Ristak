@@ -24,7 +24,7 @@ import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
-import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import {
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
@@ -904,6 +904,20 @@ function buildPreferencePayload(row, { baseUrl = '' } = {}) {
   const paymentPageUrl = buildPaymentUrl(baseUrl, publicPaymentId)
   const returnUrl = paymentPageUrl ? `${paymentPageUrl}?mercadopago=return` : ''
   const notificationUrl = cleanString(baseUrl) ? `${cleanString(baseUrl).replace(/\/+$/, '')}${MERCADOPAGO_WEBHOOK_PATH}` : ''
+  const testMarker = metadata.conversationalAgentTest && typeof metadata.conversationalAgentTest === 'object'
+    ? metadata.conversationalAgentTest
+    : {}
+  const cleanupDueAt = cleanString(testMarker.cleanupDueAt || metadata.cleanupDueAt)
+  const cleanupDueAtMs = Date.parse(cleanupDueAt)
+  const isExpiringTestPreference = normalizeMode(row.payment_mode) === 'test' && Number.isFinite(cleanupDueAtMs)
+  if (isExpiringTestPreference && cleanupDueAtMs <= Date.now()) {
+    const error = new Error('Este enlace sandbox ya venció. Inicia una nueva prueba.')
+    error.status = 410
+    throw error
+  }
+  const expirationFrom = isExpiringTestPreference
+    ? new Date().toISOString()
+    : ''
 
   return {
     items: [
@@ -932,6 +946,13 @@ function buildPreferencePayload(row, { baseUrl = '' } = {}) {
     } : undefined,
     auto_return: 'approved',
     binary_mode: false,
+    ...(isExpiringTestPreference
+      ? {
+          expires: true,
+          expiration_date_from: expirationFrom,
+          expiration_date_to: new Date(cleanupDueAtMs).toISOString()
+        }
+      : {}),
     ...(mercadoPagoInstallments
       ? {
           payment_methods: {
@@ -1108,10 +1129,12 @@ function buildCardPaymentPayload(row, input = {}, { baseUrl = '' } = {}) {
 }
 
 async function createPreferenceForPayment(row, { baseUrl = '' } = {}) {
+  const rowConfig = await getMercadoPagoClientConfig(row.payment_mode || '')
   const { payload, config } = await mercadoPagoApiRequest('/checkout/preferences', {
     method: 'POST',
     idempotencyKey: `ristak-mp-pref-${row.id}`,
-    body: buildPreferencePayload(row, { baseUrl })
+    body: buildPreferencePayload(row, { baseUrl }),
+    config: rowConfig
   })
 
   const checkoutUrl = config.mode === 'test'
@@ -1148,6 +1171,41 @@ async function createPreferenceForPayment(row, { baseUrl = '' } = {}) {
     checkoutUrl,
     raw: payload
   }
+}
+
+/**
+ * Expira una preferencia creada en sandbox. El payment_mode de la fila es la
+ * autoridad: jamás usa la conexión activa ni acepta una fila live.
+ */
+export async function expireMercadoPagoTestPreference(payment, { now = new Date().toISOString() } = {}) {
+  const row = typeof payment === 'string'
+    ? await findPaymentById(cleanString(payment))
+    : payment
+  if (!row?.id || cleanString(row.payment_provider).toLowerCase() !== 'mercadopago') {
+    return { expired: false, reason: 'payment_not_found' }
+  }
+  if (normalizeMode(row.payment_mode) !== 'test') {
+    const error = new Error('Se bloqueó la expiración porque el pago no está en modo test.')
+    error.status = 409
+    throw error
+  }
+  const preferenceId = cleanString(row.mercadopago_preference_id)
+  if (!preferenceId) return { expired: false, reason: 'preference_missing' }
+
+  const expirationDate = timestampToIso(now) || new Date().toISOString()
+  const expirationDateMs = Date.parse(expirationDate)
+  const expirationFrom = new Date(Math.min(Date.now(), expirationDateMs - 1000)).toISOString()
+  const config = await getMercadoPagoClientConfig('test')
+  await mercadoPagoApiRequest(`/checkout/preferences/${encodeURIComponent(preferenceId)}`, {
+    method: 'PUT',
+    config,
+    body: {
+      expires: true,
+      expiration_date_from: expirationFrom,
+      expiration_date_to: expirationDate
+    }
+  })
+  return { expired: true, preferenceId, paymentId: row.id, paymentMode: 'test' }
 }
 
 async function syncMercadoPagoInstallmentPreference({ paymentId, preferenceId = '', notes = '' } = {}) {
@@ -1191,20 +1249,25 @@ async function insertPaymentRow({
   metadata = {},
   createPreference = true,
   baseUrl = '',
-  mode = ''
+  mode = '',
+  paymentLinkRequestKey = ''
 } = {}) {
   const config = await getMercadoPagoClientConfig(mode)
   const publicPaymentId = createPublicId()
   const id = createId('mp_payment')
   const now = new Date().toISOString()
   const paymentUrl = buildPaymentUrl(baseUrl, publicPaymentId)
+  const conversationalTestEffectId = cleanString(metadata?.source) === 'conversational_agent_test'
+    ? cleanString(metadata?.conversationalAgentTest?.testEffectId) || null
+    : null
 
   await db.run(
     `INSERT INTO payments (
       id, contact_id, amount, currency, status, payment_method, payment_mode,
       payment_provider, reference, title, description, date, due_date, sent_at,
-      public_payment_id, payment_url, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      public_payment_id, payment_url, payment_link_request_key, conversational_test_effect_id,
+      metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       id,
       cleanString(contact.id) || null,
@@ -1222,6 +1285,8 @@ async function insertPaymentRow({
       status === 'scheduled' ? null : now,
       publicPaymentId,
       createPreference ? paymentUrl : '',
+      cleanString(paymentLinkRequestKey, 180) || null,
+      conversationalTestEffectId,
       JSON.stringify(metadata)
     ]
   )
@@ -1290,7 +1355,8 @@ export async function createMercadoPagoPaymentLink(input = {}, { baseUrl, mode =
     metadata,
     createPreference: true,
     baseUrl,
-    mode
+    mode,
+    paymentLinkRequestKey: input.paymentLinkRequestKey
   })
 
   const config = await getMercadoPagoPaymentConfig({ mode })
@@ -1303,9 +1369,9 @@ export async function createMercadoPagoPaymentLink(input = {}, { baseUrl, mode =
 }
 
 export async function getPublicMercadoPagoPayment(publicPaymentId, { baseUrl } = {}) {
-  const config = await getMercadoPagoPaymentConfig()
   const row = await findPaymentByPublicId(publicPaymentId)
   if (!row || row.payment_provider !== 'mercadopago') return null
+  const config = await getMercadoPagoPaymentConfig({ mode: row.payment_mode || '' })
 
   const paymentSettings = await getPublicPaymentSettings()
   const timezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
@@ -1376,10 +1442,12 @@ export async function createPublicMercadoPagoCardPayment(publicPaymentId, input 
 
   const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey || input.idempotency_key, row.id)
   const paymentPayload = buildCardPaymentPayload(row, input, { baseUrl })
+  const rowConfig = await getMercadoPagoClientConfig(row.payment_mode || '')
   const { payload, config } = await mercadoPagoApiRequest('/v1/payments', {
     method: 'POST',
     idempotencyKey,
-    body: paymentPayload
+    body: paymentPayload,
+    config: rowConfig
   })
 
   const referencedPayload = {
@@ -1391,7 +1459,7 @@ export async function createPublicMercadoPagoCardPayment(publicPaymentId, input 
       public_payment_id: row.public_payment_id
     }
   }
-  const updated = await updatePaymentFromMercadoPagoPayment(referencedPayload)
+  const updated = await updatePaymentFromMercadoPagoPayment(referencedPayload, { mode: config.mode })
   const refreshed = updated || await findPaymentById(row.id)
   const paymentSettings = await getPublicPaymentSettings()
 
@@ -3002,7 +3070,7 @@ async function syncMercadoPagoPaymentPlanFromLocalPayment(payment) {
   }
 }
 
-async function updatePaymentFromMercadoPagoPayment(mpPayment) {
+async function updatePaymentFromMercadoPagoPayment(mpPayment, { mode = '' } = {}) {
   const paymentId = cleanString(mpPayment?.external_reference)
     || cleanString(mpPayment?.metadata?.ristak_payment_id)
   const mercadoPagoPaymentId = cleanString(mpPayment?.id)
@@ -3012,6 +3080,19 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
     ? await findPaymentById(paymentId)
     : await db.get('SELECT * FROM payments WHERE mercadopago_payment_id = ?', [mercadoPagoPaymentId])
   if (!row) return null
+
+  const rowMode = normalizeMode(row.payment_mode)
+  const requestedMode = cleanString(mode) ? normalizeMode(mode) : ''
+  const payloadMode = mpPayment?.live_mode === false
+    ? 'test'
+    : mpPayment?.live_mode === true
+      ? 'live'
+      : ''
+  if ((requestedMode && rowMode !== requestedMode) || (payloadMode && rowMode !== payloadMode)) {
+    const error = new Error('El webhook de Mercado Pago no coincide con el modo del pago local.')
+    error.status = 409
+    throw error
+  }
 
   const amount = Number(mpPayment.transaction_amount || mpPayment.transaction_details?.total_paid_amount || row.amount)
   const currency = normalizeCurrency(mpPayment.currency_id || row.currency)
@@ -3066,6 +3147,7 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
   )
 
   let updated = await findPaymentById(row.id)
+  const suppressProductionEffects = shouldSuppressProductionPaymentEffects(updated || row)
   const linkedContactId = await resolvePaymentContactForGatewayPayment(updated, {
     provider: 'mercadopago',
     providerPayload: mpPayment
@@ -3073,7 +3155,7 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
   if (linkedContactId && !updated?.contact_id) {
     updated = await findPaymentById(row.id)
   }
-  if (updated?.id && !ignorePendingRegression) {
+  if (updated?.id && !ignorePendingRegression && !suppressProductionEffects) {
     dispatchProductPostWebhooksForPaymentInBackground(updated.id, {
       status: persistedStatus,
       previousStatus: row.status || ''
@@ -3084,7 +3166,7 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
       })
     }
   }
-  if (updated?.contact_id && nextStatus === 'paid') {
+  if (updated?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
     registerGigstackPaymentForTransactionInBackground(updated.id)
     updateSingleContactStats(updated.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Mercado Pago ${row.id}: ${error.message}`)
@@ -3637,16 +3719,25 @@ export async function refreshMercadoPagoAuthorizedPayment(authorizedPaymentId) {
   }
 }
 
-export async function refreshMercadoPagoPayment(mercadoPagoPaymentId, { useSubscriptionClient = false } = {}) {
+export async function refreshMercadoPagoPayment(mercadoPagoPaymentId, { useSubscriptionClient = false, mode = '' } = {}) {
   const paymentId = cleanString(mercadoPagoPaymentId)
   if (!paymentId) return null
-  const apiRequest = useSubscriptionClient ? mercadoPagoSubscriptionApiRequest : mercadoPagoApiRequest
-  const { payload } = await apiRequest(`/v1/payments/${encodeURIComponent(paymentId)}`)
-  return updatePaymentFromMercadoPagoPayment(payload)
+  if (useSubscriptionClient) {
+    const { payload, config } = await mercadoPagoSubscriptionApiRequest(`/v1/payments/${encodeURIComponent(paymentId)}`)
+    return updatePaymentFromMercadoPagoPayment(payload, { mode: mode || config.mode })
+  }
+
+  const localPayment = await db.get(
+    'SELECT payment_mode FROM payments WHERE mercadopago_payment_id = ? LIMIT 1',
+    [paymentId]
+  )
+  const resolvedMode = cleanString(mode) || cleanString(localPayment?.payment_mode)
+  const config = await getMercadoPagoClientConfig(resolvedMode)
+  const { payload } = await mercadoPagoApiRequest(`/v1/payments/${encodeURIComponent(paymentId)}`, { config })
+  return updatePaymentFromMercadoPagoPayment(payload, { mode: config.mode })
 }
 
 export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, query = {}) {
-  const config = await getMercadoPagoPaymentConfig({ includeSecrets: true })
   const dataId = getWebhookDataId(body, query)
   const requestId = cleanString(headers['x-request-id'])
   const signatureHeader = cleanString(headers['x-signature'])
@@ -3654,23 +3745,39 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
   const action = cleanString(body.action)
   const isSubscriptionWebhook = type.includes('subscription') || action.includes('preapproval') || action.includes('authorized_payment')
   const isTestWebhook = body.live_mode === false || cleanString(body.live_mode || query.live_mode).toLowerCase() === 'false'
+  const webhookModeHint = isTestWebhook
+    ? 'test'
+    : body.live_mode === true || cleanString(body.live_mode || query.live_mode).toLowerCase() === 'true'
+      ? 'live'
+      : ''
+  const [testConfig, liveConfig] = await Promise.all([
+    getMercadoPagoPaymentConfig({ includeSecrets: true, mode: 'test' }),
+    getMercadoPagoPaymentConfig({ includeSecrets: true, mode: 'live' })
+  ])
   const acceptedSecrets = [
-    { secret: cleanString(config.webhookSecret), useSubscriptionClient: false },
+    { secret: cleanString(testConfig.webhookSecret), useSubscriptionClient: false, mode: 'test' },
+    { secret: cleanString(liveConfig.webhookSecret), useSubscriptionClient: false, mode: 'live' },
     ...((isSubscriptionWebhook || isTestWebhook)
-      ? [{ secret: cleanString(config.subscriptionTestWebhookSecret), useSubscriptionClient: true }]
+      ? [{ secret: cleanString(testConfig.subscriptionTestWebhookSecret), useSubscriptionClient: true, mode: 'test' }]
       : [])
-  ].filter((item) => item.secret)
+  ].filter((item, index, values) => item.secret && values.findIndex((candidate) => (
+    candidate.secret === item.secret &&
+    candidate.useSubscriptionClient === item.useSubscriptionClient &&
+    candidate.mode === item.mode
+  )) === index)
   let useSubscriptionClientForPaymentWebhook = false
+  let webhookMode = webhookModeHint
 
   // (PAY2-005) Rollout seguro: si YA hay secret configurado, exigir firma válida (401 si falla);
   // si todavía no hay secret provisionado, aceptar pero dejar constancia para no romper la integración viva.
   if (acceptedSecrets.length) {
-    const matchedSecret = acceptedSecrets.find((item) => validateWebhookSignature({
+    const matchingSecrets = acceptedSecrets.filter((item) => validateWebhookSignature({
       signatureHeader,
       requestId,
       dataId,
       secret: item.secret
     }))
+    const matchedSecret = matchingSecrets.find((item) => item.mode === webhookModeHint) || matchingSecrets[0]
 
     if (!matchedSecret) {
       const error = new Error('No se pudo verificar la firma del webhook de Mercado Pago.')
@@ -3679,6 +3786,7 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
     }
 
     useSubscriptionClientForPaymentWebhook = matchedSecret.useSubscriptionClient
+    webhookMode = matchedSecret.mode || webhookMode
   } else {
     logger.warn('Webhook de Mercado Pago aceptado sin verificar firma porque no hay secret configurado. Configura el secret para exigir firma.')
   }
@@ -3721,7 +3829,8 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
   }
 
   const updated = await refreshMercadoPagoPayment(dataId, {
-    useSubscriptionClient: useSubscriptionClientForPaymentWebhook
+    useSubscriptionClient: useSubscriptionClientForPaymentWebhook,
+    mode: webhookMode
   })
   return {
     received: true,
