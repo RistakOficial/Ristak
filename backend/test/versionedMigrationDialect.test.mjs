@@ -93,3 +93,79 @@ test('SQLite omite y registra la migracion PostgreSQL sin ejecutar su DDL', asyn
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('la identidad de protocolo migra instalaciones viejas antes de crear su indice', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-whatsapp-identity-migrations-'))
+  const database = openMemoryDatabase()
+  const columnMigration = new URL(
+    '../migrations/versioned/044_whatsapp_protocol_message_identity.sql',
+    import.meta.url
+  )
+  const indexMigration = new URL(
+    '../migrations/versioned/044a_whatsapp_protocol_message_identity_index.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      CREATE TABLE whatsapp_api_messages (
+        id TEXT PRIMARY KEY,
+        direction TEXT
+      );
+    `)
+    await copyFile(columnMigration, join(directory, '044_whatsapp_protocol_message_identity.sql'))
+    await copyFile(indexMigration, join(directory, '044a_whatsapp_protocol_message_identity_index.sql'))
+
+    const result = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(result, { applied: 2, skipped: 0 })
+
+    const columns = await database.all('PRAGMA table_info(whatsapp_api_messages)')
+    assert.equal(columns.find((column) => column.name === 'protocol_message_key_id')?.type, 'TEXT')
+    assert.equal((await database.all(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_whatsapp_api_messages_protocol_key'"
+    )).length, 1)
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('el indice de identidad se crea aunque el bootstrap ya haya agregado la columna', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-whatsapp-identity-bootstrap-'))
+  const database = openMemoryDatabase()
+  const columnMigration = new URL(
+    '../migrations/versioned/044_whatsapp_protocol_message_identity.sql',
+    import.meta.url
+  )
+  const indexMigration = new URL(
+    '../migrations/versioned/044a_whatsapp_protocol_message_identity_index.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      CREATE TABLE whatsapp_api_messages (
+        id TEXT PRIMARY KEY,
+        direction TEXT,
+        protocol_message_key_id TEXT
+      );
+    `)
+    await copyFile(columnMigration, join(directory, '044_whatsapp_protocol_message_identity.sql'))
+    await copyFile(indexMigration, join(directory, '044a_whatsapp_protocol_message_identity_index.sql'))
+
+    const result = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(result, { applied: 1, skipped: 0 })
+
+    const ledger = await database.all('SELECT name FROM schema_migrations ORDER BY name')
+    assert.deepEqual(ledger.map((row) => row.name), [
+      '044_whatsapp_protocol_message_identity.sql',
+      '044a_whatsapp_protocol_message_identity_index.sql'
+    ])
+    assert.equal((await database.all(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_whatsapp_api_messages_protocol_key'"
+    )).length, 1)
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
