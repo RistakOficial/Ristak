@@ -5,6 +5,7 @@ import { DateTime } from 'luxon'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
+  appointmentReminderRetryCutoffExpression,
   createAppointmentReminder,
   getAppointmentRemindersOverview,
   processDueAppointmentReminders
@@ -698,6 +699,17 @@ test('recordatorios de citas reintentan errores después del enfriamiento sin sp
       )
     }
   })
+})
+
+test('el enfriamiento de recordatorios usa SQL nativo para SQLite y PostgreSQL', () => {
+  assert.equal(
+    appointmentReminderRetryCutoffExpression('sqlite'),
+    'datetime(COALESCE(sent_at, created_at)) <= datetime(?)'
+  )
+  assert.equal(
+    appointmentReminderRetryCutoffExpression('postgres'),
+    'COALESCE(sent_at, created_at) <= ?::timestamp'
+  )
 })
 
 test('overview marca recordatorios bloqueados si no hay remitente de WhatsApp', async () => {

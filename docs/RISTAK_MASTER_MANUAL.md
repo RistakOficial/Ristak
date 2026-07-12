@@ -1904,7 +1904,9 @@ Cada par `reminder_id + appointment_id` se reclama en
 `sent`, `skipped` y `sending` bloquean nuevos envios. Si el intento termina en
 `error`, el cron puede reintentarlo despues de 15 minutos, siempre que la hora de
 envio siga dentro de la ventana util de 3 horas; si ya se paso esa ventana se
-marca como omitido en vez de mandar un WhatsApp tarde.
+marca como omitido en vez de mandar un WhatsApp tarde. El enfriamiento se compara
+en UTC con SQL nativo del motor activo; PostgreSQL no ejecuta funciones exclusivas
+de SQLite durante este reclamo.
 
 En PostgreSQL, las columnas de citas y envios siguen siendo
 `timestamp without time zone` con el valor normalizado a UTC. Al leerlas, el

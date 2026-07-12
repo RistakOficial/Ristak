@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon'
-import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/database.js'
 import { getAccountTimezone } from '../utils/dateUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import {
@@ -32,6 +32,12 @@ import {
 } from './appointmentReminderLogic.js'
 
 export { DEFAULT_REMINDER_TEXT, DEFAULT_CONFIRMATION_TEXT, formatOffsetLabel, computeReminderSendAt }
+
+export function appointmentReminderRetryCutoffExpression(dialect = databaseDialect) {
+  return dialect === 'postgres'
+    ? 'COALESCE(sent_at, created_at) <= ?::timestamp'
+    : 'datetime(COALESCE(sent_at, created_at)) <= datetime(?)'
+}
 
 const SEEDED_CONFIG_KEY = 'appointment_reminders_seeded'
 
@@ -1345,6 +1351,7 @@ async function claimSend({ reminder, appointment, sendAt }) {
   // la misma fila de forma atómica para reintentar. Los estados sent/skipped/sending
   // siguen siendo terminales para no duplicar mensajes.
   const retryCutoff = DateTime.utc().minus({ milliseconds: ERROR_RETRY_MS }).toISO()
+  const retryCutoffExpression = appointmentReminderRetryCutoffExpression()
   const retry = await db.run(`
     UPDATE appointment_reminder_sends
     SET status = 'sending',
@@ -1358,7 +1365,7 @@ async function claimSend({ reminder, appointment, sendAt }) {
     WHERE reminder_id = ?
       AND appointment_id = ?
       AND status = 'error'
-      AND datetime(COALESCE(sent_at, created_at)) <= datetime(?)
+      AND ${retryCutoffExpression}
   `, [
     cleanString(appointment.contact_id) || null,
     reminder.messageType,
