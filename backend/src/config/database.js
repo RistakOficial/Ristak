@@ -29,13 +29,6 @@ export const databaseDialect = usePostgres ? 'postgres' : 'sqlite'
 let db
 const databaseTransactionContext = new AsyncLocalStorage()
 const databaseConnectionContext = new AsyncLocalStorage()
-let runDatabaseInitialization = (callback) => callback()
-
-// Las instalaciones grandes pueden tener un statement_timeout conservador a
-// nivel de rol (por ejemplo 10 s). Ese límite sí conviene para consultas
-// normales, pero no para el arranque idempotente que prepara cientos de tablas,
-// índices y backfills antes de publicar el contenedor nuevo.
-const POSTGRES_INITIALIZATION_STATEMENT_TIMEOUT_MS = 120_000
 
 const DEFAULT_REPORT_TABLE_COLUMN_CONFIG = [
   ['date', true],
@@ -75,6 +68,13 @@ const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City'
 const ACCOUNT_TIMEZONE_CONFIG_KEY = 'account_timezone'
 const WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY = 'whatsapp_api_first_ad_attribution_backfill_version'
 const WHATSAPP_API_FIRST_AD_BACKFILL_VERSION = '2026-07-08-first-ad-attribution-v2'
+const CORE_SCHEMA_BOOTSTRAP_CONFIG_KEY = 'core_schema_bootstrap_version'
+const CORE_SCHEMA_BOOTSTRAP_VERSION = '2026-07-12-v1'
+const STARTUP_DATA_MAINTENANCE_CONFIG_KEY = 'startup_data_maintenance_version'
+const STARTUP_DATA_MAINTENANCE_VERSION = '2026-07-12-v1'
+const STARTUP_DATA_BATCH_SIZE = 250
+const STARTUP_SCHEMA_LOCK_NAME = 'startup-schema-bootstrap'
+const STARTUP_SCHEMA_LOCK_WAIT_MS = 120_000
 
 const POSTGRES_CONNECT_RETRY_CODES = new Set([
   'ECONNREFUSED',
@@ -102,6 +102,40 @@ const POSTGRES_CLIENT_ERROR_LISTENER = Symbol('ristakPostgresClientErrorListener
 const POSTGRES_CLIENT_CONNECTION_ERROR = Symbol('ristakPostgresClientConnectionError')
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+async function updateRowsInBatches({ table, setSql, whereSql, label, batchSize = STARTUP_DATA_BATCH_SIZE }) {
+  let lastId = ''
+  let updated = 0
+
+  while (true) {
+    const rows = await db.all(`
+      SELECT id
+      FROM ${table}
+      WHERE id > ?
+        AND (${whereSql})
+      ORDER BY id
+      LIMIT ?
+    `, [lastId, batchSize])
+    if (!rows.length) break
+
+    const ids = rows.map(row => String(row.id || '')).filter(Boolean)
+    if (!ids.length) break
+    const placeholders = ids.map(() => '?').join(', ')
+    const result = await db.run(
+      `UPDATE ${table} SET ${setSql} WHERE id IN (${placeholders})`,
+      ids
+    )
+    updated += Number(result?.changes || 0)
+    lastId = ids[ids.length - 1]
+
+    // Cede el event loop y la conexión entre lotes. El usuario puede entrar y
+    // consultar sus datos mientras la normalización histórica converge.
+    await sleep(25)
+  }
+
+  if (updated > 0) logger.info(`[Arranque] ${label}: ${updated} fila(s) normalizada(s) en lotes.`)
+  return updated
+}
 
 // PostgreSQL OID 1114 (`timestamp without time zone`) representa en este
 // proyecto un instante UTC guardado como hora de pared. node-postgres lo
@@ -473,7 +507,7 @@ if (usePostgres) {
       let operationError = null
       let releaseError = null
       try {
-        result = await operation(createPostgresAdapter(client), client)
+        result = await operation(createPostgresAdapter(client))
       } catch (error) {
         operationError = error
       }
@@ -502,31 +536,6 @@ if (usePostgres) {
       throw operationError
     }
   }
-
-  runDatabaseInitialization = (callback) => withPostgresClient(async (clientDb, client) => {
-    await client.query(`SET statement_timeout = ${POSTGRES_INITIALIZATION_STATEMENT_TIMEOUT_MS}`)
-    let operationError = null
-
-    try {
-      return await databaseConnectionContext.run(
-        { client, db: clientDb },
-        callback
-      )
-    } catch (error) {
-      operationError = error
-      throw error
-    } finally {
-      try {
-        // La conexión vuelve al pool con el límite normal definido por la base.
-        await client.query('RESET statement_timeout')
-      } catch (resetError) {
-        if (!operationError) throw resetError
-        logger.warn(`No se pudo restaurar statement_timeout después de inicializar la base: ${describePostgresConnectionError(resetError)}`)
-      }
-    }
-  }, {
-    label: 'inicialización de base de datos'
-  })
 
   async function withPostgresAdvisoryLock(lockName, callback, options = {}) {
     if (typeof callback !== 'function') {
@@ -1131,16 +1140,183 @@ const RISTAK_CONTACT_ID_PREFIXES = ['rstk_', 'waapi_', 'manual_contact_', 'meta_
 // que el vínculo con HighLevel sea explícito y deje de depender de la PK.
 async function backfillGhlContactIds() {
   const exclusions = RISTAK_CONTACT_ID_PREFIXES.map(prefix => `id NOT LIKE '${prefix}%'`).join(' AND ')
-  const result = await db.run(`
-    UPDATE contacts
-    SET ghl_contact_id = id
-    WHERE (ghl_contact_id IS NULL OR ghl_contact_id = '')
-      AND ${exclusions}
-  `)
+  return updateRowsInBatches({
+    table: 'contacts',
+    setSql: 'ghl_contact_id = id',
+    whereSql: `(ghl_contact_id IS NULL OR ghl_contact_id = '') AND ${exclusions}`,
+    label: 'Contactos HighLevel ligados por ghl_contact_id'
+  })
+}
 
-  if (result?.changes > 0) {
-    logger.success(`✅ Migración: ${result.changes} contactos de HighLevel ligados vía ghl_contact_id`)
+async function seedPrimaryContactPhoneNumbersInBatches({ batchSize = STARTUP_DATA_BATCH_SIZE } = {}) {
+  let lastId = ''
+  let seeded = 0
+
+  while (true) {
+    const rows = await db.all(`
+      SELECT c.id, c.phone
+      FROM contacts c
+      WHERE c.id > ?
+        AND c.phone IS NOT NULL
+        AND c.phone != ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM contact_phone_numbers cpn
+          WHERE cpn.contact_id = c.id
+            AND cpn.is_primary = 1
+        )
+      ORDER BY c.id
+      LIMIT ?
+    `, [lastId, batchSize])
+    if (!rows.length) break
+
+    for (const row of rows) {
+      const phone = normalizePhoneForStorage(row.phone) || String(row.phone || '').trim()
+      if (!phone) continue
+
+      const result = await db.run(`
+        INSERT INTO contact_phone_numbers (
+          id, contact_id, phone, label, is_primary, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(phone) DO UPDATE SET
+          is_primary = CASE
+            WHEN contact_phone_numbers.contact_id = excluded.contact_id THEN 1
+            ELSE contact_phone_numbers.is_primary
+          END,
+          updated_at = CASE
+            WHEN contact_phone_numbers.contact_id = excluded.contact_id THEN CURRENT_TIMESTAMP
+            ELSE contact_phone_numbers.updated_at
+          END
+      `, [
+        createRistakId('contact_phone'),
+        row.id,
+        phone,
+        'Principal',
+        'legacy'
+      ])
+      seeded += Number(result?.changes || 0)
+    }
+
+    lastId = String(rows[rows.length - 1].id || lastId)
+    await sleep(25)
   }
+
+  if (seeded > 0) logger.info(`[Arranque] Teléfonos principales: ${seeded} fila(s) preparadas en lotes.`)
+  return seeded
+}
+
+async function backfillWhatsAppProviderContractInBatches() {
+  const jobs = [
+    {
+      table: 'whatsapp_message_templates',
+      label: 'Plantillas WhatsApp legacy',
+      setSql: `
+        template_provider = COALESCE(NULLIF(template_provider, ''), 'ycloud'),
+        provider_template_name = COALESCE(provider_template_name, ycloud_template_name),
+        provider_template_id = COALESCE(provider_template_id, ycloud_template_id),
+        provider_status = COALESCE(provider_status, ycloud_status),
+        provider_reason = COALESCE(provider_reason, ycloud_reason),
+        provider_status_update_event = COALESCE(provider_status_update_event, ycloud_status_update_event),
+        provider_quality_rating = COALESCE(provider_quality_rating, ycloud_quality_rating),
+        provider_raw_payload_json = COALESCE(provider_raw_payload_json, ycloud_raw_payload_json),
+        provider_submitted_at = COALESCE(provider_submitted_at, ycloud_submitted_at),
+        provider_synced_at = COALESCE(provider_synced_at, ycloud_synced_at)
+      `,
+      whereSql: `
+        COALESCE(ycloud_template_id, ycloud_template_name, ycloud_status) IS NOT NULL
+        AND (
+          COALESCE(template_provider, '') = ''
+          OR provider_template_name IS NULL
+          OR provider_template_id IS NULL
+          OR provider_status IS NULL
+        )
+      `
+    },
+    {
+      table: 'whatsapp_api_templates',
+      label: 'Plantillas API oficiales',
+      setSql: `
+        provider = COALESCE(NULLIF(provider, ''), 'ycloud'),
+        source_adapter = COALESCE(NULLIF(source_adapter, ''), 'ycloud'),
+        provider_template_id = COALESCE(provider_template_id, official_template_id, id),
+        provider_create_time = COALESCE(provider_create_time, ycloud_create_time),
+        provider_update_time = COALESCE(provider_update_time, ycloud_update_time)
+      `,
+      whereSql: `
+        COALESCE(provider, '') = ''
+        OR COALESCE(source_adapter, '') = ''
+        OR provider_template_id IS NULL
+        OR (provider_create_time IS NULL AND ycloud_create_time IS NOT NULL)
+        OR (provider_update_time IS NULL AND ycloud_update_time IS NOT NULL)
+      `
+    },
+    {
+      table: 'whatsapp_api_messages',
+      label: 'IDs Meta Directo',
+      setSql: 'meta_message_id = ycloud_message_id, ycloud_message_id = NULL',
+      whereSql: `
+        LOWER(COALESCE(provider, '')) = 'meta_direct'
+        AND COALESCE(meta_message_id, '') = ''
+        AND COALESCE(ycloud_message_id, '') != ''
+      `
+    },
+    {
+      table: 'whatsapp_api_messages',
+      label: 'IDs neutrales de mensajes',
+      setSql: `provider_message_id = COALESCE(NULLIF(meta_message_id, ''), NULLIF(ycloud_message_id, ''), NULLIF(wamid, ''))`,
+      whereSql: `
+        COALESCE(provider_message_id, '') = ''
+        AND COALESCE(NULLIF(meta_message_id, ''), NULLIF(ycloud_message_id, ''), NULLIF(wamid, '')) IS NOT NULL
+      `
+    },
+    {
+      table: 'whatsapp_api_messages',
+      label: 'Adaptadores de mensajes',
+      setSql: `source_adapter = CASE
+        WHEN LOWER(COALESCE(transport, '')) = 'qr' OR LOWER(COALESCE(provider, '')) = 'qr' THEN 'baileys'
+        WHEN LOWER(COALESCE(provider, '')) = 'meta_direct' THEN 'meta_direct'
+        ELSE 'ycloud'
+      END`,
+      whereSql: `COALESCE(source_adapter, '') != CASE
+        WHEN LOWER(COALESCE(transport, '')) = 'qr' OR LOWER(COALESCE(provider, '')) = 'qr' THEN 'baileys'
+        WHEN LOWER(COALESCE(provider, '')) = 'meta_direct' THEN 'meta_direct'
+        ELSE 'ycloud'
+      END`
+    },
+    {
+      table: 'whatsapp_api_webhook_events',
+      label: 'Proveedor de webhooks',
+      setSql: `provider = CASE
+        WHEN LOWER(COALESCE(event_type, '')) LIKE 'meta.%'
+          OR LOWER(COALESCE(webhook_endpoint_id, '')) = 'installer_relay' THEN 'meta_direct'
+        ELSE 'ycloud'
+      END`,
+      whereSql: `COALESCE(provider, '') != CASE
+        WHEN LOWER(COALESCE(event_type, '')) LIKE 'meta.%'
+          OR LOWER(COALESCE(webhook_endpoint_id, '')) = 'installer_relay' THEN 'meta_direct'
+        ELSE 'ycloud'
+      END`
+    },
+    {
+      table: 'whatsapp_api_template_sends',
+      label: 'Envíos de plantillas',
+      setSql: `
+        provider_message_id = COALESCE(NULLIF(ycloud_message_id, ''), NULLIF(wamid, '')),
+        provider = COALESCE(NULLIF(provider, ''), 'ycloud'),
+        source_adapter = COALESCE(NULLIF(source_adapter, ''), 'ycloud')
+      `,
+      whereSql: `
+        COALESCE(provider_message_id, '') = ''
+        AND COALESCE(NULLIF(ycloud_message_id, ''), NULLIF(wamid, '')) IS NOT NULL
+      `
+    }
+  ]
+
+  let updated = 0
+  for (const job of jobs) {
+    updated += await updateRowsInBatches(job)
+  }
+  return updated
 }
 
 // Re-identifica los contactos creados por WhatsApp (waapi_contact_<hash>) con el
@@ -2187,7 +2363,7 @@ async function ensureConversationalAgentStateIdentity() {
 }
 
 // Inicializar tablas
-async function initTables() {
+async function initTablesUnlocked() {
   try {
     // Tabla de configuración de HighLevel
     await db.run(`
@@ -2234,6 +2410,15 @@ async function initTables() {
       await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_app_config_config_key ON app_config(config_key)')
     } catch (err) {
       logger.warn('Advertencia al asegurar unicidad de app_config.config_key:', err.message)
+    }
+
+    const schemaBootstrap = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ? LIMIT 1',
+      [CORE_SCHEMA_BOOTSTRAP_CONFIG_KEY]
+    ).catch(() => null)
+    if (schemaBootstrap?.config_value === CORE_SCHEMA_BOOTSTRAP_VERSION) {
+      logger.info(`[Esquema] Bootstrap ${CORE_SCHEMA_BOOTSTRAP_VERSION} ya aplicado; se omite el replay legacy.`)
+      return { skipped: true, version: CORE_SCHEMA_BOOTSTRAP_VERSION }
     }
 
     // (MOB-006) Configuración por-usuario (espejo de app_config). Cuando un usuario
@@ -3235,36 +3420,6 @@ async function initTables() {
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_phone_numbers_contact ON contact_phone_numbers(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_phone_numbers_primary ON contact_phone_numbers(contact_id, is_primary)')
-
-    const contactPhoneSeedRows = await db.all(`
-      SELECT id, phone
-      FROM contacts
-      WHERE phone IS NOT NULL AND phone != ''
-    `).catch(() => [])
-    for (const row of contactPhoneSeedRows) {
-      const phone = normalizePhoneForStorage(row.phone) || String(row.phone || '').trim()
-      if (!phone) continue
-
-      await db.run(`
-        INSERT INTO contact_phone_numbers (
-          id, contact_id, phone, label, is_primary, source, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(phone) DO UPDATE SET
-          is_primary = CASE
-            WHEN contact_phone_numbers.contact_id = excluded.contact_id THEN 1
-            ELSE contact_phone_numbers.is_primary
-          END,
-          updated_at = CURRENT_TIMESTAMP
-      `, [
-        createRistakId('contact_phone'),
-        row.id,
-        phone,
-        'Principal',
-        'legacy'
-      ]).catch(error => {
-        logger.warn(`No se pudo registrar teléfono adicional para ${row.id}: ${error.message}`)
-      })
-    }
 
     // Enlaces de disparo: URL publica con ID propio que registra cada visita
     // antes de redirigir al destino final.
@@ -4743,30 +4898,6 @@ async function initTables() {
     }
 
     await db.run(`
-      UPDATE whatsapp_message_templates
-      SET template_provider = COALESCE(NULLIF(template_provider, ''), 'ycloud'),
-          provider_template_name = COALESCE(provider_template_name, ycloud_template_name),
-          provider_template_id = COALESCE(provider_template_id, ycloud_template_id),
-          provider_status = COALESCE(provider_status, ycloud_status),
-          provider_reason = COALESCE(provider_reason, ycloud_reason),
-          provider_status_update_event = COALESCE(provider_status_update_event, ycloud_status_update_event),
-          provider_quality_rating = COALESCE(provider_quality_rating, ycloud_quality_rating),
-          provider_raw_payload_json = COALESCE(provider_raw_payload_json, ycloud_raw_payload_json),
-          provider_submitted_at = COALESCE(provider_submitted_at, ycloud_submitted_at),
-          provider_synced_at = COALESCE(provider_synced_at, ycloud_synced_at)
-      WHERE COALESCE(ycloud_template_id, ycloud_template_name, ycloud_status) IS NOT NULL
-    `)
-
-    await db.run(`
-      UPDATE whatsapp_api_templates
-      SET provider = COALESCE(NULLIF(provider, ''), 'ycloud'),
-          source_adapter = COALESCE(NULLIF(source_adapter, ''), 'ycloud'),
-          provider_template_id = COALESCE(provider_template_id, official_template_id, id),
-          provider_create_time = COALESCE(provider_create_time, ycloud_create_time),
-          provider_update_time = COALESCE(provider_update_time, ycloud_update_time)
-    `)
-
-    await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_api_alerts (
         id TEXT PRIMARY KEY,
         severity TEXT DEFAULT 'info',
@@ -4978,64 +5109,6 @@ async function initTables() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
       )
-    `)
-
-    // Contrato neutral de WhatsApp. Estos backfills viven también aquí porque
-    // initTables corre antes que las migraciones versionadas y puede haber creado
-    // ya las columnas en instalaciones existentes.
-    await db.run(`
-      UPDATE whatsapp_api_messages
-      SET meta_message_id = ycloud_message_id,
-          ycloud_message_id = NULL
-      WHERE LOWER(COALESCE(provider, '')) = 'meta_direct'
-        AND COALESCE(meta_message_id, '') = ''
-        AND COALESCE(ycloud_message_id, '') != ''
-    `)
-    await db.run(`
-      UPDATE whatsapp_api_messages
-      SET provider_message_id = COALESCE(NULLIF(meta_message_id, ''), NULLIF(ycloud_message_id, ''), NULLIF(wamid, ''))
-      WHERE COALESCE(provider_message_id, '') = ''
-        AND COALESCE(NULLIF(meta_message_id, ''), NULLIF(ycloud_message_id, ''), NULLIF(wamid, '')) IS NOT NULL
-    `)
-    await db.run(`
-      UPDATE whatsapp_api_messages
-      SET source_adapter = CASE
-        WHEN LOWER(COALESCE(transport, '')) = 'qr' OR LOWER(COALESCE(provider, '')) = 'qr' THEN 'baileys'
-        WHEN LOWER(COALESCE(provider, '')) = 'meta_direct' THEN 'meta_direct'
-        ELSE 'ycloud'
-      END
-      WHERE COALESCE(source_adapter, '') = ''
-         OR (
-           source_adapter = 'ycloud'
-           AND (
-             LOWER(COALESCE(transport, '')) = 'qr'
-             OR LOWER(COALESCE(provider, '')) IN ('qr', 'meta_direct')
-           )
-         )
-    `)
-    await db.run(`
-      UPDATE whatsapp_api_webhook_events
-      SET provider = CASE
-        WHEN LOWER(COALESCE(event_type, '')) LIKE 'meta.%'
-          OR LOWER(COALESCE(webhook_endpoint_id, '')) = 'installer_relay' THEN 'meta_direct'
-        ELSE 'ycloud'
-      END
-      WHERE COALESCE(provider, '') = ''
-         OR (
-           provider = 'ycloud'
-           AND (
-             LOWER(COALESCE(event_type, '')) LIKE 'meta.%'
-             OR LOWER(COALESCE(webhook_endpoint_id, '')) = 'installer_relay'
-           )
-         )
-    `)
-    await db.run(`
-      UPDATE whatsapp_api_template_sends
-      SET provider_message_id = COALESCE(NULLIF(ycloud_message_id, ''), NULLIF(wamid, '')),
-          provider = COALESCE(NULLIF(provider, ''), 'ycloud'),
-          source_adapter = COALESCE(NULLIF(source_adapter, ''), 'ycloud')
-      WHERE COALESCE(provider_message_id, '') = ''
-        AND COALESCE(NULLIF(ycloud_message_id, ''), NULLIF(wamid, '')) IS NOT NULL
     `)
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_phone ON whatsapp_api_phone_numbers(phone_number)')
@@ -7497,73 +7570,6 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_reminder_sends_contact ON appointment_reminder_sends(contact_id, status)')
 
     try {
-      await cleanupWhatsAppApiSystemCustomFields()
-    } catch (err) {
-      logger.warn('Advertencia al limpiar campos internos de WhatsApp API:', err.message)
-    }
-
-    try {
-      await reconcileCanonicalContactPhones()
-    } catch (err) {
-      logger.warn('Advertencia al reconciliar teléfonos de contactos:', err.message)
-    }
-
-    try {
-      await backfillGhlContactIds()
-    } catch (err) {
-      logger.warn('Advertencia al ligar contactos con ghl_contact_id:', err.message)
-    }
-
-    try {
-      await migrateWhatsAppContactIdsToRistak()
-    } catch (err) {
-      logger.warn('Advertencia al migrar IDs de contactos WhatsApp a Ristak:', err.message)
-    }
-
-    try {
-      await mergeSplitSocialCommentContacts()
-    } catch (err) {
-      logger.warn('Advertencia al fusionar contactos de comentario/DM de Meta:', err.message)
-    }
-
-    try {
-      const currentFirstAdBackfillVersion = await getAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY).catch(() => '')
-      if (currentFirstAdBackfillVersion !== WHATSAPP_API_FIRST_AD_BACKFILL_VERSION) {
-        logger.info('Reparación WhatsApp API histórica programada en segundo plano; el arranque no esperará a que termine.')
-        repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })
-          .then(async () => {
-            await setAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY, WHATSAPP_API_FIRST_AD_BACKFILL_VERSION)
-            logger.success('✅ Reparación WhatsApp API histórica finalizada y marcada como aplicada')
-          })
-          .catch((err) => {
-            logger.warn('Advertencia al reparar nombres/fechas/primer anuncio de WhatsApp API en segundo plano:', err.message)
-          })
-      } else {
-        logger.info('Reparación WhatsApp API histórica omitida: versión vigente ya aplicada.')
-      }
-    } catch (err) {
-      logger.warn('Advertencia al reparar nombres/fechas/primer anuncio de WhatsApp API:', err.message)
-    }
-
-    try {
-      await migrateLegacyContactTagsToCatalog()
-    } catch (err) {
-      logger.warn('Advertencia al migrar etiquetas de contactos al catálogo:', err.message)
-    }
-
-    try {
-      await migrateTagIdsToSlugs()
-    } catch (err) {
-      logger.warn('Advertencia al migrar IDs de etiquetas a slugs:', err.message)
-    }
-
-    try {
-      await cleanupReservedSystemContactTags()
-    } catch (err) {
-      logger.warn('Advertencia al limpiar etiquetas internas de contactos:', err.message)
-    }
-
-    try {
       await db.run("ALTER TABLE appointment_reminders ADD COLUMN no_confirm_action TEXT DEFAULT 'no_action'")
     } catch (_) { /* columna ya existe */ }
 
@@ -7629,7 +7635,16 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conf_windows_contact ON appointment_confirmation_windows(contact_id, status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conf_windows_last_msg ON appointment_confirmation_windows(last_message_at, status)')
 
-    logger.success('Todas las tablas inicializadas correctamente')
+    await db.run(`
+      INSERT INTO app_config (config_key, config_value, created_at, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(config_key) DO UPDATE SET
+        config_value = excluded.config_value,
+        updated_at = CURRENT_TIMESTAMP
+    `, [CORE_SCHEMA_BOOTSTRAP_CONFIG_KEY, CORE_SCHEMA_BOOTSTRAP_VERSION])
+
+    logger.success(`Todas las tablas inicializadas correctamente (bootstrap ${CORE_SCHEMA_BOOTSTRAP_VERSION})`)
+    return { skipped: false, version: CORE_SCHEMA_BOOTSTRAP_VERSION }
   } catch (error) {
     logger.error('Error inicializando tablas:', error)
     throw error
@@ -7868,11 +7883,100 @@ async function migrateTagIdsToSlugs() {
   logger.info(`IDs de etiquetas migrados a slugs legibles: ${renames.length} etiqueta${renames.length === 1 ? '' : 's'}`)
 }
 
+export async function runCoreSchemaBootstrap() {
+  const startedAt = Date.now()
+  let waitLogged = false
+
+  while (true) {
+    try {
+      return await db.withAdvisoryLock(STARTUP_SCHEMA_LOCK_NAME, async (schemaDb) => {
+        if (usePostgres) {
+          await schemaDb.exec(`
+            SET statement_timeout = '180s';
+            SET lock_timeout = '60s';
+          `)
+        }
+
+        try {
+          return await initTablesUnlocked()
+        } finally {
+          if (usePostgres) {
+            await schemaDb.exec('RESET statement_timeout; RESET lock_timeout;').catch((error) => {
+              logger.warn(`[Esquema] No se pudieron restaurar los timeouts de sesión: ${error.message}`)
+            })
+          }
+        }
+      })
+    } catch (error) {
+      if (error?.code !== 'DATABASE_ADVISORY_LOCK_BUSY') throw error
+      const elapsed = Date.now() - startedAt
+      if (elapsed >= STARTUP_SCHEMA_LOCK_WAIT_MS) {
+        throw Object.assign(new Error('Otra instancia no liberó a tiempo el candado de preparación del esquema.'), {
+          code: 'STARTUP_SCHEMA_LOCK_TIMEOUT'
+        })
+      }
+      if (!waitLogged) {
+        waitLogged = true
+        logger.info('[Esquema] Otra instancia está preparando la base; este arranque esperará sin duplicar trabajo.')
+      }
+      await sleep(500)
+    }
+  }
+}
+
+export async function runStartupDataMaintenance() {
+  try {
+    return await db.withAdvisoryLock('startup-data-maintenance', async () => {
+      const appliedVersion = await getAppConfig(STARTUP_DATA_MAINTENANCE_CONFIG_KEY).catch(() => '')
+      if (appliedVersion === STARTUP_DATA_MAINTENANCE_VERSION) {
+        logger.info(`[Arranque] Mantenimiento histórico ${STARTUP_DATA_MAINTENANCE_VERSION} ya aplicado.`)
+        return { skipped: true, version: STARTUP_DATA_MAINTENANCE_VERSION }
+      }
+
+      const tasks = [
+        ['teléfonos principales', seedPrimaryContactPhoneNumbersInBatches],
+        ['contrato neutral de WhatsApp', backfillWhatsAppProviderContractInBatches],
+        ['campos internos de WhatsApp', cleanupWhatsAppApiSystemCustomFields],
+        ['teléfonos canónicos', reconcileCanonicalContactPhones],
+        ['IDs de HighLevel', backfillGhlContactIds],
+        ['IDs históricos de WhatsApp', migrateWhatsAppContactIdsToRistak],
+        ['contactos sociales divididos', mergeSplitSocialCommentContacts],
+        ['etiquetas legacy', migrateLegacyContactTagsToCatalog],
+        ['IDs legibles de etiquetas', migrateTagIdsToSlugs],
+        ['etiquetas internas reservadas', cleanupReservedSystemContactTags]
+      ]
+
+      for (const [label, task] of tasks) {
+        logger.info(`[Arranque] Mantenimiento en segundo plano: ${label}...`)
+        await task()
+        await sleep(50)
+      }
+
+      const firstAdBackfillVersion = await getAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY).catch(() => '')
+      if (firstAdBackfillVersion !== WHATSAPP_API_FIRST_AD_BACKFILL_VERSION) {
+        logger.info('[Arranque] Reparando identidad y primera atribución de WhatsApp en segundo plano...')
+        await repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })
+        await setAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY, WHATSAPP_API_FIRST_AD_BACKFILL_VERSION)
+      }
+
+      await setAppConfig(STARTUP_DATA_MAINTENANCE_CONFIG_KEY, STARTUP_DATA_MAINTENANCE_VERSION)
+      logger.success(`[Arranque] Mantenimiento histórico ${STARTUP_DATA_MAINTENANCE_VERSION} completado.`)
+      return { skipped: false, version: STARTUP_DATA_MAINTENANCE_VERSION }
+    }, { pinConnection: false })
+  } catch (error) {
+    if (error?.code === 'DATABASE_ADVISORY_LOCK_BUSY') {
+      logger.info('[Arranque] Otra instancia ya ejecuta el mantenimiento histórico; se omite el duplicado.')
+      return { skipped: true, reason: 'already-running' }
+    }
+    throw error
+  }
+}
+
 // En produccion no bloqueamos el import completo con las migraciones:
 // Render necesita que el proceso abra puerto rapido para no marcar el deploy
 // como "no open ports detected". El servidor espera esta promesa antes de
 // habilitar las rutas reales.
-export const databaseReady = runDatabaseInitialization(initTables)
+export const databaseReady = runCoreSchemaBootstrap()
 
 if (process.env.NODE_ENV === 'production') {
   databaseReady.catch(() => {})

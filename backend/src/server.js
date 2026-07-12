@@ -8,7 +8,8 @@ import { dirname, join } from 'path'
 import {
   databaseReady,
   describePostgresConnectionError,
-  isTransientPostgresConnectionError
+  isTransientPostgresConnectionError,
+  runStartupDataMaintenance
 } from './config/database.js'
 import { logger } from './utils/logger.js'
 import { initializeMasterKey } from './utils/encryption.js'
@@ -523,6 +524,15 @@ async function startRuntimeServices() {
   // garantiza TTL de secretos aunque nadie vuelva a abrir Configuración.
   startMetaOAuthPendingSessionCleanupScheduler()
   startMetaOAuthIntegrationCleanupScheduler()
+
+  // Las reparaciones de historiales grandes no forman parte de la compuerta de
+  // sesión. El esquema y las rutas ya están listos; esta tarea converge datos
+  // heredados por lotes mientras móvil y escritorio usan los datos existentes.
+  runStartupDrainTask(
+    'startup:data-maintenance',
+    runStartupDataMaintenance,
+    'No se pudo completar el mantenimiento histórico en segundo plano'
+  )
 
   runStartupDrainTask(
     'startup:media-runtime-config',

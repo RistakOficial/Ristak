@@ -90,7 +90,7 @@ Flujo de arranque:
 5. Monta rutas publicas y privadas.
 6. En produccion sirve `frontend/dist`.
 7. Ejecuta `startRuntimeServices()`:
-   - espera base de datos,
+   - espera sólo el esquema indispensable de la base,
    - corre migraciones,
    - inicializa llave de cifrado,
    - sanea usuarios legacy que guardaban el correo en `username`,
@@ -100,6 +100,21 @@ Flujo de arranque:
    - repara o verifica tareas pendientes de webhooks/pagos/templates/media,
    - arranca schedulers de sistema,
    - sincroniza crons registrados por integracion.
+
+El esquema base de `database.js` usa un candado distribuido durante despliegues
+rodantes: una sola instancia puede prepararlo y las demás esperan sin repetir
+DDL. Cuando el bootstrap vigente ya quedó registrado en `app_config`, los
+reinicios normales omiten el replay legacy de cientos de tablas e índices; los
+cambios nuevos deben entrar por `backend/migrations/versioned/`. PostgreSQL usa
+timeouts de mantenimiento únicamente en esa sesión y restaura los límites de la
+cuenta antes de atender tráfico.
+
+Las normalizaciones históricas no forman parte de la compuerta de login. Semillas
+de teléfonos, contrato neutral de WhatsApp, identidades legacy, fusiones y
+limpieza de etiquetas/campos corren bajo otro candado, en segundo plano y con
+lotes acotados para las tablas grandes. Móvil y escritorio pueden usar de
+inmediato los contactos y chats existentes; el mantenimiento es idempotente,
+marca su versión al completar y se reintenta en un arranque posterior si falla.
 
 El proceso tiene soporte de shutdown graceful y estado de drain para deploys.
 
