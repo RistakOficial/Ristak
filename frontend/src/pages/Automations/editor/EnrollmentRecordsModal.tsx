@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { UserRound } from 'lucide-react'
 import { Badge, Loading, Modal, TabList, type BadgeVariant } from '@/components/common'
-import automationsService, { type AutomationEnrollment } from '@/services/automationsService'
+import automationsService, {
+  type AutomationEnrollment,
+  type AutomationExecutionOutcome,
+  type AutomationLogOutcome,
+  type EnrollmentLogEntry
+} from '@/services/automationsService'
 import type { AutomationNode } from '@/services/automationsService'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { getNodeDefinition } from './nodeRegistry'
@@ -29,7 +34,34 @@ const STATUS_LABELS: Record<string, { label: string; variant: BadgeVariant }> = 
   paused: { label: 'Pausado', variant: 'info' },
   completed: { label: 'Completado', variant: 'neutral' },
   exited: { label: 'Salió', variant: 'warning' },
-  goal_met: { label: 'Objetivo cumplido', variant: 'success' }
+  goal_met: { label: 'Objetivo cumplido', variant: 'success' },
+  processing: { label: 'Procesando', variant: 'info' }
+}
+
+const EXECUTION_OUTCOME_LABELS: Record<AutomationExecutionOutcome, { label: string; variant: BadgeVariant }> = {
+  pending: { label: 'En curso', variant: 'info' },
+  success: { label: 'Exitoso', variant: 'success' },
+  error: { label: 'Error', variant: 'error' },
+  stopped: { label: 'Detenido', variant: 'neutral' }
+}
+
+function getLogOutcome(entry: EnrollmentLogEntry): AutomationLogOutcome {
+  if (entry.outcome) return entry.outcome
+  const status = String(entry.status || '').toLowerCase()
+  if (status === 'error' || status === 'failed') return 'error'
+  if (status === 'waiting' || status === 'retrying') return 'waiting'
+  if (status === 'skipped' || status === 'omitted') return 'skipped'
+  if (status === 'info' || status === 'exited' || status === 'paused') return 'info'
+  return 'success'
+}
+
+function getEnrollmentExecutionOutcome(enrollment: AutomationEnrollment): AutomationExecutionOutcome {
+  if (enrollment.executionOutcome) return enrollment.executionOutcome
+  const hasError = (enrollment.log || []).some((entry) => getLogOutcome(entry) === 'error' && !entry.resolved && !entry.resolvedAt)
+  if (hasError || enrollment.status === 'error') return 'error'
+  if (['active', 'waiting', 'paused'].includes(enrollment.status)) return 'pending'
+  if (['completed', 'goal_met'].includes(enrollment.status)) return 'success'
+  return enrollment.status === 'exited' ? 'stopped' : 'pending'
 }
 
 export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
@@ -80,9 +112,16 @@ export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
     return enrollments
       .flatMap((enrollment) =>
         (enrollment.log || []).map((entry) => ({
+          id: entry.id || `${enrollment.id}-${entry.at || entry.nodeId}`,
           contact: enrollment.contactName,
           step: entry.label || nodeName(entry.nodeId),
-          status: (entry as { detail?: string }).detail || entry.status || 'ok',
+          outcome: getLogOutcome(entry),
+          detail: [
+            entry.errorMessage || entry.detail || entry.status || 'Sin detalle registrado',
+            entry.errorDetail ? `Respuesta: ${entry.errorDetail}` : ''
+          ].filter(Boolean).join(' · '),
+          errorCode: entry.errorCode,
+          resolved: Boolean(entry.resolved || entry.resolvedAt),
           at: entry.at || enrollment.updatedAt
         }))
       )
@@ -112,15 +151,17 @@ export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
               quién entró, su estado y en qué paso del flujo va.
             </p>
           ) : (
-            <div className={styles.recordsTable}>
+            <div className={`${styles.recordsTable} ${styles.recordsEnrollmentTable}`}>
               <div className={styles.recordsHead}>
                 <span>Contacto</span>
                 <span>Estado</span>
+                <span>Resultado</span>
                 <span>Paso actual</span>
                 <span>Entró</span>
               </div>
               {enrollments.map((enrollment) => {
                 const status = STATUS_LABELS[enrollment.status] || STATUS_LABELS.active
+                const execution = EXECUTION_OUTCOME_LABELS[getEnrollmentExecutionOutcome(enrollment)]
                 return (
                   <div key={enrollment.id} className={styles.recordsRow}>
                     <span className={styles.recordsContact}>
@@ -130,7 +171,13 @@ export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
                     <span>
                       <Badge variant={status.variant}>{status.label}</Badge>
                     </span>
-                    <span>{enrollment.status === 'active' ? nodeName(enrollment.currentNodeId) : '—'}</span>
+                    <span className={styles.recordsOutcomeCell}>
+                      <Badge variant={execution.variant}>{execution.label}</Badge>
+                      {enrollment.lastError && (
+                        <small className={styles.recordsLastError}>{enrollment.lastError}</small>
+                      )}
+                    </span>
+                    <span>{['active', 'waiting', 'paused'].includes(enrollment.status) ? nodeName(enrollment.currentNodeId) : '—'}</span>
                     <span>{formatDateTime(enrollment.enteredAt, { timezone, includeTime: true })}</span>
                   </div>
                 )
@@ -143,24 +190,39 @@ export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
             condiciones evaluadas) aparecerá aquí con su contacto y resultado.
           </p>
         ) : (
-          <div className={styles.recordsTable}>
+          <div className={`${styles.recordsTable} ${styles.recordsExecutionTable}`}>
             <div className={styles.recordsHead}>
               <span>Contacto</span>
               <span>Paso</span>
-              <span>Resultado</span>
+              <span>Estado</span>
+              <span>Detalle del registro</span>
               <span>Cuándo</span>
             </div>
-            {executionRows.map((row, index) => (
-              <div key={index} className={styles.recordsRow}>
+            {executionRows.map((row) => {
+              const outcome = {
+                success: { label: 'Exitoso', variant: 'success' as BadgeVariant },
+                error: { label: 'Error', variant: 'error' as BadgeVariant },
+                waiting: { label: 'Esperando', variant: 'warning' as BadgeVariant },
+                skipped: { label: 'Omitido', variant: 'neutral' as BadgeVariant },
+                info: { label: 'Información', variant: 'info' as BadgeVariant }
+              }[row.outcome]
+              return (
+              <div key={row.id} className={styles.recordsRow}>
                 <span className={styles.recordsContact}>
                   <UserRound size={13} />
                   {row.contact}
                 </span>
                 <span>{row.step}</span>
-                <span>{row.status}</span>
+                <span><Badge variant={outcome.variant}>{outcome.label}</Badge></span>
+                <span className={row.outcome === 'error' ? styles.recordsErrorDetail : styles.recordsDetail}>
+                  {row.detail}
+                  {row.errorCode ? <small className={styles.recordsErrorCode}>Código: {row.errorCode}</small> : null}
+                  {row.resolved ? <small className={styles.recordsResolved}>Resuelto tras reintento</small> : null}
+                </span>
                 <span>{formatDateTime(row.at, { timezone, includeTime: true })}</span>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

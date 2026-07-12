@@ -141,11 +141,23 @@ export interface Automation extends AutomationSummary {
   flow: AutomationFlow
 }
 
+export type AutomationLogOutcome = 'success' | 'error' | 'waiting' | 'skipped' | 'info'
+export type AutomationExecutionOutcome = 'pending' | 'success' | 'error' | 'stopped'
+
 export interface EnrollmentLogEntry {
+  id?: string
   nodeId: string
   label?: string
   status?: string
+  outcome?: AutomationLogOutcome
   detail?: string
+  errorMessage?: string | null
+  errorDetail?: string | null
+  errorCode?: string | number | null
+  retryable?: boolean
+  retryAttempt?: number
+  resolved?: boolean
+  resolvedAt?: string | null
   at?: string
 }
 
@@ -156,6 +168,8 @@ export interface AutomationEnrollment {
   status: 'active' | 'waiting' | 'paused' | 'completed' | 'exited' | 'goal_met' | string
   currentNodeId: string | null
   log: EnrollmentLogEntry[]
+  executionOutcome?: AutomationExecutionOutcome
+  lastError?: string | null
   resumeAt?: string | null
   waitKind?: string | null
   enteredAt: string
@@ -172,6 +186,8 @@ export interface ContactAutomationActivityItem {
   contactName?: string | null
   currentNodeId?: string | null
   log?: EnrollmentLogEntry[]
+  executionOutcome?: AutomationExecutionOutcome
+  lastError?: string | null
   enteredAt?: string | null
   scheduledAt?: string | null
   enrollmentId?: string | null

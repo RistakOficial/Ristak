@@ -2725,7 +2725,20 @@ sobre ese contacto elegido.
 El modal **Registros de la automatización** muestra el historial de
 inscripciones y los registros de ejecución con fecha y hora en la zona horaria
 del negocio. Esto permite reconstruir cuándo entró cada contacto y cuándo se
-ejecutó cada paso, no sólo el día calendario.
+ejecutó cada paso, no sólo el día calendario. Cada inscripción conserva además
+un resultado agregado (`En curso`, `Exitoso`, `Error` o `Detenido`) y cada paso
+del registro conserva un resultado explícito (`Exitoso`, `Error`, `Esperando`,
+`Omitido` o `Información`) junto con el detalle de lo que ocurrió. Los errores
+guardan el mensaje técnico legible y, cuando existe, el código de respuesta;
+los reintentos muestran el intento programado y marcan el error como resuelto
+cuando una repetición posterior sí funciona. Los registros antiguos sin esos
+campos se normalizan al leerlos para mantener visible su información histórica.
+
+Las inscripciones manuales programadas también dejan una bitácora propia en
+`automation_contact_enrollment_jobs.log`: registra cuándo el motor tomó el
+trabajo, si creó la inscripción y el motivo exacto cuando falló. El campo
+`error` se conserva como resumen para consultas rápidas, mientras que la
+bitácora es la fuente detallada para investigar el caso.
 
 La acción **Notificaciones** permite elegir canales de entrega independientes:
 campanita interna del CRM (`internal_notifications`), push a la app movil/PWA

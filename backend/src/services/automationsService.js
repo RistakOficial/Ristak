@@ -637,8 +637,55 @@ export async function getAutomationsOverview() {
 
 function parseLog(raw) {
   if (!raw) return []
-  if (Array.isArray(raw)) return raw
-  try { return JSON.parse(raw) } catch { return [] }
+  const parsed = Array.isArray(raw) ? raw : (() => {
+    try { return JSON.parse(raw) } catch { return [] }
+  })()
+  if (!Array.isArray(parsed)) return []
+
+  return parsed.map((entry) => {
+    const status = cleanString(entry?.status).toLowerCase()
+    const explicitOutcome = cleanString(entry?.outcome).toLowerCase()
+    const outcome = ['success', 'error', 'waiting', 'skipped', 'info'].includes(explicitOutcome)
+      ? explicitOutcome
+      : status === 'error' || status === 'failed'
+        ? 'error'
+        : status === 'waiting' || status === 'retrying'
+          ? 'waiting'
+          : status === 'skipped' || status === 'omitted'
+            ? 'skipped'
+            : status === 'info' || status === 'exited' || status === 'paused'
+              ? 'info'
+              : 'success'
+    const errorMessage = cleanString(entry?.errorMessage || entry?.error || (outcome === 'error' ? entry?.detail : ''))
+    return {
+      ...entry,
+      outcome,
+      ...(errorMessage ? { errorMessage } : {})
+    }
+  })
+}
+
+function latestExecutionError(log, { unresolvedOnly = false } = {}) {
+  for (let index = log.length - 1; index >= 0; index -= 1) {
+    const entry = log[index]
+    if (entry.outcome !== 'error') continue
+    if (unresolvedOnly && (entry.resolved || entry.resolvedAt)) continue
+    if (entry.errorMessage || entry.detail) return entry.errorMessage || entry.detail
+  }
+  return null
+}
+
+function deriveExecutionOutcome(status, storedOutcome, log) {
+  const normalizedStatus = cleanString(status).toLowerCase()
+  const normalizedStoredOutcome = cleanString(storedOutcome).toLowerCase()
+  if (['active', 'waiting', 'paused', 'scheduled', 'processing'].includes(normalizedStatus)) return 'pending'
+  const hasUnresolvedError = log.some((entry) => entry.outcome === 'error' && !entry.resolved && !entry.resolvedAt)
+  if (hasUnresolvedError || normalizedStatus === 'error') return 'error'
+  if (normalizedStatus === 'completed' || normalizedStoredOutcome === 'success') return 'success'
+  if (normalizedStatus === 'exited' || normalizedStoredOutcome === 'stopped') return 'stopped'
+  return ['pending', 'success', 'error', 'stopped'].includes(normalizedStoredOutcome)
+    ? normalizedStoredOutcome
+    : 'pending'
 }
 
 function contactDisplayName(row) {
@@ -792,6 +839,7 @@ async function normalizeScheduledAt(value) {
 }
 
 function mapContactEnrollmentRow(row) {
+  const log = parseLog(row.log)
   return {
     id: row.id,
     kind: 'enrollment',
@@ -801,13 +849,16 @@ function mapContactEnrollmentRow(row) {
     contactId: row.contact_id || null,
     contactName: row.contact_name || 'Contacto',
     currentNodeId: row.current_node_id || null,
-    log: parseLog(row.log),
+    log,
+    executionOutcome: deriveExecutionOutcome(row.status, row.execution_outcome, log),
+    lastError: row.last_error || latestExecutionError(log, { unresolvedOnly: true }),
     enteredAt: row.entered_at,
     updatedAt: row.updated_at
   }
 }
 
 function mapContactEnrollmentJobRow(row) {
+  const log = parseLog(row.log)
   return {
     id: row.id,
     kind: 'scheduled',
@@ -819,6 +870,9 @@ function mapContactEnrollmentJobRow(row) {
     scheduledAt: row.scheduled_at,
     enrollmentId: row.enrollment_id || null,
     error: row.error || null,
+    log,
+    executionOutcome: deriveExecutionOutcome(row.status, null, log),
+    lastError: row.error || latestExecutionError(log, { unresolvedOnly: true }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     executedAt: row.executed_at || null
@@ -1273,18 +1327,23 @@ export async function listEnrollments(automationId) {
     `SELECT * FROM automation_enrollments WHERE automation_id = ? ORDER BY updated_at DESC LIMIT 200`,
     [automationId]
   )
-  return rows.map((row) => ({
-    id: row.id,
-    contactId: row.contact_id,
-    contactName: row.contact_name || 'Contacto',
-    status: row.status || 'active',
-    currentNodeId: row.current_node_id || null,
-    log: parseLog(row.log),
-    resumeAt: row.resume_at || null,
-    waitKind: row.wait_kind || null,
-    enteredAt: row.entered_at,
-    updatedAt: row.updated_at
-  }))
+  return rows.map((row) => {
+    const log = parseLog(row.log)
+    return {
+      id: row.id,
+      contactId: row.contact_id,
+      contactName: row.contact_name || 'Contacto',
+      status: row.status || 'active',
+      currentNodeId: row.current_node_id || null,
+      log,
+      executionOutcome: deriveExecutionOutcome(row.status, row.execution_outcome, log),
+      lastError: row.last_error || latestExecutionError(log, { unresolvedOnly: true }),
+      resumeAt: row.resume_at || null,
+      waitKind: row.wait_kind || null,
+      enteredAt: row.entered_at,
+      updatedAt: row.updated_at
+    }
+  })
 }
 
 export async function listContactAutomationActivity(contactId) {

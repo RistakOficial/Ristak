@@ -2298,9 +2298,11 @@ export function evaluateConditionNode(config, ctx) {
 // ---------------------------------------------------------------------------
 
 async function saveEnrollment(enrollment) {
+  finalizeEnrollmentOutcome(enrollment)
   await db.run(
     `UPDATE automation_enrollments
      SET status = ?, current_node_id = ?, log = ?, resume_at = ?, wait_kind = ?, context = ?,
+         execution_outcome = ?, last_error = ?,
          contact_id = COALESCE(?, contact_id), contact_name = COALESCE(?, contact_name),
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
@@ -2311,6 +2313,8 @@ async function saveEnrollment(enrollment) {
       enrollment.resumeAt || null,
       enrollment.waitKind || null,
       JSON.stringify(enrollment.context || {}),
+      enrollment.executionOutcome || 'pending',
+      enrollment.lastError || null,
       enrollment.contactId || null,
       enrollment.contactName || null,
       enrollment.id
@@ -2318,9 +2322,129 @@ async function saveEnrollment(enrollment) {
   )
 }
 
+const LOG_OUTCOMES = new Set(['success', 'error', 'waiting', 'skipped', 'info'])
+const ENROLLMENT_EXECUTION_OUTCOMES = new Set(['pending', 'success', 'error', 'stopped'])
+
+function normalizeLogOutcome(entry = {}) {
+  const explicit = cleanString(entry.outcome).toLowerCase()
+  if (LOG_OUTCOMES.has(explicit)) return explicit
+
+  const status = cleanString(entry.status).toLowerCase()
+  if (status === 'error' || status === 'failed' || status === 'failure') return 'error'
+  if (status === 'waiting' || status === 'retrying') return 'waiting'
+  if (status === 'skipped' || status === 'omitted') return 'skipped'
+  if (status === 'info' || status === 'exited' || status === 'paused') return 'info'
+  return 'success'
+}
+
+function logErrorMessage(entry = {}) {
+  return cleanString(entry.errorMessage || entry.error || (normalizeLogOutcome(entry) === 'error' ? entry.detail : ''))
+}
+
+function hasUnresolvedExecutionErrors(log = []) {
+  return (Array.isArray(log) ? log : []).some((entry) =>
+    normalizeLogOutcome(entry) === 'error' && !entry.resolved && !entry.resolvedAt
+  )
+}
+
+function latestExecutionError(log = [], { unresolvedOnly = false } = {}) {
+  const entries = Array.isArray(log) ? log : []
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (normalizeLogOutcome(entry) !== 'error') continue
+    if (unresolvedOnly && (entry.resolved || entry.resolvedAt)) continue
+    const message = logErrorMessage(entry)
+    if (message) return message
+  }
+  return null
+}
+
+function finalizeEnrollmentOutcome(enrollment) {
+  const status = cleanString(enrollment.status).toLowerCase()
+  if (['active', 'waiting', 'paused'].includes(status)) {
+    enrollment.executionOutcome = 'pending'
+    enrollment.lastError = latestExecutionError(enrollment.log, { unresolvedOnly: true })
+    return enrollment.executionOutcome
+  }
+
+  if (hasUnresolvedExecutionErrors(enrollment.log)) {
+    enrollment.executionOutcome = 'error'
+    enrollment.lastError = latestExecutionError(enrollment.log, { unresolvedOnly: true })
+    return enrollment.executionOutcome
+  }
+
+  if (status === 'completed' || enrollment.executionOutcome === 'success') {
+    enrollment.executionOutcome = 'success'
+    enrollment.lastError = null
+    return enrollment.executionOutcome
+  }
+
+  if (status === 'exited') {
+    enrollment.executionOutcome = 'stopped'
+    enrollment.lastError = null
+    return enrollment.executionOutcome
+  }
+
+  if (!ENROLLMENT_EXECUTION_OUTCOMES.has(enrollment.executionOutcome)) {
+    enrollment.executionOutcome = 'pending'
+  }
+  return enrollment.executionOutcome
+}
+
 function addLog(enrollment, entry) {
-  enrollment.log.push({ at: nowIso(), ...entry })
+  const outcome = normalizeLogOutcome(entry)
+  const errorMessage = logErrorMessage({ ...entry, outcome })
+  const detail = cleanString(entry.detail || errorMessage)
+  const logEntry = {
+    ...entry,
+    id: entry.id || makeId('exec'),
+    at: entry.at || nowIso(),
+    status: entry.status || (outcome === 'success' ? 'ok' : outcome),
+    outcome,
+    ...(detail ? { detail } : {}),
+    ...(errorMessage ? { errorMessage } : {})
+  }
+  if (!Array.isArray(enrollment.log)) enrollment.log = []
+  enrollment.log.push(logEntry)
   if (enrollment.log.length > 200) enrollment.log = enrollment.log.slice(-200)
+
+  if (outcome === 'error' && !logEntry.retryable) {
+    enrollment.executionOutcome = 'error'
+  }
+  if (outcome === 'error' && errorMessage) enrollment.lastError = errorMessage
+}
+
+function executionOutcomeForResult(result = {}) {
+  const explicit = cleanString(result.outcome).toLowerCase()
+  if (LOG_OUTCOMES.has(explicit)) return explicit
+  if (cleanString(result.output?.status).toLowerCase() === 'error' || result.output?.error) return 'error'
+  if (result.skipped) return 'skipped'
+  if (result.wait) return 'waiting'
+  return 'success'
+}
+
+function logStatusForOutcome(outcome) {
+  if (outcome === 'success') return 'ok'
+  if (outcome === 'waiting') return 'waiting'
+  if (outcome === 'skipped') return 'skipped'
+  if (outcome === 'info') return 'info'
+  return 'error'
+}
+
+function resolveRetryErrors(enrollment, nodeId) {
+  const resolvedAt = nowIso()
+  enrollment.log = (enrollment.log || []).map((entry) => {
+    if (
+      entry.nodeId === nodeId &&
+      normalizeLogOutcome(entry) === 'error' &&
+      entry.retryable &&
+      !entry.resolved &&
+      !entry.resolvedAt
+    ) {
+      return { ...entry, resolved: true, resolvedAt }
+    }
+    return entry
+  })
 }
 
 function getPersistentRuntimeContext(ctx = {}, current = {}) {
@@ -2347,6 +2471,8 @@ async function createEnrollment(automation, contact, ctx) {
     status: 'active',
     currentNodeId: 'start',
     log: [],
+    executionOutcome: 'pending',
+    lastError: null,
     resumeAt: null,
     waitKind: null,
     context: {
@@ -2402,7 +2528,8 @@ async function createEnrollment(automation, contact, ctx) {
   // construido, para no procesar una inscripción fantasma con id que no está en la tabla.
   if (result && result.changes === 0 && enrollment.contactId) {
     const existing = await db.get(
-      `SELECT id, automation_id, contact_id, contact_name, status, current_node_id, log, resume_at, wait_kind, context
+      `SELECT id, automation_id, contact_id, contact_name, status, current_node_id, log,
+              execution_outcome, last_error, resume_at, wait_kind, context
          FROM automation_enrollments
         WHERE automation_id = ? AND contact_id = ?
         ORDER BY entered_at ASC, id ASC
@@ -2418,6 +2545,8 @@ async function createEnrollment(automation, contact, ctx) {
         status: existing.status || 'active',
         currentNodeId: existing.current_node_id || 'start',
         log: parseJson(existing.log, []),
+        executionOutcome: existing.execution_outcome || 'pending',
+        lastError: existing.last_error || null,
         resumeAt: existing.resume_at || null,
         waitKind: existing.wait_kind || null,
         context: parseJson(existing.context, {})
@@ -4785,6 +4914,7 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
       if (retryAttempts < RETRY_MAX_ATTEMPTS) {
         const nextAttempt = retryAttempts + 1
         const backoffMs = RETRY_BACKOFF_MS[Math.min(retryAttempts, RETRY_BACKOFF_MS.length - 1)]
+        const errorMessage = error instanceof Error ? error.message : String(error || 'Error desconocido')
         enrollment.context = {
           ...enrollment.context,
           ...getPersistentRuntimeContext(ctx, enrollment.context),
@@ -4799,14 +4929,27 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
           nodeId: node.id,
           label: nodeLabel(node),
           status: 'waiting',
-          detail: `Error temporal (${error.message}); reintento ${nextAttempt}/${RETRY_MAX_ATTEMPTS} programado`
+          outcome: 'error',
+          errorMessage,
+          retryable: true,
+          retryAttempt: nextAttempt,
+          detail: `Error temporal (${errorMessage}); reintento ${nextAttempt}/${RETRY_MAX_ATTEMPTS} programado`
         })
-        logger.warn(`[Automatizaciones] Error temporal en paso ${node.type}, reintento ${nextAttempt}/${RETRY_MAX_ATTEMPTS}: ${error.message}`)
+        logger.warn(`[Automatizaciones] Error temporal en paso ${node.type}, reintento ${nextAttempt}/${RETRY_MAX_ATTEMPTS}: ${errorMessage}`)
         break
       }
-      addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'error', detail: `${error.message} (sin más reintentos)` })
+      const errorMessage = error instanceof Error ? error.message : String(error || 'Error desconocido')
+      addLog(enrollment, {
+        nodeId: node.id,
+        label: nodeLabel(node),
+        status: 'error',
+        outcome: 'error',
+        errorMessage,
+        retryable: false,
+        detail: `${errorMessage} (sin más reintentos)`
+      })
       enrollment.status = 'exited'
-      logger.warn(`[Automatizaciones] Error en paso ${node.type} tras ${retryAttempts} reintentos: ${error.message}`)
+      logger.warn(`[Automatizaciones] Error en paso ${node.type} tras ${retryAttempts} reintentos: ${errorMessage}`)
       break
     }
 
@@ -4814,11 +4957,18 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
     // para que un fallo posterior empiece de cero y no herede intentos de otro nodo.
     if (enrollment.context?.__retryAttempts || enrollment.context?.__retryNodeId) {
       const { __retryAttempts, __retryNodeId, ...restContext } = enrollment.context
+      resolveRetryErrors(enrollment, __retryNodeId)
       enrollment.context = restContext
     }
 
     if (result.wait) {
-      addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'waiting', detail: result.detail })
+      addLog(enrollment, {
+        nodeId: node.id,
+        label: nodeLabel(node),
+        status: 'waiting',
+        outcome: 'waiting',
+        detail: result.detail
+      })
       enrollment.status = 'waiting'
       enrollment.waitKind = result.wait.kind
       enrollment.resumeAt = result.wait.resumeAt
@@ -4838,15 +4988,28 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
 
     exposeNodeOutput(ctx, node, result)
 
+    const outcome = executionOutcomeForResult(result)
     addLog(enrollment, {
       nodeId: node.id,
       label: nodeLabel(node),
-      status: result.skipped ? 'skipped' : 'ok',
-      detail: result.detail
+      status: logStatusForOutcome(outcome),
+      outcome,
+      detail: result.detail,
+      ...(outcome === 'error'
+        ? {
+            errorMessage: cleanString(result.detail || result.output?.error || 'El paso reportó un error'),
+            errorDetail: cleanString(result.output?.error || ''),
+            errorCode: result.output?.status_code || null,
+            retryable: false
+          }
+        : {})
     })
 
     if (result.stop) {
       enrollment.status = 'exited'
+      if (outcome !== 'error' && !hasUnresolvedExecutionErrors(enrollment.log)) {
+        enrollment.executionOutcome = 'success'
+      }
       break
     }
 
@@ -5065,6 +5228,7 @@ async function getAutomationEnrollmentRow(id) {
 }
 
 function mapEnrollmentResult(enrollment) {
+  finalizeEnrollmentOutcome(enrollment)
   return {
     id: enrollment.id,
     automationId: enrollment.automationId,
@@ -5073,6 +5237,8 @@ function mapEnrollmentResult(enrollment) {
     status: enrollment.status || 'active',
     currentNodeId: enrollment.currentNodeId || null,
     log: enrollment.log || [],
+    executionOutcome: enrollment.executionOutcome || 'pending',
+    lastError: enrollment.lastError || null,
     resumeAt: enrollment.resumeAt || null,
     waitKind: enrollment.waitKind || null,
     enteredAt: enrollment.enteredAt || null,
@@ -5089,6 +5255,8 @@ function mapEnrollmentRow(row) {
     status: row.status || 'active',
     currentNodeId: row.current_node_id || 'start',
     log: parseJson(row.log, []),
+    executionOutcome: row.execution_outcome || null,
+    lastError: row.last_error || null,
     resumeAt: row.resume_at || null,
     waitKind: row.wait_kind || null,
     context: parseJson(row.context, {}),
@@ -5919,6 +6087,19 @@ export async function processScheduledContactEnrollments(referenceDate = new Dat
       )
       if (Number(claimed?.changes || 0) === 0) continue
 
+      const job = { log: parseJson(row.log, []) }
+      addLog(job, {
+        status: 'processing',
+        outcome: 'waiting',
+        detail: 'Inscripción programada tomada por el motor'
+      })
+      await db.run(
+        `UPDATE automation_contact_enrollment_jobs
+         SET log = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [JSON.stringify(job.log), row.id]
+      )
+
       try {
         const enrollment = await enrollContactManually({
           automationId: row.automation_id,
@@ -5927,21 +6108,34 @@ export async function processScheduledContactEnrollments(referenceDate = new Dat
           scheduledFor: row.scheduled_at
         })
 
+        addLog(job, {
+          status: 'ok',
+          outcome: 'success',
+          detail: `Inscripción creada correctamente (${enrollment.id})`
+        })
+
         await db.run(
           `UPDATE automation_contact_enrollment_jobs
-           SET status = 'completed', enrollment_id = ?, error = NULL,
+           SET status = 'completed', enrollment_id = ?, error = NULL, log = ?,
                executed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`,
-          [enrollment.id, row.id]
+          [enrollment.id, JSON.stringify(job.log), row.id]
         )
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error || 'No se pudo agregar el contacto a la automatización')
+        addLog(job, {
+          status: 'error',
+          outcome: 'error',
+          errorMessage,
+          detail: `No se pudo ejecutar la inscripción programada: ${errorMessage}`
+        })
         await db.run(
           `UPDATE automation_contact_enrollment_jobs
-           SET status = 'error', error = ?, executed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           SET status = 'error', error = ?, log = ?, executed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`,
-          [error.message || 'No se pudo agregar el contacto a la automatización', row.id]
+          [errorMessage, JSON.stringify(job.log), row.id]
         )
-        logger.warn(`[Automatizaciones] No se pudo ejecutar inscripción programada ${row.id}: ${error.message}`)
+        logger.warn(`[Automatizaciones] No se pudo ejecutar inscripción programada ${row.id}: ${errorMessage}`)
       }
     }
   } catch (error) {

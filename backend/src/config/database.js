@@ -6318,13 +6318,21 @@ async function initTables() {
         status TEXT DEFAULT 'active',
         current_node_id TEXT,
         log ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
+        execution_outcome TEXT DEFAULT 'pending',
+        last_error TEXT,
         entered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_automation_enrollments_auto ON automation_enrollments(automation_id, status)')
     // Columnas de espera del motor (tablas creadas antes de este cambio)
-    for (const column of ['resume_at DATETIME', 'wait_kind TEXT', "context TEXT DEFAULT '{}'"]) {
+    for (const column of [
+      'resume_at DATETIME',
+      'wait_kind TEXT',
+      "context TEXT DEFAULT '{}'",
+      "execution_outcome TEXT DEFAULT 'pending'",
+      'last_error TEXT'
+    ]) {
       await db.run(`ALTER TABLE automation_enrollments ADD COLUMN ${column}`).catch(() => {})
     }
 
@@ -6375,12 +6383,14 @@ async function initTables() {
         status TEXT DEFAULT 'scheduled',
         enrollment_id TEXT,
         error TEXT,
+        log TEXT DEFAULT '[]',
         created_by TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         executed_at DATETIME
       )
     `)
+    await db.run("ALTER TABLE automation_contact_enrollment_jobs ADD COLUMN log TEXT DEFAULT '[]'").catch(() => {})
     await db.run('CREATE INDEX IF NOT EXISTS idx_automation_contact_jobs_contact ON automation_contact_enrollment_jobs(contact_id, status, scheduled_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_automation_contact_jobs_due ON automation_contact_enrollment_jobs(status, scheduled_at)')
 

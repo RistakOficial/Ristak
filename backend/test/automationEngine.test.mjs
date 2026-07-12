@@ -378,6 +378,72 @@ test('testWebhookAction arma el body con campos sin escribir JSON', async () => 
   }
 })
 
+test('un webhook con respuesta de error queda marcado en la inscripción y en el log', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_webhook_error_log_${suffix}`
+  const contactId = `contact_webhook_error_log_${suffix}`
+  const server = http.createServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      res.statusCode = 502
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ error: 'upstream_unavailable' }))
+    })
+  })
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const flow = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          label: 'Cuando...',
+          config: { triggers: [{ id: 'trigger-contact-created', type: 'trigger-contact-created', config: {} }] }
+        },
+        {
+          id: 'webhook',
+          type: 'action-webhook',
+          label: 'Webhook de prueba',
+          config: { url: `http://127.0.0.1:${port}/failure`, method: 'POST', body: '{}', timeout: 5 }
+        }
+      ],
+      edges: [{ id: 'start-webhook', sourceNodeId: 'start', targetNodeId: 'webhook' }],
+      settings: {}
+    }
+
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [contactId, `+1555${Date.now().toString().slice(-8)}`, `error-${suffix}@example.com`, 'Contacto con error', 'Error', '{}']
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test log webhook con error', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('contact-created', { contactId })
+
+    const enrollment = await db.get('SELECT execution_outcome, last_error, status, log FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    const log = JSON.parse(enrollment.log)
+    const webhookLog = log.find((entry) => entry.nodeId === 'webhook')
+    assert.equal(enrollment.execution_outcome, 'error')
+    assert.match(enrollment.last_error, /Webhook respondi[oó] 502/)
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(webhookLog.outcome, 'error')
+    assert.equal(webhookLog.errorCode, 502)
+    assert.match(webhookLog.errorMessage, /Webhook respondi[oó] 502/)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
 test('testWebhookAction acepta headers en JSON cuando el usuario cambia de modo', async () => {
   let received = { headers: {}, body: {} }
   const server = http.createServer((req, res) => {
@@ -3228,10 +3294,13 @@ test('inscripción manual programada se ejecuta cuando llega su fecha', async ()
     const job = await db.get('SELECT * FROM automation_contact_enrollment_jobs WHERE id = ?', [jobId])
     assert.equal(job.status, 'completed')
     assert.ok(job.enrollment_id)
+    const jobLog = JSON.parse(job.log || '[]')
+    assert.equal(jobLog.some((entry) => entry.outcome === 'success' && /Inscripción creada correctamente/.test(entry.detail || '')), true)
 
     const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [job.enrollment_id])
     assert.equal(enrollment.status, 'completed')
     assert.equal(enrollment.contact_id, contactId)
+    assert.equal(enrollment.execution_outcome, 'success')
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automation_contact_enrollment_jobs WHERE automation_id = ?', [automationId])
