@@ -791,14 +791,17 @@ export async function claimCentralOAuthHandoff({ provider, handoffToken } = {}) 
  * Installer. La instalación sólo recibe configuración pública y, al terminar,
  * reclama un handoff de un uso con el BISU token.
  */
-export async function getCentralMetaOAuthStatus() {
-  const data = await callLicenseServer('/api/license/meta/status', {})
+export async function getCentralMetaOAuthStatus({ integrationKind = '' } = {}) {
+  const data = await callLicenseServer('/api/license/meta/status', integrationKind
+    ? { integration_kind: integrationKind }
+    : {})
   return data.meta || data.connection || data || {}
 }
 
-export async function createCentralMetaOAuthConnectUrl({ returnPath = '/settings/meta-ads/token' } = {}) {
+export async function createCentralMetaOAuthConnectUrl({ returnPath = '/settings/meta-ads/token', integrationKind = '' } = {}) {
   const data = await callLicenseServer('/api/license/meta/connect-url', {
-    return_path: returnPath
+    return_path: returnPath,
+    ...(integrationKind ? { integration_kind: integrationKind } : {})
   })
   const meta = data.meta || data || {}
   return {
@@ -807,11 +810,12 @@ export async function createCentralMetaOAuthConnectUrl({ returnPath = '/settings
   }
 }
 
-export async function connectCentralMetaOAuth({ code = '', configId = '', returnPath = '/settings/meta-ads/token' } = {}) {
+export async function connectCentralMetaOAuth({ code = '', configId = '', returnPath = '/settings/meta-ads/token', integrationKind = '' } = {}) {
   const data = await callLicenseServer('/api/license/meta/connect', {
     code,
     config_id: configId,
-    return_path: returnPath
+    return_path: returnPath,
+    ...(integrationKind ? { integration_kind: integrationKind } : {})
   })
   return {
     meta: data.meta || {},
@@ -827,6 +831,7 @@ export async function disconnectCentralWhatsAppMeta() {
 
 export async function updateCentralMetaWebhookSubscription({
   action = 'register',
+  integrationKind = '',
   connectionId = '',
   pageId = '',
   instagramAccountId = '',
@@ -834,6 +839,7 @@ export async function updateCentralMetaWebhookSubscription({
 } = {}) {
   const data = await callLicenseServer('/api/license/meta/webhook-subscription', {
     action: action === 'unregister' ? 'unregister' : 'register',
+    ...(integrationKind ? { integration_kind: integrationKind } : {}),
     connection_id: connectionId || null,
     page_id: pageId || null,
     instagram_account_id: instagramAccountId || null,
@@ -842,8 +848,25 @@ export async function updateCentralMetaWebhookSubscription({
   return data.meta || data.subscription || data || {}
 }
 
-export async function disconnectCentralMetaOAuth() {
-  const data = await callLicenseServer('/api/license/meta/disconnect', {})
+export async function finalizeCentralMetaOAuth({
+  integrationKind,
+  connectionId,
+  adAccountId,
+  datasetId = ''
+} = {}) {
+  const data = await callLicenseServer('/api/license/meta/finalize', {
+    integration_kind: integrationKind,
+    connection_id: connectionId,
+    ad_account_id: adAccountId,
+    dataset_id: datasetId || null
+  })
+  return data.meta || data.connection || data || {}
+}
+
+export async function disconnectCentralMetaOAuth({ integrationKind = '' } = {}) {
+  const data = await callLicenseServer('/api/license/meta/disconnect', integrationKind
+    ? { integration_kind: integrationKind }
+    : {})
   return {
     disconnected: data.disconnected === true,
     meta: data.meta || null

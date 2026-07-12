@@ -9,7 +9,7 @@ import { sendPaymentNotification } from './pushNotificationsService.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { NO_TRACK_REASON, shouldSkipTracking } from '../utils/noTracking.js'
-import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
+import { describeMetaCapiResponseError, safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { getActiveMetaTestEventCode, isMetaTestModeActive } from '../utils/metaTestCode.js'
 import {
   mergeContactCustomFields,
@@ -26834,7 +26834,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     const responsePayload = await response.json().catch(() => ({}))
 
     if (!response.ok || responsePayload?.error) {
-      throw new Error(responsePayload?.error?.message || `Meta CAPI ${response.status}`)
+      throw new Error(describeMetaCapiResponseError(responsePayload, response.status))
     }
 
     await logMetaEvent({
@@ -26952,7 +26952,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
     const responsePayload = await response.json().catch(() => ({}))
 
     if (!response.ok || responsePayload?.error) {
-      throw new Error(responsePayload?.error?.message || `Meta CAPI ${response.status}`)
+      throw new Error(describeMetaCapiResponseError(responsePayload, response.status))
     }
 
     await logMetaEvent({
@@ -27118,7 +27118,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     const responsePayload = await response.json().catch(() => ({}))
 
     if (!response.ok || responsePayload?.error) {
-      throw new Error(responsePayload?.error?.message || `Meta CAPI ${response.status}`)
+      throw new Error(describeMetaCapiResponseError(responsePayload, response.status))
     }
 
     await logMetaEvent({
@@ -27269,7 +27269,7 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
     const responsePayload = await response.json().catch(() => ({}))
 
     if (!response.ok || responsePayload?.error) {
-      throw new Error(responsePayload?.error?.message || `Meta CAPI ${response.status}`)
+      throw new Error(describeMetaCapiResponseError(responsePayload, response.status))
     }
 
     await logMetaEvent({

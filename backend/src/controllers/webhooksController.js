@@ -44,7 +44,7 @@ import {
   verifyInstallerSignedRequest
 } from '../services/installerSignatureService.js';
 import { markMetaOAuthRelayReceived } from '../services/metaOAuthService.js';
-import { getMetaConfig } from '../services/metaAdsService.js';
+import { getMetaSocialConfig } from '../services/metaAdsService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -212,7 +212,7 @@ export const handleMetaInstallerRelayWebhook = async (req, res) => {
       unsupported.code = 'META_INSTALLER_RELAY_OBJECT_UNSUPPORTED';
       throw unsupported;
     }
-    const config = await getMetaConfig().catch(() => null);
+    const config = await getMetaSocialConfig().catch(() => null);
     const expectedId = objectType === 'instagram'
       ? cleanString(config?.instagram_account_id)
       : cleanString(config?.page_id);

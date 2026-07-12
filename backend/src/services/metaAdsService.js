@@ -5,6 +5,11 @@ import { encrypt, decrypt, isEncrypted } from '../utils/encryption.js'
 import { API_URLS, META_INSIGHTS_FIELDS, PAGINATION } from '../config/constants.js'
 import { splitDateRangeIntoMonths, formatDate, daysAgo } from '../utils/dateUtils.js'
 import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
+import {
+  getActiveMetaOAuthIntegration,
+  mergeMetaAdsOAuthConfig,
+  mergeMetaSocialOAuthConfig
+} from './metaOAuthIntegrationConfigService.js'
 
 // Variable global para trackear el estado de sincronización
 let syncProgress = {
@@ -51,7 +56,7 @@ function normalizeMetaProfileId(value) {
   return String(value || '').trim()
 }
 
-async function syncMetaSocialChannelDefaults({
+export async function syncMetaSocialChannelDefaults({
   previousPageId = '',
   nextPageId = '',
   previousInstagramAccountId = '',
@@ -540,7 +545,7 @@ async function decryptMetaConfigSecret(config, column, label) {
   }
 }
 
-export async function getMetaConfig() {
+export async function getLegacyMetaConfig() {
   try {
     const config = await db.get('SELECT * FROM meta_config LIMIT 1')
 
@@ -568,6 +573,32 @@ export async function getMetaConfig() {
     logger.error('Error obteniendo configuración de Meta:', error.message)
     throw error
   }
+}
+
+/**
+ * Configuración operativa de Ads/CAPI. Una conexión OAuth Ads nueva tiene
+ * prioridad sobre meta_config. Los activos Social permanecen fuera de este
+ * objeto para no fingir que el token Ads tiene tareas de Página.
+ */
+export async function getMetaConfig() {
+  const [legacy, ads] = await Promise.all([
+    getLegacyMetaConfig(),
+    getActiveMetaOAuthIntegration('ads')
+  ])
+  return mergeMetaAdsOAuthConfig(legacy, ads)
+}
+
+/**
+ * Configuración operativa de Messenger, Instagram y comentarios. Social nunca
+ * hereda el token Ads; mientras no exista OAuth Social conserva el flujo
+ * combinado/manual de meta_config como fallback.
+ */
+export async function getMetaSocialConfig() {
+  const [legacy, social] = await Promise.all([
+    getLegacyMetaConfig(),
+    getActiveMetaOAuthIntegration('social')
+  ])
+  return mergeMetaSocialOAuthConfig(legacy, social)
 }
 
 /**
@@ -614,7 +645,7 @@ function buildMetaDeveloperUseCaseUrl({ appId, businessId, useCase, selectedTab,
  * Messenger e Instagram en Meta Developers, sin exponer tokens al frontend.
  */
 export async function getMetaDeveloperSetup() {
-  const config = await getMetaConfig()
+  const config = await getMetaSocialConfig()
   if (!config?.access_token) {
     return {
       configured: false,
@@ -651,7 +682,10 @@ export async function getMetaDeveloperSetup() {
     }
   }
 
-  if (appId !== (normalizeId(config.app_id) || '') || businessId !== (normalizeId(config.meta_business_id) || '')) {
+  if (
+    config.oauth_integration_kind !== 'social' &&
+    (appId !== (normalizeId(config.app_id) || '') || businessId !== (normalizeId(config.meta_business_id) || ''))
+  ) {
     await db.run(
       `UPDATE meta_config
        SET app_id = ?, meta_business_id = ?, updated_at = CURRENT_TIMESTAMP
@@ -685,16 +719,21 @@ export async function getMetaDeveloperSetup() {
 }
 
 export function resolveMetaCapiAccessToken(metaConfig = {}) {
+  if (metaConfig?.oauth_integration_kind === 'ads') {
+    const parsedScopes = parseJsonConfig(metaConfig.oauth_granted_scopes_json, [])
+    const grantedScopes = new Set(Array.isArray(parsedScopes) ? parsedScopes : [])
+    if (!metaConfig?.pixel_id || !grantedScopes.has('ads_read')) return ''
+  }
   return normalizeId(metaConfig?.access_token || process.env.META_ACCESS_TOKEN) || ''
 }
 
 export async function hasConnectedMetaDatasetConfig() {
-  const metaConfig = await db.get('SELECT pixel_id, access_token FROM meta_config LIMIT 1').catch(error => {
+  const metaConfig = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer configuración Meta para defaults de eventos: ${error.message}`)
     return null
   })
   const datasetId = normalizeId(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
-  const accessToken = normalizeId(metaConfig?.access_token || process.env.META_ACCESS_TOKEN)
+  const accessToken = normalizeId(resolveMetaCapiAccessToken(metaConfig))
   return Boolean(datasetId && accessToken)
 }
 

@@ -2,7 +2,7 @@ import fetch from 'node-fetch'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
-import { getMetaConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
+import { getMetaConfig, getMetaSocialConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
@@ -12,7 +12,7 @@ import { parseContactCustomFields } from '../utils/contactCustomFields.js'
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { applyWhatsAppQrPaidLabelForContact } from './whatsappQrService.js'
-import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
+import { describeMetaCapiResponseError, safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import {
   resolveConversionAttribution,
   persistPaymentConversionAttribution,
@@ -1101,10 +1101,16 @@ async function getConfiguredEventName(key, fallback) {
 }
 
 async function getMetaCapiConfig() {
-  const metaConfig = await getMetaConfig().catch(error => {
-    logger.warn(`No se pudo leer configuración de Meta para WhatsApp CAPI: ${error.message}`)
-    return null
-  })
+  const [metaConfig, socialConfig] = await Promise.all([
+    getMetaConfig().catch(error => {
+      logger.warn(`No se pudo leer configuración de Meta Ads para CAPI: ${error.message}`)
+      return null
+    }),
+    getMetaSocialConfig().catch(error => {
+      logger.warn(`No se pudo leer configuración de Meta Social para CAPI: ${error.message}`)
+      return null
+    })
+  ])
 
   const datasetId = cleanString(
     metaConfig?.pixel_id ||
@@ -1118,7 +1124,7 @@ async function getMetaCapiConfig() {
   const testEventCode = cleanString(await getActiveMetaTestEventCode())
 
   const pageId = cleanString(
-    metaConfig?.page_id ||
+    socialConfig?.page_id ||
     process.env.META_PAGE_ID ||
     process.env.FACEBOOK_PAGE_ID
   )
@@ -1386,7 +1392,7 @@ async function postEventToMeta({ datasetId, accessToken, appSecretProof = '', pa
   }
 
   if (!response.ok || responsePayload?.error) {
-    const message = responsePayload?.error?.message || `Meta CAPI error ${response.status}`
+    const message = describeMetaCapiResponseError(responsePayload, response.status)
     const error = new Error(message)
     error.responsePayload = responsePayload
     throw error

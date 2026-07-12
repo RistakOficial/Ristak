@@ -941,11 +941,7 @@ async function getMetaNotifications({ liveMetaCheck = true } = {}) {
 
   if (!await tableExists('meta_config')) return notifications
 
-  const row = await db.get(`
-    SELECT ad_account_id, token_expires_at, updated_at
-    FROM meta_config
-    LIMIT 1
-  `)
+  const row = await getMetaConfig().catch(() => null)
 
   const disconnected = cleanString(await getAppConfig('meta_config_disconnected')) === '1'
   if (disconnected && !row?.ad_account_id) return notifications

@@ -68,18 +68,52 @@ export async function isHighLevelConnected() {
   return Boolean(row?.location_id && row?.api_token)
 }
 
-export async function isMetaConnected() {
+async function hasActiveSplitMetaConnection(integrationKind, requiredAssetColumn) {
+  const row = await db.get(
+    `SELECT access_token, ${requiredAssetColumn} AS asset_id
+     FROM meta_oauth_integrations
+     WHERE integration_kind = ? AND status = 'active' AND validated = 1
+       AND access_token IS NOT NULL AND access_token != ''
+       AND ${requiredAssetColumn} IS NOT NULL AND ${requiredAssetColumn} != ''
+     LIMIT 1`,
+    [integrationKind]
+  ).catch(error => {
+    if (/no such table|does not exist/i.test(error.message || '')) return null
+    throw error
+  })
+  return Boolean(row?.access_token && row?.asset_id)
+}
+
+async function hasLegacyMetaConnection(requiredAssetColumn) {
   const disconnected = cleanString(await getAppConfig('meta_config_disconnected')).toLowerCase() === '1'
   if (disconnected) return false
 
   const row = await db.get(
-    `SELECT ad_account_id, access_token
+    `SELECT ${requiredAssetColumn} AS asset_id, access_token
      FROM meta_config
      WHERE access_token IS NOT NULL AND access_token != ''
-       AND ad_account_id IS NOT NULL AND ad_account_id != ''
+       AND ${requiredAssetColumn} IS NOT NULL AND ${requiredAssetColumn} != ''
      LIMIT 1`
   ).catch(() => null)
-  return Boolean(row?.access_token && row?.ad_account_id)
+  return Boolean(row?.access_token && row?.asset_id)
+}
+
+export async function isMetaAdsConnected() {
+  if (await hasActiveSplitMetaConnection('ads', 'ad_account_id')) return true
+  return hasLegacyMetaConnection('ad_account_id')
+}
+
+export async function isMetaSocialConnected() {
+  if (await hasActiveSplitMetaConnection('social', 'page_id')) return true
+  return hasLegacyMetaConnection('page_id')
+}
+
+export async function isMetaConnected() {
+  const [ads, social] = await Promise.all([
+    isMetaAdsConnected(),
+    isMetaSocialConnected()
+  ])
+  return ads || social
 }
 
 export async function isStripeConnected() {

@@ -23,7 +23,7 @@ import { startConversationalAgentTestPaymentsCleanup } from './jobs/conversation
 import { startConversationalAppointmentTestCleanupCron } from './jobs/conversationalAppointmentTestCleanup.cron.js'
 import { startConversationalAgentTestAssignmentsCleanup } from './jobs/conversationalAgentTestAssignmentsCleanup.js'
 import { syncRegisteredIntegrationCrons } from './jobs/integrationCronRegistry.js'
-import { isMetaConnected } from './services/integrationConnectionStateService.js'
+import { isMetaConnected, isMetaSocialConnected } from './services/integrationConnectionStateService.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { runVersionedMigrations } from './startup/runMigrations.js'
@@ -33,6 +33,7 @@ import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxon
 import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
 import { startMetaOAuthPendingSessionCleanupScheduler } from './services/metaOAuthService.js'
+import { startMetaOAuthIntegrationCleanupScheduler } from './services/metaOAuthIntegrationService.js'
 
 // Garantiza un ffmpeg con libopus en CUALQUIER runtime (Render nativo O Docker):
 // apunta FFMPEG_PATH al binario estático empaquetado. Toda la transcodificación
@@ -516,6 +517,7 @@ async function startRuntimeServices() {
   // Cleanup de sistema: compensa subscribed_apps/relay de OAuth abandonados y
   // garantiza TTL de secretos aunque nadie vuelva a abrir Configuración.
   startMetaOAuthPendingSessionCleanupScheduler()
+  startMetaOAuthIntegrationCleanupScheduler()
 
   runStartupDrainTask(
     'startup:media-runtime-config',
@@ -552,9 +554,9 @@ async function startRuntimeServices() {
   runStartupDrainTask(
     'startup:meta-page-messaging-subscription',
     async () => {
-      if (!(await isMetaConnected())) {
-        logger.info('Suscripción Meta de Messenger omitida: Meta no está conectado')
-        return { skipped: true, reason: 'meta-disconnected' }
+      if (!(await isMetaSocialConnected())) {
+        logger.info('Suscripción Meta de Messenger omitida: Meta Social no está conectado')
+        return { skipped: true, reason: 'meta-social-disconnected' }
       }
 
       const { reconcileMetaPageMessagingSubscription } = await import('./services/metaSocialMessagingService.js')

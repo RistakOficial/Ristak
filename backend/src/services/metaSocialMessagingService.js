@@ -6,7 +6,7 @@ import { API_URLS } from '../config/constants.js'
 import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { logger } from '../utils/logger.js'
 import { formatContactName } from '../utils/contactNameFormatter.js'
-import { getMetaConfig } from './metaAdsService.js'
+import { getMetaSocialConfig } from './metaAdsService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { claimInboundChatMessage } from './chatReadStateService.js'
@@ -1297,7 +1297,7 @@ async function resolveMetaAppSecretProof(token, explicitProof = '') {
     if (cleanToken && cleanToken === oauthProofCache.pageToken) return oauthProofCache.pageProof
     if (cleanToken && cleanToken === oauthProofCache.baseToken) return oauthProofCache.baseProof
   }
-  const config = await getMetaConfig().catch(() => null)
+  const config = await getMetaSocialConfig().catch(() => null)
   if (!['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode))) return ''
   oauthProofCache = {
     baseToken: cleanString(config?.access_token),
@@ -1390,7 +1390,7 @@ const PAGE_TOKEN_TTL_MS = 30 * 60 * 1000
 let pageTokenCache = { pageId: '', sourceTokenHash: '', token: '', at: 0 }
 
 export async function resolveMetaPageAccessToken({ config, forceRefresh = false, platform = 'messenger' } = {}) {
-  const cfg = config || await getMetaConfig().catch(() => null)
+  const cfg = config || await getMetaSocialConfig().catch(() => null)
   const pageId = cleanString(cfg?.page_id)
   const isOAuth = ['oauth_bisu', 'oauth_user'].includes(cleanString(cfg?.connection_mode))
   if (isOAuth) {
@@ -1873,7 +1873,7 @@ export async function syncMetaSocialConversationHistory({
     }
   }
 
-  const cfg = config || await getMetaConfig()
+  const cfg = config || await getMetaSocialConfig()
   const businessId = getMetaSocialHistoryBusinessId(cleanPlatform, cfg || {})
   if (!businessId) {
     return {
@@ -2087,7 +2087,7 @@ async function syncPostsOnce(platform, config, { maxPages = Infinity } = {}) {
 
 export async function listMetaSocialPosts({ platform = 'facebook', search = '', limit = 25, offset = 0, refresh = false } = {}) {
   const cleanPlatform = normalizeSocialPostPlatform(platform)
-  const config = await getMetaConfig().catch(() => null)
+  const config = await getMetaSocialConfig().catch(() => null)
   const businessId = cleanPlatform === 'instagram'
     ? cleanString(config?.instagram_account_id)
     : cleanString(config?.page_id)
@@ -2167,7 +2167,7 @@ export async function listMetaSocialPosts({ platform = 'facebook', search = '', 
  * webhook. Es idempotente: se puede llamar cuantas veces se quiera.
  */
 export async function ensureMetaPageMessagingSubscription({ config: explicitConfig = null } = {}) {
-  const config = explicitConfig || await getMetaConfig().catch(() => null)
+  const config = explicitConfig || await getMetaSocialConfig().catch(() => null)
   const pageId = cleanString(config?.page_id)
   if (!pageId) throw createMetaSocialMessageError('Falta seleccionar la Página de Facebook en Meta Ads.', 409)
 
@@ -2185,7 +2185,7 @@ export async function ensureMetaPageMessagingSubscription({ config: explicitConf
 
 /** Revierte únicamente la suscripción de la app representada por el token. */
 export async function removeMetaPageMessagingSubscription({ config: explicitConfig = null } = {}) {
-  const config = explicitConfig || await getMetaConfig().catch(() => null)
+  const config = explicitConfig || await getMetaSocialConfig().catch(() => null)
   const pageId = cleanString(config?.page_id)
   if (!pageId) return { pageId: '', unsubscribed: false, skipped: true }
 
@@ -2223,7 +2223,7 @@ export async function reconcileMetaPageMessagingSubscription({
 
 /** Lee la suscripción actual de la Página (para verificar/diagnosticar). */
 export async function getMetaPageMessagingSubscription() {
-  const config = await getMetaConfig().catch(() => null)
+  const config = await getMetaSocialConfig().catch(() => null)
   const pageId = cleanString(config?.page_id)
   if (!pageId) return { pageId: '', subscribed: false, apps: [] }
 
@@ -2869,7 +2869,7 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder por este canal.`, 409)
   }
 
-  const config = await getMetaConfig().catch(error => {
+  const config = await getMetaSocialConfig().catch(error => {
     logger.warn(`No se pudo leer Meta para enviar DM: ${error.message}`)
     return null
   })
@@ -3021,7 +3021,7 @@ export async function sendMetaSocialAudioMessage({
     throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder por este canal.`, 409)
   }
 
-  const config = await getMetaConfig().catch(error => {
+  const config = await getMetaSocialConfig().catch(error => {
     logger.warn(`No se pudo leer Meta para enviar audio DM: ${error.message}`)
     return null
   })
@@ -3231,7 +3231,7 @@ export async function sendMetaSocialAttachmentMessage({
     throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder por este canal.`, 409)
   }
 
-  const config = await getMetaConfig().catch(error => {
+  const config = await getMetaSocialConfig().catch(error => {
     logger.warn(`No se pudo leer Meta para enviar adjunto DM: ${error.message}`)
     return null
   })
@@ -3393,7 +3393,7 @@ export async function sendMetaSocialReactionMessage({ contactId, platform, emoji
     throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para reaccionar por este canal.`, 409)
   }
 
-  const config = await getMetaConfig().catch(error => {
+  const config = await getMetaSocialConfig().catch(error => {
     logger.warn(`No se pudo leer Meta para reaccionar DM: ${error.message}`)
     return null
   })
@@ -3486,7 +3486,7 @@ export async function markLatestMetaSocialMessageReadForContact({ contactId, pla
   const platforms = requestedPlatform
     ? [requestedPlatform === 'instagram' ? 'instagram' : 'messenger']
     : ['messenger', 'instagram']
-  const config = await getMetaConfig().catch(error => {
+  const config = await getMetaSocialConfig().catch(error => {
     logger.warn(`No se pudo leer Meta para marcar visto: ${error.message}`)
     return null
   })
@@ -3633,7 +3633,7 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     throw createMetaSocialMessageError(`Activa los comentarios de ${getCommentPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder.`, 409)
   }
 
-  const config = await getMetaConfig().catch(error => {
+  const config = await getMetaSocialConfig().catch(error => {
     logger.warn(`No se pudo leer Meta para responder comentario: ${error.message}`)
     return null
   })
@@ -4389,7 +4389,7 @@ export async function processMetaSocialWebhook({
   signatureHeader = '',
   signaturePreverified = false
 } = {}) {
-  const config = await getMetaConfig().catch(error => {
+  const config = await getMetaSocialConfig().catch(error => {
     logger.warn(`No se pudo leer configuración Meta para webhook social: ${error.message}`)
     return null
   })

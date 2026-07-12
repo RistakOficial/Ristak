@@ -38,7 +38,7 @@ import {
   normalizeWhatsAppProfileName,
   shouldReplaceWhatsAppApiContactName
 } from '../utils/whatsappContactProfile.js'
-import { getMetaConfig } from './metaAdsService.js'
+import { getLegacyMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { verifyInstallerSignedRequest } from './installerSignatureService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
@@ -8944,7 +8944,7 @@ export async function getMetaDirectSetupPrefill({ payload = {}, rawBody = '', he
 
   const [metaDirect, metaConfig, savedWabaId] = await Promise.all([
     loadMetaDirectConfig({ includeSecrets: true }),
-    getMetaConfig().catch(error => {
+    getLegacyMetaConfig().catch(error => {
       logger.warn(`No se pudo leer Meta local para prellenar WhatsApp: ${error.message}`)
       return null
     }),

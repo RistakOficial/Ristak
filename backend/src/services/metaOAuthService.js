@@ -14,7 +14,7 @@ import {
 } from './licenseService.js'
 import {
   enableMetaSocialChannelsForConnectedProfiles,
-  getMetaConfig,
+  getLegacyMetaConfig as getMetaConfig,
   normalizeMetaConnectionMode,
   saveMetaConfig,
   updateRecentAds
@@ -25,6 +25,7 @@ import {
   syncMetaSocialConversationHistoryInBackground
 } from './metaSocialMessagingService.js'
 import { clearMetaIntegrationCredentials } from './integrationCredentialsCleanupService.js'
+import { hasActiveMetaOAuthSocialPage } from './metaOAuthIntegrationConfigService.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { withCronLock } from '../utils/cronLock.js'
 
@@ -55,10 +56,7 @@ const META_REQUIRED_PAGE_TASKS = ['ANALYZE', 'MESSAGING', 'MODERATE']
 // Business del Installer. Esta lista local sirve para diagnóstico y para hacer
 // visibles las capacidades que no quedaron concedidas; nunca agrega scopes al
 // vuelo ni intenta saltarse la configuración aprobada por Meta.
-export const META_OAUTH_REQUIRED_SCOPES = [
-  'ads_read',
-  'ads_management',
-  'business_management',
+export const META_OAUTH_SOCIAL_REQUIRED_SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
   'pages_manage_engagement',
@@ -68,6 +66,24 @@ export const META_OAUTH_REQUIRED_SCOPES = [
   'instagram_basic',
   'instagram_manage_comments',
   'instagram_manage_messages'
+]
+
+export const META_OAUTH_ADS_REQUIRED_SCOPES = [
+  'ads_read'
+]
+
+export const META_OAUTH_SCOPES_BY_KIND = Object.freeze({
+  social: META_OAUTH_SOCIAL_REQUIRED_SCOPES,
+  ads: META_OAUTH_ADS_REQUIRED_SCOPES
+})
+
+// Alias del flujo combinado ya publicado. Se conserva sólo para instalaciones
+// que todavía no migran a las conexiones independientes.
+export const META_OAUTH_REQUIRED_SCOPES = [
+  ...META_OAUTH_ADS_REQUIRED_SCOPES,
+  'ads_management',
+  'business_management',
+  ...META_OAUTH_SOCIAL_REQUIRED_SCOPES
 ]
 
 let metaOAuthFetch = nodeFetch
@@ -308,7 +324,7 @@ function normalizeHintAssets(value = {}) {
       name: cleanString(page?.name),
       category: cleanString(page?.category),
       businessId: cleanString(page?.business_id || page?.businessId || page?.business?.id),
-      tasksAvailable: Array.isArray(page?.tasks),
+      tasksAvailable: page?.tasks_available === true || Array.isArray(page?.tasks),
       tasks: Array.isArray(page?.tasks) ? toStringArray(page.tasks).map(task => task.toUpperCase()) : [],
       instagramAccounts
     }
@@ -321,7 +337,7 @@ function normalizeHintAssets(value = {}) {
   }
 }
 
-function extractPageSecrets(value = {}) {
+export function extractPageSecrets(value = {}) {
   const pages = Array.isArray(value?.pages) ? value.pages : []
   return Object.fromEntries(pages.map(page => {
     const pageId = cleanString(page?.id)
@@ -387,9 +403,12 @@ async function discoverAdAccounts({ token, appSecretProof = '', userId }) {
 }
 
 /** Descubrimiento local: el Installer entrega el token, no la selección final. */
-export async function discoverMetaOAuthAssets({ token, handoffMeta = {} } = {}) {
+export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integrationKind = '' } = {}) {
   const accessToken = cleanString(token)
   const appSecretProof = cleanString(handoffMeta.appsecret_proof || handoffMeta.appSecretProof)
+  const kind = cleanString(integrationKind).toLowerCase()
+  const splitKind = ['social', 'ads'].includes(kind) ? kind : ''
+  const requiredScopes = splitKind ? META_OAUTH_SCOPES_BY_KIND[splitKind] : META_OAUTH_REQUIRED_SCOPES
   if (!accessToken) throw metaOAuthError('El handoff de Meta no incluyó token.', 400, 'META_OAUTH_TOKEN_MISSING')
   const hintAssets = normalizeHintAssets(handoffMeta.assets)
   const identity = await graphJson('me', { token: accessToken, appSecretProof, fields: 'id,name' })
@@ -401,12 +420,18 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {} } = {}) 
       logger.warn(`Meta OAuth no devolvió permisos locales: ${error.message}`)
       return []
     }),
-    graphCollection('me/businesses', { token: accessToken, appSecretProof, fields: 'id,name' }).catch(error => {
-      logger.warn(`Meta OAuth no devolvió portafolios: ${error.message}`)
-      return []
-    }),
-    discoverAdAccounts({ token: accessToken, appSecretProof, userId }),
-    discoverPages({ token: accessToken, appSecretProof, userId })
+    splitKind
+      ? Promise.resolve([])
+      : graphCollection('me/businesses', { token: accessToken, appSecretProof, fields: 'id,name' }).catch(error => {
+        logger.warn(`Meta OAuth no devolvió portafolios: ${error.message}`)
+        return []
+      }),
+    splitKind === 'social'
+      ? Promise.resolve([])
+      : discoverAdAccounts({ token: accessToken, appSecretProof, userId }),
+    splitKind === 'ads'
+      ? Promise.resolve([])
+      : discoverPages({ token: accessToken, appSecretProof, userId })
   ])
 
   const handoffScopes = toStringArray(handoffMeta.scopes)
@@ -417,12 +442,12 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {} } = {}) 
   const explicitlyMissing = permissionsRows
     .filter(item => cleanString(item?.status).toLowerCase() !== 'granted')
     .map(item => cleanString(item?.permission))
-    .filter(permission => META_OAUTH_REQUIRED_SCOPES.includes(permission))
+    .filter(permission => requiredScopes.includes(permission))
   const grantedScopes = permissionsRows.length
     ? handoffScopes.filter(scope => grantedFromGraph.includes(scope))
     : handoffScopes
   const missingScopes = [...new Set([
-    ...META_OAUTH_REQUIRED_SCOPES.filter(scope => !grantedScopes.includes(scope)),
+    ...requiredScopes.filter(scope => !grantedScopes.includes(scope)),
     ...explicitlyMissing
   ])]
 
@@ -432,15 +457,17 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {} } = {}) 
     hintAssets.businesses,
     businessesRaw.map(item => ({ id: cleanString(item?.id), name: cleanString(item?.name) }))
   )
-  const liveAdAccounts = adAccountsRaw.map(account => ({
-    id: graphAdAccountId(account?.id || account?.account_id),
-    name: cleanString(account?.name),
-    businessId: cleanString(account?.business?.id),
-    currency: cleanString(account?.currency),
-    timezoneName: cleanString(account?.timezone_name),
-    status: account?.account_status ?? null,
-    pixels: []
-  }))
+  const liveAdAccounts = adAccountsRaw.map(account => {
+    const businessId = cleanString(account?.business?.id)
+    return {
+      id: graphAdAccountId(account?.id || account?.account_id),
+      name: cleanString(account?.name),
+      ...(businessId ? { businessId } : {}),
+      currency: cleanString(account?.currency),
+      timezoneName: cleanString(account?.timezone_name),
+      status: account?.account_status ?? null
+    }
+  })
   const rawAdAccounts = intersectAuthorizedAssets(
     hintAssets.adAccounts,
     liveAdAccounts,
@@ -478,29 +505,41 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {} } = {}) 
       name: cleanString(account?.name),
       pageId
     })), [])
+    const businessId = cleanString(page?.business?.id)
     return {
       id: pageId,
       name: cleanString(page?.name),
       category: cleanString(page?.category),
-      businessId: cleanString(page?.business?.id),
+      ...(businessId ? { businessId } : {}),
       tasksAvailable: Array.isArray(page?.tasks),
       tasks: Array.isArray(page?.tasks) ? toStringArray(page.tasks).map(task => task.toUpperCase()) : [],
       instagramAccounts
     }
   })
-  const pages = intersectAuthorizedAssets(hintAssets.pages, livePages).map(page => ({
-    ...page,
-    instagramAccounts: intersectAuthorizedAssets(
-      hintAssets.pages.find(hint => cleanString(hint?.id) === cleanString(page?.id))?.instagramAccounts || [],
-      livePages.find(live => cleanString(live?.id) === cleanString(page?.id))?.instagramAccounts || []
-    )
-  }))
+  const pages = intersectAuthorizedAssets(hintAssets.pages, livePages).map(page => {
+    const hintPage = hintAssets.pages.find(hint => cleanString(hint?.id) === cleanString(page?.id)) || {}
+    const livePage = livePages.find(live => cleanString(live?.id) === cleanString(page?.id)) || {}
+    const liveTasksAvailable = livePage.tasksAvailable === true
+    return {
+      ...page,
+      // El handoff fue enumerado por Installer durante el mismo consentimiento.
+      // Si el fallback vivo de /me/accounts no devuelve `tasks`, conservar esa
+      // evidencia en vez de convertirla en "no sabemos" y omitir el gate.
+      tasksAvailable: liveTasksAvailable || hintPage.tasksAvailable === true,
+      tasks: liveTasksAvailable ? livePage.tasks : (hintPage.tasks || []),
+      instagramAccounts: intersectAuthorizedAssets(
+        hintPage.instagramAccounts || [],
+        livePage.instagramAccounts || []
+      )
+    }
+  })
 
   const hintedBusinessId = cleanString(handoffMeta.client_business_id || handoffMeta.business_id)
   const defaults = {
     businessId: businesses.some(item => item.id === hintedBusinessId) ? hintedBusinessId : businesses[0]?.id || '',
     adAccountId: adAccounts[0]?.id || '',
-    pixelId: adAccounts[0]?.pixels?.[0]?.id || '',
+    // El Dataset es una capacidad opcional y siempre exige elección explícita.
+    pixelId: splitKind === 'ads' ? '' : adAccounts[0]?.pixels?.[0]?.id || '',
     pageId: pages[0]?.id || '',
     instagramAccountId: pages[0]?.instagramAccounts?.[0]?.id || ''
   }
@@ -1141,11 +1180,13 @@ async function runMetaOAuthConnectedRuntimeEffects({
     }
   }
 
-  try {
-    await runtimeClient.syncCrons('meta', { reason })
-  } catch (error) {
-    runtimeWarnings.push(`crons: ${error.message}`)
-    logger.warn(`Meta OAuth conectado; no se pudieron sincronizar crons: ${error.message}`)
+  for (const provider of ['meta', 'meta-ads', 'meta-social']) {
+    try {
+      await runtimeClient.syncCrons(provider, { reason })
+    } catch (error) {
+      runtimeWarnings.push(`crons-${provider}: ${error.message}`)
+      logger.warn(`Meta OAuth conectado; no se pudieron sincronizar crons ${provider}: ${error.message}`)
+    }
   }
   const config = await getMetaConfig().catch(error => {
     runtimeWarnings.push(`config: ${error.message}`)
@@ -1515,28 +1556,50 @@ async function disconnectMetaOAuthConnectionUnlocked() {
     webhookUrl: ''
   })
   await centralClient.disconnect()
-  await runtimeClient.removePageSubscription({ config }).catch(error => {
-    // El mapping central ya quedó apagado, así que no quedan entregas al tenant.
-    // La limpieza remota de subscribed_apps puede reintentarse sin conservar el
-    // BISU token como conexión activa.
-    logger.warn(`No se pudo quitar subscribed_apps al desconectar Meta OAuth: ${error.message}`)
-  })
+  const splitSocialOwnsPage = await hasActiveMetaOAuthSocialPage(config.page_id)
+  if (!splitSocialOwnsPage) {
+    await runtimeClient.removePageSubscription({ config }).catch(error => {
+      // El mapping central ya quedó apagado, así que no quedan entregas al tenant.
+      // La limpieza remota de subscribed_apps puede reintentarse sin conservar el
+      // BISU token como conexión activa.
+      logger.warn(`No se pudo quitar subscribed_apps al desconectar Meta OAuth: ${error.message}`)
+    })
+  }
 
   const manualBackup = await loadManualConnectionBackup()
+  const splitConnections = await db.get(
+    `SELECT COUNT(*) AS total FROM meta_oauth_integrations WHERE status = 'active'`
+  ).catch(() => ({ total: 0 }))
+  const preserveSplitRuntimeState = Number(splitConnections?.total || 0) > 0
   if (manualBackup?.config?.access_token) {
-    await restoreLocalMetaState(manualBackup)
+    if (preserveSplitRuntimeState) {
+      await db.run('DELETE FROM meta_config')
+      const columns = Object.keys(manualBackup.config)
+      await db.run(
+        `INSERT INTO meta_config (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        columns.map(column => manualBackup.config[column])
+      )
+    } else {
+      await restoreLocalMetaState(manualBackup)
+    }
   } else {
-    await clearMetaIntegrationCredentials()
-    await setAppConfig('meta_config_disconnected', '1')
+    if (preserveSplitRuntimeState) {
+      await db.run('DELETE FROM meta_config')
+    } else {
+      await clearMetaIntegrationCredentials()
+      await setAppConfig('meta_config_disconnected', '1')
+    }
   }
   await db.run('DELETE FROM meta_oauth_pending_sessions')
   await db.run('DELETE FROM meta_oauth_connection_backups WHERE id = ?', [MANUAL_BACKUP_ID])
   let runtimeWarning = ''
-  try {
-    await runtimeClient.syncCrons('meta', { reason: 'meta-oauth-disconnected' })
-  } catch (error) {
-    runtimeWarning = error.message
-    logger.warn(`Meta OAuth desconectado; no se pudieron sincronizar crons: ${error.message}`)
+  for (const provider of ['meta', 'meta-ads', 'meta-social']) {
+    try {
+      await runtimeClient.syncCrons(provider, { reason: 'meta-oauth-disconnected' })
+    } catch (error) {
+      runtimeWarning ||= error.message
+      logger.warn(`Meta OAuth desconectado; no se pudieron sincronizar crons ${provider}: ${error.message}`)
+    }
   }
   return {
     disconnected: true,

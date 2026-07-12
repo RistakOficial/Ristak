@@ -18,8 +18,8 @@ let metaSocialRefreshRunning = false
 let metaAdsSyncTask = null
 let metaSocialRefreshTask = null
 
-export function startMetaSyncCron() {
-  if (metaAdsSyncTask || metaSocialRefreshTask) return
+export function startMetaAdsSyncCron() {
+  if (metaAdsSyncTask) return
   logger.info('Iniciando cron job de Meta Ads (cada hora)')
 
   // Ejecutar cada hora en punto.
@@ -54,7 +54,20 @@ export function startMetaSyncCron() {
     }
   })
 
-  // Refresca una vez al dia los seguidores usados por perfiles sociales publicados.
+  logger.success('Cron job de Meta Ads configurado (cada hora en punto)')
+}
+
+export function stopMetaAdsSyncCron() {
+  metaAdsSyncTask?.stop()
+  metaAdsSyncTask?.destroy?.()
+  metaAdsSyncTask = null
+}
+
+export function startMetaSocialRefreshCron() {
+  if (metaSocialRefreshTask) return
+  logger.info('Iniciando cron de perfiles Meta Social (diario)')
+
+  // Refresca una vez al día los seguidores usados por perfiles sociales publicados.
   metaSocialRefreshTask = cron.schedule('17 5 * * *', async () => {
     if (isDeployShutdownStarted()) return
     try {
@@ -86,14 +99,23 @@ export function startMetaSyncCron() {
     }
   })
 
-  logger.success('Cron job de Meta Ads configurado (cada hora en punto)')
+  logger.success('Cron de perfiles Meta Social configurado (diario)')
+}
+
+export function stopMetaSocialRefreshCron() {
+  metaSocialRefreshTask?.stop()
+  metaSocialRefreshTask?.destroy?.()
+  metaSocialRefreshTask = null
+}
+
+// Compatibilidad con imports anteriores. Los nuevos registros llaman cada
+// superficie por separado para que desconectar Social no apague Ads ni al revés.
+export function startMetaSyncCron() {
+  startMetaAdsSyncCron()
+  startMetaSocialRefreshCron()
 }
 
 export function stopMetaSyncCron() {
-  for (const task of [metaAdsSyncTask, metaSocialRefreshTask]) {
-    task?.stop()
-    task?.destroy?.()
-  }
-  metaAdsSyncTask = null
-  metaSocialRefreshTask = null
+  stopMetaAdsSyncCron()
+  stopMetaSocialRefreshCron()
 }

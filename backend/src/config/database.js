@@ -1,5 +1,7 @@
 import crypto from 'crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { DateTime } from 'luxon'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
@@ -631,7 +633,20 @@ if (usePostgres) {
   const sqlite3Module = await import('sqlite3')
   const sqlite3 = sqlite3Module.default
 
-  const dbPath = join(__dirname, '../../../ristak.db')
+  const configuredSqlitePath = String(process.env.RISTAK_SQLITE_PATH || '').trim()
+  const automaticTestSqlitePath = process.env.NODE_TEST_CONTEXT
+    ? join(tmpdir(), `ristak-test-${process.pid}-${crypto.randomUUID()}.db`)
+    : ''
+  const dbPath = configuredSqlitePath || automaticTestSqlitePath || join(__dirname, '../../../ristak.db')
+
+  if (automaticTestSqlitePath && !configuredSqlitePath) {
+    process.once('exit', () => {
+      for (const suffix of ['', '-shm', '-wal', '-journal']) {
+        rmSync(`${automaticTestSqlitePath}${suffix}`, { force: true })
+      }
+    })
+  }
+
   const sqliteDb = new sqlite3.Database(dbPath)
   sqliteDb.configure('busyTimeout', 10_000)
   logger.success('Conectado a SQLite:', dbPath)
@@ -3917,6 +3932,70 @@ async function initTables() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
+    `)
+
+    // OAuth de Meta se conecta por capacidad. Ads y Social no comparten
+    // selección, credenciales activas ni ciclo de desconexión. La tabla legacy
+    // meta_config se conserva intacta como respaldo durante la migración.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_oauth_integrations (
+        id TEXT PRIMARY KEY,
+        integration_kind TEXT NOT NULL CHECK (integration_kind IN ('social', 'ads')),
+        status TEXT NOT NULL DEFAULT 'candidate' CHECK (status IN ('candidate', 'active', 'replaced')),
+        connection_id TEXT NOT NULL,
+        access_token TEXT NOT NULL,
+        appsecret_proof TEXT,
+        page_access_token TEXT,
+        page_appsecret_proof TEXT,
+        app_id TEXT,
+        config_id TEXT,
+        user_id TEXT,
+        user_name TEXT,
+        business_id TEXT,
+        ad_account_id TEXT,
+        dataset_id TEXT,
+        page_id TEXT,
+        instagram_account_id TEXT,
+        granted_scopes_json TEXT,
+        missing_scopes_json TEXT,
+        granular_scopes_json TEXT,
+        token_expires_at DATETIME,
+        data_access_expires_at DATETIME,
+        validated INTEGER DEFAULT 0,
+        relay_status TEXT,
+        relay_registered_at DATETIME,
+        relay_error TEXT,
+        connected_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(integration_kind, connection_id)
+      )
+    `)
+    await db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_oauth_integrations_active_kind
+      ON meta_oauth_integrations(integration_kind)
+      WHERE status = 'active'
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_meta_oauth_integrations_connection
+      ON meta_oauth_integrations(connection_id, integration_kind)
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_oauth_integration_sessions (
+        id TEXT PRIMARY KEY,
+        integration_kind TEXT NOT NULL CHECK (integration_kind IN ('social', 'ads')),
+        payload_encrypted TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'consuming', 'central_committed', 'consumed')),
+        expires_at DATETIME NOT NULL,
+        consumed_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_meta_oauth_integration_sessions_expiry
+      ON meta_oauth_integration_sessions(integration_kind, status, expires_at)
     `)
 
     await db.run(`

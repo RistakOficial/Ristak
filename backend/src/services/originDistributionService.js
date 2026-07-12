@@ -1,4 +1,5 @@
 import { db } from '../config/database.js'
+import { getMetaSocialConfig } from './metaAdsService.js'
 import { DateTime } from 'luxon'
 import { sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
@@ -522,7 +523,7 @@ async function getMessageFirstSeenCount(range) {
 async function getMessageConnectionStatus() {
   const [phoneRows, metaConfig, metaContactRows, emailConfigRow] = await Promise.all([
     db.get('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers').catch(() => ({ total: 0 })),
-    db.get('SELECT page_id, instagram_account_id FROM meta_config LIMIT 1').catch(() => null),
+    getMetaSocialConfig().catch(() => null),
     db.get('SELECT COUNT(*) as total FROM meta_social_contacts').catch(() => ({ total: 0 })),
     db.get("SELECT config_value FROM app_config WHERE config_key = 'email_smtp_config'").catch(() => null)
   ])

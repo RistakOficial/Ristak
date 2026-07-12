@@ -2298,7 +2298,7 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
 
     try {
       // Verificar si hay configuración de Meta
-      const metaConfig = await db.get('SELECT * FROM meta_config LIMIT 1')
+      const metaConfig = await getMetaConfig()
 
       if (metaConfig && metaConfig.access_token && metaConfig.ad_account_id) {
         logger.info(`Ad Account: ${metaConfig.ad_account_id}`)

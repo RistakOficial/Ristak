@@ -3,8 +3,10 @@ import {
   isEmailInboundConnected,
   isGoogleCalendarConnected,
   isHighLevelConnected,
+  isMetaAdsConnected,
   isMercadoPagoConnected,
   isMetaConnected,
+  isMetaSocialConnected,
   isRebillConnected,
   isStripeConnected,
   isWhatsAppApiHistoryBackfillPending,
@@ -15,7 +17,12 @@ import { startEmailInboundSyncCron, stopEmailInboundSyncCron } from './emailInbo
 import { startGoogleCalendarSyncCron, stopGoogleCalendarSyncCron } from './googleCalendarSync.cron.js'
 import { startHighLevelSyncCron, stopHighLevelSyncCron } from './highlevelSync.cron.js'
 import { startMercadoPagoPaymentPlansCron, stopMercadoPagoPaymentPlansCron } from './mercadoPagoPaymentPlans.cron.js'
-import { startMetaSyncCron, stopMetaSyncCron } from './metaSync.cron.js'
+import {
+  startMetaAdsSyncCron,
+  startMetaSocialRefreshCron,
+  stopMetaAdsSyncCron,
+  stopMetaSocialRefreshCron
+} from './metaSync.cron.js'
 import { startMetaVersionCron, stopMetaVersionCron } from './metaVersionCron.js'
 import { startRebillPaymentPlansCron, stopRebillPaymentPlansCron } from './rebillPaymentPlans.cron.js'
 import { startStripePaymentPlansCron, stopStripePaymentPlansCron } from './stripePaymentPlans.cron.js'
@@ -52,12 +59,21 @@ export function registerIntegrationCrons() {
   })
 
   registerIntegrationCron({
-    name: 'meta-sync',
-    label: 'Meta Ads y social',
-    provider: 'meta',
-    isEnabled: isMetaConnected,
-    start: startMetaSyncCron,
-    stop: stopMetaSyncCron
+    name: 'meta-ads-sync',
+    label: 'Meta Ads',
+    provider: 'meta-ads',
+    isEnabled: isMetaAdsConnected,
+    start: startMetaAdsSyncCron,
+    stop: stopMetaAdsSyncCron
+  })
+
+  registerIntegrationCron({
+    name: 'meta-social-profile-refresh',
+    label: 'Facebook e Instagram',
+    provider: 'meta-social',
+    isEnabled: isMetaSocialConnected,
+    start: startMetaSocialRefreshCron,
+    stop: stopMetaSocialRefreshCron
   })
 
   registerIntegrationCron({
