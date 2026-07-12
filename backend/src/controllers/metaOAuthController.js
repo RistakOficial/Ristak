@@ -5,7 +5,8 @@ import {
   createMetaOAuthConnectionUrl,
   disconnectMetaOAuthConnection,
   finalizeMetaOAuthConnection,
-  getMetaOAuthConnectionStatus
+  getMetaOAuthConnectionStatus,
+  prepareMetaOAuthReconfiguration
 } from '../services/metaOAuthService.js'
 import {
   completeMetaOAuthIntegration,
@@ -143,6 +144,22 @@ export async function finalizeMetaOAuth(req, res) {
   } catch (error) {
     logger.warn(`No se pudo finalizar Meta OAuth: ${error.message}`)
     errorResponse(res, error, 'No se pudo guardar la conexión OAuth de Meta')
+  }
+}
+
+export async function reconfigureMetaOAuth(req, res) {
+  try {
+    if (integrationKind(req)) {
+      const error = new Error('La selección interna sólo aplica al login unificado de Meta.')
+      error.statusCode = 400
+      error.code = 'META_OAUTH_RECONFIGURE_KIND_INVALID'
+      throw error
+    }
+    const data = await prepareMetaOAuthReconfiguration()
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.warn(`No se pudo preparar la selección interna de Meta: ${error.message}`)
+    errorResponse(res, error, 'No se pudieron cargar los activos autorizados de Meta')
   }
 }
 

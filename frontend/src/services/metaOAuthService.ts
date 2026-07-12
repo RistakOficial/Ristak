@@ -167,6 +167,13 @@ export const metaOAuthService = {
     })
   ),
 
+  reconfigure: () => (
+    requestMetaOAuth<MetaOAuthSession>('/api/meta/oauth/reconfigure', {
+      method: 'POST',
+      body: JSON.stringify({})
+    })
+  ),
+
   finalize: (selection: MetaOAuthFinalizeSelection) => (
     requestMetaOAuth<MetaOAuthFinalizeResult>('/api/meta/oauth/finalize', {
       method: 'POST',

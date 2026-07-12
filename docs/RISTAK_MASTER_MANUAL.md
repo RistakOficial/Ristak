@@ -2233,10 +2233,11 @@ Ristak usa Meta en varias areas:
 
 ### Conexion OAuth y convivencia manual
 
-- `Configuracion > Meta` conserva el wizard manual con System User Token como
-  experiencia principal mientras termina la revision oficial. Debajo queda el
-  boton discreto **Probar OAuth**; el flujo OAuth sigue siendo unico para
+- `Configuracion > Meta` recomienda **Conectar con Meta**; el flujo OAuth sigue siendo unico para
   anuncios, Dataset/CAPI, Facebook, Instagram, mensajes y comentarios.
+- Antes del dialogo oficial, la UI indica marcar **Seleccionar todo** en cada
+  grupo de activos actuales. Meta controla esa eleccion y Ristak no puede
+  preseleccionarla por API. Los activos futuros requieren **Autorizar nuevos activos**.
 - La interfaz se divide en **Cuenta Meta**, **Redes sociales**, **Rastreo web**
   y **Dataset Test**. Cuenta Meta muestra una sola tabla de la conexion activa;
   no muestra una tabla separada de capacidades OAuth. Redes sociales concentra
@@ -2256,7 +2257,9 @@ Ristak usa Meta en varias areas:
   experiencia visible sea vieja o manual.
 - La conexion unificada cifrada vive en `meta_config` con
   `connection_mode=oauth_bisu`; su sesion temporal vive en
-  `meta_oauth_pending_sessions`. Las filas separadas anteriores en
+  `meta_oauth_pending_sessions`. La allowlist completa y todos los Page
+  tokens/proofs viven cifrados en `meta_oauth_authorized_assets`, lo que permite
+  **Cambiar activos en Ristak** sin repetir OAuth. Las filas separadas anteriores en
   `meta_oauth_integrations` y el System User Token manual se conservan como
   fallbacks, no se borran al iniciar OAuth.
 - Las rutas canonicas son
@@ -2277,8 +2280,9 @@ Ristak usa Meta en varias areas:
   Instagram debe estar enlazado a la Page. Si Meta devuelve tareas de Page,
   Ristak exige `ANALYZE`, `MESSAGING` y `MODERATE`.
 - El Dataset se descubre por `/act_<AD_ACCOUNT_ID>/adspixels` y tambien por
-  `/{BUSINESS_ID}/owned_pixels|client_pixels`. Antes de guardarlo, Ristak lee el
-  Dataset y exige que el BISU tenga tarea `UPLOAD` en
+  `/{BUSINESS_ID}/owned_pixels|client_pixels`, pero Installer lo excluye si el
+  BISU no tiene `UPLOAD`; pertenecer al portafolio no basta. Antes de guardarlo,
+  Ristak repite esa validacion en
   `/{DATASET_ID}/assigned_users?business=...`. No manda un evento automatico
   durante el login.
 - Ristak prepara `subscribed_apps`, Page token/proof, configuracion Ads/Dataset
@@ -3987,7 +3991,7 @@ Registro de ubicacion:
 | Base de datos produccion | `DATABASE_URL` | Si en Render/Postgres | SQLite local si no existe |
 | URL publica/CORS | `APP_URL`, `PUBLIC_URL`, `RENDER_EXTERNAL_URL`, `CORS_ALLOWED_ORIGINS` | No siempre | Necesaria para webhooks y links correctos |
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
-| Meta Ads/Dataset/social | OAuth unificado cifrado en `meta_config`; sesion en `meta_oauth_pending_sessions`; fallbacks separados en `meta_oauth_integrations`; App Secret y Config IDs en DB de Installer | No | Un solo login; manual y OAuth `social|ads` anteriores sobreviven como fallback. Env solo es compatibilidad y `meta_test_event_code` activa Test Events |
+| Meta Ads/Dataset/social | OAuth unificado cifrado en `meta_config`; allowlist y Page credentials cifrados en `meta_oauth_authorized_assets`; sesion en `meta_oauth_pending_sessions`; fallbacks separados en `meta_oauth_integrations`; App Secret y Config IDs en DB de Installer | No | Un solo login; cambiar activos autorizados no repite OAuth. Manual y OAuth `social|ads` anteriores sobreviven como fallback. Env solo es compatibilidad y `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
 | Correo SMTP/IMAP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | App password cifrado; requerido para enviar y recibir correos cuando la integracion esta activa |
 | Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |

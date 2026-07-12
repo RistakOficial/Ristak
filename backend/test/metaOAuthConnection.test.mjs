@@ -13,6 +13,7 @@ import {
   disconnectMetaOAuthConnection,
   finalizeMetaOAuthConnection,
   getMetaOAuthConnectionStatus,
+  prepareMetaOAuthReconfiguration,
   setMetaOAuthCentralClientForTest,
   setMetaOAuthFetchForTest,
   setMetaOAuthMarkLocalRelayForTest,
@@ -25,6 +26,7 @@ const TABLES = [
   'meta_config',
   'meta_oauth_pending_sessions',
   'meta_oauth_connection_backups',
+  'meta_oauth_authorized_assets',
   'meta_oauth_integrations',
   'meta_oauth_integration_sessions'
 ]
@@ -328,6 +330,22 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal(isEncrypted(rawOauth.access_token), true)
     assert.equal(isEncrypted(rawOauth.oauth_page_access_token), true)
     assert.equal(isEncrypted(rawOauth.oauth_page_appsecret_proof), true)
+    const authorizedVault = await db.get(
+      'SELECT connection_id, payload_encrypted FROM meta_oauth_authorized_assets WHERE id = ?',
+      ['unified']
+    )
+    assert.equal(authorizedVault.connection_id, 'connection-1')
+    assert.equal(isEncrypted(authorizedVault.payload_encrypted), true)
+    assert.equal(authorizedVault.payload_encrypted.includes('oauth-page-token'), false)
+
+    const internalSelection = await prepareMetaOAuthReconfiguration()
+    assert.equal(internalSelection.defaults.adAccountId, '123')
+    assert.equal(internalSelection.defaults.pageId, 'page-1')
+    assert.equal(internalSelection.defaults.pixelId, 'pixel-1')
+    assert.deepEqual(internalSelection.adAccounts.map(account => account.id), ['act_123'])
+    assert.deepEqual(internalSelection.pages.map(page => page.id), ['page-1'])
+    assert.equal(JSON.stringify(internalSelection).includes('oauth-page-token'), false)
+    await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [internalSelection.sessionId])
 
     // Reautorizar la misma Page no puede ejecutar DELETE subscribed_apps. Ese
     // DELETE es global para la app/Page y rompería tanto la conexión anterior

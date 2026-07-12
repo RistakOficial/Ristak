@@ -44,6 +44,7 @@ test('developer surfaces are gated by Developers and by resource features', asyn
   assert.match(externalRoutes, /router\.get\('\/transactions', requireExternalFeatures\('payments'\), getTransactions\)/)
   assert.match(externalRoutes, /SENSITIVE_TABLE_PATTERN[^\n]*conversational_agent_goal_links/)
   assert.match(externalRoutes, /SENSITIVE_TABLE_PATTERN[^\n]*meta_oauth_integrations[^\n]*meta_oauth_integration_sessions/)
+  assert.match(externalRoutes, /SENSITIVE_TABLE_PATTERN[^\n]*meta_oauth_pending_sessions[^\n]*meta_oauth_connection_backups[^\n]*meta_oauth_authorized_assets/)
   assert.match(externalRoutes, /WRITE_BLOCKED_TABLE_PATTERN[^\n]*conversational_agents[^\n]*conversational_agent_\.\*/)
   assert.match(externalRoutes, /name === 'conversational_agents' \|\| \/\^conversational_agent_\/\.test\(name\)/)
 
@@ -54,8 +55,10 @@ test('developer surfaces are gated by Developers and by resource features', asyn
   assert.match(mcpRoutes, /getMcpTableFeatureKeys\(args\?\.table\)/)
   assert.match(mcpRoutes, /SENSITIVE_TABLE_PATTERN[^\n]*conversational_agent_goal_links/)
   assert.match(mcpRoutes, /SENSITIVE_TABLE_PATTERN[^\n]*meta_oauth_integrations[^\n]*meta_oauth_integration_sessions/)
+  assert.match(mcpRoutes, /SENSITIVE_TABLE_PATTERN[^\n]*meta_oauth_pending_sessions[^\n]*meta_oauth_connection_backups[^\n]*meta_oauth_authorized_assets/)
   assert.match(mcpRoutes, /blockedTables:[^\n]*conversational_agent_goal_links/)
   assert.match(mcpRoutes, /blockedTables:[^\n]*meta_oauth_integrations[^\n]*meta_oauth_integration_sessions/)
+  assert.match(mcpRoutes, /blockedTables:[^\n]*meta_oauth_pending_sessions[^\n]*meta_oauth_connection_backups[^\n]*meta_oauth_authorized_assets/)
   assert.match(mcpRoutes, /const selectedColumns = config\.exposedColumns/)
   assert.match(mcpRoutes, /name === 'conversational_agents' \|\| \/\^conversational_agent_\/\.test\(name\)/)
   assert.match(goalLedgerMigration, /WHERE status = 'completed'/)

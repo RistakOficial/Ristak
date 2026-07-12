@@ -1112,6 +1112,31 @@
   background: var(--color-background);
 }
 
+.oauthInventorySummary {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-primary, #1877f2) 9%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.metaAuthorizationGuide {
+  display: grid;
+  gap: 12px;
+}
+
+.metaAuthorizationGuide p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+
+.metaAuthorizationGuide strong {
+  color: var(--color-text-primary);
+}
+
 .stepIntro {
   display: flex;
   flex-direction: column;

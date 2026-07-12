@@ -50,7 +50,8 @@ import {
   createMetaOAuthConnectUrl,
   disconnectMetaOAuth,
   finalizeMetaOAuth,
-  getMetaOAuthStatus
+  getMetaOAuthStatus,
+  reconfigureMetaOAuth
 } from '../controllers/metaOAuthController.js'
 
 const router = express.Router()
@@ -70,6 +71,7 @@ router.get('/oauth/status', getMetaOAuthStatus)
 router.post('/oauth/connect-url', createMetaOAuthConnectUrl)
 router.post('/oauth/complete', completeMetaOAuth)
 router.post('/oauth/finalize', finalizeMetaOAuth)
+router.post('/oauth/reconfigure', reconfigureMetaOAuth)
 router.post('/oauth/disconnect', disconnectMetaOAuth)
 
 // Configuración

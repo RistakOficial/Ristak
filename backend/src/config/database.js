@@ -3957,6 +3957,20 @@ async function initTables() {
       )
     `)
 
+    // Inventario autorizado por Meta y credenciales Page-scoped cifradas. Esto
+    // permite cambiar la selección operativa dentro de Ristak sin volver a
+    // abrir OAuth; nunca se expone al frontend ni se guarda en texto plano.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_oauth_authorized_assets (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        payload_encrypted TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_oauth_authorized_assets_connection ON meta_oauth_authorized_assets(connection_id)')
+
     // OAuth de Meta se conecta por capacidad. Ads y Social no comparten
     // selección, credenciales activas ni ciclo de desconexión. La tabla legacy
     // meta_config se conserva intacta como respaldo durante la migración.

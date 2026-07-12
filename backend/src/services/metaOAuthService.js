@@ -42,6 +42,7 @@ const META_OAUTH_COMPENSATION_RETRY_MAX_MS = 2 * 60 * 60 * 1000
 const GRAPH_PAGE_LIMIT = 100
 const MAX_GRAPH_PAGES = 20
 const MANUAL_BACKUP_ID = 'manual_before_oauth'
+const AUTHORIZED_ASSETS_ID = 'unified'
 const META_STATE_CONFIG_KEYS = [
   'meta_config_disconnected',
   'meta_test_event_code',
@@ -1026,6 +1027,56 @@ function sanitizeSessionData(session, expiresAt) {
   }
 }
 
+function authorizedAssetsPayload(payload = {}) {
+  return {
+    connectionId: cleanString(payload.connectionId),
+    appId: cleanString(payload.appId),
+    configId: cleanString(payload.configId),
+    user: payload.user || {},
+    tokenExpiresAt: payload.tokenExpiresAt || null,
+    dataAccessExpiresAt: payload.dataAccessExpiresAt || null,
+    permissions: payload.permissions || { granted: [], missing: [], granular: [] },
+    businesses: Array.isArray(payload.businesses) ? payload.businesses : [],
+    adAccounts: Array.isArray(payload.adAccounts) ? payload.adAccounts : [],
+    pages: Array.isArray(payload.pages) ? payload.pages : [],
+    pageSecrets: payload.pageSecrets && typeof payload.pageSecrets === 'object' ? payload.pageSecrets : {}
+  }
+}
+
+async function saveAuthorizedAssets(payload) {
+  const authorized = authorizedAssetsPayload(payload)
+  if (!authorized.connectionId) {
+    throw metaOAuthError('Falta identificar el inventario autorizado de Meta.', 500, 'META_OAUTH_AUTHORIZED_ASSETS_CONNECTION_MISSING')
+  }
+  await db.run(
+    `INSERT INTO meta_oauth_authorized_assets (id, connection_id, payload_encrypted)
+     VALUES (?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       connection_id = excluded.connection_id,
+       payload_encrypted = excluded.payload_encrypted,
+       updated_at = CURRENT_TIMESTAMP`,
+    [AUTHORIZED_ASSETS_ID, authorized.connectionId, encrypt(JSON.stringify(authorized))]
+  )
+}
+
+async function loadAuthorizedAssets() {
+  const row = await db.get(
+    'SELECT connection_id, payload_encrypted FROM meta_oauth_authorized_assets WHERE id = ?',
+    [AUTHORIZED_ASSETS_ID]
+  ).catch(() => null)
+  if (!row?.payload_encrypted) return null
+  try {
+    const payload = JSON.parse(decrypt(row.payload_encrypted))
+    return {
+      ...authorizedAssetsPayload(payload),
+      connectionId: cleanString(payload?.connectionId || row.connection_id)
+    }
+  } catch (error) {
+    logger.error(`No se pudo abrir el inventario autorizado de Meta: ${error.message}`)
+    return null
+  }
+}
+
 function localMetaOAuthState(config) {
   const connectionMode = config ? normalizeMetaConnectionMode(config.connection_mode) : null
   const oauthConnected = connectionMode === 'oauth_bisu' && Number(config?.oauth_connected) === 1
@@ -1161,6 +1212,55 @@ export async function completeMetaOAuthConnection({
     adAccounts: discovered.adAccounts,
     pages: discovered.pages,
     defaults: discovered.defaults
+  }
+  const session = await createPendingSession(pendingPayload)
+  return sanitizeSessionData({ ...pendingPayload, id: session.id }, session.expiresAt)
+}
+
+export async function prepareMetaOAuthReconfiguration() {
+  const config = await getMetaConfig().catch(() => null)
+  if (!config || normalizeMetaConnectionMode(config.connection_mode) !== 'oauth_bisu') {
+    throw metaOAuthError('Primero conecta Meta con OAuth.', 409, 'META_OAUTH_RECONFIGURE_NOT_CONNECTED')
+  }
+  const authorized = await loadAuthorizedAssets()
+  if (!authorized || cleanString(authorized.connectionId) !== cleanString(config.oauth_connection_id)) {
+    throw metaOAuthError(
+      'Esta conexión es anterior al selector interno. Autoriza Meta una vez más para guardar todos los activos permitidos.',
+      409,
+      'META_OAUTH_RECONFIGURE_REAUTH_REQUIRED'
+    )
+  }
+  if (!cleanString(config.access_token) || !cleanString(config.oauth_appsecret_proof)) {
+    throw metaOAuthError(
+      'La conexión OAuth guardada está incompleta. Vuelve a autorizar Meta.',
+      409,
+      'META_OAUTH_RECONFIGURE_CREDENTIALS_MISSING'
+    )
+  }
+
+  const pendingPayload = {
+    id: crypto.randomUUID(),
+    accessToken: config.access_token,
+    appSecretProof: config.oauth_appsecret_proof,
+    pageSecrets: authorized.pageSecrets,
+    source: 'oauth_bisu',
+    connectionId: authorized.connectionId,
+    appId: authorized.appId || cleanString(config.oauth_app_id || config.app_id),
+    configId: authorized.configId || cleanString(config.oauth_config_id),
+    user: authorized.user,
+    tokenExpiresAt: authorized.tokenExpiresAt || config.token_expires_at || null,
+    dataAccessExpiresAt: authorized.dataAccessExpiresAt || config.oauth_data_access_expires_at || null,
+    permissions: authorized.permissions,
+    businesses: authorized.businesses,
+    adAccounts: authorized.adAccounts,
+    pages: authorized.pages,
+    defaults: {
+      businessId: cleanString(config.oauth_business_id || config.meta_business_id),
+      adAccountId: normalizeAdAccountId(config.ad_account_id),
+      pixelId: cleanString(config.pixel_id),
+      pageId: cleanString(config.page_id),
+      instagramAccountId: cleanString(config.instagram_account_id)
+    }
   }
   const session = await createPendingSession(pendingPayload)
   return sanitizeSessionData({ ...pendingPayload, id: session.id }, session.expiresAt)
@@ -1400,8 +1500,7 @@ async function runMetaOAuthConnectedRuntimeEffects({
   if (
     ['oauth_bisu', 'oauth_user'].includes(cleanString(previousConfig?.connection_mode)) &&
     cleanString(previousConfig?.page_id) &&
-    cleanString(previousConfig?.page_id) !== cleanString(selected?.pageId) &&
-    cleanString(previousConfig?.oauth_connection_id) !== cleanString(payload?.connectionId)
+    cleanString(previousConfig?.page_id) !== cleanString(selected?.pageId)
   ) {
     await removeMetaPageSubscriptionIfUnused({
       config: previousConfig,
@@ -1658,6 +1757,10 @@ async function finalizeMetaOAuthConnectionUnlocked({
       }
     )
     await setAppConfig('meta_config_disconnected', '0')
+    // Conserva cifrada la allowlist completa, incluyendo los Page tokens que
+    // Meta entregó para cada Página. Así cambiar entre activos ya autorizados
+    // no obliga a repetir OAuth ni expone secretos al navegador.
+    await saveAuthorizedAssets(payload)
     payload.saga.stage = 'local_saved'
     await persistPendingPayload(sessionId, payload, 'consuming')
 
@@ -1860,6 +1963,7 @@ async function disconnectMetaOAuthConnectionUnlocked({ publicBaseUrl = '' } = {}
   }
   await db.run('DELETE FROM meta_oauth_pending_sessions')
   await db.run('DELETE FROM meta_oauth_connection_backups WHERE id = ?', [MANUAL_BACKUP_ID])
+  await db.run('DELETE FROM meta_oauth_authorized_assets WHERE id = ?', [AUTHORIZED_ASSETS_ID])
   if (preserveSplitRuntimeState) {
     const restoredAdsConfig = await getOperationalMetaConfig().catch(() => null)
     if (restoredAdsConfig?.access_token && restoredAdsConfig?.pixel_id) {

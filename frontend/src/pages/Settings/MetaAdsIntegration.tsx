@@ -500,6 +500,8 @@ export const MetaAdsIntegration: React.FC = () => {
   const [metaOAuthSession, setMetaOAuthSession] = useState<MetaOAuthSession | null>(null)
   const [metaOAuthSelection, setMetaOAuthSelection] = useState<MetaOAuthFinalizeSelection>({ sessionId: '' })
   const [isConnectingMetaOAuth, setIsConnectingMetaOAuth] = useState(false)
+  const [isLoadingAuthorizedMetaAssets, setIsLoadingAuthorizedMetaAssets] = useState(false)
+  const [isMetaAuthorizationGuideOpen, setIsMetaAuthorizationGuideOpen] = useState(false)
   const [showManualConnection, setShowManualConnection] = useState(false)
   const [isSavingToken, setIsSavingToken] = useState(false)
   const [isRevealingAccessToken, setIsRevealingAccessToken] = useState(false)
@@ -857,7 +859,7 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const handleConnectWithMeta = async () => {
+  const startMetaAuthorization = async () => {
     setIsConnectingMetaOAuth(true)
     try {
       const status = metaOAuthStatus || await loadMetaOAuthStatus()
@@ -870,6 +872,34 @@ export const MetaAdsIntegration: React.FC = () => {
     } catch (error) {
       setIsConnectingMetaOAuth(false)
       showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Usa la conexión manual mientras revisamos el Installer.')
+    }
+  }
+
+  const handleConnectWithMeta = () => {
+    setIsMetaAuthorizationGuideOpen(true)
+  }
+
+  const handleChangeAuthorizedMetaAssets = async () => {
+    setIsLoadingAuthorizedMetaAssets(true)
+    try {
+      const session = await metaOAuthService.reconfigure()
+      applyMetaOAuthSession(session)
+      setActiveMetaTab('cuenta')
+      navigate(buildMetaAdsConnectedTabPath('cuenta'), { replace: true })
+      showToast(
+        'success',
+        'Activos autorizados cargados',
+        'Cambia la selección dentro de Ristak; no necesitas volver a entrar a Meta.'
+      )
+    } catch (error) {
+      showToast(
+        'warning',
+        'Hace falta autorizar una vez más',
+        error instanceof Error ? error.message : 'Meta no devolvió el inventario autorizado.'
+      )
+      setIsMetaAuthorizationGuideOpen(true)
+    } finally {
+      setIsLoadingAuthorizedMetaAssets(false)
     }
   }
 
@@ -2419,10 +2449,10 @@ export const MetaAdsIntegration: React.FC = () => {
             </div>
             <p>
               {session
-                ? 'Elige los activos que Ristak usará antes de guardar la nueva conexión.'
+                ? 'Aquí sólo aparecen activos autorizados y utilizables. Elige cuáles usará Ristak; los demás siguen autorizados para cambiarlos después.'
                 : connected
-                  ? 'Esta cuenta ya usa el login unificado. Puedes volver a autorizarla si cambian los activos.'
-                  : 'Acceso anticipado mientras Meta termina la revisión. La configuración manual de arriba sigue siendo la opción principal.'}
+                  ? 'Cambia entre activos ya autorizados sin repetir OAuth. Abre Meta únicamente cuando quieras agregar activos nuevos.'
+                  : 'Autoriza tus activos actuales una sola vez y elige dentro de Ristak cuáles quedarán trabajando.'}
             </p>
           </div>
         </div>
@@ -2441,6 +2471,11 @@ export const MetaAdsIntegration: React.FC = () => {
 
         {session ? (
           <div className={styles.stepPanel}>
+            <p className={styles.oauthInventorySummary}>
+              Meta autorizó {session.adAccounts.length} cuenta(s) publicitaria(s), {session.pages.length} Página(s),{' '}
+              {session.adAccounts.reduce((total, account) => total + account.pixels.length, 0)} Dataset(s) y{' '}
+              {session.pages.reduce((total, page) => total + page.instagramAccounts.length, 0)} cuenta(s) de Instagram.
+            </p>
             <label className={styles.formGroup}>
               <span className={styles.formLabel}>Cuenta publicitaria</span>
               <CustomSelect
@@ -2549,14 +2584,25 @@ export const MetaAdsIntegration: React.FC = () => {
 
         {!session ? (
           <div className={styles.oauthActions}>
+            {connected ? (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => void handleChangeAuthorizedMetaAssets()}
+                disabled={isLoadingAuthorizedMetaAssets || isConnectingMetaOAuth}
+              >
+                {isLoadingAuthorizedMetaAssets ? <RefreshCw size={16} className={styles.spinning} /> : <Settings2 size={16} />}
+                {isLoadingAuthorizedMetaAssets ? 'Cargando activos' : 'Cambiar activos en Ristak'}
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="ghost"
-              onClick={() => void handleConnectWithMeta()}
+              onClick={handleConnectWithMeta}
               disabled={isConnectingMetaOAuth || metaOAuthStatus === null || metaOAuthStatus?.available === false}
             >
               {isConnectingMetaOAuth ? <RefreshCw size={16} className={styles.spinning} /> : <MetaBrandMark size={17} />}
-              {isConnectingMetaOAuth ? 'Abriendo Meta' : connected ? 'Reconectar OAuth' : 'Probar OAuth'}
+              {isConnectingMetaOAuth ? 'Abriendo Meta' : connected ? 'Autorizar nuevos activos' : 'Conectar con Meta'}
             </Button>
             {connected && (
               <Button type="button" variant="ghost" onClick={handleEditMetaConfig}>
@@ -3883,6 +3929,29 @@ export const MetaAdsIntegration: React.FC = () => {
 
 
       </div>
+
+      <Modal
+        isOpen={isMetaAuthorizationGuideOpen}
+        onClose={() => {
+          if (!isConnectingMetaOAuth) setIsMetaAuthorizationGuideOpen(false)
+        }}
+        title="Autoriza todos tus activos actuales"
+        subtitle="Meta controla esta pantalla; Ristak no puede marcar las opciones por ti."
+        type="custom"
+        size="md"
+        confirmText={isConnectingMetaOAuth ? 'Abriendo Meta...' : 'Abrir Meta'}
+        cancelText="Ahora no"
+        onConfirm={async () => {
+          setIsMetaAuthorizationGuideOpen(false)
+          await startMetaAuthorization()
+        }}
+      >
+        <div className={styles.metaAuthorizationGuide}>
+          <p>En cada grupo que muestre Meta —Páginas, cuentas publicitarias, Datasets e Instagram— elige <strong>Seleccionar todo</strong>.</p>
+          <p>Al volver, Ristak te preguntará cuáles quieres dejar activos. Los demás quedarán disponibles para cambiarlos aquí sin repetir OAuth.</p>
+          <p>Si después creas un activo nuevo, usa <strong>Autorizar nuevos activos</strong> para agregarlo.</p>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={isDisconnectModalOpen}
