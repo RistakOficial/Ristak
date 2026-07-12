@@ -86,6 +86,7 @@ const SOURCE_NAME = 'WhatsApp_API'
 const PROVIDER_NAME = WHATSAPP_PROVIDER_YCLOUD
 const META_DIRECT_PROVIDER_NAME = WHATSAPP_PROVIDER_META_DIRECT
 const DEFAULT_INSTALLER_PUBLIC_URL = 'https://www.ristak.com'
+const META_EMBEDDED_SIGNUP_TIMEOUT_MS = 20_000
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
@@ -8931,6 +8932,98 @@ export async function createMetaDirectConnectUrl({ appUrl } = {}) {
     url: url.toString(),
     expiresAt: new Date(issuedAt + 15 * 60 * 1000).toISOString()
   }
+}
+
+function metaEmbeddedSignupError(message, code = 'whatsapp_embedded_signup_error', statusCode = 400) {
+  const error = new Error(message)
+  error.code = code
+  error.statusCode = statusCode
+  return error
+}
+
+function getMetaEmbeddedSignupInstallerUrl() {
+  const baseUrl = normalizePublicBaseUrl(
+    process.env.META_WHATSAPP_PORTAL_URL ||
+    process.env.META_WHATSAPP_PUBLIC_URL ||
+    DEFAULT_INSTALLER_PUBLIC_URL
+  )
+  let parsed
+  try {
+    parsed = new URL(baseUrl)
+  } catch {
+    throw metaEmbeddedSignupError('El portal central de Meta no tiene una URL válida', 'whatsapp_installer_url_invalid', 503)
+  }
+  const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
+  if (parsed.protocol !== 'https:' && !localHttp) {
+    throw metaEmbeddedSignupError('El portal central de Meta no tiene una URL segura', 'whatsapp_installer_url_insecure', 503)
+  }
+  return parsed.origin
+}
+
+async function callMetaEmbeddedSignupInstaller(path, body = {}) {
+  let response
+  let data
+  try {
+    response = await metaDirectFetch(new URL(path, getMetaEmbeddedSignupInstallerUrl()), {
+      method: 'POST',
+      redirect: 'error',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(META_EMBEDDED_SIGNUP_TIMEOUT_MS)
+    })
+    data = await response.json().catch(() => ({}))
+  } catch (error) {
+    if (error?.code && error?.statusCode) throw error
+    throw metaEmbeddedSignupError(
+      'No se pudo contactar al servicio central de Meta. Intenta nuevamente.',
+      'whatsapp_installer_unreachable',
+      502
+    )
+  }
+  if (!response.ok || data?.success === false) {
+    throw metaEmbeddedSignupError(
+      cleanString(data?.error || data?.message) || 'El servicio central de Meta rechazó la solicitud.',
+      cleanString(data?.code) || 'whatsapp_embedded_signup_rejected',
+      Number(response.status) || 502
+    )
+  }
+  return data || {}
+}
+
+export async function prepareMetaDirectEmbeddedSignup({ appUrl } = {}) {
+  const connection = await createMetaDirectConnectUrl({ appUrl })
+  const state = cleanString(new URL(connection.url).searchParams.get('state'))
+  if (!state) {
+    throw metaEmbeddedSignupError('El portal central no generó una sesión firmada de Meta', 'whatsapp_state_missing', 502)
+  }
+  const response = await callMetaEmbeddedSignupInstaller('/api/meta/whatsapp/session', { state })
+  const session = response.session || {}
+  if (!cleanString(session.appId) || !cleanString(session.configId) || !cleanString(session.graphVersion)) {
+    throw metaEmbeddedSignupError('La configuración pública de Meta está incompleta', 'whatsapp_embedded_signup_not_configured', 503)
+  }
+  return {
+    state,
+    expiresAt: connection.expiresAt,
+    status: cleanString(session.status) || 'pending',
+    appId: cleanString(session.appId),
+    configId: cleanString(session.configId),
+    graphVersion: cleanString(session.graphVersion),
+    featureType: cleanString(session.featureType),
+    sessionInfoVersion: cleanString(session.sessionInfoVersion),
+    coexistence: session.coexistence !== false
+  }
+}
+
+export async function completeMetaDirectEmbeddedSignup({ state, code = '', signupData = {} } = {}) {
+  if (!cleanString(state)) {
+    throw metaEmbeddedSignupError('La sesión de conexión con Meta ya no está disponible', 'whatsapp_state_missing', 400)
+  }
+  const response = await callMetaEmbeddedSignupInstaller('/api/meta/whatsapp/complete', {
+    state: cleanString(state),
+    code: cleanString(code),
+    signupData: signupData && typeof signupData === 'object' ? signupData : {}
+  })
+  return response.result || {}
 }
 
 export async function getMetaDirectSetupPrefill({ payload = {}, rawBody = '', headers = {} } = {}) {

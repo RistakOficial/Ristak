@@ -454,7 +454,10 @@ const requireWhatsAppFeatureForWhatsAppApiRoute = (() => {
     return whatsappFeatureGate(req, res, next)
   }
 })()
-app.use('/api/whatsapp-api', requireAuth, requireWhatsAppFeatureForWhatsAppApiRoute, whatsappApiRoutes) // (LIC-002) auth antes de feature
+// Los callbacks Installer -> tenant viven antes de router.use(requireAuth) y se
+// autentican con HMAC, timestamp, nonce e installation id dentro del router.
+// El resto de /api/whatsapp-api sigue exigiendo la sesión humana ahí mismo.
+app.use('/api/whatsapp-api', requireWhatsAppFeatureForWhatsAppApiRoute, whatsappApiRoutes)
 app.use('/api/email', requireAuth, requireFeature('email'), emailRoutes) // (LIC-002) auth antes de feature
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'

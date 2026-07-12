@@ -202,6 +202,24 @@ export interface WhatsAppMetaDirectConnectUrlResponse {
   expiresAt?: string
 }
 
+export interface WhatsAppMetaEmbeddedSignupSession {
+  state: string
+  expiresAt?: string
+  status: string
+  appId: string
+  configId: string
+  graphVersion: string
+  featureType: string
+  sessionInfoVersion: string
+  coexistence: boolean
+}
+
+export interface WhatsAppMetaEmbeddedSignupData {
+  wabaId?: string
+  phoneNumberId?: string
+  businessId?: string
+}
+
 export interface WhatsAppMetaBusinessAccountResponse {
   whatsappBusinessAccountId?: string | null
 }
@@ -643,6 +661,10 @@ export const whatsappApiService = {
   getStatus: () => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status'),
   getMetaBusinessAccount: () => apiClient.get<WhatsAppMetaBusinessAccountResponse>('/whatsapp-api/meta/business-account'),
   getMetaConnectUrl: () => apiClient.get<WhatsAppMetaDirectConnectUrlResponse>('/whatsapp-api/meta/connect-url'),
+  prepareMetaSignup: () => apiClient.get<WhatsAppMetaEmbeddedSignupSession>('/whatsapp-api/meta/signup-session'),
+  completeMetaSignup: (payload: { state: string; code?: string; signupData?: WhatsAppMetaEmbeddedSignupData }) => (
+    apiClient.post<{ completed: boolean; wabaId?: string; phoneNumberId?: string }>('/whatsapp-api/meta/signup-complete', payload)
+  ),
   setProvider: (provider: 'ycloud' | 'meta_direct') => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/provider', { provider }),
   testMetaDirect: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/test'),
   sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),

@@ -1,9 +1,10 @@
 // Tipos para Facebook SDK
 interface Window {
-  FB: {
+  FB?: {
     init: (params: {
       appId: string
       autoLogAppEvents?: boolean
+      cookie?: boolean
       xfbml?: boolean
       version: string
     }) => void
@@ -21,5 +22,5 @@ interface Window {
       params?: any
     ) => void
   }
-  fbAsyncInit: () => void
+  fbAsyncInit?: () => void
 }

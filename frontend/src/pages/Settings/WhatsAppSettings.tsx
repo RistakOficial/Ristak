@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -40,7 +40,7 @@ import {
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useUrlStringState } from '@/hooks'
-import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
+import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppMetaEmbeddedSignupData, WhatsAppMetaEmbeddedSignupSession, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { formatInTimezone, getStoredBusinessTimezone } from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import { MessageTemplates } from './MessageTemplates'
@@ -80,6 +80,88 @@ const QR_DRIP_DELAY_UNIT_OPTIONS: Array<{ value: WhatsAppQrDripDelayUnit; label:
   { value: 'seconds', label: 'Segundos' },
   { value: 'minutes', label: 'Minutos' }
 ]
+
+let facebookSdkPromise: Promise<void> | null = null
+
+function loadFacebookSdk(session: WhatsAppMetaEmbeddedSignupSession) {
+  const initialize = () => {
+    if (!window.FB) throw new Error('Meta no terminó de cargar el acceso seguro')
+    window.FB.init({
+      appId: session.appId,
+      cookie: true,
+      xfbml: false,
+      version: session.graphVersion
+    })
+  }
+
+  if (window.FB) {
+    initialize()
+    return Promise.resolve()
+  }
+  if (facebookSdkPromise) return facebookSdkPromise.then(initialize)
+
+  facebookSdkPromise = new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error('Meta tardó demasiado en cargar el acceso seguro')), 15_000)
+    const previousInit = window.fbAsyncInit
+    window.fbAsyncInit = () => {
+      previousInit?.()
+      if (!window.FB) {
+        window.clearTimeout(timeout)
+        reject(new Error('Meta no terminó de cargar el acceso seguro'))
+        return
+      }
+      window.clearTimeout(timeout)
+      resolve()
+    }
+
+    const existing = document.getElementById('facebook-jssdk') as HTMLScriptElement | null
+    if (existing) {
+      existing.addEventListener('error', () => reject(new Error('No se pudo cargar el acceso seguro de Meta')), { once: true })
+      return
+    }
+
+    const script = document.createElement('script')
+    script.id = 'facebook-jssdk'
+    script.async = true
+    script.defer = true
+    script.crossOrigin = 'anonymous'
+    script.src = 'https://connect.facebook.net/es_LA/sdk.js'
+    script.onerror = () => {
+      window.clearTimeout(timeout)
+      reject(new Error('No se pudo cargar el acceso seguro de Meta'))
+    }
+    document.body.appendChild(script)
+  })
+
+  return facebookSdkPromise.then(initialize).catch(error => {
+    facebookSdkPromise = null
+    throw error
+  })
+}
+
+function parseMetaSignupMessage(event: MessageEvent): WhatsAppMetaEmbeddedSignupData | null {
+  try {
+    const origin = new URL(event.origin)
+    if (origin.protocol !== 'https:' || (origin.hostname !== 'facebook.com' && !origin.hostname.endsWith('.facebook.com'))) return null
+    const payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+    if (payload?.type !== 'WA_EMBEDDED_SIGNUP') return null
+    const eventName = String(payload?.event || '').toUpperCase()
+    if (!['FINISH', 'FINISH_ONLY_WABA', 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'].includes(eventName)) return null
+    const data = payload?.data || {}
+    return {
+      wabaId: String(data.waba_id || data.wabaId || '').trim() || undefined,
+      phoneNumberId: String(data.phone_number_id || data.phoneNumberId || '').trim() || undefined,
+      businessId: String(data.business_id || data.businessId || '').trim() || undefined
+    }
+  } catch {
+    return null
+  }
+}
+
+function apiErrorCode(error: unknown) {
+  const body = (error as Error & { body?: { code?: unknown } })?.body
+  return String(body?.code || '').trim()
+}
 
 function parseJson<T>(value?: string | null): T | null {
   if (!value) return null
@@ -267,6 +349,8 @@ export const WhatsAppSettings: React.FC = () => {
   const [apiLoading, setApiLoading] = useState(true)
   const [apiConnecting, setApiConnecting] = useState(false)
   const [metaConnecting, setMetaConnecting] = useState(false)
+  const [metaSignupPreparing, setMetaSignupPreparing] = useState(false)
+  const [metaSignupSession, setMetaSignupSession] = useState<WhatsAppMetaEmbeddedSignupSession | null>(null)
   const [apiRefreshing, setApiRefreshing] = useState(false)
   const [apiDisconnecting, setApiDisconnecting] = useState(false)
   const [apiKey, setApiKey] = useState('')
@@ -291,6 +375,8 @@ export const WhatsAppSettings: React.FC = () => {
   const [qrDripSaving, setQrDripSaving] = useState(false)
   const [qrDripDisableConfirmOpen, setQrDripDisableConfirmOpen] = useState(false)
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
+  const metaSignupDataRef = useRef<WhatsAppMetaEmbeddedSignupData>({})
+  const metaSignupPreparationRef = useRef<Promise<WhatsAppMetaEmbeddedSignupSession> | null>(null)
 
   const hasWhatsAppApiAccess = hasLicenseFeature(user, ['whatsapp_api'])
   const hasWhatsAppTemplatesAccess = hasLicenseFeature(user, ['whatsapp_templates'])
@@ -366,6 +452,55 @@ export const WhatsAppSettings: React.FC = () => {
     setSelectedPhoneId(preferredPhoneId)
     return nextStatus
   }
+
+  const prepareMetaSignup = useCallback(async (force = false) => {
+    const expiresAt = metaSignupSession?.expiresAt ? new Date(metaSignupSession.expiresAt).getTime() : 0
+    if (!force && metaSignupSession && (!expiresAt || expiresAt > Date.now() + 30_000)) return metaSignupSession
+    if (metaSignupPreparationRef.current) return metaSignupPreparationRef.current
+
+    setMetaSignupPreparing(true)
+    const preparation = whatsappApiService.prepareMetaSignup()
+      .then(async session => {
+        if (!['delivery_pending', 'completed'].includes(session.status)) {
+          await loadFacebookSdk(session)
+        }
+        metaSignupDataRef.current = {}
+        setMetaSignupSession(session)
+        return session
+      })
+      .finally(() => {
+        metaSignupPreparationRef.current = null
+        setMetaSignupPreparing(false)
+      })
+    metaSignupPreparationRef.current = preparation
+    return preparation
+  }, [metaSignupSession])
+
+  useEffect(() => {
+    const shouldPrepare = hasWhatsAppApiAccess && (connectionChoice === 'api' || addNumberChoice === 'api')
+    if (!shouldPrepare) return
+    prepareMetaSignup().catch(error => {
+      showToast('error', 'No se pudo preparar Meta', error instanceof Error ? error.message : 'Intenta nuevamente.')
+    })
+  }, [addNumberChoice, connectionChoice, hasWhatsAppApiAccess, prepareMetaSignup, showToast])
+
+  useEffect(() => {
+    if (!metaSignupSession?.expiresAt || (connectionChoice !== 'api' && addNumberChoice !== 'api')) return
+    const refreshIn = Math.max(0, new Date(metaSignupSession.expiresAt).getTime() - Date.now() - 30_000)
+    const timer = window.setTimeout(() => {
+      prepareMetaSignup(true).catch(() => null)
+    }, refreshIn)
+    return () => window.clearTimeout(timer)
+  }, [addNumberChoice, connectionChoice, metaSignupSession?.expiresAt, prepareMetaSignup])
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = parseMetaSignupMessage(event)
+      if (data) metaSignupDataRef.current = { ...metaSignupDataRef.current, ...data }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
 
   const paymentConfigUrl = useMemo(() => {
     const businessId = metaBusinessAccountId.trim()
@@ -495,63 +630,82 @@ export const WhatsAppSettings: React.FC = () => {
   const connectMetaDirect = async () => {
     if (metaConnecting) return
 
-    const popup = window.open('', 'ristak-whatsapp-meta', 'popup=yes,width=620,height=760,resizable=yes,scrollbars=yes')
-    setMetaConnecting(true)
-    let pollTimer: number | null = null
-    let installerOrigin = ''
-    let finished = false
-
-    const cleanup = () => {
-      if (pollTimer !== null) window.clearInterval(pollTimer)
-      window.removeEventListener('message', onConnected)
-      setMetaConnecting(false)
-    }
-
-    const confirmConnection = async () => {
-      if (finished) return
-      finished = true
-      cleanup()
+    const finishConnection = async (session: WhatsAppMetaEmbeddedSignupSession, code = '') => {
+      setMetaConnecting(true)
       try {
-        const nextStatus = await loadApiStatus()
-        if (nextStatus.metaDirect?.connected) {
-          setConnectionChoice(null)
-          setAddNumberChoice(null)
-          setAddNumberModalOpen(false)
-          selectSection('numbers')
-          showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak mediante Coexistence.')
+        if (code && !metaSignupDataRef.current.wabaId) {
+          await new Promise(resolve => window.setTimeout(resolve, 350))
         }
-      } catch {
-        // El estado también se refresca al volver a abrir la pantalla.
+        await whatsappApiService.completeMetaSignup({
+          state: session.state,
+          code,
+          signupData: metaSignupDataRef.current
+        })
+        const nextStatus = await loadApiStatus()
+        if (!nextStatus.metaDirect?.connected) throw new Error('Meta terminó, pero el número aún no aparece conectado')
+        setConnectionChoice(null)
+        setAddNumberChoice(null)
+        setAddNumberModalOpen(false)
+        setMetaSignupSession(null)
+        selectSection('numbers')
+        showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak mediante Coexistence.')
+      } catch (error) {
+        const code = apiErrorCode(error)
+        if (code === 'whatsapp_tenant_unreachable' || code === 'whatsapp_tenant_delivery_failed') {
+          setMetaSignupSession(current => current ? { ...current, status: 'delivery_pending' } : current)
+          showToast('error', 'Falta terminar de guardarlo', 'Meta ya autorizó el número. Vuelve a tocar el botón para terminar sin autorizar otra vez.')
+        } else {
+          showToast('error', 'No se pudo conectar Meta', error instanceof Error ? error.message : 'Intenta nuevamente.')
+        }
+      } finally {
+        setMetaConnecting(false)
       }
     }
 
-    function onConnected(event: MessageEvent) {
-      if (!installerOrigin || event.origin !== installerOrigin || event.data?.type !== 'RISTAK_WHATSAPP_META_CONNECTED') return
-      void confirmConnection()
-    }
-
-    window.addEventListener('message', onConnected)
-    try {
-      const data = await whatsappApiService.getMetaConnectUrl()
-      const connectUrl = new URL(data.url)
-      const localHttp = connectUrl.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(connectUrl.hostname)
-      if (connectUrl.protocol !== 'https:' && !localHttp) throw new Error('El portal de Meta no tiene una URL segura')
-      installerOrigin = connectUrl.origin
-
-      if (popup) {
-        popup.location.replace(connectUrl.toString())
-        pollTimer = window.setInterval(() => {
-          if (popup.closed) void confirmConnection()
-        }, 700)
-      } else {
-        cleanup()
-        window.location.assign(connectUrl.toString())
+    let session = metaSignupSession
+    if (!session) {
+      try {
+        session = await prepareMetaSignup()
+      } catch (error) {
+        showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Intenta nuevamente.')
+        return
       }
-    } catch (error) {
-      popup?.close()
-      cleanup()
-      showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Intenta nuevamente.')
     }
+
+    if (session.status === 'delivery_pending') {
+      await finishConnection(session)
+      return
+    }
+    if (!window.FB) {
+      showToast('error', 'Meta no está listo', 'Espera un momento y vuelve a intentarlo.')
+      return
+    }
+
+    setMetaConnecting(true)
+    window.FB.login(response => {
+      const authorizationCode = String(response?.authResponse?.code || '').trim()
+      if (!authorizationCode) {
+        setMetaConnecting(false)
+        showToast(
+          'error',
+          'Meta no se conectó',
+          response?.status === 'not_authorized'
+            ? 'Acepta los permisos de WhatsApp para terminar la conexión.'
+            : 'Cerraste la ventana de Meta antes de terminar.'
+        )
+        return
+      }
+      void finishConnection(session, authorizationCode)
+    }, {
+      config_id: session.configId,
+      response_type: 'code',
+      override_default_response_type: true,
+      extras: {
+        setup: {},
+        featureType: session.featureType,
+        sessionInfoVersion: session.sessionInfoVersion
+      }
+    })
   }
 
   const refreshApi = async () => {
@@ -998,7 +1152,8 @@ export const WhatsAppSettings: React.FC = () => {
           type="button"
           className={styles.metaConnectButton}
           onClick={() => void connectMetaDirect()}
-          loading={metaConnecting}
+          loading={metaConnecting || metaSignupPreparing}
+          disabled={metaSignupPreparing}
         >
           <Link2 size={17} />
           Conectar con Meta
@@ -1026,6 +1181,7 @@ export const WhatsAppSettings: React.FC = () => {
               startStandaloneQrConnection().catch(() => null)
               return
             }
+            setMetaSignupPreparing(true)
             setAddNumberChoice(choice)
           })}
         </div>
@@ -1041,7 +1197,8 @@ export const WhatsAppSettings: React.FC = () => {
             type="button"
             className={styles.metaConnectButton}
             onClick={() => void connectMetaDirect()}
-            loading={metaConnecting}
+            loading={metaConnecting || metaSignupPreparing}
+            disabled={metaSignupPreparing}
           >
             <Link2 size={17} />
             Conectar con Meta
@@ -1083,6 +1240,7 @@ export const WhatsAppSettings: React.FC = () => {
               startStandaloneQrConnection().catch(() => null)
               return
             }
+            setMetaSignupPreparing(true)
             setConnectionChoice(choice)
           })}
         </section>

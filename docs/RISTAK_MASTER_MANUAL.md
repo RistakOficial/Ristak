@@ -516,12 +516,16 @@ endpoints, nombres de webhook ni columnas de ID específicas. Baileys nunca debe
 presentarse como proveedor de API oficial.
 
 En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece dos conexiones
-separadas: **Conectar con Meta** abre el Embedded Signup central de Installer con
-Coexistence y **YCloud** conserva su formulario de API key. Meta valida el WABA y
-el número, guarda el token cifrado sólo en la base de esa instalación y activa
+separadas: **Conectar con Meta** precarga el Embedded Signup desde el backend del
+tenant y abre directamente una sola ventana oficial de Meta con Coexistence;
+**YCloud** conserva su formulario de API key. La página intermedia de Installer
+queda sólo como fallback para clientes anteriores. Meta valida el WABA y el
+número, guarda el token cifrado sólo en la base de esa instalación y activa
 `meta_direct`; el broker central enruta webhooks por WABA sin mezclarlos con
-YCloud ni con las sesiones QR/Baileys. Si la entrega final al tenant falla, el
-usuario puede reintentar sin volver a exponer el token en el navegador.
+YCloud ni con las sesiones QR/Baileys. Si la entrega final al tenant falla,
+Installer conserva temporalmente el resultado cifrado y una sesión nueva de la
+misma instalación lo retoma sin volver a autorizar ni exponer el token al
+navegador.
 
 Las plantillas usan el proveedor API activo. Con Meta directo se administran en
 Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
