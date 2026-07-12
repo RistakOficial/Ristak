@@ -210,6 +210,10 @@ function getOfficialProviderLabel(phone: WhatsAppApiPhoneNumber) {
   return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'Meta Directo' : 'YCloud'
 }
 
+function getDisconnectApiLabel(phone: WhatsAppApiPhoneNumber) {
+  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'API' : 'YCloud'
+}
+
 function getPhoneProfile(phone?: WhatsAppApiPhoneNumber | null) {
   return parseJson<BusinessProfile>(phone?.business_profile_json)
 }
@@ -906,17 +910,15 @@ export const WhatsAppSettings: React.FC = () => {
 
   const disconnectPhoneConnection = (phone: WhatsAppApiPhoneNumber, connection: 'api' | 'qr') => {
     const standaloneQr = isStandaloneQrPhone(phone)
-    const providerLabel = getOfficialProviderLabel(phone)
+    const apiLabel = getDisconnectApiLabel(phone)
     const title = connection === 'api'
-      ? `Desconectar ${providerLabel}`
-      : standaloneQr
-        ? 'Desconectar WhatsApp QR'
-        : 'Desconectar respaldo QR'
+      ? `Desconectar ${apiLabel}`
+      : 'Desconectar QR'
     const detail = connection === 'api'
-      ? `Ristak dejará de enviar y recibir con ${getPhoneLabel(phone)} mediante ${providerLabel}. El número seguirá registrado en ${providerLabel} y tus mensajes, contactos y plantillas guardadas se quedan intactos.`
+      ? `${getPhoneLabel(phone)} dejará de enviar y recibir mediante ${apiLabel === 'API' ? 'la API oficial' : 'YCloud'}. El número seguirá registrado en ${apiLabel === 'API' ? 'Meta' : 'YCloud'} y tus mensajes, contactos y plantillas guardadas se quedan intactos.`
       : standaloneQr
-        ? `Ristak cerrará la sesión local de WhatsApp Web de ${getPhoneLabel(phone)} y quitará el número de esta lista. No se eliminará el número de WhatsApp y tus mensajes y contactos guardados se quedan intactos.`
-        : `Ristak cerrará únicamente el respaldo QR de ${getPhoneLabel(phone)}. La conexión oficial, el número real y tus mensajes guardados se quedan intactos.`
+        ? `Se cerrará la sesión local de WhatsApp Web de ${getPhoneLabel(phone)} y el número se quitará de esta lista. No se eliminará el número de WhatsApp y tus mensajes y contactos guardados se quedan intactos.`
+        : `Se cerrará únicamente el QR de ${getPhoneLabel(phone)}. La conexión oficial, el número real y tus mensajes guardados se quedan intactos.`
 
     showConfirm(
       title,
@@ -937,9 +939,9 @@ export const WhatsAppSettings: React.FC = () => {
           }
           showToast(
             'success',
-            'Conexión retirada de Ristak',
+            'Conexión desconectada',
             connection === 'api'
-              ? `${providerLabel} quedó desconectado para este número.`
+              ? `${apiLabel} quedó desconectado para este número.`
               : 'La sesión QR quedó desconectada.'
           )
         } catch (error) {
@@ -1490,7 +1492,7 @@ export const WhatsAppSettings: React.FC = () => {
                                       }}
                                     >
                                       <Unplug size={15} />
-                                      Desconectar {getOfficialProviderLabel(phone)} de Ristak
+                                      Desconectar {getDisconnectApiLabel(phone)}
                                     </DropdownMenuItem>
                                   )}
                                   {canDisconnectQr && (
@@ -1502,7 +1504,7 @@ export const WhatsAppSettings: React.FC = () => {
                                       }}
                                     >
                                       <Unplug size={15} />
-                                      {standaloneQr ? 'Desconectar QR de Ristak' : 'Desconectar respaldo QR'}
+                                      Desconectar QR
                                     </DropdownMenuItem>
                                   )}
                                 </DropdownMenuContent>
