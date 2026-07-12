@@ -1033,7 +1033,12 @@ async function fetchAndCacheSocialPost(comment, accessToken, baseUrl = '', confi
   if (!postId || !accessToken) return
   const existing = await db.get('SELECT id, image_url FROM meta_social_posts WHERE id = ?', [postId]).catch(() => null)
   const existingImageUrl = cleanString(existing?.image_url)
-  if (existing && existingImageUrl && !isMetaHostedMediaUrl(existingImageUrl)) return
+  if (existing && existingImageUrl && !isMetaHostedMediaUrl(existingImageUrl)) {
+    return db.get(
+      'SELECT id, platform, post_type, message, image_url, permalink, fetched_at, updated_at FROM meta_social_posts WHERE id = ?',
+      [postId]
+    ).catch(() => existing)
+  }
 
   try {
     const graphBaseUrl = cleanString(baseUrl) || getMetaSocialGraphBaseUrl(platform)
@@ -1079,10 +1084,91 @@ async function fetchAndCacheSocialPost(comment, accessToken, baseUrl = '', confi
         raw_json = excluded.raw_json,
         updated_at = CURRENT_TIMESTAMP
     `, [postId, platform, postType, message || null, imageUrl || null, permalink || null, safeJson(data)])
+
+    return db.get(
+      'SELECT id, platform, post_type, message, image_url, permalink, fetched_at, updated_at FROM meta_social_posts WHERE id = ?',
+      [postId]
+    ).catch(() => ({ id: postId, platform, post_type: postType, message, image_url: imageUrl, permalink }))
   } catch (error) {
-    await cacheDeletedSocialPost(comment, error)
+    const unavailable = error?.statusCode === 404 ||
+      /unsupported get request|does not exist|cannot be loaded|object .*not found/i.test(cleanString(error?.message))
+    if (unavailable) await cacheDeletedSocialPost(comment, error)
     logger.warn(`No se pudo cachear la publicación comentada ${postId}: ${error.message}`)
+    return null
   }
+}
+
+const metaSocialPostPreviewRefreshes = new Map()
+
+async function refreshMetaSocialPostPreviewForChat(message = {}) {
+  const platform = cleanString(message.platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const postId = platform === 'instagram'
+    ? cleanString(message.media_id || message.post_id)
+    : cleanString(message.post_id || message.media_id)
+  if (!postId) return null
+
+  const existingImageUrl = cleanString(message.post_image_url)
+  if (!isMetaHostedMediaUrl(existingImageUrl)) return null
+  if (cleanString(message.post_type).toLowerCase() === 'deleted') return null
+
+  const refreshKey = `${platform}:${postId}`
+  if (metaSocialPostPreviewRefreshes.has(refreshKey)) {
+    return metaSocialPostPreviewRefreshes.get(refreshKey)
+  }
+
+  const refreshPromise = (async () => {
+    const config = await getMetaSocialConfig().catch(() => null)
+    if (!config) return null
+    const credentials = await resolveMetaSocialGraphCredentials(platform, config, { safe: true })
+    if (!credentials.token) return null
+
+    return fetchAndCacheSocialPost({
+      platform,
+      postId: platform === 'messenger' ? postId : '',
+      mediaId: platform === 'instagram' ? postId : ''
+    }, credentials.token, credentials.baseUrl, config)
+  })()
+    .catch(error => {
+      logger.warn(`[Meta social] No se pudo renovar el preview temporal ${postId}: ${error.message}`)
+      return null
+    })
+    .finally(() => {
+      metaSocialPostPreviewRefreshes.delete(refreshKey)
+    })
+
+  metaSocialPostPreviewRefreshes.set(refreshKey, refreshPromise)
+  return refreshPromise
+}
+
+// Las URLs de fbcdn/scontent que quedaron en filas legacy pueden caducar aunque el
+// mensaje y la publicación sigan existiendo. La primera lectura del chat las renueva
+// contra Graph y las rehospeda; las siguientes lecturas ya usan la URL estable.
+export async function refreshMetaSocialPostPreviewsForChat(messages = [], { limit = 6 } = {}) {
+  const unique = new Map()
+  // El query del chat regresa orden cronológico; recorremos al revés para reparar
+  // primero lo que el usuario acaba de recibir y tiene visible al fondo del hilo.
+  const newestFirst = Array.isArray(messages) ? [...messages].reverse() : []
+  for (const message of newestFirst) {
+    const platform = cleanString(message?.platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+    const postId = platform === 'instagram'
+      ? cleanString(message?.media_id || message?.post_id)
+      : cleanString(message?.post_id || message?.media_id)
+    if (!postId || !isMetaHostedMediaUrl(message?.post_image_url)) continue
+    if (cleanString(message?.post_type).toLowerCase() === 'deleted') continue
+    if (!unique.has(`${platform}:${postId}`)) unique.set(`${platform}:${postId}`, message)
+    if (unique.size >= Math.max(1, Number(limit) || 6)) break
+  }
+
+  const refreshed = new Map()
+  const results = await Promise.allSettled(
+    [...unique.entries()].map(async ([key, message]) => [key, await refreshMetaSocialPostPreviewForChat(message)])
+  )
+  results.forEach(result => {
+    if (result.status !== 'fulfilled') return
+    const [key, row] = result.value
+    if (row?.image_url) refreshed.set(key, row)
+  })
+  return refreshed
 }
 
 // Nombre del participante vía el endpoint de conversaciones cuando el perfil
@@ -4072,9 +4158,13 @@ function cleanMimeType(value) {
   return cleanString(value).split(';')[0].toLowerCase()
 }
 
-async function downloadMetaAttachmentBuffer(url, token) {
+async function downloadMetaAttachmentBuffer(url, token, timeoutMs = SOCIAL_MEDIA_DOWNLOAD_TIMEOUT_MS) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), SOCIAL_MEDIA_DOWNLOAD_TIMEOUT_MS)
+  const parsedTimeout = Number(timeoutMs)
+  const effectiveTimeout = Number.isFinite(parsedTimeout) && parsedTimeout > 0
+    ? Math.min(SOCIAL_MEDIA_DOWNLOAD_TIMEOUT_MS, Math.max(1000, parsedTimeout))
+    : SOCIAL_MEDIA_DOWNLOAD_TIMEOUT_MS
+  const timer = setTimeout(() => controller.abort(), effectiveTimeout)
   try {
     let response = await fetch(url, { redirect: 'follow', signal: controller.signal })
     if ((response.status === 401 || response.status === 403) && cleanString(token)) {
@@ -4131,7 +4221,11 @@ export async function rehostMetaSocialMedia({ socialMessage, config, accessToken
   const limitBytes = getSocialMediaLimitBytes(messageType)
 
   const token = cleanString(accessToken) || await resolveMetaSocialGraphToken(socialMessage.platform, config, { safe: true })
-  const { buffer, mimeType: downloadedMime } = await socialMediaDownloader(sourceUrl, token)
+  const { buffer, mimeType: downloadedMime } = await socialMediaDownloader(
+    sourceUrl,
+    token,
+    socialMessage.downloadTimeoutMs
+  )
   if (!buffer?.length) throw new Error('Meta devolvió un adjunto vacío')
   if (buffer.length > limitBytes) {
     throw new Error(`El adjunto excede el tamaño máximo permitido (${buffer.length} > ${limitBytes})`)
@@ -4153,7 +4247,7 @@ export async function rehostMetaSocialMedia({ socialMessage, config, accessToken
     isPublic: true,
     skipCompression: true,
     metadata: {
-      source: 'meta_social_inbound_media',
+      source: cleanString(socialMessage.metadataSource) || 'meta_social_inbound_media',
       platform: socialMessage.platform,
       metaMessageId: cleanString(socialMessage.metaMessageId),
       whatsappMessageType: messageType

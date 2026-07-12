@@ -318,6 +318,61 @@ test('contact conversation exposes every WhatsApp ad touch without decorating or
   }
 })
 
+test('contact conversation exposes WhatsApp ad preview media stored inside referral_json', async () => {
+  const id = randomUUID()
+  const contactId = `journey_whatsapp_preview_${id}`
+  const phone = `+52988${Date.now().toString().slice(-7)}`
+  const adId = `783${Date.now().toString().slice(-10)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Preview WhatsApp',
+      first_name: 'Cliente',
+      source: 'WhatsApp_API',
+      created_at: '2099-06-20T12:00:00.000Z',
+      updated_at: '2099-06-20T12:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_preview_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Hola, quiero información',
+      detected_source_id: adId,
+      detected_source_type: 'ad',
+      detected_headline: 'Anuncio con imagen oficial',
+      referral_json: JSON.stringify({
+        source_id: adId,
+        source_type: 'ad',
+        image_url: 'https://ristak-media-cdn.b-cdn.net/accounts/test/chat/ad-preview.jpg',
+        thumbnail_url: 'https://ristak-media-cdn.b-cdn.net/accounts/test/chat/ad-thumb.jpg'
+      }),
+      message_timestamp: '2099-06-20T12:01:00.000Z',
+      created_at: '2099-06-20T12:01:00.000Z'
+    })
+
+    const journey = await readConversation(contactId)
+    const message = journey.find((event) => event.type === 'whatsapp_message')
+
+    assert.ok(message)
+    assert.equal(message.data.is_ad_attributed, true)
+    assert.equal(message.data.referral_source_id, adId)
+    assert.equal(message.data.referral_image_url, 'https://ristak-media-cdn.b-cdn.net/accounts/test/chat/ad-preview.jpg')
+    assert.equal(message.data.referral_thumbnail_url, 'https://ristak-media-cdn.b-cdn.net/accounts/test/chat/ad-thumb.jpg')
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('contact conversation exposes Messenger and Instagram ad touches for chat previews', async () => {
   const id = randomUUID()
   const contactId = `journey_social_ads_${id}`

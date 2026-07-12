@@ -7,6 +7,7 @@ import {
   extractCommentMedia,
   setMetaSocialMediaTransportForTest
 } from '../src/services/metaSocialMessagingService.js'
+import { extractAttribution, persistWhatsAppAttributionPreview } from '../src/services/whatsappApiService.js'
 
 const META_IMAGE_URL = 'https://lookaside.fbsbx.com/messaging_attachment/abc123?token=xyz'
 const META_SCONTENT_URL = 'https://scontent.cdninstagram.com/v/t51/foto.jpg?oh=abc'
@@ -201,4 +202,66 @@ test('rehostMetaSocialMedia reutiliza el token ya resuelto al persistir previews
   } finally {
     setMetaSocialMediaTransportForTest({})
   }
+})
+
+test('persistWhatsAppAttributionPreview reemplaza la URL temporal por una copia estable', async () => {
+  let uploadedSource = ''
+  setMetaSocialMediaTransportForTest({
+    downloader: async (url) => {
+      uploadedSource = url
+      return { buffer: Buffer.from('preview-anuncio'), mimeType: 'image/jpeg' }
+    },
+    uploader: async (input) => {
+      assert.equal(input.metadata.source, 'whatsapp_ad_preview')
+      return { id: 'wa-ad-preview', publicUrl: BUNNY_URL, mimeType: 'image/jpeg' }
+    }
+  })
+
+  try {
+    const result = await persistWhatsAppAttributionPreview({
+      sourceId: '120123456789',
+      imageUrl: META_SCONTENT_URL,
+      thumbnailUrl: META_SCONTENT_URL,
+      referral: {
+        source_id: '120123456789',
+        image_url: META_SCONTENT_URL
+      }
+    }, 'wamid.preview')
+
+    assert.equal(uploadedSource, META_SCONTENT_URL)
+    assert.equal(result.imageUrl, BUNNY_URL)
+    assert.equal(result.thumbnailUrl, BUNNY_URL)
+    assert.equal(result.referral.image_url, BUNNY_URL)
+    assert.equal(result.referral.thumbnail_url, BUNNY_URL)
+  } finally {
+    setMetaSocialMediaTransportForTest({})
+  }
+})
+
+test('extractAttribution conserva el thumbnail de anuncios recibidos por WhatsApp QR', () => {
+  const attribution = extractAttribution({}, {
+    qrRaw: {
+      message: {
+        extendedTextMessage: {
+          text: 'Hola, quiero información',
+          contextInfo: {
+            externalAdReply: {
+              title: 'Anuncio QR rstkad_id=6994538207111!',
+              body: 'Descripción del anuncio',
+              sourceUrl: 'https://www.facebook.com/ads/example',
+              thumbnailUrl: META_SCONTENT_URL,
+              mediaType: 1
+            }
+          }
+        }
+      }
+    }
+  }, 'Hola, quiero información')
+
+  assert.equal(attribution.sourceId, '6994538207111')
+  assert.equal(attribution.sourceType, 'ad')
+  assert.equal(attribution.headline, 'Anuncio QR rstkad_id=6994538207111!')
+  assert.equal(attribution.body, 'Descripción del anuncio')
+  assert.equal(attribution.imageUrl, META_SCONTENT_URL)
+  assert.equal(attribution.thumbnailUrl, META_SCONTENT_URL)
 })

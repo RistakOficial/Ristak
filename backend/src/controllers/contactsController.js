@@ -24,7 +24,11 @@ import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '..
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
 import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, markLatestInboundWhatsAppApiMessageReadForContact, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
 import { markLatestInboundWhatsAppQrMessageReadForContact, warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
-import { isMetaSocialMessagingEnabled, markLatestMetaSocialMessageReadForContact } from '../services/metaSocialMessagingService.js'
+import {
+  isMetaSocialMessagingEnabled,
+  markLatestMetaSocialMessageReadForContact,
+  refreshMetaSocialPostPreviewsForChat
+} from '../services/metaSocialMessagingService.js'
 import {
   getChatUnreadCountsForUser,
   markChatContactReadForUser,
@@ -2363,6 +2367,39 @@ const buildMetaSocialAdAttributionData = (row = {}, rawPayload = null) => {
     referral_source_app: platform,
     referral_entry_point: cleanString(referral.type) || null,
     ad_id_thru_message: sourceId || null
+  }
+}
+
+const buildWhatsAppReferralPreviewData = (row = {}) => {
+  const referral = parseJsonObject(row.referral_json) || {}
+  const adsContext = referral.ads_context_data && typeof referral.ads_context_data === 'object'
+    ? referral.ads_context_data
+    : {}
+  const imageUrl = cleanString(
+    referral.image_url ||
+    referral.imageUrl ||
+    referral.photo_url ||
+    adsContext.image_url ||
+    adsContext.photo_url ||
+    adsContext.picture
+  )
+  const videoUrl = cleanString(
+    referral.video_url ||
+    referral.videoUrl ||
+    adsContext.video_url
+  )
+  const thumbnailUrl = cleanString(
+    referral.thumbnail_url ||
+    referral.thumbnailUrl ||
+    adsContext.thumbnail_url ||
+    imageUrl ||
+    videoUrl
+  )
+
+  return {
+    referral_image_url: imageUrl || null,
+    referral_video_url: videoUrl || null,
+    referral_thumbnail_url: thumbnailUrl || null
   }
 }
 
@@ -5843,6 +5880,7 @@ export const getContactJourney = async (req, res) => {
           msg.media_duration_ms,
           msg.raw_payload_json,
           msg.context_json,
+          COALESCE(NULLIF(attr.referral_json, 'null'), msg.referral_json) as referral_json,
           COALESCE(msg.message_timestamp, msg.created_at) as journey_message_date,
           COALESCE(attr.id, '') as attribution_id,
           COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as detected_ctwa_clid,
@@ -5894,6 +5932,7 @@ export const getContactJourney = async (req, res) => {
       const agentMetadata = extractConversationalAgentMessageMetadata(rawPayload)
       const context = parseJsonObject(msg.context_json)
       const detectedAttribution = detectWhatsAppAttributionFields({ row: msg, rawPayload, context }, [msg.message_text])
+      const referralPreview = buildWhatsAppReferralPreviewData(msg)
       const detectedSourceId = cleanString(msg.detected_source_id || detectedAttribution.sourceId)
       const detectedSourceType = cleanString(msg.detected_source_type || detectedAttribution.sourceType)
       const replyContextId = getWhatsAppReplyContextId(context, rawPayload)
@@ -5928,6 +5967,7 @@ export const getContactJourney = async (req, res) => {
         referral_source_id: detectedSourceId,
         referral_headline: msg.detected_headline || detectedAttribution.headline,
         referral_body: msg.detected_body || detectedAttribution.body,
+        ...referralPreview,
         referral_source_app: msg.detected_source_app || detectedAttribution.sourceApp,
         referral_entry_point: msg.detected_entry_point || detectedAttribution.entryPoint,
         referral_conversion_data: msg.detected_conversion_data || detectedAttribution.conversionData,
@@ -6029,6 +6069,10 @@ export const getContactJourney = async (req, res) => {
       )
     )
 
+    const refreshedPostPreviews = await refreshMetaSocialPostPreviewsForChat(metaSocialMessages).catch(error => {
+      logger.warn(`[Chat] No se pudieron renovar previews de publicaciones Meta para ${id}: ${error.message}`)
+      return new Map()
+    })
     const metaSocialJourneyEvents = []
 
     metaSocialMessages.forEach(msg => {
@@ -6045,6 +6089,8 @@ export const getContactJourney = async (req, res) => {
         ? getMetaReactionTargetId(rawPayload) || cleanString(msg.meta_message_id)
         : ''
       const postDeleted = isMetaPostDeletedForChat(msg)
+      const postCacheKey = `${platform === 'instagram' ? 'instagram' : 'messenger'}:${cleanString(platform === 'instagram' ? (msg.media_id || msg.post_id) : (msg.post_id || msg.media_id))}`
+      const refreshedPost = refreshedPostPreviews.get(postCacheKey)
 
       metaSocialJourneyEvents.push({
         type: 'meta_message',
@@ -6096,8 +6142,8 @@ export const getContactJourney = async (req, res) => {
           // Contenido de la publicación comentada (para mostrar "de qué publicación
           // comentó" dentro del globo): texto, imagen y link a la publicación.
           post_message: getMetaPostMessageForChat(msg) || null,
-          post_image_url: msg.post_image_url || null,
-          post_permalink: msg.post_permalink || msg.permalink || null,
+          post_image_url: refreshedPost?.image_url || msg.post_image_url || null,
+          post_permalink: refreshedPost?.permalink || msg.post_permalink || msg.permalink || null,
           post_type: msg.post_type || null,
           post_deleted: postDeleted ? 1 : 0
         }

@@ -620,6 +620,11 @@ o `source_app='api'` nunca deben pintar anuncio. En Messenger/Instagram salen de
 incluye `ads_context_data.photo_url` o `ads_context_data.video_url`, el backend
 los expone como media/thumbnail del anuncio para que la tarjeta tenga material
 visual aunque todavia no exista una fila sincronizada en `meta_ads`. Cuando
+WhatsApp entrega `image_url`/`thumbnail_url` dentro de su `referral_json`, Ristak
+los expone tambien en el evento del chat y, si apuntan a CDN temporal de Meta,
+guarda una copia estable en el storage de chat antes de conservar el referral.
+Asi el globo no depende de que `fbcdn` siga aceptando la misma URL dias despues.
+Cuando
 el backend ya enriquecio el evento con `meta_ads`, usa
 `creative_image_url`/`creative_thumbnail_url`, `creative_preview_url`,
 `ad_account_id`, campana, conjunto y nombre del anuncio. En `/chat`, `/movil`,
@@ -2410,8 +2415,9 @@ Ristak usa Meta en varias areas:
   queda como `Publicacion eliminada` sin borrar el hilo.
   La foto del comentario y la imagen de contexto de la publicacion se rehospedan
   en el storage de chat cuando Meta entrega una URL temporal. Si una fila legacy
-  todavia apunta a `fbcdn`, `scontent` o `cdninstagram`, el siguiente evento que
-  vuelva a enriquecer esa publicacion intenta reemplazarla por la URL persistente.
+  todavia apunta a `fbcdn`, `scontent` o `cdninstagram`, la siguiente lectura del
+  chat renueva el contenido contra Graph, lo rehospeda y reemplaza esa URL por la
+  persistente; no hace falta esperar a que Meta reenvie otro comentario.
   Mientras una imagen no esta disponible o falla, `/chat` y `/movil` conservan el
   tamaño del preview y muestran placeholder; nunca el icono roto del navegador.
 - El enriquecimiento de contactos Meta usa el mismo contrato de Page token:

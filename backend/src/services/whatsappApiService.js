@@ -6107,6 +6107,18 @@ async function hydrateInboundMessageMedia(normalizedMessage = {}, media = {}, { 
   }
 }
 
+function findNestedObjectByKey(value, wantedKey, depth = 0, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object' || depth > 12 || seen.has(value)) return null
+  seen.add(value)
+
+  if (isPlainObject(value[wantedKey])) return value[wantedKey]
+  for (const child of Object.values(value)) {
+    const match = findNestedObjectByKey(child, wantedKey, depth + 1, seen)
+    if (match) return match
+  }
+  return null
+}
+
 function findReferralObject(payload = {}, message = {}) {
   const candidates = [
     message.referral,
@@ -6121,13 +6133,17 @@ function findReferralObject(payload = {}, message = {}) {
     payload.whatsappInboundMessage?.contextInfo?.referral,
     payload.referral,
     payload.context?.referral,
-    payload.contextInfo?.referral
+    payload.contextInfo?.referral,
+    // WhatsApp Web/Baileys entrega el contexto de anuncios dentro de
+    // contextInfo.externalAdReply, a veces envuelto en ephemeral/viewOnce.
+    findNestedObjectByKey(message, 'externalAdReply'),
+    findNestedObjectByKey(payload, 'externalAdReply')
   ]
 
   return candidates.find(isPlainObject) || {}
 }
 
-function extractAttribution(payload = {}, message = {}, messageText = '') {
+export function extractAttribution(payload = {}, message = {}, messageText = '') {
   const referral = findReferralObject(payload, message)
   const detected = detectWhatsAppAttributionFields({ payload, message, referral }, [messageText])
   const referralSourceId = cleanString(referral.source_id || referral.sourceId || referral.ad_id || referral.adId)
@@ -6144,9 +6160,9 @@ function extractAttribution(payload = {}, message = {}, messageText = '') {
     entryPoint: cleanString(referral.entry_point || referral.entryPoint || detected.entryPoint),
     headline: cleanString(referral.headline || referral.title || detected.headline),
     body: cleanString(referral.body || referral.description || detected.body),
-    imageUrl: cleanString(referral.image_url || referral.imageUrl),
+    imageUrl: cleanString(referral.image_url || referral.imageUrl || referral.photo_url || referral.photoUrl || referral.thumbnail_url || referral.thumbnailUrl || referral.mediaUrl),
     videoUrl: cleanString(referral.video_url || referral.videoUrl),
-    thumbnailUrl: cleanString(referral.thumbnail_url || referral.thumbnailUrl),
+    thumbnailUrl: cleanString(referral.thumbnail_url || referral.thumbnailUrl || referral.image_url || referral.imageUrl || referral.mediaUrl),
     conversionData: cleanString(detected.conversionData),
     ctwaPayload: cleanString(detected.ctwaPayload),
     referral
@@ -6170,6 +6186,43 @@ function extractAttribution(payload = {}, message = {}, messageText = '') {
       attribution.ctwaPayload
     ) ||
       Boolean(referral && Object.keys(referral).length)
+  }
+}
+
+export async function persistWhatsAppAttributionPreview(attribution = {}, referenceId = '') {
+  const imageUrl = cleanString(attribution.imageUrl)
+  const thumbnailUrl = cleanString(attribution.thumbnailUrl)
+  const sourceUrl = imageUrl || thumbnailUrl
+  if (!sourceUrl) return attribution
+
+  const { isMetaHostedMediaUrl, rehostMetaSocialMedia } = await import('./metaSocialMessagingService.js')
+  if (!isMetaHostedMediaUrl(sourceUrl)) return attribution
+
+  const rehosted = await rehostMetaSocialMedia({
+    socialMessage: {
+      platform: 'whatsapp',
+      messageType: 'image',
+      mediaType: 'image',
+      mediaUrl: sourceUrl,
+      mediaMimeType: '',
+      metaMessageId: cleanString(referenceId || attribution.sourceId || attribution.ctwaClid),
+      metadataSource: 'whatsapp_ad_preview',
+      downloadTimeoutMs: 7000
+    },
+    config: null
+  })
+  if (!rehosted?.mediaUrl) return attribution
+
+  const stableUrl = cleanString(rehosted.mediaUrl)
+  const referral = isPlainObject(attribution.referral) ? { ...attribution.referral } : {}
+  referral.image_url = stableUrl
+  referral.thumbnail_url = stableUrl
+
+  return {
+    ...attribution,
+    imageUrl: stableUrl,
+    thumbnailUrl: stableUrl,
+    referral
   }
 }
 
@@ -7323,7 +7376,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ...profileIdentity
   }
   const profilePictureUrl = findProfilePictureUrlInValue(rawProfile)
-  const attribution = await resolveWhatsAppAttributionSourceId(
+  let attribution = await resolveWhatsAppAttributionSourceId(
     extractAttribution(payload, normalizedMessage, messageText),
     messageTimestamp
   )
@@ -7377,6 +7430,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     wamid, wamid
   ]).catch(() => null)
   const messageId = existingMessage?.id || computedMessageId
+  if (attribution.imageUrl || attribution.thumbnailUrl) {
+    attribution = await persistWhatsAppAttributionPreview(attribution, messageId).catch(error => {
+      logger.warn(`[WhatsApp API] No se pudo persistir el preview del anuncio ${messageId}: ${error.message}`)
+      return attribution
+    })
+  }
   const incomingAgentMarker = extractConversationalAgentMessageMetadata(normalizedMessage)
   const existingAgentMarker = extractConversationalAgentMessageMetadata(existingMessage?.raw_payload_json)
   const preservedAgentMetadata = formatConversationalAgentMessageMetadata(
