@@ -34,6 +34,7 @@ import {
   sendWhatsAppApiVideoMessageView,
   sendMetaDirectTestMessageView,
   sendMetaSocialAudioMessageView,
+  sendMetaSocialAttachmentMessageView,
   sendMetaSocialTextMessageView,
   sendMetaSocialReactionMessageView,
   sendMetaSocialCommentReplyView,
@@ -65,6 +66,7 @@ function requireFeatureAndModule(feature, moduleKey) {
 const requireWhatsAppApiAccess = requireFeature('whatsapp_api')
 const requireWhatsAppApiChatAccess = requireFeatureAndModule('whatsapp_api', 'chat')
 const requireWhatsAppTemplatesChatAccess = requireFeatureAndModule('whatsapp_templates', 'chat')
+const requireMetaSocialChatAccess = requireFeatureAndModule('campaigns', 'chat')
 
 function requireWhatsAppMessageTransportAccess(req, res, next) {
   if (String(req.body?.transport || '').trim().toLowerCase() === 'qr') {
@@ -96,11 +98,12 @@ router.get('/meta/connect-url', requireWhatsAppApiAccess, getMetaDirectConnectUr
 router.post('/meta/provider', requireWhatsAppApiAccess, setWhatsAppActiveProviderView)
 router.post('/meta/test', requireWhatsAppApiAccess, testMetaDirectConnectionView)
 router.post('/meta/messages/test', requireWhatsAppApiAccess, sendMetaDirectTestMessageView)
-router.post('/meta/social/messages/text', requireWhatsAppApiAccess, sendMetaSocialTextMessageView)
-router.post('/meta/social/messages/audio', requireWhatsAppApiAccess, sendMetaSocialAudioMessageView)
-router.post('/meta/social/messages/reaction', requireWhatsAppApiAccess, sendMetaSocialReactionMessageView)
-router.post('/meta/social/comments/reply', requireWhatsAppApiAccess, sendMetaSocialCommentReplyView)
-router.get('/meta/social/posts', requireWhatsAppApiAccess, listMetaSocialPostsView)
+router.post('/meta/social/messages/text', requireMetaSocialChatAccess, sendMetaSocialTextMessageView)
+router.post('/meta/social/messages/audio', requireMetaSocialChatAccess, sendMetaSocialAudioMessageView)
+router.post('/meta/social/messages/attachment', requireMetaSocialChatAccess, sendMetaSocialAttachmentMessageView)
+router.post('/meta/social/messages/reaction', requireMetaSocialChatAccess, sendMetaSocialReactionMessageView)
+router.post('/meta/social/comments/reply', requireMetaSocialChatAccess, sendMetaSocialCommentReplyView)
+router.get('/meta/social/posts', requireFeature('campaigns'), listMetaSocialPostsView)
 router.post('/meta/sync-history', requireWhatsAppApiAccess, syncMetaDirectHistoryView)
 router.post('/meta/disconnect', requireWhatsAppApiAccess, disconnectMetaDirectConnectionView)
 router.post('/connect', requireWhatsAppApiAccess, connectWhatsAppApiView)

@@ -178,6 +178,8 @@ const VIDEO_EXTENSION_BY_MIME = {
   'video/mp4': 'mp4',
   'video/quicktime': 'mov',
   'video/webm': 'webm',
+  'video/ogg': 'ogv',
+  'video/x-msvideo': 'avi',
   'video/3gpp': '3gp',
   'video/3gp': '3gp'
 }
@@ -844,7 +846,7 @@ function parseVideoDataUrl(value = '') {
   const mimeType = cleanMimeType(match[1])
   const extension = VIDEO_EXTENSION_BY_MIME[mimeType]
   if (!extension) {
-    throw new Error('El video debe ser MP4, MOV, WebM o 3GP para poder prepararlo para WhatsApp.')
+    throw new Error('El video debe ser MP4, MOV, WebM, OGV, AVI o 3GP para poder prepararlo para WhatsApp.')
   }
 
   const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64')
@@ -1015,7 +1017,11 @@ async function runFfmpeg(args = [], options = {}) {
   }
 }
 
-async function convertVideoToWhatsAppMp4({ buffer, extension }) {
+async function convertVideoToWhatsAppMp4({
+  buffer,
+  extension,
+  maxOutputBytes = MAX_WHATSAPP_VIDEO_OUTPUT_BYTES
+}) {
   const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-whatsapp-video-'))
   const inputPath = join(folder, `input.${extension || 'video'}`)
   const attempts = [
@@ -1075,7 +1081,7 @@ async function convertVideoToWhatsAppMp4({ buffer, extension }) {
       if (!converted.length) {
         throw new Error('El video convertido quedó vacío. Intenta grabarlo otra vez.')
       }
-      if (converted.length <= MAX_WHATSAPP_VIDEO_OUTPUT_BYTES) {
+      if (converted.length <= maxOutputBytes) {
         return {
           buffer: converted,
           compression: `whatsapp_mp4_h264_aac_${attempt.label}`
@@ -1083,7 +1089,7 @@ async function convertVideoToWhatsAppMp4({ buffer, extension }) {
       }
     }
 
-    throw new Error('El video sigue pesando más de 16 MB después de comprimirlo. Graba uno más corto para enviarlo por WhatsApp.')
+    throw new Error(`El video sigue pesando más de ${Math.floor(maxOutputBytes / (1024 * 1024))} MB después de comprimirlo. Graba uno más corto para enviarlo.`)
   } finally {
     await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -1250,7 +1256,11 @@ export async function convertAudioToOggOpus({ buffer, extension }) {
   }
 }
 
-async function convertAudioToChatPlaybackMp4({ buffer, extension }) {
+async function convertAudioToChatPlaybackMp4({
+  buffer,
+  extension,
+  maxOutputBytes = MAX_WHATSAPP_AUDIO_BYTES
+}) {
   const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-chat-audio-preview-'))
   const inputPath = join(folder, `input.${extension || 'audio'}`)
   const outputPath = join(folder, `preview.${CHAT_AUDIO_PLAYBACK_EXTENSION}`)
@@ -1283,8 +1293,8 @@ async function convertAudioToChatPlaybackMp4({ buffer, extension }) {
       throw new Error('El audio de reproducción quedó vacío. Intenta grabarlo otra vez.')
     }
 
-    if (converted.length > MAX_WHATSAPP_AUDIO_BYTES) {
-      throw new Error('El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp.')
+    if (converted.length > maxOutputBytes) {
+      throw new Error('El audio pesa demasiado. Graba uno más corto para poder enviarlo.')
     }
 
     return converted
@@ -1316,7 +1326,8 @@ export async function prepareWhatsAppMediaForDirectUpload({
   buffer,
   mimeType = '',
   filename = '',
-  kind = ''
+  kind = '',
+  maxVideoOutputBytes = MAX_WHATSAPP_VIDEO_OUTPUT_BYTES
 } = {}) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) {
     throw new Error('El archivo está vacío.')
@@ -1347,12 +1358,12 @@ export async function prepareWhatsAppMediaForDirectUpload({
   if (cleanKind === 'video') {
     const extension = VIDEO_EXTENSION_BY_MIME[normalizedMimeType]
     if (!extension) {
-      throw new Error('El video debe ser MP4, MOV, WebM o 3GP para poder prepararlo para WhatsApp.')
+      throw new Error('El video debe ser MP4, MOV, WebM, OGV, AVI o 3GP para poder prepararlo para WhatsApp.')
     }
     if (buffer.length > MAX_WHATSAPP_VIDEO_INPUT_BYTES) {
       throw new Error('El video pesa demasiado. Graba uno más corto para poder comprimirlo y enviarlo por WhatsApp.')
     }
-    const prepared = await convertVideoToWhatsAppMp4({ buffer, extension })
+    const prepared = await convertVideoToWhatsAppMp4({ buffer, extension, maxOutputBytes: maxVideoOutputBytes })
     return {
       buffer: prepared.buffer,
       mimeType: WHATSAPP_VIDEO_MIME_TYPE,
@@ -1477,6 +1488,49 @@ export async function prepareWhatsAppRegularAudioBuffer({ buffer, mimeType = '' 
     params: cleanString(mimeType).toLowerCase().split(';').slice(1).join(';'),
     extension
   })
+}
+
+/**
+ * Messenger e Instagram no exponen el flag PTT de WhatsApp. Para ambos, una
+ * nota de voz es un adjunto `audio` y Meta exige un archivo reproducible. Esta
+ * frontera vuelve a codificar SIEMPRE a M4A/AAC, incluso cuando el navegador
+ * declaró MP3 u OGG como si ya fueran compatibles, para no entregar a Graph un
+ * contenedor ambiguo o bytes con un MIME mentiroso.
+ */
+export async function prepareMetaSocialAudioBuffer({ buffer, mimeType = '' } = {}) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) {
+    throw new Error('El audio está vacío.')
+  }
+
+  const maxMetaAudioBytes = 25 * 1024 * 1024
+  if (buffer.length > maxMetaAudioBytes) {
+    throw new Error('El audio pesa demasiado. Elige uno de menos de 25 MB para enviarlo por Messenger o Instagram.')
+  }
+
+  const normalizedMimeType = cleanMimeTypeValue(mimeType)
+  const extension = AUDIO_EXTENSION_BY_MIME[normalizedMimeType]
+  if (!extension) {
+    throw new Error('Messenger e Instagram no aceptan este formato de audio. Usa MP3, M4A, AAC, OGG, WAV o WebM.')
+  }
+
+  const converted = await convertAudioToChatPlaybackMp4({
+    buffer,
+    extension,
+    maxOutputBytes: maxMetaAudioBytes
+  })
+
+  return {
+    buffer: converted,
+    mimeType: CHAT_AUDIO_PLAYBACK_MIME_TYPE,
+    extension: CHAT_AUDIO_PLAYBACK_EXTENSION,
+    filename: `meta-audio.${CHAT_AUDIO_PLAYBACK_EXTENSION}`,
+    compression: 'meta_social_m4a_aac',
+    metadata: {
+      metaSocialCompatible: true,
+      metaSocialAudioCompression: 'm4a_aac',
+      originalMimeType: normalizedMimeType
+    }
+  }
 }
 
 export async function saveWhatsAppImageDataUrl(dataUrl = '') {

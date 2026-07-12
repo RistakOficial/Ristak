@@ -117,7 +117,7 @@ test('publicar acepta mensaje privado por Instagram DM desde comentario de Insta
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
-test('publicar acepta una nota de voz sola por mensaje privado', () => {
+test('publicar rechaza una nota de voz en la respuesta privada inicial a un comentario', () => {
   const privateReply = {
     id: 'comment_voice_private',
     type: 'channel-comment-public-reply',
@@ -135,7 +135,10 @@ test('publicar acepta una nota de voz sola por mensaje privado', () => {
     edges: [edge('e1', 'start', 'comment_voice_private')]
   }
 
-  assert.deepEqual(validateFlowForPublish(flow), [])
+  assert.match(
+    validateFlowForPublish(flow).join(' '),
+    /respuesta privada inicial.*solo admite texto/i
+  )
 })
 
 test('publicar rechaza respuesta de comentario que no coincide con la plataforma del disparador', () => {
@@ -417,6 +420,24 @@ test('publicar exige mensaje enviado anterior en esperas por respuesta a mensaje
   flow.edges = [edge('e1', 'start', 'wait1'), edge('e2', 'wait1', 'msg1')]
   errors = validateFlowForPublish(flow)
   assert.ok(errors.some((message) => message.includes('ya no está antes')))
+})
+
+test('Instagram bloquea documentos salientes antes de publicar el flujo', () => {
+  const instagramNode = {
+    id: 'ig1',
+    type: 'channel-instagram',
+    position: { x: 100, y: 0 },
+    config: {
+      messageBlocks: [{ id: 'file1', type: 'file', url: 'https://cdn.example.test/catalogo.pdf' }]
+    }
+  }
+  const flow = {
+    nodes: [startNode(), instagramNode],
+    edges: [edge('e1', 'start', 'ig1')]
+  }
+
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('Instagram no permite documentos')))
 })
 
 test('publicar solo permite esperar respuesta de comentario cuando el comentario se respondió por privado', () => {

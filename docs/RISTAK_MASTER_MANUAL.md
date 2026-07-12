@@ -712,27 +712,60 @@ En iOS, el scrubber de las notas de voz usa holgura lateral para que la bolita e
 La hora, etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de
 la burbuja para no crear columnas internas. Los errores de envio no se escriben
 dentro del globo: se muestran como icono externo con detalle en tooltip. En
-Messenger/Instagram nativo el chat puede conservar texto y notas de voz. El
-audio nativo de Meta se guarda primero como media reproducible de Ristak y luego
-se envia a Messenger/Instagram como `message.attachment.type='audio'` con URL
-publica HTTPS; la burbuja local queda como `message_type='audio'` con
-`media_url`/MIME para poder reproducirse al recargar. Los adjuntos manuales de
-Messenger/Instagram pueden salir por HighLevel cuando esa integracion esta
-conectada; el transporte nativo de Meta conserva audio y las automatizaciones
-usan el envio nativo de adjuntos publicado por HTTPS.
+Messenger/Instagram nativo, el chat desktop y `/movil` envian por Meta texto,
+imagen, video y audio/nota de voz; Messenger tambien admite documentos. Se
+pueden mandar varios adjuntos en secuencia. Si Meta nativo y HighLevel estan
+conectados al mismo tiempo, la ruta se decide por el perfil y transporte reales
+del contacto: una conversacion `ghl_messenger`/`ghl_instagram` conserva
+HighLevel y una fila nativa de `meta_social_contacts` usa Meta. Nunca se fuerza
+Meta solo porque la integracion global este encendida. El mensaje privado mas
+reciente de la plataforma elegida prevalece sobre el hint global del contacto,
+para que un Instagram de HighLevel no desvie un Messenger nativo ni al reves.
+El texto que acompana media se envia como mensaje separado
+porque Send API no admite caption dentro del adjunto. Cada elemento conserva su
+estado optimista y un fallo parcial solo restaura al composer el texto/archivo
+que no salio.
+
+La frontera `prepareMetaSocialOutboundMedia` es compartida por chat directo y
+Automatizaciones. Lee los bytes reales del data URL o descarga con proteccion
+SSRF la URL externa, valida tipo/tamano, normaliza imagen a JPEG compatible,
+video a MP4 H.264/AAC y todo audio (incluidos MP3, OGG y WebM de Chrome)
+a M4A/AAC `audio/mp4`, lo publica en el storage multimedia y solo entonces manda
+una URL publica HTTPS a Graph. Messenger e Instagram no exponen `ptt` ni
+`voice=true`: una nota de voz se representa como
+`message.attachment.type='audio'`, aunque Ristak conserva `voice` como metadata
+interna para mostrarla correctamente. La burbuja queda con `media_url`, MIME y
+nombre reproducibles despues de recargar.
+
+Instagram aplica su contrato antes del POST: imagen JPG/PNG (GIF cuando Meta lo
+admita) hasta 8 MB ya preparada, audio normalizado y video normalizado. Su Send
+API no ofrece documentos/PDF salientes; cualquier archivo se detiene antes de
+Graph con una explicacion clara. El editor tampoco ofrece `Documentos` cuando el
+composer usa Instagram nativo; un audio o video conserva su tipo multimedia en
+vez de degradarse a archivo.
+Messenger admite imagen, audio, video y archivos compatibles. El limite de
+entrada de esta tuberia es 25 MB y los formatos que requieren conversion pueden
+quedar sujetos a un limite menor despues de comprimir.
+El chat usa `POST /api/whatsapp-api/meta/social/messages/attachment` para
+imagen/video/archivo y conserva la ruta especializada `/audio` para voz/audio.
+Estas rutas de Messenger/Instagram requieren `campaigns` y acceso al modulo
+`chat`; el montaje `/api/whatsapp-api` las excluye de la compuerta externa
+`whatsapp`, por lo que no dependen de `whatsapp` ni `whatsapp_api`.
 
 En Automatizaciones, los bloques de mensaje de WhatsApp, Messenger e Instagram
 pueden consistir en un solo adjunto: imagen, video, archivo de audio, nota de
 voz o archivo, sin requerir un bloque de texto. WhatsApp conserva el tipo real
 de imagen/video/documento y el bloque `Nota de voz` se envia como voz (OGG/Opus
 cuando el proveedor lo necesita), separado del bloque `Audio`, que se manda como
-archivo reproducible. Messenger e Instagram reciben imagen, video, audio y
-archivo mediante `message.attachment` con una URL publica HTTPS; si el bloque
+archivo reproducible. Messenger recibe imagen, video, audio y documentos;
+Instagram recibe imagen, video y audio mediante `message.attachment` con una URL publica HTTPS. Si el bloque
 trae texto opcional, Ristak lo manda como el siguiente mensaje porque Meta no
 admite caption dentro del payload de adjunto. Los assets cargados en
 automatizaciones se resuelven desde su URL pública CDN al asset interno antes de
 enviar. Así una foto WebP ya cargada se manda por la misma ruta de conversión a
-JPEG compatible que usa el chat normal; no se reenvía el WebP crudo a WhatsApp.
+JPEG compatible que usa el chat normal, un video MOV/WebM se vuelve MP4 y un
+MP3/OGG se vuelve M4A antes de llegar a Meta; no se reenvían bytes crudos por
+confiar en la extensión.
 El editor no repone un bloque de texto vacío: al borrar el último bloque el flujo
 queda vacío hasta que el usuario agregue explícitamente texto, imagen, video,
 audio, nota de voz, archivo o retraso; esta regla aplica igual a WhatsApp,
@@ -2227,9 +2260,21 @@ Ristak usa Meta en varias areas:
   base y liga su cache al hash del token origen. En OAuth usa el Page token y
   `page_appsecret_proof` entregados por Installer para la Page seleccionada; no
   reutiliza el proof BISU con otro token. Si Meta invalida esa credencial, exige
-  reconectar OAuth en vez de pedir el App Secret central. No hay token alterno
-  para Instagram; si falta el Page token, la integracion falla con un error
-  accionable. El recipient sigue siendo el IGSID recibido por webhook.
+  reconectar OAuth en vez de pedir el App Secret central. En modo manual, un
+  rechazo de token invalida la derivacion y permite repetir una sola vez el POST
+  ya rechazado; en OAuth una credencial invalida exige reconexion. Texto, audio,
+  adjuntos y reacciones comparten este manejo. Si falta el Page token, la
+  integracion falla con un error accionable; no hay token alterno de Instagram.
+  El recipient sigue siendo el IGSID recibido por webhook. Los envios de
+  Automatizaciones llevan un `externalId` determinista por
+  `automationId + enrollmentId + nodeId + bloque`: un reintento de la misma
+  inscripcion reutiliza el despacho, pero un reingreso legitimo crea otro. Antes
+  de Graph se reserva una fila `pending`, pasa a `sending` y luego a
+  `accepted/sent`; la llave primaria derivada evita que dos workers hagan dos
+  POST. Un resultado de red ambiguo queda bloqueado como `send_unknown` para no
+  duplicarlo a ciegas. Si el webhook echo llega antes o despues de guardar, se
+  fusiona por `meta_message_id` con esa reserva y la copia local autoritativa
+  conserva URL publica, `externalId`, voz, nombre y contexto.
   Para perfil/DM/comentarios la credencial activa debe tener los permisos
   Meta correspondientes (`instagram_manage_messages`,
   `instagram_manage_comments`, `pages_messaging`, `pages_manage_engagement`,
@@ -2822,11 +2867,17 @@ con la plataforma del disparador; si una automatizacion mezcla comentarios de
 Facebook e Instagram, se deben separar los flujos para evitar que el sistema
 adivine la red social. Por contrato de Meta, Instagram publico solo acepta texto
 en `/{ig-comment-id}/replies`, Facebook publico acepta texto y una imagen, y las
-respuestas privadas usan el `comment_id` para mandar un unico mensaje inicial al
-comentarista por Messenger o Instagram DM. Las respuestas privadas a comentario
-cuentan como mensaje enviado para una espera posterior de respuesta; las
-respuestas publicas no abren una espera de DM. Si una respuesta a comentario
-falla temporalmente y entra a reintento, la inscripcion debe conservar
+respuestas privadas usan el `comment_id` para mandar un unico mensaje inicial de
+texto al comentarista por Messenger o Instagram DM. Ese contrato inicial no
+acepta imagen, video, audio ni archivo; cuando la persona responde, el flujo ya
+puede continuar con un nodo normal de Messenger/Instagram y multimedia por
+`recipient.id`. Editor, validacion y runtime aplican la misma restriccion. La
+imagen publica de Facebook pasa por la preparacion multimedia antes de entregar
+su URL HTTPS a Graph. Las respuestas privadas a comentario cuentan como mensaje
+enviado para una espera posterior de respuesta; las respuestas publicas no abren
+una espera de DM. El `externalId` se reserva antes del POST para que un reintento
+no consuma dos veces el unico mensaje privado permitido. Si una respuesta a
+comentario falla temporalmente y entra a reintento, la inscripcion debe conservar
 `platform`, `commentId`, `postId`, `mediaId`, `parentCommentId` y `permalink`;
 sin ese contexto el reintento ya no puede reconstruir el endpoint correcto de
 Meta y debe tratarse como bug del motor, no como configuracion del usuario.

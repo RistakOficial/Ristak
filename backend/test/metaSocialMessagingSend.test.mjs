@@ -2,6 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import http from 'node:http'
+import { execFile as execFileCallback } from 'node:child_process'
+import fs from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import ffmpegPath from 'ffmpeg-static'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
@@ -22,8 +28,120 @@ import {
   sendMetaSocialCommentReply,
   sendMetaSocialReactionMessage,
   sendMetaSocialTextMessage,
+  setMetaSocialGraphTimeoutForTest,
+  setMetaSocialOutboundMediaTransportForTest,
   syncMetaSocialConversationHistory
 } from '../src/services/metaSocialMessagingService.js'
+
+const execFile = promisify(execFileCallback)
+const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC'
+const PDF_DATA_URL = 'data:application/pdf;base64,JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlIC9QYWdlcyAvQ291bnQgMD4+CmVuZG9iago='
+
+function createPcmWavBuffer() {
+  const sampleRate = 8_000
+  const sampleCount = 2_000
+  const dataSize = sampleCount * 2
+  const buffer = Buffer.alloc(44 + dataSize)
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + dataSize, 4)
+  buffer.write('WAVEfmt ', 8)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(1, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(sampleRate * 2, 28)
+  buffer.writeUInt16LE(2, 32)
+  buffer.writeUInt16LE(16, 34)
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(dataSize, 40)
+  for (let index = 0; index < sampleCount; index += 1) {
+    const value = Math.round(Math.sin((2 * Math.PI * 440 * index) / sampleRate) * 8_000)
+    buffer.writeInt16LE(value, 44 + (index * 2))
+  }
+  return buffer
+}
+
+let validMp3DataUrlPromise
+async function getValidMp3DataUrl() {
+  if (!validMp3DataUrlPromise) {
+    validMp3DataUrlPromise = (async () => {
+      const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-meta-mp3-'))
+      const outputPath = join(folder, 'audio.mp3')
+      try {
+        await execFile(ffmpegPath, [
+          '-v', 'error',
+          '-f', 'lavfi',
+          '-i', 'sine=frequency=523:duration=0.35',
+          '-ac', '1',
+          '-ar', '22050',
+          '-c:a', 'libmp3lame',
+          '-b:a', '48k',
+          outputPath
+        ])
+        const bytes = await fs.readFile(outputPath)
+        return `data:audio/mpeg;base64,${bytes.toString('base64')}`
+      } finally {
+        await fs.rm(folder, { recursive: true, force: true })
+      }
+    })()
+  }
+  return validMp3DataUrlPromise
+}
+
+let validMp4VideoDataUrlPromise
+async function getValidMp4VideoDataUrl() {
+  if (!validMp4VideoDataUrlPromise) {
+    validMp4VideoDataUrlPromise = (async () => {
+      const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-meta-video-'))
+      const outputPath = join(folder, 'video.mp4')
+      try {
+        await execFile(ffmpegPath, [
+          '-v', 'error',
+          '-f', 'lavfi',
+          '-i', 'color=c=0x2463eb:s=32x32:d=0.35',
+          '-vf', 'format=yuv420p',
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-movflags', '+faststart',
+          '-an',
+          outputPath
+        ])
+        const bytes = await fs.readFile(outputPath)
+        return `data:video/mp4;base64,${bytes.toString('base64')}`
+      } finally {
+        await fs.rm(folder, { recursive: true, force: true })
+      }
+    })()
+  }
+  return validMp4VideoDataUrlPromise
+}
+
+let validWebmAudioDataUrlPromise
+async function getValidWebmAudioDataUrl() {
+  if (!validWebmAudioDataUrlPromise) {
+    validWebmAudioDataUrlPromise = (async () => {
+      const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-meta-webm-audio-'))
+      const outputPath = join(folder, 'voice.webm')
+      try {
+        await execFile(ffmpegPath, [
+          '-v', 'error',
+          '-f', 'lavfi',
+          '-i', 'sine=frequency=659:duration=0.35',
+          '-ac', '1',
+          '-ar', '48000',
+          '-c:a', 'libopus',
+          '-b:a', '48k',
+          outputPath
+        ])
+        const bytes = await fs.readFile(outputPath)
+        return `data:audio/webm;base64,${bytes.toString('base64')}`
+      } finally {
+        await fs.rm(folder, { recursive: true, force: true })
+      }
+    })()
+  }
+  return validWebmAudioDataUrlPromise
+}
 
 function hashTestId(prefix, value) {
   return `${prefix}_${crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 32)}`
@@ -64,11 +182,11 @@ async function snapshotAppConfig(keys, callback) {
   }
 }
 
-async function startMetaSendServer(calls) {
+async function startMetaSendServer(calls, { beforeMessageResponse } = {}) {
   const server = http.createServer((req, res) => {
     let body = ''
     req.on('data', chunk => { body += chunk })
-    req.on('end', () => {
+    req.on('end', async () => {
       calls.push({ method: req.method, url: req.url, body, authorization: req.headers.authorization || '' })
 
       if (req.method === 'GET' && /^\/debug_token(?:\?|$)/.test(req.url)) {
@@ -309,6 +427,9 @@ async function startMetaSendServer(calls) {
           return
         }
         const isInstagramRecipient = parsedBody?.recipient?.id === 'igsid-send-test' || parsedBody?.recipient?.comment_id
+        if (typeof beforeMessageResponse === 'function') {
+          await beforeMessageResponse({ parsedBody, isInstagramRecipient })
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           recipient_id: isInstagramRecipient ? 'igsid-send-test' : 'psid-send-test',
@@ -345,6 +466,12 @@ async function startMetaSendServer(calls) {
             fbtrace_id: 'trace-comment-permission-test'
           }
         }))
+        return
+      }
+
+      if (req.method === 'POST' && req.url.startsWith('/fb-comment-success-test/comments')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ id: 'fb-comment-reply-success-test' }))
         return
       }
 
@@ -457,6 +584,94 @@ async function seedMetaConfigForInstagramTests() {
     null,
     null
   ])
+}
+
+async function cleanupMetaMediaSendHarness({ contactId, platform }) {
+  const senderId = platform === 'instagram' ? 'igsid-send-test' : 'psid-send-test'
+  const derivedContactId = hashTestId('meta_social_contact', `${platform}:${senderId}`)
+  await db.run('DELETE FROM meta_social_messages WHERE contact_id IN (?, ?)', [contactId, derivedContactId]).catch(() => undefined)
+  await db.run(
+    'DELETE FROM meta_social_contacts WHERE contact_id = ? OR (platform = ? AND sender_id = ?)',
+    [contactId, platform, senderId]
+  ).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactId, derivedContactId]).catch(() => undefined)
+}
+
+async function withMetaMediaSendHarness({ platform, testId, downloader, beforeMessageResponse, enabledKey: requestedEnabledKey }, callback) {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  const uploads = []
+  let metaServer
+  const contactId = `meta_media_${platform}_${testId}_contact`
+  const metaContactId = `meta_media_${platform}_${testId}_profile`
+  const enabledKey = requestedEnabledKey || (platform === 'instagram'
+    ? 'meta_instagram_messaging_enabled'
+    : 'meta_messenger_messaging_enabled')
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls, { beforeMessageResponse })
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig([enabledKey], async () => {
+        await cleanupMetaMediaSendHarness({ contactId, platform })
+        await seedMetaConfigForInstagramTests()
+        await setAppConfig(enabledKey, '1')
+        if (platform === 'instagram') {
+          await seedInstagramContact({ contactId, metaContactId })
+        } else {
+          await seedMessengerContact({ contactId, metaContactId })
+        }
+
+        setMetaSocialOutboundMediaTransportForTest({
+          ...(typeof downloader === 'function' ? { downloader } : {}),
+          uploader: async (input) => {
+            uploads.push(input)
+            const publicUrl = `https://media.ristak.test/${encodeURIComponent(testId)}/${uploads.length}`
+            return {
+              id: `media-asset-${testId}-${uploads.length}`,
+              publicUrl,
+              publicPath: publicUrl,
+              mimeType: input.mimeType,
+              originalFilename: input.filename,
+              storedFilename: input.filename,
+              sizeProcessed: input.buffer.length
+            }
+          }
+        })
+
+        try {
+          await callback({ calls, uploads, contactId, metaContactId })
+        } finally {
+          setMetaSocialOutboundMediaTransportForTest()
+          await cleanupMetaMediaSendHarness({ contactId, platform })
+        }
+      })
+    })
+  } finally {
+    setMetaSocialOutboundMediaTransportForTest()
+    await cleanupMetaMediaSendHarness({ contactId, platform })
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+}
+
+function getMetaMessagePosts(calls) {
+  return calls.filter(call => call.method === 'POST' && call.url === '/page-send-test/messages')
+}
+
+function assertPreparedMp4(upload, kind) {
+  assert.ok(upload)
+  assert.equal(upload.mimeType, kind === 'audio' ? 'audio/mp4' : 'video/mp4')
+  assert.ok(Buffer.isBuffer(upload.buffer))
+  assert.ok(upload.buffer.length > 100)
+  assert.ok(upload.buffer.includes(Buffer.from('ftyp', 'ascii')))
 }
 
 async function cleanupSocialRows({ senderId, metaMessageId }) {
@@ -1644,6 +1859,224 @@ test('sendMetaSocialCommentReply manda privado Instagram con Page token derivado
   }
 })
 
+test('sendMetaSocialCommentReply rechaza adjuntos privados de Instagram antes de subir o llamar Graph', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'instagram',
+    testId: 'comment-private-text-only',
+    enabledKey: 'meta_instagram_comments_enabled'
+  }, async ({ calls, uploads, contactId }) => {
+    const fixtures = [
+      {
+        type: 'image',
+        url: ONE_PIXEL_PNG_DATA_URL,
+        mimeType: 'image/png',
+        filename: 'respuesta.png'
+      },
+      {
+        type: 'audio',
+        url: await getValidWebmAudioDataUrl(),
+        mimeType: 'audio/webm',
+        filename: 'respuesta.webm'
+      },
+      {
+        type: 'file',
+        url: PDF_DATA_URL,
+        mimeType: 'application/pdf',
+        filename: 'respuesta.pdf'
+      }
+    ]
+
+    for (const [index, attachment] of fixtures.entries()) {
+      await assert.rejects(
+        sendMetaSocialCommentReply({
+          contactId,
+          platform: 'instagram',
+          replyType: 'private',
+          commentId: 'ig-comment-private-text-only',
+          postId: 'ig-media-private-text-only',
+          attachment,
+          externalId: `ig-comment-private-media-${index}`
+        }),
+        (error) => {
+          assert.equal(error.statusCode, 422)
+          assert.match(error.message, /texto/i)
+          return true
+        }
+      )
+    }
+
+    assert.equal(uploads.length, 0)
+    assert.equal(getMetaMessagePosts(calls).length, 0)
+  })
+})
+
+test('sendMetaSocialCommentReply restringe a texto los adjuntos privados de Messenger', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'comment-private-text-only',
+    enabledKey: 'meta_facebook_comments_enabled'
+  }, async ({ calls, uploads, contactId }) => {
+    const fixtures = [
+      { type: 'image', url: ONE_PIXEL_PNG_DATA_URL, mimeType: 'image/png', filename: 'respuesta.png' },
+      { type: 'file', url: PDF_DATA_URL, mimeType: 'application/pdf', filename: 'respuesta.pdf' }
+    ]
+
+    for (const [index, attachment] of fixtures.entries()) {
+      await assert.rejects(
+        sendMetaSocialCommentReply({
+          contactId,
+          platform: 'messenger',
+          replyType: 'private',
+          commentId: 'fb-comment-private-text-only',
+          postId: 'page-send-test_456',
+          attachment,
+          externalId: `fb-comment-private-media-${index}`
+        }),
+        (error) => {
+          assert.equal(error.statusCode, 422)
+          assert.match(error.message, /texto/i)
+          return true
+        }
+      )
+    }
+
+    assert.equal(uploads.length, 0)
+    assert.equal(getMetaMessagePosts(calls).length, 0)
+  })
+})
+
+test('sendMetaSocialCommentReply deduplica dos respuestas privadas de texto concurrentes', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'comment-private-concurrent',
+    enabledKey: 'meta_facebook_comments_enabled',
+    beforeMessageResponse: async () => {
+      await new Promise(resolve => setTimeout(resolve, 80))
+    }
+  }, async ({ calls, uploads, contactId }) => {
+    const payload = {
+      contactId,
+      platform: 'messenger',
+      message: 'Respuesta privada idempotente',
+      replyType: 'private',
+      commentId: 'fb-comment-private-concurrent',
+      postId: 'page-send-test_789',
+      externalId: 'fb-comment-private-concurrent-external-id'
+    }
+
+    const [first, second] = await Promise.all([
+      sendMetaSocialCommentReply(payload),
+      sendMetaSocialCommentReply(payload)
+    ])
+
+    assert.equal(first.remoteMessageId, second.remoteMessageId)
+    assert.equal(getMetaMessagePosts(calls).length, 1)
+    assert.equal(uploads.length, 0)
+
+    const rows = await db.all(
+      `SELECT id, raw_payload_json
+       FROM meta_social_messages
+       WHERE contact_id = ? AND direction = 'outbound'`,
+      [contactId]
+    )
+    assert.equal(rows.length, 1)
+    assert.equal(JSON.parse(rows[0].raw_payload_json).externalId, payload.externalId)
+  })
+})
+
+test('timeout de respuesta privada a comentario queda send_unknown y no repite el POST', async () => {
+  setMetaSocialGraphTimeoutForTest(30)
+  try {
+    await withMetaMediaSendHarness({
+      platform: 'instagram',
+      testId: 'comment-private-timeout',
+      enabledKey: 'meta_instagram_comments_enabled',
+      beforeMessageResponse: async () => {
+        await new Promise(resolve => setTimeout(resolve, 120))
+      }
+    }, async ({ calls, contactId }) => {
+      const payload = {
+        contactId,
+        platform: 'instagram',
+        message: 'Respuesta privada con timeout',
+        replyType: 'private',
+        commentId: 'ig-comment-private-timeout',
+        postId: 'ig-media-private-timeout',
+        externalId: 'ig-comment-private-timeout-external-id'
+      }
+
+      await assert.rejects(
+        sendMetaSocialCommentReply(payload),
+        error => error.statusCode === 504 && error.meta?.code === 'meta_graph_timeout'
+      )
+
+      const reservation = await db.get(
+        "SELECT status FROM meta_social_messages WHERE contact_id = ? AND direction = 'outbound'",
+        [contactId]
+      )
+      assert.equal(reservation.status, 'send_unknown')
+
+      await assert.rejects(
+        sendMetaSocialCommentReply(payload),
+        error => error.statusCode === 409 && error.meta?.code === 'meta_send_delivery_unknown'
+      )
+      assert.equal(getMetaMessagePosts(calls).length, 1)
+    })
+  } finally {
+    setMetaSocialGraphTimeoutForTest()
+  }
+})
+
+test('sendMetaSocialCommentReply prepara imagen y usa attachment_url en comentario público Facebook', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'public-comment-image',
+    enabledKey: 'meta_facebook_comments_enabled'
+  }, async ({ calls, uploads, contactId }) => {
+    const result = await sendMetaSocialCommentReply({
+      contactId,
+      platform: 'messenger',
+      message: 'Foto lista',
+      replyType: 'public',
+      commentId: 'fb-comment-success-test',
+      postId: 'page-send-test_post-1',
+      attachment: {
+        type: 'image',
+        dataUrl: ONE_PIXEL_PNG_DATA_URL,
+        mimeType: 'image/png',
+        filename: 'comentario.png'
+      },
+      externalId: 'public-comment-image-1',
+      publicBaseUrl: 'https://ristak.test'
+    })
+
+    assert.equal(result.remoteMessageId, 'fb-comment-reply-success-test')
+    assert.equal(uploads.length, 1)
+    assert.equal(uploads[0].mimeType, 'image/jpeg')
+    assert.equal(uploads[0].filename, 'meta-image.jpg')
+
+    const sendCall = calls.find(call => call.method === 'POST' && call.url === '/fb-comment-success-test/comments')
+    assert.ok(sendCall)
+    assert.deepEqual(JSON.parse(sendCall.body), {
+      message: 'Foto lista',
+      attachment_url: 'https://media.ristak.test/public-comment-image/1'
+    })
+
+    const row = await db.get(
+      `SELECT status, message_type, media_url, media_mime_type
+       FROM meta_social_messages
+       WHERE contact_id = ? AND direction = 'outbound'
+       ORDER BY message_timestamp DESC
+       LIMIT 1`,
+      [contactId]
+    )
+    assert.equal(row.status, 'sent')
+    assert.equal(row.message_type, 'comment_reply_public')
+    assert.equal(row.media_url, 'https://media.ristak.test/public-comment-image/1')
+    assert.equal(row.media_mime_type, 'image/jpeg')
+  })
+})
+
 test('sendMetaSocialCommentReply explica permiso faltante para comentario publico Facebook', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   const calls = []
@@ -1794,299 +2227,642 @@ test('sendMetaSocialTextMessage mantiene Messenger con Page token y messaging_ty
 })
 
 test('sendMetaSocialAttachmentMessage manda una imagen de Messenger sin requerir texto', async () => {
-  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
-  const calls = []
-  let metaServer
-  const contactId = 'meta_send_image_messenger_contact'
-  const metaContactId = 'meta_send_image_messenger_profile'
-
-  try {
-    await initializeMasterKey()
-    metaServer = await startMetaSendServer(calls)
-    Object.defineProperty(API_URLS, 'META_GRAPH', {
-      value: `http://127.0.0.1:${metaServer.address().port}`,
-      configurable: true
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'image-data-url'
+  }, async ({ calls, uploads, contactId }) => {
+    const result = await sendMetaSocialAttachmentMessage({
+      contactId,
+      platform: 'messenger',
+      attachmentType: 'image',
+      attachmentDataUrl: ONE_PIXEL_PNG_DATA_URL,
+      mimeType: 'image/png',
+      filename: 'captura.png',
+      publicBaseUrl: 'https://ristak.test'
     })
 
-    await snapshotMetaConfig(async () => {
-      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
-        try {
-          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    assert.equal(result.remoteMessageId, 'mid-messenger-send-test')
+    assert.equal(result.attachment.type, 'image')
+    assert.equal(result.attachment.mimeType, 'image/jpeg')
+    assert.equal(uploads.length, 1)
+    assert.equal(uploads[0].mimeType, 'image/jpeg')
+    assert.equal(uploads[0].filename, 'meta-image.jpg')
+    assert.ok(uploads[0].buffer.length > 100)
 
-          await db.run(`
-            INSERT INTO meta_config (
-              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
-              timezone_id, timezone_name, timezone_offset_hours_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `, [
-            'act-send-image-test',
-            encrypt('user-token-send-test'),
-            null,
-            'page-send-test',
-            'ig-business-send-test',
-            null,
-            null,
-            null
-          ])
-          await setAppConfig('meta_messenger_messaging_enabled', '1')
-          await seedMessengerContact({ contactId, metaContactId })
-
-          const result = await sendMetaSocialAttachmentMessage({
-            contactId,
-            platform: 'messenger',
-            attachmentType: 'image',
-            attachmentUrl: 'https://cdn.example.test/automation-image.jpg',
-            mimeType: 'image/jpeg'
-          })
-
-          assert.equal(result.remoteMessageId, 'mid-messenger-send-test')
-          assert.equal(result.attachment.type, 'image')
-          const sendCall = calls.find(call => call.method === 'POST' && call.url === '/page-send-test/messages')
-          assert.ok(sendCall)
-          assert.deepEqual(JSON.parse(sendCall.body), {
-            messaging_type: 'RESPONSE',
-            recipient: { id: 'psid-send-test' },
-            message: {
-              attachment: {
-                type: 'image',
-                payload: {
-                  url: 'https://cdn.example.test/automation-image.jpg',
-                  is_reusable: false
-                }
-              }
-            }
-          })
-
-          const row = await db.get(
-            `SELECT message_type, message_text, media_url, media_mime_type
-             FROM meta_social_messages
-             WHERE contact_id = ? AND direction = 'outbound'
-             ORDER BY message_timestamp DESC
-             LIMIT 1`,
-            [contactId]
-          )
-          assert.equal(row.message_type, 'image')
-          assert.equal(row.message_text, '')
-          assert.equal(row.media_url, 'https://cdn.example.test/automation-image.jpg')
-          assert.equal(row.media_mime_type, 'image/jpeg')
-        } finally {
-          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    const [sendCall] = getMetaMessagePosts(calls)
+    assert.ok(sendCall)
+    assert.deepEqual(JSON.parse(sendCall.body), {
+      messaging_type: 'RESPONSE',
+      recipient: { id: 'psid-send-test' },
+      message: {
+        attachment: {
+          type: 'image',
+          payload: {
+            url: result.attachment.url,
+            is_reusable: false
+          }
         }
-      })
+      }
     })
-  } finally {
-    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
-    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
-  }
+
+    const row = await db.get(
+      `SELECT message_type, message_text, media_url, media_mime_type
+       FROM meta_social_messages
+       WHERE contact_id = ? AND direction = 'outbound'
+       ORDER BY message_timestamp DESC
+       LIMIT 1`,
+      [contactId]
+    )
+    assert.equal(row.message_type, 'image')
+    assert.equal(row.message_text, '')
+    assert.equal(row.media_url, result.attachment.url)
+    assert.equal(row.media_mime_type, 'image/jpeg')
+  })
 })
 
 test('sendMetaSocialAudioMessage manda audio Messenger con URL pública y lo persiste como audio', async () => {
-  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
-  const calls = []
-  let metaServer
-  const contactId = 'meta_send_audio_messenger_contact'
-  const metaContactId = 'meta_send_audio_messenger_profile'
-  let mediaAssetId = ''
-
-  try {
-    await initializeMasterKey()
-    metaServer = await startMetaSendServer(calls)
-    Object.defineProperty(API_URLS, 'META_GRAPH', {
-      value: `http://127.0.0.1:${metaServer.address().port}`,
-      configurable: true
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'audio-wav'
+  }, async ({ calls, uploads, contactId }) => {
+    const wav = createPcmWavBuffer()
+    const result = await sendMetaSocialAudioMessage({
+      contactId,
+      platform: 'messenger',
+      audioDataUrl: `data:audio/wav;base64,${wav.toString('base64')}`,
+      audioMimeType: 'audio/wav',
+      filename: 'nota.wav',
+      durationMs: 1800,
+      publicBaseUrl: 'https://ristak.test'
     })
 
-    await snapshotMetaConfig(async () => {
-      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
-        try {
-          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    assert.equal(result.remoteMessageId, 'mid-messenger-send-test')
+    assert.equal(result.audio?.mimeType, 'audio/mp4')
+    assert.equal(result.audio?.durationMs, 1800)
+    assert.equal(result.audio?.voice, true)
+    assert.equal(uploads.length, 1)
+    assertPreparedMp4(uploads[0], 'audio')
+    assert.equal(uploads[0].filename, 'meta-audio.m4a')
 
-          await db.run(`
-            INSERT INTO meta_config (
-              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
-              timezone_id, timezone_name, timezone_offset_hours_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `, [
-            'act-send-audio-test',
-            encrypt('user-token-send-test'),
-            null,
-            'page-send-test',
-            'ig-business-send-test',
-            null,
-            null,
-            null
-          ])
-          await setAppConfig('meta_messenger_messaging_enabled', '1')
-          await seedMessengerContact({ contactId, metaContactId })
+    const [sendCall] = getMetaMessagePosts(calls)
+    assert.ok(sendCall)
+    assert.deepEqual(JSON.parse(sendCall.body), {
+      messaging_type: 'RESPONSE',
+      recipient: { id: 'psid-send-test' },
+      message: {
+        attachment: {
+          type: 'audio',
+          payload: {
+            url: result.audio.url,
+            is_reusable: false
+          }
+        }
+      }
+    })
 
-          const result = await sendMetaSocialAudioMessage({
-            contactId,
-            platform: 'messenger',
-            audioDataUrl: `data:audio/mp4;base64,${Buffer.from('fake native meta audio').toString('base64')}`,
-            durationMs: 1800,
-            publicBaseUrl: 'https://ristak.test'
-          })
-          mediaAssetId = result.localMedia?.mediaAssetId || ''
+    const row = await db.get(
+      `SELECT message_type, message_text, media_url, media_mime_type, raw_payload_json
+       FROM meta_social_messages
+       WHERE contact_id = ? AND direction = 'outbound'
+       ORDER BY message_timestamp DESC
+       LIMIT 1`,
+      [contactId]
+    )
+    assert.equal(row.message_type, 'audio')
+    assert.equal(row.message_text, '')
+    assert.equal(row.media_url, result.audio.url)
+    assert.equal(row.media_mime_type, 'audio/mp4')
+    assert.equal(JSON.parse(row.raw_payload_json).context.audio.durationMs, 1800)
+    assert.equal(JSON.parse(row.raw_payload_json).context.audio.voice, true)
+  })
+})
 
-          assert.equal(result.remoteMessageId, 'mid-messenger-send-test')
-          assert.equal(result.audio?.mimeType, 'audio/mp4')
-          assert.equal(result.audio?.durationMs, 1800)
-          assert.equal(result.audio?.voice, true)
-          const tokenLookupCall = calls.find(call => call.method === 'GET')
-          if (tokenLookupCall) assert.match(tokenLookupCall.url, /^\/page-send-test\?/)
-          const sendCall = calls.find(call => call.method === 'POST')
-          assert.ok(sendCall)
-          assert.equal(sendCall.url, '/page-send-test/messages')
-          assert.deepEqual(JSON.parse(sendCall.body), {
-            messaging_type: 'RESPONSE',
-            recipient: { id: 'psid-send-test' },
-            message: {
-              attachment: {
-                type: 'audio',
-                payload: {
-                  url: result.audio.url,
-                  is_reusable: false
-                }
-              }
-            }
-          })
+test('sendMetaSocialAudioMessage convierte WAV, MP3 y WebM reales a audio/mp4 para Instagram', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'instagram',
+    testId: 'audio-wav-mp3'
+  }, async ({ calls, uploads, contactId }) => {
+    const wav = createPcmWavBuffer()
+    const fixtures = [
+      {
+        dataUrl: `data:audio/wav;base64,${wav.toString('base64')}`,
+        mimeType: 'audio/wav',
+        filename: 'nota.wav',
+        externalId: 'instagram-audio-wav'
+      },
+      {
+        dataUrl: await getValidMp3DataUrl(),
+        mimeType: 'audio/mpeg',
+        filename: 'nota.mp3',
+        externalId: 'instagram-audio-mp3'
+      },
+      {
+        dataUrl: await getValidWebmAudioDataUrl(),
+        mimeType: 'audio/webm',
+        filename: 'nota.webm',
+        externalId: 'instagram-audio-webm'
+      }
+    ]
 
-          const row = await db.get(
-            `SELECT message_type, message_text, media_url, media_mime_type, raw_payload_json
-             FROM meta_social_messages
-             WHERE contact_id = ? AND direction = 'outbound'
-             ORDER BY message_timestamp DESC
-             LIMIT 1`,
-            [contactId]
-          )
-          assert.equal(row.message_type, 'audio')
-          assert.equal(row.message_text, '')
-          assert.match(row.media_url, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
-          assert.equal(row.media_mime_type, 'audio/mp4')
-          assert.equal(JSON.parse(row.raw_payload_json).context.audio.durationMs, 1800)
-          assert.equal(JSON.parse(row.raw_payload_json).context.audio.voice, true)
-        } finally {
-          if (mediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
-          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    for (const fixture of fixtures) {
+      const result = await sendMetaSocialAudioMessage({
+        contactId,
+        platform: 'instagram',
+        audioDataUrl: fixture.dataUrl,
+        audioMimeType: fixture.mimeType,
+        filename: fixture.filename,
+        durationMs: 2400,
+        voice: false,
+        externalId: fixture.externalId,
+        publicBaseUrl: 'https://ristak.test'
+      })
+
+      assert.equal(result.remoteMessageId, 'mid-instagram-page-send-test')
+      assert.equal(result.platform, 'instagram')
+      assert.equal(result.audio?.mimeType, 'audio/mp4')
+      assert.equal(result.audio?.durationMs, 2400)
+      assert.equal(result.audio?.voice, false)
+    }
+
+    assert.equal(uploads.length, 3)
+    for (const upload of uploads) {
+      assertPreparedMp4(upload, 'audio')
+      assert.equal(upload.filename, 'meta-audio.m4a')
+    }
+
+    const sendCalls = getMetaMessagePosts(calls)
+    assert.equal(sendCalls.length, 3)
+    for (let index = 0; index < sendCalls.length; index += 1) {
+      const resultUrl = `https://media.ristak.test/audio-wav-mp3/${index + 1}`
+      assert.equal(sendCalls[index].authorization, 'Bearer page-token-send-test')
+      assert.deepEqual(JSON.parse(sendCalls[index].body), {
+        recipient: { id: 'igsid-send-test' },
+        message: {
+          attachment: {
+            type: 'audio',
+            payload: { url: resultUrl }
+          }
         }
       })
+    }
+    assert.equal(calls.some(call => call.url === '/ig-business-send-test/messages'), false)
+
+    const row = await db.get(
+      `SELECT message_type, message_text, media_url, media_mime_type, raw_payload_json
+       FROM meta_social_messages
+       WHERE contact_id = ? AND platform = 'instagram' AND direction = 'outbound'
+       ORDER BY message_timestamp DESC
+       LIMIT 1`,
+      [contactId]
+    )
+    assert.equal(row.message_type, 'audio')
+    assert.equal(row.message_text, '')
+    assert.match(row.media_url, /^https:\/\/media\.ristak\.test\/audio-wav-mp3\/[123]$/)
+    assert.equal(row.media_mime_type, 'audio/mp4')
+    assert.equal(JSON.parse(row.raw_payload_json).context.audio.durationMs, 2400)
+    assert.equal(JSON.parse(row.raw_payload_json).context.audio.voice, false)
+  })
+})
+
+test('sendMetaSocialAttachmentMessage prepara y manda video MP4 real por Messenger', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'video'
+  }, async ({ calls, uploads, contactId }) => {
+    const result = await sendMetaSocialAttachmentMessage({
+      contactId,
+      platform: 'messenger',
+      attachmentType: 'video',
+      attachmentDataUrl: await getValidMp4VideoDataUrl(),
+      mimeType: 'video/mp4',
+      filename: 'demo.mp4',
+      publicBaseUrl: 'https://ristak.test'
+    })
+
+    assert.equal(result.attachment.type, 'video')
+    assert.equal(result.attachment.mimeType, 'video/mp4')
+    assert.equal(uploads.length, 1)
+    assertPreparedMp4(uploads[0], 'video')
+    assert.equal(uploads[0].filename, 'meta-video.mp4')
+
+    const [sendCall] = getMetaMessagePosts(calls)
+    assert.deepEqual(JSON.parse(sendCall.body), {
+      messaging_type: 'RESPONSE',
+      recipient: { id: 'psid-send-test' },
+      message: {
+        attachment: {
+          type: 'video',
+          payload: {
+            url: result.attachment.url,
+            is_reusable: false
+          }
+        }
+      }
+    })
+  })
+})
+
+test('sendMetaSocialAttachmentMessage manda PDF por Messenger y externalId evita un segundo POST', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'pdf-idempotent'
+  }, async ({ calls, uploads, contactId }) => {
+    const payload = {
+      contactId,
+      platform: 'messenger',
+      attachmentType: 'file',
+      attachmentDataUrl: PDF_DATA_URL,
+      mimeType: 'application/pdf',
+      filename: 'cotizacion.pdf',
+      externalId: 'meta-pdf-idempotency-test',
+      publicBaseUrl: 'https://ristak.test'
+    }
+    const first = await sendMetaSocialAttachmentMessage(payload)
+    const repeated = await sendMetaSocialAttachmentMessage(payload)
+
+    assert.equal(first.attachment.type, 'file')
+    assert.equal(first.attachment.mimeType, 'application/pdf')
+    assert.equal(first.attachment.filename, 'cotizacion.pdf')
+    assert.equal(repeated.deduplicated, true)
+    assert.equal(repeated.isNew, false)
+    assert.equal(repeated.remoteMessageId, first.remoteMessageId)
+    assert.equal(repeated.attachment.url, first.attachment.url)
+    assert.equal(uploads.length, 1)
+    assert.equal(uploads[0].mimeType, 'application/pdf')
+    assert.deepEqual(uploads[0].buffer, Buffer.from(PDF_DATA_URL.split(',')[1], 'base64'))
+
+    const sendCalls = getMetaMessagePosts(calls)
+    assert.equal(sendCalls.length, 1)
+    assert.deepEqual(JSON.parse(sendCalls[0].body).message.attachment, {
+      type: 'file',
+      payload: {
+        url: first.attachment.url,
+        is_reusable: false
+      }
+    })
+
+    const rows = await db.all(
+      `SELECT id, meta_message_id, media_url, raw_payload_json
+       FROM meta_social_messages
+       WHERE contact_id = ? AND direction = 'outbound'`,
+      [contactId]
+    )
+    assert.equal(rows.length, 1)
+    assert.equal(JSON.parse(rows[0].raw_payload_json).externalId, payload.externalId)
+
+    const webhookResult = await processMetaSocialWebhook({
+      payload: {
+        object: 'page',
+        entry: [{
+          id: 'page-send-test',
+          time: 1783180860,
+          messaging: [{
+            sender: { id: 'page-send-test' },
+            recipient: { id: 'psid-send-test' },
+            timestamp: 1783180860000,
+            message: {
+              mid: first.remoteMessageId,
+              is_echo: true,
+              attachments: [{
+                type: 'file',
+                payload: {
+                  url: first.attachment.url,
+                  mime_type: 'application/pdf'
+                }
+              }]
+            }
+          }]
+        }]
+      }
+    })
+    assert.equal(webhookResult.messages, 1)
+
+    const rowsAfterEcho = await db.all(
+      `SELECT id, meta_message_id, media_url, media_mime_type, raw_payload_json
+       FROM meta_social_messages
+       WHERE meta_message_id = ? AND direction = 'outbound'`,
+      [first.remoteMessageId]
+    )
+    assert.equal(rowsAfterEcho.length, 1)
+    assert.equal(rowsAfterEcho[0].id, rows[0].id)
+    assert.equal(rowsAfterEcho[0].media_url, first.attachment.url)
+    assert.equal(rowsAfterEcho[0].media_mime_type, 'application/pdf')
+    assert.equal(JSON.parse(rowsAfterEcho[0].raw_payload_json).externalId, payload.externalId)
+  })
+})
+
+test('dos envíos concurrentes con el mismo externalId hacen un solo POST a Meta', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'concurrent-idempotency'
+  }, async ({ calls, uploads, contactId }) => {
+    const payload = {
+      contactId,
+      platform: 'messenger',
+      attachmentType: 'file',
+      attachmentDataUrl: PDF_DATA_URL,
+      mimeType: 'application/pdf',
+      filename: 'concurrente.pdf',
+      externalId: 'meta-concurrent-idempotency-test',
+      publicBaseUrl: 'https://ristak.test'
+    }
+
+    const [first, second] = await Promise.all([
+      sendMetaSocialAttachmentMessage(payload),
+      sendMetaSocialAttachmentMessage(payload)
+    ])
+
+    assert.equal(first.remoteMessageId, second.remoteMessageId)
+    assert.equal([first.deduplicated, second.deduplicated].filter(Boolean).length, 1)
+    assert.equal(getMetaMessagePosts(calls).length, 1)
+    assert.equal(uploads.length, 1)
+    const rows = await db.all(
+      "SELECT id FROM meta_social_messages WHERE contact_id = ? AND direction = 'outbound'",
+      [contactId]
+    )
+    assert.equal(rows.length, 1)
+  })
+})
+
+test('timeout de Graph termina en send_unknown y bloquea un duplicado ciego', async () => {
+  setMetaSocialGraphTimeoutForTest(30)
+  try {
+    await withMetaMediaSendHarness({
+      platform: 'messenger',
+      testId: 'graph-timeout',
+      beforeMessageResponse: async () => {
+        await new Promise(resolve => setTimeout(resolve, 120))
+      }
+    }, async ({ calls, contactId }) => {
+      const payload = {
+        contactId,
+        platform: 'messenger',
+        message: 'Prueba timeout Meta',
+        externalId: 'meta-timeout-idempotency-test'
+      }
+
+      await assert.rejects(
+        sendMetaSocialTextMessage(payload),
+        error => error.statusCode === 504 && error.meta?.code === 'meta_graph_timeout'
+      )
+      const reservation = await db.get(
+        "SELECT status FROM meta_social_messages WHERE contact_id = ? AND direction = 'outbound'",
+        [contactId]
+      )
+      assert.equal(reservation.status, 'send_unknown')
+
+      await assert.rejects(
+        sendMetaSocialTextMessage(payload),
+        error => error.statusCode === 409 && error.meta?.code === 'meta_send_delivery_unknown'
+      )
+      assert.equal(getMetaMessagePosts(calls).length, 1)
     })
   } finally {
-    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
-    if (previousMetaGraphDescriptor) {
-      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
-    }
+    setMetaSocialGraphTimeoutForTest()
   }
 })
 
-test('sendMetaSocialAudioMessage manda audio Instagram con Page token derivado y lo persiste como audio', async () => {
-  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
-  const calls = []
-  let metaServer
-  const contactId = 'meta_send_audio_instagram_contact'
-  const metaContactId = 'meta_send_audio_instagram_profile'
-  let mediaAssetId = ''
-
-  try {
-    await initializeMasterKey()
-    metaServer = await startMetaSendServer(calls)
-    Object.defineProperty(API_URLS, 'META_GRAPH', {
-      value: `http://127.0.0.1:${metaServer.address().port}`,
-      configurable: true
-    })
-
-    await snapshotMetaConfig(async () => {
-      await snapshotAppConfig(['meta_instagram_messaging_enabled'], async () => {
-        try {
-          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
-
-          await db.run(`
-            INSERT INTO meta_config (
-              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
-              timezone_id, timezone_name, timezone_offset_hours_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `, [
-            'act-send-audio-ig-test',
-            encrypt('user-token-send-test'),
-            null,
-            'page-send-test',
-            'ig-business-send-test',
-            null,
-            null,
-            null
-          ])
-          await setAppConfig('meta_instagram_messaging_enabled', '1')
-          await seedInstagramContact({ contactId, metaContactId })
-
-          const result = await sendMetaSocialAudioMessage({
-            contactId,
-            platform: 'instagram',
-            audioDataUrl: `data:audio/mp4;base64,${Buffer.from('fake native instagram audio').toString('base64')}`,
-            durationMs: 2400,
-            voice: false,
-            publicBaseUrl: 'https://ristak.test'
-          })
-          mediaAssetId = result.localMedia?.mediaAssetId || ''
-
-          assert.equal(result.remoteMessageId, 'mid-instagram-page-send-test')
-          assert.equal(result.platform, 'instagram')
-          assert.equal(result.audio?.mimeType, 'audio/mp4')
-          assert.equal(result.audio?.durationMs, 2400)
-          assert.equal(result.audio?.voice, false)
-          const sendCall = calls.find(call => call.method === 'POST' && call.url === '/page-send-test/messages')
-          assert.ok(sendCall)
-          assert.equal(sendCall.authorization, 'Bearer page-token-send-test')
-          assert.deepEqual(JSON.parse(sendCall.body), {
-            recipient: { id: 'igsid-send-test' },
-            message: {
-              attachment: {
-                type: 'audio',
-                payload: {
-                  url: result.audio.url
-                }
+test('un webhook echo que llega antes de guardar se fusiona con la reserva local', async () => {
+  let echoProcessed = false
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'echo-before-save',
+    beforeMessageResponse: async ({ parsedBody }) => {
+      if (echoProcessed) return
+      echoProcessed = true
+      await processMetaSocialWebhook({
+        payload: {
+          object: 'page',
+          entry: [{
+            id: 'page-send-test',
+            time: 1783180860,
+            messaging: [{
+              sender: { id: 'page-send-test' },
+              recipient: { id: 'psid-send-test' },
+              timestamp: 1783180860000,
+              message: {
+                mid: 'mid-messenger-send-test',
+                is_echo: true,
+                attachments: [{
+                  type: 'image',
+                  payload: {
+                    url: parsedBody.message.attachment.payload.url,
+                    mime_type: 'image/jpeg'
+                  }
+                }]
               }
-            }
-          })
-          assert.equal(calls.some(call => call.url === '/ig-business-send-test/messages'), false)
-
-          const row = await db.get(
-            `SELECT message_type, message_text, media_url, media_mime_type, raw_payload_json
-             FROM meta_social_messages
-             WHERE contact_id = ? AND platform = 'instagram' AND direction = 'outbound'
-             ORDER BY message_timestamp DESC
-             LIMIT 1`,
-            [contactId]
-          )
-          assert.equal(row.message_type, 'audio')
-          assert.equal(row.message_text, '')
-          assert.match(row.media_url, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
-          assert.equal(row.media_mime_type, 'audio/mp4')
-          assert.equal(JSON.parse(row.raw_payload_json).context.audio.durationMs, 2400)
-          assert.equal(JSON.parse(row.raw_payload_json).context.audio.voice, false)
-        } finally {
-          if (mediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
-          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
-          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+            }]
+          }]
         }
       })
-    })
-  } finally {
-    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
-    if (previousMetaGraphDescriptor) {
-      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
     }
-  }
+  }, async ({ contactId }) => {
+    const result = await sendMetaSocialAttachmentMessage({
+      contactId,
+      platform: 'messenger',
+      attachmentType: 'image',
+      attachmentDataUrl: ONE_PIXEL_PNG_DATA_URL,
+      mimeType: 'image/png',
+      filename: 'echo.png',
+      externalId: 'meta-echo-before-save-test',
+      publicBaseUrl: 'https://ristak.test'
+    })
+
+    assert.equal(echoProcessed, true)
+    const rows = await db.all(
+      `SELECT id, media_url, media_mime_type, raw_payload_json
+       FROM meta_social_messages
+       WHERE contact_id = ? AND meta_message_id = ? AND direction = 'outbound'`,
+      [contactId, result.remoteMessageId]
+    )
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].media_url, result.attachment.url)
+    assert.equal(rows[0].media_mime_type, 'image/jpeg')
+    assert.equal(JSON.parse(rows[0].raw_payload_json).externalId, 'meta-echo-before-save-test')
+    assert.equal(JSON.parse(rows[0].raw_payload_json).context.attachment.filename, 'meta-image.jpg')
+  })
+})
+
+test('sendMetaSocialAttachmentMessage descarga URL externa con transporte inyectado antes de mandar a Meta', async () => {
+  const downloads = []
+  const png = Buffer.from(ONE_PIXEL_PNG_DATA_URL.split(',')[1], 'base64')
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'external-url',
+    downloader: async (url, options) => {
+      downloads.push({ url, options })
+      return { buffer: png, mimeType: 'image/png', filename: 'externa.png' }
+    }
+  }, async ({ calls, uploads, contactId }) => {
+    const result = await sendMetaSocialAttachmentMessage({
+      contactId,
+      platform: 'messenger',
+      attachmentType: 'image',
+      attachmentUrl: 'https://origin.example.test/media/campana.png',
+      mimeType: 'image/png',
+      filename: 'campana.png',
+      publicBaseUrl: 'https://ristak.test'
+    })
+
+    assert.deepEqual(downloads, [{
+      url: 'https://origin.example.test/media/campana.png',
+      options: { maxBytes: 25 * 1024 * 1024, timeoutMs: 60_000 }
+    }])
+    assert.equal(uploads.length, 1)
+    assert.equal(uploads[0].mimeType, 'image/jpeg')
+    assert.notEqual(result.attachment.url, 'https://origin.example.test/media/campana.png')
+    assert.equal(JSON.parse(getMetaMessagePosts(calls)[0].body).message.attachment.payload.url, result.attachment.url)
+  })
+})
+
+test('sendMetaSocialAudioMessage acepta WebM externo aunque el CDN lo declare video/webm', async () => {
+  const webmDataUrl = await getValidWebmAudioDataUrl()
+  const webmBytes = Buffer.from(webmDataUrl.split(',')[1], 'base64')
+  await withMetaMediaSendHarness({
+    platform: 'instagram',
+    testId: 'external-webm-audio',
+    downloader: async () => ({
+      buffer: webmBytes,
+      mimeType: 'video/webm',
+      filename: 'grabacion.webm'
+    })
+  }, async ({ calls, uploads, contactId }) => {
+    const result = await sendMetaSocialAudioMessage({
+      contactId,
+      platform: 'instagram',
+      audioUrl: 'https://cdn.example.test/grabacion.webm',
+      filename: 'grabacion.webm',
+      voice: true,
+      externalId: 'instagram-external-webm'
+    })
+
+    assert.equal(result.audio.mimeType, 'audio/mp4')
+    assert.equal(result.audio.voice, true)
+    assert.equal(uploads.length, 1)
+    assertPreparedMp4(uploads[0], 'audio')
+    assert.equal(getMetaMessagePosts(calls).length, 1)
+  })
+})
+
+test('sendMetaSocialAttachmentMessage prepara y manda imagen por Instagram', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'instagram',
+    testId: 'image'
+  }, async ({ calls, uploads, contactId }) => {
+    const result = await sendMetaSocialAttachmentMessage({
+      contactId,
+      platform: 'instagram',
+      attachmentType: 'image',
+      attachmentDataUrl: ONE_PIXEL_PNG_DATA_URL,
+      mimeType: 'image/png',
+      filename: 'historia.png',
+      publicBaseUrl: 'https://ristak.test'
+    })
+
+    assert.equal(result.remoteMessageId, 'mid-instagram-page-send-test')
+    assert.equal(result.attachment.type, 'image')
+    assert.equal(result.attachment.mimeType, 'image/jpeg')
+    assert.equal(uploads.length, 1)
+    assert.equal(uploads[0].mimeType, 'image/jpeg')
+    const [sendCall] = getMetaMessagePosts(calls)
+    assert.equal(sendCall.authorization, 'Bearer page-token-send-test')
+    assert.deepEqual(JSON.parse(sendCall.body), {
+      recipient: { id: 'igsid-send-test' },
+      message: {
+        attachment: {
+          type: 'image',
+          payload: { url: result.attachment.url }
+        }
+      }
+    })
+  })
+})
+
+test('sendMetaSocialAttachmentMessage prepara y manda video MP4 real por Instagram', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'instagram',
+    testId: 'video'
+  }, async ({ calls, uploads, contactId }) => {
+    const result = await sendMetaSocialAttachmentMessage({
+      contactId,
+      platform: 'instagram',
+      attachmentType: 'video',
+      attachmentDataUrl: await getValidMp4VideoDataUrl(),
+      mimeType: 'video/mp4',
+      filename: 'reel.mp4',
+      publicBaseUrl: 'https://ristak.test'
+    })
+
+    assert.equal(result.attachment.type, 'video')
+    assert.equal(result.attachment.mimeType, 'video/mp4')
+    assert.equal(uploads.length, 1)
+    assertPreparedMp4(uploads[0], 'video')
+    const [sendCall] = getMetaMessagePosts(calls)
+    assert.deepEqual(JSON.parse(sendCall.body), {
+      recipient: { id: 'igsid-send-test' },
+      message: {
+        attachment: {
+          type: 'video',
+          payload: { url: result.attachment.url }
+        }
+      }
+    })
+  })
+})
+
+test('sendMetaSocialAttachmentMessage rechaza PDF en Instagram antes de subirlo o llamar Graph', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'instagram',
+    testId: 'pdf'
+  }, async ({ calls, uploads, contactId }) => {
+    await assert.rejects(
+      sendMetaSocialAttachmentMessage({
+        contactId,
+        platform: 'instagram',
+        attachmentType: 'document',
+        attachmentDataUrl: PDF_DATA_URL,
+        mimeType: 'application/pdf',
+        filename: 'catalogo.pdf',
+        publicBaseUrl: 'https://ristak.test'
+      }),
+      error => {
+        assert.equal(error.statusCode, 415)
+        assert.equal(error.meta?.code, 'instagram_file_not_supported')
+        assert.match(error.message, /Instagram no permite enviar documentos/)
+        return true
+      }
+    )
+    assert.equal(uploads.length, 0)
+    assert.equal(getMetaMessagePosts(calls).length, 0)
+  })
+})
+
+test('sendMetaSocialAttachmentMessage rechaza DOCX en Instagram antes de subirlo o llamar Graph', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'instagram',
+    testId: 'docx-rejected'
+  }, async ({ calls, uploads, contactId }) => {
+    const fakeDocxBytes = Buffer.from('PK\u0003\u0004document.xml', 'latin1')
+    await assert.rejects(
+      sendMetaSocialAttachmentMessage({
+        contactId,
+        platform: 'instagram',
+        attachmentType: 'file',
+        attachmentDataUrl: `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${fakeDocxBytes.toString('base64')}`,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        filename: 'propuesta.docx',
+        publicBaseUrl: 'https://ristak.test'
+      }),
+      error => {
+        assert.equal(error.statusCode, 415)
+        assert.equal(error.meta?.code, 'instagram_file_not_supported')
+        assert.match(error.message, /Instagram no permite enviar documentos/)
+        return true
+      }
+    )
+    assert.equal(uploads.length, 0)
+    assert.equal(getMetaMessagePosts(calls).length, 0)
+  })
 })
 
 test('sendMetaSocialTextMessage envia reply_to para contestar un globo de Messenger', async () => {
@@ -2318,6 +3094,71 @@ test('sendMetaSocialTextMessage rederiva el Page token tras un rechazo temporal 
             contactId,
             platform: 'messenger',
             message: 'Hola después de refrescar permisos'
+          })
+
+          assert.equal(result.remoteMessageId, 'mid-permission-retry-test')
+          const sends = calls.filter(call => call.method === 'POST' && call.url === '/page-permission-retry-test/messages')
+          assert.equal(sends.length, 2)
+          assert.equal(sends[0].authorization, 'Bearer page-token-stale')
+          assert.equal(sends[1].authorization, 'Bearer page-token-fresh')
+        } finally {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('sendMetaSocialTextMessage rederiva tambien el Page token de Instagram tras rechazo temporal', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const contactId = 'meta_permission_retry_instagram_contact'
+  const metaContactId = 'meta_permission_retry_instagram_profile'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_instagram_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-permission-retry-instagram-test',
+            encrypt('user-token-permission-retry-instagram-test'),
+            null,
+            'page-permission-retry-test',
+            'ig-business-send-test',
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_instagram_messaging_enabled', '1')
+          await seedInstagramContact({ contactId, metaContactId })
+
+          const result = await sendMetaSocialTextMessage({
+            contactId,
+            platform: 'instagram',
+            message: 'Instagram después de refrescar permisos'
           })
 
           assert.equal(result.remoteMessageId, 'mid-permission-retry-test')

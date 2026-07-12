@@ -840,7 +840,7 @@ test('contact journey exposes provider for HighLevel mirrored meta messages', as
     assert.ok(message)
     assert.equal(message.data.provider, 'highlevel')
     assert.equal(message.data.provider_message_id, metaMessageId)
-    assert.equal(message.data.transport, 'messenger')
+    assert.equal(message.data.transport, 'ghl_messenger')
   } finally {
     await cleanup(contactId, phone)
   }

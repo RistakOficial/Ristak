@@ -466,6 +466,16 @@ export interface WhatsAppApiSendResponse {
     ptt?: boolean
     voice?: boolean
   }
+  attachment?: {
+    type?: 'image' | 'video' | 'audio' | 'file' | string
+    link?: string
+    url?: string
+    mimeType?: string
+    mimetype?: string
+    filename?: string
+    fileName?: string
+    durationMs?: number
+  }
   localMedia?: {
     publicUrl?: string
     publicPath?: string
@@ -531,8 +541,23 @@ export interface MetaSocialAudioSendPayload {
   platform: 'messenger' | 'instagram'
   audioDataUrl?: string
   audioUrl?: string
+  audioMimeType?: string
+  filename?: string
   durationMs?: number
   voice?: boolean
+  externalId?: string
+  replyToMessageId?: string
+  replyToProviderMessageId?: string
+}
+
+export interface MetaSocialAttachmentSendPayload {
+  contactId: string
+  platform: 'messenger' | 'instagram'
+  attachmentType: 'image' | 'video' | 'file'
+  attachmentDataUrl?: string
+  attachmentUrl?: string
+  mimeType?: string
+  filename?: string
   externalId?: string
   replyToMessageId?: string
   replyToProviderMessageId?: string
@@ -623,6 +648,7 @@ export const whatsappApiService = {
   sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),
   sendMetaSocialText: (payload: MetaSocialTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/text', payload),
   sendMetaSocialAudio: (payload: MetaSocialAudioSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/audio', payload),
+  sendMetaSocialAttachment: (payload: MetaSocialAttachmentSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/attachment', payload),
   sendMetaSocialReaction: (payload: MetaSocialReactionSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/reaction', payload),
   sendMetaSocialCommentReply: (payload: MetaSocialCommentReplyPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/comments/reply', payload),
   listMetaSocialPosts: (params: MetaSocialPostsQuery) => {

@@ -45,7 +45,7 @@ import {
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultWhatsAppApiMessageTemplates
 } from '../services/messageTemplatesService.js'
-import { sendMetaSocialTextMessage, sendMetaSocialAudioMessage, sendMetaSocialReactionMessage, sendMetaSocialCommentReply, listMetaSocialPosts } from '../services/metaSocialMessagingService.js'
+import { sendMetaSocialTextMessage, sendMetaSocialAudioMessage, sendMetaSocialAttachmentMessage, sendMetaSocialReactionMessage, sendMetaSocialCommentReply, listMetaSocialPosts } from '../services/metaSocialMessagingService.js'
 import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
@@ -490,6 +490,8 @@ export async function sendMetaSocialAudioMessageView(req, res) {
       platform: req.body?.platform,
       audioDataUrl: req.body?.audioDataUrl,
       audioUrl: media?.url,
+      audioMimeType: req.body?.audioMimeType || req.body?.mimeType || media?.mimeType,
+      filename: req.body?.filename || media?.filename,
       durationMs: req.body?.durationMs,
       voice: req.body?.voice,
       externalId: req.body?.externalId,
@@ -503,7 +505,45 @@ export async function sendMetaSocialAudioMessageView(req, res) {
     logger.error(`Error enviando audio Meta social: ${error.message}`)
     res.status(error.statusCode || 400).json({
       success: false,
-      error: error.message || 'No se pudo enviar el audio por Messenger/Instagram'
+      error: error.message || 'No se pudo enviar el audio por Messenger/Instagram',
+      ...((error.code || error.meta?.code) ? { code: error.code || error.meta.code } : {})
+    })
+  }
+}
+
+export async function sendMetaSocialAttachmentMessageView(req, res) {
+  try {
+    const requestedType = cleanString(req.body?.attachmentType || req.body?.type).toLowerCase()
+    const attachmentType = requestedType === 'document' ? 'file' : requestedType
+    const expectedMediaTypes = attachmentType === 'file'
+      ? ['document', 'other']
+      : attachmentType ? [attachmentType] : []
+    const media = await resolveRequestChatMedia(req, {
+      type: 'attachment',
+      urlField: 'attachmentUrl',
+      expectedMediaTypes
+    })
+    const data = await sendMetaSocialAttachmentMessage({
+      contactId: req.body?.contactId,
+      platform: req.body?.platform,
+      attachmentType,
+      attachmentDataUrl: req.body?.attachmentDataUrl,
+      attachmentUrl: media?.url,
+      mimeType: req.body?.mimeType || media?.mimeType,
+      filename: req.body?.filename || media?.filename,
+      externalId: req.body?.externalId,
+      replyToMessageId: req.body?.replyToMessageId,
+      replyToProviderMessageId: req.body?.replyToProviderMessageId,
+      publicBaseUrl: getPublicBaseUrl(req)
+    })
+    notifyHumanTakeover({ contactId: req.body?.contactId })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando adjunto Meta social: ${error.message}`)
+    res.status(error.statusCode || error.status || 400).json({
+      success: false,
+      error: error.message || 'No se pudo enviar el archivo por Messenger/Instagram',
+      ...((error.code || error.meta?.code) ? { code: error.code || error.meta.code } : {})
     })
   }
 }

@@ -4278,15 +4278,13 @@ function publicAutomationMediaUrl(rawUrl, ctx = {}) {
   }
 }
 
-async function automationMediaMimeType(block) {
-  const mediaUrl = str(block.url)
-  const assetMatch = /\/api\/automations\/assets\/([\w-]+)/.exec(mediaUrl)
-  if (!assetMatch) return ''
-  const row = await db.get('SELECT content_type FROM automation_assets WHERE id = ?', [assetMatch[1]]).catch(() => null)
-  return str(row?.content_type)
+export function buildMetaSocialAutomationExternalIdBase(node, ctx = {}, enrollment = {}) {
+  const automationId = str(enrollment?.automationId || ctx?.automationId) || 'automation'
+  const enrollmentId = str(enrollment?.id || ctx?.enrollmentId)
+  return `${automationId}:${enrollmentId}:${node?.id || 'node'}`
 }
 
-async function sendMetaSocialBlocks(node, ctx, platform) {
+async function sendMetaSocialBlocks(node, ctx, platform, enrollment = {}) {
   const {
     sendMetaSocialAttachmentMessage,
     sendMetaSocialAudioMessage,
@@ -4296,7 +4294,10 @@ async function sendMetaSocialBlocks(node, ctx, platform) {
   const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
   const sentMessages = []
   const notes = []
-  const baseExternalId = `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}`
+  // La inscripción, no el contacto ni el nodo por sí solos, define una ejecución
+  // visible. Conservamos este ID durante los reintentos de ESA inscripción y lo
+  // cambiamos cuando el contacto vuelve a entrar al flujo.
+  const baseExternalId = buildMetaSocialAutomationExternalIdBase(node, ctx, enrollment)
 
   const nextExternalId = () => `${baseExternalId}:${sentMessages.length + 1}`
 
@@ -4320,30 +4321,35 @@ async function sendMetaSocialBlocks(node, ctx, platform) {
     } else if (['image', 'video', 'audio', 'voice', 'file'].includes(block.type) && str(block.url)) {
       const renderedMediaUrl = renderTemplate(str(block.url), ctx, { preserveUnknown: true }).trim()
       const attachmentUrl = publicAutomationMediaUrl(renderedMediaUrl, ctx)
-      const mimeType = await automationMediaMimeType(block)
       const externalId = nextExternalId()
+      const media = await resolveAutomationMediaSource(renderedMediaUrl)
       if (block.type === 'audio' || block.type === 'voice') {
         // Meta no tiene un equivalente a `ptt`. Su representación correcta de
         // una nota de voz es un attachment de audio. Si el archivo es nuestro,
         // lo entregamos como data URL para que use exactamente la misma tubería
         // del chat directo (preview M4A/AAC público y reproducible).
-        const media = await resolveAutomationMediaSource(renderedMediaUrl)
         await sendMetaSocialAudioMessage({
           contactId: ctx.contact?.id,
           platform,
           audioDataUrl: media.dataUrl || undefined,
           audioUrl: media.dataUrl ? undefined : attachmentUrl,
+          audioMimeType: media.mimeType,
+          filename: media.filename,
           voice: block.type === 'voice' || block.voiceNote !== false,
-          externalId
+          externalId,
+          publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url || ''
         })
       } else {
         await sendMetaSocialAttachmentMessage({
           contactId: ctx.contact?.id,
           platform,
           attachmentType: block.type,
-          attachmentUrl,
-          mimeType,
-          externalId
+          attachmentDataUrl: media.dataUrl || undefined,
+          attachmentUrl: media.dataUrl ? undefined : attachmentUrl,
+          mimeType: media.mimeType,
+          filename: media.filename,
+          externalId,
+          publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url || ''
         })
       }
       sentMessages.push(block.type)
@@ -4485,7 +4491,9 @@ function evaluateGoalMet(config, ctx) {
 // declarada coincida con esa plataforma.
 // Qué adjuntos acepta Meta al responder un comentario, por tipo de respuesta y
 // plataforma (verificado en la doc oficial): público FB = 1 imagen; público IG =
-// solo texto; DM (Messenger/Instagram) = imagen/video/audio/archivo.
+// solo texto; la respuesta privada INICIAL por comment_id también es solo texto.
+// Una vez que la persona responde y existe una conversación normal, los nodos de
+// Messenger/Instagram sí pueden mandar imagen, video y audio por recipient.id.
 const COMMENT_MEDIA_BLOCKS = ['image', 'video', 'audio', 'voice', 'file']
 const COMMENT_REPLY_TARGETS = {
   facebook_public_comment: {
@@ -4510,7 +4518,7 @@ const COMMENT_REPLY_TARGETS = {
     eventPlatform: 'facebook',
     apiPlatform: 'messenger',
     replyType: 'private',
-    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'voice', 'file'])
+    allowedBlockTypes: new Set(['text'])
   },
   instagram_private_message: {
     value: 'instagram_private_message',
@@ -4518,7 +4526,7 @@ const COMMENT_REPLY_TARGETS = {
     eventPlatform: 'instagram',
     apiPlatform: 'instagram',
     replyType: 'private',
-    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'voice', 'file'])
+    allowedBlockTypes: new Set(['text'])
   }
 }
 
@@ -4544,7 +4552,7 @@ function commentContentBlock(block, ctx) {
   return null
 }
 
-async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public') {
+async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public', enrollment = {}) {
   const config = node.config || {}
   const contactId = ctx.contact?.id
   if (!contactId) throw new Error('Falta el contacto para responder el comentario')
@@ -4570,7 +4578,7 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public')
   }
 
   const { sendMetaSocialCommentReply } = await import('./metaSocialMessagingService.js')
-  const baseExternal = `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}`
+  const baseExternal = buildMetaSocialAutomationExternalIdBase(node, ctx, enrollment)
 
   let sent = 0
   let index = 0
@@ -4587,6 +4595,9 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public')
       sent += 1
     } else if (content.kind === 'media') {
       if (!target.allowedBlockTypes.has(content.type)) {
+        if (replyType === 'private') {
+          throw new Error('La respuesta privada inicial a un comentario solo admite texto. Cuando la persona responda, usa un paso normal de Messenger o Instagram para enviar multimedia')
+        }
         skipped.push(content.type)
         continue
       }
@@ -4595,11 +4606,21 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public')
       const caption = target.value === 'facebook_public_comment' && block.caption
         ? renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim()
         : ''
+      const renderedMediaUrl = renderTemplate(str(content.url), ctx, { preserveUnknown: true }).trim()
+      const attachmentUrl = publicAutomationMediaUrl(renderedMediaUrl, ctx)
+      const media = await resolveAutomationMediaSource(renderedMediaUrl)
       await sendMetaSocialCommentReply({
         contactId, platform, replyType, message: caption,
-        attachment: { type: content.type, url: content.url },
+        attachment: {
+          type: content.type,
+          dataUrl: media.dataUrl || undefined,
+          url: media.dataUrl ? undefined : attachmentUrl,
+          mimeType: media.mimeType,
+          filename: media.filename
+        },
         commentId: str(ctx.commentId), postId: str(ctx.postId),
-        externalId: `${baseExternal}:${index}`
+        externalId: `${baseExternal}:${index}`,
+        publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url || ''
       })
       sent += 1
     }
@@ -4659,7 +4680,7 @@ async function executeNode(node, ctx, enrollment) {
     }
 
     case 'channel-messenger': {
-      const sendResult = await sendMetaSocialBlocks(node, ctx, 'messenger')
+      const sendResult = await sendMetaSocialBlocks(node, ctx, 'messenger', enrollment)
       return {
         handle: 'out',
         detail: sendResult.detail,
@@ -4673,7 +4694,7 @@ async function executeNode(node, ctx, enrollment) {
     }
 
     case 'channel-instagram': {
-      const sendResult = await sendMetaSocialBlocks(node, ctx, 'instagram')
+      const sendResult = await sendMetaSocialBlocks(node, ctx, 'instagram', enrollment)
       return {
         handle: 'out',
         detail: sendResult.detail,
@@ -4687,7 +4708,7 @@ async function executeNode(node, ctx, enrollment) {
     }
 
     case 'channel-comment-public-reply': {
-      const sendResult = await sendCommentReplyFromNode(node, ctx, 'public')
+      const sendResult = await sendCommentReplyFromNode(node, ctx, 'public', enrollment)
       const isPrivate = sendResult.target?.replyType === 'private'
       return {
         handle: 'out',
@@ -4702,7 +4723,7 @@ async function executeNode(node, ctx, enrollment) {
     }
 
     case 'channel-comment-dm-reply': {
-      const sendResult = await sendCommentReplyFromNode(node, ctx, 'private')
+      const sendResult = await sendCommentReplyFromNode(node, ctx, 'private', enrollment)
       return {
         handle: 'out',
         detail: sendResult.detail,

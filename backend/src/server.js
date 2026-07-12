@@ -440,7 +440,16 @@ app.use('/api/conversational-agent', requireAuth, requireFeature('conversational
 app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
-app.use('/api/whatsapp-api', requireAuth, requireFeature('whatsapp'), whatsappApiRoutes) // (LIC-002) auth antes de feature
+const requireWhatsAppFeatureForWhatsAppApiRoute = (() => {
+  const whatsappFeatureGate = requireFeature('whatsapp')
+  return (req, res, next) => {
+    // Messenger/Instagram comparten controladores históricos bajo este prefijo,
+    // pero pertenecen a Campañas + Chat. No deben heredar la licencia WhatsApp.
+    if (String(req.path || '').toLowerCase().startsWith('/meta/social/')) return next()
+    return whatsappFeatureGate(req, res, next)
+  }
+})()
+app.use('/api/whatsapp-api', requireAuth, requireWhatsAppFeatureForWhatsAppApiRoute, whatsappApiRoutes) // (LIC-002) auth antes de feature
 app.use('/api/email', requireAuth, requireFeature('email'), emailRoutes) // (LIC-002) auth antes de feature
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'

@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import fetch from 'node-fetch'
+import { fileTypeFromBuffer } from 'file-type'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
@@ -10,13 +11,20 @@ import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { claimInboundChatMessage } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
-import { buildLocalMediaUrl, saveWhatsAppAudioPlaybackPreviewDataUrl } from './whatsappApiService.js'
+import {
+  buildLocalMediaUrl,
+  prepareMetaSocialAudioBuffer,
+  prepareWhatsAppMediaForDirectUpload
+} from './whatsappApiService.js'
+import { downloadSafeOutboundMediaUrl } from './outboundMediaReferenceService.js'
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 // (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
 const DEFAULT_VERIFY_TOKEN = 'ristak-meta-webhook'
 const META_SIGNATURE_HEADER = 'x-hub-signature-256'
+const META_SOCIAL_GRAPH_TIMEOUT_MS = 45_000
+let metaSocialGraphTimeoutMs = META_SOCIAL_GRAPH_TIMEOUT_MS
 const META_MESSENGER_MESSAGING_ENABLED_KEY = 'meta_messenger_messaging_enabled'
 const META_INSTAGRAM_MESSAGING_ENABLED_KEY = 'meta_instagram_messaging_enabled'
 const META_FACEBOOK_COMMENTS_ENABLED_KEY = 'meta_facebook_comments_enabled'
@@ -27,10 +35,367 @@ const META_SOCIAL_HISTORY_MESSAGE_FIELDS = 'id,message,created_time,from,to,atta
 const COMMENT_DELETED_TEXT = 'Comentario eliminado'
 const POST_DELETED_TEXT = 'Publicación eliminada'
 const metaSocialHistorySyncing = new Set()
+const META_SOCIAL_MAX_MEDIA_BYTES = 25 * 1024 * 1024
+const META_INSTAGRAM_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+const META_SOCIAL_ATTACHMENT_TYPES = new Set(['image', 'video', 'audio', 'file'])
+const META_SOCIAL_PREPARED_MEDIA_CACHE_TTL_MS = 60 * 60 * 1000
+const META_SOCIAL_PREPARED_MEDIA_CACHE_MAX = 300
+const metaSocialPreparedMediaCache = new Map()
+const metaSocialPreparedMediaInflight = new Map()
+const META_SOCIAL_MESSENGER_FILE_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/json',
+  'application/zip',
+  'text/csv',
+  'text/plain'
+])
+
+async function defaultMetaSocialOutboundMediaUploader(input) {
+  const { uploadMediaAsset } = await import('./mediaStorageService.js')
+  return uploadMediaAsset(input)
+}
+
+let metaSocialOutboundMediaDownloader = downloadSafeOutboundMediaUrl
+let metaSocialOutboundMediaUploader = defaultMetaSocialOutboundMediaUploader
+
+export function setMetaSocialOutboundMediaTransportForTest(overrides = {}) {
+  metaSocialPreparedMediaCache.clear()
+  metaSocialPreparedMediaInflight.clear()
+  metaSocialOutboundMediaDownloader = typeof overrides.downloader === 'function'
+    ? overrides.downloader
+    : downloadSafeOutboundMediaUrl
+  metaSocialOutboundMediaUploader = typeof overrides.uploader === 'function'
+    ? overrides.uploader
+    : defaultMetaSocialOutboundMediaUploader
+}
+
+export function setMetaSocialGraphTimeoutForTest(timeoutMs = META_SOCIAL_GRAPH_TIMEOUT_MS) {
+  const parsed = Number(timeoutMs)
+  metaSocialGraphTimeoutMs = Number.isFinite(parsed) && parsed > 0
+    ? Math.max(1, Math.round(parsed))
+    : META_SOCIAL_GRAPH_TIMEOUT_MS
+}
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+function cleanMediaMimeType(value = '') {
+  const normalized = cleanString(value).toLowerCase().split(';')[0].trim()
+  if (normalized === 'audio/x-m4a' || normalized === 'audio/m4a') return 'audio/mp4'
+  if (normalized === 'audio/x-wav') return 'audio/wav'
+  if (normalized === 'image/jpg') return 'image/jpeg'
+  return normalized
+}
+
+function sanitizeMetaMediaFilename(value = '', fallback = 'archivo') {
+  const rawName = cleanString(value).split(/[\\/]/).pop() || fallback
+  const safeName = rawName
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[<>:"/\\|?*]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return (safeName || fallback).slice(0, 180)
+}
+
+function parseMetaSocialMediaDataUrl(value = '') {
+  const match = cleanString(value).match(/^data:([^;,]+)(?:;[^,]*)?;base64,([a-z0-9+/=\s]+)$/i)
+  if (!match) {
+    throw createMetaSocialMessageError('El archivo multimedia no llegó en un formato válido.', 400, {
+      code: 'invalid_meta_media_data_url'
+    })
+  }
+
+  const encoded = match[2].replace(/\s/g, '')
+  const estimatedBytes = Math.floor((encoded.length * 3) / 4)
+  if (!encoded || encoded.length % 4 !== 0 || estimatedBytes > META_SOCIAL_MAX_MEDIA_BYTES) {
+    throw createMetaSocialMessageError('El archivo multimedia está vacío o supera 25 MB.', 413, {
+      code: 'meta_media_too_large'
+    })
+  }
+
+  const buffer = Buffer.from(encoded, 'base64')
+  if (!buffer.length || buffer.length > META_SOCIAL_MAX_MEDIA_BYTES) {
+    throw createMetaSocialMessageError('El archivo multimedia está vacío o supera 25 MB.', 413, {
+      code: 'meta_media_too_large'
+    })
+  }
+
+  return {
+    buffer,
+    mimeType: cleanMediaMimeType(match[1])
+  }
+}
+
+async function detectMetaSocialMediaMime({ buffer, declaredMimeType = '', attachmentType = '' } = {}) {
+  const detected = await fileTypeFromBuffer(buffer).catch(() => null)
+  const declared = cleanMediaMimeType(declaredMimeType)
+  const detectedMime = cleanMediaMimeType(detected?.mime)
+
+  // Un M4A puede ser reconocido como video/mp4 por su contenedor ISO-BMFF. Si
+  // el caller lo envió por la ruta de audio, la recodificación con ffmpeg es
+  // quien verifica que de verdad exista una pista de audio.
+  if (attachmentType === 'audio' && detectedMime === 'video/mp4') {
+    return declared.startsWith('audio/') ? declared : 'audio/mp4'
+  }
+  if (attachmentType === 'audio' && detectedMime === 'video/webm') {
+    return declared.startsWith('audio/') ? declared : 'audio/webm'
+  }
+
+  return detectedMime || declared
+}
+
+function assertMetaSocialSourceMatchesType({ platform, attachmentType, mimeType, size, providerReady = false } = {}) {
+  const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
+  const cleanType = attachmentType === 'document' ? 'file' : attachmentType
+  const cleanMime = cleanMediaMimeType(mimeType)
+  const byteSize = Number(size || 0)
+
+  if (!cleanMime) {
+    throw createMetaSocialMessageError('No se pudo reconocer el tipo real del archivo multimedia.', 415, {
+      code: 'meta_media_type_unknown'
+    })
+  }
+  if (byteSize < 1 || byteSize > META_SOCIAL_MAX_MEDIA_BYTES) {
+    throw createMetaSocialMessageError('El archivo multimedia está vacío o supera 25 MB.', 413, {
+      code: 'meta_media_too_large'
+    })
+  }
+
+  if (cleanType === 'image') {
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(cleanMime)) {
+      throw createMetaSocialMessageError('La imagen debe ser JPG, PNG, WebP o GIF.', 415, {
+        code: 'meta_image_type_invalid'
+      })
+    }
+    if (providerReady && cleanPlatform === 'instagram' && byteSize > META_INSTAGRAM_MAX_IMAGE_BYTES) {
+      throw createMetaSocialMessageError('Instagram permite imágenes de hasta 8 MB.', 413, {
+        code: 'instagram_image_too_large'
+      })
+    }
+    return
+  }
+
+  if (cleanType === 'video') {
+    if (!cleanMime.startsWith('video/')) {
+      throw createMetaSocialMessageError('El archivo seleccionado no contiene un video válido.', 415, {
+        code: 'meta_video_type_invalid'
+      })
+    }
+    return
+  }
+
+  if (cleanType === 'audio') {
+    if (!cleanMime.startsWith('audio/') && cleanMime !== 'video/mp4') {
+      throw createMetaSocialMessageError('El archivo seleccionado no contiene audio válido.', 415, {
+        code: 'meta_audio_type_invalid'
+      })
+    }
+    return
+  }
+
+  if (cleanPlatform === 'instagram') {
+    throw createMetaSocialMessageError('Instagram no permite enviar documentos por la API. Usa imagen, audio o video.', 415, {
+      code: 'instagram_file_not_supported'
+    })
+  }
+
+  if (!META_SOCIAL_MESSENGER_FILE_MIME_TYPES.has(cleanMime)) {
+    throw createMetaSocialMessageError('Messenger no acepta este tipo de archivo. Usa PDF, Word, Excel, PowerPoint, TXT, CSV, JSON o ZIP.', 415, {
+      code: 'messenger_file_type_invalid'
+    })
+  }
+}
+
+function normalizeMetaSocialMediaPreparationError(error) {
+  if (error?.meta?.code) return error
+  const message = cleanString(error?.message)
+    .replace(/WhatsApp API/gi, 'Messenger o Instagram')
+    .replace(/WhatsApp/gi, 'Messenger o Instagram')
+  return createMetaSocialMessageError(
+    message || 'No se pudo preparar el archivo para Messenger o Instagram.',
+    error?.statusCode || error?.status || 422,
+    {
+      code: cleanString(error?.code) || 'meta_media_preparation_failed'
+    }
+  )
+}
+
+/**
+ * Frontera única de salida para chat directo y Automatizaciones. Nunca confía
+ * en la extensión o el MIME del navegador: lee bytes reales, adapta imagen,
+ * video y audio al contrato de Meta, publica el resultado y sólo entonces
+ * entrega una URL HTTPS a Graph.
+ */
+export async function prepareMetaSocialOutboundMedia({
+  platform,
+  attachmentType,
+  attachmentDataUrl = '',
+  attachmentUrl = '',
+  mimeType = '',
+  filename = '',
+  publicBaseUrl = ''
+} = {}) {
+  const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const cleanType = cleanString(attachmentType).toLowerCase() === 'document'
+    ? 'file'
+    : cleanString(attachmentType).toLowerCase()
+  const cleanDataUrl = cleanString(attachmentDataUrl)
+  const cleanUrl = cleanString(attachmentUrl)
+
+  if (!META_SOCIAL_ATTACHMENT_TYPES.has(cleanType)) {
+    throw createMetaSocialMessageError('Meta sólo permite imagen, video, audio o archivo como adjunto.', 400)
+  }
+  if (!cleanDataUrl && !cleanUrl) {
+    throw createMetaSocialMessageError('Falta el archivo para enviar.', 400)
+  }
+
+  const source = cleanDataUrl
+    ? parseMetaSocialMediaDataUrl(cleanDataUrl)
+    : await metaSocialOutboundMediaDownloader(cleanUrl, {
+      maxBytes: META_SOCIAL_MAX_MEDIA_BYTES,
+      timeoutMs: 60_000
+    })
+  const declaredMimeType = cleanMediaMimeType(mimeType || source.mimeType)
+  const sourceMimeType = await detectMetaSocialMediaMime({
+    buffer: source.buffer,
+    declaredMimeType,
+    attachmentType: cleanType
+  })
+
+  assertMetaSocialSourceMatchesType({
+    platform: cleanPlatform,
+    attachmentType: cleanType,
+    mimeType: sourceMimeType,
+    size: source.buffer.length
+  })
+
+  const sourceHash = crypto.createHash('sha256')
+    .update(source.buffer)
+    .update(`|${cleanPlatform}|${cleanType}|${declaredMimeType}|${sanitizeMetaMediaFilename(filename)}`)
+    .digest('hex')
+  const cacheKey = `meta-social-media-v2:${sourceHash}`
+  const cached = metaSocialPreparedMediaCache.get(cacheKey)
+  if (cached?.value && cached.expiresAt > Date.now()) return cached.value
+  if (cached) metaSocialPreparedMediaCache.delete(cacheKey)
+  const inflight = metaSocialPreparedMediaInflight.get(cacheKey)
+  if (inflight) return inflight
+
+  const preparationPromise = (async () => {
+    let prepared
+    try {
+      if (cleanType === 'audio') {
+        prepared = await prepareMetaSocialAudioBuffer({
+          buffer: source.buffer,
+          mimeType: sourceMimeType
+        })
+      } else if (cleanType === 'image' && sourceMimeType !== 'image/gif') {
+        prepared = await prepareWhatsAppMediaForDirectUpload({
+          buffer: source.buffer,
+          mimeType: sourceMimeType,
+          filename,
+          kind: 'image'
+        })
+        prepared.filename = 'meta-image.jpg'
+        prepared.metadata = {
+          ...(prepared.metadata || {}),
+          metaSocialCompatible: true
+        }
+      } else if (cleanType === 'video') {
+        prepared = await prepareWhatsAppMediaForDirectUpload({
+          buffer: source.buffer,
+          mimeType: sourceMimeType,
+          filename,
+          kind: 'video',
+          maxVideoOutputBytes: META_SOCIAL_MAX_MEDIA_BYTES
+        })
+        prepared.filename = 'meta-video.mp4'
+        prepared.metadata = {
+          ...(prepared.metadata || {}),
+          metaSocialCompatible: true
+        }
+      } else {
+        const fallbackName = cleanType === 'image' ? 'meta-image.gif' : 'archivo'
+        prepared = {
+          buffer: source.buffer,
+          mimeType: sourceMimeType,
+          filename: sanitizeMetaMediaFilename(filename, fallbackName),
+          metadata: {
+            metaSocialCompatible: true,
+            originalMimeType: declaredMimeType || sourceMimeType
+          }
+        }
+      }
+    } catch (error) {
+      throw normalizeMetaSocialMediaPreparationError(error)
+    }
+
+    assertMetaSocialSourceMatchesType({
+      platform: cleanPlatform,
+      attachmentType: cleanType,
+      mimeType: prepared.mimeType,
+      size: prepared.buffer.length,
+      providerReady: true
+    })
+
+    const asset = await metaSocialOutboundMediaUploader({
+      buffer: prepared.buffer,
+      mimeType: prepared.mimeType,
+      filename: sanitizeMetaMediaFilename(prepared.filename, 'archivo'),
+      module: 'chat',
+      isPublic: true,
+      skipCompression: true,
+      clientUploadId: cacheKey,
+      metadata: {
+        ...(prepared.metadata || {}),
+        source: 'meta_social_outbound_media',
+        platform: cleanPlatform,
+        attachmentType: cleanType
+      }
+    })
+    const publicUrl = buildLocalMediaUrl({ publicPath: asset.publicUrl || asset.publicPath }, publicBaseUrl)
+    if (!/^https:\/\//i.test(publicUrl)) {
+      throw createMetaSocialMessageError('Messenger e Instagram necesitan almacenamiento multimedia público por HTTPS.', 503, {
+        code: 'meta_media_public_url_missing'
+      })
+    }
+
+    const result = {
+      attachmentType: cleanType,
+      publicUrl,
+      publicPath: asset.publicUrl || asset.publicPath,
+      mimeType: cleanMediaMimeType(asset.mimeType || prepared.mimeType),
+      filename: asset.originalFilename || asset.storedFilename || prepared.filename,
+      size: Number(asset.sizeProcessed || prepared.buffer.length),
+      mediaAssetId: cleanString(asset.id || asset.mediaAssetId),
+      originalMimeType: declaredMimeType || sourceMimeType
+    }
+    metaSocialPreparedMediaCache.set(cacheKey, {
+      value: result,
+      expiresAt: Date.now() + META_SOCIAL_PREPARED_MEDIA_CACHE_TTL_MS
+    })
+    while (metaSocialPreparedMediaCache.size > META_SOCIAL_PREPARED_MEDIA_CACHE_MAX) {
+      const oldestKey = metaSocialPreparedMediaCache.keys().next().value
+      if (!oldestKey) break
+      metaSocialPreparedMediaCache.delete(oldestKey)
+    }
+    return result
+  })()
+  metaSocialPreparedMediaInflight.set(cacheKey, preparationPromise)
+  try {
+    return await preparationPromise
+  } finally {
+    if (metaSocialPreparedMediaInflight.get(cacheKey) === preparationPromise) {
+      metaSocialPreparedMediaInflight.delete(cacheKey)
+    }
+  }
 }
 
 function safeJson(value) {
@@ -879,21 +1244,6 @@ function normalizeMetaSocialSendError(error, platform) {
     })
   }
 
-  // Instagram rechaza con frecuencia las notas de voz salientes por DM aunque el
-  // formato sea válido (limitación documentada de Meta con audios por Instagram,
-  // no del codec). Traducimos ese rechazo a un mensaje accionable en vez del
-  // error crudo del Graph.
-  if (cleanPlatform === 'instagram') {
-    const message = cleanString(error?.message).toLowerCase()
-    if (/unsupported attachment|attachment format is not supported|attachment.*not supported/.test(message)) {
-      return createMetaSocialMessageError(
-        'Instagram no está aceptando esta nota de voz por ahora (limitación de Meta con audios por DM). Envíala por WhatsApp o manda un mensaje de texto.',
-        error.statusCode || 400,
-        { ...(error.meta || {}), actionRequired: 'instagram_audio_unsupported' }
-      )
-    }
-  }
-
   return error
 }
 
@@ -969,9 +1319,17 @@ async function metaSocialGraphRequest(path, {
         Authorization: `Bearer ${cleanToken}`,
         ...(body ? { 'Content-Type': 'application/json' } : {})
       },
-      ...(body ? { body: JSON.stringify(body) } : {})
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(metaSocialGraphTimeoutMs)
     })
   } catch (error) {
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+      throw createMetaSocialMessageError('Meta tardó demasiado en responder. Ristak no repetirá este intento a ciegas.', 504, {
+        code: 'meta_graph_timeout',
+        path,
+        method
+      })
+    }
     throw createMetaSocialMessageError(safeMetaGraphTransportError(error), 502)
   }
   const data = await response.json().catch(() => ({}))
@@ -1905,7 +2263,6 @@ async function resolveMetaSocialMessageReference({ contactId, platform, messageI
   const remoteId = cleanString(
     row?.meta_message_id ||
     rawPayload?.response?.message_id ||
-    rawPayload?.response?.recipient_id ||
     cleanProviderMessageId
   )
   if (!remoteId) return null
@@ -1952,21 +2309,32 @@ async function sendMetaMessengerTextRequest({ businessId, recipientId, body, con
   }
 }
 
-async function sendMetaInstagramTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId = '' }) {
-  const graphCredentials = await resolveMetaSocialGraphCredentials('instagram', config)
+async function withRefreshedMetaInstagramCredentials(config, callback) {
+  const credentials = await resolveMetaSocialGraphCredentials('instagram', config)
+  try {
+    return await callback(credentials)
+  } catch (error) {
+    if (!shouldRefreshMetaPageToken(error)) throw error
+    const refreshedCredentials = await resolveMetaSocialGraphCredentials('instagram', config, { forceRefresh: true })
+    return callback(refreshedCredentials)
+  }
+}
 
-  return await metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
-    method: 'POST',
-    token: graphCredentials.token,
-    baseUrl: graphCredentials.baseUrl,
-    body: {
-      recipient: { id: recipientId },
-      message: {
-        text: body,
-        ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})
+async function sendMetaInstagramTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId = '' }) {
+  return withRefreshedMetaInstagramCredentials(config, graphCredentials => (
+    metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
+      method: 'POST',
+      token: graphCredentials.token,
+      baseUrl: graphCredentials.baseUrl,
+      body: {
+        recipient: { id: recipientId },
+        message: {
+          text: body,
+          ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})
+        }
       }
-    }
-  })
+    })
+  ))
 }
 
 async function sendMetaMessengerAttachmentRequest({ businessId, recipientId, attachmentType, attachmentUrl, config, replyToProviderMessageId = '' }) {
@@ -2002,25 +2370,57 @@ async function sendMetaMessengerAttachmentRequest({ businessId, recipientId, att
 }
 
 async function sendMetaInstagramAttachmentRequest({ businessId, recipientId, attachmentType, attachmentUrl, config, replyToProviderMessageId = '' }) {
-  const graphCredentials = await resolveMetaSocialGraphCredentials('instagram', config)
-
-  return await metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
-    method: 'POST',
-    token: graphCredentials.token,
-    baseUrl: graphCredentials.baseUrl,
-    body: {
-      recipient: { id: recipientId },
-      message: {
-        attachment: {
-          type: attachmentType,
-          payload: {
-            url: attachmentUrl
-          }
-        },
-        ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})
+  return withRefreshedMetaInstagramCredentials(config, graphCredentials => (
+    metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
+      method: 'POST',
+      token: graphCredentials.token,
+      baseUrl: graphCredentials.baseUrl,
+      body: {
+        recipient: { id: recipientId },
+        message: {
+          attachment: {
+            type: attachmentType,
+            payload: {
+              url: attachmentUrl
+            }
+          },
+          ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})
+        }
       }
-    }
-  })
+    })
+  ))
+}
+
+async function sendMetaInstagramReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId, config }) {
+  return withRefreshedMetaInstagramCredentials(config, graphCredentials => (
+    metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
+      method: 'POST',
+      token: graphCredentials.token,
+      baseUrl: graphCredentials.baseUrl,
+      body: {
+        recipient: { id: recipientId },
+        sender_action: 'react',
+        payload: {
+          message_id: targetProviderMessageId,
+          reaction
+        }
+      }
+    })
+  ))
+}
+
+async function sendMetaInstagramMarkSeenRequest({ recipientId, config }) {
+  return withRefreshedMetaInstagramCredentials(config, graphCredentials => (
+    metaSocialGraphRequest(getMetaInstagramMessagesPath({ config, credentials: graphCredentials }), {
+      method: 'POST',
+      token: graphCredentials.token,
+      baseUrl: graphCredentials.baseUrl,
+      body: {
+        recipient: { id: recipientId },
+        sender_action: 'mark_seen'
+      }
+    })
+  ))
 }
 
 async function sendMetaMessengerReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId, config }) {
@@ -2049,24 +2449,6 @@ async function sendMetaMessengerReactionRequest({ businessId, recipientId, react
   }
 }
 
-async function sendMetaInstagramReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId, config }) {
-  const graphCredentials = await resolveMetaSocialGraphCredentials('instagram', config)
-
-  return await metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
-    method: 'POST',
-    token: graphCredentials.token,
-    baseUrl: graphCredentials.baseUrl,
-    body: {
-      recipient: { id: recipientId },
-      sender_action: 'react',
-      payload: {
-        message_id: targetProviderMessageId,
-        reaction
-      }
-    }
-  })
-}
-
 async function sendMetaMessengerMarkSeenRequest({ businessId, recipientId, config }) {
   const sendPayload = {
     recipient: { id: recipientId },
@@ -2089,32 +2471,17 @@ async function sendMetaMessengerMarkSeenRequest({ businessId, recipientId, confi
   }
 }
 
-async function sendMetaInstagramMarkSeenRequest({ recipientId, config }) {
-  const graphCredentials = await resolveMetaSocialGraphCredentials('instagram', config)
-
-  return await metaSocialGraphRequest(getMetaInstagramMessagesPath({ config, credentials: graphCredentials }), {
-    method: 'POST',
-    token: graphCredentials.token,
-    baseUrl: graphCredentials.baseUrl,
-    body: {
-      recipient: { id: recipientId },
-      sender_action: 'mark_seen'
-    }
-  })
-}
-
-async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, agentId, messageType = 'text', messageTimestamp = '', commentId = '', postId = '', parentCommentId = '', mediaUrl = '', mediaMimeType = '', context = null }) {
+async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, agentId, messageType = 'text', messageTimestamp = '', commentId = '', postId = '', parentCommentId = '', mediaUrl = '', mediaMimeType = '', context = null, reservationId = '' }) {
   const now = cleanString(messageTimestamp) || new Date().toISOString()
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
   const cleanMessageType = cleanString(messageType) || 'text'
   const remoteMessageId = cleanString(
     messageId ||
     response?.message_id ||
-    response?.recipient_id ||
     response?.id ||
     externalId
   )
-  const localMessageId = hashId(
+  const localMessageId = cleanString(reservationId) || hashId(
     'meta_social_msg',
     remoteMessageId
       ? `${cleanPlatform}:${remoteMessageId}:outbound`
@@ -2128,9 +2495,26 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     response,
     ...(context ? { context } : {})
   })
-  const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [localMessageId]).catch(() => null)
+  const existing = await db.get('SELECT id, status FROM meta_social_messages WHERE id = ?', [localMessageId]).catch(() => null)
 
-  await db.run(`
+  const persist = async (database) => {
+    // Si el webhook echo ganó la carrera contra la respuesta HTTP de Graph,
+    // fusionamos esa fila temporal en la reserva idempotente antes de publicar.
+    if (remoteMessageId) {
+      const duplicateRows = await database.all(`
+        SELECT id
+        FROM meta_social_messages
+        WHERE platform = ?
+          AND meta_message_id = ?
+          AND direction = 'outbound'
+          AND id != ?
+      `, [cleanPlatform, remoteMessageId, localMessageId])
+      for (const duplicate of duplicateRows) {
+        await database.run('DELETE FROM meta_social_messages WHERE id = ?', [duplicate.id])
+      }
+    }
+
+    await database.run(`
     INSERT INTO meta_social_messages (
       id, platform, meta_message_id, meta_social_contact_id, contact_id,
       sender_id, recipient_id, page_id, instagram_account_id,
@@ -2140,6 +2524,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
       comment_id, post_id, parent_comment_id, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
+      meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
       meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
       contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
       sender_id = COALESCE(NULLIF(excluded.sender_id, ''), meta_social_messages.sender_id),
@@ -2181,7 +2566,10 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     cleanString(commentId) || null,
     cleanString(postId) || null,
     cleanString(parentCommentId) || null
-  ])
+    ])
+  }
+
+  await db.transaction(persist)
 
   publishChatMessageEvent({
     contactId,
@@ -2192,7 +2580,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     direction: 'outbound',
     messageType: cleanMessageType,
     messageTimestamp: now,
-    isNew: !existing
+    isNew: !existing || ['pending', 'sending', 'accepted'].includes(cleanString(existing.status))
   })
 
   return {
@@ -2201,7 +2589,243 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     transport: cleanPlatform,
     channel: cleanPlatform,
     remoteMessageId: remoteMessageId || null,
-    isNew: !existing
+    isNew: !existing || ['pending', 'sending', 'accepted'].includes(cleanString(existing.status))
+  }
+}
+
+const META_SOCIAL_DISPATCH_WAIT_MS = 10_000
+const META_SOCIAL_PENDING_STALE_MS = 5 * 60 * 1000
+
+function parseMetaSocialDatabaseTimestampMs(value) {
+  if (value instanceof Date) return value.getTime()
+  const raw = cleanString(value)
+  if (!raw) return 0
+  // SQLite CURRENT_TIMESTAMP no incluye offset, pero siempre está en UTC.
+  // Sin la Z, JavaScript lo interpretaría como hora local y podría declarar
+  // stale una reserva recién creada en instalaciones fuera de UTC.
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(raw)
+    ? `${raw.replace(' ', 'T')}Z`
+    : raw
+  const parsed = Date.parse(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function getMetaSocialDispatchId({ contactId, platform, externalId } = {}) {
+  const cleanExternalId = cleanString(externalId)
+  if (!cleanExternalId) return ''
+  return hashId('meta_social_dispatch', `${platform}:${contactId}:${cleanExternalId}`)
+}
+
+async function readMetaSocialOutboundDispatch(id) {
+  if (!id) return null
+  return db.get(`
+    SELECT id, platform, meta_message_id, status, message_type, message_text,
+           media_url, media_mime_type, raw_payload_json, updated_at, message_timestamp
+    FROM meta_social_messages
+    WHERE id = ? AND direction = 'outbound'
+    LIMIT 1
+  `, [id])
+}
+
+async function waitForMetaSocialOutboundDispatch(row) {
+  let current = row
+  const deadline = Date.now() + META_SOCIAL_DISPATCH_WAIT_MS
+  while (current && ['pending', 'sending'].includes(cleanString(current.status)) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+    current = await readMetaSocialOutboundDispatch(current.id)
+  }
+  return current
+}
+
+async function reconcileAcceptedMetaSocialDispatch(row) {
+  if (!row?.id || !cleanString(row.meta_message_id)) return row
+  await db.transaction(async (database) => {
+    const duplicates = await database.all(`
+      SELECT id
+      FROM meta_social_messages
+      WHERE platform = ? AND meta_message_id = ? AND direction = 'outbound' AND id != ?
+    `, [row.platform, row.meta_message_id, row.id])
+    for (const duplicate of duplicates) {
+      await database.run('DELETE FROM meta_social_messages WHERE id = ?', [duplicate.id])
+    }
+    await database.run(`
+      UPDATE meta_social_messages
+      SET status = 'sent', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'accepted'
+    `, [row.id])
+  })
+  return readMetaSocialOutboundDispatch(row.id)
+}
+
+async function findMetaSocialOutboundByExternalId({ contactId, platform, externalId } = {}) {
+  const cleanExternalId = cleanString(externalId)
+  if (!cleanExternalId) return null
+
+  const dispatchId = getMetaSocialDispatchId({ contactId, platform, externalId: cleanExternalId })
+  let exact = await readMetaSocialOutboundDispatch(dispatchId)
+  if (exact && ['pending', 'sending'].includes(cleanString(exact.status))) {
+    const updatedAt = parseMetaSocialDatabaseTimestampMs(exact.updated_at || exact.message_timestamp)
+    if (updatedAt && Date.now() - updatedAt > META_SOCIAL_PENDING_STALE_MS) {
+      if (cleanString(exact.status) === 'pending') {
+        await db.run("DELETE FROM meta_social_messages WHERE id = ? AND status = 'pending'", [dispatchId])
+        exact = null
+      } else {
+        await db.run("UPDATE meta_social_messages SET status = 'send_unknown', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'sending'", [dispatchId])
+        exact = await readMetaSocialOutboundDispatch(dispatchId)
+      }
+    }
+  }
+  if (exact) {
+    exact = await waitForMetaSocialOutboundDispatch(exact)
+    if (cleanString(exact?.status) === 'accepted') {
+      exact = await reconcileAcceptedMetaSocialDispatch(exact)
+    }
+    return exact
+  }
+
+  // Compatibilidad con mensajes creados antes de la reserva determinística.
+  const legacyCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  const externalIdNeedle = `%"externalId":${JSON.stringify(cleanExternalId)}%`
+  const rows = await db.all(`
+    SELECT id, meta_message_id, status, message_type, message_text,
+           media_url, media_mime_type, raw_payload_json
+    FROM meta_social_messages
+    WHERE contact_id = ?
+      AND platform = ?
+      AND direction = 'outbound'
+      AND COALESCE(updated_at, message_timestamp) >= ?
+      AND raw_payload_json LIKE ?
+    ORDER BY updated_at DESC, message_timestamp DESC
+    LIMIT 50
+  `, [contactId, platform, legacyCutoff, externalIdNeedle])
+
+  return rows.find(row => cleanString(parseJsonObject(row.raw_payload_json)?.externalId) === cleanExternalId) || null
+}
+
+async function claimMetaSocialOutboundDispatch({ contactId, platform, externalId, profile, messageType = 'text', text = '', mediaUrl = '', mediaMimeType = '', context = null } = {}) {
+  const cleanExternalId = cleanString(externalId)
+  if (!cleanExternalId) return { claimed: true, reservationId: '' }
+  const reservationId = getMetaSocialDispatchId({ contactId, platform, externalId: cleanExternalId })
+  const now = new Date().toISOString()
+  const rawPayload = safeJson({
+    provider: 'meta',
+    platform,
+    externalId: cleanExternalId,
+    dispatchState: 'pending',
+    ...(context ? { context } : {})
+  })
+  const result = await db.run(`
+    INSERT INTO meta_social_messages (
+      id, platform, meta_social_contact_id, contact_id,
+      sender_id, recipient_id, page_id, instagram_account_id,
+      direction, status, message_type, message_text,
+      media_url, media_mime_type, message_timestamp, raw_payload_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'outbound', 'pending', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO NOTHING
+  `, [
+    reservationId,
+    platform,
+    profile?.id || null,
+    contactId,
+    getMetaSocialBusinessId(platform, {}, profile || {}) || null,
+    cleanString(profile?.sender_id) || null,
+    platform === 'messenger' ? cleanString(profile?.page_id) || null : null,
+    platform === 'instagram' ? cleanString(profile?.instagram_account_id) || null : null,
+    cleanString(messageType) || 'text',
+    text,
+    cleanString(mediaUrl) || null,
+    cleanString(mediaMimeType) || null,
+    now,
+    rawPayload
+  ])
+  if (Number(result?.changes || result?.rowCount || 0) > 0) {
+    return { claimed: true, reservationId }
+  }
+
+  const existing = await findMetaSocialOutboundByExternalId({ contactId, platform, externalId: cleanExternalId })
+  if (!existing) return claimMetaSocialOutboundDispatch({ contactId, platform, externalId, profile, messageType, text, mediaUrl, mediaMimeType, context })
+  return { claimed: false, reservationId, existing }
+}
+
+async function markMetaSocialOutboundDispatchSending(reservationId) {
+  if (!reservationId) return
+  const result = await db.run(`
+    UPDATE meta_social_messages
+    SET status = 'sending', updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending'
+  `, [reservationId])
+  if (Number(result?.changes || result?.rowCount || 0) < 1) {
+    throw createMetaSocialMessageError('Este mensaje ya está siendo procesado.', 409, {
+      code: 'meta_send_in_progress'
+    })
+  }
+}
+
+async function markMetaSocialOutboundDispatchAccepted({ reservationId, remoteMessageId, response, externalId, context, mediaUrl = '', mediaMimeType = '' } = {}) {
+  if (!reservationId) return
+  await db.run(`
+    UPDATE meta_social_messages
+    SET meta_message_id = ?, status = 'accepted',
+        media_url = COALESCE(NULLIF(?, ''), media_url),
+        media_mime_type = COALESCE(NULLIF(?, ''), media_mime_type),
+        raw_payload_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    cleanString(remoteMessageId) || null,
+    cleanString(mediaUrl),
+    cleanString(mediaMimeType),
+    safeJson({
+      provider: 'meta',
+      externalId: cleanString(externalId),
+      dispatchState: 'accepted',
+      response,
+      ...(context ? { context } : {})
+    }),
+    reservationId
+  ])
+}
+
+async function handleMetaSocialOutboundDispatchFailure(reservationId, error) {
+  if (!reservationId) return
+  const statusCode = Number(error?.statusCode || error?.status || 0)
+  if (statusCode >= 400 && statusCode < 500 && statusCode !== 408) {
+    await db.run("DELETE FROM meta_social_messages WHERE id = ? AND status = 'sending'", [reservationId])
+    return
+  }
+  await db.run(`
+    UPDATE meta_social_messages
+    SET status = 'send_unknown', updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'sending'
+  `, [reservationId])
+}
+
+function buildReusedMetaSocialSendResult(row, platform) {
+  const storedStatus = cleanString(row.status)
+  if (['pending', 'sending'].includes(storedStatus)) {
+    throw createMetaSocialMessageError('Este mensaje todavía se está procesando; Ristak no lo duplicará.', 409, {
+      code: 'meta_send_in_progress'
+    })
+  }
+  if (storedStatus === 'send_unknown') {
+    throw createMetaSocialMessageError('Meta no confirmó si recibió este intento. Ristak lo bloqueó para evitar un mensaje duplicado.', 409, {
+      code: 'meta_send_delivery_unknown'
+    })
+  }
+  const sent = {
+    localMessageId: cleanString(row.id),
+    status: storedStatus === 'accepted' ? 'sent' : storedStatus || 'sent',
+    transport: platform,
+    channel: platform,
+    remoteMessageId: cleanString(row.meta_message_id) || null,
+    isNew: false,
+    deduplicated: true
+  }
+  return {
+    ...sent,
+    id: sent.remoteMessageId || sent.localMessageId,
+    platform,
+    provider: 'meta',
+    data: sent
   }
 }
 
@@ -2212,6 +2836,13 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
 
   if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
   if (!body) throw createMetaSocialMessageError('Falta el texto del mensaje', 400)
+
+  const existingSend = await findMetaSocialOutboundByExternalId({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    externalId
+  })
+  if (existingSend) return buildReusedMetaSocialSendResult(existingSend, cleanPlatform)
 
   const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
   if (!enabled) {
@@ -2264,14 +2895,36 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
   })
   const replyProviderMessageId = cleanString(replyReference?.providerMessageId)
 
+  const textContext = replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : null
+  const dispatch = await claimMetaSocialOutboundDispatch({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    externalId,
+    profile,
+    messageType: 'text',
+    text: body,
+    context: textContext
+  })
+  if (!dispatch.claimed) return buildReusedMetaSocialSendResult(dispatch.existing, cleanPlatform)
+  await markMetaSocialOutboundDispatchSending(dispatch.reservationId)
+
   let response
   try {
     response = cleanPlatform === 'instagram'
       ? await sendMetaInstagramTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId: replyProviderMessageId })
       : await sendMetaMessengerTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId: replyProviderMessageId })
   } catch (error) {
+    await handleMetaSocialOutboundDispatchFailure(dispatch.reservationId, error).catch(() => undefined)
     throw normalizeMetaSocialSendError(error, cleanPlatform)
   }
+
+  await markMetaSocialOutboundDispatchAccepted({
+    reservationId: dispatch.reservationId,
+    remoteMessageId: response?.message_id || response?.id,
+    response,
+    externalId,
+    context: textContext
+  })
 
   const sent = await saveMetaSocialOutboundMessage({
     platform: cleanPlatform,
@@ -2282,7 +2935,8 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     response,
     externalId,
     agentId,
-    context: replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : null
+    context: textContext,
+    reservationId: dispatch.reservationId
   })
 
   return {
@@ -2294,7 +2948,20 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
   }
 }
 
-export async function sendMetaSocialAudioMessage({ contactId, platform, audioDataUrl = '', audioUrl = '', durationMs = null, voice = true, externalId, replyToMessageId = '', replyToProviderMessageId = '', publicBaseUrl = '' } = {}) {
+export async function sendMetaSocialAudioMessage({
+  contactId,
+  platform,
+  audioDataUrl = '',
+  audioUrl = '',
+  audioMimeType = '',
+  filename = '',
+  durationMs = null,
+  voice = true,
+  externalId,
+  replyToMessageId = '',
+  replyToProviderMessageId = '',
+  publicBaseUrl = ''
+} = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const cleanAudioUrl = cleanString(audioUrl)
@@ -2307,6 +2974,27 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
 
   if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
   if (!cleanAudioUrl && !cleanAudioDataUrl) throw createMetaSocialMessageError('Falta el audio para enviar', 400)
+
+  const existingSend = await findMetaSocialOutboundByExternalId({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    externalId
+  })
+  if (existingSend) {
+    const reused = buildReusedMetaSocialSendResult(existingSend, cleanPlatform)
+    const rawPayload = parseJsonObject(existingSend.raw_payload_json)
+    const existingAudio = rawPayload?.context?.audio || {}
+    return {
+      ...reused,
+      audio: {
+        link: cleanString(existingAudio.link || existingSend.media_url),
+        url: cleanString(existingAudio.url || existingSend.media_url),
+        mimeType: cleanString(existingAudio.mimeType || existingSend.media_mime_type || 'audio/mp4'),
+        voice: existingAudio.voice !== false,
+        ...(Number(existingAudio.durationMs) > 0 ? { durationMs: Number(existingAudio.durationMs) } : {})
+      }
+    }
+  }
 
   const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
   if (!enabled) {
@@ -2359,28 +3047,57 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
   })
   const replyProviderMessageId = cleanString(replyReference?.providerMessageId)
 
-  let localMedia = null
-  let attachmentUrl = cleanAudioUrl
-  let mediaMimeType = 'audio/mp4'
-  if (cleanAudioDataUrl) {
-    const savedAudio = await saveWhatsAppAudioPlaybackPreviewDataUrl(cleanAudioDataUrl, audioDurationMs)
-    attachmentUrl = buildLocalMediaUrl(savedAudio, publicBaseUrl)
-    mediaMimeType = cleanString(savedAudio.mimeType) || mediaMimeType
-    localMedia = {
-      publicUrl: attachmentUrl,
-      publicPath: savedAudio.publicPath,
+  const preparedMedia = await prepareMetaSocialOutboundMedia({
+    platform: cleanPlatform,
+    attachmentType: 'audio',
+    attachmentDataUrl: cleanAudioDataUrl,
+    attachmentUrl: cleanAudioUrl,
+    mimeType: audioMimeType,
+    filename,
+    publicBaseUrl
+  })
+  const attachmentUrl = preparedMedia.publicUrl
+  const mediaMimeType = preparedMedia.mimeType
+  const localMedia = {
+    publicUrl: preparedMedia.publicUrl,
+    publicPath: preparedMedia.publicPath,
+    mimeType: preparedMedia.mimeType,
+    filename: preparedMedia.filename,
+    size: preparedMedia.size,
+    mediaAssetId: preparedMedia.mediaAssetId,
+    kind: 'audio',
+    originalMimeType: preparedMedia.originalMimeType
+  }
+  const audioContext = {
+    audio: {
+      link: attachmentUrl,
+      url: attachmentUrl,
       mimeType: mediaMimeType,
-      filename: savedAudio.filename,
-      size: savedAudio.size,
-      mediaAssetId: savedAudio.mediaAssetId,
-      kind: 'audio',
-      originalMimeType: savedAudio.originalMimeType
+      voice: isVoiceNote,
+      ...(audioDurationMs ? { durationMs: audioDurationMs } : {})
+    },
+    ...(replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : {})
+  }
+  const dispatch = await claimMetaSocialOutboundDispatch({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    externalId,
+    profile,
+    messageType: 'audio',
+    mediaUrl: attachmentUrl,
+    mediaMimeType,
+    context: audioContext
+  })
+  if (!dispatch.claimed) {
+    const reused = buildReusedMetaSocialSendResult(dispatch.existing, cleanPlatform)
+    const rawPayload = parseJsonObject(dispatch.existing.raw_payload_json)
+    return {
+      ...reused,
+      audio: rawPayload?.context?.audio || audioContext.audio,
+      localMedia
     }
   }
-
-  if (!/^https:\/\//i.test(attachmentUrl)) {
-    throw createMetaSocialMessageError('Meta necesita una URL pública HTTPS para enviar el audio.', 400)
-  }
+  await markMetaSocialOutboundDispatchSending(dispatch.reservationId)
 
   let response
   try {
@@ -2388,8 +3105,19 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
       ? await sendMetaInstagramAttachmentRequest({ businessId, recipientId, attachmentType: 'audio', attachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
       : await sendMetaMessengerAttachmentRequest({ businessId, recipientId, attachmentType: 'audio', attachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
   } catch (error) {
+    await handleMetaSocialOutboundDispatchFailure(dispatch.reservationId, error).catch(() => undefined)
     throw normalizeMetaSocialSendError(error, cleanPlatform)
   }
+
+  await markMetaSocialOutboundDispatchAccepted({
+    reservationId: dispatch.reservationId,
+    remoteMessageId: response?.message_id || response?.id,
+    response,
+    externalId,
+    context: audioContext,
+    mediaUrl: attachmentUrl,
+    mediaMimeType
+  })
 
   const sent = await saveMetaSocialOutboundMessage({
     platform: cleanPlatform,
@@ -2402,16 +3130,8 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
     messageType: 'audio',
     mediaUrl: attachmentUrl,
     mediaMimeType,
-    context: {
-      audio: {
-        link: attachmentUrl,
-        url: attachmentUrl,
-        mimeType: mediaMimeType,
-        voice: isVoiceNote,
-        ...(audioDurationMs ? { durationMs: audioDurationMs } : {})
-      },
-      ...(replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : {})
-    }
+    context: audioContext,
+    reservationId: dispatch.reservationId
   })
 
   return {
@@ -2426,32 +3146,64 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
       voice: isVoiceNote,
       ...(audioDurationMs ? { durationMs: audioDurationMs } : {})
     },
-    ...(localMedia ? { localMedia } : {}),
+    localMedia,
     data: sent
   }
 }
 
-const META_SOCIAL_ATTACHMENT_TYPES = new Set(['image', 'video', 'audio', 'file'])
-
 /**
- * Envía un adjunto ya publicado por HTTPS en un DM de Messenger o Instagram.
- * A diferencia de WhatsApp, Meta no acepta un caption dentro del payload del
- * adjunto: el caller puede mandar texto como un mensaje separado si lo necesita.
+ * Envía un adjunto normalizado por la frontera compartida de chat y
+ * Automatizaciones. Meta no acepta un caption dentro del payload del adjunto:
+ * el caller puede mandar texto como un mensaje separado si lo necesita.
  */
-export async function sendMetaSocialAttachmentMessage({ contactId, platform, attachmentType, attachmentUrl, mimeType = '', externalId, agentId, replyToMessageId = '', replyToProviderMessageId = '' } = {}) {
+export async function sendMetaSocialAttachmentMessage({
+  contactId,
+  platform,
+  attachmentType,
+  attachmentDataUrl = '',
+  attachmentUrl = '',
+  mimeType = '',
+  filename = '',
+  externalId,
+  agentId,
+  replyToMessageId = '',
+  replyToProviderMessageId = '',
+  publicBaseUrl = ''
+} = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
-  const cleanAttachmentType = cleanString(attachmentType).toLowerCase()
+  const requestedAttachmentType = cleanString(attachmentType).toLowerCase()
+  const cleanAttachmentType = requestedAttachmentType === 'document' ? 'file' : requestedAttachmentType
+  const cleanAttachmentDataUrl = cleanString(attachmentDataUrl)
   const cleanAttachmentUrl = cleanString(attachmentUrl)
-  const cleanMimeType = cleanString(mimeType)
 
   if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
   if (!META_SOCIAL_ATTACHMENT_TYPES.has(cleanAttachmentType)) {
-    throw createMetaSocialMessageError('Meta solo permite imagen, video, audio o archivo como adjunto.', 400)
+    throw createMetaSocialMessageError('Meta sólo permite imagen, video, audio o archivo como adjunto.', 400)
   }
-  if (!cleanAttachmentUrl) throw createMetaSocialMessageError('Falta el archivo para enviar', 400)
-  if (!/^https:\/\//i.test(cleanAttachmentUrl)) {
-    throw createMetaSocialMessageError('Meta necesita una URL pública HTTPS para enviar el adjunto.', 400)
+  if (!cleanAttachmentDataUrl && !cleanAttachmentUrl) {
+    throw createMetaSocialMessageError('Falta el archivo para enviar', 400)
+  }
+
+  const existingSend = await findMetaSocialOutboundByExternalId({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    externalId
+  })
+  if (existingSend) {
+    const reused = buildReusedMetaSocialSendResult(existingSend, cleanPlatform)
+    const rawPayload = parseJsonObject(existingSend.raw_payload_json)
+    const existingAttachment = rawPayload?.context?.attachment || {}
+    return {
+      ...reused,
+      attachment: {
+        type: cleanString(existingAttachment.type || existingSend.message_type || cleanAttachmentType),
+        link: cleanString(existingAttachment.link || existingSend.media_url),
+        url: cleanString(existingAttachment.url || existingSend.media_url),
+        mimeType: cleanString(existingAttachment.mimeType || existingSend.media_mime_type),
+        ...(cleanString(existingAttachment.filename) ? { filename: cleanString(existingAttachment.filename) } : {})
+      }
+    }
   }
 
   const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
@@ -2505,14 +3257,66 @@ export async function sendMetaSocialAttachmentMessage({ contactId, platform, att
   })
   const replyProviderMessageId = cleanString(replyReference?.providerMessageId)
 
+  const preparedMedia = await prepareMetaSocialOutboundMedia({
+    platform: cleanPlatform,
+    attachmentType: cleanAttachmentType,
+    attachmentDataUrl: cleanAttachmentDataUrl,
+    attachmentUrl: cleanAttachmentUrl,
+    mimeType,
+    filename,
+    publicBaseUrl
+  })
+  const preparedAttachmentUrl = preparedMedia.publicUrl
+  const preparedMimeType = preparedMedia.mimeType
+  const attachmentContext = {
+    attachment: {
+      type: cleanAttachmentType,
+      link: preparedAttachmentUrl,
+      url: preparedAttachmentUrl,
+      mimeType: preparedMimeType,
+      filename: preparedMedia.filename
+    },
+    ...(replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : {})
+  }
+  const dispatch = await claimMetaSocialOutboundDispatch({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    externalId,
+    profile,
+    messageType: cleanAttachmentType,
+    mediaUrl: preparedAttachmentUrl,
+    mediaMimeType: preparedMimeType,
+    context: attachmentContext
+  })
+  if (!dispatch.claimed) {
+    const reused = buildReusedMetaSocialSendResult(dispatch.existing, cleanPlatform)
+    const rawPayload = parseJsonObject(dispatch.existing.raw_payload_json)
+    return {
+      ...reused,
+      attachment: rawPayload?.context?.attachment || attachmentContext.attachment
+    }
+  }
+  await markMetaSocialOutboundDispatchSending(dispatch.reservationId)
+
   let response
   try {
     response = cleanPlatform === 'instagram'
-      ? await sendMetaInstagramAttachmentRequest({ businessId, recipientId, attachmentType: cleanAttachmentType, attachmentUrl: cleanAttachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
-      : await sendMetaMessengerAttachmentRequest({ businessId, recipientId, attachmentType: cleanAttachmentType, attachmentUrl: cleanAttachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
+      ? await sendMetaInstagramAttachmentRequest({ businessId, recipientId, attachmentType: cleanAttachmentType, attachmentUrl: preparedAttachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
+      : await sendMetaMessengerAttachmentRequest({ businessId, recipientId, attachmentType: cleanAttachmentType, attachmentUrl: preparedAttachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
   } catch (error) {
+    await handleMetaSocialOutboundDispatchFailure(dispatch.reservationId, error).catch(() => undefined)
     throw normalizeMetaSocialSendError(error, cleanPlatform)
   }
+
+  await markMetaSocialOutboundDispatchAccepted({
+    reservationId: dispatch.reservationId,
+    remoteMessageId: response?.message_id || response?.id,
+    response,
+    externalId,
+    context: attachmentContext,
+    mediaUrl: preparedAttachmentUrl,
+    mediaMimeType: preparedMimeType
+  })
 
   const sent = await saveMetaSocialOutboundMessage({
     platform: cleanPlatform,
@@ -2524,17 +3328,10 @@ export async function sendMetaSocialAttachmentMessage({ contactId, platform, att
     externalId,
     agentId,
     messageType: cleanAttachmentType,
-    mediaUrl: cleanAttachmentUrl,
-    mediaMimeType: cleanMimeType,
-    context: {
-      attachment: {
-        type: cleanAttachmentType,
-        link: cleanAttachmentUrl,
-        url: cleanAttachmentUrl,
-        ...(cleanMimeType ? { mimeType: cleanMimeType } : {})
-      },
-      ...(replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : {})
-    }
+    mediaUrl: preparedAttachmentUrl,
+    mediaMimeType: preparedMimeType,
+    context: attachmentContext,
+    reservationId: dispatch.reservationId
   })
 
   return {
@@ -2544,9 +3341,20 @@ export async function sendMetaSocialAttachmentMessage({ contactId, platform, att
     provider: 'meta',
     attachment: {
       type: cleanAttachmentType,
-      link: cleanAttachmentUrl,
-      url: cleanAttachmentUrl,
-      ...(cleanMimeType ? { mimeType: cleanMimeType } : {})
+      link: preparedAttachmentUrl,
+      url: preparedAttachmentUrl,
+      mimeType: preparedMimeType,
+      filename: preparedMedia.filename
+    },
+    localMedia: {
+      publicUrl: preparedAttachmentUrl,
+      publicPath: preparedMedia.publicPath,
+      mimeType: preparedMimeType,
+      filename: preparedMedia.filename,
+      size: preparedMedia.size,
+      mediaAssetId: preparedMedia.mediaAssetId,
+      kind: cleanAttachmentType,
+      originalMimeType: preparedMedia.originalMimeType
     },
     data: sent
   }
@@ -2746,18 +3554,59 @@ export async function markLatestMetaSocialMessageReadForContact({ contactId, pla
 //  - 'private' => abre/continúa un DM con quien comentó (/{businessId}/messages recipient:{comment_id})
 // Se apoya en el token de PÁGINA y en el comment_id del último comentario entrante
 // del contacto (si no se pasa explícito). NO usa el senderId sintético (no es un PSID).
-export async function sendMetaSocialCommentReply({ contactId, platform, message, replyType = 'private', commentId = '', postId = '', externalId, agentId, attachment = null } = {}) {
+export async function sendMetaSocialCommentReply({ contactId, platform, message, replyType = 'private', commentId = '', postId = '', externalId, agentId, attachment = null, publicBaseUrl = '' } = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const body = cleanString(message)
   const mode = cleanString(replyType).toLowerCase() === 'public' ? 'public' : 'private'
-  // Un envío lleva texto O un adjunto ({ type, url }). El nodo separa cada bloque.
-  const att = attachment && cleanString(attachment.url)
-    ? { type: cleanString(attachment.type).toLowerCase() || 'image', url: cleanString(attachment.url) }
+  const rawAttachmentType = cleanString(attachment?.type).toLowerCase()
+  const attachmentType = rawAttachmentType === 'voice'
+    ? 'audio'
+    : rawAttachmentType === 'document' ? 'file' : rawAttachmentType
+  // Un envío lleva texto O un adjunto. Private Replies por comment_id sólo
+  // admite texto; el adjunto existe aquí únicamente para la imagen pública de FB.
+  let att = attachment && (cleanString(attachment.dataUrl || attachment.data_url) || cleanString(attachment.url || attachment.link))
+    ? {
+        type: attachmentType || 'image',
+        dataUrl: cleanString(attachment.dataUrl || attachment.data_url),
+        url: cleanString(attachment.url || attachment.link),
+        mimeType: cleanMediaMimeType(attachment.mimeType || attachment.mimetype),
+        filename: sanitizeMetaMediaFilename(attachment.filename || attachment.fileName, 'imagen')
+      }
     : null
 
   if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
   if (!body && !att) throw createMetaSocialMessageError('Falta el contenido de la respuesta', 400)
+  if (att && mode === 'private') {
+    throw createMetaSocialMessageError(
+      'La respuesta privada inicial a un comentario solo admite texto. Cuando la persona responda, envía imagen, video o audio desde su conversación normal.',
+      422,
+      { code: 'meta_private_comment_reply_text_only' }
+    )
+  }
+  if (att && cleanPlatform === 'instagram') {
+    throw createMetaSocialMessageError('Instagram no permite adjuntos en respuestas públicas; responde con texto.', 422, {
+      code: 'instagram_public_comment_attachment_not_supported'
+    })
+  }
+  if (att && att.type !== 'image') {
+    throw createMetaSocialMessageError('En respuestas públicas de Facebook solo puedes adjuntar una imagen.', 422, {
+      code: 'facebook_public_comment_image_only'
+    })
+  }
+
+  const existingSend = await findMetaSocialOutboundByExternalId({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    externalId
+  })
+  if (existingSend) {
+    return {
+      ...buildReusedMetaSocialSendResult(existingSend, cleanPlatform),
+      replyType: mode,
+      commentId: cleanString(commentId) || null
+    }
+  }
 
   const enabled = await isMetaSocialCommentsEnabled(cleanPlatform)
   if (!enabled) {
@@ -2822,6 +3671,25 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     targetPostId = cleanString(postRow?.post_id) || cleanString(postRow?.media_id)
   }
 
+  if (att) {
+    const preparedMedia = await prepareMetaSocialOutboundMedia({
+      platform: cleanPlatform,
+      attachmentType: 'image',
+      attachmentDataUrl: att.dataUrl,
+      attachmentUrl: att.dataUrl ? '' : att.url,
+      mimeType: att.mimeType,
+      filename: att.filename,
+      publicBaseUrl
+    })
+    att = {
+      type: 'image',
+      url: preparedMedia.publicUrl,
+      mimeType: preparedMedia.mimeType,
+      filename: preparedMedia.filename,
+      mediaAssetId: preparedMedia.mediaAssetId
+    }
+  }
+
   let path
   let payload
   let graphCredentials = null
@@ -2831,12 +3699,6 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
       : `/${encodeURIComponent(targetCommentId)}/comments`
     if (att) {
       // Público: Instagram es SOLO texto; Facebook admite UNA imagen (attachment_url).
-      if (cleanPlatform === 'instagram') {
-        throw createMetaSocialMessageError('Instagram no permite adjuntos en respuestas públicas; responde por privado (DM).', 422)
-      }
-      if (att.type !== 'image') {
-        throw createMetaSocialMessageError('En respuestas públicas de Facebook solo puedes adjuntar una imagen.', 422)
-      }
       payload = body ? { message: body, attachment_url: att.url } : { attachment_url: att.url }
     } else {
       payload = { message: body }
@@ -2854,24 +3716,60 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     path = cleanPlatform === 'instagram'
       ? getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials })
       : `/${encodeURIComponent(businessId)}/messages`
-    // DM: un envío es texto O adjunto (imagen/video/audio/archivo).
-    payload = att
-      ? { recipient: { comment_id: targetCommentId }, message: { attachment: { type: att.type, payload: { url: att.url, is_reusable: false } } } }
-      : { recipient: { comment_id: targetCommentId }, message: { text: body } }
+    // Private Replies abre el hilo con un único texto. La multimedia se habilita
+    // después, cuando el usuario responde y ya existe recipient.id/PSID/IGSID.
+    payload = { recipient: { comment_id: targetCommentId }, message: { text: body } }
   }
 
   graphCredentials ||= await resolveMetaSocialGraphCredentials(cleanPlatform, config)
+  const commentContext = {
+    commentReply: {
+      mode,
+      commentId: targetCommentId,
+      ...(targetPostId ? { postId: targetPostId } : {})
+    },
+    ...(att ? {
+      attachment: {
+        type: 'image',
+        link: att.url,
+        url: att.url,
+        mimeType: att.mimeType,
+        filename: att.filename,
+        ...(att.mediaAssetId ? { mediaAssetId: att.mediaAssetId } : {})
+      }
+    } : {})
+  }
+  const dispatch = await claimMetaSocialOutboundDispatch({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    externalId,
+    profile,
+    messageType: mode === 'public' ? 'comment_reply_public' : 'comment_reply_private',
+    text: body,
+    mediaUrl: att?.url || '',
+    mediaMimeType: att?.mimeType || '',
+    context: commentContext
+  })
+  if (!dispatch.claimed) {
+    return {
+      ...buildReusedMetaSocialSendResult(dispatch.existing, cleanPlatform),
+      replyType: mode,
+      commentId: targetCommentId
+    }
+  }
+  await markMetaSocialOutboundDispatchSending(dispatch.reservationId)
+
   let response
   try {
-    response = await metaSocialGraphRequest(path, {
-      method: 'POST',
-      token: graphCredentials.token,
-      baseUrl: graphCredentials.baseUrl,
-      body: payload
-    })
-  } catch (error) {
-    if (!shouldRefreshMetaPageToken(error)) throw normalizeMetaSocialCommentReplyError(error, cleanPlatform, mode)
     try {
+      response = await metaSocialGraphRequest(path, {
+        method: 'POST',
+        token: graphCredentials.token,
+        baseUrl: graphCredentials.baseUrl,
+        body: payload
+      })
+    } catch (error) {
+      if (!shouldRefreshMetaPageToken(error)) throw error
       const retryCredentials = await resolveMetaSocialGraphCredentials(cleanPlatform, config, { forceRefresh: true })
       const retryPath = mode === 'private' && cleanPlatform === 'instagram'
         ? getMetaInstagramMessagesPath({
@@ -2886,10 +3784,21 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
         baseUrl: retryCredentials.baseUrl,
         body: payload
       })
-    } catch (retryError) {
-      throw normalizeMetaSocialCommentReplyError(retryError, cleanPlatform, mode)
     }
+  } catch (error) {
+    await handleMetaSocialOutboundDispatchFailure(dispatch.reservationId, error).catch(() => undefined)
+    throw normalizeMetaSocialCommentReplyError(error, cleanPlatform, mode)
   }
+
+  await markMetaSocialOutboundDispatchAccepted({
+    reservationId: dispatch.reservationId,
+    remoteMessageId: response?.id || response?.message_id,
+    response,
+    externalId,
+    context: commentContext,
+    mediaUrl: att?.url || '',
+    mediaMimeType: att?.mimeType || ''
+  })
 
   const sent = await saveMetaSocialOutboundMessage({
     platform: cleanPlatform,
@@ -2902,9 +3811,11 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     agentId,
     messageType: mode === 'public' ? 'comment_reply_public' : 'comment_reply_private',
     mediaUrl: att?.url || '',
-    mediaMimeType: att?.type || '',
+    mediaMimeType: att?.mimeType || '',
     commentId: targetCommentId,
-    postId: targetPostId
+    postId: targetPostId,
+    context: commentContext,
+    reservationId: dispatch.reservationId
   })
 
   return {
@@ -3225,15 +4136,30 @@ export async function rehostMetaSocialMedia({ socialMessage, config, existingMed
 }
 
 function getMetaSocialMessageLocalId(socialMessage = {}) {
+  const remoteMessageId = cleanString(socialMessage.metaMessageId)
+  if (remoteMessageId && cleanString(socialMessage.direction).toLowerCase() === 'outbound') {
+    return hashId('meta_social_msg', `${socialMessage.platform}:${remoteMessageId}:outbound`)
+  }
   return hashId(
     'meta_social_msg',
-    socialMessage.metaMessageId ||
+    remoteMessageId ||
       `${socialMessage.platform}:${socialMessage.senderId}:${socialMessage.messageTimestamp}:${socialMessage.messageText}:${socialMessage.messageType}`
   )
 }
 
 async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null, historyImport = false }) {
-  const messageId = getMetaSocialMessageLocalId(socialMessage)
+  let messageId = getMetaSocialMessageLocalId(socialMessage)
+  const remoteMessageId = cleanString(socialMessage.metaMessageId)
+  if (remoteMessageId && cleanString(socialMessage.direction).toLowerCase() === 'outbound') {
+    const acceptedLocalSend = await db.get(`
+      SELECT id
+      FROM meta_social_messages
+      WHERE platform = ? AND meta_message_id = ? AND direction = 'outbound'
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `, [socialMessage.platform, remoteMessageId]).catch(() => null)
+    if (acceptedLocalSend?.id) messageId = acceptedLocalSend.id
+  }
   const existing = await db.get('SELECT id, media_url FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
 
   // Rehospeda la media temporal de Meta en nuestro storage para que el historial no
@@ -3264,6 +4190,7 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
       comment_id, post_id, parent_comment_id, media_id, permalink, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
+      meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
       meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
       contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
       sender_id = COALESCE(NULLIF(excluded.sender_id, ''), meta_social_messages.sender_id),
@@ -3273,11 +4200,23 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
       direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
       message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
       message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
-      media_url = COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url),
-      media_mime_type = COALESCE(NULLIF(excluded.media_mime_type, ''), meta_social_messages.media_mime_type),
+      media_url = CASE
+        WHEN meta_social_messages.direction = 'outbound' AND COALESCE(meta_social_messages.media_url, '') != ''
+          THEN meta_social_messages.media_url
+        ELSE COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url)
+      END,
+      media_mime_type = CASE
+        WHEN meta_social_messages.direction = 'outbound' AND COALESCE(meta_social_messages.media_mime_type, '') != ''
+          THEN meta_social_messages.media_mime_type
+        ELSE COALESCE(NULLIF(excluded.media_mime_type, ''), meta_social_messages.media_mime_type)
+      END,
       postback_payload = COALESCE(NULLIF(excluded.postback_payload, ''), meta_social_messages.postback_payload),
       message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
-      raw_payload_json = excluded.raw_payload_json,
+      raw_payload_json = CASE
+        WHEN meta_social_messages.direction = 'outbound' AND excluded.direction = 'outbound'
+          THEN meta_social_messages.raw_payload_json
+        ELSE excluded.raw_payload_json
+      END,
       referral_json = COALESCE(NULLIF(excluded.referral_json, 'null'), meta_social_messages.referral_json),
       comment_id = COALESCE(NULLIF(excluded.comment_id, ''), meta_social_messages.comment_id),
       post_id = COALESCE(NULLIF(excluded.post_id, ''), meta_social_messages.post_id),

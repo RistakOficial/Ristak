@@ -385,7 +385,25 @@ const CONTACT_META_PROFILE_SELECT = `
           WHERE contact_id = c.id
           ORDER BY updated_at DESC
           LIMIT 1
-        ) AS meta_social_username`
+        ) AS meta_social_username,
+        (
+          SELECT CASE WHEN EXISTS (
+            SELECT 1
+            FROM meta_social_contacts
+            WHERE contact_id = c.id
+              AND platform = 'messenger'
+              AND COALESCE(sender_id, '') != ''
+          ) THEN 1 ELSE 0 END
+        ) AS meta_has_messenger_profile,
+        (
+          SELECT CASE WHEN EXISTS (
+            SELECT 1
+            FROM meta_social_contacts
+            WHERE contact_id = c.id
+              AND platform = 'instagram'
+              AND COALESCE(sender_id, '') != ''
+          ) THEN 1 ELSE 0 END
+        ) AS meta_has_instagram_profile`
 
 // Comentario vs DM ya NO es identidad de contacto (la misma persona = un solo
 // contacto por red). La distinción vive a NIVEL MENSAJE (message_type). Dos flags
@@ -1948,6 +1966,8 @@ const mapContactRowForResponse = (contact = {}) => {
     customFields: parseContactCustomFields(contact.custom_fields),
     socialProfileName: cleanString(contact.meta_social_profile_name) || null,
     socialUsername: cleanString(contact.meta_social_username).replace(/^@+/, '') || null,
+    hasMetaMessengerProfile: Boolean(Number(contact.meta_has_messenger_profile || 0)),
+    hasMetaInstagramProfile: Boolean(Number(contact.meta_has_instagram_profile || 0)),
     notes: ''
   }
 }
@@ -2059,7 +2079,11 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
           meta_social_messages.direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
-          NULL AS transport,
+          CASE
+            WHEN meta_social_messages.raw_payload_json LIKE '%"provider":"highlevel"%'
+              THEN 'ghl_' || meta_social_messages.platform
+            ELSE meta_social_messages.platform
+          END AS transport,
           COALESCE(meta_social_messages.message_timestamp, meta_social_messages.created_at) AS message_date,
           meta_social_messages.created_at,
           meta_social_messages.platform AS message_channel
@@ -2694,7 +2718,11 @@ export const getChatContacts = async (req, res) => {
           meta_social_messages.direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
-          NULL AS transport,
+          CASE
+            WHEN meta_social_messages.raw_payload_json LIKE '%"provider":"highlevel"%'
+              THEN 'ghl_' || meta_social_messages.platform
+            ELSE meta_social_messages.platform
+          END AS transport,
           COALESCE(meta_social_messages.message_timestamp, meta_social_messages.created_at) AS message_date,
           meta_social_messages.created_at,
           meta_social_messages.platform AS message_channel
@@ -5954,7 +5982,9 @@ export const getContactJourney = async (req, res) => {
           // como DM: Facebook para comentarios de página e Instagram para media.
           transport: isMetaCommentMessageType(msg.message_type)
             ? (platform === 'instagram' ? 'instagram_comment' : 'facebook_comment')
-            : (platform === 'instagram' ? 'instagram' : 'messenger'),
+            : provider === 'highlevel'
+              ? `ghl_${platform === 'instagram' ? 'instagram' : 'messenger'}`
+              : (platform === 'instagram' ? 'instagram' : 'messenger'),
           // Contexto de comentario (para etiquetar "comentó" y responder desde el inbox).
           comment_id: msg.comment_id || null,
           post_id: msg.post_id || null,

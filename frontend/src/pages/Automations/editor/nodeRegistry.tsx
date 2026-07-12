@@ -226,7 +226,7 @@ export const COMMENT_REPLY_TARGETS: CommentReplyTargetDefinition[] = [
     eventPlatform: 'facebook',
     delivery: 'private',
     apiChannel: 'messenger',
-    allowedBlockTypes: ['text', 'image', 'video', 'audio', 'voice', 'file']
+    allowedBlockTypes: ['text']
   },
   {
     value: 'instagram_private_message',
@@ -236,7 +236,7 @@ export const COMMENT_REPLY_TARGETS: CommentReplyTargetDefinition[] = [
     eventPlatform: 'instagram',
     delivery: 'private',
     apiChannel: 'instagram',
-    allowedBlockTypes: ['text', 'image', 'video', 'audio', 'voice', 'file']
+    allowedBlockTypes: ['text']
   }
 ]
 
@@ -380,7 +380,9 @@ function validateCommentReply(config: Record<string, unknown>): string[] {
       errors.push(`La respuesta a comentario no puede usar botones en el bloque ${index + 1}`)
     }
     if (!allowedTypes.has(block.type)) {
-      if (target.value === 'instagram_public_comment' && MEDIA_BLOCK_TYPES.includes(block.type)) {
+      if (target.delivery === 'private' && MEDIA_BLOCK_TYPES.includes(block.type)) {
+        errors.push('La respuesta privada inicial a un comentario solo admite texto; después de que la persona responda usa un paso normal de Messenger o Instagram para enviar multimedia')
+      } else if (target.value === 'instagram_public_comment' && MEDIA_BLOCK_TYPES.includes(block.type)) {
         errors.push('Instagram no permite adjuntos en respuestas públicas a comentarios; usa solo texto')
       } else if (target.value === 'facebook_public_comment' && MEDIA_BLOCK_TYPES.includes(block.type)) {
         errors.push('Facebook solo permite imagen como adjunto en una respuesta pública a comentario')
@@ -1417,6 +1419,7 @@ interface ChannelNodeOptions {
   addButtonLabel: string
   channel: 'whatsapp' | 'messenger' | 'instagram'
   supportsQuickReplies: boolean
+  messageBlockTypes?: MessageBlockType[]
   senderKey?: 'page' | 'account'
   senderLabel?: string
 }
@@ -1432,6 +1435,7 @@ function channelMessageNode({
   addButtonLabel,
   channel,
   supportsQuickReplies,
+  messageBlockTypes,
   senderKey,
   senderLabel
 }: ChannelNodeOptions): NodeDefinition {
@@ -1448,6 +1452,7 @@ function channelMessageNode({
     allowedChannels: [channel],
     configComponent: 'message',
     supportsMessageBlocks: true,
+    ...(messageBlockTypes ? { messageBlockTypes: () => messageBlockTypes } : {}),
     supportsQuickReplies,
     supportsMultipleBranches: true,
     maxBranches: MAX_BRANCHES,
@@ -1626,6 +1631,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     addButtonLabel: 'Agregar DM',
     channel: 'instagram',
     supportsQuickReplies: true,
+    messageBlockTypes: ['text', 'image', 'video', 'audio', 'voice', 'delay'],
     senderKey: 'account',
     senderLabel: 'Cuenta de Instagram (opcional)'
   }),

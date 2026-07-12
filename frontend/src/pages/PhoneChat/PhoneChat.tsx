@@ -1289,6 +1289,8 @@ interface ChatContact extends Contact {
   photoUrl?: string | null
   pictureUrl?: string | null
   profile_picture_url?: string | null
+  hasMetaMessengerProfile?: boolean
+  hasMetaInstagramProfile?: boolean
 }
 
 function normalizeFilterProbe(values: unknown[]) {
@@ -3690,8 +3692,8 @@ function buildMessageReferencePayload(message: ChatMessage | null | undefined) {
 
 function getMetaPlatformForMessage(message: ChatMessage): 'messenger' | 'instagram' | null {
   const transport = String(message.transport || message.commentPlatform || '').toLowerCase()
-  if (transport === 'instagram' || transport === 'ig') return 'instagram'
-  if (transport === 'messenger' || transport === 'facebook' || transport === 'facebook_messenger') return 'messenger'
+  if (transport === 'instagram' || transport === 'ig' || transport.includes('instagram')) return 'instagram'
+  if (transport === 'messenger' || transport === 'facebook' || transport.includes('messenger')) return 'messenger'
   return null
 }
 
@@ -6676,6 +6678,30 @@ export const PhoneChat: React.FC = () => {
   const activeMetaSocialChannel = activeHighLevelChatChannel === 'messenger' || activeHighLevelChatChannel === 'instagram'
     ? activeHighLevelChatChannel
     : ''
+  const activeContactRecord = (activeContact || {}) as Record<string, unknown>
+  const latestSelectedSocialMessage = [...messages].reverse().find((message) => (
+    !message.isComment &&
+    message.direction !== 'system' &&
+    getMetaPlatformForMessage(message) === activeMetaSocialChannel
+  ))
+  const contactLastSocialProbe = `${String(activeContact?.lastMessageChannel || '')} ${String(activeContact?.lastMessageTransport || '')}`.toLowerCase()
+  const contactLastSocialPlatform = contactLastSocialProbe.includes('instagram')
+    ? 'instagram'
+    : contactLastSocialProbe.includes('messenger') || contactLastSocialProbe.includes('facebook')
+      ? 'messenger'
+      : ''
+  const contactLastTransportUsesHighLevel = contactLastSocialPlatform === activeMetaSocialChannel &&
+    String(activeContact?.lastMessageTransport || '').trim().toLowerCase().startsWith('ghl_')
+  const activeSocialConversationUsesHighLevel = latestSelectedSocialMessage
+    ? isHighLevelMessageTransport(latestSelectedSocialMessage)
+    : contactLastTransportUsesHighLevel
+  const activeContactHasNativeMetaProfile = activeMetaSocialChannel
+    ? (() => {
+        const field = activeMetaSocialChannel === 'instagram' ? 'hasMetaInstagramProfile' : 'hasMetaMessengerProfile'
+        if (typeof activeContactRecord[field] === 'boolean') return Boolean(activeContactRecord[field])
+        return messages.some((message) => !isHighLevelMessageTransport(message) && getMetaPlatformForMessage(message) === activeMetaSocialChannel)
+      })()
+    : false
   const activeMetaSocialNativeConnected = activeMetaSocialChannel === 'messenger'
     ? metaMessengerConnected
     : activeMetaSocialChannel === 'instagram'
@@ -6684,10 +6710,16 @@ export const PhoneChat: React.FC = () => {
   const sendingThroughMetaSocial = Boolean(
     activeContact &&
     activeMetaSocialChannel &&
-    activeMetaSocialNativeConnected
+    activeMetaSocialNativeConnected &&
+    activeContactHasNativeMetaProfile &&
+    !activeSocialConversationUsesHighLevel
   )
   const highLevelChannelRequired = activeHighLevelChatChannel === 'sms_qr'
-    || Boolean(activeMetaSocialChannel && !activeMetaSocialNativeConnected)
+    || Boolean(activeMetaSocialChannel && (
+      !activeMetaSocialNativeConnected ||
+      !activeContactHasNativeMetaProfile ||
+      activeSocialConversationUsesHighLevel
+    ))
     || (activeHighLevelChatChannel === 'whatsapp_api' && !whatsappConnected && !selectedQrReady)
   const sendingThroughHighLevel = Boolean(highLevelConnected && activeContact && highLevelChannelRequired)
   const highLevelWhatsAppFallsBackToSms = Boolean(sendingThroughHighLevel && activeHighLevelChatChannel === 'whatsapp_api' && activeContact?.phone && !highLevelWhatsAppReplyWindowOpen)
@@ -9551,7 +9583,8 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (!aiAgentConversationOpen && !activeContact?.phone) {
+    const socialVoiceRouteReady = sendingThroughMetaSocial || Boolean(sendingThroughHighLevel && !activeHighLevelChannelNeedsPhone)
+    if (!aiAgentConversationOpen && !activeContact?.phone && !socialVoiceRouteReady) {
       showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
       return
     }
@@ -11619,7 +11652,9 @@ export const PhoneChat: React.FC = () => {
           }
 
           let deliveryMode: MobileAttachmentDeliveryMode = 'media'
-          if (file.size > MAX_MEDIA_MESSAGE_BYTES && file.size <= MAX_DOCUMENT_ATTACHMENT_BYTES) {
+          if (sendingThroughMetaSocial && activeMetaSocialChannel === 'instagram') {
+            deliveryMode = 'media'
+          } else if (file.size > MAX_MEDIA_MESSAGE_BYTES && file.size <= MAX_DOCUMENT_ATTACHMENT_BYTES) {
             deliveryMode = 'document'
           } else if (file.size <= MAX_MEDIA_MESSAGE_BYTES) {
             const answer = await askMediaDeliveryMode(file, 'video')
@@ -11641,14 +11676,21 @@ export const PhoneChat: React.FC = () => {
             continue
           }
 
-          let deliveryMode: MobileAttachmentDeliveryMode = file.size > MAX_MEDIA_MESSAGE_BYTES ? 'document' : 'voice'
-          if (file.size <= MAX_MEDIA_MESSAGE_BYTES) {
+          let deliveryMode: MobileAttachmentDeliveryMode = sendingThroughMetaSocial && activeMetaSocialChannel === 'instagram'
+            ? 'voice'
+            : file.size > MAX_MEDIA_MESSAGE_BYTES ? 'document' : 'voice'
+          if (!(sendingThroughMetaSocial && activeMetaSocialChannel === 'instagram') && file.size <= MAX_MEDIA_MESSAGE_BYTES) {
             const answer = await askMediaDeliveryMode(file, 'audio')
             if (answer === 'cancel') continue
             deliveryMode = answer === 'document' ? 'document' : 'voice'
           }
 
           await readAttachmentFile(file, 'audio', audioMimeType, deliveryMode)
+          continue
+        }
+
+        if (sendingThroughMetaSocial && activeMetaSocialChannel === 'instagram') {
+          showToast('warning', 'Instagram no envía documentos', 'En este canal puedes mandar fotos, videos, audios y notas de voz.')
           continue
         }
 
@@ -12710,7 +12752,7 @@ export const PhoneChat: React.FC = () => {
     const attachmentsToSend = hasTextOverride || locationToSend ? [] : draftAttachments
     const voiceToSend = hasTextOverride || locationToSend ? null : voiceDraft
     if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend && !locationToSend)) return
-    const sendAttachmentsThroughHighLevel = attachmentsToSend.length > 0 && highLevelConnected && Boolean(activeMetaSocialChannel)
+    const sendAttachmentsThroughHighLevel = attachmentsToSend.length > 0 && !sendingThroughMetaSocial && highLevelConnected && Boolean(activeMetaSocialChannel)
 
     if (
       !options.skipAgentInterruptionConfirm &&
@@ -12799,7 +12841,8 @@ export const PhoneChat: React.FC = () => {
           platform: commentPlatform,
           message: text,
           replyType,
-          commentId: selectedCommentReplyTarget?.commentId
+          commentId: selectedCommentReplyTarget?.commentId,
+          externalId: optimisticId
         })
         const responseIds = getChatSendResponseIds(result)
         setCommentReplyTarget(null)
@@ -12840,16 +12883,11 @@ export const PhoneChat: React.FC = () => {
 
     if (sendingThroughMetaSocial && activeMetaSocialChannel && !sendAttachmentsThroughHighLevel) {
       const outgoingText = locationToSend ? buildLocationFallbackText(locationToSend) : text
-      const nativeMetaAudioAttachment = attachmentsToSend.length === 1 && getDraftAttachmentKind(attachmentsToSend[0]) === 'audio'
-        ? attachmentsToSend[0]
-        : null
-      const nativeMetaAudio = voiceToSend || nativeMetaAudioAttachment
-      const nativeMetaAudioPayloadCount = (voiceToSend ? 1 : 0) + attachmentsToSend.filter((attachment) => getDraftAttachmentKind(attachment) === 'audio').length
-      const hasUnsupportedNativeMetaAttachment = attachmentsToSend.some((attachment) => getDraftAttachmentKind(attachment) !== 'audio') || nativeMetaAudioPayloadCount > 1
+      const nativeMetaAudio = voiceToSend
       const nativeMetaAudioDurationMs = getNativeMetaAudioDurationMs(nativeMetaAudio)
 
-      if (hasUnsupportedNativeMetaAttachment) {
-        showToast('warning', 'Adjunto no disponible', 'Messenger e Instagram desde Meta nativo mandan texto o audio en este chat.')
+      if (activeMetaSocialChannel === 'instagram' && attachmentsToSend.some((attachment) => getDraftAttachmentKind(attachment) === 'document')) {
+        showToast('warning', 'Instagram no envía documentos', 'Quita el archivo o mándalo como foto, video, audio o nota de voz.')
         return
       }
 
@@ -12858,8 +12896,8 @@ export const PhoneChat: React.FC = () => {
         return
       }
 
-      if (!outgoingText && !nativeMetaAudio) {
-        showToast('warning', 'Escribe o graba algo', 'Manda texto o una nota de voz desde este chat.')
+      if (!outgoingText && !nativeMetaAudio && attachmentsToSend.length === 0) {
+        showToast('warning', 'Escribe o adjunta algo', 'Manda texto, una nota de voz o un archivo desde este chat.')
         return
       }
 
@@ -12879,87 +12917,272 @@ export const PhoneChat: React.FC = () => {
         setVoiceDraft(null)
       }
 
-      const optimisticMessage: ChatMessage = {
-        id: optimisticId,
-        text: locationToSend || nativeMetaAudio ? '' : text,
-        date: sentAt,
-        direction: 'outbound',
-        status: 'enviando',
-        transport: activeMetaSocialChannel,
-        replyToMessageId: hasMessageReplyTarget ? replyingToMessage?.id : undefined,
-        replyToProviderMessageId: hasMessageReplyTarget ? replyReferencePayload.replyToProviderMessageId : undefined,
-        ...(locationToSend ? { location: locationToSend } : {}),
-        ...(nativeMetaAudio
-          ? {
-              attachment: {
-                type: 'audio' as const,
-                dataUrl: nativeMetaAudio.dataUrl,
-                name: nativeMetaAudio.name,
-                mimeType: nativeMetaAudio.type,
-                durationMs: nativeMetaAudioDurationMs
-              }
-            }
-          : {})
+      const optimisticMessages: ChatMessage[] = []
+      if (locationToSend) {
+        optimisticMessages.push({
+          id: optimisticId,
+          text: '',
+          date: sentAt,
+          direction: 'outbound',
+          status: 'enviando',
+          transport: activeMetaSocialChannel,
+          location: locationToSend
+        })
+      } else if (nativeMetaAudio) {
+        optimisticMessages.push({
+          id: optimisticId,
+          text: '',
+          date: sentAt,
+          direction: 'outbound',
+          status: 'enviando',
+          transport: activeMetaSocialChannel,
+          attachment: {
+            type: 'audio',
+            dataUrl: nativeMetaAudio.dataUrl,
+            name: nativeMetaAudio.name,
+            mimeType: nativeMetaAudio.type,
+            durationMs: nativeMetaAudioDurationMs
+          }
+        })
+      } else if (attachmentsToSend.length > 0) {
+        if (text) {
+          optimisticMessages.push({
+            id: `${optimisticId}-text`,
+            text,
+            date: sentAt,
+            direction: 'outbound',
+            status: 'enviando',
+            transport: activeMetaSocialChannel
+          })
+        }
+        optimisticMessages.push(...attachmentsToSend.map((attachment, index) => ({
+          id: `${optimisticId}-attachment-${index}`,
+          text: '',
+          date: sentAt,
+          direction: 'outbound' as const,
+          status: 'enviando',
+          transport: activeMetaSocialChannel,
+          attachment: {
+            type: getDraftAttachmentKind(attachment),
+            dataUrl: attachment.dataUrl,
+            name: attachment.name,
+            mimeType: attachment.type
+          }
+        })))
+      } else {
+        optimisticMessages.push({
+          id: optimisticId,
+          text,
+          date: sentAt,
+          direction: 'outbound',
+          status: 'enviando',
+          transport: activeMetaSocialChannel,
+          replyToMessageId: hasMessageReplyTarget ? replyingToMessage?.id : undefined,
+          replyToProviderMessageId: hasMessageReplyTarget ? replyReferencePayload.replyToProviderMessageId : undefined
+        })
       }
 
-      setMessages((current) => [...current, optimisticMessage])
+      setMessages((current) => [...current, ...optimisticMessages])
       setChats((current) => current.map((contact) => (
         contact.id === activeContact.id
           ? {
               ...contact,
-              lastMessageText: locationToSend ? 'Ubicación' : nativeMetaAudio ? 'Mensaje de voz' : text,
+              lastMessageText: locationToSend
+                ? 'Ubicación'
+                : nativeMetaAudio
+                  ? 'Mensaje de voz'
+                  : attachmentsToSend.length > 0
+                    ? (text || getAttachmentPreviewText(attachmentsToSend))
+                    : text,
               lastMessageDate: sentAt,
               lastMessageDirection: 'outbound',
               lastMessageChannel: activeMetaSocialChannel,
-              messageCount: Number(contact.messageCount || 0) + 1
+              messageCount: Number(contact.messageCount || 0) + Math.max(
+                1,
+                nativeMetaAudio || locationToSend ? 1 : attachmentsToSend.length + (text ? 1 : 0)
+              )
             }
           : contact
       )))
 
       try {
-        const result = nativeMetaAudio
-          ? await whatsappApiService.sendMetaSocialAudio({
+        if (nativeMetaAudio) {
+          const result = await whatsappApiService.sendMetaSocialAudio({
               contactId: activeContact.id,
               platform: activeMetaSocialChannel,
               audioDataUrl: nativeMetaAudio.dataUrl,
+              audioMimeType: nativeMetaAudio.type,
+              filename: nativeMetaAudio.name,
               durationMs: nativeMetaAudioDurationMs,
               voice: Boolean(voiceToSend),
               externalId: optimisticId,
               ...(hasMessageReplyTarget ? replyReferencePayload : {})
             })
-          : await whatsappApiService.sendMetaSocialText({
+          const resultData = result.data || result
+          const resultStatus = String(resultData.status || '').trim() || 'sent'
+          const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
+          const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
+          const responseAudioDurationMs = Number(result.audio?.durationMs || 0) || nativeMetaAudioDurationMs
+          const responseIds = getChatSendResponseIds(result)
+
+          setMessages((current) => current.map((message) => (
+            message.id === optimisticId
+              ? {
+                  ...message,
+                  serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+                  providerMessageId: responseIds.providerMessageId || message.providerMessageId,
+                  status: resultStatus,
+                  transport: resultData.transport || activeMetaSocialChannel,
+                  attachment: message.attachment?.type === 'audio'
+                    ? {
+                        ...message.attachment,
+                        ...(responseAudioUrl ? { url: responseAudioUrl } : {}),
+                        ...(responseAudioMimeType ? { mimeType: responseAudioMimeType } : {}),
+                        ...(responseAudioDurationMs ? { durationMs: responseAudioDurationMs } : {})
+                      }
+                    : message.attachment
+                }
+              : message
+          )))
+        } else if (attachmentsToSend.length > 0) {
+          const failedAttachments: MobileChatAttachment[] = []
+          let textFailed = false
+          let firstErrorMessage = ''
+
+          if (outgoingText) {
+            const nativeMetaTextOptimisticId = `${optimisticId}-text`
+            try {
+              const result = await whatsappApiService.sendMetaSocialText({
+                contactId: activeContact.id,
+                platform: activeMetaSocialChannel,
+                message: outgoingText,
+                externalId: nativeMetaTextOptimisticId
+              })
+              const resultData = result.data || result
+              const responseIds = getChatSendResponseIds(result)
+              setMessages((current) => current.map((message) => message.id === nativeMetaTextOptimisticId
+                ? {
+                    ...message,
+                    serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+                    providerMessageId: responseIds.providerMessageId || message.providerMessageId,
+                    status: String(resultData.status || '').trim() || 'sent',
+                    transport: resultData.transport || activeMetaSocialChannel
+                  }
+                : message
+              ))
+            } catch (error: any) {
+              textFailed = true
+              firstErrorMessage = getErrorMessage(error, 'No se pudo enviar el texto.')
+              setMessages((current) => current.map((message) => message.id === nativeMetaTextOptimisticId
+                ? { ...message, status: 'error', errorReason: firstErrorMessage }
+                : message
+              ))
+            }
+          }
+
+          for (const [index, attachment] of attachmentsToSend.entries()) {
+            const nativeMetaOptimisticId = `${optimisticId}-attachment-${index}`
+            const attachmentKind = getDraftAttachmentKind(attachment)
+            try {
+              const result = attachmentKind === 'audio'
+                ? await whatsappApiService.sendMetaSocialAudio({
+                    contactId: activeContact.id,
+                    platform: activeMetaSocialChannel,
+                    audioDataUrl: attachment.dataUrl,
+                    audioMimeType: attachment.type,
+                    filename: attachment.name,
+                    voice: attachment.deliveryMode === 'voice',
+                    externalId: nativeMetaOptimisticId
+                  })
+                : await whatsappApiService.sendMetaSocialAttachment({
+                    contactId: activeContact.id,
+                    platform: activeMetaSocialChannel,
+                    attachmentType: attachmentKind === 'document' ? 'file' : attachmentKind,
+                    attachmentDataUrl: attachment.dataUrl,
+                    filename: attachment.name,
+                    mimeType: attachment.type,
+                    externalId: nativeMetaOptimisticId
+                  })
+              const resultData = result.data || result
+              const resultMedia = (result.attachment || result.document || result.image || result.video || result.audio || null) as {
+                link?: string
+                url?: string
+                mimeType?: string
+                mimetype?: string
+                filename?: string
+                fileName?: string
+                durationMs?: number
+              } | null
+              const mediaUrl = resultMedia?.link || resultMedia?.url || result.localMedia?.publicUrl || ''
+              const mediaMimeType = resultMedia?.mimeType || resultMedia?.mimetype || result.localMedia?.mimeType || ''
+              const mediaFilename = resultMedia?.filename || resultMedia?.fileName || result.localMedia?.filename || ''
+              const mediaDurationMs = Number(resultMedia?.durationMs || 0) || undefined
+              const responseIds = getChatSendResponseIds(result)
+              setMessages((current) => current.map((message) => message.id === nativeMetaOptimisticId
+                ? {
+                    ...message,
+                    serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+                    providerMessageId: responseIds.providerMessageId || message.providerMessageId,
+                    status: String(resultData.status || '').trim() || 'sent',
+                    transport: resultData.transport || activeMetaSocialChannel,
+                    attachment: message.attachment
+                      ? {
+                          ...message.attachment,
+                          ...(mediaUrl ? { url: mediaUrl } : {}),
+                          ...(mediaMimeType ? { mimeType: mediaMimeType } : {}),
+                          ...(mediaFilename ? { name: mediaFilename } : {}),
+                          ...(mediaDurationMs ? { durationMs: mediaDurationMs } : {})
+                        }
+                      : message.attachment
+                  }
+                : message
+              ))
+            } catch (error: any) {
+              const errorMessage = getErrorMessage(error, `No se pudo enviar ${attachment.name}.`)
+              if (!firstErrorMessage) firstErrorMessage = errorMessage
+              failedAttachments.push(attachment)
+              setMessages((current) => current.map((message) => message.id === nativeMetaOptimisticId
+                ? { ...message, status: 'error', errorReason: errorMessage }
+                : message
+              ))
+            }
+          }
+
+          if (textFailed || failedAttachments.length > 0) {
+            if (!preserveComposer) {
+              if (textFailed && !messageTextRef.current.trim()) {
+                setComposerMessageText(text)
+                if (composerInputRef.current) composerInputRef.current.textContent = text
+              }
+              setDraftAttachments(failedAttachments)
+            }
+            showToast(
+              'error',
+              textFailed && failedAttachments.length === attachmentsToSend.length ? 'No se envió el mensaje' : 'Parte del envío falló',
+              firstErrorMessage || 'Revisa los elementos marcados e intenta enviarlos otra vez.'
+            )
+          }
+        } else {
+          const result = await whatsappApiService.sendMetaSocialText({
               contactId: activeContact.id,
               platform: activeMetaSocialChannel,
               message: outgoingText,
               externalId: optimisticId,
               ...(hasMessageReplyTarget ? replyReferencePayload : {})
             })
-        const resultData = result.data || result
-        const resultStatus = String(resultData.status || '').trim() || 'sent'
-        const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
-        const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
-        const responseAudioDurationMs = Number(result.audio?.durationMs || 0) || nativeMetaAudioDurationMs
-        const responseIds = getChatSendResponseIds(result)
-
-        setMessages((current) => current.map((message) => (
-          message.id === optimisticId
+          const resultData = result.data || result
+          const responseIds = getChatSendResponseIds(result)
+          setMessages((current) => current.map((message) => message.id === optimisticId
             ? {
                 ...message,
                 serverMessageId: responseIds.serverMessageId || message.serverMessageId,
                 providerMessageId: responseIds.providerMessageId || message.providerMessageId,
-                status: resultStatus,
-                transport: resultData.transport || activeMetaSocialChannel,
-                attachment: message.attachment?.type === 'audio'
-                  ? {
-                      ...message.attachment,
-                      ...(responseAudioUrl ? { url: responseAudioUrl } : {}),
-                      ...(responseAudioMimeType ? { mimeType: responseAudioMimeType } : {}),
-                      ...(responseAudioDurationMs ? { durationMs: responseAudioDurationMs } : {})
-                    }
-                  : message.attachment
+                status: String(resultData.status || '').trim() || 'sent',
+                transport: resultData.transport || activeMetaSocialChannel
               }
             : message
-        )))
+          ))
+        }
         void Promise.all([
           loadConversation(activeContact.id, { silent: true, useCache: false }),
           loadChats({ silent: true, useCache: false })
@@ -12967,10 +13190,14 @@ export const PhoneChat: React.FC = () => {
       } catch (error: any) {
         const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
         setMessages((current) => current.map((message) => (
-          message.id === optimisticId
+          message.id === optimisticId || message.id === `${optimisticId}-text` || message.id.startsWith(`${optimisticId}-attachment-`)
             ? { ...message, status: 'error', errorReason: errorMessage }
             : message
         )))
+        if (!preserveComposer) {
+          setDraftAttachments(attachmentsToSend)
+          setVoiceDraft(voiceToSend)
+        }
         if (!locationToSend && !preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
           setComposerMessageText(text)
           composerInputRef.current.textContent = text
@@ -18836,17 +19063,18 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderAttachmentsSheet = () => {
+    const allowDocuments = !(sendingThroughMetaSocial && activeMetaSocialChannel === 'instagram')
     const attachmentActions = aiAgentConversationOpen
       ? [
           { label: 'Fotos', Icon: ImageIcon, className: styles.actionBlue, onClick: () => handlePickPhoto('photos') },
           ...(isWideChatDevice ? [] : [{ label: 'Cámara', Icon: Camera, className: styles.actionDark, onClick: () => handlePickPhoto('camera') }]),
-          { label: 'Documentos', Icon: FileText, className: styles.actionSky, onClick: handlePickDocument }
+          ...(allowDocuments ? [{ label: 'Documentos', Icon: FileText, className: styles.actionSky, onClick: handlePickDocument }] : [])
         ]
       : [
           { label: 'Plantillas', Icon: FileText, className: styles.actionTemplate, onClick: handleOpenTemplatesSheet },
           { label: 'Fotos', Icon: ImageIcon, className: styles.actionBlue, onClick: () => handlePickPhoto('photos') },
           ...(isWideChatDevice ? [] : [{ label: 'Cámara', Icon: Camera, className: styles.actionDark, onClick: () => handlePickPhoto('camera') }]),
-          { label: 'Documentos', Icon: FileText, className: styles.actionSky, onClick: handlePickDocument },
+          ...(allowDocuments ? [{ label: 'Documentos', Icon: FileText, className: styles.actionSky, onClick: handlePickDocument }] : []),
           { label: 'Ubicación', Icon: MapPin, className: styles.actionGreen, onClick: handleShareLocation },
           { label: 'CLABE', Icon: Banknote, className: styles.actionClabe, onClick: handleOpenClabeSheet }
         ]

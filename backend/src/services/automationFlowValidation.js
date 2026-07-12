@@ -97,14 +97,14 @@ const COMMENT_REPLY_TARGETS = {
     eventPlatform: 'facebook',
     delivery: 'private',
     apiChannel: 'messenger',
-    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'voice', 'file'])
+    allowedBlockTypes: new Set(['text'])
   },
   instagram_private_message: {
     label: 'enviar mensaje privado por Instagram DM',
     eventPlatform: 'instagram',
     delivery: 'private',
     apiChannel: 'instagram',
-    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'voice', 'file'])
+    allowedBlockTypes: new Set(['text'])
   }
 }
 
@@ -378,7 +378,9 @@ function validateCommentReplyNode({ node, triggers, errors }) {
       errors.push(`La respuesta a comentario no puede usar botones en el bloque ${index + 1}`)
     }
     if (!target.allowedBlockTypes.has(type)) {
-      if (target.label.includes('Instagram') && COMMENT_REPLY_MEDIA_BLOCKS.has(type)) {
+      if (target.delivery === 'private' && COMMENT_REPLY_MEDIA_BLOCKS.has(type)) {
+        errors.push('La respuesta privada inicial a un comentario solo admite texto; cuando la persona responda usa un paso normal de Messenger o Instagram para enviar multimedia')
+      } else if (target.label.includes('Instagram') && COMMENT_REPLY_MEDIA_BLOCKS.has(type)) {
         errors.push('Instagram no permite adjuntos en respuestas públicas a comentarios; usa solo texto')
       } else if (target.label.includes('Facebook') && COMMENT_REPLY_MEDIA_BLOCKS.has(type)) {
         errors.push('Facebook solo permite imagen como adjunto en una respuesta pública a comentario')
@@ -530,6 +532,15 @@ export function validateFlowForPublish(flow) {
   nodes
     .filter((node) => node.type === 'channel-comment-public-reply' || node.type === 'channel-comment-dm-reply')
     .forEach((node) => validateCommentReplyNode({ node, triggers, errors }))
+
+  nodes
+    .filter((node) => node.type === 'channel-instagram')
+    .forEach((node) => {
+      const blocks = asArray(node.config?.messageBlocks)
+      if (blocks.some((block) => String(block?.type || '') === 'file' && String(block?.url || '').trim())) {
+        errors.push('Instagram no permite documentos por DM desde la API; usa imagen, audio o video')
+      }
+    })
 
   // Canales no soportados (SMS, Email…) en cualquier configuración
   const invalidChannels = new Set()

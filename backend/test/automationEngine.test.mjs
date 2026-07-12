@@ -20,7 +20,8 @@ import {
   resolveAutomationMediaSource,
   resolveAutomationAudioDelivery,
   resolveAutomationVoicePublicUrl,
-  inferAutomationDownloadedAudioMimeType
+  inferAutomationDownloadedAudioMimeType,
+  buildMetaSocialAutomationExternalIdBase
 } from '../src/services/automationEngine.js'
 import { resetCentralStorageConfigCache, uploadMediaAssetFromDataUrl } from '../src/services/mediaStorageService.js'
 import { saveAutomationAsset } from '../src/services/automationsService.js'
@@ -52,6 +53,20 @@ const ctx = {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('IDs Meta de automatización son estables por reintento y cambian al reingresar', () => {
+  const node = { id: 'channel-instagram-1' }
+  const firstEnrollment = { id: 'enrollment-1', automationId: 'automation-1' }
+  const secondEnrollment = { id: 'enrollment-2', automationId: 'automation-1' }
+
+  const firstAttempt = buildMetaSocialAutomationExternalIdBase(node, {}, firstEnrollment)
+  const retryAttempt = buildMetaSocialAutomationExternalIdBase(node, {}, firstEnrollment)
+  const reentryAttempt = buildMetaSocialAutomationExternalIdBase(node, {}, secondEnrollment)
+
+  assert.equal(firstAttempt, 'automation-1:enrollment-1:channel-instagram-1')
+  assert.equal(retryAttempt, firstAttempt)
+  assert.notEqual(reentryAttempt, firstAttempt)
+})
 
 async function withAppConfigValues(entries, callback) {
   const previous = {}
