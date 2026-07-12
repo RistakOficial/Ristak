@@ -3425,31 +3425,50 @@ nunca un booleano escrito por el modelo.
   nunca autoriza al modelo a escoger el primer hueco. Incluso si el cliente
   propone dia y hora exactos, el agente debe consultar `get_free_slots` y llamar
   `offer_appointment_slot` con un solo `startTime`. Esta tool vuelve a validar el
-  slot, guarda `appointment_slot_offer_created` y construye el unico texto visible
-  de la oferta. El modelo no escribe, reformula ni agrega horarios; live y preview
+  slot, guarda `appointment_slot_offer_created` en vivo o su sobre aislado de
+  preview y construye el unico texto visible de la oferta. El modelo no escribe,
+  reformula ni agrega horarios; live y preview
   terminan la vuelta y entregan esa oferta en un solo globo, sin pasarla por el
   divisor de mensajes. Una oferta nueva invalida las anteriores del contacto.
-  `book_appointment` y `request_human_booking` exigen `selectionEvidence`
-  estructurada con el mismo `startTime`, el mensaje completo y literal mas
-  reciente del cliente y exactamente el texto de la ultima oferta estructurada
-  dentro del mensaje del agente inmediatamente anterior. El servidor sólo
-  comprueba identidad, orden y
-  coincidencia literal contra el hilo; no usa regex ni reglas de palabras para
-  adivinar intención. La
-  interpretacion de lenguaje natural sigue perteneciendo al modelo principal.
-  Una evidencia ausente, parafraseada, tomada de otro turno o ligada a otro slot
-  falla antes de producir `ctx.actions`; Modo test vuelve a exigir la marca
-  verificada antes de convertir una simulacion en cita temporal real. En vivo,
+  `book_appointment` y `request_human_booking` ya no le piden al modelo volver a
+  copiar `startTime`, `selectionEvidence`, el mensaje del cliente ni la etiqueta
+  del horario. La llamada nativa expresa la decision semantica del modelo; el
+  servidor recupera `startTime` desde la unica oferta vigente que guardo el
+  propio servidor y construye la evidencia con el mensaje completo mas reciente
+  del cliente y la oferta canonica del turno inmediatamente anterior. Después
+  sólo comprueba identidad, orden y coincidencia literal contra el hilo; no usa
+  regex ni reglas de palabras para adivinar intención. Una oferta ausente,
+  vencida, tomada de otro turno, ambigua, ligada a otro slot o perteneciente a
+  otra sesion de prueba falla antes de producir `ctx.actions`. El preview
+  conserva una sola oferta interna por usuario, agente y `testSessionId` bajo
+  `appointment_slot_preview_offer_created`; nunca consulta ni reemplaza ofertas
+  live, no aparece en la bitacora visible y el barrido por TTL o la limpieza de
+  la corrida la elimina. El tester del wizard genera una identidad de borrador,
+  sesion y mensaje estables aunque el agente todavía no se haya guardado; eso
+  permite probar el flujo de dos turnos como mock sin habilitar efectos reales.
+  Así Modo test apagado y encendido recuperan el mismo UTC entre requests sin
+  confiar en texto o estado del navegador. Modo test vuelve a exigir esa marca
+  verificada y toma un claim CAS de la misma oferta antes de convertir una
+  simulacion en cita temporal real; si otra petición cambió el slot, no crea nada
+  ni pisa la oferta nueva. En vivo,
   la seleccion sólo se sella despues de volver a comprobar que el horario existe
   y sigue libre, mediante el evento durable
   `appointment_slot_selection_verified`, ligado a agente, contacto, calendario,
   `startTime`, ejecucion y los IDs de la oferta y confirmacion. Al sellar la
   seleccion, la oferta queda `accepted`; un retry exacto la puede reproducir,
   pero nunca revivir despues de que otra seleccion la sustituyo.
-  `get_free_slots` entrega el instante UTC que
-  debe copiarse sin cambios a `book_appointment` y, por separado, fecha, hora y
-  etiqueta visibles ya calculadas con la zona horaria del negocio; el modelo no
-  convierte UTC ni adivina el horario que debe decirle a la persona. La
+  `get_free_slots` entrega el instante UTC que sólo debe copiarse sin cambios a
+  `offer_appointment_slot` y, por separado, fecha, hora y etiqueta visibles ya
+  calculadas con la zona horaria del negocio. Las tools terminales recuperan ese
+  instante del evento de oferta; el modelo no convierte UTC ni adivina el
+  horario que debe decirle a la persona. Después de un anticipo confirmado,
+  `book_appointment` recupera el mismo UTC de la cadena durable reconciliacion →
+  fuente de cobro → seleccion → oferta y vuelve a validar disponibilidad; no le
+  pide al modelo reconstruirlo ni consultar otro horario. En Modo test, el efecto
+  del link sandbox conserva la huella exacta de la oferta aceptada. Sólo un
+  webhook `paid_test` del mismo run, scope, evento, calendario, UTC y huella puede
+  reanudar esa cita en otro request; la ejecución que materializa queda registrada
+  aparte y nunca reescribe la confirmación original. La
   idempotencia de cada intento se deriva de
   mensaje, canal, contacto, calendario y slot; un retry reproduce la cita
   canonica. La exclusion fisica del slot vive en el candado

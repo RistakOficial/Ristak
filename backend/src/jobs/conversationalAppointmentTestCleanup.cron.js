@@ -1,5 +1,6 @@
 import cron from 'node-cron'
 import { cleanupExpiredConversationalTestAppointments } from '../services/conversationalAppointmentTestCleanupService.js'
+import { cleanupExpiredConversationalAppointmentPreviewOffers } from '../services/conversationalAppointmentPreviewOfferService.js'
 import { logger } from '../utils/logger.js'
 import { withCronLock } from '../utils/cronLock.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
@@ -18,7 +19,11 @@ export async function runConversationalAppointmentTestCleanup(source = 'manual')
       const result = await withCronLock(
         'conversational-appointment-test-cleanup',
         TEST_APPOINTMENT_CLEANUP_LOCK_TTL_MS,
-        () => cleanupExpiredConversationalTestAppointments()
+        async () => {
+          const appointments = await cleanupExpiredConversationalTestAppointments()
+          const previewOffers = await cleanupExpiredConversationalAppointmentPreviewOffers()
+          return { ...appointments, previewOffers }
+        }
       )
       if (!result.ran) return { skipped: true, reason: 'locked' }
 

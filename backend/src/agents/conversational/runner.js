@@ -1548,6 +1548,8 @@ async function buildToolCallingV2AgentForRun({
   channel = 'whatsapp',
   knowledgeQuery = '',
   executionId = '',
+  previewScopeId = '',
+  testVerifiedPaymentEvidence = null,
   virtualContact = null,
   followUpContext = null,
   historyContext = null,
@@ -1588,6 +1590,10 @@ async function buildToolCallingV2AgentForRun({
     channel: normalizeConversationalChannel(channel),
     followUpMode: Boolean(followUpContext),
     executionId: String(executionId || '').trim(),
+    previewScopeId: dryRun ? String(previewScopeId || '').trim() : '',
+    testVerifiedPaymentEvidence: dryRun && testVerifiedPaymentEvidence && typeof testVerifiedPaymentEvidence === 'object'
+      ? { ...testVerifiedPaymentEvidence }
+      : null,
     virtualContact,
     accountLocale,
     runtimeMode: TOOL_CALLING_V2_RUNTIME_MODE,
@@ -1651,6 +1657,8 @@ export async function runToolCallingV2Turn({
   channel = 'whatsapp',
   traceMessage = '',
   executionId = '',
+  previewScopeId = '',
+  testVerifiedPaymentEvidence = null,
   virtualContact = null,
   conversationModel = null,
   followUpContext = null,
@@ -1677,6 +1685,8 @@ export async function runToolCallingV2Turn({
     channel,
     knowledgeQuery: traceMessage,
     executionId,
+    previewScopeId,
+    testVerifiedPaymentEvidence,
     virtualContact,
     followUpContext,
     historyContext,
@@ -2969,7 +2979,7 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
     const runtimeEventContext = [
       `El ${paymentPurpose === 'appointment_deposit' ? 'anticipo requerido para la cita' : 'pago pendiente'} fue confirmado contra el ledger real por ${Number(amount)} ${String(currency || '').trim().toUpperCase()} en ambiente ${paymentEnvironment}.`,
       'Continúa ahora desde el paso pendiente sin volver a cobrar ni pedir comprobante.',
-      'Si la persona ya eligió día y hora, vuelve a consultar disponibilidad real y usa book_appointment; la tool debe revalidar el slot antes de reservar.',
+      'Si la persona ya eligió día y hora, usa directamente la herramienta terminal de agenda que esté disponible. El servidor recupera el horario exacto ligado al pago y vuelve a validar su disponibilidad; no copies ni reconstruyas fecha u hora.',
       'Si ese horario ya no está libre, avisa con naturalidad y ofrece opciones reales.'
     ].join(' ')
     const turn = await runNativeTurn({
@@ -3844,6 +3854,8 @@ export async function runConversationalAgentPreview({
   agentId = null,
   previewContact = null,
   executionId = '',
+  previewScopeId = '',
+  testVerifiedPaymentEvidence = null,
   runtimeEventContext = ''
 }, dependencies = {}) {
   const resolvePreviewConfig = dependencies.resolvePreviewRuntimeConfig || resolveConversationalAgentPreviewRuntimeConfig
@@ -3853,7 +3865,11 @@ export async function runConversationalAgentPreview({
   const { config, runtimeDefaults } = await resolvePreviewConfig({ configOverride, agentId })
   const aiProvider = normalizeConversationalAIProvider(config.aiProvider || runtimeDefaults.aiProvider)
   const runtime = await resolveAIRuntime(aiProvider)
-  const runtimeConfig = { ...config, aiProvider }
+  const runtimeConfig = {
+    ...config,
+    ...(agentId ? { id: String(agentId).trim() } : {}),
+    aiProvider
+  }
   const previewChannel = normalizeConversationalChannel(configOverride?.channel || configOverride?.testChannel || 'whatsapp')
 
   const cleanMessages = (Array.isArray(messages) ? messages : [])
@@ -3924,6 +3940,8 @@ export async function runConversationalAgentPreview({
     channel: previewChannel,
     traceMessage: latestPreviewText,
     executionId: String(executionId || '').trim(),
+    previewScopeId: String(previewScopeId || '').trim(),
+    testVerifiedPaymentEvidence,
     conversationModel: runtimeConfig.model || runtimeDefaults.model,
     historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages },
     runtimeEventContext: String(runtimeEventContext || '').trim()

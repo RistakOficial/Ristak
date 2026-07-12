@@ -146,7 +146,7 @@ test('bookingOwner human reemplaza agendar por la solicitud humana estructurada'
   const request = tools.find((candidate) => candidate.name === 'request_human_booking')
   assert.deepEqual(
     Object.keys(request.parameters.properties).sort(),
-    ['attendeeContext', 'attendeeName', 'guests', 'notes', 'primaryAttendee', 'selectionEvidence', 'startTime', 'title']
+    ['attendeeContext', 'attendeeName', 'guests', 'notes', 'primaryAttendee', 'title']
   )
 })
 
@@ -532,6 +532,8 @@ test('prompt de agenda humana ofrece espacios pero prohíbe crear o confirmar la
   assert.match(instructions, /sus reglas tienen precedencia sobre el guion editable/i)
   assert.match(instructions, /contacto solicitante siempre es el contacto de este hilo/i)
   assert.match(instructions, /no busques otra ficha ni pidas otro teléfono/i)
+  assert.doesNotMatch(instructions, /selectionEvidence|customerQuote|assistantOfferQuote|mismo startTime/i)
+  assert.match(instructions, /servidor recupera la oferta exacta/i)
 })
 
 test('prompt v2 expresa seguimientos en la zona blindada sin fabricar mensajes del cliente', () => {
@@ -879,11 +881,15 @@ test('preview con efectos usa el contacto real elegido y conserva dryRun para to
     full_name: 'Patricia Jiménez',
     phone: '+526560000000'
   }
+  const previewScopeId = `appointment_preview_${'a'.repeat(48)}`
+  const agentId = 'agent-preview-real-contact'
 
   const result = await runConversationalAgentPreview({
     messages: [{ role: 'user', content: 'quiero agendar para mi mamá' }],
     previewContact,
-    executionId: 'test:message-real-contact'
+    agentId,
+    executionId: 'test:message-real-contact',
+    previewScopeId
   }, {
     resolvePreviewRuntimeConfig: async () => ({
       config,
@@ -895,12 +901,14 @@ test('preview con efectos usa el contacto real elegido y conserva dryRun para to
       supportsMultimodalInputs: true
     }),
     hydratePreviewMessages: async (input) => input,
-    runNativeTurn: async ({ contactId, contactName, virtualContact, dryRun, executionId }) => {
+    runNativeTurn: async ({ config: receivedConfig, contactId, contactName, virtualContact, dryRun, executionId, previewScopeId: receivedScopeId }) => {
+      assert.equal(receivedConfig.id, agentId)
       assert.equal(contactId, previewContact.id)
       assert.equal(contactName, previewContact.full_name)
       assert.equal(virtualContact, null)
       assert.equal(dryRun, true)
       assert.equal(executionId, 'test:message-real-contact')
+      assert.equal(receivedScopeId, previewScopeId)
       return {
         reply: 'respuesta con contacto real',
         ctx: { actions: [] },

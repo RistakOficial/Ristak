@@ -697,7 +697,7 @@ test('normaliza venta completa como modo default sin forzar moneda fija', () => 
   assert.equal(workflow.deposit.currency, '')
 })
 
-test('book_appointment rechaza un horario inventado o fuera de horario de atención', async () => {
+test('offer_appointment_slot rechaza un horario inventado o fuera de horario de atención', async () => {
   const suffix = randomUUID()
   const calendarId = `rstk_cal_conv_invalidslot_${suffix}`
   const timezone = await getAccountTimezone()
@@ -705,11 +705,6 @@ test('book_appointment rechaza un horario inventado o fuera de horario de atenci
   const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
   // Hora claramente fuera del horario de atención (05:00, cuando el calendario abre 15:00-17:00).
   const outOfHours = nextMonday.set({ hour: 5, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO()
-  const localLabel = buildNativeFreeSlotDays([{
-    date: nextMonday.toISODate(),
-    timezone,
-    slots: [outOfHours]
-  }], timezone)[0].options[0].localLabel
   try {
     await upsertLocalCalendar({
       id: calendarId,
@@ -727,10 +722,6 @@ test('book_appointment rechaza un horario inventado o fuera de horario de atenci
       contactId: `rstk_contact_invalidslot_${suffix}`,
       dryRun: true,
       actions: [],
-      conversationMessages: [
-        { role: 'assistant', content: `Te ofrezco ${localLabel}.` },
-        { role: 'user', content: 'sí, ese horario está bien' }
-      ],
       config: {
         objective: 'citas',
         capabilitiesConfig: {
@@ -739,23 +730,10 @@ test('book_appointment rechaza un horario inventado o fuera de horario de atenci
         }
       }
     }
-    const bookTool = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
-    assert.ok(bookTool)
+    const offerTool = createConversationalTools(ctx).find((item) => item.name === 'offer_appointment_slot')
+    assert.ok(offerTool)
 
-    const result = await bookTool.invoke(null, JSON.stringify({
-      calendarId,
-      startTime: outOfHours,
-      selectionEvidence: {
-        selectionMode: 'accepted_prior_offer',
-        selectedStartTime: outOfHours,
-        customerQuote: 'sí, ese horario está bien',
-        assistantOfferQuote: localLabel
-      },
-      title: 'Cita inventada',
-      notes: 'Hora fuera de horario de atención',
-      attendeeName: null,
-      attendeeContext: null
-    }))
+    const result = await offerTool.invoke(null, JSON.stringify({ startTime: outOfHours }))
     assert.equal(result.ok, false)
     assert.equal(result.invalidSlot, true)
     assert.equal(ctx.actions.length, 0)

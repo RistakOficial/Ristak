@@ -130,15 +130,15 @@ export function buildCanonicalAppointmentSlotOption(startTime = '', timezone = '
 }
 
 /**
- * Valida el comprobante estructurado que el MISMO modelo principal adjunta a
- * book_appointment/request_human_booking. No intenta interpretar lenguaje ni
- * decidir intención con regex: sólo comprueba hechos mecánicos del hilo.
+ * Valida el comprobante estructurado que el servidor deriva cuando el modelo
+ * principal decide usar book_appointment/request_human_booking. No intenta
+ * interpretar lenguaje ni decidir intención con regex: sólo comprueba hechos
+ * mecánicos del hilo.
  *
- * El modelo conserva el trabajo semántico (entender "va, el martes tipo 10"),
- * pero debe señalar de forma auditable:
- *   - la cita literal del último mensaje del cliente que eligió/aceptó el slot;
- *   - y, cuando aceptó una propuesta, la cita literal de la respuesta del agente
- *     inmediatamente anterior a ese mensaje.
+ * El modelo conserva únicamente el trabajo semántico (entender "va, el martes
+ * tipo 10") y su tool call expresa esa decisión. El servidor toma del hilo el
+ * último mensaje completo del cliente y la oferta canónica inmediatamente
+ * anterior, por lo que el modelo no vuelve a copiar citas ni etiquetas.
  *
  * Esto impide que "sí quiere ir" se convierta en permiso para escoger el primer
  * hueco del calendario y también evita reutilizar una oferta vieja después de

@@ -1,0 +1,348 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { DateTime } from 'luxon'
+
+import { db } from '../src/config/database.js'
+import { createConversationalTools } from '../src/agents/conversational/tools.js'
+import {
+  getConversationalAgentTestVerifiedPaymentEvidence,
+  prepareConversationalAgentTestRun,
+  recordConversationalAgentPreviewEffects,
+  setConversationalAgentTestServiceDependenciesForTests
+} from '../src/services/conversationalAgentTestService.js'
+import {
+  setConversationalAgentTestPaymentDependenciesForTests,
+  syncConversationalAgentTestPaymentLink
+} from '../src/services/conversationalAgentTestPaymentService.js'
+import {
+  buildConversationalAppointmentPreviewOfferEventId,
+  buildConversationalAppointmentPreviewScopeId
+} from '../src/services/conversationalAppointmentPreviewOfferService.js'
+import { createLocalAppointment, upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import { getAccountCurrency } from '../src/utils/accountLocale.js'
+import { getAccountTimezone } from '../src/utils/dateUtils.js'
+import { runVersionedMigrations } from '../src/startup/runMigrations.js'
+
+await runVersionedMigrations()
+
+function terminalBookingArgs() {
+  return {
+    title: 'Valoración de rodilla',
+    notes: 'Dolor de rodilla',
+    attendeeName: 'Paty Jiménez',
+    attendeeContext: 'Mamá del contacto',
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: null,
+      phoneSourceQuote: null,
+      email: null,
+      emailSourceQuote: null,
+      relation: 'Mamá del contacto'
+    },
+    guests: []
+  }
+}
+
+test('preview con anticipo reanuda desde evidencia sandbox durable y materializa la cita en otro request', async () => {
+  const suffix = randomUUID()
+  const runId = `session_payment_resume_${suffix}`
+  const agentId = `agent_payment_resume_${suffix}`
+  const contactId = `contact_payment_resume_${suffix}`
+  const calendarId = `calendar_payment_resume_${suffix}`
+  const username = `user_payment_resume_${suffix}`
+  const offerMessageId = `message_offer_${suffix}`
+  const confirmationMessageId = `message_confirm_${suffix}`
+  const resumeMessageId = `message_resume_${suffix}`
+  const currency = await getAccountCurrency()
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 31 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const slot = monday.set({ hour: 11, minute: 0, second: 0, millisecond: 0 })
+  const startTime = slot.toUTC().toISO()
+  const capabilitiesConfig = {
+    schemaVersion: 2,
+    testMode: { enabled: true, cleanupAfterMinutes: 5, notify: false },
+    items: [
+      {
+        id: 'schedule_appointment',
+        enabled: true,
+        calendarId,
+        bookingOwner: 'ai',
+        allowOverlaps: false
+      },
+      {
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'deposit',
+        chargeType: 'deposit',
+        gateway: 'stripe',
+        deposit: {
+          enabled: true,
+          mode: 'fixed',
+          amount: 500,
+          currency,
+          methods: { paymentLink: true, bankTransfer: false }
+        },
+        installments: { enabled: false, maxInstallments: 0 },
+        expirationMinutes: 60,
+        afterPayment: 'continue'
+      }
+    ]
+  }
+  const config = {
+    id: agentId,
+    runtimeMode: 'tool_calling_v2',
+    objective: 'schedule_appointment',
+    capabilitiesConfig
+  }
+  const effects = {
+    enabled: true,
+    scheduleAppointment: true,
+    collectPayment: true,
+    assignUser: false,
+    notifyOwner: false
+  }
+  let userId = ''
+  let paymentEffectId = ''
+  let paymentId = ''
+
+  try {
+    await db.run(
+      `INSERT INTO users (username, password_hash, full_name, is_active, created_at, updated_at)
+       VALUES (?, 'test-hash', 'Dueño de prueba', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [username]
+    )
+    userId = String((await db.get('SELECT id FROM users WHERE username = ?', [username]))?.id || '')
+    await db.run(
+      `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+       VALUES (?, 'Contacto que agenda', '+526567426612', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_payment_resume_${suffix}`,
+      name: 'Agenda sandbox con anticipo',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{
+        daysOfTheWeek: [1],
+        hours: [{ openHour: 11, openMinute: 0, closeHour: 12, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+       VALUES (?, 'Agente sandbox con anticipo', 1, 'tool_calling_v2', ?)`,
+      [agentId, JSON.stringify(capabilitiesConfig)]
+    )
+
+    setConversationalAgentTestServiceDependenciesForTests({
+      createAppointment: async (req, res) => {
+        const appointment = await createLocalAppointment(req.body, { syncStatus: 'synced' })
+        res.status(201).json({ success: true, data: appointment })
+      }
+    })
+    setConversationalAgentTestPaymentDependenciesForTests({
+      createPaymentGateLink: async (paymentConfig, options) => {
+        assert.equal(paymentConfig.mode, 'test')
+        assert.equal(options.forceTestMode, true)
+        paymentId = `payment_resume_${suffix}`
+        const publicPaymentId = `public_payment_resume_${suffix}`
+        const paymentUrl = `https://payments.example.test/${publicPaymentId}`
+        const testEffectId = options.metadata?.conversationalAgentTest?.testEffectId || null
+        await db.run(
+          `INSERT INTO payments (
+             id, contact_id, amount, currency, status, payment_method, payment_mode,
+             payment_provider, public_payment_id, payment_url, metadata_json,
+             conversational_test_effect_id, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, 'sent', 'stripe', 'test', 'stripe', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            paymentId,
+            contactId,
+            paymentConfig.amount,
+            paymentConfig.currency,
+            publicPaymentId,
+            paymentUrl,
+            JSON.stringify(options.metadata),
+            testEffectId
+          ]
+        )
+        return { payment: { id: paymentId }, publicPaymentId, paymentUrl }
+      }
+    })
+
+    const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+      testSessionId: runId,
+      requestedByUserId: userId,
+      agentId
+    })
+    const offerRun = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: offerMessageId,
+      agentId,
+      requestedByUserId: userId,
+      contactId,
+      effects
+    })
+    const virtualContact = {
+      id: contactId,
+      fullName: 'Contacto que agenda',
+      full_name: 'Contacto que agenda',
+      phone: '+526567426612'
+    }
+    const offerCtx = {
+      runtimeMode: 'tool_calling_v2',
+      contactId,
+      agentId,
+      channel: 'whatsapp',
+      dryRun: true,
+      previewScopeId,
+      executionId: offerRun.executionId,
+      virtualContact,
+      conversationMessages: [
+        { id: offerRun.executionId, role: 'user', content: 'Quiero agendar a mi mamá Paty.' }
+      ],
+      accountLocale: { currency },
+      actions: [],
+      config
+    }
+    const offered = await createConversationalTools(offerCtx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+
+    const confirmationRun = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: confirmationMessageId,
+      agentId,
+      requestedByUserId: userId,
+      contactId,
+      effects
+    })
+    const confirmationCtx = {
+      ...offerCtx,
+      executionId: confirmationRun.executionId,
+      actions: [],
+      conversationMessages: [
+        { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty.' },
+        { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
+        { id: confirmationRun.executionId, role: 'user', content: 'Sí, ese horario le funciona. Agéndala por favor.' }
+      ]
+    }
+    const missingDeposit = await createConversationalTools(confirmationCtx)
+      .find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify(terminalBookingArgs()))
+    assert.equal(missingDeposit.ok, false, JSON.stringify(missingDeposit))
+    assert.equal(missingDeposit.paymentEvidenceRequired, true)
+
+    const paymentLink = await createConversationalTools(confirmationCtx)
+      .find((item) => item.name === 'create_payment_link')
+      .invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+    assert.equal(paymentLink.ok, true, JSON.stringify(paymentLink))
+    assert.equal(paymentLink.simulated, true)
+
+    const paymentEffects = await recordConversationalAgentPreviewEffects({
+      runContext: confirmationRun,
+      actions: confirmationCtx.actions
+    })
+    assert.equal(paymentEffects.length, 1, JSON.stringify(paymentEffects))
+    assert.equal(paymentEffects[0].type, 'payment')
+    assert.equal(paymentEffects[0].status, 'prepared')
+    paymentEffectId = paymentEffects[0].id
+
+    await db.run(
+      `UPDATE payments
+       SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [paymentId]
+    )
+    const paidLedger = await syncConversationalAgentTestPaymentLink({
+      effectId: paymentEffectId,
+      requestedByUserId: userId
+    })
+    assert.equal(paidLedger.status, 'paid_test')
+
+    const resumeRun = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: resumeMessageId,
+      agentId,
+      requestedByUserId: userId,
+      contactId,
+      effects
+    })
+    const testVerifiedPaymentEvidence = await getConversationalAgentTestVerifiedPaymentEvidence({
+      runContext: resumeRun
+    })
+    assert.ok(testVerifiedPaymentEvidence)
+    assert.equal(testVerifiedPaymentEvidence.testEffectId, paymentEffectId)
+    assert.equal(testVerifiedPaymentEvidence.startTime, startTime)
+
+    const resumeCtx = {
+      ...offerCtx,
+      executionId: resumeRun.executionId,
+      testVerifiedPaymentEvidence,
+      actions: [],
+      conversationMessages: [
+        { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty.' },
+        { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
+        { id: confirmationRun.executionId, role: 'user', content: 'Sí, ese horario le funciona. Agéndala por favor.' },
+        { id: `assistant_payment_${suffix}`, role: 'assistant', content: 'Aquí está el enlace sandbox para pagar el anticipo.' },
+        { id: resumeRun.executionId, role: 'user', content: 'Ya pagué, ¿quedó lista?' }
+      ]
+    }
+    const resumedBooking = await createConversationalTools(resumeCtx)
+      .find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify(terminalBookingArgs()))
+
+    assert.equal(resumedBooking.ok, true, JSON.stringify(resumedBooking))
+    assert.equal(resumedBooking.simulated, true)
+    const bookingAction = resumeCtx.actions.find((action) => action.type === 'book_appointment')
+    assert.ok(bookingAction)
+    assert.equal(bookingAction.startTime, startTime)
+    assert.equal(bookingAction.confirmationEvidence.reusedForTestPaymentResume, true)
+
+    const appointmentEffects = await recordConversationalAgentPreviewEffects({
+      runContext: resumeRun,
+      actions: resumeCtx.actions
+    })
+    assert.equal(appointmentEffects.length, 1, JSON.stringify(appointmentEffects))
+    assert.equal(appointmentEffects[0].type, 'appointment')
+    assert.equal(appointmentEffects[0].status, 'recorded', JSON.stringify(appointmentEffects[0]))
+    assert.equal(appointmentEffects[0].payload.appointmentCreated, true)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [calendarId, contactId]
+    )).total), 1)
+
+    const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+    const materialized = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json)
+    assert.equal(materialized.status, 'materialized')
+  } finally {
+    setConversationalAgentTestServiceDependenciesForTests(null)
+    setConversationalAgentTestPaymentDependenciesForTests(null)
+    await db.run(
+      `DELETE FROM internal_notifications
+       WHERE category = 'conversational_agent_test' AND contact_id = ?`,
+      [contactId]
+    ).catch(() => undefined)
+    await db.run(
+      `DELETE FROM appointment_creation_requests
+       WHERE appointment_id IN (SELECT id FROM appointments WHERE calendar_id = ?)`,
+      [calendarId]
+    ).catch(() => undefined)
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_test_payment_links WHERE test_run_id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_test_effects WHERE run_id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => undefined)
+  }
+})

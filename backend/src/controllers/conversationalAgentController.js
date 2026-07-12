@@ -27,6 +27,7 @@ import { runConversationalAgentPreview } from '../agents/conversational/runner.j
 import {
   buildConversationalAgentTestRuntimeEventContext,
   cleanupConversationalAgentTestRun,
+  getConversationalAgentTestVerifiedPaymentEvidence,
   listConversationalAgentTestEffects,
   listRecentConversationalAgentTestRuns,
   normalizeConversationalAgentTestEffects,
@@ -35,6 +36,10 @@ import {
 } from '../services/conversationalAgentTestService.js'
 import { hasUserAccess } from '../utils/userAccess.js'
 import { resolveConversationalAgentPreventiveMeasuresForContact } from '../services/conversationalAgentSafetyService.js'
+import {
+  buildConversationalAppointmentPreviewExecutionId,
+  buildConversationalAppointmentPreviewScopeId
+} from '../services/conversationalAppointmentPreviewOfferService.js'
 
 function assertConversationalTesterAccess(user, effects) {
   if (!effects?.enabled) return
@@ -351,12 +356,26 @@ export async function testAgent(req, res) {
     const runtimeEventContext = runContext
       ? await buildConversationalAgentTestRuntimeEventContext({ runContext })
       : ''
+    const testVerifiedPaymentEvidence = runContext
+      ? await getConversationalAgentTestVerifiedPaymentEvidence({ runContext })
+      : null
+    const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+      testSessionId: req.body?.testSessionId,
+      requestedByUserId: req.user?.userId,
+      agentId
+    })
+    const previewExecutionId = runContext?.executionId || buildConversationalAppointmentPreviewExecutionId({
+      previewScopeId,
+      testMessageId: req.body?.testMessageId
+    })
     const result = await runConversationalAgentPreview({
       messages: req.body?.messages,
       configOverride,
       agentId: agentId || null,
       previewContact: runContext?.contact || null,
-      executionId: runContext?.executionId || '',
+      executionId: previewExecutionId,
+      previewScopeId,
+      testVerifiedPaymentEvidence,
       runtimeEventContext
     })
     const testEffects = runContext

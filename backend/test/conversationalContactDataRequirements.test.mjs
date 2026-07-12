@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { DateTime } from 'luxon'
 
 import { db, databaseReady } from '../src/config/database.js'
 import {
@@ -18,6 +19,7 @@ import {
 import { getConversationState } from '../src/services/conversationalAgentService.js'
 import { ensureToolCallingV2VisibleReply } from '../src/agents/conversational/runner.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
+import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
 
 await databaseReady
 
@@ -558,10 +560,12 @@ test('prompt blindado respeta titular distinto apagado y límite de invitados si
 
 test('tools de agenda rechazan titular distinto y exceso de invitados antes de cualquier cita', async () => {
   const calendarId = `calendar_participant_policy_${randomUUID()}`
-  const selectedStartTime = '2026-08-01T18:00:00.000Z'
   const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 30 }).startOf('day')
+  const slot = baseDay.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
+  const selectedStartTime = slot.toUTC().toISO()
   const localLabel = buildNativeFreeSlotDays([{
-    date: '2026-08-01',
+    date: slot.toISODate(),
     timezone,
     slots: [selectedStartTime]
   }], timezone)[0].options[0].localLabel
@@ -588,37 +592,57 @@ test('tools de agenda rechazan titular distinto y exceso de invitados antes de c
       handoffUserName: ''
     }]
   }
-  await db.run(
-    `INSERT INTO calendars (id, name, slot_duration, is_active, created_at, updated_at)
-     VALUES (?, 'Calendario política', 60, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [calendarId]
-  )
+  await upsertLocalCalendar({
+    id: calendarId,
+    locationId: `location_participant_policy_${randomUUID()}`,
+    name: 'Calendario política',
+    source: 'ristak',
+    slotDuration: 60,
+    slotInterval: 60,
+    openHours: [{
+      daysOfTheWeek: [slot.weekday],
+      hours: [{ openHour: 10, openMinute: 0, closeHour: 11, closeMinute: 0 }]
+    }]
+  }, { source: 'ristak', syncStatus: 'synced' })
   try {
-    const buildTools = (capabilitiesConfig) => {
-      const executionId = `message_participant_policy_${randomUUID()}`
-      return createConversationalTools({
+    const buildTools = async (capabilitiesConfig) => {
+      const suffix = randomUUID()
+      const agentId = `agent_participant_policy_${suffix}`
+      const offerExecutionId = `offer_participant_policy_${suffix}`
+      const executionId = `message_participant_policy_${suffix}`
+      const ctx = {
       runtimeMode: 'tool_calling_v2',
-      contactId: `virtual_contact_${randomUUID()}`,
-      agentId: `agent_participant_policy_${randomUUID()}`,
-      executionId,
+      contactId: `virtual_contact_${suffix}`,
+      agentId,
+      executionId: offerExecutionId,
       dryRun: true,
+      channel: 'whatsapp',
+      previewScopeId: `appointment_preview_${createHash('sha256').update(suffix).digest('hex').slice(0, 48)}`,
       followUpMode: false,
       actions: [],
-      conversationMessages: [
-        { id: `offer_participant_policy_${randomUUID()}`, role: 'assistant', content: `Te ofrezco ${localLabel}.` },
-        { id: executionId, role: 'user', content: 'sí, ese horario está bien' }
-      ],
+      conversationMessages: [{ id: `opening_${suffix}`, role: 'user', content: 'quiero agendar' }],
       virtualContact: {
         fullName: 'Raúl Gómez',
         phone: '+526561111111',
         email: 'raul@example.com'
       },
       capabilitiesConfig,
-      config: { runtimeMode: 'tool_calling_v2', capabilitiesConfig }
-      })
+      config: { id: agentId, runtimeMode: 'tool_calling_v2', capabilitiesConfig }
+      }
+      const offered = await createConversationalTools(ctx)
+        .find((tool) => tool.name === 'offer_appointment_slot')
+        .invoke(null, JSON.stringify({ startTime: selectedStartTime }))
+      assert.equal(offered.ok, true, JSON.stringify(offered))
+      ctx.actions = []
+      ctx.executionId = executionId
+      ctx.conversationMessages = [
+        { id: `offer_visible_${suffix}`, role: 'assistant', content: offered.visibleReply },
+        { id: executionId, role: 'user', content: 'sí, ese horario está bien' }
+      ]
+      return createConversationalTools(ctx)
     }
 
-    const book = buildTools(baseCapabilities).find((tool) => tool.name === 'book_appointment')
+    const book = (await buildTools(baseCapabilities)).find((tool) => tool.name === 'book_appointment')
     assert.ok(book)
     const forbiddenPrimary = await book.invoke(null, JSON.stringify({
       startTime: selectedStartTime,
@@ -665,7 +689,7 @@ test('tools de agenda rechazan titular distinto y exceso de invitados antes de c
       ...baseCapabilities,
       items: [{ ...baseCapabilities.items[0], bookingOwner: 'human', handoffUserId: '7', handoffUserName: 'Mariana' }]
     }
-    const requestHuman = buildTools(humanCapabilities).find((tool) => tool.name === 'request_human_booking')
+    const requestHuman = (await buildTools(humanCapabilities)).find((tool) => tool.name === 'request_human_booking')
     assert.ok(requestHuman)
     const forbiddenHumanPrimary = await requestHuman.invoke(null, JSON.stringify({
       startTime: selectedStartTime,

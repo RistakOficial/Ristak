@@ -23,9 +23,20 @@ import {
 import { createLocalAppointment, upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import { getAccountCurrency } from '../src/utils/accountLocale.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
-import { updateConversationalAgent } from '../src/services/conversationalAgentService.js'
+import {
+  getConversationalAgentMetrics,
+  listConversationalAgentEvents,
+  updateConversationalAgent
+} from '../src/services/conversationalAgentService.js'
 import { withConversationalAgentTestMutationLock } from '../src/services/conversationalAgentTestMutationLockService.js'
 import { runVersionedMigrations } from '../src/startup/runMigrations.js'
+import {
+  CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+  buildConversationalAppointmentPreviewExecutionId,
+  buildConversationalAppointmentPreviewOfferEventId,
+  buildConversationalAppointmentPreviewScopeId,
+  cleanupExpiredConversationalAppointmentPreviewOffers
+} from '../src/services/conversationalAppointmentPreviewOfferService.js'
 
 await runVersionedMigrations()
 
@@ -43,6 +54,63 @@ function mockResponse() {
     }
   }
 }
+
+test('scope y ejecución del preview quedan ligados a usuario, agente, sesión y mensaje', () => {
+  const base = {
+    testSessionId: `session_${randomUUID()}`,
+    requestedByUserId: 'user-preview-scope',
+    agentId: 'agent-preview-scope'
+  }
+  const scope = buildConversationalAppointmentPreviewScopeId(base)
+  assert.match(scope, /^appointment_preview_[a-f0-9]{48}$/)
+  assert.equal(buildConversationalAppointmentPreviewScopeId(base), scope)
+  assert.notEqual(buildConversationalAppointmentPreviewScopeId({ ...base, requestedByUserId: 'other-user' }), scope)
+  assert.notEqual(buildConversationalAppointmentPreviewScopeId({ ...base, agentId: 'other-agent' }), scope)
+  const firstExecution = buildConversationalAppointmentPreviewExecutionId({
+    previewScopeId: scope,
+    testMessageId: `message_${randomUUID()}`
+  })
+  const secondExecution = buildConversationalAppointmentPreviewExecutionId({
+    previewScopeId: scope,
+    testMessageId: `message_${randomUUID()}`
+  })
+  assert.match(firstExecution, /^preview:[a-f0-9]{48}$/)
+  assert.notEqual(firstExecution, secondExecution)
+})
+
+test('ofertas preview vencidas se limpian por TTL y nunca aparecen en la bitácora visible', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_preview_ttl_${suffix}`
+  const contactId = `contact_preview_ttl_${suffix}`
+  const scopeId = buildConversationalAppointmentPreviewScopeId({
+    testSessionId: `session_${suffix}`,
+    requestedByUserId: `user_${suffix}`,
+    agentId
+  })
+  const eventId = buildConversationalAppointmentPreviewOfferEventId(scopeId)
+  try {
+    const metricsBefore = await getConversationalAgentMetrics()
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        eventId,
+        contactId,
+        agentId,
+        CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+        JSON.stringify({ previewScopeId: scopeId, status: 'active', expiresAt: '2000-01-01T00:00:00.000Z' })
+      ]
+    )
+    assert.deepEqual(await listConversationalAgentEvents({ contactId }), [])
+    const metricsAfter = await getConversationalAgentMetrics()
+    assert.equal(metricsAfter.totalEvents, metricsBefore.totalEvents)
+    const result = await cleanupExpiredConversationalAppointmentPreviewOffers({ now: new Date(), limit: 20 })
+    assert.ok(result.deleted >= 1)
+    assert.equal(await db.get('SELECT id FROM conversational_agent_events WHERE id = ?', [eventId]), null)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [eventId]).catch(() => undefined)
+  }
+})
 
 test('normaliza efectos sólo cuando hay una acción explícita y no activa notificaciones por omisión', () => {
   assert.deepEqual(normalizeConversationalAgentTestEffects({ enabled: true }), {
@@ -101,6 +169,23 @@ test('historial de pruebas recientes queda limitado al agente y usuario solicita
        ) VALUES (?, ?, ?, 'appointment', 'history-hash', 'recorded', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [`catfx_history_${suffix}`, runId, `message_history_${suffix}`, JSON.stringify({ summary: 'Cita de prueba creada.' })]
     )
+    const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+      testSessionId: runId,
+      requestedByUserId: userId,
+      agentId
+    })
+    const previewOfferEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        previewOfferEventId,
+        contactId,
+        agentId,
+        CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+        JSON.stringify({ previewScopeId, status: 'active', expiresAt: new Date(Date.now() + 60_000).toISOString() })
+      ]
+    )
 
     const ownHistory = await listRecentConversationalAgentTestRuns({ agentId, requestedByUserId: userId, limit: 5 })
     assert.equal(ownHistory.length, 1)
@@ -128,7 +213,9 @@ test('historial de pruebas recientes queda limitado al agente y usuario solicita
       (await db.get('SELECT status FROM conversational_agent_test_runs WHERE id = ?', [runId])).status,
       'cleaned'
     )
+    assert.equal(await db.get('SELECT id FROM conversational_agent_events WHERE id = ?', [previewOfferEventId]), null)
   } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_test_effects WHERE run_id = ?', [runId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
@@ -352,6 +439,179 @@ test('configuración y efecto externo comparten un candado durable por agente', 
   }
 })
 
+test('si otra petición reemplaza el slot aceptado antes de materializarlo, no crea la cita ni pisa la oferta nueva', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_preview_offer_race_${suffix}`
+  const contactId = `contact_preview_offer_race_${suffix}`
+  const calendarId = `calendar_preview_offer_race_${suffix}`
+  const runId = `session_preview_offer_race_${suffix}`
+  const requestedByUserId = `user_preview_offer_race_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 35 }).startOf('day')
+  const slotA = baseDay.set({ hour: 14, minute: 0, second: 0, millisecond: 0 })
+  const slotB = slotA.plus({ hours: 1 })
+  const capabilitiesConfig = {
+    schemaVersion: 2,
+    testMode: { enabled: true, cleanupAfterMinutes: 5, notify: false },
+    items: [
+      { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai', allowOverlaps: false }
+    ]
+  }
+  let providerCalls = 0
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto carrera preview', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_preview_offer_race_${suffix}`,
+      name: 'Agenda carrera preview',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{
+        daysOfTheWeek: [slotA.weekday],
+        hours: [{ openHour: 13, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+       VALUES (?, 'Agente carrera preview', 1, 'tool_calling_v2', ?)`,
+      [agentId, JSON.stringify(capabilitiesConfig)]
+    )
+    setConversationalAgentTestServiceDependenciesForTests({
+      createAppointment: async () => {
+        providerCalls += 1
+        throw new Error('No debe llegar al proveedor cuando la oferta cambió')
+      }
+    })
+
+    const effects = {
+      enabled: true,
+      scheduleAppointment: true,
+      collectPayment: false,
+      assignUser: false,
+      notifyOwner: false
+    }
+    const run = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: `message_preview_offer_race_${suffix}`,
+      agentId,
+      requestedByUserId,
+      contactId,
+      effects
+    })
+    const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+      testSessionId: run.id,
+      requestedByUserId: run.requestedByUserId,
+      agentId: run.agent.id
+    })
+    const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+    const acceptedOfferA = {
+      previewScopeId,
+      agentId,
+      contactId,
+      channel: 'whatsapp',
+      calendarId,
+      startTime: slotA.toUTC().toISO(),
+      localLabel: slotA.setLocale('es-MX').toFormat("cccc d 'de' LLLL, HH:mm"),
+      timezone,
+      executionId: buildConversationalAppointmentPreviewExecutionId({
+        previewScopeId,
+        testMessageId: `message_preview_offer_a_${suffix}`
+      }),
+      offerText: 'Tengo disponible el primer horario.',
+      status: 'accepted',
+      offeredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      acceptedAt: new Date().toISOString(),
+      acceptedExecutionId: run.executionId
+    }
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        offerEventId,
+        contactId,
+        agentId,
+        CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+        JSON.stringify(acceptedOfferA)
+      ]
+    )
+
+    // La acción del primer turno ya quedó armada para A, pero antes de que el
+    // tester la materialice otra petición del mismo preview publica y acepta B.
+    const acceptedOfferB = {
+      ...acceptedOfferA,
+      startTime: slotB.toUTC().toISO(),
+      localLabel: slotB.setLocale('es-MX').toFormat("cccc d 'de' LLLL, HH:mm"),
+      executionId: buildConversationalAppointmentPreviewExecutionId({
+        previewScopeId,
+        testMessageId: `message_preview_offer_b_${suffix}`
+      }),
+      offerText: 'Tengo disponible el segundo horario.'
+    }
+    await db.run(
+      `UPDATE conversational_agent_events SET detail_json = ?
+       WHERE id = ? AND event_type = ?`,
+      [JSON.stringify(acceptedOfferB), offerEventId, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT]
+    )
+
+    const result = await recordConversationalAgentPreviewEffects({
+      runContext: run,
+      actions: [{
+        type: 'book_appointment',
+        calendarId,
+        startTime: slotA.toUTC().toISO(),
+        endTime: slotA.plus({ hours: 1 }).toUTC().toISO(),
+        title: 'Cita que ya no debe materializarse',
+        confirmationEvidence: {
+          evidenceVerified: true,
+          nativeToolDecision: true,
+          selectionMode: 'accepted_prior_offer',
+          selectedStartTime: slotA.toUTC().toISO(),
+          customerQuote: 'sí, el primero',
+          assistantOfferQuote: 'Tengo disponible el primer horario.',
+          offerEventId
+        },
+        participants: [
+          { role: 'requester', contactId, name: 'Contacto carrera preview', phone: '', email: '', relation: '' }
+        ],
+        outcome: { status: 'simulated' }
+      }]
+    })
+
+    assert.equal(result.length, 1)
+    assert.equal(result[0].type, 'appointment')
+    assert.equal(result[0].status, 'failed')
+    assert.match(result[0].summary, /oferta cambió antes de materializar/i)
+    assert.equal(providerCalls, 0)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
+      [calendarId]
+    )).total), 0)
+    const currentOffer = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json)
+    assert.equal(currentOffer.status, 'accepted')
+    assert.equal(currentOffer.startTime, slotB.toUTC().toISO())
+    assert.equal(currentOffer.offerText, 'Tengo disponible el segundo horario.')
+  } finally {
+    setConversationalAgentTestServiceDependenciesForTests(null)
+    await db.run('DELETE FROM conversational_agent_test_effects WHERE run_id = ?', [runId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
 test('efectos del tester crean artefactos reales de prueba, son idempotentes, revalidan y se limpian', async () => {
   const suffix = randomUUID()
   const agentId = `agent_test_effects_${suffix}`
@@ -477,6 +737,42 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
       contactId,
       effects
     })
+    const appointmentPreviewScopeId = buildConversationalAppointmentPreviewScopeId({
+      testSessionId: appointmentRun.id,
+      requestedByUserId: appointmentRun.requestedByUserId,
+      agentId: appointmentRun.agent.id
+    })
+    const appointmentOfferEventId = buildConversationalAppointmentPreviewOfferEventId(appointmentPreviewScopeId)
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        appointmentOfferEventId,
+        contactId,
+        agentId,
+        CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+        JSON.stringify({
+          previewScopeId: appointmentPreviewScopeId,
+          agentId,
+          contactId,
+          channel: 'whatsapp',
+          calendarId,
+          startTime: slot.toUTC().toISO(),
+          localLabel: slot.setLocale('es-MX').toFormat("cccc d 'de' LLLL, HH:mm"),
+          timezone,
+          executionId: buildConversationalAppointmentPreviewExecutionId({
+            previewScopeId: appointmentPreviewScopeId,
+            testMessageId: `message_offer_${suffix}`
+          }),
+          offerText: 'Tengo disponible el martes a las 14:00.',
+          status: 'accepted',
+          offeredAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+          acceptedAt: new Date().toISOString(),
+          acceptedExecutionId: appointmentRun.executionId
+        })
+      ]
+    )
     const appointmentAction = {
       type: 'book_appointment',
       calendarId,
@@ -489,7 +785,8 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
         selectionMode: 'accepted_prior_offer',
         selectedStartTime: slot.toUTC().toISO(),
         customerQuote: 'el martes tipo 10',
-        assistantOfferQuote: 'martes a las 10:00'
+        assistantOfferQuote: 'martes a las 10:00',
+        offerEventId: appointmentOfferEventId
       },
       participants: [
         { role: 'requester', contactId, name: 'Contacto elegido', phone: contactPhone, email: '', relation: '' },
@@ -709,6 +1006,7 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
     ).catch(() => {})
     await db.run('DELETE FROM conversational_agent_test_effects WHERE run_id = ?', [runId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => {})
     await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => {})
     await db.run('DELETE FROM product_prices WHERE id = ?', [priceId]).catch(() => {})
     await db.run('DELETE FROM products WHERE id = ?', [productId]).catch(() => {})

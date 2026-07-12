@@ -12,6 +12,7 @@ import {
 } from '../src/agents/conversational/tools.js'
 import {
   ensureToolCallingV2VisibleReply,
+  runConversationalAgentPreview,
   resumeToolCallingV2AfterVerifiedPayment
 } from '../src/agents/conversational/runner.js'
 import {
@@ -61,6 +62,7 @@ function v2Context(items, overrides = {}) {
     agentId: `agent_v2_${randomUUID()}`,
     channel: 'whatsapp',
     dryRun: true,
+    previewScopeId: `appointment_preview_${createHash('sha256').update(randomUUID()).digest('hex').slice(0, 48)}`,
     followUpMode: false,
     actions: [],
     accountLocale: { currency: 'MXN' },
@@ -437,6 +439,18 @@ test('todas las tools v2 conservan JSON Schema estricto y todos sus campos son r
   }
   const paymentTool = tools.find((item) => item.name === 'create_payment_link')
   assert.equal('dueDate' in paymentTool.parameters.properties, false, 'v2 no debe permitir que el modelo invente fecha límite')
+  for (const bookingTool of tools.filter((item) => ['book_appointment', 'request_human_booking'].includes(item.name))) {
+    assert.equal(
+      'selectionEvidence' in bookingTool.parameters.properties,
+      false,
+      `${bookingTool.name} debe derivar la evidencia del hilo y no pedirle al modelo que la recopie`
+    )
+    assert.equal(
+      'startTime' in bookingTool.parameters.properties,
+      false,
+      `${bookingTool.name} debe recuperar el horario de la oferta guardada por el servidor`
+    )
+  }
 })
 
 test('agenda v2 no convierte "sí quiere ir" en un slot y sí acepta "el martes tipo 10" sobre la oferta anterior', async () => {
@@ -474,7 +488,6 @@ test('agenda v2 no convierte "sí quiere ir" en un slot y sí acepta "el martes 
     })
     const book = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
     const basePayload = {
-      startTime,
       title: 'Valoración de rodilla',
       notes: 'Dolor diario desde hace seis meses',
       attendeeName: null,
@@ -499,7 +512,7 @@ test('agenda v2 no convierte "sí quiere ir" en un slot y sí acepta "el martes 
     }))
     assert.equal(premature.ok, false, JSON.stringify(premature))
     assert.equal(premature.confirmationRequired, true)
-    assert.match(premature.error, /mensaje completo|etiqueta canónica/i)
+    assert.match(premature.error, /oferta estructurada|horario/i)
     assert.equal(ctx.actions.length, 0, 'sin selección no debe producir una acción que Modo test pueda materializar')
 
     ctx.conversationMessages = [
@@ -533,19 +546,20 @@ test('agenda v2 no convierte "sí quiere ir" en un slot y sí acepta "el martes 
     assert.equal(arbitraryIntent.confirmationRequired, true)
     assert.equal(ctx.actions.length, 0)
 
+    ctx.executionId = `offer_selection_${suffix}`
+    const offered = await createConversationalTools(ctx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+    ctx.actions = []
+    ctx.executionId = `confirm_selection_${suffix}`
     ctx.conversationMessages = [
       { role: 'user', content: initialMessage },
-      { role: 'assistant', content: `Tengo ${canonicalLabel}. ¿Te funciona?` },
-      { role: 'user', content: 'el martes tipo 10' }
+      { id: `offer_visible_${suffix}`, role: 'assistant', content: offered.visibleReply },
+      { id: ctx.executionId, role: 'user', content: 'el martes tipo 10' }
     ]
     const confirmed = await book.invoke(null, JSON.stringify({
-      ...basePayload,
-      selectionEvidence: {
-        selectionMode: 'accepted_prior_offer',
-        selectedStartTime: startTime,
-        customerQuote: 'el martes tipo 10',
-        assistantOfferQuote: canonicalLabel
-      }
+      ...basePayload
     }))
     assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
     assert.equal(confirmed.simulated, true)
@@ -1325,10 +1339,17 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     assert.match(returnedSlot.localLabel, /4:00/)
     assert.equal(availability.slots[0]?.timezone, timezone)
     assert.match(availability.note, /offer_appointment_slot/)
+    ctx.executionId = `offer_natural_${suffix}`
+    const offered = await createConversationalTools(ctx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime: returnedSlot.startTime }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+    ctx.actions = []
+    ctx.executionId = `confirm_natural_${suffix}`
     ctx.conversationMessages = [
       { role: 'user', content: 'Quiero ver horarios para el martes.' },
-      { role: 'assistant', content: `Tengo ${returnedSlot.localLabel}.` },
-      { role: 'user', content: 'Va, el martes tipo tardecita.' }
+      { id: `offer_visible_natural_${suffix}`, role: 'assistant', content: offered.visibleReply },
+      { id: ctx.executionId, role: 'user', content: 'Va, el martes tipo tardecita.' }
     ]
     const book = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
     const result = await book.invoke(null, JSON.stringify({
@@ -1354,6 +1375,180 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     assert.equal(ctx.actions[0]?.confirmationEvidence?.nativeToolDecision, true)
     assert.equal(ctx.actions[0]?.confirmationEvidence?.evidenceVerified, true)
   } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('dos requests de preview recuperan el UTC guardado y confirman sin startTime en la tool terminal', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_preview_two_turns_${suffix}`
+  const agentId = `agent_preview_two_turns_${suffix}`
+  const previewScopeId = `appointment_preview_${createHash('sha256').update(`scope_${suffix}`).digest('hex').slice(0, 48)}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 24 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const slot = monday.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
+  const startTime = slot.toUTC().toISO()
+  const opening = 'Es para mi mamá Paty Jiménez. Sí quiere que le agende; yo escribo desde este contacto.'
+  const confirmation = 'Sí, ese horario le funciona. Agéndala por favor.'
+  const config = {
+    id: agentId,
+    runtimeMode: 'tool_calling_v2',
+    aiProvider: 'openai',
+    model: 'fake-model',
+    replyDelivery: { splitMessagesEnabled: false },
+    capabilitiesConfig: {
+      schemaVersion: 1,
+      items: [{ id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }]
+    }
+  }
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_preview_two_turns_${suffix}`,
+      name: 'Agenda preview dos turnos',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 10, openMinute: 0, closeHour: 11, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    let turnNumber = 0
+    const dependencies = {
+      resolvePreviewRuntimeConfig: async () => ({
+        config,
+        runtimeDefaults: { aiProvider: 'openai', model: 'fake-model' }
+      }),
+      resolveAIRuntime: async () => ({
+        apiKey: 'stored-test-key-not-real',
+        modelProvider: { kind: 'fake' },
+        supportsMultimodalInputs: true
+      }),
+      hydratePreviewMessages: async (messages) => messages,
+      runNativeTurn: async (args) => {
+        turnNumber += 1
+        assert.equal(args.previewScopeId, previewScopeId)
+        const ctx = {
+          runtimeMode: 'tool_calling_v2',
+          contactId: args.contactId,
+          agentId,
+          channel: args.channel,
+          dryRun: true,
+          previewScopeId: args.previewScopeId,
+          executionId: args.executionId,
+          virtualContact: args.virtualContact,
+          conversationMessages: args.messages,
+          accountLocale: { currency: 'MXN' },
+          actions: [],
+          config
+        }
+        const tools = createConversationalTools(ctx)
+        const output = turnNumber === 1
+          ? await tools.find((item) => item.name === 'offer_appointment_slot')
+              .invoke(null, JSON.stringify({ startTime }))
+          : await tools.find((item) => item.name === 'book_appointment')
+              .invoke(null, JSON.stringify({
+                title: 'Valoración de rodilla',
+                notes: 'Dolor de rodilla',
+                attendeeName: 'Paty Jiménez',
+                attendeeContext: 'Mamá del contacto',
+                primaryAttendee: {
+                  name: 'Paty Jiménez',
+                  phone: null,
+                  phoneSourceQuote: null,
+                  email: null,
+                  emailSourceQuote: null,
+                  relation: 'Mamá del contacto'
+                },
+                guests: []
+              }))
+        assert.equal(output.ok, true, JSON.stringify(output))
+        return {
+          reply: turnNumber === 1 ? output.visibleReply : 'listo, la cita de prueba quedó preparada',
+          ctx,
+          model: 'fake-model',
+          runtimeMode: 'tool_calling_v2',
+          modelCallCount: 1,
+          historyTelemetry: args.historyEnvelope.telemetry,
+          capabilityManifest: [],
+          validationErrors: []
+        }
+      }
+    }
+
+    const first = await runConversationalAgentPreview({
+      messages: [{ role: 'user', content: opening }],
+      agentId,
+      previewScopeId,
+      executionId: `preview:offer_${suffix}`
+    }, dependencies)
+    assert.equal(first.replyParts.length, 1)
+    assert.equal(first.actions[0]?.type, 'offer_appointment_slot')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE agent_id = ? AND event_type = 'appointment_slot_preview_offer_created'`,
+      [agentId]
+    )).total), 1)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+      [agentId]
+    )).total), 0, 'una oferta preview nunca debe crear o superseder una oferta live')
+
+    const otherScopeId = `appointment_preview_${createHash('sha256').update(`other_scope_${suffix}`).digest('hex').slice(0, 48)}`
+    const wrongSessionCtx = {
+      runtimeMode: 'tool_calling_v2',
+      contactId: 'ristak-preview-contact',
+      agentId,
+      channel: 'whatsapp',
+      dryRun: true,
+      previewScopeId: otherScopeId,
+      executionId: `preview:wrong_session_${suffix}`,
+      virtualContact: { id: 'ristak-preview-contact', fullName: 'Contacto de prueba' },
+      conversationMessages: [
+        { id: `wrong_opening_${suffix}`, role: 'user', content: opening },
+        { id: `wrong_offer_${suffix}`, role: 'assistant', content: first.reply },
+        { id: `preview:wrong_session_${suffix}`, role: 'user', content: confirmation }
+      ],
+      accountLocale: { currency: 'MXN' },
+      actions: [],
+      config
+    }
+    const wrongSession = await createConversationalTools(wrongSessionCtx)
+      .find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify({
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(wrongSession.ok, false)
+    assert.equal(wrongSession.code, 'appointment_offer_required')
+    assert.equal(wrongSessionCtx.actions.length, 0)
+
+    const second = await runConversationalAgentPreview({
+      messages: [
+        { role: 'user', content: opening },
+        { role: 'assistant', content: first.reply },
+        { role: 'user', content: confirmation }
+      ],
+      agentId,
+      previewScopeId,
+      executionId: `preview:confirmation_${suffix}`
+    }, dependencies)
+    const booking = second.actions.find((action) => action.type === 'book_appointment')
+    assert.ok(booking)
+    assert.equal(booking.startTime, startTime)
+    assert.equal(booking.outcome.status, 'simulated')
+    assert.equal(booking.confirmationEvidence.evidenceVerified, true)
+    assert.equal(booking.confirmationEvidence.customerQuote, confirmation)
+    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?', [calendarId])).total), 0)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => {})
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
   }
@@ -2951,7 +3146,8 @@ test('la reanudación por pago usa el mismo Agent/Runner, el hilo completo y ent
         nativeTurnCalls += 1
         assert.deepEqual(args.messages, history)
         assert.match(args.runtimeEventContext, /anticipo requerido para la cita fue confirmado/i)
-        assert.match(args.runtimeEventContext, /vuelve a consultar disponibilidad real/i)
+        assert.match(args.runtimeEventContext, /servidor recupera el horario exacto ligado al pago/i)
+        assert.doesNotMatch(args.runtimeEventContext, /vuelve a consultar disponibilidad real/i)
         assert.equal(args.executionId, `payment-resume:${reconciliationId}`)
         return {
           ctx: { actions: [{ type: 'book_appointment', outcome: { status: 'ok', ok: true } }] },
@@ -4020,8 +4216,6 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
     const result = await createConversationalTools(ctx)
       .find((item) => item.name === 'book_appointment')
       .invoke(null, JSON.stringify({
-        startTime: slot.toUTC().toISO(),
-        selectionEvidence: null,
         title: null,
         notes: null,
         attendeeName: null,
@@ -4031,6 +4225,7 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
       }))
 
     assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.appointment.startTime, slot.toUTC().toISO())
     assert.equal(ctx.actions[0]?.confirmationEvidence?.reusedForPaymentResume, true)
     assert.equal(ctx.actions[0]?.confirmationEvidence?.selectionEventId, selectionEvent.id)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 1)

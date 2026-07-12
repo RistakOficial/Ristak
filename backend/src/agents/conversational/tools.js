@@ -56,6 +56,11 @@ import {
   getConversationalCapability,
   getEnabledConversationalCapabilities
 } from './nativeRuntimeConfig.js'
+import {
+  CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+  buildConversationalAppointmentPreviewOfferEventId,
+  isConversationalAppointmentPreviewScopeId
+} from '../../services/conversationalAppointmentPreviewOfferService.js'
 
 /**
  * Tools del agente conversacional. Se crean por ejecución con una factory
@@ -779,15 +784,6 @@ const appointmentPersonSchema = z.object({
   relation: z.string().nullable().describe('Relación o contexto breve; null si no aplica')
 })
 
-const appointmentSelectionEvidenceSchema = z.object({
-  selectionMode: z.literal('accepted_prior_offer').describe('La persona confirma en otro turno una oferta exacta y canónica del agente'),
-  selectedStartTime: z.string().describe('Copia exacta del mismo startTime UTC que se solicita reservar'),
-  customerQuote: z.string().min(1).max(4000).describe(
-    'Mensaje COMPLETO y literal más reciente del cliente que confirma la oferta; no uses un substring, resumen ni palabras sueltas'
-  ),
-  assistantOfferQuote: z.string().min(1).max(1000).describe('localLabel exacto de la oferta estructurada creada por offer_appointment_slot para ESTE startTime')
-})
-
 function getToolRuntimeConfig(ctx = {}, config = {}) {
   return {
     ...config,
@@ -1281,16 +1277,29 @@ function nativeAppointmentOfferText(localLabel = '') {
 }
 
 async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTime, localLabel, timezone } = {}) {
-  if (ctx?.dryRun) return { ok: true, durable: false, offerEventId: null }
   const agentId = String(config?.id || ctx?.agentId || '').trim()
   const contactId = String(ctx?.contactId || '').trim()
   const executionId = String(ctx?.executionId || '').trim()
+  const previewScopeId = ctx?.dryRun && isConversationalAppointmentPreviewScopeId(ctx?.previewScopeId)
+    ? String(ctx.previewScopeId).trim()
+    : ''
+  if (ctx?.dryRun && !previewScopeId) {
+    return appointmentSelectionError(
+      'La sesión del tester no conserva una identidad segura para la oferta. Reinicia el chat de prueba.',
+      'appointment_preview_scope_missing'
+    )
+  }
   if (!agentId || !contactId || !executionId || !calendarId || !startTime || !localLabel) {
     return appointmentSelectionError('No se pudo identificar la oferta de horario. No se mostró ningún horario.', 'appointment_offer_identity_missing')
   }
-  const eventId = `cae_appointment_offer_${createHash('sha256').update([
-    agentId, contactId, calendarId, startTime, executionId
-  ].join('\u0000')).digest('hex').slice(0, 48)}`
+  const eventType = previewScopeId
+    ? CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT
+    : NATIVE_APPOINTMENT_OFFER_EVENT
+  const eventId = previewScopeId
+    ? buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+    : `cae_appointment_offer_${createHash('sha256').update([
+        agentId, contactId, calendarId, startTime, executionId
+      ].join('\u0000')).digest('hex').slice(0, 48)}`
   const detail = {
     agentId,
     contactId,
@@ -1298,12 +1307,55 @@ async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTim
     startTime,
     localLabel,
     timezone,
+    channel: String(ctx?.channel || '').trim(),
     executionId,
     offerText: nativeAppointmentOfferText(localLabel),
     status: 'active',
     offeredAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + NATIVE_APPOINTMENT_SELECTION_COLLECTION_TTL_MS).toISOString()
+    expiresAt: new Date(Date.now() + NATIVE_APPOINTMENT_SELECTION_COLLECTION_TTL_MS).toISOString(),
+    ...(previewScopeId ? { previewScopeId } : {})
   }
+
+  if (previewScopeId) {
+    let previewConflict = false
+    await db.transaction(async () => {
+      const inserted = await db.run(
+        `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+        [eventId, contactId, agentId, eventType, JSON.stringify(detail)]
+      )
+      if (Number(inserted?.changes ?? inserted?.rowCount ?? 0) === 1) return
+      const current = await db.get(
+        `SELECT contact_id, agent_id, event_type, detail_json
+         FROM conversational_agent_events WHERE id = ?`,
+        [eventId]
+      )
+      const currentDetail = parseNativeEventDetail(current?.detail_json)
+      if (
+        current?.event_type !== eventType ||
+        String(current?.contact_id || '') !== contactId ||
+        String(current?.agent_id || '') !== agentId ||
+        String(currentDetail.previewScopeId || '') !== previewScopeId ||
+        (String(currentDetail.channel || '') && String(currentDetail.channel || '') !== String(detail.channel || '')) ||
+        ['materializing', 'materialized'].includes(String(currentDetail.status || ''))
+      ) {
+        previewConflict = true
+        return
+      }
+      const updated = await db.run(
+        `UPDATE conversational_agent_events SET detail_json = ?
+         WHERE id = ? AND contact_id = ? AND agent_id = ? AND event_type = ? AND detail_json = ?`,
+        [JSON.stringify(detail), eventId, contactId, agentId, eventType, current.detail_json]
+      )
+      if (Number(updated?.changes ?? updated?.rowCount ?? 0) !== 1) previewConflict = true
+    })
+    if (previewConflict) {
+      return appointmentSelectionError(
+        'La identidad de esta sesión de prueba cambió. Reinicia el chat antes de ofrecer otro horario.',
+        'appointment_preview_offer_conflict'
+      )
+    }
+  } else {
   await db.transaction(async () => {
     const contactLock = await db.get(
       `SELECT id FROM contacts WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
@@ -1313,13 +1365,13 @@ async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTim
     const inserted = await db.run(
       `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
        VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
-      [eventId, contactId, agentId, NATIVE_APPOINTMENT_OFFER_EVENT, JSON.stringify(detail)]
+      [eventId, contactId, agentId, eventType, JSON.stringify(detail)]
     )
     if (Number(inserted?.changes ?? inserted?.rowCount ?? 0) !== 1) return
     const rows = await db.all(
       `SELECT id, detail_json FROM conversational_agent_events
        WHERE contact_id = ? AND agent_id = ? AND event_type = ? AND id != ?`,
-      [contactId, agentId, NATIVE_APPOINTMENT_OFFER_EVENT, eventId]
+      [contactId, agentId, eventType, eventId]
     )
     const supersededAt = new Date().toISOString()
     for (const row of rows || []) {
@@ -1331,26 +1383,152 @@ async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTim
       )
     }
   })
+  }
   const stored = await db.get(
     `SELECT id, contact_id, agent_id, event_type, detail_json FROM conversational_agent_events WHERE id = ?`,
     [eventId]
   )
   const storedDetail = parseNativeEventDetail(stored?.detail_json)
   if (
-    stored?.event_type !== NATIVE_APPOINTMENT_OFFER_EVENT ||
+    stored?.event_type !== eventType ||
     String(stored?.contact_id || '') !== contactId ||
     String(stored?.agent_id || '') !== agentId ||
     String(storedDetail.status || '') !== 'active' ||
     String(storedDetail.calendarId || '') !== String(calendarId) ||
-    String(storedDetail.startTime || '') !== String(startTime)
+    String(storedDetail.startTime || '') !== String(startTime) ||
+    (previewScopeId && String(storedDetail.previewScopeId || '') !== previewScopeId)
   ) {
     return appointmentSelectionError('La oferta de horario ya fue reemplazada por otra. Vuelve a ofrecer un solo horario.', 'appointment_offer_superseded')
   }
-  return { ok: true, durable: true, offerEventId: eventId, detail: storedDetail }
+  return {
+    ok: true,
+    durable: true,
+    preview: Boolean(previewScopeId),
+    offerEventId: eventId,
+    detail: storedDetail
+  }
+}
+
+function verifiedTestPaymentAuthorizesPreviewOffer({ ctx, offer, detail } = {}) {
+  const evidence = ctx?.dryRun && ctx?.testVerifiedPaymentEvidence && typeof ctx.testVerifiedPaymentEvidence === 'object'
+    ? ctx.testVerifiedPaymentEvidence
+    : null
+  if (!evidence || !offer?.detail_json) return false
+  return Boolean(
+    String(evidence.paymentMode || '').toLowerCase() === 'test' &&
+    String(evidence.paymentPurpose || '') === 'appointment_deposit' &&
+    String(evidence.previewScopeId || '') === String(ctx?.previewScopeId || '') &&
+    String(evidence.previewScopeId || '') === String(detail?.previewScopeId || '') &&
+    String(evidence.appointmentOfferEventId || '') === String(offer?.id || '') &&
+    String(evidence.appointmentOfferFingerprint || '') === createHash('sha256').update(String(offer.detail_json)).digest('hex') &&
+    String(evidence.calendarId || '') === String(detail?.calendarId || '') &&
+    String(evidence.startTime || '') === String(detail?.startTime || '') &&
+    String(evidence.testRunId || '').trim() &&
+    String(evidence.testEffectId || '').trim()
+  )
+}
+
+async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
+  const agentId = String(config?.id || ctx?.agentId || '').trim()
+  const contactId = String(ctx?.contactId || '').trim()
+  const executionId = String(ctx?.executionId || '').trim()
+  const channel = String(ctx?.channel || '').trim()
+  const previewScopeId = ctx?.dryRun && isConversationalAppointmentPreviewScopeId(ctx?.previewScopeId)
+    ? String(ctx.previewScopeId).trim()
+    : ''
+  if (!agentId || !contactId) {
+    return appointmentSelectionError(
+      'No se pudo identificar la conversación de la oferta. No se agendó nada.',
+      'appointment_offer_identity_missing'
+    )
+  }
+  if (ctx?.dryRun && !previewScopeId) {
+    return appointmentSelectionError(
+      'La sesión del tester no conserva la oferta anterior. Reinicia el chat de prueba.',
+      'appointment_preview_scope_missing'
+    )
+  }
+
+  const eventType = previewScopeId
+    ? CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT
+    : NATIVE_APPOINTMENT_OFFER_EVENT
+  const rows = previewScopeId
+    ? [await db.get(
+        `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
+         FROM conversational_agent_events WHERE id = ?`,
+        [buildConversationalAppointmentPreviewOfferEventId(previewScopeId)]
+      )].filter(Boolean)
+    : await db.all(
+        `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
+         FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = ?
+         ORDER BY created_at DESC, id DESC LIMIT 20`,
+        [contactId, agentId, eventType]
+      )
+
+  const eligible = []
+  let expired = false
+  let sameExecution = false
+  for (const row of rows || []) {
+    const detail = parseNativeEventDetail(row.detail_json)
+    if (
+      row.event_type !== eventType ||
+      String(row.contact_id || '') !== contactId ||
+      String(row.agent_id || '') !== agentId ||
+      (previewScopeId && String(detail.previewScopeId || '') !== previewScopeId) ||
+      (String(detail.channel || '') && String(detail.channel || '') !== channel)
+    ) continue
+    const status = String(detail.status || '')
+    const expiresAtMs = Date.parse(detail.expiresAt || '')
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      expired = true
+      continue
+    }
+    if (status === 'active') {
+      if (String(detail.executionId || '') === executionId) {
+        sameExecution = true
+        continue
+      }
+      eligible.push({ ...row, detail })
+      continue
+    }
+    if (previewScopeId) {
+      const testPaymentResume = status === 'accepted' && verifiedTestPaymentAuthorizesPreviewOffer({ ctx, offer: row, detail })
+      if (
+        status === 'accepted' &&
+        (String(detail.acceptedExecutionId || '') === executionId || testPaymentResume)
+      ) {
+        eligible.push({ ...row, detail, testPaymentResume })
+      }
+      continue
+    }
+    if (status !== 'accepted' || !detail.selectionEventId) continue
+    const selection = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?',
+      [detail.selectionEventId, NATIVE_APPOINTMENT_SELECTION_EVENT]
+    )
+    const selectionDetail = parseNativeEventDetail(selection?.detail_json)
+    if (
+      String(selectionDetail.offerEventId || '') === row.id &&
+      String(selectionDetail.executionId || '') === executionId
+    ) eligible.push({ ...row, detail })
+  }
+  if (eligible.length !== 1) {
+    return appointmentSelectionError(
+      expired
+        ? 'La oferta de horario expiró. Consulta disponibilidad y ofrece un horario nuevo.'
+        : sameExecution
+          ? 'La oferta necesita una respuesta nueva de la persona en otro turno antes de poder confirmarse.'
+        : 'No hay una única oferta estructurada vigente. Ofrece un solo horario con offer_appointment_slot.',
+      expired
+        ? 'appointment_offer_expired'
+        : (sameExecution ? 'appointment_confirmation_turn_required' : 'appointment_offer_required')
+    )
+  }
+  return { ok: true, offer: eligible[0], preview: Boolean(previewScopeId) }
 }
 
 async function verifyNativeAppointmentOfferEvent({ ctx, config, calendarId, startTime, evidence } = {}) {
-  if (ctx?.dryRun) return { ok: true, offerEventId: null }
   const agentId = String(config?.id || ctx?.agentId || '').trim()
   const contactId = String(ctx?.contactId || '').trim()
   if (evidence?.reusedForPaymentResume === true) {
@@ -1389,35 +1567,9 @@ async function verifyNativeAppointmentOfferEvent({ ctx, config, calendarId, star
       ? { ok: true, offerEventId, offerDetail }
       : appointmentSelectionError('La selección pagada no conserva una oferta estructurada exacta. No se agendó nada.', 'payment_resume_offer_mismatch')
   }
-  const rows = await db.all(
-    `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
-     FROM conversational_agent_events
-     WHERE contact_id = ? AND agent_id = ? AND event_type = ?
-     ORDER BY created_at DESC, id DESC LIMIT 20`,
-    [contactId, agentId, NATIVE_APPOINTMENT_OFFER_EVENT]
-  )
-  const offers = (rows || []).map((row) => ({ ...row, detail: parseNativeEventDetail(row.detail_json) }))
-  const eligible = []
-  for (const offer of offers) {
-    if (String(offer.detail.status || '') === 'active') {
-      eligible.push(offer)
-      continue
-    }
-    if (String(offer.detail.status || '') !== 'accepted' || !offer.detail.selectionEventId) continue
-    const selection = await db.get(
-      'SELECT detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?',
-      [offer.detail.selectionEventId, NATIVE_APPOINTMENT_SELECTION_EVENT]
-    )
-    const selectionDetail = parseNativeEventDetail(selection?.detail_json)
-    if (
-      String(selectionDetail.offerEventId || '') === offer.id &&
-      String(selectionDetail.executionId || '') === String(ctx?.executionId || '')
-    ) eligible.push(offer)
-  }
-  if (eligible.length !== 1) {
-    return appointmentSelectionError('No hay una única oferta estructurada vigente. Ofrece un solo horario con offer_appointment_slot.', 'appointment_offer_required')
-  }
-  const offer = eligible[0]
+  const candidate = await loadNativeAppointmentOfferCandidate({ ctx, config })
+  if (!candidate.ok) return candidate
+  const offer = candidate.offer
   const offerTurnIds = new Set(Array.isArray(evidence?.offerTurnMessageIds) ? evidence.offerTurnMessageIds.map(String) : [])
   const offerTurnText = (Array.isArray(ctx?.conversationMessages) ? ctx.conversationMessages : [])
     .filter((message) => offerTurnIds.has(String(message?.id || '')))
@@ -1431,7 +1583,11 @@ async function verifyNativeAppointmentOfferEvent({ ctx, config, calendarId, star
     String(offer.detail.calendarId || '') !== String(calendarId || '') ||
     String(offer.detail.startTime || '') !== String(startTime || '') ||
     String(offer.detail.localLabel || '') !== String(evidence?.localLabel || '') ||
-    (String(offer.detail.status || '') === 'active' && Date.parse(offer.detail.expiresAt || '') <= Date.now()) ||
+    (evidence?.offerEventId && String(evidence.offerEventId) !== String(offer.id)) ||
+    (
+      String(offer.detail.status || '') === 'active' &&
+      (!Number.isFinite(Date.parse(offer.detail.expiresAt || '')) || Date.parse(offer.detail.expiresAt || '') <= Date.now())
+    ) ||
     offerTurnText !== expectedText
   ) {
     return appointmentSelectionError('La respuesta no confirma la oferta estructurada vigente o el agente agregó otro horario. Reofrece uno solo.', 'appointment_offer_mismatch')
@@ -1446,7 +1602,91 @@ async function persistNativeAppointmentSelection({
   startTime,
   evidence
 } = {}) {
-  if (ctx.dryRun) return { ...evidence, durable: false, selectionEventId: null }
+  if (ctx.dryRun) {
+    const previewScopeId = isConversationalAppointmentPreviewScopeId(ctx?.previewScopeId)
+      ? String(ctx.previewScopeId).trim()
+      : ''
+    const offerEventId = String(evidence?.offerEventId || '').trim()
+    const executionId = String(ctx?.executionId || '').trim()
+    if (!previewScopeId || !offerEventId || !executionId) {
+      return appointmentSelectionError(
+        'La prueba perdió el vínculo interno con la oferta. Reinicia el chat y vuelve a ofrecer el horario.',
+        'appointment_preview_selection_identity_missing'
+      )
+    }
+    const current = await db.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [offerEventId]
+    )
+    const currentDetail = parseNativeEventDetail(current?.detail_json)
+    const sameIdentity = Boolean(
+      current?.event_type === CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT &&
+      String(current?.contact_id || '') === String(ctx?.contactId || '') &&
+      String(current?.agent_id || '') === String(config?.id || ctx?.agentId || '') &&
+      String(currentDetail.previewScopeId || '') === previewScopeId &&
+      String(currentDetail.calendarId || '') === String(calendarId || '') &&
+      String(currentDetail.startTime || '') === String(startTime || '')
+    )
+    if (!sameIdentity) {
+      return appointmentSelectionError(
+        'La oferta de prueba cambió antes de confirmar el horario. No se registró ninguna acción.',
+        'appointment_preview_offer_mismatch'
+      )
+    }
+    if (
+      String(currentDetail.status || '') === 'accepted' &&
+      verifiedTestPaymentAuthorizesPreviewOffer({ ctx, offer: current, detail: currentDetail })
+    ) {
+      return {
+        ...evidence,
+        durable: true,
+        preview: true,
+        reusedForTestPaymentResume: true,
+        selectionEventId: null
+      }
+    }
+    if (
+      String(currentDetail.status || '') === 'accepted' &&
+      String(currentDetail.acceptedExecutionId || '') === executionId
+    ) {
+      return { ...evidence, durable: true, preview: true, selectionEventId: null }
+    }
+    if (String(currentDetail.status || '') !== 'active') {
+      return appointmentSelectionError(
+        'La oferta de prueba ya fue consumida por otro mensaje. Ofrece un horario nuevo.',
+        'appointment_preview_offer_already_consumed'
+      )
+    }
+    const acceptedDetail = {
+      ...currentDetail,
+      status: 'accepted',
+      acceptedAt: new Date().toISOString(),
+      acceptedExecutionId: executionId
+    }
+    const accepted = await db.run(
+      `UPDATE conversational_agent_events SET detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [JSON.stringify(acceptedDetail), offerEventId, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT, current.detail_json]
+    )
+    if (Number(accepted?.changes ?? accepted?.rowCount ?? 0) !== 1) {
+      const replay = await db.get(
+        'SELECT detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?',
+        [offerEventId, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT]
+      )
+      const replayDetail = parseNativeEventDetail(replay?.detail_json)
+      if (
+        String(replayDetail.status || '') !== 'accepted' ||
+        String(replayDetail.acceptedExecutionId || '') !== executionId
+      ) {
+        return appointmentSelectionError(
+          'Otro mensaje cambió la oferta mientras se confirmaba. No se registró ninguna acción.',
+          'appointment_preview_selection_race'
+        )
+      }
+    }
+    return { ...evidence, durable: true, preview: true, selectionEventId: null }
+  }
   const agentId = String(config?.id || ctx?.agentId || '').trim()
   const contactId = String(ctx?.contactId || '').trim()
   const executionId = String(ctx?.executionId || '').trim()
@@ -2160,8 +2400,7 @@ async function verifyPaymentResumeAppointmentSelection({
   reconciliationId,
   agentId,
   contactId,
-  calendarId,
-  startTime
+  calendarId
 } = {}) {
   const cleanReconciliationId = String(reconciliationId || '').trim()
   const cleanAgentId = String(agentId || '').trim()
@@ -2208,15 +2447,17 @@ async function verifyPaymentResumeAppointmentSelection({
     [selectionEventId]
   )
   const detail = parseNativeEventDetail(selection?.detail_json)
+  const durableStartTime = String(detail.startTime || '').trim()
   const identityMatches = Boolean(
     selection?.event_type === NATIVE_APPOINTMENT_SELECTION_EVENT &&
     String(selection?.contact_id || '') === cleanContactId &&
     String(selection?.agent_id || '') === cleanAgentId &&
     String(detail.status || '') === 'active' &&
     String(detail.calendarId || '') === String(calendarId || '') &&
-    String(detail.startTime || '') === String(startTime || '') &&
     String(sourceDetail.appointmentSelectionCalendarId || '') === String(calendarId || '') &&
-    String(sourceDetail.appointmentSelectionStartTime || '') === String(startTime || '') &&
+    durableStartTime &&
+    !Number.isNaN(new Date(durableStartTime).getTime()) &&
+    String(sourceDetail.appointmentSelectionStartTime || '') === durableStartTime &&
     String(sourceDetail.appointmentSelectionVerifiedAt || '') === String(detail.verifiedAt || '')
   )
   if (!identityMatches) {
@@ -2250,28 +2491,92 @@ async function resolveNativeAppointmentSelection({
   ctx,
   config,
   calendarId,
-  startTime,
-  selectionEvidence,
   timezone
 } = {}) {
   const executionId = String(ctx?.executionId || '').trim()
   if (executionId.startsWith('payment-resume:')) {
-    return verifyPaymentResumeAppointmentSelection({
+    const paymentEvidence = await verifyPaymentResumeAppointmentSelection({
       reconciliationId: executionId.slice('payment-resume:'.length).trim(),
       agentId: config?.id || ctx?.agentId,
       contactId: ctx?.contactId,
-      calendarId,
-      startTime
+      calendarId
     })
+    if (!paymentEvidence.ok) return paymentEvidence
+    const offerAuthorization = await verifyNativeAppointmentOfferEvent({
+      ctx,
+      config,
+      calendarId,
+      startTime: paymentEvidence.selectedStartTime,
+      evidence: paymentEvidence
+    })
+    return offerAuthorization.ok
+      ? { ...paymentEvidence, offerEventId: offerAuthorization.offerEventId }
+      : offerAuthorization
   }
+  const candidate = await loadNativeAppointmentOfferCandidate({ ctx, config })
+  if (!candidate.ok) return candidate
+  const startTime = String(candidate.offer?.detail?.startTime || '').trim()
+  const offerTimezone = String(candidate.offer?.detail?.timezone || timezone || '').trim()
+  if (candidate.offer.testPaymentResume === true) {
+    // El webhook sandbox ya probó el hecho importante: el anticipo pagado está
+    // ligado criptográficamente a esta oferta preview exacta. El mensaje que
+    // reanuda el flujo puede ser el mismo transcript que creó el link y no debe
+    // reinterpretarse como una segunda confirmación textual. La identidad, el
+    // fingerprint, el calendario y el UTC ya fueron revalidados en el loader y
+    // volverán a comprobarse al persistir/materializar el efecto temporal.
+    return {
+      ok: true,
+      evidenceVerified: true,
+      nativeToolDecision: true,
+      selectionMode: 'accepted_prior_offer',
+      selectedStartTime: startTime,
+      customerQuote: '',
+      customerMessageId: null,
+      assistantOfferQuote: candidate.offer.detail.localLabel || null,
+      localLabel: candidate.offer.detail.localLabel || null,
+      timezone: offerTimezone || null,
+      offerMessageId: candidate.offer.detail.offerMessageId || null,
+      offerEventId: candidate.offer.id,
+      durable: true,
+      preview: true,
+      reusedForTestPaymentResume: true,
+      testPaymentEffectId: String(ctx?.testVerifiedPaymentEvidence?.testEffectId || '').trim() || null
+    }
+  }
+  const canonicalSlot = buildCanonicalAppointmentSlotOption(startTime, offerTimezone)
+  const latestCustomerMessage = [...(Array.isArray(ctx?.conversationMessages) ? ctx.conversationMessages : [])]
+    .reverse()
+    .find((message) => isCustomerAppointmentMessage(message) && appointmentMessageText(message))
+  const selectionEvidence = canonicalSlot && latestCustomerMessage
+    ? {
+        selectionMode: 'accepted_prior_offer',
+        selectedStartTime: String(startTime || '').trim(),
+        customerQuote: appointmentMessageText(latestCustomerMessage),
+        assistantOfferQuote: canonicalSlot.localLabel
+      }
+    : null
   const verified = verifyNativeAppointmentSelectionEvidence({
     messages: ctx?.conversationMessages,
     startTime,
-    timezone,
+    timezone: offerTimezone,
     executionId,
     evidence: selectionEvidence
   })
-  return verified
+  if (!verified.ok) return verified
+  const evidence = {
+    ...verified,
+    offerEventId: candidate.offer.id
+  }
+  const offerAuthorization = await verifyNativeAppointmentOfferEvent({
+    ctx,
+    config,
+    calendarId,
+    startTime,
+    evidence
+  })
+  return offerAuthorization.ok
+    ? { ...evidence, offerEventId: offerAuthorization.offerEventId }
+    : offerAuthorization
 }
 
 function getDepositRequirementForRuntime(ctx = {}, config = {}) {
@@ -2315,7 +2620,7 @@ async function rejectMissingDepositIfNeeded(
   ctx,
   config = {},
   accountLocale = {},
-  { appointmentRequestId = '' } = {}
+  { appointmentRequestId = '', calendarId = '', startTime = '' } = {}
 ) {
   const deposit = getDepositRequirementForRuntime(ctx, config)
   if (!deposit) return null
@@ -2325,6 +2630,25 @@ async function rejectMissingDepositIfNeeded(
     ? executionId.slice('payment-resume:'.length).trim()
     : ''
   const paymentLabel = getDepositRequirementLabel(ctx, config)
+  if (ctx.dryRun && ctx.testVerifiedPaymentEvidence && typeof ctx.testVerifiedPaymentEvidence === 'object') {
+    const evidence = ctx.testVerifiedPaymentEvidence
+    const expectedCurrency = String(deposit.currency || accountLocale.currency || '').trim().toUpperCase()
+    const testEvidenceMatches = Boolean(
+      String(evidence.paymentMode || '').toLowerCase() === 'test' &&
+      String(evidence.paymentPurpose || '') === 'appointment_deposit' &&
+      String(evidence.previewScopeId || '') === String(ctx.previewScopeId || '') &&
+      String(evidence.calendarId || '') === String(calendarId || '') &&
+      String(evidence.startTime || '') === String(startTime || '') &&
+      String(evidence.currency || '').trim().toUpperCase() === expectedCurrency &&
+      depositRequirementAmountMatches(deposit, evidence.amount) &&
+      String(evidence.testRunId || '').trim() &&
+      String(evidence.testEffectId || '').trim()
+    )
+    if (testEvidenceMatches) {
+      ctx.verifiedPaymentEvidence = { ...evidence, testPayment: true }
+      return null
+    }
+  }
   if (!ctx.dryRun) {
     const verification = await findVerifiedPaymentEvidence({
       database: db,
@@ -3684,10 +4008,6 @@ export function createConversationalTools(ctx) {
         visibleReply,
         effect: { liveEffect: 'OFRECERÍA un solo horario real y esperaría confirmación', marksObjectiveCompleted: false }
       })
-      if (ctx.dryRun) {
-        settleAction(action, 'simulated', { visibleReply, terminal: true, actionCompleted: false })
-        return { ok: true, simulated: true, actionCompleted: false, terminal: true, visibleReply }
-      }
       const persisted = await persistNativeAppointmentOffer({
         ctx,
         config,
@@ -3699,6 +4019,22 @@ export function createConversationalTools(ctx) {
       if (!persisted.ok) {
         settleAction(action, 'error', { error: persisted.error })
         return persisted
+      }
+      if (ctx.dryRun) {
+        settleAction(action, 'simulated', {
+          visibleReply,
+          terminal: true,
+          actionCompleted: false,
+          offerEventId: persisted.offerEventId
+        })
+        return {
+          ok: true,
+          simulated: true,
+          actionCompleted: false,
+          terminal: true,
+          visibleReply,
+          offerEventId: persisted.offerEventId
+        }
       }
       settleAction(action, 'ok', {
         terminal: true,
@@ -3712,13 +4048,8 @@ export function createConversationalTools(ctx) {
 
   const bookAppointmentTool = tool({
     name: 'book_appointment',
-    description: 'Agenda una cita real en el calendario blindado. Sólo se usa cuando el cliente confirma en otro turno la última oferta estructurada creada por offer_appointment_slot para ESTE startTime. Querer agendar, querer ir o proponer una fecha/hora no autoriza reservar en ese mismo turno. Copia exactamente options[].startTime; adjunta el mensaje completo del cliente, nunca un substring. El servidor comprueba oferta, selección durable, horario y carreras.',
+    description: 'Agenda una cita real en el calendario blindado. Sólo se usa cuando el cliente confirma en otro turno la última oferta estructurada creada por offer_appointment_slot. Querer agendar, querer ir o proponer una fecha/hora no autoriza reservar en ese mismo turno. No recibe horarios: el servidor recupera el único slot ofrecido, deriva la evidencia del hilo y comprueba oferta, orden de turnos, selección durable, disponibilidad y carreras.',
     parameters: z.object({
-      startTime: z.string().describe('Valor exacto de options[].startTime devuelto por get_free_slots; no recalcular ni convertir'),
-      selectionEvidence: z.preprocess(
-        (value) => value ?? null,
-        appointmentSelectionEvidenceSchema.nullable()
-      ).describe('Evidencia estructurada y literal de la confirmación de la oferta canónica; null sólo durante una reanudación de pago que ya trae selección durable ligada'),
       title: z.string().nullable().describe('Título corto de la cita; null usa el título seguro por defecto'),
       notes: z.string().nullable().describe('Resumen breve de lo que busca la persona; null usa una nota segura'),
       attendeeName: z.string().nullable().describe('Nombre de la persona que asistirá sólo cuando sea distinta del contacto del hilo; null si la cita es para quien escribe'),
@@ -3736,8 +4067,6 @@ export function createConversationalTools(ctx) {
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
       if (safetyFence) return safetyFence
       const {
-        startTime,
-        selectionEvidence,
         title,
         notes,
         attendeeName,
@@ -3750,29 +4079,19 @@ export function createConversationalTools(ctx) {
       if (!calendarId) {
         return { ok: false, actionCompleted: false, error: 'El calendario blindado de la capacidad no existe o ya no está activo. No se agendó nada; pasa la conversación a una persona.' }
       }
-      const start = new Date(startTime)
-      if (Number.isNaN(start.getTime())) {
-        return { ok: false, actionCompleted: false, error: 'startTime inválido: usa exactamente un slot devuelto por get_free_slots. No se agendó nada.' }
-      }
       const businessTimezone = await getAccountTimezone()
       let confirmationEvidence = await resolveNativeAppointmentSelection({
         ctx,
         config,
         calendarId,
-        startTime: String(startTime || '').trim(),
-        selectionEvidence,
         timezone: businessTimezone
       })
       if (!confirmationEvidence.ok) return confirmationEvidence
-      const offerAuthorization = await verifyNativeAppointmentOfferEvent({
-        ctx,
-        config,
-        calendarId,
-        startTime: String(startTime || '').trim(),
-        evidence: confirmationEvidence
-      })
-      if (!offerAuthorization.ok) return offerAuthorization
-      confirmationEvidence = { ...confirmationEvidence, offerEventId: offerAuthorization.offerEventId }
+      const startTime = String(confirmationEvidence.selectedStartTime || '').trim()
+      const start = new Date(startTime)
+      if (Number.isNaN(start.getTime())) {
+        return { ok: false, actionCompleted: false, error: 'La oferta guardada no conserva un horario válido. No se agendó nada.' }
+      }
       const threadContact = await getThreadContact(ctx)
       if (!threadContact) return missingThreadContactResult(ctx)
       const participantEvidenceMessages = await resolveAppointmentParticipantEvidenceMessages({
@@ -4058,7 +4377,11 @@ export function createConversationalTools(ctx) {
         ctx,
         config,
         ctx.accountLocale,
-        { appointmentRequestId: clientRequestId || '' }
+        {
+          appointmentRequestId: clientRequestId || '',
+          calendarId,
+          startTime: start.toISOString()
+        }
       )
       if (depositError) {
         if (!ctx.dryRun && confirmationEvidence?.durable === true) {
@@ -4413,13 +4736,8 @@ export function createConversationalTools(ctx) {
 
   const requestHumanBookingTool = tool({
     name: 'request_human_booking',
-    description: 'Revalida el horario y entrega el hilo al equipo sin crear una cita. Sólo se usa cuando el cliente confirma en otro turno la última oferta estructurada creada por offer_appointment_slot para ESTE startTime. Querer agendar, querer ir o proponer una fecha/hora no autoriza transferir ese slot en el mismo turno. Adjunta el mensaje completo del cliente, nunca un substring.',
+    description: 'Revalida el horario y entrega el hilo al equipo sin crear una cita. Sólo se usa cuando el cliente confirma en otro turno la última oferta estructurada creada por offer_appointment_slot. Querer agendar, querer ir o proponer una fecha/hora no autoriza transferir ese slot en el mismo turno. No recibe horarios: el servidor recupera el único slot ofrecido y comprueba la oferta, el orden de turnos y la disponibilidad.',
     parameters: z.object({
-      startTime: z.string().describe('Valor exacto de options[].startTime elegido por la persona; no recalcular ni convertir'),
-      selectionEvidence: z.preprocess(
-        (value) => value ?? null,
-        appointmentSelectionEvidenceSchema.nullable()
-      ).describe('Evidencia estructurada y literal de la confirmación de la oferta canónica; null sólo durante una reanudación de pago que ya trae selección durable ligada'),
       title: z.string().nullable().describe('Motivo corto de la cita; null usa un título seguro'),
       notes: z.string().nullable().describe('Resumen factual para la persona que terminará de agendar'),
       attendeeName: z.string().nullable().describe('Nombre de quien asistirá sólo si es distinto del contacto del hilo; null si es quien escribe'),
@@ -4433,7 +4751,7 @@ export function createConversationalTools(ctx) {
         z.array(appointmentPersonSchema).nullable()
       ).describe('Invitados adicionales confirmados; null o [] si no hay')
     }),
-    execute: async ({ startTime, selectionEvidence, title, notes, attendeeName, attendeeContext, primaryAttendee, guests }) => {
+    execute: async ({ title, notes, attendeeName, attendeeContext, primaryAttendee, guests }) => {
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
       if (safetyFence) return safetyFence
       const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
@@ -4442,29 +4760,19 @@ export function createConversationalTools(ctx) {
         return { ok: false, actionCompleted: false, error: 'El calendario blindado ya no existe o está apagado. No se entregó una solicitud de cita.' }
       }
 
-      const start = new Date(startTime)
-      if (Number.isNaN(start.getTime())) {
-        return { ok: false, actionCompleted: false, error: 'startTime inválido: usa exactamente un horario de get_free_slots. No se entregó ninguna solicitud.' }
-      }
       const businessTimezone = await getAccountTimezone()
       let confirmationEvidence = await resolveNativeAppointmentSelection({
         ctx,
         config,
         calendarId,
-        startTime: String(startTime || '').trim(),
-        selectionEvidence,
         timezone: businessTimezone
       })
       if (!confirmationEvidence.ok) return confirmationEvidence
-      const offerAuthorization = await verifyNativeAppointmentOfferEvent({
-        ctx,
-        config,
-        calendarId,
-        startTime: String(startTime || '').trim(),
-        evidence: confirmationEvidence
-      })
-      if (!offerAuthorization.ok) return offerAuthorization
-      confirmationEvidence = { ...confirmationEvidence, offerEventId: offerAuthorization.offerEventId }
+      const startTime = String(confirmationEvidence.selectedStartTime || '').trim()
+      const start = new Date(startTime)
+      if (Number.isNaN(start.getTime())) {
+        return { ok: false, actionCompleted: false, error: 'La oferta guardada no conserva un horario válido. No se entregó ninguna solicitud.' }
+      }
       const threadContact = await getThreadContact(ctx)
       if (!threadContact) return missingThreadContactResult(ctx)
       const participantEvidenceMessages = await resolveAppointmentParticipantEvidenceMessages({

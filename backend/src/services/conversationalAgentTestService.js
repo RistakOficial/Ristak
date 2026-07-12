@@ -22,6 +22,12 @@ import { withConversationalAgentTestMutationLock } from './conversationalAgentTe
 import { getAccountTimezone, normalizeDateOnlyInTimezone } from '../utils/dateUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { logger } from '../utils/logger.js'
+import {
+  CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+  buildConversationalAppointmentPreviewOfferEventId,
+  buildConversationalAppointmentPreviewScopeId,
+  cleanupConversationalAppointmentPreviewOffers
+} from './conversationalAppointmentPreviewOfferService.js'
 
 const TEST_RUN_ID_PATTERN = /^[A-Za-z0-9_-]{12,160}$/
 const TEST_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{8,160}$/
@@ -452,11 +458,16 @@ async function verifyTestAppointmentAction(action, scheduleCapability) {
   const confirmationEvidence = action?.confirmationEvidence && typeof action.confirmationEvidence === 'object'
     ? action.confirmationEvidence
     : null
+  const serverOwnedTestPaymentResume = Boolean(
+    confirmationEvidence?.reusedForTestPaymentResume === true &&
+    cleanString(confirmationEvidence?.offerEventId) &&
+    cleanString(confirmationEvidence?.testPaymentEffectId)
+  )
   const selectionVerified = Boolean(
     confirmationEvidence?.evidenceVerified === true &&
     confirmationEvidence?.nativeToolDecision === true &&
     cleanString(confirmationEvidence?.selectedStartTime) === startTime &&
-    cleanString(confirmationEvidence?.customerQuote)
+    (cleanString(confirmationEvidence?.customerQuote) || serverOwnedTestPaymentResume)
   )
   if (!selectionVerified) {
     throw testError(
@@ -515,6 +526,142 @@ async function verifyTestAppointmentAction(action, scheduleCapability) {
   if (!stillFree) {
     throw testError('Ese horario dejó de estar libre. No se registró la cita de prueba; vuelve a consultar espacios.', 409, 'test_slot_no_longer_free')
   }
+}
+
+async function claimPreviewAppointmentOfferForTestEffect({ runContext, request, effectId } = {}) {
+  const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+    testSessionId: runContext?.id,
+    requestedByUserId: runContext?.requestedByUserId,
+    agentId: runContext?.agent?.id
+  })
+  const expectedEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+  const evidenceEventId = cleanString(request?.confirmationEvidence?.offerEventId)
+  if (!expectedEventId || evidenceEventId !== expectedEventId) {
+    throw testError(
+      'La cita de prueba perdió el vínculo con la oferta confirmada. No se creó ninguna cita.',
+      409,
+      'test_appointment_offer_binding_missing'
+    )
+  }
+  const row = await db.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [expectedEventId]
+  )
+  const detail = parseJson(row?.detail_json, {})
+  const baseIdentityMatches = Boolean(
+    row?.event_type === CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT &&
+    cleanString(row?.contact_id) === cleanString(runContext?.contact?.id) &&
+    cleanString(row?.agent_id) === cleanString(runContext?.agent?.id) &&
+    cleanString(detail.previewScopeId) === previewScopeId &&
+    cleanString(detail.calendarId) === cleanString(request?.calendarId) &&
+    cleanString(detail.startTime) === cleanString(request?.startTime) &&
+    cleanString(request?.confirmationEvidence?.selectedStartTime) === cleanString(request?.startTime) &&
+    Date.parse(detail.expiresAt || '') > Date.now()
+  )
+  const materializationReplay = Boolean(
+    baseIdentityMatches &&
+    cleanString(detail.status) === 'materializing' &&
+    cleanString(detail.materializationEffectId) === cleanString(effectId) &&
+    cleanString(detail.materializationExecutionId) === cleanString(runContext?.executionId)
+  )
+  if (materializationReplay) return detail
+
+  let verifiedPaymentEvidence = null
+  const acceptedByCurrentTurn = Boolean(
+    baseIdentityMatches &&
+    cleanString(detail.status) === 'accepted' &&
+    cleanString(detail.acceptedExecutionId) === cleanString(runContext?.executionId)
+  )
+  if (
+    baseIdentityMatches &&
+    cleanString(detail.status) === 'accepted' &&
+    !acceptedByCurrentTurn &&
+    request?.confirmationEvidence?.reusedForTestPaymentResume === true
+  ) {
+    verifiedPaymentEvidence = await getConversationalAgentTestVerifiedPaymentEvidence({ runContext })
+  }
+  const acceptedByVerifiedTestPayment = Boolean(
+    verifiedPaymentEvidence &&
+    cleanString(verifiedPaymentEvidence.paymentMode).toLowerCase() === 'test' &&
+    cleanString(verifiedPaymentEvidence.paymentPurpose) === 'appointment_deposit' &&
+    cleanString(verifiedPaymentEvidence.testRunId) === cleanString(runContext?.id) &&
+    cleanString(verifiedPaymentEvidence.previewScopeId) === previewScopeId &&
+    cleanString(verifiedPaymentEvidence.appointmentOfferEventId) === expectedEventId &&
+    cleanString(verifiedPaymentEvidence.appointmentOfferFingerprint) === sha256(row?.detail_json || '') &&
+    cleanString(verifiedPaymentEvidence.calendarId) === cleanString(detail.calendarId) &&
+    cleanString(verifiedPaymentEvidence.startTime) === cleanString(detail.startTime) &&
+    cleanString(verifiedPaymentEvidence.testEffectId)
+  )
+  const identityMatches = baseIdentityMatches && (acceptedByCurrentTurn || acceptedByVerifiedTestPayment)
+  if (!identityMatches) {
+    throw testError(
+      'La oferta cambió antes de materializar la cita de prueba. No se creó ninguna cita ni se tocó la oferta nueva.',
+      409,
+      'test_appointment_offer_changed'
+    )
+  }
+  if (cleanString(detail.status) !== 'accepted') {
+    throw testError(
+      'La oferta ya fue consumida por otra acción de prueba. No se creó otra cita.',
+      409,
+      'test_appointment_offer_claimed'
+    )
+  }
+  const claimedDetail = {
+    ...detail,
+    status: 'materializing',
+    materializationEffectId: cleanString(effectId),
+    materializationExecutionId: cleanString(runContext?.executionId),
+    ...(acceptedByVerifiedTestPayment
+      ? { materializationPaymentEffectId: cleanString(verifiedPaymentEvidence.testEffectId) }
+      : {}),
+    materializationClaimedAt: toIso()
+  }
+  const claimed = await db.run(
+    `UPDATE conversational_agent_events SET detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [JSON.stringify(claimedDetail), expectedEventId, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT, row.detail_json]
+  )
+  if (mutationCount(claimed) !== 1) {
+    throw testError(
+      'Otra acción cambió la oferta mientras se registraba la cita de prueba. No se creó ninguna cita.',
+      409,
+      'test_appointment_offer_claim_race'
+    )
+  }
+  return claimedDetail
+}
+
+async function markPreviewAppointmentOfferMaterialized({ runContext, effectId } = {}) {
+  const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+    testSessionId: runContext?.id,
+    requestedByUserId: runContext?.requestedByUserId,
+    agentId: runContext?.agent?.id
+  })
+  const eventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+  const row = eventId
+    ? await db.get('SELECT detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?', [
+        eventId,
+        CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT
+      ])
+    : null
+  const detail = parseJson(row?.detail_json, {})
+  if (
+    cleanString(detail.status) !== 'materializing' ||
+    cleanString(detail.materializationEffectId) !== cleanString(effectId)
+  ) return false
+  const result = await db.run(
+    `UPDATE conversational_agent_events SET detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [
+      JSON.stringify({ ...detail, status: 'materialized', materializedAt: toIso() }),
+      eventId,
+      CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+      row.detail_json
+    ]
+  )
+  return mutationCount(result) === 1
 }
 
 function currencyFractionDigits(currency) {
@@ -638,6 +785,71 @@ async function verifyTestPaymentAction(action, paymentCapability) {
   }
 }
 
+async function resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig) {
+  const schedule = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
+  const payment = getConversationalCapability({ capabilitiesConfig }, 'collect_payment')
+  const usesAppointmentDeposit = Boolean(
+    schedule?.enabled &&
+    payment?.enabled &&
+    (payment.paymentMode === 'deposit' || payment.deposit?.enabled === true)
+  )
+  if (!usesAppointmentDeposit) return null
+
+  const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+    testSessionId: runContext?.id,
+    requestedByUserId: runContext?.requestedByUserId,
+    agentId: runContext?.agent?.id
+  })
+  const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+  const offer = offerEventId
+    ? await db.get(
+        `SELECT id, contact_id, agent_id, event_type, detail_json
+         FROM conversational_agent_events WHERE id = ?`,
+        [offerEventId]
+      )
+    : null
+  const detail = parseJson(offer?.detail_json, {})
+  const configuredCalendarId = cleanString(schedule?.calendarId)
+  const calendar = configuredCalendarId
+    ? await db.get(
+        `SELECT id, ghl_calendar_id, is_active FROM calendars
+         WHERE id = ? OR ghl_calendar_id = ? LIMIT 1`,
+        [configuredCalendarId, configuredCalendarId]
+      )
+    : null
+  const calendarMatches = Boolean(
+    calendar &&
+    !['0', 'false', 'off'].includes(String(calendar.is_active ?? '1').trim().toLowerCase()) &&
+    [calendar.id, calendar.ghl_calendar_id].filter(Boolean).map(String).includes(cleanString(detail.calendarId))
+  )
+  const identityMatches = Boolean(
+    offer?.event_type === CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT &&
+    cleanString(offer?.contact_id) === cleanString(runContext?.contact?.id) &&
+    cleanString(offer?.agent_id) === cleanString(runContext?.agent?.id) &&
+    cleanString(detail.previewScopeId) === previewScopeId &&
+    cleanString(detail.status) === 'accepted' &&
+    cleanString(detail.acceptedExecutionId) === cleanString(runContext?.executionId) &&
+    Date.parse(detail.expiresAt || '') > Date.now() &&
+    Number.isFinite(Date.parse(detail.startTime || '')) &&
+    calendarMatches
+  )
+  if (!identityMatches) {
+    throw testError(
+      'El anticipo de prueba no conserva una selección exacta de horario en esta sesión. Vuelve a ofrecer un horario y confírmalo antes de crear el link.',
+      409,
+      'test_payment_appointment_offer_missing'
+    )
+  }
+  return {
+    previewScopeId,
+    offerEventId: offer.id,
+    offerFingerprint: sha256(offer.detail_json),
+    calendarId: cleanString(detail.calendarId),
+    startTime: cleanString(detail.startTime),
+    acceptedExecutionId: cleanString(detail.acceptedExecutionId)
+  }
+}
+
 function actionForEffect(actions, effectType) {
   const acceptedTypes = effectType === 'appointment'
     ? new Set(['book_appointment', 'request_human_booking'])
@@ -660,6 +872,9 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
     agent_id: runContext.agent.id,
     effects_json: JSON.stringify(runContext.effects)
   }, effectType)
+  const appointmentOfferBinding = effectType === 'payment'
+    ? await resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig)
+    : null
 
   const scheduleForAssignment = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
   const handoffForAssignment = getConversationalCapability({ capabilitiesConfig }, 'handoff_human')
@@ -688,7 +903,8 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         currency: cleanString(action.currency).toUpperCase(),
         concept: cleanString(action.concept),
         productId: cleanString(action.catalogEvidence?.productId),
-        priceId: cleanString(action.catalogEvidence?.priceId)
+        priceId: cleanString(action.catalogEvidence?.priceId),
+        ...(appointmentOfferBinding ? { appointmentOfferBinding } : {})
       }
       : {
           actionType: cleanString(action.type),
@@ -724,6 +940,16 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
 
     try {
       capabilitiesConfig = await assertCurrentTestRunAuthority(claim.run, effectType)
+      if (effectType === 'payment' && appointmentOfferBinding) {
+        const currentBinding = await resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig)
+        if (JSON.stringify(currentBinding) !== JSON.stringify(appointmentOfferBinding)) {
+          throw testError(
+            'La oferta de la cita cambió mientras se preparaba el anticipo de prueba. No se creó el link.',
+            409,
+            'test_payment_appointment_offer_changed'
+          )
+        }
+      }
       if (effectType === 'assignment') {
         await assertCurrentTestRunAuthority(claim.run, 'assignment')
         if (!assignmentTargetUserId) {
@@ -761,9 +987,14 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         capabilitiesConfig = await assertCurrentTestRunAuthority(claim.run, 'appointment')
         const schedule = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
         await verifyTestAppointmentAction(action, schedule)
+        await claimPreviewAppointmentOfferForTestEffect({
+          runContext,
+          request,
+          effectId: claim.effect.id
+        })
         const humanBooking = action.type === 'request_human_booking'
         if (humanBooking) {
-          return await completeConversationalAgentTestEffect({
+          const completed = await completeConversationalAgentTestEffect({
             effectId: claim.effect.id,
             claimToken: claim.claimToken,
             status: 'recorded',
@@ -777,6 +1008,8 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
               summary: 'El horario real sigue libre. La solicitud se entregará a la persona configurada en una prueba temporal de asignación.'
             }
           })
+          await markPreviewAppointmentOfferMaterialized({ runContext, effectId: claim.effect.id })
+          return completed
         }
 
         const testExpiresAt = toIso(Date.now() + 5 * 60 * 1000)
@@ -823,7 +1056,7 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         const automationSimulatedActionCount = Number(automationExecution?.booked?.execution?.simulatedActionCount || 0) +
           Number(automationExecution?.status?.execution?.simulatedActionCount || 0)
         const reminderNotificationCount = Number(automationExecution?.reminders?.sentCount || 0)
-        return await completeConversationalAgentTestEffect({
+        const completed = await completeConversationalAgentTestEffect({
           effectId: claim.effect.id,
           claimToken: claim.claimToken,
           status: 'recorded',
@@ -842,6 +1075,8 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
             summary: `Cita de prueba creada de verdad. Se enviaron las notificaciones seguras${automationRealActionCount ? ` y ${automationRealActionCount} acción(es) real(es) aislada(s)` : ''}${reminderNotificationCount ? `, incluyendo ${reminderNotificationCount} recordatorio(s) al dueño de la prueba` : ''}${uniqueAutomationNames.length ? `; se recorrieron ${uniqueAutomationNames.length} automatización(es)` : ''}${automationSimulatedActionCount ? ` y ${automationSimulatedActionCount} efecto(s) irreversible(s) quedaron simulados` : ''}. La cita se eliminará automáticamente después de cinco minutos.`
           }
         })
+        await markPreviewAppointmentOfferMaterialized({ runContext, effectId: claim.effect.id })
+        return completed
       }
 
       capabilitiesConfig = await assertCurrentTestRunAuthority(claim.run, 'payment')
@@ -1063,6 +1298,69 @@ export async function buildConversationalAgentTestRuntimeEventContext({ runConte
   return facts.join('\n').slice(0, 2000)
 }
 
+export async function getConversationalAgentTestVerifiedPaymentEvidence({ runContext } = {}) {
+  if (!runContext?.id || !runContext?.requestedByUserId || !runContext?.agent?.id || !runContext?.contact?.id) return null
+  let rows = await db.all(
+    `SELECT * FROM conversational_agent_test_effects
+     WHERE run_id = ? AND effect_type = 'payment'
+     ORDER BY created_at DESC, id DESC`,
+    [runContext.id]
+  )
+  await syncPaymentEffects(rows, runContext.requestedByUserId)
+  rows = await db.all(
+    `SELECT * FROM conversational_agent_test_effects
+     WHERE run_id = ? AND effect_type = 'payment' AND status = 'paid_test'
+       AND COALESCE(cleanup_status, '') != 'cleaned'
+     ORDER BY created_at DESC, id DESC`,
+    [runContext.id]
+  )
+  for (const row of rows || []) {
+    const payload = parseJson(row.payload_json, {})
+    const binding = payload.appointmentOfferBinding && typeof payload.appointmentOfferBinding === 'object'
+      ? payload.appointmentOfferBinding
+      : null
+    if (
+      payload.paymentConfirmed !== true ||
+      cleanString(payload.paymentMode).toLowerCase() !== 'test' ||
+      !binding?.offerEventId ||
+      !binding?.offerFingerprint
+    ) continue
+    const offer = await db.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [cleanString(binding.offerEventId)]
+    )
+    const detail = parseJson(offer?.detail_json, {})
+    const valid = Boolean(
+      offer?.event_type === CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT &&
+      cleanString(offer?.contact_id) === cleanString(runContext.contact.id) &&
+      cleanString(offer?.agent_id) === cleanString(runContext.agent.id) &&
+      cleanString(detail.previewScopeId) === cleanString(binding.previewScopeId) &&
+      cleanString(detail.calendarId) === cleanString(binding.calendarId) &&
+      cleanString(detail.startTime) === cleanString(binding.startTime) &&
+      cleanString(detail.status) === 'accepted' &&
+      cleanString(detail.acceptedExecutionId) === cleanString(binding.acceptedExecutionId) &&
+      sha256(offer.detail_json) === cleanString(binding.offerFingerprint) &&
+      Date.parse(detail.expiresAt || '') > Date.now()
+    )
+    if (!valid) continue
+    return {
+      testRunId: runContext.id,
+      testEffectId: row.id,
+      paymentMode: 'test',
+      paymentPurpose: 'appointment_deposit',
+      amount: Number(payload.amount),
+      currency: cleanString(payload.currency).toUpperCase(),
+      previewScopeId: cleanString(binding.previewScopeId),
+      appointmentOfferEventId: offer.id,
+      appointmentOfferFingerprint: cleanString(binding.offerFingerprint),
+      calendarId: cleanString(binding.calendarId),
+      startTime: cleanString(binding.startTime)
+    }
+  }
+  return null
+}
+
 export async function listConversationalAgentTestEffects({ testRunId, requestedByUserId } = {}) {
   const runId = normalizeIdentifier(testRunId, TEST_RUN_ID_PATTERN, 'La sesión de prueba')
   await loadOwnedRun(runId, requestedByUserId, { active: false })
@@ -1239,6 +1537,14 @@ export async function cleanupConversationalAgentTestRun({ testRunId, requestedBy
         error.cleanupFailures = cleanupFailures
         throw error
       }
+      await cleanupConversationalAppointmentPreviewOffers({
+        previewScopeId: buildConversationalAppointmentPreviewScopeId({
+          testSessionId: runId,
+          requestedByUserId,
+          agentId: lockedRun.agent_id
+        }),
+        agentId: lockedRun.agent_id
+      })
       await db.run(
         `UPDATE conversational_agent_test_runs
          SET status = 'cleaned', cleaned_at = CURRENT_TIMESTAMP, updated_at = ?

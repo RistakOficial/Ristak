@@ -31,6 +31,7 @@ import {
 } from '../agents/conversational/nativeRuntimeConfig.js'
 import { getPaymentGateCheckoutKeys } from './publicPaymentGateService.js'
 import { withConversationalAgentTestMutationLock } from './conversationalAgentTestMutationLockService.js'
+import { CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT } from './conversationalAppointmentPreviewOfferService.js'
 import { isHighLevelConnected } from './integrationConnectionStateService.js'
 import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
 
@@ -4597,7 +4598,8 @@ export async function getConversationalAgentMetrics() {
           THEN 1 ELSE 0
         END) AS error_events
       FROM conversational_agent_events
-    `)
+      WHERE event_type != ?
+    `, [CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT])
   ])
 
   return buildConversationalAgentMetrics({
@@ -7479,7 +7481,8 @@ function mapConversationalAgentEventRow(row) {
 export async function listConversationalAgentEvents({ contactId = null, limit = 100, kind = null } = {}) {
   const normalizedLimit = Math.min(Math.max(Number(limit) || 100, 1), 500)
   const params = []
-  const where = []
+  const where = ['event_type != ?']
+  params.push(CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT)
   if (contactId) {
     where.push('contact_id = ?')
     params.push(contactId)

@@ -34,6 +34,13 @@ const VOICE_MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp
 const TEXT_EXTENSIONS = new Set(['txt', 'csv', 'json', 'md', 'html', 'xml'])
 const STATIC_BARS = Array.from({ length: 28 }, (_, i) => 6 + (i % 5) * 4)
 
+function createWizardTestTrackingId(kind: 'agent' | 'session' | 'message') {
+  const random = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+  return `wizard-test-${kind}-${random}`.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 160)
+}
+
 type DraftAttachment = ConversationalAgentTestAttachment & { id: string }
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -151,6 +158,12 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
   const sendAfterStopRef = useRef(false)
   const discardRef = useRef(false)
   const mountedRef = useRef(true)
+  // El wizard todavía no tiene un agente guardado, pero su chat sí necesita
+  // una identidad estable para conservar de forma aislada la oferta de horario
+  // entre el turno donde la muestra y el turno donde la persona la confirma.
+  // No habilita efectos reales: sólo identifica este mock dentro del tester.
+  const previewAgentIdRef = useRef(createWizardTestTrackingId('agent'))
+  const previewSessionIdRef = useRef(createWizardTestTrackingId('session'))
 
   const stopStream = () => {
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -203,7 +216,12 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
     try {
       const result: ConversationalAgentTestResult = await conversationalAgentService.testAgent(
         nextMessages.map(toPayload),
-        { config: getConfig() }
+        {
+          config: getConfig(),
+          agentId: previewAgentIdRef.current,
+          testSessionId: previewSessionIdRef.current,
+          testMessageId: createWizardTestTrackingId('message')
+        }
       )
       for (const action of result.actions || []) {
         setMessages((current) => [
