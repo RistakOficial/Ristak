@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 
 import { db } from '../src/config/database.js'
-import { createConversationalTools } from '../src/agents/conversational/tools.js'
+import {
+  createConversationalTools,
+  loadConversationalAppointmentOfferDecisionContext
+} from '../src/agents/conversational/tools.js'
 import { runToolCallingV2Turn } from '../src/agents/conversational/runner.js'
 import {
   getConversationalAgentTestVerifiedPaymentEvidence,
@@ -72,6 +75,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
   const username = `user_payment_resume_${suffix}`
   const offerMessageId = `message_offer_${suffix}`
   const confirmationMessageId = `message_confirm_${suffix}`
+  const acceptanceMessageId = `message_accept_${suffix}`
   const resumeMessageId = `message_resume_${suffix}`
   const currency = await getAccountCurrency()
   const timezone = await getAccountTimezone()
@@ -248,22 +252,195 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       conversationMessages: [
         { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' },
         { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
-        { id: confirmationRun.executionId, role: 'user', content: 'ok' }
+        { id: confirmationRun.executionId, role: 'user', content: 'antes dime cuánto cuesta' }
       ]
     }
-    const missingDeposit = await createConversationalTools(confirmationCtx)
-      .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify(terminalBookingArgs()))
-    assert.equal(missingDeposit.ok, false, JSON.stringify(missingDeposit))
-    assert.equal(missingDeposit.paymentEvidenceRequired, true)
-
     const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+    const offerBeforeWrongReplay = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )
+    const wrongReoffer = await createConversationalTools(confirmationCtx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime }))
+    assert.equal(wrongReoffer.ok, false, JSON.stringify(wrongReoffer))
+    assert.equal(wrongReoffer.code, 'appointment_preview_offer_pending_decision')
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, offerBeforeWrongReplay.detail_json)
+
+    confirmationCtx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: confirmationCtx,
+      config
+    })
+    assert.equal(confirmationCtx.appointmentOfferDecision?.active, true)
+    const decisionTools = createConversationalTools(confirmationCtx)
+    assert.equal(decisionTools.some((item) => item.name === 'get_free_slots'), false)
+    assert.equal(decisionTools.some((item) => item.name === 'offer_appointment_slot'), false)
+    assert.equal(decisionTools.some((item) => item.name === 'book_appointment'), false)
+    const keptOpen = await decisionTools
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'keep_open',
+        reply: 'claro, la valoración tiene el valor configurado; el horario sigue disponible',
+        agreedAmount: null,
+        ...terminalBookingArgs()
+      }))
+    assert.equal(keptOpen.ok, true, JSON.stringify(keptOpen))
+    assert.equal(JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json).status, 'active')
+
+    const acceptanceRun = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: acceptanceMessageId,
+      agentId,
+      requestedByUserId: userId,
+      contactId,
+      effects
+    })
+    const acceptanceCtx = {
+      ...confirmationCtx,
+      executionId: acceptanceRun.executionId,
+      actions: [],
+      conversationMessages: [
+        { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' },
+        { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
+        { id: confirmationRun.executionId, role: 'user', content: 'antes dime cuánto cuesta' },
+        { id: `assistant_keep_open_${suffix}`, role: 'assistant', content: keptOpen.visibleReply },
+        { id: acceptanceRun.executionId, role: 'user', content: 'ok, sí apártalo' }
+      ]
+    }
+    acceptanceCtx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: acceptanceCtx,
+      config
+    })
+
+    const activeOfferBeforePaymentPreflight = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )
+    const missingPaymentDataConfig = {
+      ...config,
+      capabilitiesConfig: {
+        ...capabilitiesConfig,
+        items: capabilitiesConfig.items.map((item) => item.id === 'collect_payment'
+          ? {
+              ...item,
+              deposit: {
+                ...item.deposit,
+                mode: 'range',
+                amount: null,
+                minAmount: 100,
+                maxAmount: 700
+              }
+            }
+          : item),
+        dataRequirements: {
+          enabled: true,
+          fields: [{ field: 'email', level: 'required', scope: 'payment' }],
+          updateContact: { enabled: false, policy: 'replace_placeholders' },
+          participants: { enabled: false, guestFields: ['name'], maxGuests: 10 }
+        }
+      }
+    }
+    const actionScopedPaymentCtx = {
+      ...acceptanceCtx,
+      config: missingPaymentDataConfig,
+      capabilitiesConfig: missingPaymentDataConfig.capabilitiesConfig,
+      actions: []
+    }
+    const actionScopedPaymentTools = createConversationalTools(actionScopedPaymentCtx)
+    assert.equal(actionScopedPaymentTools.some((item) => item.name === 'save_contact_data'), true)
+    const missingPaymentData = await actionScopedPaymentTools
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'accept',
+        reply: null,
+        agreedAmount: null,
+        ...terminalBookingArgs()
+      }))
+    assert.equal(missingPaymentData.ok, false, JSON.stringify(missingPaymentData))
+    assert.equal(missingPaymentData.needsData, true)
+    assert.match(missingPaymentData.visibleReply, /correo/i)
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, activeOfferBeforePaymentPreflight.detail_json)
+
+    const retainedOnlyForAction = await actionScopedPaymentTools
+      .find((item) => item.name === 'save_contact_data')
+      .invoke(null, JSON.stringify({
+        fullName: null,
+        phone: null,
+        alternatePhone: null,
+        email: 'paty@example.com',
+        company: null,
+        address: null,
+        customValues: null,
+        confirmedReplacement: false
+      }))
+    assert.equal(retainedOnlyForAction.ok, true, JSON.stringify(retainedOnlyForAction))
+    assert.equal(retainedOnlyForAction.retainedForCurrentAction, true)
+    assert.equal(retainedOnlyForAction.actionCompleted, false)
+    const effectiveContact = await createConversationalTools({
+      ...actionScopedPaymentCtx,
+      appointmentOfferDecision: null
+    }).find((item) => item.name === 'get_contact_profile')
+      .invoke(null, JSON.stringify({}))
+    assert.equal(effectiveContact.contact.email, 'paty@example.com')
+    assert.equal((await db.get('SELECT email FROM contacts WHERE id = ?', [contactId])).email, null)
+
+    const missingAgreedAmount = await actionScopedPaymentTools
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'accept',
+        reply: null,
+        agreedAmount: null,
+        ...terminalBookingArgs()
+      }))
+    assert.equal(missingAgreedAmount.ok, false, JSON.stringify(missingAgreedAmount))
+    assert.equal(missingAgreedAmount.requiredField, 'agreedAmount')
+    assert.match(missingAgreedAmount.visibleReply, /monto de anticipo/i)
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, activeOfferBeforePaymentPreflight.detail_json)
+
+    const acceptedWithAutomaticPayment = await createConversationalTools(acceptanceCtx)
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'accept',
+        reply: null,
+        agreedAmount: null,
+        ...terminalBookingArgs()
+      }))
+    assert.equal(acceptedWithAutomaticPayment.ok, true, JSON.stringify(acceptedWithAutomaticPayment))
+    assert.equal(acceptedWithAutomaticPayment.terminal, true)
+    assert.match(acceptedWithAutomaticPayment.visibleReply, /enlace de anticipo/i)
+    assert.equal(acceptanceCtx.actions.filter((action) => action.type === 'create_payment_link').length, 1)
+
     const boundBeforeConflictingReplay = await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerEventId]
     )
+    const replayDecisionContext = {
+      ...acceptanceCtx.appointmentOfferDecision,
+      active: false
+    }
     const conflictingDraftReplay = await createConversationalTools({
-      ...confirmationCtx,
+      ...acceptanceCtx,
+      appointmentOfferDecision: replayDecisionContext,
+      appointmentOfferResolutionAuthority: {
+        decision: 'accept',
+        offerEventId,
+        executionId: acceptanceRun.executionId,
+        calendarId,
+        startTime,
+        terminalToolName: acceptanceCtx.appointmentOfferDecision.terminalToolName
+      },
       actions: []
     }).find((item) => item.name === 'book_appointment')
       .invoke(null, JSON.stringify(alteredResumeBookingArgs()))
@@ -274,15 +451,9 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       [offerEventId]
     )).detail_json, boundBeforeConflictingReplay.detail_json)
 
-    const paymentLink = await createConversationalTools(confirmationCtx)
-      .find((item) => item.name === 'create_payment_link')
-      .invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
-    assert.equal(paymentLink.ok, true, JSON.stringify(paymentLink))
-    assert.equal(paymentLink.simulated, true)
-
     const paymentEffects = await recordConversationalAgentPreviewEffects({
-      runContext: confirmationRun,
-      actions: confirmationCtx.actions
+      runContext: acceptanceRun,
+      actions: acceptanceCtx.actions
     })
     assert.equal(paymentEffects.length, 1, JSON.stringify(paymentEffects))
     assert.equal(paymentEffects[0].type, 'payment')
@@ -349,7 +520,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       { id: `availability_${suffix}`, role: 'user', content: 'que fechas hay' },
       { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
       { id: confirmationRun.executionId, role: 'user', content: 'ok' },
-      { id: `assistant_payment_${suffix}`, role: 'assistant', content: `Para confirmar la cita se requiere un anticipo. ${paymentLink.paymentUrl}` }
+      { id: `assistant_payment_${suffix}`, role: 'assistant', content: `Para confirmar la cita se requiere un anticipo. ${paymentEffects[0].payload.paymentUrl}` }
     ]
     let forcedToolCalls = 0
     const resumedTurn = await runToolCallingV2Turn({

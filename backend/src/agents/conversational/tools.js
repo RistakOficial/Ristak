@@ -114,6 +114,29 @@ function cleanAppointmentText(value, maxLength) {
   return String(value || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength)
 }
 
+function requiredDataVisibleReply(result = {}) {
+  const labels = Array.isArray(result.requiredFields)
+    ? result.requiredFields.map((item) => cleanAppointmentText(item?.label, 120)).filter(Boolean)
+    : []
+  if (labels.length) {
+    return `para continuar me falta ${labels.join(', ')}. me pasas ${labels.length === 1 ? 'ese dato' : 'esos datos'}?`
+  }
+  if (result.requiredField === 'agreedAmount') {
+    const min = Number(result.minAmount) || 0
+    const max = Number(result.maxAmount) || 0
+    const range = min && max ? ` entre ${min} y ${max}` : ''
+    return `qué monto de anticipo vas a dejar${range}?`
+  }
+  if (result.amountOutOfRange) {
+    const min = Number(result.minAmount) || 0
+    const max = Number(result.maxAmount) || 0
+    return min && max
+      ? `ese anticipo debe quedar entre ${min} y ${max}. qué monto vas a dejar?`
+      : 'ese monto no entra en el rango configurado. qué monto vas a dejar?'
+  }
+  return ''
+}
+
 function getVirtualThreadContact(ctx = {}) {
   const source = ctx.virtualContact && typeof ctx.virtualContact === 'object'
     ? ctx.virtualContact
@@ -125,24 +148,40 @@ function getVirtualThreadContact(ctx = {}) {
     last_name: cleanAppointmentText(source.lastName || source.last_name, 120),
     phone: cleanAppointmentText(source.phone, 80),
     email: cleanAppointmentText(source.email, 240),
-    custom_fields: null,
+    custom_fields: source.custom_fields || null,
     total_paid: 0,
     purchases_count: 0,
     virtual: true
   }
 }
 
+function applyActionScopedContactData(ctx = {}, contact = null) {
+  if (!contact) return null
+  const actionScoped = ctx.actionScopedContactData && typeof ctx.actionScopedContactData === 'object'
+    ? ctx.actionScopedContactData
+    : null
+  if (!actionScoped) return contact
+  return {
+    ...contact,
+    ...actionScoped,
+    custom_fields: serializeContactCustomFieldsForDb(mergeContactCustomFields(
+      parseContactCustomFields(contact.custom_fields),
+      parseContactCustomFields(actionScoped.custom_fields)
+    ))
+  }
+}
+
 async function getThreadContact(ctx = {}) {
   const contactId = String(ctx.contactId || '').trim()
   if (ctx.virtualContact && typeof ctx.virtualContact === 'object') {
-    return getVirtualThreadContact(ctx)
+    return applyActionScopedContactData(ctx, getVirtualThreadContact(ctx))
   }
-  if (!contactId) return ctx.dryRun ? getVirtualThreadContact(ctx) : null
+  if (!contactId) return ctx.dryRun ? applyActionScopedContactData(ctx, getVirtualThreadContact(ctx)) : null
   const stored = await db.get(`
     SELECT id, full_name, first_name, last_name, phone, email, custom_fields, total_paid, purchases_count
     FROM contacts WHERE id = ?
   `, [contactId])
-  return stored || (ctx.dryRun ? getVirtualThreadContact(ctx) : null)
+  return applyActionScopedContactData(ctx, stored || (ctx.dryRun ? getVirtualThreadContact(ctx) : null))
 }
 
 function missingThreadContactResult(ctx = {}, actionType = 'contact_identity_unavailable') {
@@ -670,7 +709,9 @@ function assertRequiredContactData({ scope, contact, dataRequirements, facts = {
 async function enforceRequiredContactData({ ctx, scope, dataRequirements, contact = null, facts = {} } = {}) {
   const hasRequiredFields = activeContactDataRequirements({ scope, dataRequirements, facts }).length > 0
   if (!hasRequiredFields) return null
-  const resolvedContact = contact || await getThreadContact(ctx)
+  const resolvedContact = contact
+    ? applyActionScopedContactData(ctx, contact)
+    : await getThreadContact(ctx)
   if (!resolvedContact) return missingThreadContactResult(ctx)
   const validation = assertRequiredContactData({ scope, contact: resolvedContact, dataRequirements, facts })
   return validation.ok ? null : validation
@@ -717,6 +758,7 @@ async function guardMutationAgainstPreventiveMeasure(ctx = {}) {
 
 const PREVENTIVE_FENCED_MUTATION_TOOLS = new Set([
   'save_contact_data',
+  'resolve_active_appointment_offer',
   'book_appointment',
   'request_human_booking',
   'mark_ready_to_advance',
@@ -1553,6 +1595,7 @@ async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTim
     executionId,
     offerText: nativeAppointmentOfferText(localLabel),
     status: 'active',
+    phase: 'awaiting_decision',
     offeredAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + NATIVE_APPOINTMENT_SELECTION_COLLECTION_TTL_MS).toISOString(),
     ...(previewScopeId ? { previewScopeId } : {})
@@ -1573,13 +1616,23 @@ async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTim
         [eventId]
       )
       const currentDetail = parseNativeEventDetail(current?.detail_json)
+      const currentStatus = String(currentDetail.status || '')
+      const exactReplay = Boolean(
+        currentStatus === 'active' &&
+        String(currentDetail.executionId || '') === executionId &&
+        String(currentDetail.calendarId || '') === String(calendarId) &&
+        String(currentDetail.startTime || '') === String(startTime) &&
+        String(currentDetail.localLabel || '') === String(localLabel)
+      )
+      if (exactReplay) return
       if (
         current?.event_type !== eventType ||
         String(current?.contact_id || '') !== contactId ||
         String(current?.agent_id || '') !== agentId ||
         String(currentDetail.previewScopeId || '') !== previewScopeId ||
         (String(currentDetail.channel || '') && String(currentDetail.channel || '') !== String(detail.channel || '')) ||
-        ['accepted', 'materializing', 'materialized'].includes(String(currentDetail.status || ''))
+        ['active', 'resolving_handoff'].includes(currentStatus) ||
+        ['accepted', 'materializing', 'materialized'].includes(currentStatus)
       ) {
         previewConflict = true
         return
@@ -1593,38 +1646,62 @@ async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTim
     })
     if (previewConflict) {
       return appointmentSelectionError(
-        'La identidad de esta sesión de prueba cambió. Reinicia el chat antes de ofrecer otro horario.',
-        'appointment_preview_offer_conflict'
+        'Ya hay un horario pendiente de respuesta en esta prueba. Resuelve esa oferta antes de consultar u ofrecer otra.',
+        'appointment_preview_offer_pending_decision'
       )
     }
   } else {
-  await db.transaction(async () => {
-    const contactLock = await db.get(
-      `SELECT id FROM contacts WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
-      [contactId]
-    )
-    if (!contactLock?.id) throw new Error('El contacto dejó de existir antes de guardar la oferta')
-    const inserted = await db.run(
-      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
-       VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
-      [eventId, contactId, agentId, eventType, JSON.stringify(detail)]
-    )
-    if (Number(inserted?.changes ?? inserted?.rowCount ?? 0) !== 1) return
-    const rows = await db.all(
-      `SELECT id, detail_json FROM conversational_agent_events
-       WHERE contact_id = ? AND agent_id = ? AND event_type = ? AND id != ?`,
-      [contactId, agentId, eventType, eventId]
-    )
-    const supersededAt = new Date().toISOString()
-    for (const row of rows || []) {
-      const prior = parseNativeEventDetail(row.detail_json)
-      if (String(prior.status || '') !== 'active') continue
-      await db.run(
-        'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
-        [JSON.stringify({ ...prior, status: 'superseded', supersededAt, supersededByOfferEventId: eventId }), row.id, row.detail_json]
+    let liveConflict = false
+    await db.transaction(async () => {
+      const contactLock = await db.get(
+        `SELECT id FROM contacts WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+        [contactId]
+      )
+      if (!contactLock?.id) throw new Error('El contacto dejó de existir antes de guardar la oferta')
+      const priorRows = await db.all(
+        `SELECT id, detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = ?`,
+        [contactId, agentId, eventType]
+      )
+      const pendingOffer = (priorRows || []).find((row) => {
+        const prior = parseNativeEventDetail(row.detail_json)
+        return row.id !== eventId &&
+          ['active', 'resolving_handoff'].includes(String(prior.status || '')) &&
+          Number.isFinite(Date.parse(prior.expiresAt || '')) &&
+          Date.parse(prior.expiresAt || '') > Date.now() &&
+          (!String(prior.channel || '') || String(prior.channel || '') === String(detail.channel || ''))
+      })
+      if (pendingOffer) {
+        liveConflict = true
+        return
+      }
+      const inserted = await db.run(
+        `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+        [eventId, contactId, agentId, eventType, JSON.stringify(detail)]
+      )
+      if (Number(inserted?.changes ?? inserted?.rowCount ?? 0) !== 1) return
+      const rows = await db.all(
+        `SELECT id, detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = ? AND id != ?`,
+        [contactId, agentId, eventType, eventId]
+      )
+      const supersededAt = new Date().toISOString()
+      for (const row of rows || []) {
+        const prior = parseNativeEventDetail(row.detail_json)
+        if (String(prior.status || '') !== 'active') continue
+        await db.run(
+          'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
+          [JSON.stringify({ ...prior, status: 'superseded', supersededAt, supersededByOfferEventId: eventId }), row.id, row.detail_json]
+        )
+      }
+    })
+    if (liveConflict) {
+      return appointmentSelectionError(
+        'Ya hay un horario pendiente de respuesta. Resuelve esa oferta antes de consultar u ofrecer otra.',
+        'appointment_offer_pending_decision'
       )
     }
-  })
   }
   const stored = await db.get(
     `SELECT id, contact_id, agent_id, event_type, detail_json FROM conversational_agent_events WHERE id = ?`,
@@ -1715,6 +1792,7 @@ async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
   const eligible = []
   let expired = false
   let sameExecution = false
+  let unresolvedTransitionCount = 0
   for (const row of rows || []) {
     const detail = parseNativeEventDetail(row.detail_json)
     if (
@@ -1728,6 +1806,10 @@ async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
     const expiresAtMs = Date.parse(detail.expiresAt || '')
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
       expired = true
+      continue
+    }
+    if (status === 'resolving_handoff') {
+      unresolvedTransitionCount += 1
       continue
     }
     if (status === 'active') {
@@ -1759,8 +1841,9 @@ async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
       String(selectionDetail.executionId || '') === executionId
     ) eligible.push({ ...row, detail })
   }
-  if (eligible.length !== 1) {
-    return appointmentSelectionError(
+  if (eligible.length !== 1 || unresolvedTransitionCount > 0) {
+    return {
+      ...appointmentSelectionError(
       expired
         ? 'La oferta de horario expiró. Consulta disponibilidad y ofrece un horario nuevo.'
         : sameExecution
@@ -1769,9 +1852,55 @@ async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
       expired
         ? 'appointment_offer_expired'
         : (sameExecution ? 'appointment_confirmation_turn_required' : 'appointment_offer_required')
-    )
+      ),
+      eligibleOfferCount: eligible.length,
+      unresolvedTransitionCount
+    }
   }
   return { ok: true, offer: eligible[0], preview: Boolean(previewScopeId) }
+}
+
+/**
+ * Hidrata el hecho durable de que existe una oferta pendiente antes de llamar
+ * al modelo. No interpreta el mensaje del cliente: únicamente comprueba
+ * identidad, canal, expiración, fase y responsable configurado.
+ */
+export async function loadConversationalAppointmentOfferDecisionContext({ ctx, config } = {}) {
+  const scheduleCapability = getNativeCapability(ctx, config, 'schedule_appointment')
+  if (!scheduleCapability) return null
+  const terminalToolName = scheduleCapability.bookingOwner === 'human'
+    ? 'request_human_booking'
+    : 'book_appointment'
+  const terminalBinding = buildNativeAppointmentTerminalBinding(scheduleCapability, terminalToolName)
+  if (!terminalBinding) return null
+  const candidate = await loadNativeAppointmentOfferCandidate({ ctx, config })
+  if (!candidate?.ok) {
+    if (Number(candidate?.unresolvedTransitionCount || 0) > 0) {
+      throw Object.assign(
+        new Error('La entrega de una oferta al equipo quedó en transición; se bloquearon las acciones para evitar una cita o cobro duplicado.'),
+        { code: 'appointment_offer_resolution_in_progress', statusCode: 409 }
+      )
+    }
+    if (Number(candidate?.eligibleOfferCount || 0) > 1) {
+      throw Object.assign(
+        new Error('Hay más de una oferta de horario vigente para el mismo hilo; se bloquearon las acciones hasta resolver el estado.'),
+        { code: 'appointment_offer_state_ambiguous', statusCode: 409 }
+      )
+    }
+    return null
+  }
+  if (String(candidate.offer?.detail?.status || '') !== 'active') return null
+  return {
+    active: true,
+    offerEventId: String(candidate.offer.id || '').trim(),
+    offerFingerprint: createHash('sha256').update(String(candidate.offer.detail_json || '')).digest('hex'),
+    calendarId: String(candidate.offer.detail.calendarId || '').trim(),
+    startTime: String(candidate.offer.detail.startTime || '').trim(),
+    localLabel: String(candidate.offer.detail.localLabel || '').trim(),
+    preview: candidate.preview === true,
+    allowHandoff: Boolean(getNativeCapability(ctx, config, 'handoff_human')),
+    ...terminalBinding
+  }
 }
 
 async function verifyNativeAppointmentOfferEvent({ ctx, config, calendarId, startTime, evidence } = {}) {
@@ -2031,10 +2160,13 @@ async function persistNativeAppointmentSelection({
     )
     if (Number(inserted?.changes ?? inserted?.rowCount ?? 0) !== 1) return
     if (String(offerDetail.status || '') === 'active') {
-      await db.run(
+      const accepted = await db.run(
         'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
         [JSON.stringify({ ...offerDetail, status: 'accepted', acceptedAt: new Date().toISOString(), selectionEventId: eventId }), offerEventId, offer.detail_json]
       )
+      if (Number(accepted?.changes ?? accepted?.rowCount ?? 0) !== 1) {
+        throw new Error('La oferta cambió mientras se confirmaba; la selección se revirtió')
+      }
     }
     const supersededAt = new Date().toISOString()
     const priorSelections = await db.all(
@@ -2993,6 +3125,75 @@ async function resolveNativeAppointmentSelection({
       testPaymentEffectId: String(ctx?.testVerifiedPaymentEvidence?.testEffectId || '').trim() || null
     }
   }
+  const resolverAuthority = ctx?.appointmentOfferResolutionAuthority
+  const resolverAuthorized = Boolean(
+    resolverAuthority?.decision === 'accept' &&
+    String(resolverAuthority.offerEventId || '') === String(candidate.offer.id || '') &&
+    String(resolverAuthority.executionId || '') === executionId &&
+    String(resolverAuthority.calendarId || '') === String(calendarId || '') &&
+    String(resolverAuthority.startTime || '') === startTime &&
+    String(resolverAuthority.terminalToolName || '') &&
+    String(resolverAuthority.terminalToolName || '') === String(ctx?.appointmentOfferDecision?.terminalToolName || '')
+  )
+  if (resolverAuthorized) {
+    const conversationMessages = Array.isArray(ctx?.conversationMessages) ? ctx.conversationMessages : []
+    let latestCustomerIndex = -1
+    for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
+      const message = conversationMessages[index]
+      if (
+        isCustomerAppointmentMessage(message) &&
+        String(message?.id || '').trim() === executionId &&
+        appointmentMessageText(message)
+      ) {
+        latestCustomerIndex = index
+        break
+      }
+    }
+    const expectedOfferText = String(candidate.offer.detail.offerText || '').replace(/\s+/g, ' ').trim()
+    let visibleOfferMessage = null
+    for (let index = latestCustomerIndex - 1; index >= 0; index -= 1) {
+      const message = conversationMessages[index]
+      const messageText = appointmentMessageText(message).replace(/\s+/g, ' ').trim()
+      if (String(message?.role || '').trim().toLowerCase() === 'assistant' && messageText === expectedOfferText) {
+        visibleOfferMessage = message
+        break
+      }
+    }
+    const latestCustomerMessage = latestCustomerIndex >= 0 ? conversationMessages[latestCustomerIndex] : null
+    const customerQuote = appointmentMessageText(latestCustomerMessage)
+    const visibleOfferMessageId = String(visibleOfferMessage?.id || '').trim()
+    if (!customerQuote || !visibleOfferMessageId || !expectedOfferText) {
+      return appointmentSelectionError(
+        'La resolución nativa no puede demostrar que la persona vio esta oferta exacta antes de responder. No se agendó nada.',
+        'appointment_resolver_visible_offer_missing'
+      )
+    }
+    return {
+      ok: true,
+      evidenceVerified: true,
+      nativeToolDecision: true,
+      resolverDecision: true,
+      selectionMode: 'accepted_prior_offer',
+      selectedStartTime: startTime,
+      customerQuote,
+      customerMessageId: executionId,
+      customerMessageIds: [executionId],
+      latestCustomerMessageId: executionId,
+      assistantOfferQuote: candidate.offer.detail.localLabel || null,
+      localLabel: candidate.offer.detail.localLabel || null,
+      timezone: offerTimezone || null,
+      offerMessageId: visibleOfferMessageId,
+      offerTurnId: String(
+        visibleOfferMessage?.turnId ||
+        visibleOfferMessage?.turn_id ||
+        visibleOfferMessage?.executionId ||
+        visibleOfferMessage?.execution_id ||
+        ''
+      ).trim() || `assistant-turn:${visibleOfferMessageId}`,
+      offerTurnMessageIds: [visibleOfferMessageId],
+      offerEventId: candidate.offer.id
+    }
+  }
   const canonicalSlot = buildCanonicalAppointmentSlotOption(startTime, offerTimezone)
   const latestCustomerMessage = [...(Array.isArray(ctx?.conversationMessages) ? ctx.conversationMessages : [])]
     .reverse()
@@ -3732,9 +3933,11 @@ export function createConversationalTools(ctx) {
   const linkCapability = getNativeCapability(ctx, config, 'send_link')
   const handoffCapability = getNativeCapability(ctx, config, 'handoff_human')
   const customCapability = getNativeCapability(ctx, config, 'custom_goal')
-  const dataRequirements = ctx.capabilitiesConfig?.dataRequirements || {}
+  const dataRequirements = runtimeConfig.capabilitiesConfig?.dataRequirements || {}
   const safetyPolicy = ctx.capabilitiesConfig?.safetyPolicy || {}
   const nativePaymentPurpose = getNativePaymentPurpose(ctx, config)
+  const appointmentOfferDecisionMode = ctx.appointmentOfferDecision?.active === true
+  const canResolveOfferWithHandoff = Boolean(handoffCapability)
 
   const failClosedPreventiveMeasureToHuman = async ({ action, category, reason, cause }) => {
     try {
@@ -4177,7 +4380,9 @@ export function createConversationalTools(ctx) {
 
   const saveContactDataTool = tool({
     name: 'save_contact_data',
-    description: 'Guarda sólo datos que quien escribe confirmó como propios para el contacto de este mismo hilo. Nunca guarda aquí datos del titular distinto o invitados. No busca ni crea otra ficha; el servidor protege datos existentes y sólo reemplaza cuando la política lo permite.',
+    description: dataRequirements?.updateContact?.enabled
+      ? 'Guarda sólo datos que quien escribe confirmó como propios para el contacto de este mismo hilo. Nunca guarda aquí datos del titular distinto o invitados. No busca ni crea otra ficha; el servidor protege datos existentes y sólo reemplaza cuando la política lo permite.'
+      : 'Conserva sólo durante esta vuelta los datos que quien escribe confirmó como propios y que hacen falta para la acción. No modifica la ficha, no busca otro contacto y nunca se usa para datos del titular distinto o invitados.',
     parameters: z.object({
       fullName: z.string().nullable().describe('Nombre completo confirmado; null si no se proporcionó'),
       phone: z.string().nullable().describe('Teléfono principal confirmado; null si no se proporcionó'),
@@ -4192,8 +4397,8 @@ export function createConversationalTools(ctx) {
       confirmedReplacement: z.boolean().describe('Compatibilidad: el servidor nunca usa este booleano como autorización suficiente para reemplazar una identidad existente')
     }),
     execute: async ({ fullName, phone, alternatePhone, email, company, address, customValues }) => {
-      if (!dataRequirements?.enabled || !dataRequirements?.updateContact?.enabled) {
-        return { ok: false, actionCompleted: false, error: 'La actualización automática del contacto no está habilitada.' }
+      if (!dataRequirements?.enabled) {
+        return { ok: false, actionCompleted: false, error: 'No hay datos de contacto autorizados en esta configuración.' }
       }
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
       if (safetyFence) return safetyFence
@@ -4242,6 +4447,38 @@ export function createConversationalTools(ctx) {
       }
       const contact = await getThreadContact(ctx)
       if (!contact) return missingThreadContactResult(ctx)
+      if (dataRequirements?.updateContact?.enabled !== true) {
+        const actionScopedCustomUpdates = []
+        if (cleanAlternatePhone) actionScopedCustomUpdates.push({ key: 'alternate_phone', label: 'Teléfono alterno', value: cleanAlternatePhone })
+        if (company) actionScopedCustomUpdates.push({ key: 'company', label: 'Empresa', value: cleanAppointmentText(company, 400) })
+        if (address) actionScopedCustomUpdates.push({ key: 'address_1', label: 'Dirección', value: cleanAppointmentText(address, 800) })
+        for (const item of Array.isArray(customValues) ? customValues : []) {
+          const key = normalizeCustomKey(item?.key)
+          if (key && allowedCustomFields.has(key)) {
+            actionScopedCustomUpdates.push({ key, label: allowedCustomFields.get(key), value: cleanAppointmentText(item.value, 1000) })
+          }
+        }
+        ctx.actionScopedContactData = {
+          ...(ctx.actionScopedContactData || {}),
+          ...(cleanFullName ? { full_name: cleanFullName } : {}),
+          ...(cleanPhone ? { phone: cleanPhone } : {}),
+          ...(cleanEmail ? { email: cleanEmail } : {}),
+          ...(actionScopedCustomUpdates.length
+            ? {
+                custom_fields: serializeContactCustomFieldsForDb(mergeContactCustomFields(
+                  parseContactCustomFields(ctx.actionScopedContactData?.custom_fields),
+                  actionScopedCustomUpdates
+                ))
+              }
+            : {})
+        }
+        return {
+          ok: true,
+          actionCompleted: false,
+          retainedForCurrentAction: true,
+          note: 'Los datos quedaron disponibles únicamente para completar la acción de esta vuelta; la ficha no se modificó.'
+        }
+      }
       const action = pushAction(ctx, 'save_contact_data', {
         fields: [
           fullName ? 'full_name' : '',
@@ -6989,6 +7226,356 @@ export function createConversationalTools(ctx) {
     }
   })
 
+  const resolveActiveAppointmentOfferTool = tool({
+    name: 'resolve_active_appointment_offer',
+    description: [
+      'Resuelve la única oferta estructurada de horario que Ristak ya dejó pendiente.',
+      `La MISMA IA decide semánticamente: accept si la persona acepta; request_other_options si rechaza ese horario pero quiere otro; decline si ya no quiere agendar; ${canResolveOfferWithHandoff ? 'handoff si pide explícitamente hablar con una persona; ' : ''}keep_open si preguntó otra cosa o la respuesta es ambigua.`,
+      'Nunca uses accept por el simple hecho de que exista una oferta. No repitas ni reconstruyas fecha u hora; el servidor recupera el slot exacto y, si hay anticipo por link, prepara el enlace en este mismo flujo.'
+    ].join(' '),
+    parameters: z.object({
+      decision: z.enum(canResolveOfferWithHandoff
+        ? ['accept', 'request_other_options', 'decline', 'handoff', 'keep_open']
+        : ['accept', 'request_other_options', 'decline', 'keep_open']),
+      reply: z.string().nullable().describe('Sólo para keep_open: respuesta natural, breve y visible a la duda actual; null para las demás decisiones'),
+      title: z.string().nullable().describe('Sólo para accept: título corto de la cita; null usa el título seguro'),
+      notes: z.string().nullable().describe('Sólo para accept: resumen breve; null usa una nota segura'),
+      attendeeName: z.string().nullable().describe('Sólo para accept: nombre si asistirá alguien distinto al contacto; null si asiste quien escribe'),
+      attendeeContext: z.string().nullable().describe('Sólo para accept: relación o contexto de la persona distinta; null cuando no aplica'),
+      primaryAttendee: z.preprocess(
+        (value) => value ?? null,
+        appointmentPersonSchema.nullable()
+      ).describe('Sólo para accept: titular real distinto al contacto; null usa el contacto del hilo'),
+      guests: z.preprocess(
+        (value) => value ?? null,
+        z.array(appointmentPersonSchema).nullable()
+      ).describe('Sólo para accept: invitados confirmados; null o [] si no hay'),
+      agreedAmount: z.number().positive().nullable().describe('Sólo para accept con anticipo en rango: monto acordado; null cuando el anticipo es fijo')
+    }),
+    execute: async ({
+      decision,
+      reply,
+      title,
+      notes,
+      attendeeName,
+      attendeeContext,
+      primaryAttendee,
+      guests,
+      agreedAmount
+    }) => {
+      const expected = ctx.appointmentOfferDecision
+      const candidate = await loadNativeAppointmentOfferCandidate({ ctx, config })
+      const candidateFingerprint = createHash('sha256')
+        .update(String(candidate?.offer?.detail_json || ''))
+        .digest('hex')
+      if (
+        !expected?.active ||
+        !candidate?.ok ||
+        String(candidate.offer?.id || '') !== String(expected.offerEventId || '') ||
+        candidateFingerprint !== String(expected.offerFingerprint || '') ||
+        String(candidate.offer?.detail?.status || '') !== 'active' ||
+        String(candidate.offer?.detail?.calendarId || '') !== String(expected.calendarId || '') ||
+        String(candidate.offer?.detail?.startTime || '') !== String(expected.startTime || '') ||
+        String(candidate.offer?.detail?.localLabel || '') !== String(expected.localLabel || '')
+      ) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          terminal: true,
+          visibleReply: 'ese horario ya cambió o dejó de estar disponible. dime qué otro día te queda mejor'
+        }
+      }
+
+      if (decision === 'keep_open') {
+        return {
+          ok: true,
+          actionCompleted: false,
+          terminal: true,
+          visibleReply: cleanAppointmentText(reply, 900) || 'para no mover nada mal, qué te gustaría aclarar antes de decidir el horario?'
+        }
+      }
+
+      if (decision === 'handoff') {
+        if (!canResolveOfferWithHandoff || expected.allowHandoff !== true) {
+          return {
+            ok: false,
+            actionCompleted: false,
+            terminal: true,
+            visibleReply: 'en este momento no tengo habilitada la entrega directa al equipo. puedo conservar el horario mientras lo revisas'
+          }
+        }
+        const handoffStartedAt = new Date().toISOString()
+        const resolvingDetail = {
+          ...candidate.offer.detail,
+          status: 'resolving_handoff',
+          phase: 'resolving',
+          handoffExecutionId: String(ctx.executionId || '').trim(),
+          handoffStartedAt
+        }
+        const resolvingJson = JSON.stringify(resolvingDetail)
+        let handoffClaimed = false
+        await db.transaction(async () => {
+          const contactId = String(ctx.contactId || '').trim()
+          if (!ctx.dryRun) {
+            const contactLock = await db.get(
+              `SELECT id FROM contacts WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+              [contactId]
+            )
+            if (!contactLock?.id) return
+          }
+          const current = await db.get(
+            'SELECT detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?',
+            [candidate.offer.id, candidate.offer.event_type]
+          )
+          const currentFingerprint = createHash('sha256').update(String(current?.detail_json || '')).digest('hex')
+          if (currentFingerprint !== String(expected.offerFingerprint || '')) return
+          const updated = await db.run(
+            'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND event_type = ? AND detail_json = ?',
+            [resolvingJson, candidate.offer.id, candidate.offer.event_type, current.detail_json]
+          )
+          handoffClaimed = Number(updated?.changes ?? updated?.rowCount ?? 0) === 1
+        })
+        if (!handoffClaimed) {
+          return {
+            ok: false,
+            actionCompleted: false,
+            terminal: true,
+            visibleReply: 'ese horario cambió mientras entregaba el chat. necesito que el equipo lo revise antes de continuar'
+          }
+        }
+
+        let handoffResult
+        try {
+          handoffResult = await sendToHumanTool.invoke(null, JSON.stringify({
+            motivo: 'La persona pidió hablar con el equipo durante la selección de horario',
+            resumen: cleanAppointmentText(reply, 500) || 'Solicitud explícita de atención humana'
+          }))
+        } catch (error) {
+          await db.run(
+            'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND event_type = ? AND detail_json = ?',
+            [candidate.offer.detail_json, candidate.offer.id, candidate.offer.event_type, resolvingJson]
+          ).catch(() => {})
+          throw error
+        }
+        if (handoffResult?.ok) {
+          const handedOffJson = JSON.stringify({
+            ...resolvingDetail,
+            status: 'handed_off',
+            phase: 'resolved',
+            resolvedAt: new Date().toISOString(),
+            resolution: 'handoff'
+          })
+          const finalized = await db.run(
+            'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND event_type = ? AND detail_json = ?',
+            [handedOffJson, candidate.offer.id, candidate.offer.event_type, resolvingJson]
+          )
+          if (Number(finalized?.changes ?? finalized?.rowCount ?? 0) !== 1) {
+            return {
+              ok: false,
+              actionCompleted: true,
+              terminal: true,
+              visibleReply: 'el equipo ya recibió el chat, pero necesito que revisen manualmente el horario antes de continuar'
+            }
+          }
+        } else {
+          await db.run(
+            'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND event_type = ? AND detail_json = ?',
+            [candidate.offer.detail_json, candidate.offer.id, candidate.offer.event_type, resolvingJson]
+          ).catch(() => {})
+        }
+        return {
+          ...handoffResult,
+          terminal: true,
+          visibleReply: handoffResult?.ok
+            ? 'claro, dejo este caso con el equipo para que continúe contigo'
+            : (requiredDataVisibleReply(handoffResult) || 'no pude entregar el chat al equipo en este momento. necesito que lo revisen manualmente')
+        }
+      }
+
+      if (decision === 'request_other_options' || decision === 'decline') {
+        const resolvedAt = new Date().toISOString()
+        let resolved = false
+        await db.transaction(async () => {
+          const contactId = String(ctx.contactId || '').trim()
+          if (!ctx.dryRun) {
+            const contactLock = await db.get(
+              `SELECT id FROM contacts WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+              [contactId]
+            )
+            if (!contactLock?.id) return
+          }
+          const current = await db.get(
+            `SELECT id, contact_id, agent_id, event_type, detail_json
+             FROM conversational_agent_events WHERE id = ?`,
+            [candidate.offer.id]
+          )
+          const currentDetail = parseNativeEventDetail(current?.detail_json)
+          const currentFingerprint = createHash('sha256').update(String(current?.detail_json || '')).digest('hex')
+          if (
+            current?.event_type !== candidate.offer.event_type ||
+            String(current?.contact_id || '') !== contactId ||
+            String(current?.agent_id || '') !== String(config?.id || ctx.agentId || '') ||
+            currentFingerprint !== String(expected.offerFingerprint || '') ||
+            String(currentDetail.status || '') !== 'active'
+          ) return
+          const nextDetail = {
+            ...currentDetail,
+            status: decision === 'request_other_options' ? 'superseded' : 'declined',
+            phase: 'resolved',
+            resolvedAt,
+            resolvedExecutionId: String(ctx.executionId || '').trim(),
+            resolution: decision
+          }
+          const updated = await db.run(
+            `UPDATE conversational_agent_events SET detail_json = ?
+             WHERE id = ? AND event_type = ? AND detail_json = ?`,
+            [JSON.stringify(nextDetail), current.id, current.event_type, current.detail_json]
+          )
+          resolved = Number(updated?.changes ?? updated?.rowCount ?? 0) === 1
+        })
+        if (!resolved) {
+          return {
+            ok: false,
+            actionCompleted: false,
+            terminal: true,
+            visibleReply: 'ese horario cambió mientras lo revisaba. dime qué otro día te queda mejor'
+          }
+        }
+        return {
+          ok: true,
+          actionCompleted: true,
+          terminal: true,
+          visibleReply: decision === 'request_other_options'
+            ? 'claro, dejamos ese horario. qué otro día o momento te queda mejor?'
+            : 'claro, sin problema. si después quieres retomarlo, aquí estoy'
+        }
+      }
+
+      const configuredDeposit = getDepositRequirementForRuntime(ctx, config)
+      if (configuredDeposit) {
+        const paymentContact = await getPaymentContact(ctx)
+        const requiredPaymentData = await enforceRequiredContactData({
+          ctx,
+          scope: 'payment',
+          dataRequirements,
+          contact: paymentContact,
+          facts: paymentRequirementFacts(paymentCapability)
+        })
+        if (requiredPaymentData) {
+          return {
+            ...requiredPaymentData,
+            terminal: true,
+            visibleReply: requiredDataVisibleReply(requiredPaymentData) || 'para continuar con el anticipo me falta un dato. me ayudas a completarlo?'
+          }
+        }
+
+        const accountCurrency = String(
+          ctx.accountLocale?.currency || await getAccountCurrency().catch(() => '')
+        ).trim().toUpperCase()
+        const paymentAuthority = await resolveNativePaymentAuthority({
+          capability: paymentCapability,
+          quantity: 1,
+          agreedAmount: agreedAmount ?? null,
+          accountCurrency
+        })
+        if (!paymentAuthority.ok) {
+          const paymentQuestion = requiredDataVisibleReply(paymentAuthority)
+          return {
+            ...paymentAuthority,
+            terminal: true,
+            visibleReply: paymentQuestion || (
+              paymentAuthority.amountMismatch
+                ? 'el anticipo acordado no coincide con el configurado. qué monto vas a dejar?'
+                : 'no pude validar el anticipo configurado. necesito que el equipo lo revise antes de apartar el horario'
+            )
+          }
+        }
+      }
+
+      const terminalTool = expected.terminalToolName === 'request_human_booking'
+        ? requestHumanBookingTool
+        : bookAppointmentTool
+      ctx.appointmentOfferResolutionAuthority = {
+        decision: 'accept',
+        offerEventId: candidate.offer.id,
+        executionId: String(ctx.executionId || '').trim(),
+        calendarId: candidate.offer.detail.calendarId,
+        startTime: candidate.offer.detail.startTime,
+        terminalToolName: expected.terminalToolName
+      }
+      let bookingResult
+      try {
+        bookingResult = await terminalTool.invoke(null, JSON.stringify({
+          title: title ?? null,
+          notes: notes ?? null,
+          attendeeName: attendeeName ?? null,
+          attendeeContext: attendeeContext ?? null,
+          primaryAttendee: primaryAttendee ?? null,
+          guests: Array.isArray(guests) ? guests : []
+        }))
+      } finally {
+        delete ctx.appointmentOfferResolutionAuthority
+      }
+
+      if (bookingResult?.paymentEvidenceRequired === true) {
+        const methods = getDepositPaymentMethodsForRuntime(ctx, config)
+        if (methods.paymentLink && paymentCapability?.collectionMethod === 'payment_link') {
+          const paymentResult = await createPaymentLinkTool.invoke(null, JSON.stringify({
+            quantity: 1,
+            agreedAmount: agreedAmount ?? null
+          }))
+          if (paymentResult?.ok) {
+            return {
+              ...paymentResult,
+              actionCompleted: paymentResult.actionCompleted === true,
+              terminal: true,
+              visibleReply: `listo, preparé el enlace de anticipo por ${paymentResult.amount || ''} ${paymentResult.currency || ''}`.trim()
+            }
+          }
+          return {
+            ...paymentResult,
+            ok: false,
+            actionCompleted: false,
+            terminal: true,
+            visibleReply: 'el horario sí quedó elegido, pero no pude preparar el enlace de anticipo. necesito que el equipo lo revise'
+          }
+        }
+        if (methods.bankTransfer && paymentCapability?.collectionMethod === 'bank_transfer') {
+          const transferDetails = cleanAppointmentText(paymentCapability?.bankTransfer?.details, 1200)
+          return {
+            ok: true,
+            actionCompleted: false,
+            terminal: true,
+            visibleReply: transferDetails
+              ? `para apartar ese horario, realiza el anticipo con estos datos: ${transferDetails}. después mándame la foto o captura del comprobante`
+              : 'el horario quedó elegido, pero faltan los datos de transferencia. necesito que el equipo lo revise'
+          }
+        }
+      }
+
+      const bookingSucceeded = bookingResult?.ok === true && (
+        bookingResult?.actionCompleted === true ||
+        bookingResult?.simulated === true
+      )
+      if (!bookingSucceeded) {
+        const missingDataReply = requiredDataVisibleReply(bookingResult)
+        return {
+          ...bookingResult,
+          terminal: true,
+          visibleReply: missingDataReply || 'no pude terminar la cita con ese horario. necesito que el equipo lo revise antes de volver a intentarlo'
+        }
+      }
+      const humanBooking = expected.terminalToolName === 'request_human_booking'
+      return {
+        ...bookingResult,
+        terminal: true,
+        visibleReply: humanBooking
+          ? 'el horario seguía disponible y ya quedó preparada la entrega al equipo para que confirme la cita'
+          : (ctx.dryRun ? 'listo, la cita de prueba quedó confirmada' : 'listo, la cita quedó confirmada')
+      }
+    }
+  })
+
   const enabledCapabilities = new Set(
     getEnabledConversationalCapabilities(runtimeConfig).map((capability) => capability.id)
   )
@@ -7004,11 +7591,12 @@ export function createConversationalTools(ctx) {
   ) {
     nativeTools.push(getConversationHistoryTool)
   }
-  if (!ctx.followUpMode && dataRequirements?.enabled && dataRequirements?.updateContact?.enabled) {
+  if (!ctx.followUpMode && dataRequirements?.enabled) {
     nativeTools.push(saveContactDataTool)
   }
   if (
     !ctx.followUpMode &&
+    !appointmentOfferDecisionMode &&
     (
       enabledCapabilities.has('handoff_human') ||
       (enabledCapabilities.has('collect_payment') && paymentCapability?.afterPayment === 'handoff')
@@ -7017,15 +7605,19 @@ export function createConversationalTools(ctx) {
     nativeTools.push(sendToHumanTool)
   }
   if (!ctx.followUpMode && enabledCapabilities.has('schedule_appointment')) {
-    nativeTools.push(getFreeSlotsForAgentTool)
-    nativeTools.push(offerAppointmentSlotTool)
-    nativeTools.push(
-      scheduleCapability?.bookingOwner === 'human'
-        ? requestHumanBookingTool
-        : bookAppointmentTool
-    )
+    if (appointmentOfferDecisionMode) {
+      nativeTools.push(resolveActiveAppointmentOfferTool)
+    } else {
+      nativeTools.push(getFreeSlotsForAgentTool)
+      nativeTools.push(offerAppointmentSlotTool)
+      nativeTools.push(
+        scheduleCapability?.bookingOwner === 'human'
+          ? requestHumanBookingTool
+          : bookAppointmentTool
+      )
+    }
   }
-  if (!ctx.followUpMode && enabledCapabilities.has('collect_payment')) {
+  if (!ctx.followUpMode && !appointmentOfferDecisionMode && enabledCapabilities.has('collect_payment')) {
     if (paymentCapability?.collectionMethod === 'payment_link') {
       nativeTools.push(createPaymentLinkTool)
     }
@@ -7033,17 +7625,25 @@ export function createConversationalTools(ctx) {
       nativeTools.push(registerDepositProofTool)
     }
   }
-  if (!ctx.followUpMode && enabledCapabilities.has('send_link')) {
+  if (!ctx.followUpMode && !appointmentOfferDecisionMode && enabledCapabilities.has('send_link')) {
     nativeTools.push(sendGoalUrlTool)
   }
   if (
     !ctx.followUpMode &&
+    !appointmentOfferDecisionMode &&
     enabledCapabilities.has('custom_goal') &&
     customCapability?.completion === 'handoff'
   ) {
     nativeTools.push(markReadyTool)
   }
-  return nativeTools.map((toolDefinition) => wrapMutableToolWithPreventiveFence(toolDefinition, ctx))
+  const focusedTools = appointmentOfferDecisionMode
+    ? nativeTools.filter((toolDefinition) => [
+        'apply_safety_measure',
+        'save_contact_data',
+        'resolve_active_appointment_offer'
+      ].includes(String(toolDefinition?.name || '').trim()))
+    : nativeTools
+  return focusedTools.map((toolDefinition) => wrapMutableToolWithPreventiveFence(toolDefinition, ctx))
 }
 
 export const __conversationalToolsTestHooks = Object.freeze({

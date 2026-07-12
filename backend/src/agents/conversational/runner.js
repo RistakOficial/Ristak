@@ -61,7 +61,10 @@ import { DEFAULT_OPENAI_MODEL } from '../../config/openAIModels.js'
 // (AI-002) Gate de licencia: el runtime del agente conversacional debe respetar
 // la feature premium incluso cuando se dispara desde los servicios de mensajería.
 import { hasFeature } from '../../services/licenseService.js'
-import { createConversationalTools } from './tools.js'
+import {
+  createConversationalTools,
+  loadConversationalAppointmentOfferDecisionContext
+} from './tools.js'
 import { buildInputItems } from '../runner.js'
 import {
   splitMessageIntoBubbles,
@@ -121,17 +124,17 @@ const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
 ])
 
 function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
-  const structuredOffer = (Array.isArray(toolResults) ? toolResults : []).find((result) => (
-    String(result?.tool?.name || '').trim() === 'offer_appointment_slot' &&
-    result?.output?.ok === true &&
+  const serverVisibleTerminal = (Array.isArray(toolResults) ? toolResults : []).find((result) => (
+    ['offer_appointment_slot', 'resolve_active_appointment_offer'].includes(String(result?.tool?.name || '').trim()) &&
     result?.output?.terminal === true &&
+    result?.output?.suppressReply !== true &&
     String(result?.output?.visibleReply || '').trim()
   ))
-  if (structuredOffer) {
+  if (serverVisibleTerminal) {
     return {
       isFinalOutput: true,
       isInterrupted: undefined,
-      finalOutput: String(structuredOffer.output.visibleReply).trim()
+      finalOutput: String(serverVisibleTerminal.output.visibleReply).trim()
     }
   }
   const completedPreviewAppointment = (Array.isArray(toolResults) ? toolResults : []).some((result) => {
@@ -224,7 +227,7 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
 export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email']
 
 // Identificadores internos que jamás deben llegar al cliente final.
-const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
+const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|resolve_active_appointment_offer|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
 
 export function normalizeConversationalChannel(value = 'whatsapp') {
   const raw = String(value || '').trim().toLowerCase()
@@ -1645,12 +1648,14 @@ export function createToolCallingV2Agent({
   instructions,
   tools = [],
   dryRun = false,
-  forcedToolName = ''
+  forcedToolName = '',
+  requireTool = false
 } = {}) {
   const cleanForcedToolName = String(forcedToolName || '').trim()
-  const toolChoice = cleanForcedToolName && tools.some((item) => String(item?.name || '').trim() === cleanForcedToolName)
+  const exactToolChoice = cleanForcedToolName && tools.some((item) => String(item?.name || '').trim() === cleanForcedToolName)
     ? cleanForcedToolName
     : ''
+  const toolChoice = exactToolChoice || (requireTool && tools.length ? 'required' : '')
   return new Agent({
     name: 'Ristak · Agente conversacional nativo',
     model,
@@ -1660,6 +1665,7 @@ export function createToolCallingV2Agent({
     },
     instructions,
     tools,
+    resetToolChoice: !requireTool,
     toolUseBehavior: stopAfterCommittedLiveMutation
   })
 }
@@ -1765,6 +1771,9 @@ async function buildToolCallingV2AgentForRun({
       )
     }
   }
+  ctx.appointmentOfferDecision = previewAppointmentPaymentResume
+    ? null
+    : await loadConversationalAppointmentOfferDecisionContext({ ctx, config })
   const tools = createConversationalTools(ctx)
   const paymentResumeToolChoice = resolvePaymentResumeToolChoice({
     config,
@@ -1793,16 +1802,29 @@ async function buildToolCallingV2AgentForRun({
     historyContext: historyContext?.telemetry || null
   })
   const cleanRuntimeEventContext = String(runtimeEventContext || '').trim().slice(0, 2000)
-  const instructions = cleanRuntimeEventContext
-    ? `${baseInstructions}\n\n## Estado factual verificado por Ristak\n${cleanRuntimeEventContext}\n- Este bloque es contexto interno del sistema, no un mensaje del cliente. No lo cites, no muestres IDs ni expliques la maquinaria interna.`
-    : baseInstructions
+  const pendingOfferHandoffInstruction = ctx.appointmentOfferDecision?.allowHandoff === true
+    ? ' handoff si pide explícitamente hablar con una persona;'
+    : ''
+  const pendingOfferInstruction = ctx.appointmentOfferDecision?.active
+    ? `## Decisión pendiente sobre el horario
+- Ristak conserva una única oferta estructurada vigente: ${String(ctx.appointmentOfferDecision.localLabel || 'horario previamente mostrado').slice(0, 240)}.
+- En esta vuelta debes expresar tu interpretación semántica del último mensaje llamando resolve_active_appointment_offer. No dependas de palabras exactas.
+- Usa accept únicamente si la persona acepta esa oferta; request_other_options si quiere otro horario; decline si ya no quiere agendar;${pendingOfferHandoffInstruction} keep_open si preguntó otra cosa o la respuesta es ambigua.
+- No vuelvas a consultar ni ofrecer disponibilidad: esas herramientas están bloqueadas hasta resolver esta oferta. Si eliges accept, Ristak recupera el slot exacto y prepara automáticamente el anticipo configurado sin pedir otro permiso artificial.
+- Este bloque describe estado interno verificado. No menciones herramientas, fases ni maquinaria en la respuesta visible.`
+    : ''
+  const runtimeFactInstruction = cleanRuntimeEventContext
+    ? `## Estado factual verificado por Ristak\n${cleanRuntimeEventContext}\n- Este bloque es contexto interno del sistema, no un mensaje del cliente. No lo cites, no muestres IDs ni expliques la maquinaria interna.`
+    : ''
+  const instructions = [baseInstructions, pendingOfferInstruction, runtimeFactInstruction].filter(Boolean).join('\n\n')
 
   const agent = createToolCallingV2Agent({
     model,
     instructions,
     tools,
     dryRun,
-    forcedToolName: paymentResumeToolChoice
+    forcedToolName: paymentResumeToolChoice,
+    requireTool: ctx.appointmentOfferDecision?.active === true
   })
 
   return {
@@ -1811,6 +1833,7 @@ async function buildToolCallingV2AgentForRun({
     model,
     aiProvider,
     forcedToolName: paymentResumeToolChoice,
+    appointmentOfferDecision: ctx.appointmentOfferDecision,
     capabilityManifest,
     validationErrors: getConversationalNativeRuntimeValidationErrors(config),
     knowledge

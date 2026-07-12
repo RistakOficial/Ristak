@@ -3303,9 +3303,12 @@ flags `enabled` correspondientes tanto en frontend como en servidor.
 
 Sin `dataRequirements` activo, el agente usa la identidad del hilo y no insiste
 por nombre, telefono, correo, apellido ni otra ficha. `save_contact_data` sólo se
-expone cuando esa configuracion lo autoriza, aplica una allowlist en servidor,
+expone cuando esa configuracion autoriza campos, aplica una allowlist en servidor,
 valida telefono/correo y nunca usa datos de un invitado para sobrescribir al
-solicitante. Los campos marcados `required` se vuelven una precondicion real de
+solicitante. Si el dueño desactiva la actualizacion de la ficha, la misma tool
+conserva el dato confirmado únicamente durante esa vuelta para completar la
+accion y no escribe el contacto; así un dato obligatorio no entra en un ciclo
+imposible. Los campos marcados `required` se vuelven una precondicion real de
 servidor antes de cita, cobro o cualquier accion con alcance `any_action`; no
 basta con que el modelo diga que ya los obtuvo. Los opcionales no bloquean y los
 condicionales conservan su condicion explicita para que el modelo los solicite
@@ -3600,13 +3603,34 @@ nunca un booleano escrito por el modelo.
   preview y construye el unico texto visible de la oferta. El modelo no escribe,
   reformula ni agrega horarios; live y preview
   terminan la vuelta y entregan esa oferta en un solo globo, sin pasarla por el
-  divisor de mensajes. Una oferta nueva invalida las anteriores del contacto.
+  divisor de mensajes. Una oferta activa queda en fase durable
+  `awaiting_decision` y no puede ser sobrescrita por otra ejecución. Antes de
+  cada vuelta el backend hidrata ese hecho desde
+  `conversational_agent_events`; mientras siga pendiente oculta
+  `get_free_slots`, `offer_appointment_slot` y las tools de cobro directo, y
+  exige a la misma IA resolverla mediante una llamada estructurada: aceptar,
+  pedir otras opciones, rechazar o conservar la oferta abierta porque el mensaje
+  es ambiguo o trata otro tema. Entregar el chat a una persona aparece como
+  quinta decisión únicamente cuando la capacidad de handoff está habilitada; no
+  puede brincarse la configuración del dueño. No existe detector de
+  `ok`, listas de frases ni regex: el modelo conserva el trabajo semántico, pero
+  ya no tiene una tool con la que pueda volver a ofrecer el mismo horario. Pedir
+  otras opciones cambia la oferta anterior a `superseded`; rechazarla la cambia
+  a `declined`; entregarla a una persona la reclama primero por CAS y termina en
+  `handed_off`, por lo que nunca puede ganar también una aceptación concurrente;
+  sólo entonces se vuelve a habilitar la consulta de agenda.
+  Además, el guard de persistencia rechaza por CAS cualquier intento accidental
+  de pisar una oferta activa y conserva byte por byte la evidencia original.
+  Si la lectura durable falla, aparecen varias ofertas activas o una entrega
+  queda a medio resolver tras un crash, el runtime falla cerrado y no vuelve a
+  exponer agenda o cobro a ciegas.
   `book_appointment` y `request_human_booking` ya no le piden al modelo volver a
   copiar `startTime`, `selectionEvidence`, el mensaje del cliente ni la etiqueta
   del horario. La llamada nativa expresa la decision semantica del modelo; el
   servidor recupera `startTime` desde la unica oferta vigente que guardo el
   propio servidor y construye la evidencia con el mensaje completo mas reciente
-  del cliente y la oferta canonica del turno inmediatamente anterior. Después
+  del cliente y la oferta canonica que ya fue visible en el hilo. Puede haber una
+  aclaración intermedia sin perder la oferta. Después
   sólo comprueba identidad, orden y coincidencia literal contra el hilo; no usa
   regex ni reglas de palabras para adivinar intención. Una oferta ausente,
   vencida, tomada de otro turno, ambigua, ligada a otro slot o perteneciente a
@@ -3626,8 +3650,12 @@ nunca un booleano escrito por el modelo.
   y sigue libre, mediante el evento durable
   `appointment_slot_selection_verified`, ligado a agente, contacto, calendario,
   `startTime`, ejecucion y los IDs de la oferta y confirmacion. Al sellar la
-  seleccion, la oferta queda `accepted`; un retry exacto la puede reproducir,
-  pero nunca revivir despues de que otra seleccion la sustituyo.
+  seleccion, la oferta queda `accepted`; si la configuración exige anticipo por
+  link, esa misma resolución prepara el enlace automáticamente y no pide un
+  segundo “sí” artificial. Crear el link no confirma ni cobra el pago: la cita
+  continúa pendiente hasta recibir el webhook real. Un retry exacto puede
+  reproducir la selección, pero nunca revivirla después de que otra selección la
+  sustituyó.
   `get_free_slots` entrega el instante UTC que sólo debe copiarse sin cambios a
   `offer_appointment_slot` y, por separado, fecha, hora y etiqueta visibles ya
   calculadas con la zona horaria del negocio. Las tools terminales recuperan ese

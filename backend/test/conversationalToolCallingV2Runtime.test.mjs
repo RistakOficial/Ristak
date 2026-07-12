@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto'
 import { db } from '../src/config/database.js'
 import { buildInputItems } from '../src/agents/runner.js'
 import { buildNativeConversationalInstructions } from '../src/agents/conversational/nativePrompt.js'
-import { createConversationalTools } from '../src/agents/conversational/tools.js'
+import {
+  createConversationalTools,
+  loadConversationalAppointmentOfferDecisionContext
+} from '../src/agents/conversational/tools.js'
 import {
   CONVERSATIONAL_PREVIEW_CONTACT_ID,
   CONVERSATIONAL_PREVIEW_CONTACT_NAME,
@@ -163,6 +166,284 @@ test('Agent v2 puede exigir una herramienta terminal exacta sin aceptar nombres 
     forcedToolName: 'request_human_booking'
   })
   assert.equal(unavailableAgent.modelSettings.toolChoice, undefined)
+})
+
+test('una oferta durable pendiente activa un menú focalizado y exige una decisión nativa', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_offer_decision_${suffix}`
+  const contactId = `contact_offer_decision_${suffix}`
+  const previewScopeId = `appointment_preview_${'b'.repeat(48)}`
+  const offerEventId = `cae_appointment_preview_offer_${previewScopeId}`
+  const offerExecutionId = `test:offer_${suffix}`
+  const confirmationExecutionId = `test:confirm_${suffix}`
+  const config = {
+    id: agentId,
+    runtimeMode: 'tool_calling_v2',
+    aiProvider: 'openai',
+    model: 'gpt-4.1-mini',
+    capabilitiesConfig: {
+      items: [
+        { id: 'schedule_appointment', enabled: true, calendarId: `calendar_${suffix}`, bookingOwner: 'ai' },
+        {
+          id: 'collect_payment',
+          enabled: true,
+          collectionMethod: 'payment_link',
+          paymentMode: 'deposit',
+          gateway: 'stripe',
+          deposit: { enabled: true, mode: 'fixed', amount: 100, currency: 'MXN', methods: { paymentLink: true } }
+        },
+        { id: 'handoff_human', enabled: true }
+      ]
+    }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, 'appointment_slot_preview_offer_created', ?)`,
+      [offerEventId, contactId, agentId, JSON.stringify({
+        agentId,
+        contactId,
+        calendarId: `calendar_${suffix}`,
+        startTime: '2030-07-15T16:00:00.000Z',
+        localLabel: 'lunes 15 de julio de 2030 a las 10:00 a.m.',
+        timezone: 'America/Mexico_City',
+        channel: 'whatsapp',
+        executionId: offerExecutionId,
+        offerText: 'Tengo disponible lunes 15 de julio de 2030 a las 10:00 a.m. ¿Te funciona ese horario?',
+        status: 'active',
+        phase: 'awaiting_decision',
+        previewScopeId,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      })]
+    )
+
+    const result = await runToolCallingV2Turn({
+      config,
+      runtime: { modelProvider: {} },
+      messages: [
+        { id: offerExecutionId, role: 'assistant', content: 'Tengo disponible lunes 15 de julio de 2030 a las 10:00 a.m. ¿Te funciona ese horario?' },
+        { id: confirmationExecutionId, role: 'user', content: 'ok' }
+      ],
+      contactId,
+      dryRun: true,
+      channel: 'whatsapp',
+      executionId: confirmationExecutionId,
+      previewScopeId,
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      executeAgent: async ({ agent }) => {
+        const names = agent.tools.map((item) => item.name)
+        assert.equal(agent.modelSettings.toolChoice, 'required')
+        assert.equal(agent.resetToolChoice, false)
+        assert.ok(names.includes('resolve_active_appointment_offer'))
+        assert.equal(names.includes('get_business_profile'), false)
+        assert.equal(names.includes('list_products'), false)
+        assert.equal(names.includes('get_contact_profile'), false)
+        assert.equal(names.includes('get_conversation_history'), false)
+        assert.equal(names.includes('get_free_slots'), false)
+        assert.equal(names.includes('offer_appointment_slot'), false)
+        assert.equal(names.includes('book_appointment'), false)
+        assert.equal(names.includes('create_payment_link'), false)
+        return 'respuesta de prueba'
+      },
+      runInChannel: (_channel, callback) => callback()
+    })
+    assert.equal(result.appointmentOfferDecision?.offerEventId, offerEventId)
+
+    const decisionCtx = {
+      config,
+      capabilitiesConfig: config.capabilitiesConfig,
+      runtimeMode: 'tool_calling_v2',
+      contactId,
+      agentId,
+      channel: 'whatsapp',
+      dryRun: true,
+      previewScopeId,
+      executionId: confirmationExecutionId,
+      appointmentOfferDecision: result.appointmentOfferDecision,
+      accountLocale: { currency: 'MXN' },
+      conversationMessages: [
+        { id: offerExecutionId, role: 'assistant', content: 'Tengo disponible lunes 15 de julio de 2030 a las 10:00 a.m. ¿Te funciona ese horario?' },
+        { id: confirmationExecutionId, role: 'user', content: 'cuánto cuesta la consulta?' }
+      ],
+      actions: []
+    }
+    const keepOpen = await createConversationalTools(decisionCtx)
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'keep_open',
+        reply: 'la consulta tiene el valor configurado; el horario sigue pendiente',
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(keepOpen.ok, true)
+    assert.equal(JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json).status, 'active')
+
+    const otherOptions = await createConversationalTools(decisionCtx)
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'request_other_options',
+        reply: null,
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(otherOptions.ok, true)
+    assert.match(otherOptions.visibleReply, /otro día/i)
+    assert.equal(JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json).status, 'superseded')
+
+    const supersededRow = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )
+    const restoredOffer = JSON.parse(supersededRow.detail_json)
+    restoredOffer.status = 'active'
+    restoredOffer.phase = 'awaiting_decision'
+    delete restoredOffer.resolvedAt
+    delete restoredOffer.resolvedExecutionId
+    delete restoredOffer.resolution
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify(restoredOffer), offerEventId]
+    )
+    decisionCtx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: decisionCtx,
+      config
+    })
+    const handoffTools = createConversationalTools(decisionCtx)
+    const handedOff = await handoffTools
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'handoff',
+        reply: 'quiero hablar con una persona',
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(handedOff.ok, true, JSON.stringify(handedOff))
+    assert.equal(JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json).status, 'handed_off')
+    const staleAcceptance = await handoffTools
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'accept',
+        reply: null,
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(staleAcceptance.ok, false)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [offerEventId]).catch(() => {})
+  }
+})
+
+test('dos ofertas live vigentes fallan cerrado antes de volver a exponer agenda', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_ambiguous_offer_${suffix}`
+  const contactId = `contact_ambiguous_offer_${suffix}`
+  const calendarId = `calendar_ambiguous_offer_${suffix}`
+  const eventIds = [`offer_ambiguous_a_${suffix}`, `offer_ambiguous_b_${suffix}`]
+  const config = {
+    id: agentId,
+    capabilitiesConfig: {
+      items: [{ id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai' }]
+    }
+  }
+  try {
+    for (const [index, eventId] of eventIds.entries()) {
+      await db.run(
+        `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+         VALUES (?, ?, ?, 'appointment_slot_offer_created', ?)`,
+        [eventId, contactId, agentId, JSON.stringify({
+          agentId,
+          contactId,
+          calendarId,
+          startTime: `2030-07-${15 + index}T16:00:00.000Z`,
+          localLabel: `horario ${index + 1}`,
+          timezone: 'America/Mexico_City',
+          channel: 'whatsapp',
+          executionId: `old_execution_${index}_${suffix}`,
+          offerText: `Oferta ${index + 1}`,
+          status: 'active',
+          phase: 'awaiting_decision',
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+        })]
+      )
+    }
+    await assert.rejects(
+      loadConversationalAppointmentOfferDecisionContext({
+        ctx: {
+          config,
+          capabilitiesConfig: config.capabilitiesConfig,
+          contactId,
+          agentId,
+          channel: 'whatsapp',
+          dryRun: false,
+          executionId: `current_execution_${suffix}`
+        },
+        config
+      }),
+      (error) => error?.code === 'appointment_offer_state_ambiguous'
+    )
+    await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [eventIds[1]])
+    const resolvingRow = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [eventIds[0]]
+    )
+    const resolvingDetail = JSON.parse(resolvingRow.detail_json)
+    resolvingDetail.status = 'resolving_handoff'
+    resolvingDetail.phase = 'resolving'
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify(resolvingDetail), eventIds[0]]
+    )
+    await assert.rejects(
+      loadConversationalAppointmentOfferDecisionContext({
+        ctx: {
+          config,
+          capabilitiesConfig: config.capabilitiesConfig,
+          contactId,
+          agentId,
+          channel: 'whatsapp',
+          dryRun: false,
+          executionId: `next_execution_${suffix}`
+        },
+        config
+      }),
+      (error) => error?.code === 'appointment_offer_resolution_in_progress'
+    )
+  } finally {
+    for (const eventId of eventIds) {
+      await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [eventId]).catch(() => {})
+    }
+  }
 })
 
 test('un anticipo sandbox verificado exige la terminal humana cuando bookingOwner es human', async () => {
