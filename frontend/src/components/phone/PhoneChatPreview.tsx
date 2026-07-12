@@ -67,6 +67,7 @@ interface PhoneChatPreviewProps {
   emptyText?: string
   typing?: boolean
   headerActions?: PhoneChatPreviewHeaderAction[]
+  moreOptionsAction?: PhoneChatPreviewHeaderAction
   composer?: React.ReactNode
   hideComposer?: boolean
   className?: string
@@ -422,6 +423,7 @@ export const PhoneChatPreview: React.FC<PhoneChatPreviewProps> = ({
   emptyText,
   typing = false,
   headerActions,
+  moreOptionsAction,
   composer,
   hideComposer = false,
   className = '',
@@ -627,8 +629,15 @@ export const PhoneChatPreview: React.FC<PhoneChatPreviewProps> = ({
                 {action.icon || <RotateCcw size={17} />}
               </button>
             ))}
-            <button type="button" className={styles.headerIconButton} aria-label="Más opciones" disabled>
-              <MoreVertical size={19} />
+            <button
+              type="button"
+              className={styles.headerIconButton}
+              aria-label={moreOptionsAction?.label || 'Más opciones'}
+              title={moreOptionsAction?.label || 'Más opciones'}
+              onClick={moreOptionsAction?.onClick}
+              disabled={!moreOptionsAction || moreOptionsAction.disabled}
+            >
+              {moreOptionsAction?.icon || <MoreVertical size={19} />}
             </button>
           </div>
         </header>

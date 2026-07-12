@@ -39,6 +39,9 @@ export interface ScheduleAppointmentCapability extends ConversationalCapabilityB
   id: 'schedule_appointment'
   calendarId: string
   allowOverlaps: boolean
+  bookingOwner: 'ai' | 'human'
+  handoffUserId: string
+  handoffUserName: string
 }
 
 export interface CollectPaymentCapability extends ConversationalCapabilityBase {
@@ -405,6 +408,40 @@ export interface ConversationalAgentTestResult {
   actions: Array<{ type: string; effect?: { liveEffect?: string; marksObjectiveCompleted?: boolean }; [key: string]: unknown }>
   aiProvider: ConversationalAIProviderId
   model: string
+  testRunId?: string
+  testEffects?: ConversationalAgentTestEffectResult[]
+}
+
+export interface ConversationalAgentTestEffects {
+  enabled: boolean
+  scheduleAppointment: boolean
+  collectPayment: boolean
+  notifyOwner: boolean
+}
+
+export interface ConversationalAgentTestEffectResult {
+  type: string
+  status?: 'simulated' | 'executed' | 'skipped' | 'failed' | string
+  summary?: string
+  message?: string
+  notificationStatus?: string | null
+  notificationError?: string | null
+  [key: string]: unknown
+}
+
+export interface ConversationalAgentTestCleanupResult {
+  runId: string
+  cleaned: boolean
+  effects: ConversationalAgentTestEffectResult[]
+}
+
+export interface ConversationalAgentTestOptions {
+  config?: ConversationalAgentDefInput
+  agentId?: string
+  testSessionId?: string
+  testMessageId?: string
+  contactId?: string
+  effects?: ConversationalAgentTestEffects
 }
 
 export type ConversationalAgentTestAttachmentKind = 'image' | 'audio' | 'video' | 'document' | 'pdf' | 'text' | 'file'
@@ -738,7 +775,10 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
       calendarId: String(raw.calendarId || '').trim().slice(0, 160),
       // V2 siempre vuelve a comprobar un espacio libre. El campo sólo conserva
       // compatibilidad de lectura con agentes anteriores.
-      allowOverlaps: false
+      allowOverlaps: false,
+      bookingOwner: raw.bookingOwner === 'human' ? 'human' : 'ai',
+      handoffUserId: String(raw.handoffUserId || '').trim().slice(0, 160),
+      handoffUserName: String(raw.handoffUserName || '').trim().slice(0, 240)
     }
   }
 
@@ -1327,15 +1367,29 @@ export const conversationalAgentService = {
 
   testAgent(
     messages: ConversationalAgentTestMessage[],
-    options: { config?: ConversationalAgentDefInput; agentId?: string } = {}
+    options: ConversationalAgentTestOptions = {}
   ): Promise<ConversationalAgentTestResult> {
     return request<ConversationalAgentTestResult>('/test', {
       method: 'POST',
       body: JSON.stringify({
         messages,
         ...(options.config ? { config: options.config } : {}),
-        ...(options.agentId ? { agentId: options.agentId } : {})
+        ...(options.agentId ? { agentId: options.agentId } : {}),
+        ...(options.testSessionId ? { testSessionId: options.testSessionId } : {}),
+        ...(options.testMessageId ? { testMessageId: options.testMessageId } : {}),
+        ...(options.contactId ? { contactId: options.contactId } : {}),
+        ...(options.effects ? { effects: options.effects } : {})
       })
+    })
+  },
+
+  listTestRunEffects(testRunId: string): Promise<ConversationalAgentTestEffectResult[]> {
+    return request<ConversationalAgentTestEffectResult[]>(`/test-runs/${encodeURIComponent(testRunId)}/effects`)
+  },
+
+  cleanupTestRun(testRunId: string): Promise<ConversationalAgentTestCleanupResult> {
+    return request<ConversationalAgentTestCleanupResult>(`/test-runs/${encodeURIComponent(testRunId)}`, {
+      method: 'DELETE'
     })
   },
 

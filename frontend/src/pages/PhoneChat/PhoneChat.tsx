@@ -19624,7 +19624,10 @@ export const PhoneChat: React.FC = () => {
           id,
           enabled: true,
           calendarId: calendars.length === 1 ? calendars[0].id : '',
-          allowOverlaps: false
+          allowOverlaps: false,
+          bookingOwner: 'ai',
+          handoffUserId: '',
+          handoffUserName: ''
         }
       }
       if (id === 'collect_payment') {

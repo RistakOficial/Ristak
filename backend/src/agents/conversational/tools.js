@@ -72,6 +72,89 @@ function settleAction(action, status, detail = {}) {
   return action.outcome
 }
 
+function cleanAppointmentText(value, maxLength) {
+  return String(value || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function getVirtualThreadContact(ctx = {}) {
+  const source = ctx.virtualContact && typeof ctx.virtualContact === 'object'
+    ? ctx.virtualContact
+    : {}
+  return {
+    id: String(source.id || ctx.contactId || 'preview-contact').trim(),
+    full_name: cleanAppointmentText(source.fullName || source.full_name || 'Contacto de prueba', 240),
+    first_name: cleanAppointmentText(source.firstName || source.first_name, 120),
+    last_name: cleanAppointmentText(source.lastName || source.last_name, 120),
+    phone: cleanAppointmentText(source.phone, 80),
+    email: cleanAppointmentText(source.email, 240),
+    custom_fields: null,
+    total_paid: 0,
+    purchases_count: 0,
+    virtual: true
+  }
+}
+
+async function getThreadContact(ctx = {}) {
+  const contactId = String(ctx.contactId || '').trim()
+  if (ctx.virtualContact && typeof ctx.virtualContact === 'object') {
+    return getVirtualThreadContact(ctx)
+  }
+  if (!contactId) return ctx.dryRun ? getVirtualThreadContact(ctx) : null
+  const stored = await db.get(`
+    SELECT id, full_name, first_name, last_name, phone, email, custom_fields, total_paid, purchases_count
+    FROM contacts WHERE id = ?
+  `, [contactId])
+  return stored || (ctx.dryRun ? getVirtualThreadContact(ctx) : null)
+}
+
+function missingThreadContactResult(ctx = {}, actionType = 'contact_identity_unavailable') {
+  const action = pushAction(ctx, actionType, {
+    transferRequired: true,
+    terminal: true,
+    reason: 'thread_contact_missing'
+  })
+  const error = 'No se pudo comprobar el contacto interno de este hilo. No pidas nombre, apellido ni teléfono para buscar otra ficha; el caso necesita atención del equipo.'
+  settleAction(action, 'error', { transferRequired: true, terminal: true, error })
+  return {
+    ok: false,
+    actionCompleted: false,
+    transferRequired: true,
+    terminal: true,
+    error
+  }
+}
+
+function buildAppointmentParticipant({ contact, title, notes, attendeeName, attendeeContext } = {}) {
+  const threadContactLabel = cleanAppointmentText(
+    contact?.full_name || contact?.phone || contact?.email || 'Contacto',
+    180
+  ) || 'Contacto'
+  const attendee = cleanAppointmentText(attendeeName, 180)
+  const context = cleanAppointmentText(attendeeContext, 1000)
+  const requestedTitle = cleanAppointmentText(title, 240)
+  const requestedNotes = cleanAppointmentText(notes, 2000)
+
+  if (!attendee) {
+    return {
+      title: requestedTitle || `Cita - ${threadContactLabel}`,
+      notes: requestedNotes || 'Agendada por el agente conversacional',
+      attendeeName: null,
+      attendeeContext: null
+    }
+  }
+
+  return {
+    title: [`Cita para ${attendee}`, requestedTitle].filter(Boolean).join(' · ').slice(0, 240),
+    notes: [
+      `Solicitada desde el contacto ${threadContactLabel} para ${attendee}.`,
+      context ? `Contexto del asistente: ${context}.` : '',
+      requestedNotes
+    ].filter(Boolean).join(' ').slice(0, 2000),
+    attendeeName: attendee,
+    attendeeContext: context || null
+  }
+}
+
 function getToolRuntimeConfig(ctx = {}, config = {}) {
   return {
     ...config,
@@ -366,9 +449,11 @@ async function commitNativeHandoff({
   capability,
   signal = 'ready_for_human',
   signalOptions = {},
-  assignmentEventSource = 'handoff_human'
+  assignmentEventSource = 'handoff_human',
+  evidenceEvent = null
 } = {}) {
   return db.transaction(async () => {
+    let evidenceInserted = null
     const assignment = await assignNativeHandoffUser({
       contactId: ctx.contactId,
       capability
@@ -411,7 +496,21 @@ async function commitNativeHandoff({
       })
     }
 
-    return { assignment, state }
+    if (evidenceEvent?.eventType) {
+      const evidenceResult = await recordConversationalAgentEvent({
+        eventId: evidenceEvent.eventId || '',
+        contactId: ctx.contactId,
+        eventType: evidenceEvent.eventType,
+        detail: {
+          ...(evidenceEvent.detail && typeof evidenceEvent.detail === 'object' ? evidenceEvent.detail : {}),
+          agentId: config.id || ctx.agentId || null
+        },
+        throwOnError: true
+      })
+      evidenceInserted = evidenceResult?.inserted === true
+    }
+
+    return { assignment, state, evidenceInserted }
   })
 }
 
@@ -564,10 +663,16 @@ function buildPaymentChannels(channel) {
   }
 }
 
-async function getPaymentContact(contactId) {
-  const row = await db.get('SELECT id, full_name, email, phone FROM contacts WHERE id = ?', [contactId])
-  if (!row) return null
-  return { id: row.id, name: row.full_name, email: row.email, phone: row.phone }
+async function getPaymentContact(ctx = {}) {
+  const contact = await getThreadContact(ctx)
+  if (!contact) return null
+  return {
+    id: contact.id,
+    name: contact.full_name,
+    email: contact.email,
+    phone: contact.phone,
+    virtual: contact.virtual === true
+  }
 }
 
 const RECEIPT_MEDIA_WINDOW_HOURS = 72
@@ -991,11 +1096,28 @@ export function createConversationalTools(ctx) {
       : 'Devuelve los datos reales del contacto con el que conversas (nombre, teléfono, email, datos personalizados) y sus citas próximas. Úsala para no pedir datos que ya existen y para saber si ya tiene cita agendada.',
     parameters: z.object({}),
     execute: async () => {
-      const contact = await db.get(`
-        SELECT id, full_name, first_name, last_name, phone, email, custom_fields, total_paid, purchases_count
-        FROM contacts WHERE id = ?
-      `, [ctx.contactId])
-      if (!contact) return { ok: false, error: 'Contacto no encontrado' }
+      const contact = await getThreadContact(ctx)
+      if (!contact) return missingThreadContactResult(ctx)
+
+      if (contact.virtual) {
+        return {
+          ok: true,
+          contact: {
+            fullName: contact.full_name || 'Contacto de prueba',
+            phone: contact.phone || null,
+            email: contact.email || null,
+            customFields: null,
+            source: 'preview_thread'
+          },
+          upcomingAppointments: [],
+          pastClientEvidence: {
+            isPastClient: false,
+            successfulPayments: [],
+            pastAppointments: []
+          },
+          note: 'Este es el contacto virtual estable del probador. Úsalo como la identidad del hilo; no pidas teléfono ni intentes buscar otra ficha.'
+        }
+      }
 
       const nowIso = new Date().toISOString()
       const [appointments, pastAppointments, paymentRows] = await Promise.all([
@@ -1054,7 +1176,8 @@ export function createConversationalTools(ctx) {
           fullName: contact.full_name || null,
           phone: contact.phone || null,
           email: contact.email || null,
-          customFields
+          customFields,
+          source: 'current_thread'
         },
         upcomingAppointments: appointments.map((appt) => ({
           title: appt.title,
@@ -1066,7 +1189,8 @@ export function createConversationalTools(ctx) {
           isPastClient: successfulPayments.length > 0 || visiblePastAppointments.length > 0,
           successfulPayments,
           pastAppointments: visiblePastAppointments
-        }
+        },
+        note: 'Esta ficha ya es la identidad del hilo actual. No pidas otro teléfono, apellido ni registro para buscar a la misma persona.'
       }
     }
   })
@@ -1132,13 +1256,17 @@ export function createConversationalTools(ctx) {
     parameters: z.object({
       startTime: z.string().describe('Valor exacto de options[].startTime devuelto por get_free_slots; no recalcular ni convertir'),
       title: z.string().nullable().describe('Título corto de la cita; null usa el título seguro por defecto'),
-      notes: z.string().nullable().describe('Resumen breve de lo que busca la persona; null usa una nota segura')
+      notes: z.string().nullable().describe('Resumen breve de lo que busca la persona; null usa una nota segura'),
+      attendeeName: z.string().nullable().describe('Nombre de la persona que asistirá sólo cuando sea distinta del contacto del hilo; null si la cita es para quien escribe'),
+      attendeeContext: z.string().nullable().describe('Relación o contexto útil del asistente distinto, por ejemplo "mamá del contacto, dolor de rodilla"; null si no aplica')
     }),
     execute: async (args) => {
       const {
         startTime,
         title,
-        notes
+        notes,
+        attendeeName,
+        attendeeContext
       } = args || {}
       const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
       const calendarId = nativeCalendar?.id || null
@@ -1149,6 +1277,15 @@ export function createConversationalTools(ctx) {
       if (Number.isNaN(start.getTime())) {
         return { ok: false, actionCompleted: false, error: 'startTime inválido: usa exactamente un slot devuelto por get_free_slots. No se agendó nada.' }
       }
+      const threadContact = await getThreadContact(ctx)
+      if (!threadContact) return missingThreadContactResult(ctx)
+      const participant = buildAppointmentParticipant({
+        contact: threadContact,
+        title,
+        notes,
+        attendeeName,
+        attendeeContext
+      })
 
       const nativeExecutionId = String(ctx.executionId || '').trim()
       const nativeOverlapsAllowed = scheduleCapability?.allowOverlaps === true
@@ -1363,12 +1500,10 @@ export function createConversationalTools(ctx) {
       )
       if (depositError) return depositError
 
-      // Candado funcional anti-cita-inventada: el horario debe ser un slot REAL del
-      // calendario (dentro del horario de atención, en el futuro y no bloqueado).
-      // Validamos la FORMA del horario ignorando la ocupación: la política de empalme
-      // la aplica el chequeo dedicado de más abajo (que da un mensaje específico).
-      // Aquí sólo atajamos horas inventadas, fuera de horario o en el pasado, sin
-      // importar en qué turno se ofreció el slot (revalidación al momento de agendar).
+      // Candado funcional anti-cita-inventada: el horario debe seguir siendo un slot
+      // real y libre del calendario al momento de confirmar. La creación vuelve a
+      // comprobarlo dentro de su lock transaccional para cerrar también la carrera
+      // entre esta lectura y el INSERT definitivo.
       const startMs = start.getTime()
       const businessTimezone = await getAccountTimezone()
       const confirmationEvidence = { ok: true, evidenceVerified: false, nativeToolDecision: true }
@@ -1381,7 +1516,8 @@ export function createConversationalTools(ctx) {
         requestedStartTime: start.toISOString(),
         windowStart: slotWindowStart,
         windowEnd: slotWindowEnd,
-        lookupSlots: getLocalFreeSlots
+        lookupSlots: getLocalFreeSlots,
+        ignoreAppointmentConflicts: false
       })
       if (!slotValidation.ok) {
         if (slotValidation.availabilityCheckFailed) {
@@ -1397,8 +1533,7 @@ export function createConversationalTools(ctx) {
       // El controller debe recibir primero la llave durable: así un retry
       // idéntico reproduce la cita ya creada antes de volver a evaluar conflicto.
       // La primera creación sí vuelve a comprobar cupo dentro del lock transaccional.
-      const contact = await db.get('SELECT full_name, phone FROM contacts WHERE id = ?', [ctx.contactId])
-      const finalTitle = title || `Cita - ${contact?.full_name || contact?.phone || 'Contacto'}`
+      const finalTitle = participant.title
       const action = pushAction(ctx, 'book_appointment', {
         calendarId, startTime: start.toISOString(), endTime: end.toISOString(), title: finalTitle,
         confirmationEvidence: { nativeToolDecision: true },
@@ -1521,7 +1656,7 @@ export function createConversationalTools(ctx) {
             title: finalTitle,
             startTime: start.toISOString(),
             endTime: end.toISOString(),
-            notes: notes || 'Agendada por el agente conversacional',
+            notes: participant.notes,
             clientRequestId,
             strictAvailabilityCheck: true,
             source: 'conversational_agent_v2',
@@ -1729,6 +1864,206 @@ export function createConversationalTools(ctx) {
     }
   })
 
+  const requestHumanBookingTool = tool({
+    name: 'request_human_booking',
+    description: 'Revalida el horario exacto elegido y entrega el hilo al equipo para que una persona confirme y cree la cita. No crea citas ni marca el objetivo como cumplido. Copia exactamente options[].startTime devuelto por get_free_slots.',
+    parameters: z.object({
+      startTime: z.string().describe('Valor exacto de options[].startTime elegido por la persona; no recalcular ni convertir'),
+      title: z.string().nullable().describe('Motivo corto de la cita; null usa un título seguro'),
+      notes: z.string().nullable().describe('Resumen factual para la persona que terminará de agendar'),
+      attendeeName: z.string().nullable().describe('Nombre de quien asistirá sólo si es distinto del contacto del hilo; null si es quien escribe'),
+      attendeeContext: z.string().nullable().describe('Relación o contexto útil del asistente distinto; null si no aplica')
+    }),
+    execute: async ({ startTime, title, notes, attendeeName, attendeeContext }) => {
+      const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
+      const calendarId = nativeCalendar?.id || null
+      if (!calendarId) {
+        return { ok: false, actionCompleted: false, error: 'El calendario blindado ya no existe o está apagado. No se entregó una solicitud de cita.' }
+      }
+
+      const start = new Date(startTime)
+      if (Number.isNaN(start.getTime())) {
+        return { ok: false, actionCompleted: false, error: 'startTime inválido: usa exactamente un horario de get_free_slots. No se entregó ninguna solicitud.' }
+      }
+      const threadContact = await getThreadContact(ctx)
+      if (!threadContact) return missingThreadContactResult(ctx)
+      const participant = buildAppointmentParticipant({
+        contact: threadContact,
+        title,
+        notes,
+        attendeeName,
+        attendeeContext
+      })
+
+      const durationMinutes = Number(nativeCalendar.slot_duration) > 0 ? Number(nativeCalendar.slot_duration) : 60
+      const businessTimezone = await getAccountTimezone()
+      const startMs = start.getTime()
+      const slotWindowStart = normalizeDateOnlyInTimezone(
+        new Date(startMs - 24 * 60 * 60 * 1000).toISOString(),
+        businessTimezone
+      )
+      const slotWindowEnd = normalizeDateOnlyInTimezone(
+        new Date(startMs + 24 * 60 * 60 * 1000).toISOString(),
+        businessTimezone
+      )
+      const slotValidation = await revalidateAppointmentSlot({
+        calendarId,
+        requestedStartTime: start.toISOString(),
+        windowStart: slotWindowStart,
+        windowEnd: slotWindowEnd,
+        lookupSlots: getLocalFreeSlots,
+        ignoreAppointmentConflicts: false
+      })
+      if (!slotValidation.ok) return slotValidation
+      start.setTime(new Date(slotValidation.matchedStartTime).getTime())
+      const end = new Date(start.getTime() + durationMinutes * 60000)
+
+      const action = pushAction(ctx, 'request_human_booking', {
+        calendarId,
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        title: participant.title,
+        attendeeName: participant.attendeeName,
+        effect: {
+          liveEffect: 'ENTREGARÍA el horario elegido al equipo sin crear una cita',
+          marksObjectiveCompleted: false
+        }
+      })
+      if (ctx.dryRun) {
+        settleAction(action, 'simulated', {
+          actionCompleted: false,
+          appointmentCreated: false,
+          wouldTransferToHuman: true,
+          wouldNotifyHuman: true,
+          objectiveCompleted: false
+        })
+        return {
+          ok: true,
+          simulated: true,
+          appointmentCreated: false,
+          wouldTransferToHuman: true,
+          wouldNotifyHuman: true,
+          requestedSlot: {
+            title: participant.title,
+            startTime: start.toISOString(),
+            endTime: end.toISOString()
+          },
+          note: 'Simulación: el horario está disponible. En vivo se entregaría al equipo, pero no se crearía ni confirmaría una cita.'
+        }
+      }
+
+      const executionId = String(ctx.executionId || '').trim()
+      if (!executionId) {
+        const error = 'No se pudo identificar el mensaje que eligió el horario. No se entregó ni creó una cita.'
+        settleAction(action, 'error', { transferRequired: true, error })
+        return { ok: false, actionCompleted: false, transferRequired: true, error }
+      }
+
+      const agentId = String(config.id || ctx.agentId || '').trim()
+      const requestDigest = createHash('sha256')
+        .update([agentId, ctx.contactId, calendarId, start.toISOString(), executionId].join('\u0000'))
+        .digest('hex')
+        .slice(0, 48)
+      const evidenceEventId = `cae_human_booking_${requestDigest}`
+      const assignmentCapability = {
+        userId: scheduleCapability?.handoffUserId || '',
+        userName: scheduleCapability?.handoffUserName || ''
+      }
+
+      let assignment = { assigned: false, alreadyAssigned: false, userName: null }
+      let evidenceInserted = true
+      try {
+        const committed = await commitNativeHandoff({
+          ctx,
+          config,
+          capability: assignmentCapability,
+          signal: 'ready_for_human',
+          signalOptions: {
+            reason: 'La persona eligió un horario y el equipo debe terminar de agendar',
+            summary: `${participant.title}: ${start.toISOString()}`,
+            status: 'human'
+          },
+          assignmentEventSource: 'human_booking_requested',
+          evidenceEvent: {
+            eventId: evidenceEventId,
+            eventType: 'human_booking_requested',
+            detail: {
+              bookingOwner: 'human',
+              calendarId,
+              startTime: start.toISOString(),
+              endTime: end.toISOString(),
+              title: participant.title,
+              notes: participant.notes,
+              attendeeName: participant.attendeeName,
+              attendeeContext: participant.attendeeContext,
+              appointmentCreated: false,
+              objectiveCompleted: false,
+              sourceMessageId: executionId
+            }
+          }
+        })
+        assignment = committed.assignment
+        evidenceInserted = committed.evidenceInserted !== false
+      } catch (error) {
+        logger.error(`[Agente conversacional] No se pudo entregar la solicitud humana de cita: ${error.message}`)
+        const errorResult = {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          ...(error?.code ? { code: error.code } : {}),
+          error: error?.code
+            ? error.message
+            : 'No se pudo guardar y transferir la solicitud de cita. No afirmes que el equipo la recibió ni que la cita quedó confirmada.'
+        }
+        settleAction(action, 'error', { transferRequired: true, error: errorResult.error })
+        return errorResult
+      }
+
+      let notificationWarning = false
+      if (evidenceInserted) {
+        try {
+          await notifyHumanPriority(ctx, {
+            reason: 'Horario elegido pendiente de confirmación humana',
+            summary: `${participant.title}: ${start.toISOString()}`,
+            signal: 'ready_for_human'
+          })
+        } catch (error) {
+          notificationWarning = true
+          logger.warn(`[Agente conversacional] La solicitud humana quedó guardada, pero falló la notificación: ${error.message}`)
+        }
+      }
+
+      settleAction(action, 'ok', {
+        transferredToHuman: true,
+        appointmentCreated: false,
+        objectiveCompleted: false,
+        evidenceEventId,
+        replayed: !evidenceInserted,
+        ...(assignment.assigned
+          ? {
+              assignedUserId: assignment.assignedUserId,
+              assignedUserName: assignment.userName,
+              assignmentReused: assignment.alreadyAssigned
+            }
+          : {}),
+        ...(notificationWarning ? { warnings: ['priority_notification'] } : {})
+      })
+      return {
+        ok: true,
+        actionCompleted: true,
+        transferredToHuman: true,
+        appointmentCreated: false,
+        requestedSlot: {
+          title: participant.title,
+          startTime: start.toISOString(),
+          endTime: end.toISOString()
+        },
+        ...(assignment.assigned ? { assignedUserName: assignment.userName } : {}),
+        note: 'El horario seguía disponible y la solicitud quedó en manos del equipo. La cita todavía no está creada ni confirmada; dilo claramente.'
+      }
+    }
+  })
+
   const markReadyTool = tool({
     name: 'mark_ready_to_advance',
     description: `Marca como cumplido el objetivo propio configurado: ${customCapability?.description || 'objetivo personalizado'}. Registra el resultado y entrega el seguimiento al equipo.`,
@@ -1893,11 +2228,13 @@ export function createConversationalTools(ctx) {
         }
       }
 
-      const contact = await getPaymentContact(ctx.contactId)
+      const contact = await getPaymentContact(ctx)
       if (!contact) return { ok: false, actionCompleted: false, error: 'Contacto no encontrado. No se creó ni envió ningún link.' }
 
       const action = pushAction(ctx, 'create_payment_link', {
         amount: trustedPayment.amount,
+        unitAmount: trustedPayment.unitAmount || trustedPayment.amount,
+        quantity: trustedPayment.quantity || 1,
         currency: trustedPayment.currency,
         concept: trustedPayment.concept,
         catalogEvidence: {
@@ -2594,7 +2931,12 @@ export function createConversationalTools(ctx) {
     nativeTools.push(sendToHumanTool)
   }
   if (!ctx.followUpMode && enabledCapabilities.has('schedule_appointment')) {
-    nativeTools.push(getFreeSlotsForAgentTool, bookAppointmentTool)
+    nativeTools.push(getFreeSlotsForAgentTool)
+    nativeTools.push(
+      scheduleCapability?.bookingOwner === 'human'
+        ? requestHumanBookingTool
+        : bookAppointmentTool
+    )
   }
   if (!ctx.followUpMode && enabledCapabilities.has('collect_payment')) {
     const methods = paymentCapability?.deposit?.methods || {}

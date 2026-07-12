@@ -3732,6 +3732,27 @@ export async function getConversationalNativeRuntimeResourceValidationErrors(nex
       ))
     }
   }
+  if (schedule?.bookingOwner === 'human' && schedule.handoffUserId) {
+    const assignedUser = await db.get(
+      'SELECT id, is_active FROM users WHERE CAST(id AS TEXT) = ? LIMIT 1',
+      [schedule.handoffUserId]
+    )
+    if (!assignedUser) {
+      errors.push(nativeResourceValidationItem(
+        'CONVERSATIONAL_CAPABILITY_SCHEDULE_HANDOFF_USER_NOT_FOUND',
+        'schedule_appointment',
+        'capabilitiesConfig.items.schedule_appointment.handoffUserId',
+        'La persona elegida para terminar de agendar ya no existe. Elige un usuario activo o deja la entrega al equipo.'
+      ))
+    } else if (!isStoredRecordActive(assignedUser.is_active)) {
+      errors.push(nativeResourceValidationItem(
+        'CONVERSATIONAL_CAPABILITY_SCHEDULE_HANDOFF_USER_INACTIVE',
+        'schedule_appointment',
+        'capabilitiesConfig.items.schedule_appointment.handoffUserId',
+        'La persona elegida para terminar de agendar está desactivada. Actívala, elige otra o deja la entrega al equipo.'
+      ))
+    }
+  }
 
   const payment = capabilities.find((item) => item.id === 'collect_payment')
   if (payment) {
@@ -7060,14 +7081,19 @@ export async function recordConversationalAgentEvent({
     const storedDetailJson = eventType === 'signal_set' ? detailJson : detailJson?.slice(0, 4000)
     const agentId = String(detail?.agentId || detail?.agent_id || '').trim() || null
     const cleanEventId = String(eventId || '').trim().slice(0, 180) || `cae_${randomUUID()}`
-    await db.run(`
+    const result = await db.run(`
       INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(id) DO NOTHING
     `, [cleanEventId, contactId, agentId, eventType, storedDetailJson || null])
+    return {
+      id: cleanEventId,
+      inserted: Number(result?.changes ?? result?.rowCount ?? 0) === 1
+    }
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo registrar evento ${eventType}: ${error.message}`)
     if (throwOnError) throw error
+    return { id: null, inserted: false }
   }
 }
 

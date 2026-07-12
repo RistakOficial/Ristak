@@ -25,6 +25,7 @@ interface ContactSearchInputProps {
   error?: string;
   disabled?: boolean;
   portal?: boolean;
+  allowCreate?: boolean;
 }
 
 const CONTACT_SEARCH_DELAY_MS = 90;
@@ -69,7 +70,8 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   required = false,
   error,
   disabled = false,
-  portal = false
+  portal = false,
+  allowCreate = true
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -160,7 +162,8 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen || showNewContactForm) return;
 
-      const totalItems = suggestions.length + 1; // +1 for "Add new contact" option
+      const totalItems = suggestions.length + (allowCreate ? 1 : 0);
+      if (totalItems === 0) return;
 
       switch (e.key) {
         case 'ArrowDown':
@@ -175,7 +178,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
           e.preventDefault();
           if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
             handleSelectContact(suggestions[selectedIndex]);
-          } else if (selectedIndex === suggestions.length) {
+          } else if (allowCreate && selectedIndex === suggestions.length) {
             openNewContactForm();
           }
           break;
@@ -190,7 +193,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
-  }, [isOpen, suggestions, selectedIndex, showNewContactForm]);
+  }, [allowCreate, isOpen, suggestions, selectedIndex, showNewContactForm]);
 
   const updatePortalDropdownPosition = useCallback(() => {
     if (!portal || !isOpen) return;
@@ -470,24 +473,26 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
             </div>
           ) : null}
 
-          <button
-            type="button"
-            className={`${styles.addNewButton} ${
-              selectedIndex === suggestions.length ? styles.selected : ''
-            }`}
-            data-ristak-dropdown-item
-            data-active={selectedIndex === suggestions.length ? 'true' : undefined}
-            onClick={openNewContactForm}
-            onMouseEnter={() => setSelectedIndex(suggestions.length)}
-          >
-            <Icon name="plus" size={16} />
-            <span className={styles.addNewButtonText}>
-              <span>{addNewContactLabel}</span>
-              {trimmedSearchTerm && (
-                <small>Se abrirá el formulario con este dato precargado.</small>
-              )}
-            </span>
-          </button>
+          {allowCreate && (
+            <button
+              type="button"
+              className={`${styles.addNewButton} ${
+                selectedIndex === suggestions.length ? styles.selected : ''
+              }`}
+              data-ristak-dropdown-item
+              data-active={selectedIndex === suggestions.length ? 'true' : undefined}
+              onClick={openNewContactForm}
+              onMouseEnter={() => setSelectedIndex(suggestions.length)}
+            >
+              <Icon name="plus" size={16} />
+              <span className={styles.addNewButtonText}>
+                <span>{addNewContactLabel}</span>
+                {trimmedSearchTerm && (
+                  <small>Se abrirá el formulario con este dato precargado.</small>
+                )}
+              </span>
+            </button>
+          )}
         </>
       )}
     </div>

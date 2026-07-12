@@ -6,6 +6,8 @@ import { buildInputItems } from '../src/agents/runner.js'
 import { buildNativeConversationalInstructions } from '../src/agents/conversational/nativePrompt.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
 import {
+  CONVERSATIONAL_PREVIEW_CONTACT_ID,
+  CONVERSATIONAL_PREVIEW_CONTACT_NAME,
   TOOL_CALLING_V2_HISTORY_BYTE_BUDGET,
   TOOL_CALLING_V2_MODEL_SETTINGS,
   buildToolCallingV2HistoryEnvelope,
@@ -64,6 +66,40 @@ test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silen
   ]) {
     assert.equal(names.includes(forbidden), false, `no debe exponer ${forbidden}`)
   }
+})
+
+test('bookingOwner human reemplaza agendar por la solicitud humana estructurada', () => {
+  const capabilitiesConfig = {
+    schemaVersion: 1,
+    items: [{
+      id: 'schedule_appointment',
+      enabled: true,
+      calendarId: 'calendar-real',
+      bookingOwner: 'human',
+      handoffUserId: '7',
+      handoffUserName: 'Mariana'
+    }]
+  }
+  const tools = createConversationalTools({
+    config: { runtimeMode: 'tool_calling_v2', capabilitiesConfig },
+    runtimeMode: 'tool_calling_v2',
+    capabilitiesConfig,
+    followUpMode: false,
+    dryRun: true,
+    virtualContact: { fullName: CONVERSATIONAL_PREVIEW_CONTACT_NAME },
+    accountLocale: { currency: 'MXN' },
+    actions: []
+  })
+  const names = tools.map((candidate) => candidate.name)
+
+  assert.ok(names.includes('get_free_slots'))
+  assert.ok(names.includes('request_human_booking'))
+  assert.equal(names.includes('book_appointment'), false)
+  const request = tools.find((candidate) => candidate.name === 'request_human_booking')
+  assert.deepEqual(
+    Object.keys(request.parameters.properties).sort(),
+    ['attendeeContext', 'attendeeName', 'notes', 'startTime', 'title']
+  )
 })
 
 test('seguimiento v2 conserva sólo herramientas de lectura', () => {
@@ -407,6 +443,41 @@ test('prompt nativo separa estrategia, personalidad, contexto real y capacidades
   assert.match(instructions, /Nunca afirmes que una cita, cobro, enlace, transferencia o meta quedó lista/i)
 })
 
+test('prompt de agenda humana ofrece espacios pero prohíbe crear o confirmar la cita', () => {
+  const capabilitiesConfig = {
+    schemaVersion: 1,
+    items: [{
+      id: 'schedule_appointment',
+      enabled: true,
+      calendarId: 'calendar-human',
+      bookingOwner: 'human'
+    }]
+  }
+  const instructions = buildNativeConversationalInstructions({
+    promptConfig: { strategyText: 'Ayuda a elegir horario.', personalityText: 'Habla claro.' },
+    capabilitiesConfig,
+    capabilityManifest: [{
+      id: 'schedule_appointment',
+      label: 'Agendar cita',
+      enabled: true,
+      ready: true,
+      locked: true,
+      bookingOwner: 'human',
+      summary: 'Agenda humana',
+      missingConfiguration: []
+    }]
+  })
+
+  assert.match(instructions, /request_human_booking/)
+  assert.match(instructions, /sin crear una cita/i)
+  assert.match(instructions, /nunca digas que la cita ya quedó agendada/i)
+  assert.match(instructions, /pausa cualquier guion, interrogatorio o pregunta de calificación/i)
+  assert.match(instructions, /no la uses para sustituir ni adelantar este flujo de agenda/i)
+  assert.match(instructions, /sus reglas tienen precedencia sobre el guion editable/i)
+  assert.match(instructions, /siempre el contacto de este hilo/i)
+  assert.match(instructions, /no busques otra ficha ni pidas otro teléfono/i)
+})
+
 test('prompt v2 expresa seguimientos en la zona blindada sin fabricar mensajes del cliente', () => {
   const instructions = buildNativeConversationalInstructions({
     promptConfig: { editableText: 'Habla con calidez.' },
@@ -702,8 +773,13 @@ test('preview v2 comparte el sobre por bytes, conserva 60 mensajes cortos y nunc
       hydratedCount = input.length
       return input
     },
-    runNativeTurn: async ({ messages: input, historyEnvelope }) => {
+    runNativeTurn: async ({ messages: input, historyEnvelope, contactId, contactName, virtualContact, dryRun }) => {
       nativeRuns += 1
+      assert.equal(contactId, CONVERSATIONAL_PREVIEW_CONTACT_ID)
+      assert.equal(contactName, CONVERSATIONAL_PREVIEW_CONTACT_NAME)
+      assert.equal(virtualContact.id, CONVERSATIONAL_PREVIEW_CONTACT_ID)
+      assert.equal(virtualContact.fullName, CONVERSATIONAL_PREVIEW_CONTACT_NAME)
+      assert.equal(dryRun, true)
       assert.equal(input.length, 60)
       assert.equal(historyEnvelope.telemetry.source, 'preview')
       assert.equal(historyEnvelope.telemetry.includedMessages, 60)
@@ -731,6 +807,56 @@ test('preview v2 comparte el sobre por bytes, conserva 60 mensajes cortos y nunc
   assert.equal(result.historyTelemetry.includedMessages, 60)
   assert.equal(result.historyTelemetry.omittedMessages, 0)
   assert.deepEqual(result.validationErrors, [])
+})
+
+test('preview con efectos usa el contacto real elegido y conserva dryRun para todas las tools', async () => {
+  const config = {
+    runtimeMode: 'tool_calling_v2',
+    aiProvider: 'openai',
+    model: 'fake-model',
+    replyDelivery: { splitMessagesEnabled: false }
+  }
+  const previewContact = {
+    id: 'contact-real-test',
+    full_name: 'Patricia Jiménez',
+    phone: '+526560000000'
+  }
+
+  const result = await runConversationalAgentPreview({
+    messages: [{ role: 'user', content: 'quiero agendar para mi mamá' }],
+    previewContact,
+    executionId: 'test:message-real-contact'
+  }, {
+    resolvePreviewRuntimeConfig: async () => ({
+      config,
+      runtimeDefaults: { aiProvider: 'openai', model: 'fake-model' }
+    }),
+    resolveAIRuntime: async () => ({
+      apiKey: 'stored-test-key-not-real',
+      modelProvider: { kind: 'fake' },
+      supportsMultimodalInputs: true
+    }),
+    hydratePreviewMessages: async (input) => input,
+    runNativeTurn: async ({ contactId, contactName, virtualContact, dryRun, executionId }) => {
+      assert.equal(contactId, previewContact.id)
+      assert.equal(contactName, previewContact.full_name)
+      assert.equal(virtualContact, null)
+      assert.equal(dryRun, true)
+      assert.equal(executionId, 'test:message-real-contact')
+      return {
+        reply: 'respuesta con contacto real',
+        ctx: { actions: [] },
+        model: 'fake-model',
+        runtimeMode: 'tool_calling_v2',
+        modelCallCount: 1,
+        historyTelemetry: {},
+        capabilityManifest: [],
+        validationErrors: []
+      }
+    }
+  })
+
+  assert.equal(result.reply, 'respuesta con contacto real')
 })
 
 test('preview v2 pagina sólo sus mensajes omitidos dentro de la misma ejecución principal', async () => {

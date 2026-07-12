@@ -24,6 +24,46 @@ import {
   listConversationalAIProviders
 } from '../services/conversationalAIProviderService.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
+import {
+  cleanupConversationalAgentTestRun,
+  listConversationalAgentTestEffects,
+  normalizeConversationalAgentTestEffects,
+  prepareConversationalAgentTestRun,
+  recordConversationalAgentPreviewEffects
+} from '../services/conversationalAgentTestService.js'
+import { hasUserAccess } from '../utils/userAccess.js'
+
+function assertConversationalTesterAccess(user, effects) {
+  if (!effects?.enabled) return
+  if (!hasUserAccess(user, 'contacts', 'read')) {
+    const error = new Error('Necesitas acceso a Contactos para usar un contacto real en esta prueba.')
+    error.statusCode = 403
+    error.code = 'test_contacts_access_required'
+    throw error
+  }
+  if (effects.scheduleAppointment && !hasUserAccess(user, 'appointments', 'write')) {
+    const error = new Error('Necesitas permiso para editar Citas antes de registrar una cita de prueba.')
+    error.statusCode = 403
+    error.code = 'test_appointments_write_required'
+    throw error
+  }
+  if (effects.collectPayment && !hasUserAccess(user, 'payments', 'write')) {
+    const error = new Error('Necesitas permiso para editar Pagos antes de preparar un cobro de prueba.')
+    error.statusCode = 403
+    error.code = 'test_payments_write_required'
+    throw error
+  }
+}
+
+export function lockConversationalTesterConfigOverride(configOverride, persistedAgent) {
+  return {
+    ...(configOverride && typeof configOverride === 'object' ? configOverride : {}),
+    id: persistedAgent.id,
+    capabilitiesConfig: persistedAgent.capabilitiesConfig,
+    defaultCalendarId: persistedAgent.defaultCalendarId,
+    goalWorkflow: persistedAgent.goalWorkflow
+  }
+}
 
 export async function getConfig(req, res) {
   try {
@@ -258,15 +298,82 @@ export async function updateState(req, res) {
 
 export async function testAgent(req, res) {
   try {
+    const requestedEffects = normalizeConversationalAgentTestEffects(req.body?.effects)
+    assertConversationalTesterAccess(req.user, requestedEffects)
+    const agentId = String(req.body?.agentId || '').trim()
+    let runContext = null
+    let configOverride = req.body?.config || null
+
+    if (requestedEffects.enabled) {
+      if (!agentId) {
+        return res.status(400).json({ success: false, error: 'Guarda el agente antes de registrar acciones de prueba.' })
+      }
+      const persistedAgent = await getConversationalAgent(agentId)
+      if (!persistedAgent) {
+        return res.status(404).json({ success: false, error: 'El agente de esta prueba ya no existe.' })
+      }
+      // En una prueba con efectos, el texto editable puede venir de la pantalla,
+      // pero calendario, producto, precio, monto y dueño de agenda siempre salen
+      // de la versión guardada en servidor.
+      configOverride = lockConversationalTesterConfigOverride(configOverride, persistedAgent)
+      runContext = await prepareConversationalAgentTestRun({
+        testRunId: req.body?.testSessionId,
+        testMessageId: req.body?.testMessageId,
+        agentId,
+        requestedByUserId: req.user?.userId,
+        contactId: req.body?.contactId,
+        effects: requestedEffects
+      })
+    }
+
     const result = await runConversationalAgentPreview({
       messages: req.body?.messages,
-      configOverride: req.body?.config || null,
-      agentId: req.body?.agentId || null
+      configOverride,
+      agentId: agentId || null,
+      previewContact: runContext?.contact || null,
+      executionId: runContext?.executionId || ''
+    })
+    const testEffects = runContext
+      ? await recordConversationalAgentPreviewEffects({ runContext, actions: result.actions })
+      : []
+    res.json({
+      success: true,
+      data: {
+        ...result,
+        ...(runContext ? { testRunId: runContext.id, testEffects } : {})
+      }
+    })
+  } catch (error) {
+    logger.error('Error en prueba del agente conversacional:', error)
+    res.status(error.statusCode || 500).json({
+      success: false,
+      code: error.code,
+      error: error.message || 'Error al probar el agente conversacional'
+    })
+  }
+}
+
+export async function getTestRunEffects(req, res) {
+  try {
+    const effects = await listConversationalAgentTestEffects({
+      testRunId: req.params?.testRunId,
+      requestedByUserId: req.user?.userId
+    })
+    res.json({ success: true, data: effects })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ success: false, code: error.code, error: error.message })
+  }
+}
+
+export async function cleanupTestRun(req, res) {
+  try {
+    const result = await cleanupConversationalAgentTestRun({
+      testRunId: req.params?.testRunId,
+      requestedByUserId: req.user?.userId
     })
     res.json({ success: true, data: result })
   } catch (error) {
-    logger.error('Error en prueba del agente conversacional:', error)
-    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al probar el agente conversacional' })
+    res.status(error.statusCode || 500).json({ success: false, code: error.code, error: error.message })
   }
 }
 

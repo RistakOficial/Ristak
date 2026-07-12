@@ -96,6 +96,8 @@ const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PEND
 const FOLLOW_UP_WINDOW_MS = MAX_FOLLOW_UP_DELAY_MINUTES * 60 * 1000
 const MAX_TIMER_MS = 2_147_483_647
 export const TOOL_CALLING_V2_RUNTIME_MODE = 'tool_calling_v2'
+export const CONVERSATIONAL_PREVIEW_CONTACT_ID = 'ristak-preview-contact'
+export const CONVERSATIONAL_PREVIEW_CONTACT_NAME = 'Contacto de prueba'
 export const TOOL_CALLING_V2_MODEL_SETTINGS = Object.freeze({
   parallelToolCalls: false
 })
@@ -164,7 +166,7 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
 export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email']
 
 // Identificadores internos que jamás deben llegar al cliente final.
-const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|update_closing_context|register_deposit_payment_proof)\b/gi
+const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|update_closing_context|register_deposit_payment_proof)\b/gi
 
 export function normalizeConversationalChannel(value = 'whatsapp') {
   const raw = String(value || '').trim().toLowerCase()
@@ -1422,9 +1424,15 @@ function nativeActionVisibleUrl(action = {}) {
 
 export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   let visible = sanitizeToolCallingV2Reply(reply)
+  const contactIdentityUnavailable = (Array.isArray(actions) ? actions : [])
+    .some((action) => action?.type === 'contact_identity_unavailable')
+  if (contactIdentityUnavailable) {
+    return 'tuve un problema para abrir la información de este chat. no te voy a pedir datos que ya deberían estar registrados; necesito que una persona del equipo lo revise'
+  }
   const confirmed = (Array.isArray(actions) ? actions : []).find(nativeActionSucceeded)
   if (!visible) {
     if (confirmed?.type === 'book_appointment') visible = 'listo, la cita quedó confirmada'
+    else if (confirmed?.type === 'request_human_booking') visible = 'el horario seguía disponible y ya dejé la solicitud con el equipo para que te confirme la cita'
     else if (confirmed?.type === 'create_payment_link') visible = 'listo, ya preparé el enlace de pago. el pago seguirá pendiente hasta que el sistema lo confirme'
     else if (confirmed?.type === 'send_goal_url' || confirmed?.type === 'send_trigger_link') {
       const sentUrl = nativeActionVisibleUrl(confirmed)
@@ -1473,6 +1481,7 @@ async function buildToolCallingV2AgentForRun({
   channel = 'whatsapp',
   knowledgeQuery = '',
   executionId = '',
+  virtualContact = null,
   followUpContext = null,
   historyContext = null,
   runtimeEventContext = ''
@@ -1512,6 +1521,7 @@ async function buildToolCallingV2AgentForRun({
     channel: normalizeConversationalChannel(channel),
     followUpMode: Boolean(followUpContext),
     executionId: String(executionId || '').trim(),
+    virtualContact,
     accountLocale,
     runtimeMode: TOOL_CALLING_V2_RUNTIME_MODE,
     promptConfig,
@@ -1574,6 +1584,7 @@ export async function runToolCallingV2Turn({
   channel = 'whatsapp',
   traceMessage = '',
   executionId = '',
+  virtualContact = null,
   conversationModel = null,
   followUpContext = null,
   historyEnvelope = null,
@@ -1599,6 +1610,7 @@ export async function runToolCallingV2Turn({
     channel,
     knowledgeQuery: traceMessage,
     executionId,
+    virtualContact,
     followUpContext,
     historyContext,
     runtimeEventContext
@@ -2485,7 +2497,8 @@ function toolCallingV2OwnsTerminalState(actions = []) {
   const stateChangingTools = new Set([
     'book_appointment',
     'mark_ready_to_advance',
-    'send_to_human'
+    'send_to_human',
+    'request_human_booking'
   ])
   return (Array.isArray(actions) ? actions : []).some((action) => (
     stateChangingTools.has(String(action?.type || '')) && nativeActionSucceeded(action)
@@ -3586,7 +3599,13 @@ export function getConversationalAgentPreviewResponseDelayMs() {
  * No envía mensajes reales, no toca estados ni crea citas: las acciones internas
  * se devuelven como lista para mostrarlas en la prueba.
  */
-export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }, dependencies = {}) {
+export async function runConversationalAgentPreview({
+  messages = [],
+  configOverride = null,
+  agentId = null,
+  previewContact = null,
+  executionId = ''
+}, dependencies = {}) {
   const resolvePreviewConfig = dependencies.resolvePreviewRuntimeConfig || resolveConversationalAgentPreviewRuntimeConfig
   const resolveAIRuntime = dependencies.resolveAIRuntime || resolveConversationalAIRuntime
   const hydratePreviewMessages = dependencies.hydratePreviewMessages || hydrateConversationalPreviewMessagesMedia
@@ -3628,15 +3647,32 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     includeBinary: shouldIncludeConversationalBinaryMedia({ runtime })
   })
   const latestPreviewText = [...cleanMessages].reverse().find((message) => message.role === 'user')?.content || ''
+  const storedPreviewContactId = String(previewContact?.id || '').trim()
+  const storedPreviewContactName = String(
+    previewContact?.full_name ||
+    previewContact?.name ||
+    [previewContact?.first_name, previewContact?.last_name].filter(Boolean).join(' ') ||
+    previewContact?.phone ||
+    previewContact?.email ||
+    ''
+  ).trim()
+  const usesStoredPreviewContact = Boolean(storedPreviewContactId)
   const turn = await runNativeTurn({
     config: runtimeConfig,
     runtime,
     messages: hydratedMessages,
-    contactId: null,
-    contactName: null,
+    contactId: usesStoredPreviewContact ? storedPreviewContactId : CONVERSATIONAL_PREVIEW_CONTACT_ID,
+    contactName: usesStoredPreviewContact ? (storedPreviewContactName || 'Contacto de prueba') : CONVERSATIONAL_PREVIEW_CONTACT_NAME,
+    virtualContact: usesStoredPreviewContact
+      ? null
+      : {
+          id: CONVERSATIONAL_PREVIEW_CONTACT_ID,
+          fullName: CONVERSATIONAL_PREVIEW_CONTACT_NAME
+        },
     dryRun: true,
     channel: previewChannel,
     traceMessage: latestPreviewText,
+    executionId: String(executionId || '').trim(),
     conversationModel: runtimeConfig.model || runtimeDefaults.model,
     historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages }
   })

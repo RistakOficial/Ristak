@@ -74,6 +74,9 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       id: 'schedule_appointment',
       enabled: true,
       calendarId: 'cal_real',
+      bookingOwner: 'ai',
+      handoffUserId: '',
+      handoffUserName: '',
       allowOverlaps: false
     },
     {
@@ -85,6 +88,87 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       pastClientsToHuman: false
     }
   ])
+})
+
+test('agendar normaliza quién termina la cita y el manifest expone ese contrato', () => {
+  const human = normalizeConversationalCapabilitiesConfig({
+    items: [{
+      id: 'schedule_appointment',
+      enabled: true,
+      calendarId: 'cal_human',
+      bookingOwner: 'human',
+      handoffUserId: '42',
+      handoffUserName: 'Mariana'
+    }]
+  })
+  assert.deepEqual(human.items[0], {
+    id: 'schedule_appointment',
+    enabled: true,
+    calendarId: 'cal_human',
+    bookingOwner: 'human',
+    handoffUserId: '42',
+    handoffUserName: 'Mariana',
+    allowOverlaps: false
+  })
+  assert.equal(
+    buildConversationalCapabilityManifest({ capabilitiesConfig: human })
+      .find((item) => item.id === 'schedule_appointment')?.bookingOwner,
+    'human'
+  )
+
+  const automatic = normalizeConversationalCapabilitiesConfig({
+    items: [{
+      id: 'schedule_appointment',
+      enabled: true,
+      calendarId: 'cal_ai',
+      bookingOwner: 'valor_invalido',
+      handoffUserId: 'no_debe_quedar',
+      handoffUserName: 'Tampoco'
+    }]
+  }).items[0]
+  assert.equal(automatic.bookingOwner, 'ai')
+  assert.equal(automatic.handoffUserId, '')
+  assert.equal(automatic.handoffUserName, '')
+})
+
+test('publicar agenda humana valida que la persona asignada siga activa', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_human_owner_${suffix}`
+  const username = `human_owner_${suffix}`
+  let userId = ''
+  const config = (handoffUserId) => ({
+    enabled: true,
+    capabilitiesConfig: {
+      items: [{
+        id: 'schedule_appointment',
+        enabled: true,
+        calendarId,
+        bookingOwner: 'human',
+        handoffUserId
+      }]
+    }
+  })
+
+  try {
+    await db.run('INSERT INTO calendars (id, name, is_active) VALUES (?, ?, 1)', [calendarId, 'Agenda humana'])
+    let errors = await getConversationalNativeRuntimeResourceValidationErrors(config('999999999'))
+    assert.equal(errors[0]?.code, 'CONVERSATIONAL_CAPABILITY_SCHEDULE_HANDOFF_USER_NOT_FOUND')
+
+    await db.run(
+      'INSERT INTO users (username, password_hash, full_name, is_active) VALUES (?, ?, ?, 0)',
+      [username, 'test-hash', 'Usuario agenda humana']
+    )
+    userId = String((await db.get('SELECT id FROM users WHERE username = ?', [username])).id)
+    errors = await getConversationalNativeRuntimeResourceValidationErrors(config(userId))
+    assert.equal(errors[0]?.code, 'CONVERSATIONAL_CAPABILITY_SCHEDULE_HANDOFF_USER_INACTIVE')
+
+    await db.run('UPDATE users SET is_active = 1 WHERE id = ?', [userId])
+    errors = await getConversationalNativeRuntimeResourceValidationErrors(config(userId))
+    assert.deepEqual(errors, [])
+  } finally {
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+  }
 })
 
 test('prompt schema 2 conserva textos largos completos y migra schema 1 sin adivinar personalidad', () => {

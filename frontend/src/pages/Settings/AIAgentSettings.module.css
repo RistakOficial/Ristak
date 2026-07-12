@@ -1865,6 +1865,73 @@
   background: transparent;
 }
 
+.agentTestOptions {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.agentTestModeSummary {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+}
+
+.agentTestModeSummary[data-effects-enabled='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.agentTestModeSummary strong,
+.agentTestOptionSwitch strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agentTestModeSummary span,
+.agentTestOptionSwitch small {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.agentTestOptionSwitch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.agentTestOptionSwitch > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agentTestEffectList {
+  display: grid;
+  gap: 13px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.agentTestEffectList .agentTestOptionSwitch + .agentTestOptionSwitch {
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.agentTestOptionsActions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
 .agentTestHeader {
   display: grid;
   gap: 6px;

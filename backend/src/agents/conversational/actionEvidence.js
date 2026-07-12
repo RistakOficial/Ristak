@@ -97,12 +97,14 @@ export async function revalidateAppointmentSlot({
   requestedStartTime,
   windowStart,
   windowEnd,
-  lookupSlots
+  lookupSlots,
+  ignoreAppointmentConflicts = true
 }) {
   let availability
   try {
     availability = await lookupSlots(calendarId, windowStart, windowEnd, null, {
-      ignoreAppointmentConflicts: true
+      ignoreAppointmentConflicts,
+      ...(ignoreAppointmentConflicts ? {} : { appointmentLimit: 1 })
     })
   } catch (error) {
     return {

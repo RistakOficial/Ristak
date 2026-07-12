@@ -2895,6 +2895,15 @@ realidad operativa antes de persistir el cambio: calendario y usuario activos,
 producto/precio relacionados y cobrables, moneda de la cuenta, monto de
 anticipo y destino HTTP(S) de enlaces directos o triggers.
 
+Agenda define ademas `bookingOwner`: `ai` hace que la IA revalide, cree y solo
+despues confirme la cita; `human` deja que la misma IA consulte y ofrezca slots
+reales, pero al elegirse uno ejecuta `request_human_booking`. Esa tool vuelve a
+comprobar que el horario siga libre, guarda la fecha y el contexto, cambia el
+chat a atencion humana y avisa al equipo sin crear ni prometer una cita. Puede
+asignarse un usuario activo concreto o avisarse al equipo sin asignacion. La
+asignacion generica de `handoff_human` no se hereda silenciosamente cuando
+Agenda dice "sin asignar".
+
 En la capacidad Cobrar, `paymentMode` es la fuente de verdad: pago completo
 apaga cualquier configuracion vieja de anticipo y anticipo la activa. Los montos
 se editan con el simbolo derivado de `account_currency` y respetan los decimales
@@ -2956,8 +2965,7 @@ pseudoagente global "Todos".
 
 ### Runtime conversacional unico
 
-Cada inbound,
-preview y seguimiento entra a un solo `Agent`/`Runner`. El modelo conversa y
+Cada inbound, preview y seguimiento entra a un solo `Agent`/`Runner`. El modelo conversa y
 decide llamadas estructuradas a las tools
 que corresponden exactamente a las capacidades activadas. No ejecuta
 `assessment`, `strategyPlanner`, `turnPolicy`, `closingPhaseGate`,
@@ -3047,7 +3055,7 @@ enviar.
 
 OpenAI, Claude, Gemini y DeepSeek pueden ejecutar el agente si su conexion esta
 configurada; las rutas conversacionales no exigen OpenAI globalmente. La
-  prueba del editor llama la misma ruta nativa, con las mismas tools en
+prueba del editor llama la misma ruta nativa, con las mismas tools en
 `dryRun`, el mismo prompt blindado y el mismo limite de historial. Devuelve el
 manifiesto de capacidades y las acciones simuladas; no produce assessment,
 estrategia ni una decision de silencio. `responseDelayMs` es cero
@@ -3056,6 +3064,35 @@ de globos cuando el switch esta activo. El chat publicado conserva su espera. Si
 entran mensajes durante esa espera, mientras se calculan los cortes o entre
 globos, el runtime recarga contexto, detiene partes obsoletas y vuelve a ejecutar
 el turno mas reciente antes de enviar contenido viejo.
+
+El tester usa por defecto un contacto virtual estable. `get_contact_profile` lo
+reconoce como la identidad del hilo, sin inventar que falta una ficha, pedir otro
+telefono ni marcarlo como cliente anterior. En **Mas opciones de prueba** el
+usuario puede activar validaciones controladas, elegir un contacto existente y
+habilitar por separado agenda, cobro y notificacion. Elegir contacto nunca crea
+uno nuevo. En ese modo el servidor conserva `dryRun=true` para todas las tools,
+recarga las capacidades guardadas del agente e ignora cualquier calendario,
+producto, precio, monto o moneda enviados como override por el navegador.
+
+Las validaciones se guardan de forma aislada en
+`conversational_agent_test_runs` y `conversational_agent_test_effects`, ligadas
+al usuario, agente, contacto, sesion y mensaje. Requieren acceso de lectura a
+Contactos y permiso de escritura en Citas o Pagos segun corresponda; otro
+usuario no puede leer ni limpiar la corrida. Cada efecto usa hash, llave
+idempotente, claim token y lease: reintentar el mismo mensaje no duplica la
+evidencia ni la notificacion. Al reiniciar, cambiar contacto, apagar el modo o
+cerrar el editor, el frontend pide limpiar la corrida; el servidor la cierra por
+compare-and-swap antes de limpiar para bloquear efectos tardios.
+
+La validacion de agenda vuelve a consultar el calendario estricto y registra el
+horario probado, pero no inserta una cita real, no cambia el chat y no cuenta una
+conversion. La validacion de cobro vuelve a cruzar capacidad, catalogo, cantidad,
+monto y `account_currency`, pero no crea pago ni link, no llama al proveedor, no
+envia nada al contacto y nunca simula un pago confirmado. Es una prueba de la
+decision y de la autoridad de datos de Ristak, no una prueba sandbox de la
+pasarela. Si se activa **Notificarme al validar**, la campana/push se dirige solo
+al usuario que inicio la prueba; el estado de envio queda durable y un fallo se
+muestra como pendiente en lugar de afirmar que se notifico.
 
 ### Herramientas y verdad operativa
 
@@ -3086,6 +3123,14 @@ nunca un booleano escrito por el modelo.
   duplicarla. Una cita ajena o de otro calendario nunca se adopta como exito del
   agente. El ID local/GHL se canonicaliza al calendario local activo. Un fallo de
   calendario o disponibilidad cierra en seguro.
+  El contacto de la cita es siempre el contacto canonico del hilo. Si quien
+  asistira es un familiar o tercero, el modelo manda `attendeeName` y
+  `attendeeContext`; Ristak conserva al remitente como contacto y guarda el nombre
+  y contexto del asistente en titulo/notas, sin buscar otra ficha ni insistir con
+  otro telefono. Cuando `bookingOwner=human`, `request_human_booking` comparte la
+  misma revalidacion estricta y el mismo slot UTC, pero sella una solicitud humana
+  idempotente en lugar de llamar al controller de creacion. Un retry exacto no
+  duplica el aviso y un slot ocupado no cambia estado, asignacion ni notificaciones.
 - Pago: producto, precio, monto, concepto y moneda deben coincidir con la
   capacidad blindada o el catalogo real. Antes de hablar con el proveedor, v2
   reserva una llave durable

@@ -49,6 +49,7 @@ export const CONVERSATIONAL_CAPABILITY_IDS = Object.freeze([
 
 const CAPABILITY_ID_SET = new Set(CONVERSATIONAL_CAPABILITY_IDS)
 const PAYMENT_MODES = new Set(['full_payment', 'deposit'])
+const BOOKING_OWNERS = new Set(['ai', 'human'])
 const DEPOSIT_MODES = new Set(['fixed', 'range'])
 const LINK_KINDS = new Set(['trigger', 'verified_goal'])
 const CUSTOM_GOAL_COMPLETIONS = new Set(['handoff', 'send_link'])
@@ -153,10 +154,14 @@ function normalizeCapabilityItem(input) {
   const enabled = input.enabled === undefined ? true : toBoolean(input.enabled)
 
   if (id === 'schedule_appointment') {
+    const bookingOwner = BOOKING_OWNERS.has(input.bookingOwner) ? input.bookingOwner : 'ai'
     return {
       id,
       enabled,
       calendarId: cleanId(input.calendarId, 160),
+      bookingOwner,
+      handoffUserId: bookingOwner === 'human' ? cleanId(input.handoffUserId, 160) : '',
+      handoffUserName: bookingOwner === 'human' ? cleanText(input.handoffUserName, 180) : '',
       // La agenda nativa verifica disponibilidad real siempre. Un valor
       // almacenado en goalWorkflow nunca habilita traslapes en la capacidad.
       allowOverlaps: false
@@ -390,7 +395,10 @@ export function buildConversationalCapabilityManifest(config = {}) {
       locked: true,
       enabled: Boolean(item.enabled),
       ready: Boolean(item.enabled) && missingConfiguration.length === 0,
-      summary: CAPABILITY_META[id].summary,
+      summary: id === 'schedule_appointment' && item.bookingOwner === 'human'
+        ? 'Consulta horarios realmente libres y entrega el horario elegido al equipo para que una persona confirme y agende.'
+        : CAPABILITY_META[id].summary,
+      ...(id === 'schedule_appointment' ? { bookingOwner: item.bookingOwner || 'ai' } : {}),
       missingConfiguration
     }
   })

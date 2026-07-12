@@ -737,7 +737,9 @@ test('book_appointment rechaza un horario inventado o fuera de horario de atenci
       calendarId,
       startTime: outOfHours,
       title: 'Cita inventada',
-      notes: 'Hora fuera de horario de atención'
+      notes: 'Hora fuera de horario de atención',
+      attendeeName: null,
+      attendeeContext: null
     }))
     assert.equal(result.ok, false)
     assert.equal(result.invalidSlot, true)

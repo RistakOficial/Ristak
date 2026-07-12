@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, LockKeyhole, Pause, PauseCircle, Play, Plus, RotateCcw, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
-import { Badge, Button, Card, CustomSelect, ExpandableTextareaField, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import { Badge, Button, Card, ContactSearchInput, CustomSelect, ExpandableTextareaField, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import type { ContactSearchInputContact } from '@/components/common/ContactSearchInput/ContactSearchInput'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -52,6 +53,8 @@ import {
   type ConversationalAgentMetrics,
   type ConversationalContactScope,
   type ConversationalAgentTestAttachment,
+  type ConversationalAgentTestEffectResult,
+  type ConversationalAgentTestEffects,
   type ConversationalAgentTestMessage,
   type ConversationalAgentTestResult,
 } from '@/services/conversationalAgentService'
@@ -304,6 +307,37 @@ const TEST_VOICE_MIME_CANDIDATES = [
   'audio/mp4'
 ]
 const TEST_TEXT_EXTENSIONS = new Set(['txt', 'csv', 'json', 'md', 'html', 'xml'])
+
+function createTestTrackingId(prefix: 'session' | 'message') {
+  const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `agent-test-${prefix}-${randomPart}`
+}
+
+function describeTestEffectResult(effect: ConversationalAgentTestEffectResult) {
+  const explicitSummary = String(effect.summary || effect.message || '').trim()
+  const notificationWarning = effect.notificationStatus === 'pending' && effect.notificationError
+    ? ' La acción sí se validó, pero la notificación quedó pendiente; puedes reintentar desde esta prueba.'
+    : ''
+  if (explicitSummary) return `${explicitSummary}${notificationWarning}`
+  const status = String(effect.status || '').trim().toLowerCase()
+  const effectLabels: Record<string, string> = {
+    schedule_appointment: 'cita de prueba',
+    scheduleAppointment: 'cita de prueba',
+    appointment: 'cita de prueba',
+    collect_payment: 'cobro de prueba',
+    collectPayment: 'cobro de prueba',
+    payment: 'cobro de prueba',
+    notify_owner: 'notificación de prueba',
+    notifyOwner: 'notificación de prueba'
+  }
+  const label = effectLabels[String(effect.type || '').trim()] || 'acción de prueba'
+  if (status === 'executed' || status === 'recorded' || status === 'prepared') return `Se registró: ${label}.`
+  if (status === 'failed') return `No se pudo registrar: ${label}.`
+  if (status === 'skipped') return `No se ejecutó: ${label}.`
+  return `Prueba: ${label}.`
+}
 
 type TestAttachment = ConversationalAgentTestAttachment & PhoneChatPreviewAttachment & {
   id: string
@@ -985,7 +1019,7 @@ const nativeCapabilityMeta: Record<ConversationalCapabilityId, {
 }> = {
   schedule_appointment: {
     label: 'Agendar cita',
-    description: 'Consulta espacios reales y crea la cita en el calendario elegido.',
+    description: 'Consulta espacios reales y termina el proceso en el calendario elegido.',
     Icon: CalendarCheck
   },
   collect_payment: {
@@ -1031,7 +1065,10 @@ function buildNativeCapabilityFromAgent(
       id,
       enabled: true,
       calendarId: calendars.length === 1 ? calendars[0].id : '',
-      allowOverlaps: false
+      allowOverlaps: false,
+      bookingOwner: 'ai',
+      handoffUserId: '',
+      handoffUserName: ''
     }
   }
   if (id === 'collect_payment') {
@@ -1186,6 +1223,46 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
             {calendars.map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}</option>)}
           </CustomSelect>
           <p className={styles.helper}>El modelo no puede cambiar este calendario ni sobreagendar. Cada espacio se vuelve a comprobar al confirmar.</p>
+          <label className={styles.label}>¿Quién termina de agendar?</label>
+          <CustomSelect
+            value={scheduleCapability.bookingOwner || 'ai'}
+            onChange={(event) => updateCapability({
+              ...scheduleCapability,
+              bookingOwner: event.target.value === 'human' ? 'human' : 'ai',
+              handoffUserId: event.target.value === 'human' ? scheduleCapability.handoffUserId : '',
+              handoffUserName: event.target.value === 'human' ? scheduleCapability.handoffUserName : ''
+            })}
+            portal
+            aria-label="Quién termina de agendar"
+          >
+            <option value="ai">La IA agenda y confirma</option>
+            <option value="human">Una persona confirma y agenda</option>
+          </CustomSelect>
+          {scheduleCapability.bookingOwner === 'human' ? (
+            <>
+              <label className={styles.label}>Persona asignada (opcional)</label>
+              <CustomSelect
+                value={scheduleCapability.handoffUserId}
+                onChange={(event) => {
+                  const user = teamUsers.find((item) => item.id === event.target.value) || null
+                  updateCapability({
+                    ...scheduleCapability,
+                    bookingOwner: 'human',
+                    handoffUserId: user?.id || '',
+                    handoffUserName: getTeamUserDisplayName(user)
+                  })
+                }}
+                disabled={teamUsersLoading}
+                portal
+              >
+                <option value="">Avisar al equipo sin asignar</option>
+                {teamUsers.map((user) => <option key={user.id} value={user.id}>{getTeamUserDisplayName(user)}</option>)}
+              </CustomSelect>
+              <p className={styles.helper}>La IA muestra horarios reales. Cuando la persona elige uno, vuelve a comprobarlo y entrega el chat con esa fecha y hora; no crea ni promete la cita.</p>
+            </>
+          ) : (
+            <p className={styles.helper}>La IA vuelve a comprobar el horario elegido, crea la cita y sólo entonces la confirma.</p>
+          )}
         </div>
       ) : null
     },
@@ -1632,6 +1709,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testAttachmentMenuOpen, setTestAttachmentMenuOpen] = useState(false)
   const [testEmojiPickerOpen, setTestEmojiPickerOpen] = useState(false)
   const [testPracticeExpired, setTestPracticeExpired] = useState(false)
+  const [testOptionsOpen, setTestOptionsOpen] = useState(false)
+  const [testEffectsEnabled, setTestEffectsEnabled] = useState(false)
+  const [testContact, setTestContact] = useState<ContactSearchInputContact | null>(null)
+  const [testScheduleAppointment, setTestScheduleAppointment] = useState(false)
+  const [testCollectPayment, setTestCollectPayment] = useState(false)
+  const [testNotifyOwner, setTestNotifyOwner] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testVoiceRecording, setTestVoiceRecording] = useState(false)
   const [testVoiceProcessing, setTestVoiceProcessing] = useState(false)
@@ -1660,10 +1743,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const testVoiceDiscardRef = useRef(false)
   const testVoiceAudioRef = useRef<HTMLAudioElement | null>(null)
   const testPracticeExpiredRef = useRef(false)
+  const testSessionIdRef = useRef(createTestTrackingId('session'))
+  const activeTestRunIdRef = useRef<string | null>(null)
+
+  const cleanupActiveTestRun = useCallback(() => {
+    const testRunId = activeTestRunIdRef.current
+    activeTestRunIdRef.current = null
+    if (!testRunId) return
+    void conversationalAgentService.cleanupTestRun(testRunId).catch(() => undefined)
+  }, [])
 
   useEffect(() => () => {
     cleanupTestVoiceRecorder()
-  }, [])
+    cleanupActiveTestRun()
+  }, [cleanupActiveTestRun])
 
   useEffect(() => {
     testPracticeExpiredRef.current = testPracticeExpired
@@ -1724,6 +1817,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const followUpError = getFollowUpError(followUp)
   const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
   const hasTestConversation = testPracticeExpired || testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
+  const testScheduleCapabilityEnabled = Boolean(getNativeCapability(agent.capabilitiesConfig, 'schedule_appointment')?.enabled)
+  const testPaymentCapabilityEnabled = Boolean(getNativeCapability(agent.capabilitiesConfig, 'collect_payment')?.enabled)
+  const effectiveTestEffects: ConversationalAgentTestEffects = {
+    enabled: testEffectsEnabled,
+    scheduleAppointment: testEffectsEnabled && testScheduleCapabilityEnabled && testScheduleAppointment,
+    collectPayment: testEffectsEnabled && testPaymentCapabilityEnabled && testCollectPayment,
+    notifyOwner: testEffectsEnabled && testNotifyOwner
+  }
 
   useEffect(() => {
     if (!testVoicePanelActive && !testing) return
@@ -1954,6 +2055,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     const content = String(input.content ?? '').trim()
     const attachments = input.attachments || []
     if (testPracticeExpired || testing || (!content && attachments.length === 0)) return
+    if (testEffectsEnabled && !testContact?.id) {
+      setTestOptionsOpen(true)
+      showToast('warning', 'Elige un contacto de prueba', 'Lo necesitamos para ligar las validaciones al hilo correcto sin adivinar identidades.')
+      return
+    }
 
     const now = Date.now()
     if (attachments.some((attachment) => testAttachmentExpired(attachment, now)) || testMessages.some((message) => testMessageHasExpiredAttachment(message, now))) {
@@ -1980,10 +2086,21 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     try {
       const agentForTest = await onFlushSave()
       const effectiveAgent = agentForTest || agent
+      const expectsTestRun = effectiveTestEffects.scheduleAppointment || effectiveTestEffects.collectPayment
+      if (expectsTestRun) activeTestRunIdRef.current = testSessionIdRef.current
       const result: ConversationalAgentTestResult = await conversationalAgentService.testAgent(
         nextMessages.map(toTestPayloadMessage),
-        { config: agentToInput(effectiveAgent), agentId: effectiveAgent.id }
+        {
+          config: agentToInput(effectiveAgent),
+          agentId: effectiveAgent.id,
+          testSessionId: testSessionIdRef.current,
+          testMessageId: createTestTrackingId('message'),
+          ...(testEffectsEnabled && testContact?.id ? { contactId: testContact.id } : {}),
+          effects: effectiveTestEffects
+        }
       )
+      if (result.testRunId) activeTestRunIdRef.current = result.testRunId
+      else if (expectsTestRun) activeTestRunIdRef.current = null
 
       const responseDelayMs = normalizeTestResponseDelay(result.responseDelayMs)
       if (responseDelayMs > 0) {
@@ -1996,6 +2113,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         setTestMessages((current) => [
           ...current,
           { role: 'assistant', content: describeConversationalPreviewAction(action), internal: true }
+        ])
+      }
+
+      for (const effect of result.testEffects || []) {
+        if (testPracticeExpiredRef.current) return
+        setTestMessages((current) => [
+          ...current,
+          { role: 'assistant', content: describeTestEffectResult(effect), internal: true }
         ])
       }
 
@@ -2014,6 +2139,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         setTestMessages((current) => [...current, { role: 'assistant', content: '⚠︎ La prueba no devolvió una respuesta válida. Vuelve a intentarlo.', internal: true }])
       }
     } catch (error: any) {
+      if (activeTestRunIdRef.current === testSessionIdRef.current) {
+        cleanupActiveTestRun()
+        testSessionIdRef.current = createTestTrackingId('session')
+      }
       if (!testPracticeExpiredRef.current) {
         showToast('error', 'Prueba fallida', error?.message || 'No se pudo probar el agente')
       }
@@ -2288,6 +2417,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
   const handleResetTestChat = () => {
     if (testing) return
+    cleanupActiveTestRun()
+    testSessionIdRef.current = createTestTrackingId('session')
     testPracticeExpiredRef.current = false
     cleanupTestVoiceRecorder()
     setTestMessages([])
@@ -2701,7 +2832,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           <PhoneChatPreview
             className={styles.agentTestPhonePreview}
             title="Mi negocio"
-            subtitle="Prueba interna"
+            subtitle={testEffectsEnabled ? 'Registro de prueba activo' : 'Simulación segura'}
             avatarLabel="Mi negocio"
             messages={testPreviewMessages}
             emptyText={testPracticeExpired ? TEST_MEDIA_EXPIRED_NOTICE : `Escribe como ${leadLowerLabel} y revisa si contesta como debe.`}
@@ -2715,6 +2846,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 disabled: testing || !hasTestConversation
               }
             ]}
+            moreOptionsAction={{
+              id: 'test-options',
+              label: 'Más opciones de prueba',
+              onClick: () => setTestOptionsOpen(true),
+              disabled: testing
+            }}
             composer={(
               <>
                 <input
@@ -2815,6 +2952,108 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </>
             )}
           />
+          <Modal
+            isOpen={testOptionsOpen}
+            onClose={() => setTestOptionsOpen(false)}
+            title="Opciones de la prueba"
+            subtitle="El chat sigue siendo una simulación hasta que tú permitas registrar acciones."
+            size="md"
+          >
+            <div className={styles.agentTestOptions}>
+              <div className={styles.agentTestModeSummary} data-effects-enabled={testEffectsEnabled ? 'true' : undefined}>
+                <strong>{testEffectsEnabled ? 'Registro controlado' : 'Simulación segura'}</strong>
+                <span>{testEffectsEnabled
+                  ? 'Sólo se validan las acciones que actives abajo y siempre contra el contacto elegido.'
+                  : 'La IA conversa y muestra lo que haría, pero no crea citas, cobros ni notificaciones.'}</span>
+              </div>
+
+              <label className={styles.agentTestOptionSwitch}>
+                <span>
+                  <strong>Registrar validaciones de prueba</strong>
+                  <small>Apagado por defecto. Enciéndelo cuando quieras comprobar datos reales sin crear citas ni cobros.</small>
+                </span>
+                <Switch
+                  checked={testEffectsEnabled}
+                  onChange={(enabled) => {
+                    setTestEffectsEnabled(enabled)
+                    if (!enabled) {
+                      cleanupActiveTestRun()
+                      setTestScheduleAppointment(false)
+                      setTestCollectPayment(false)
+                      setTestNotifyOwner(false)
+                    }
+                  }}
+                  aria-label="Registrar validaciones de prueba"
+                />
+              </label>
+
+              {testEffectsEnabled && (
+                <>
+                  <ContactSearchInput
+                    value={testContact}
+                    onChange={(contact) => {
+                      if (contact?.id !== testContact?.id) handleResetTestChat()
+                      setTestContact(contact)
+                    }}
+                    label="Contacto de prueba"
+                    placeholder="Buscar contacto existente"
+                    required
+                    allowCreate={false}
+                    error={!testContact ? 'Elige el contacto que recibirá las acciones de esta prueba.' : undefined}
+                    portal
+                  />
+
+                  <div className={styles.agentTestEffectList}>
+                    {testScheduleCapabilityEnabled && (
+                      <label className={styles.agentTestOptionSwitch}>
+                        <span>
+                          <strong>Validar cita de prueba</strong>
+                          <small>Revalida el horario y registra la evidencia de prueba, sin crear una cita real ni tocar el chat.</small>
+                        </span>
+                        <Switch
+                          checked={testScheduleAppointment}
+                          onChange={setTestScheduleAppointment}
+                          aria-label="Validar cita de prueba"
+                        />
+                      </label>
+                    )}
+
+                    {testPaymentCapabilityEnabled && (
+                      <label className={styles.agentTestOptionSwitch}>
+                        <span>
+                          <strong>Validar cobro de prueba</strong>
+                          <small>Comprueba producto, monto y moneda. No crea ni envía un enlace y jamás finge un pago confirmado.</small>
+                        </span>
+                        <Switch
+                          checked={testCollectPayment}
+                          onChange={setTestCollectPayment}
+                          aria-label="Validar cobro de prueba"
+                        />
+                      </label>
+                    )}
+
+                    <label className={styles.agentTestOptionSwitch}>
+                      <span>
+                        <strong>Notificarme al validar</strong>
+                        <small>Recibe una notificación interna para comprobar que la validación sí quedó registrada.</small>
+                      </span>
+                      <Switch
+                        checked={testNotifyOwner}
+                        onChange={setTestNotifyOwner}
+                        aria-label="Notificarme al validar una acción de prueba"
+                      />
+                    </label>
+                  </div>
+                </>
+              )}
+
+              <div className={styles.agentTestOptionsActions}>
+                <Button variant="primary" onClick={() => setTestOptionsOpen(false)} disabled={testEffectsEnabled && !testContact}>
+                  Listo
+                </Button>
+              </div>
+            </div>
+          </Modal>
         </div>
       </aside>
     </div>

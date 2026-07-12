@@ -9,7 +9,10 @@ import {
   createConversationalTools,
   setNativeHandoffAfterAssignmentHookForTest
 } from '../src/agents/conversational/tools.js'
-import { resumeToolCallingV2AfterVerifiedPayment } from '../src/agents/conversational/runner.js'
+import {
+  ensureToolCallingV2VisibleReply,
+  resumeToolCallingV2AfterVerifiedPayment
+} from '../src/agents/conversational/runner.js'
 import { findVerifiedPaymentEvidence } from '../src/agents/conversational/actionEvidence.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import { registerAgentTransferPaymentProofForReview } from '../src/services/paymentFlowService.js'
@@ -82,6 +85,86 @@ test('v2 presenta la hora local del servidor y conserva el startTime UTC sin rec
   assert.match(option.localLabel, /martes 14 de julio de 2026/)
   assert.match(option.localLabel, /4:00/)
   assert.doesNotMatch(option.localLabel, /5:00/)
+})
+
+test('get_contact_profile usa identidad virtual estable en preview y falla cerrado en vivo', async () => {
+  const previewCtx = v2Context([], {
+    contactId: 'ristak-preview-contact',
+    dryRun: true,
+    virtualContact: { id: 'ristak-preview-contact', fullName: 'Contacto de prueba' }
+  })
+  const previewTool = createConversationalTools(previewCtx)
+    .find((item) => item.name === 'get_contact_profile')
+  const preview = await previewTool.invoke(null, '{}')
+
+  assert.equal(preview.ok, true)
+  assert.equal(preview.contact.fullName, 'Contacto de prueba')
+  assert.equal(preview.contact.source, 'preview_thread')
+  assert.equal(preview.pastClientEvidence.isPastClient, false)
+  assert.deepEqual(preview.upcomingAppointments, [])
+  assert.match(preview.note, /no pidas teléfono/i)
+
+  const missingCtx = v2Context([], {
+    contactId: `contact_missing_${randomUUID()}`,
+    dryRun: false
+  })
+  const missingTool = createConversationalTools(missingCtx)
+    .find((item) => item.name === 'get_contact_profile')
+  const missing = await missingTool.invoke(null, '{}')
+  assert.equal(missing.ok, false)
+  assert.equal(missing.transferRequired, true)
+  assert.equal(missing.terminal, true)
+  assert.equal(missingCtx.actions[0]?.type, 'contact_identity_unavailable')
+  assert.doesNotMatch(
+    ensureToolCallingV2VisibleReply('me pasas tu teléfono para buscarte?', missingCtx.actions),
+    /teléfono para buscarte/i
+  )
+})
+
+test('create_payment_link usa el contacto virtual del preview sin pedir teléfono ni crear pagos', async () => {
+  const suffix = randomUUID()
+  const productId = `product_preview_${suffix}`
+  const priceId = `price_preview_${suffix}`
+  const currency = await getAccountCurrency()
+  try {
+    await db.run(
+      `INSERT INTO products (id, name, currency, is_active, source)
+       VALUES (?, 'Consulta preview', ?, 1, 'ristak')`,
+      [productId, currency]
+    )
+    await db.run(
+      `INSERT INTO product_prices (id, product_id, name, currency, amount, source)
+       VALUES (?, ?, 'Precio preview', ?, 1200, 'ristak')`,
+      [priceId, productId, currency]
+    )
+    const ctx = v2Context([{
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'full_payment',
+      productId,
+      priceId
+    }], {
+      contactId: 'ristak-preview-contact',
+      dryRun: true,
+      virtualContact: { id: 'ristak-preview-contact', fullName: 'Contacto de prueba' },
+      accountLocale: { currency }
+    })
+    const payment = createConversationalTools(ctx).find((item) => item.name === 'create_payment_link')
+    const result = await payment.invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.simulated, true)
+    assert.equal(result.amount, 1200)
+    assert.equal(ctx.actions[0]?.type, 'create_payment_link')
+    assert.equal(ctx.actions[0]?.outcome?.status, 'simulated')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?',
+      ['ristak-preview-contact']
+    )).total), 0)
+  } finally {
+    await db.run('DELETE FROM product_prices WHERE id = ?', [priceId]).catch(() => {})
+    await db.run('DELETE FROM products WHERE id = ?', [productId]).catch(() => {})
+  }
 })
 
 test('v2 expone la unión exacta de capacidades y nunca las tools de silencio/descarte legacy', () => {
@@ -196,7 +279,9 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     const result = await book.invoke(null, JSON.stringify({
       startTime: returnedSlot.startTime,
       title: null,
-      notes: null
+      notes: null,
+      attendeeName: null,
+      attendeeContext: null
     }))
 
     assert.equal(result.ok, true, JSON.stringify(result))
@@ -208,6 +293,213 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     assert.equal(ctx.actions[0]?.confirmationEvidence?.nativeToolDecision, true)
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('agenda humana revalida, asigna y transfiere sin crear cita ni cerrar conversión', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_human_booking_${suffix}`
+  const contactId = `contact_human_booking_${suffix}`
+  const agentId = `agent_human_booking_${suffix}`
+  const username = `user_human_booking_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 24 }).startOf('day')
+  const nextWednesday = baseDay.plus({ days: (3 - baseDay.weekday + 7) % 7 })
+  const slot = nextWednesday.set({ hour: 16, minute: 0, second: 0, millisecond: 0 })
+  let userId = ''
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Raúl Gómez', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO users (username, password_hash, full_name, is_active, created_at, updated_at)
+       VALUES (?, 'test-hash', 'Mariana Agenda', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [username]
+    )
+    userId = String((await db.get('SELECT id FROM users WHERE username = ?', [username]))?.id || '')
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'location_human_booking',
+      name: 'Agenda humana',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        { daysOfTheWeek: [3], hours: [{ openHour: 15, openMinute: 0, closeHour: 18, closeMinute: 0 }] }
+      ]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    const ctx = v2Context([{
+      id: 'schedule_appointment',
+      enabled: true,
+      calendarId,
+      bookingOwner: 'human',
+      handoffUserId: userId,
+      handoffUserName: 'Mariana Agenda'
+    }], {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `message_human_booking_${suffix}`
+    })
+    ctx.config.id = agentId
+    const tools = createConversationalTools(ctx)
+    assert.equal(tools.some((item) => item.name === 'book_appointment'), false)
+    const request = tools.find((item) => item.name === 'request_human_booking')
+    assert.ok(request)
+    const payload = {
+      startTime: slot.toUTC().toISO(),
+      title: 'Valoración de rodilla',
+      notes: 'Dolor diario desde hace seis meses',
+      attendeeName: 'Paty Jiménez',
+      attendeeContext: 'Mamá del contacto'
+    }
+    const result = await request.invoke(null, JSON.stringify(payload))
+
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.transferredToHuman, true)
+    assert.equal(result.appointmentCreated, false)
+    assert.match(result.requestedSlot.title, /Paty Jiménez/)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+      [contactId]
+    )).total), 0)
+
+    const contact = await db.get('SELECT assigned_user_id FROM contacts WHERE id = ?', [contactId])
+    assert.equal(String(contact.assigned_user_id), userId)
+    const state = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agentId]
+    )
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+    const event = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
+      [contactId]
+    )
+    const detail = JSON.parse(event.detail_json)
+    assert.equal(detail.appointmentCreated, false)
+    assert.equal(detail.objectiveCompleted, false)
+    assert.equal(detail.attendeeName, 'Paty Jiménez')
+    assert.match(detail.notes, /Raúl Gómez/)
+    assert.match(detail.notes, /Mamá del contacto/)
+    assert.equal(ctx.actions[0]?.outcome?.objectiveCompleted, false)
+
+    const replay = await request.invoke(null, JSON.stringify(payload))
+    assert.equal(replay.ok, true, JSON.stringify(replay))
+    assert.equal(replay.appointmentCreated, false)
+    assert.equal(ctx.actions[1]?.outcome?.replayed, true)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
+      [contactId]
+    )).total), 1)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type IN ('priority_push_notification', 'priority_push_notification_failed')`,
+      [contactId]
+    )).total), 1)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('agenda humana rechaza un slot ocupado y no usa la asignación del handoff general', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_human_stale_${suffix}`
+  const contactId = `contact_human_stale_${suffix}`
+  const competitorId = `contact_competitor_${suffix}`
+  const agentId = `agent_human_stale_${suffix}`
+  const username = `user_generic_handoff_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 26 }).startOf('day')
+  const nextWednesday = baseDay.plus({ days: (3 - baseDay.weekday + 7) % 7 })
+  const slot = nextWednesday.set({ hour: 16, minute: 0, second: 0, millisecond: 0 })
+  let userId = ''
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'location_human_stale',
+      name: 'Agenda humana ocupada',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [3], hours: [{ openHour: 15, openMinute: 0, closeHour: 18, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto del hilo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+              (?, 'Contacto competidor', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, competitorId]
+    )
+    await db.run(
+      `INSERT INTO users (username, password_hash, full_name, is_active, created_at, updated_at)
+       VALUES (?, 'test-hash', 'Persona del handoff general', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [username]
+    )
+    userId = String((await db.get('SELECT id FROM users WHERE username = ?', [username]))?.id || '')
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time
+       ) VALUES (?, ?, ?, 'Cita competidora', 'confirmed', 'confirmed', ?, ?)`,
+      [
+        `appointment_competitor_${suffix}`,
+        calendarId,
+        competitorId,
+        slot.toUTC().toISO(),
+        slot.plus({ hours: 1 }).toUTC().toISO()
+      ]
+    )
+
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'human' },
+      { id: 'handoff_human', enabled: true, userId, userName: 'Persona del handoff general' }
+    ], {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `message_human_stale_${suffix}`
+    })
+    ctx.config.id = agentId
+    const request = createConversationalTools(ctx).find((item) => item.name === 'request_human_booking')
+    const result = await request.invoke(null, JSON.stringify({
+      startTime: slot.toUTC().toISO(),
+      title: 'Valoración',
+      notes: null,
+      attendeeName: null,
+      attendeeContext: null
+    }))
+
+    assert.equal(result.ok, false)
+    assert.equal(result.invalidSlot, true)
+    assert.equal(await db.get(
+      'SELECT id FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agentId]
+    ), null)
+    const contact = await db.get('SELECT assigned_user_id FROM contacts WHERE id = ?', [contactId])
+    assert.equal(contact.assigned_user_id, null)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type IN ('human_booking_requested', 'priority_push_notification', 'priority_push_notification_failed')`,
+      [contactId]
+    )).total), 0)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactId, competitorId]).catch(() => {})
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
   }
 })
@@ -258,7 +550,9 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     const payload = {
       startTime: slot.toUTC().toISO(),
       title: 'Valoración inicial',
-      notes: 'Requiere valoración'
+      notes: 'Requiere valoración',
+      attendeeName: 'Paty Jiménez',
+      attendeeContext: 'Mamá del contacto con dolor de rodilla'
     }
     const first = await book.invoke(null, JSON.stringify(payload))
     clientRequestId = ctx.actions[0]?.clientRequestId || ''
@@ -274,11 +568,14 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     assert.match(clientRequestId, /^conv-v2-attempt:/)
     assert.equal(ctx.actions[1]?.clientRequestId, clientRequestId)
     const rows = await db.all(
-      `SELECT id FROM appointments
+      `SELECT id, title, notes FROM appointments
        WHERE calendar_id = ? AND contact_id = ? AND start_time = ?`,
       [calendarId, contactId, slot.toUTC().toISO()]
     )
     assert.equal(rows.length, 1)
+    assert.match(rows[0].title, /Paty Jiménez/)
+    assert.match(rows[0].notes, /Cliente replay v2/)
+    assert.match(rows[0].notes, /Mamá del contacto con dolor de rodilla/)
     const movedSlot = slot.plus({ days: 1, hours: 1 })
     await db.run(
       `UPDATE appointments SET start_time = ?, end_time = ?, title = 'Valoración reprogramada'
@@ -365,7 +662,7 @@ test('book_appointment v2 nunca adopta como propia una cita futura de otro calen
     ctx.config.id = agentId
     const result = await createConversationalTools(ctx)
       .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({ startTime: targetSlot.toUTC().toISO(), title: null, notes: null }))
+      .invoke(null, JSON.stringify({ startTime: targetSlot.toUTC().toISO(), title: null, notes: null, attendeeName: null, attendeeContext: null }))
 
     assert.equal(result.ok, true, JSON.stringify(result))
     assert.equal(result.alreadyBooked, undefined)
@@ -2205,7 +2502,7 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
     ctx.config.id = agentId
     const result = await createConversationalTools(ctx)
       .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO(), title: null, notes: null }))
+      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO(), title: null, notes: null, attendeeName: null, attendeeContext: null }))
 
     assert.equal(result.ok, true, JSON.stringify(result))
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 1)
@@ -2361,7 +2658,7 @@ test('si el cierre de una cita v2 falla, el siguiente inbound repara la cita exi
     firstCtx.config.id = agentId
     const first = await createConversationalTools(firstCtx)
       .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO(), title: null, notes: null }))
+      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO(), title: null, notes: null, attendeeName: null, attendeeContext: null }))
     assert.equal(first.ok, true, JSON.stringify(first))
     assert.equal(first.completionSyncWarning, true)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 1)
@@ -2379,7 +2676,7 @@ test('si el cierre de una cita v2 falla, el siguiente inbound repara la cita exi
     retryCtx.config.id = agentId
     const retry = await createConversationalTools(retryCtx)
       .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({ startTime: slot.plus({ weeks: 1 }).toUTC().toISO(), title: null, notes: null }))
+      .invoke(null, JSON.stringify({ startTime: slot.plus({ weeks: 1 }).toUTC().toISO(), title: null, notes: null, attendeeName: null, attendeeContext: null }))
     assert.equal(retry.ok, true, JSON.stringify(retry))
     assert.equal(retry.alreadyBooked, true)
     assert.equal(retry.appointment.startTime, slot.toUTC().toISO())
