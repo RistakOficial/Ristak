@@ -3279,6 +3279,7 @@ async function syncLocalMessageTemplateFromProvider(template) {
 
 async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
   const normalized = phoneNumbers.map(normalizePhoneNumberRecord)
+  const reactivate = options.reactivate === true ? 1 : 0
 
   // Cuando recibimos la lista COMPLETA desde YCloud (pruneMissing) borramos las
   // filas en caché que YCloud ya no devuelve (números eliminados / WABA dado de baja),
@@ -3306,8 +3307,8 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
       INSERT INTO whatsapp_api_phone_numbers (
         id, provider, waba_id, phone_number, display_phone_number, verified_name,
         profile_picture_url, business_profile_json, quality_rating, messaging_limit,
-        status, raw_payload_json, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        status, api_send_enabled, raw_payload_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         provider = COALESCE(NULLIF(excluded.provider, ''), whatsapp_api_phone_numbers.provider),
         waba_id = excluded.waba_id,
@@ -3319,6 +3320,10 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
         quality_rating = excluded.quality_rating,
         messaging_limit = excluded.messaging_limit,
         status = excluded.status,
+        api_send_enabled = CASE
+          WHEN ? = 1 THEN 1
+          ELSE whatsapp_api_phone_numbers.api_send_enabled
+        END,
         raw_payload_json = excluded.raw_payload_json,
         updated_at = CURRENT_TIMESTAMP
     `, [
@@ -3333,7 +3338,8 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
       item.qualityRating || null,
       item.messagingLimit || null,
       item.status || null,
-      safeJson(item.raw)
+      safeJson(item.raw),
+      reactivate
     ])
 
     await syncPhoneNumberAlert(item, options)
@@ -3349,6 +3355,34 @@ async function setDefaultSenderPhoneNumber(phoneNumberId) {
     SET is_default_sender = CASE WHEN id = ? THEN 1 ELSE 0 END,
       updated_at = CURRENT_TIMESTAMP
   `, [cleanPhoneNumberId])
+}
+
+function isLocallyConnectedWhatsAppPhone(phone = {}) {
+  const provider = cleanString(phone.provider).toLowerCase()
+  const qrStatus = cleanString(phone.qr_status).toLowerCase()
+  const apiEnabled = provider !== 'qr' && Number(phone.api_send_enabled ?? 1) === 1
+  const qrEnabled = Number(phone.qr_send_enabled || 0) === 1 ||
+    ['starting', 'qr_pending', 'connected', 'reconnecting', 'restarting'].includes(qrStatus)
+  return provider === 'qr' || apiEnabled || qrEnabled
+}
+
+async function selectNextDefaultWhatsAppPhone() {
+  const rows = await getPhoneNumbersFromDb()
+  const nextDefault = rows.find(isLocallyConnectedWhatsAppPhone) || null
+
+  if (nextDefault?.id) {
+    await setDefaultSenderPhoneNumber(nextDefault.id)
+    await setAppConfig(CONFIG_KEYS.senderPhone, nextDefault.phone_number || nextDefault.display_phone_number || '')
+    await setAppConfig(CONFIG_KEYS.phoneNumberId, nextDefault.id || '')
+    await setAppConfig(CONFIG_KEYS.wabaId, nextDefault.waba_id || '')
+    return nextDefault
+  }
+
+  await db.run('UPDATE whatsapp_api_phone_numbers SET is_default_sender = 0 WHERE is_default_sender != 0')
+  await setAppConfig(CONFIG_KEYS.senderPhone, '')
+  await setAppConfig(CONFIG_KEYS.phoneNumberId, '')
+  await setAppConfig(CONFIG_KEYS.wabaId, '')
+  return null
 }
 
 export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {
@@ -4363,10 +4397,10 @@ export async function createWhatsAppQrPhoneNumber({ phoneNumberId, phoneNumber, 
   return db.get('SELECT * FROM whatsapp_api_phone_numbers WHERE id = ?', [id])
 }
 
-export async function deleteWhatsAppQrPhoneNumber({ phoneNumberId } = {}) {
+export async function disconnectStandaloneWhatsAppQrPhoneNumber({ phoneNumberId } = {}) {
   const cleanPhoneNumberId = cleanString(phoneNumberId)
   if (!cleanPhoneNumberId) {
-    throw new Error('Elige el número QR que quieres eliminar')
+    throw new Error('Elige el número QR que quieres desconectar de Ristak')
   }
 
   const phone = await db.get(`
@@ -4380,7 +4414,7 @@ export async function deleteWhatsAppQrPhoneNumber({ phoneNumberId } = {}) {
   }
 
   if (cleanString(phone.provider).toLowerCase() !== 'qr') {
-    throw new Error('Solo puedes eliminar números conectados por QR. Los números oficiales se eliminan desde YCloud/Meta y Ristak los limpia al sincronizar.')
+    throw new Error('Esta ruta sólo desconecta números QR independientes. Para un número oficial usa la desconexión por fila y elige API o respaldo QR.')
   }
 
   await disconnectWhatsAppQrConnection({ phoneNumberId: cleanPhoneNumberId })
@@ -4397,34 +4431,112 @@ export async function deleteWhatsAppQrPhoneNumber({ phoneNumberId } = {}) {
   const result = await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [cleanPhoneNumberId])
 
   if (shouldResetDefault) {
-    const nextDefault = await db.get(`
-      SELECT id, waba_id, phone_number, display_phone_number
-      FROM whatsapp_api_phone_numbers
-      ORDER BY is_default_sender DESC, updated_at DESC, phone_number ASC
-      LIMIT 1
-    `)
-
-    if (nextDefault?.id) {
-      await setDefaultSenderPhoneNumber(nextDefault.id)
-      await setAppConfig(CONFIG_KEYS.senderPhone, nextDefault.phone_number || nextDefault.display_phone_number || '')
-      await setAppConfig(CONFIG_KEYS.phoneNumberId, nextDefault.id || '')
-      await setAppConfig(CONFIG_KEYS.wabaId, nextDefault.waba_id || '')
-    } else {
-      await setAppConfig(CONFIG_KEYS.senderPhone, '')
-      await setAppConfig(CONFIG_KEYS.phoneNumberId, '')
-      await setAppConfig(CONFIG_KEYS.wabaId, '')
-    }
+    await selectNextDefaultWhatsAppPhone()
   }
 
   await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
   await setAppConfig(CONFIG_KEYS.lastError, '')
 
-  logger.info(`WhatsApp QR: número eliminado localmente: ${phone.phone_number || phone.display_phone_number || phone.id} (${phone.verified_name || 'sin nombre'})`)
+  logger.info(`WhatsApp QR: conexión local retirada de Ristak: ${phone.phone_number || phone.display_phone_number || phone.id} (${phone.verified_name || 'sin nombre'})`)
 
   return {
+    disconnected: true,
     deleted: Number(result?.changes || 0),
     phoneNumberId: cleanPhoneNumberId
   }
+}
+
+// Compatibilidad con clientes anteriores. La operación nunca elimina el número
+// real de WhatsApp: sólo cierra Baileys y retira su fila/sesión local de Ristak.
+export async function deleteWhatsAppQrPhoneNumber(options = {}) {
+  return disconnectStandaloneWhatsAppQrPhoneNumber(options)
+}
+
+export async function disconnectWhatsAppPhoneNumber({ phoneNumberId, connection } = {}) {
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  const cleanConnection = cleanString(connection).toLowerCase()
+  if (!cleanPhoneNumberId) throw new Error('Elige el número que quieres desconectar')
+  if (!['api', 'qr'].includes(cleanConnection)) {
+    throw new Error('Indica si quieres desconectar la API oficial o el QR')
+  }
+
+  const phone = await db.get(`
+    SELECT id, provider, status, phone_number, display_phone_number, verified_name,
+      is_default_sender, api_send_enabled, qr_send_enabled, qr_status
+    FROM whatsapp_api_phone_numbers
+    WHERE id = ?
+  `, [cleanPhoneNumberId])
+  if (!phone) throw new Error('Ese número de WhatsApp no está conectado a Ristak')
+
+  const provider = cleanString(phone.provider).toLowerCase() || PROVIDER_NAME
+  if (cleanConnection === 'qr') {
+    if (provider === 'qr' || cleanString(phone.status).toUpperCase() === 'QR_ONLY') {
+      await disconnectStandaloneWhatsAppQrPhoneNumber({ phoneNumberId: cleanPhoneNumberId })
+    } else {
+      await disconnectWhatsAppQrConnection({ phoneNumberId: cleanPhoneNumberId })
+      const configuredPhoneNumberId = cleanString(await getAppConfig(CONFIG_KEYS.phoneNumberId))
+      if (
+        (configuredPhoneNumberId === cleanPhoneNumberId || Number(phone.is_default_sender || 0) === 1) &&
+        Number(phone.api_send_enabled ?? 1) === 0
+      ) {
+        await selectNextDefaultWhatsAppPhone()
+      }
+    }
+    return getWhatsAppApiStatus()
+  }
+
+  if (provider === 'qr') {
+    throw new Error('Ese número usa WhatsApp QR; desconecta la conexión QR')
+  }
+
+  if (provider === META_DIRECT_PROVIDER_NAME) {
+    const metaDirect = await loadMetaDirectConfig()
+    if (metaDirect.phoneNumberId && metaDirect.phoneNumberId !== cleanPhoneNumberId) {
+      throw new Error('Ese número no corresponde a la conexión activa de Meta directo')
+    }
+    if (metaDirect.connected || metaDirect.phoneNumberId) {
+      await disconnectMetaDirectConnection()
+    }
+    await db.run(`
+      UPDATE whatsapp_api_phone_numbers
+      SET api_send_enabled = 0,
+          is_default_sender = 0,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND provider = ?
+    `, [cleanPhoneNumberId, META_DIRECT_PROVIDER_NAME])
+  } else if (provider === PROVIDER_NAME) {
+    await db.run(`
+      UPDATE whatsapp_api_phone_numbers
+      SET api_send_enabled = 0,
+          is_default_sender = 0,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [cleanPhoneNumberId])
+
+    const remainingYCloud = await db.get(`
+      SELECT COUNT(*) AS total
+      FROM whatsapp_api_phone_numbers
+      WHERE COALESCE(provider, ?) = ?
+        AND id != ?
+        AND COALESCE(api_send_enabled, 1) = 1
+    `, [PROVIDER_NAME, PROVIDER_NAME, cleanPhoneNumberId])
+
+    if (Number(remainingYCloud?.total || 0) === 0) {
+      await disconnectWhatsAppApi()
+      const metaDirect = await loadMetaDirectConfig()
+      if (metaDirect.connected) {
+        await setAppConfig(CONFIG_KEYS.provider, META_DIRECT_PROVIDER_NAME)
+      }
+    }
+  } else {
+    throw new Error('El proveedor oficial de ese número no es compatible')
+  }
+
+  await selectNextDefaultWhatsAppPhone()
+  await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
+  await setAppConfig(CONFIG_KEYS.lastError, '')
+  logger.info(`WhatsApp: conexión ${cleanConnection} retirada de Ristak para ${phone.phone_number || phone.display_phone_number || phone.id} (${provider})`)
+  return getWhatsAppApiStatus()
 }
 
 async function getBalanceFromDb() {
@@ -4797,11 +4909,16 @@ export async function getWhatsAppApiStatus() {
   const requiresPhoneSelection = false
 
   // Disponibilidad operativa por número: API oficial sana, respaldo QR listo, o nada.
-  const phoneNumbersWithAvailability = await Promise.all(phoneNumbers.map(async (phone) => {
-    const apiRestrictionReason = connected
+  const locallyConnectedPhoneNumbers = phoneNumbers.filter(isLocallyConnectedWhatsAppPhone)
+  const phoneNumbersWithAvailability = await Promise.all(locallyConnectedPhoneNumbers.map(async (phone) => {
+    const provider = cleanString(phone.provider).toLowerCase() || PROVIDER_NAME
+    const officialProviderConnected = provider === META_DIRECT_PROVIDER_NAME
+      ? metaDirect.connected
+      : connected
+    const apiRestrictionReason = officialProviderConnected
       ? await getOfficialApiRestrictionReason({ phoneRow: phone, config }).catch(() => '')
       : 'WhatsApp API no está conectado.'
-    const apiAvailable = connected && !apiRestrictionReason
+    const apiAvailable = officialProviderConnected && !apiRestrictionReason
     const qrReady = isQrFallbackReady(phone)
     return {
       ...phone,
@@ -5033,7 +5150,7 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       })
     ])
     const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(cleanApiKey, phoneNumbers)
-    await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true })
+    await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true, reactivate: true })
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
 
@@ -7166,6 +7283,22 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     payload.contact_id
   )
   const cleanTransport = cleanString(normalizedMessage.transport || payload.transport || transport || 'api').toLowerCase() || 'api'
+  const businessPhoneNumberId = await findBusinessPhoneNumberId(identity.businessPhone)
+  if (cleanTransport !== 'qr' && businessPhoneNumberId) {
+    const localPhone = await db.get(`
+      SELECT api_send_enabled
+      FROM whatsapp_api_phone_numbers
+      WHERE id = ?
+    `, [businessPhoneNumberId]).catch(() => null)
+    if (localPhone && Number(localPhone.api_send_enabled ?? 1) === 0) {
+      logger.info(`WhatsApp API: evento ignorado para número desconectado localmente (${businessPhoneNumberId})`)
+      return {
+        ignored: true,
+        reason: 'phone_disconnected_from_ristak',
+        businessPhoneNumberId
+      }
+    }
+  }
   const routingReason = cleanString(
     normalizedMessage.fallbackReason ||
     normalizedMessage.routingReason ||
@@ -7249,7 +7382,6 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const preservedAgentMetadata = formatConversationalAgentMessageMetadata(
     incomingAgentMarker.sentByAgent ? incomingAgentMarker : existingAgentMarker
   )
-  const businessPhoneNumberId = await findBusinessPhoneNumberId(identity.businessPhone)
   const incomingStatus = normalizeMessageDeliveryStatus(normalizedMessage.status)
   const existingQrFallbackApplied = cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
     Boolean(cleanString(existingMessage?.routing_reason)) &&
@@ -9111,8 +9243,8 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
   await db.run(`
     INSERT INTO whatsapp_api_phone_numbers (
       id, provider, waba_id, phone_number, display_phone_number, verified_name,
-      status, raw_payload_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'CONNECTED', ?, CURRENT_TIMESTAMP)
+      status, api_send_enabled, raw_payload_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'CONNECTED', 1, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       provider = excluded.provider,
       waba_id = excluded.waba_id,
@@ -9120,6 +9252,7 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
       display_phone_number = COALESCE(NULLIF(excluded.display_phone_number, ''), whatsapp_api_phone_numbers.display_phone_number),
       verified_name = COALESCE(NULLIF(excluded.verified_name, ''), whatsapp_api_phone_numbers.verified_name),
       status = 'CONNECTED',
+      api_send_enabled = 1,
       raw_payload_json = excluded.raw_payload_json,
       updated_at = CURRENT_TIMESTAMP
   `, [
@@ -9147,6 +9280,15 @@ export async function disconnectMetaDirectConnection() {
   if (current.webhookMode === 'installer_relay') {
     await disconnectCentralWhatsAppMeta()
   }
+  if (current.phoneNumberId) {
+    await db.run(`
+      UPDATE whatsapp_api_phone_numbers
+      SET api_send_enabled = 0,
+          is_default_sender = 0,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND provider = ?
+    `, [current.phoneNumberId, META_DIRECT_PROVIDER_NAME])
+  }
   await clearWhatsAppMetaDirectIntegrationCredentials()
   await setAppConfig(CONFIG_KEYS.metaStatus, 'disconnected')
   await setAppConfig(CONFIG_KEYS.metaDisconnectedAt, nowIso())
@@ -9154,6 +9296,9 @@ export async function disconnectMetaDirectConnection() {
   const activeProvider = await getAppConfig(CONFIG_KEYS.provider)
   if (activeProvider === META_DIRECT_PROVIDER_NAME) {
     await setAppConfig(CONFIG_KEYS.provider, PROVIDER_NAME)
+  }
+  if (current.phoneNumberId) {
+    await selectNextDefaultWhatsAppPhone()
   }
 
   return getWhatsAppApiStatus()

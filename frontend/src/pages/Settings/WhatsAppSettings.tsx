@@ -17,7 +17,6 @@ import {
   Send,
   ShieldCheck,
   Star,
-  Trash2,
   Unplug,
   Wallet
 } from 'lucide-react'
@@ -207,6 +206,10 @@ function getPhoneLabel(phone: WhatsAppApiPhoneNumber) {
   return phone.verified_name && phone.verified_name !== number ? `${number} · ${phone.verified_name}` : number
 }
 
+function getOfficialProviderLabel(phone: WhatsAppApiPhoneNumber) {
+  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'Meta Directo' : 'YCloud'
+}
+
 function getPhoneProfile(phone?: WhatsAppApiPhoneNumber | null) {
   return parseJson<BusinessProfile>(phone?.business_profile_json)
 }
@@ -352,13 +355,11 @@ export const WhatsAppSettings: React.FC = () => {
   const [metaSignupPreparing, setMetaSignupPreparing] = useState(false)
   const [metaSignupSession, setMetaSignupSession] = useState<WhatsAppMetaEmbeddedSignupSession | null>(null)
   const [apiRefreshing, setApiRefreshing] = useState(false)
-  const [apiDisconnecting, setApiDisconnecting] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [selectedPhoneId, setSelectedPhoneId] = useState('')
   const [metaBusinessAccountId, setMetaBusinessAccountId] = useState('')
   const [qrConnectingPhoneId, setQrConnectingPhoneId] = useState('')
-  const [qrDisconnectingPhoneId, setQrDisconnectingPhoneId] = useState('')
-  const [qrDeletingPhoneId, setQrDeletingPhoneId] = useState('')
+  const [disconnectingConnectionKey, setDisconnectingConnectionKey] = useState('')
   const [qrConsentPhone, setQrConsentPhone] = useState<WhatsAppApiPhoneNumber | null>(null)
   const [connectionChoice, setConnectionChoice] = useState<ConnectionChoice | null>(null)
   const [addNumberModalOpen, setAddNumberModalOpen] = useState(false)
@@ -390,7 +391,9 @@ export const WhatsAppSettings: React.FC = () => {
       )),
     [apiStatus?.phoneNumbers, hasWhatsAppApiAccess]
   )
-  const apiConnected = hasWhatsAppApiAccess && Boolean(apiStatus?.connected)
+  const ycloudConnected = hasWhatsAppApiAccess && Boolean(apiStatus?.connected)
+  const metaDirectConnected = hasWhatsAppApiAccess && Boolean(apiStatus?.metaDirect?.connected)
+  const apiConnected = ycloudConnected || metaDirectConnected
   const hasWhatsAppNumbers = visiblePhoneNumbers.length > 0
   const hasAnyWhatsAppConnection = apiConnected || hasWhatsAppNumbers
   const qrDripSettings = useMemo(() => normalizeQrDripSettings(apiStatus?.qr?.drip), [apiStatus?.qr?.drip])
@@ -722,7 +725,7 @@ export const WhatsAppSettings: React.FC = () => {
   }
 
   const refreshWhatsAppStatus = async () => {
-    if (apiConnected) {
+    if (ycloudConnected) {
       await refreshApi()
       return
     }
@@ -869,29 +872,6 @@ export const WhatsAppSettings: React.FC = () => {
     }
   }
 
-  const confirmApiDisconnect = () => {
-    showConfirm(
-      'Desconectar WhatsApp',
-      'Se eliminará la llave local de WhatsApp API. Los mensajes, contactos y plantillas guardadas se quedan intactos, pero para reconectar tendrás que pegar la API Key otra vez.',
-      async () => {
-        setApiDisconnecting(true)
-        try {
-          const nextStatus = await whatsappApiService.disconnect()
-          setApiStatus(nextStatus)
-          showToast('success', 'Desconectado', 'WhatsApp Business quedó sin credenciales locales')
-        } catch (error) {
-          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar WhatsApp')
-        } finally {
-          setApiDisconnecting(false)
-        }
-      },
-      'Desconectar',
-      'Cancelar',
-      undefined,
-      { typeToConfirm: 'DESCONECTAR' }
-    )
-  }
-
   const openQrConsentForPhone = (phone: WhatsAppApiPhoneNumber) => {
     // Si ya hay un QR generándose para este número, abrir directo en el QR.
     const session = qrSessionsByPhoneId.get(phone.id)
@@ -924,54 +904,54 @@ export const WhatsAppSettings: React.FC = () => {
     }
   }
 
-  const disconnectQrForPhone = (phone: WhatsAppApiPhoneNumber) => {
-    showConfirm(
-      'Desconectar QR',
-      `Se apagara el envio por QR para ${getPhoneLabel(phone)}. La conexión oficial de WhatsApp API y los mensajes guardados se quedan intactos.`,
-      async () => {
-        setQrDisconnectingPhoneId(phone.id)
-        try {
-          await whatsappApiService.disconnectQr(phone.id)
-          await loadApiStatus()
-          showToast('success', 'QR desconectado', 'Este número ya no enviara mensajes por QR')
-        } catch (error) {
-          showToast('error', 'No se pudo desconectar', error instanceof Error ? error.message : 'Intenta nuevamente')
-        } finally {
-          setQrDisconnectingPhoneId('')
-        }
-      },
-      'Desconectar',
-      'Cancelar'
-    )
-  }
+  const disconnectPhoneConnection = (phone: WhatsAppApiPhoneNumber, connection: 'api' | 'qr') => {
+    const standaloneQr = isStandaloneQrPhone(phone)
+    const providerLabel = getOfficialProviderLabel(phone)
+    const title = connection === 'api'
+      ? `Desconectar ${providerLabel}`
+      : standaloneQr
+        ? 'Desconectar WhatsApp QR'
+        : 'Desconectar respaldo QR'
+    const detail = connection === 'api'
+      ? `Ristak dejará de enviar y recibir con ${getPhoneLabel(phone)} mediante ${providerLabel}. El número seguirá registrado en ${providerLabel} y tus mensajes, contactos y plantillas guardadas se quedan intactos.`
+      : standaloneQr
+        ? `Ristak cerrará la sesión local de WhatsApp Web de ${getPhoneLabel(phone)} y quitará el número de esta lista. No se eliminará el número de WhatsApp y tus mensajes y contactos guardados se quedan intactos.`
+        : `Ristak cerrará únicamente el respaldo QR de ${getPhoneLabel(phone)}. La conexión oficial, el número real y tus mensajes guardados se quedan intactos.`
 
-  const deleteQrPhone = (phone: WhatsAppApiPhoneNumber) => {
     showConfirm(
-      'Eliminar WhatsApp QR',
-      `Vas a eliminar ${getPhoneLabel(phone)} de la lista y borrar su sesión local de WhatsApp Web. Los mensajes y contactos guardados se quedan en Ristak. Esta acción no se puede deshacer.`,
+      title,
+      detail,
       async () => {
-        setQrDeletingPhoneId(phone.id)
+        const connectionKey = `${phone.id}:${connection}`
+        setDisconnectingConnectionKey(connectionKey)
         try {
-          const nextStatus = await whatsappApiService.deleteQrPhoneNumber(phone.id)
+          const nextStatus = await whatsappApiService.disconnectPhoneNumber(phone.id, connection)
           setApiStatus(nextStatus)
-          if (selectedPhoneId === phone.id) {
-            const nextSelectedPhoneId = nextStatus.sender.phoneNumberId ||
+          if (selectedPhoneId === phone.id && !nextStatus.phoneNumbers.some(item => item.id === phone.id)) {
+            setSelectedPhoneId(
+              nextStatus.sender.phoneNumberId ||
               nextStatus.phoneNumbers.find(item => item.is_default_sender)?.id ||
               nextStatus.phoneNumbers[0]?.id ||
               ''
-            setSelectedPhoneId(nextSelectedPhoneId)
+            )
           }
-          showToast('success', 'WhatsApp QR eliminado', 'Ese número ya no aparecerá en la lista de WhatsApp.')
+          showToast(
+            'success',
+            'Conexión retirada de Ristak',
+            connection === 'api'
+              ? `${providerLabel} quedó desconectado para este número.`
+              : 'La sesión QR quedó desconectada.'
+          )
         } catch (error) {
-          showToast('error', 'No se pudo eliminar', error instanceof Error ? error.message : 'Intenta nuevamente')
+          showToast('error', 'No se pudo desconectar', error instanceof Error ? error.message : 'Intenta nuevamente')
         } finally {
-          setQrDeletingPhoneId('')
+          setDisconnectingConnectionKey('')
         }
       },
-      'Eliminar',
+      'Desconectar',
       'Cancelar',
       undefined,
-      { typeToConfirm: 'ELIMINAR' }
+      { typeToConfirm: 'DESCONECTAR' }
     )
   }
 
@@ -1048,7 +1028,7 @@ export const WhatsAppSettings: React.FC = () => {
 
       <Button type="submit" loading={apiConnecting} disabled={!canSubmitApi}>
         <Cloud size={18} />
-        {apiConnected ? 'Actualizar conexión' : 'Conectar WhatsApp API'}
+        {ycloudConnected ? 'Actualizar conexión' : 'Conectar WhatsApp API'}
       </Button>
     </form>
   )
@@ -1298,11 +1278,14 @@ export const WhatsAppSettings: React.FC = () => {
         phone.display_phone_number === apiStatus.sender.phone
       const qrPending = ['starting', 'qr_pending', 'restarting', 'reconnecting'].includes(String(qrStatus).toLowerCase())
       const qrConnected = String(qrStatus).toLowerCase() === 'connected'
-      const apiEnabled = apiConnected && Number(phone.api_send_enabled ?? 1) !== 0
+      const provider = String(phone.provider || '').toLowerCase()
+      const officialProviderConnected = provider === 'meta_direct' ? metaDirectConnected : ycloudConnected
+      const officialAttached = !isStandaloneQrPhone(phone) && Number(phone.api_send_enabled ?? 1) !== 0
+      const apiEnabled = officialAttached && officialProviderConnected
       const displayName = phone.verified_name || phoneProfile?.verifiedName || phoneProfile?.businessName || phoneProfile?.name || 'Sin nombre'
       const needsAttention = Boolean(qrError) || ['RED', 'FLAGGED', 'RESTRICTED'].includes(String(phone.quality_rating || '').toUpperCase())
 
-      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, apiEnabled, needsAttention }
+      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, officialAttached, apiEnabled, needsAttention }
     })
     const query = phoneSearch.trim().toLowerCase()
     const qrConnectedCount = enrichedPhones.filter((row) => row.qrConnected).length
@@ -1326,7 +1309,7 @@ export const WhatsAppSettings: React.FC = () => {
       ].some((value) => String(value || '').toLowerCase().includes(query))
     })
     const balanceLabel = balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'
-    const hasAdvancedActions = hasWhatsAppApiAccess && Boolean(paymentConfigUrl || apiConnected)
+    const hasAdvancedActions = hasWhatsAppApiAccess && Boolean(paymentConfigUrl || ycloudConnected)
 
     return (
       <div className={styles.layout}>
@@ -1396,27 +1379,13 @@ export const WhatsAppSettings: React.FC = () => {
                         </a>
                       </DropdownMenuItem>
                     )}
-                    {apiConnected && (
-                      <>
-                        <DropdownMenuItem asChild>
-                          <a href={YCLOUD_CONSOLE_URL} target="_blank" rel="noopener noreferrer">
-                            <ExternalLink size={15} />
-                            Abrir consola API
-                          </a>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className={styles.destructiveMenuItem}
-                          disabled={apiDisconnecting}
-                          onSelect={(event) => {
-                            event.preventDefault()
-                            confirmApiDisconnect()
-                          }}
-                        >
-                          <Unplug size={15} />
-                          Desconectar WhatsApp API
-                        </DropdownMenuItem>
-                      </>
+                    {ycloudConnected && (
+                      <DropdownMenuItem asChild>
+                        <a href={YCLOUD_CONSOLE_URL} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink size={15} />
+                          Abrir consola de YCloud
+                        </a>
+                      </DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -1442,8 +1411,12 @@ export const WhatsAppSettings: React.FC = () => {
                 </thead>
                 <tbody>
                   {filteredPhones.map((row) => {
-                    const { phone, qrPending, qrConnected, qrError, qrStatus, displayName, isSender, apiEnabled } = row
-                    const canDeleteQrPhone = isStandaloneQrPhone(phone)
+                    const { phone, qrPending, qrConnected, qrError, qrStatus, displayName, isSender, officialAttached, apiEnabled } = row
+                    const standaloneQr = isStandaloneQrPhone(phone)
+                    const canDisconnectQr = standaloneQr || qrConnected || qrPending || Number(phone.qr_send_enabled || 0) === 1
+                    const apiDisconnectKey = `${phone.id}:api`
+                    const qrDisconnectKey = `${phone.id}:qr`
+                    const rowBusy = disconnectingConnectionKey === apiDisconnectKey || disconnectingConnectionKey === qrDisconnectKey
 
                     return (
                       <React.Fragment key={phone.id}>
@@ -1456,9 +1429,9 @@ export const WhatsAppSettings: React.FC = () => {
                           <td>
                             <div className={styles.apiCell}>
                               <Badge variant={apiEnabled ? 'success' : 'neutral'}>
-                                {apiEnabled ? (isSender ? 'Principal' : 'Oficial') : 'No conectado'}
+                                {apiEnabled ? getOfficialProviderLabel(phone) : isStandaloneQrPhone(phone) ? 'Sin API' : 'No conectado'}
                               </Badge>
-                              {isSender && <span>Usado por defecto</span>}
+                              {apiEnabled && <span>{isSender ? 'Principal' : 'API oficial'}</span>}
                             </div>
                           </td>
                           <td>
@@ -1466,17 +1439,7 @@ export const WhatsAppSettings: React.FC = () => {
                               <Badge variant={qrConnected ? 'info' : qrPending ? 'warning' : 'neutral'}>
                                 {getQrStatusLabel(qrStatus)}
                               </Badge>
-                              {qrConnected ? (
-                                <Button
-                                  variant="outline"
-                                  size="small"
-                                  loading={qrDisconnectingPhoneId === phone.id}
-                                  onClick={() => disconnectQrForPhone(phone)}
-                                >
-                                  <Unplug size={14} />
-                                  Desconectar QR
-                                </Button>
-                              ) : (
+                              {!qrConnected && (
                                 <Button
                                   variant="primary"
                                   size="small"
@@ -1493,23 +1456,57 @@ export const WhatsAppSettings: React.FC = () => {
                           <td>{phone.messaging_limit || 'Sin dato'}</td>
                           <td>
                             <div className={styles.rowActions}>
-                              {!isSender && (
-                                <button type="button" onClick={() => makePhoneDefault(phone)} disabled={defaultingPhoneId === phone.id} title="Hacer principal" aria-label={`Hacer principal ${getPhoneLabel(phone)}`}>
-                                  <Star size={15} />
-                                </button>
-                              )}
-                              {canDeleteQrPhone && (
-                                <button
-                                  type="button"
-                                  className={styles.dangerRowAction}
-                                  onClick={() => deleteQrPhone(phone)}
-                                  disabled={qrDeletingPhoneId === phone.id}
-                                  title="Eliminar WhatsApp QR"
-                                  aria-label={`Eliminar WhatsApp QR ${getPhoneLabel(phone)}`}
-                                >
-                                  <Trash2 size={15} />
-                                </button>
-                              )}
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="small"
+                                    disabled={rowBusy || defaultingPhoneId === phone.id}
+                                    aria-label={`Acciones para ${getPhoneLabel(phone)}`}
+                                  >
+                                    <MoreHorizontal size={16} />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className={styles.actionsMenu}>
+                                  {!isSender && (apiEnabled || qrConnected) && (
+                                    <DropdownMenuItem
+                                      onSelect={(event) => {
+                                        event.preventDefault()
+                                        makePhoneDefault(phone)
+                                      }}
+                                    >
+                                      <Star size={15} />
+                                      Hacer principal
+                                    </DropdownMenuItem>
+                                  )}
+                                  {!isSender && (apiEnabled || qrConnected) && (apiEnabled || canDisconnectQr) && <DropdownMenuSeparator />}
+                                  {officialAttached && (
+                                    <DropdownMenuItem
+                                      className={styles.destructiveMenuItem}
+                                      onSelect={(event) => {
+                                        event.preventDefault()
+                                        disconnectPhoneConnection(phone, 'api')
+                                      }}
+                                    >
+                                      <Unplug size={15} />
+                                      Desconectar {getOfficialProviderLabel(phone)} de Ristak
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canDisconnectQr && (
+                                    <DropdownMenuItem
+                                      className={styles.destructiveMenuItem}
+                                      onSelect={(event) => {
+                                        event.preventDefault()
+                                        disconnectPhoneConnection(phone, 'qr')
+                                      }}
+                                    >
+                                      <Unplug size={15} />
+                                      {standaloneQr ? 'Desconectar QR de Ristak' : 'Desconectar respaldo QR'}
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </td>
                         </tr>

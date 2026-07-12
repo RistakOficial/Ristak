@@ -462,6 +462,58 @@ test('webhook entrante de YCloud reemplaza WhatsApp_API por customerProfile.name
   }
 })
 
+test('webhook YCloud ignora mensajes nuevos de un número desconectado de Ristak', async () => {
+  const id = randomUUID()
+  const phone = `+52996${Date.now().toString().slice(-7)}`
+  const businessPhone = `+52654${Date.now().toString().slice(-7)}`
+  const phoneNumberId = `ycloud_detached_phone_${id}`
+  const messageId = `ycloud_detached_message_${id}`
+  const eventId = `ycloud_detached_event_${id}`
+  const messageAt = '2024-04-05T06:07:08.000Z'
+
+  await cleanup({ contactId: '', messageId, phone, eventId })
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        status, api_send_enabled, qr_send_enabled, qr_status
+      ) VALUES (?, 'ycloud', 'waba_detached', ?, ?, 'YCloud desconectado', 'CONNECTED', 0, 0, 'disconnected')
+    `, [phoneNumberId, businessPhone, businessPhone])
+
+    const payload = {
+      id: eventId,
+      type: 'whatsapp.inbound_message.received',
+      apiVersion: 'v2',
+      createTime: messageAt,
+      whatsappInboundMessage: {
+        id: messageId,
+        wamid: `wamid.${id}`,
+        wabaId: 'waba_detached',
+        from: phone,
+        to: businessPhone,
+        sendTime: messageAt,
+        type: 'text',
+        text: { body: 'Este mensaje no debe entrar a Ristak' }
+      }
+    }
+
+    await processYCloudWhatsAppWebhook({
+      payload,
+      rawBody: JSON.stringify(payload),
+      signatureHeader: '',
+      endpointId: ''
+    })
+
+    const storedMessage = await db.get('SELECT id FROM whatsapp_api_messages WHERE ycloud_message_id = ?', [messageId])
+    const storedContact = await db.get('SELECT id FROM contacts WHERE phone = ?', [phone])
+    assert.equal(storedMessage, null)
+    assert.equal(storedContact, null)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId: '', messageId, phone, eventId })
+  }
+})
+
 test('webhook entrante guarda cuerpo y botones de mensajes interactivos', async () => {
   const id = randomUUID()
   const phone = `+52998${Date.now().toString().slice(-7)}`

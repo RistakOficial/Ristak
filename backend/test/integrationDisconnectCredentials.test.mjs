@@ -5,6 +5,7 @@ import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   connectWhatsAppApi,
   disconnectMetaDirectConnection,
+  disconnectWhatsAppPhoneNumber,
   disconnectWhatsAppApi,
   getWhatsAppApiConfigKeys,
   getWhatsAppApiStatus,
@@ -374,19 +375,106 @@ test('desconectar WhatsApp Meta directo borra token e identificadores reutilizab
       await setAppConfig(key, key.includes('token') ? encrypt('meta_direct_secret') : `value_${key}`)
     }
     await setAppConfig('whatsapp_api_provider', 'meta_direct')
+    const metaPhoneNumberId = 'value_whatsapp_meta_direct_phone_number_id'
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        status, api_send_enabled, qr_send_enabled, qr_status
+      ) VALUES (?, 'meta_direct', 'waba_meta_disconnect', '+526568619478', '+52 656 861 9478', 'Meta directo', 'CONNECTED', 1, 0, 'disconnected')
+      ON CONFLICT(id) DO UPDATE SET provider = 'meta_direct', api_send_enabled = 1
+    `, [metaPhoneNumberId])
 
-    const disconnected = await disconnectMetaDirectConnection()
+    try {
+      const disconnected = await disconnectMetaDirectConnection()
 
-    assert.equal(disconnected.metaDirect.connected, false)
-    assert.equal(disconnected.metaDirect.configured, false)
-    assert.equal(disconnected.metaDirect.hasSystemUserToken, false)
-    assert.equal(await getAppConfig('whatsapp_meta_direct_status'), 'disconnected')
-    assert.equal(await getAppConfig('whatsapp_api_provider'), 'ycloud')
-    assert.ok(await getAppConfig('whatsapp_meta_direct_disconnected_at'))
-    assert.equal(await countExistingAppConfig(metaDirectKeys), 1)
-    assert.equal(await getAppConfig('whatsapp_meta_direct_system_user_token_encrypted'), null)
-    assert.equal(await getAppConfig('whatsapp_meta_direct_waba_id'), null)
-    assert.equal(await getAppConfig('whatsapp_meta_direct_phone_number_id'), null)
-    assert.equal(await getAppConfig('whatsapp_meta_direct_installer_webhook_url'), null)
+      assert.equal(disconnected.metaDirect.connected, false)
+      assert.equal(disconnected.metaDirect.configured, false)
+      assert.equal(disconnected.metaDirect.hasSystemUserToken, false)
+      assert.equal(await getAppConfig('whatsapp_meta_direct_status'), 'disconnected')
+      assert.equal(await getAppConfig('whatsapp_api_provider'), 'ycloud')
+      assert.ok(await getAppConfig('whatsapp_meta_direct_disconnected_at'))
+      assert.equal(await countExistingAppConfig(metaDirectKeys), 1)
+      assert.equal(await getAppConfig('whatsapp_meta_direct_system_user_token_encrypted'), null)
+      assert.equal(await getAppConfig('whatsapp_meta_direct_waba_id'), null)
+      assert.equal(await getAppConfig('whatsapp_meta_direct_phone_number_id'), null)
+      assert.equal(await getAppConfig('whatsapp_meta_direct_installer_webhook_url'), null)
+      const localPhone = await db.get('SELECT api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?', [metaPhoneNumberId])
+      assert.equal(Number(localPhone.api_send_enabled), 0)
+      assert.equal(disconnected.phoneNumbers.some(phone => phone.id === metaPhoneNumberId), false)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [metaPhoneNumberId])
+    }
   })
+})
+
+test('desconectar una fila YCloud solo retira ese número de Ristak', async () => {
+  const firstId = 'test_ycloud_row_disconnect_first'
+  const secondId = 'test_ycloud_row_disconnect_second'
+  const metaId = 'test_meta_fallback_after_ycloud_disconnect'
+  const previousDefaults = await db.all('SELECT id FROM whatsapp_api_phone_numbers WHERE is_default_sender = 1')
+
+  try {
+    await initializeMasterKey()
+    await snapshotAppConfig([
+      'whatsapp_api_phone_number_id',
+      'whatsapp_api_sender_phone',
+      'whatsapp_api_waba_id',
+      'whatsapp_api_provider',
+      'whatsapp_api_last_synced_at',
+      'whatsapp_api_last_error',
+      ...getIntegrationAppConfigKeys('whatsappMetaDirect')
+    ], async () => {
+      try {
+        await db.run(`
+          INSERT INTO whatsapp_api_phone_numbers (
+            id, provider, waba_id, phone_number, display_phone_number, verified_name,
+            status, api_send_enabled, qr_send_enabled, qr_status, is_default_sender
+          ) VALUES
+            (?, 'ycloud', 'waba_row_disconnect', '+526561110001', '+52 656 111 0001', 'YCloud uno', 'CONNECTED', 1, 0, 'disconnected', 1),
+            (?, 'ycloud', 'waba_row_disconnect', '+526561110002', '+52 656 111 0002', 'YCloud dos', 'CONNECTED', 1, 0, 'disconnected', 0)
+          ON CONFLICT(id) DO UPDATE SET api_send_enabled = 1, qr_send_enabled = 0, qr_status = 'disconnected'
+        `, [firstId, secondId])
+        await setAppConfig('whatsapp_api_phone_number_id', firstId)
+        await setAppConfig('whatsapp_api_sender_phone', '+526561110001')
+
+        const status = await disconnectWhatsAppPhoneNumber({ phoneNumberId: firstId, connection: 'api' })
+        const [first, second] = await Promise.all([
+          db.get('SELECT api_send_enabled, is_default_sender FROM whatsapp_api_phone_numbers WHERE id = ?', [firstId]),
+          db.get('SELECT api_send_enabled, is_default_sender FROM whatsapp_api_phone_numbers WHERE id = ?', [secondId])
+        ])
+
+        assert.equal(Number(first.api_send_enabled), 0)
+        assert.equal(Number(first.is_default_sender), 0)
+        assert.equal(Number(second.api_send_enabled), 1)
+        assert.equal(Number(second.is_default_sender), 1)
+        assert.equal(status.phoneNumbers.some(phone => phone.id === firstId), false)
+        assert.equal(status.phoneNumbers.some(phone => phone.id === secondId), true)
+        assert.equal(await getAppConfig('whatsapp_api_phone_number_id'), secondId)
+
+        await db.run(`
+          INSERT INTO whatsapp_api_phone_numbers (
+            id, provider, waba_id, phone_number, display_phone_number, verified_name,
+            status, api_send_enabled, qr_send_enabled, qr_status, is_default_sender
+          ) VALUES (?, 'meta_direct', 'waba_meta_fallback', '+526561110003', '+52 656 111 0003', 'Meta fallback', 'CONNECTED', 1, 0, 'disconnected', 0)
+        `, [metaId])
+        await setAppConfig('whatsapp_meta_direct_status', 'connected')
+        await setAppConfig('whatsapp_meta_direct_waba_id', 'waba_meta_fallback')
+        await setAppConfig('whatsapp_meta_direct_phone_number_id', metaId)
+        await setAppConfig('whatsapp_meta_direct_system_user_token_encrypted', encrypt('meta_fallback_secret'))
+        await setAppConfig('whatsapp_api_provider', 'ycloud')
+
+        const fallbackStatus = await disconnectWhatsAppPhoneNumber({ phoneNumberId: secondId, connection: 'api' })
+        assert.equal(await getAppConfig('whatsapp_api_provider'), 'meta_direct')
+        assert.equal(fallbackStatus.activeProvider, 'meta_direct')
+        assert.equal(fallbackStatus.phoneNumbers.some(phone => phone.id === metaId), true)
+      } finally {
+        await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?, ?)', [firstId, secondId, metaId])
+      }
+    })
+  } finally {
+    await db.run('UPDATE whatsapp_api_phone_numbers SET is_default_sender = 0 WHERE is_default_sender != 0')
+    for (const row of previousDefaults) {
+      await db.run('UPDATE whatsapp_api_phone_numbers SET is_default_sender = 1 WHERE id = ?', [row.id])
+    }
+  }
 })

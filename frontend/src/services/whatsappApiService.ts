@@ -686,6 +686,9 @@ export const whatsappApiService = {
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),
   previewPhoneNumbers: (apiKey?: string) => apiClient.post<WhatsAppApiPhoneNumbersPreviewResponse>('/whatsapp-api/phone-numbers/preview', { apiKey }),
   setDefaultPhoneNumber: (phoneNumberId: string) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/phone-numbers/default', { phoneNumberId }),
+  disconnectPhoneNumber: (phoneNumberId: string, connection: 'api' | 'qr') => (
+    apiClient.post<WhatsAppApiStatus>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/disconnect`, { connection })
+  ),
   rerouteContacts: (phoneNumberId: string, targetPhoneNumberId: string, reason?: string) => (
     apiClient.post<{ moved: number; from: string; to: string }>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/reroute`, { targetPhoneNumberId, reason })
   ),
@@ -704,7 +707,6 @@ export const whatsappApiService = {
   getQrDripSettings: () => apiClient.get<WhatsAppQrDripSettings>('/whatsapp-api/qr/drip-settings'),
   updateQrDripSettings: (payload: WhatsAppQrDripSettingsPayload) => apiClient.put<WhatsAppQrDripSettings>('/whatsapp-api/qr/drip-settings', payload),
   createQrPhoneNumber: (payload: WhatsAppQrPhoneNumberPayload) => apiClient.post<WhatsAppApiPhoneNumber>('/whatsapp-api/qr/phone-numbers', payload),
-  deleteQrPhoneNumber: (phoneNumberId: string) => apiClient.delete<WhatsAppApiStatus>(`/whatsapp-api/qr/phone-numbers/${encodeURIComponent(phoneNumberId)}`),
   connectQr: (payload: WhatsAppQrConnectPayload) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload),
   disconnectQr: (phoneNumberId: string) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId }),
   getTemplates: (status: string | null = WHATSAPP_API_APPROVED_TEMPLATE_STATUS) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {

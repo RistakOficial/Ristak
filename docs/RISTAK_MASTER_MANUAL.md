@@ -527,6 +527,14 @@ Installer conserva temporalmente el resultado cifrado y una sesión nueva de la
 misma instalación lo retoma sin volver a autorizar ni exponer el token al
 navegador.
 
+Cada número tiene en la última columna acciones separadas para **Meta Directo**,
+**YCloud** y **QR**. Desconectar ahí sólo retira esa conexión de Ristak: no borra
+ni desregistra el número real en Meta, YCloud o WhatsApp. Una fila oficial puede
+conservar su respaldo QR, o viceversa, sin mezclar credenciales ni apagar la otra
+conexión. Los mensajes, contactos y plantillas históricas permanecen; los nuevos
+eventos API de una fila retirada se ignoran localmente hasta que el usuario la
+conecte otra vez de forma explícita.
+
 Las plantillas usan el proveedor API activo. Con Meta directo se administran en
 Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
 propios. El modelo neutral y la UI se comparten, pero IDs remotos, estados,
