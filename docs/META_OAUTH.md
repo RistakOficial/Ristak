@@ -1,21 +1,31 @@
-# Meta OAuth y broker de webhooks
+# Meta OAuth: conexiones separadas y broker social
 
 ## Proposito
 
-Este documento define la conexion oficial de Meta para instalaciones de Ristak.
-El flujo nuevo usa **Facebook Login for Business** con credencial
-**Business Integration System User (BISU)** y convive con la conexion manual por
-System User Token mientras la app termina App Review.
+Este documento define el contrato OAuth oficial de Meta para instalaciones de
+Ristak. Las conexiones nuevas usan **Facebook Login for Business** con
+credenciales **Business Integration System User (BISU)**, pero no comparten
+permisos, activos ni ciclo de vida:
 
-La regla de compatibilidad es estricta:
+- `social`: Facebook Pages, Instagram profesional enlazado, Messenger,
+  Instagram Direct y comentarios.
+- `ads`: cuenta publicitaria, lectura de campañas/reportes y, si el usuario lo
+  elige, un Dataset/Pixel para Conversions API.
 
-- `manual_system_user` sigue disponible y conserva el comportamiento anterior.
-- `oauth_bisu` es una via adicional; no toca la conexion manual hasta que el
-  callback, permisos, activos y seguridad hayan sido validados.
-- Un login cancelado, expirado, incompleto o sin permisos no sustituye una
-  conexion que ya funciona.
-- WhatsApp Embedded Signup mantiene su Config ID y flujo especializado. No se
-  mezcla con esta autorizacion de Ads, Pages, Messenger e Instagram.
+La separacion es una frontera real de seguridad y operacion. El token Ads nunca
+se usa como token social, Social nunca enumera cuentas publicitarias ni datasets,
+y Ads nunca registra rutas de webhooks de Page o Instagram.
+
+La migracion sigue siendo gradual:
+
+- `manual_system_user` continua disponible con el comportamiento historico.
+- El OAuth combinado anterior conserva sus aliases y datos legacy mientras
+  existan instalaciones que aun lo usan.
+- `meta_config` no se elimina ni se sobreescribe al conectar una de las dos
+  superficies nuevas; queda como fallback manual/legacy.
+- Un login cancelado, expirado o incompleto no sustituye la conexion activa de
+  ese tipo ni rompe la otra superficie.
+- WhatsApp Embedded Signup mantiene su propio Config ID, permisos y webhooks.
 
 ## WhatsApp Embedded Signup especializado
 
@@ -47,40 +57,57 @@ estados y `header_handle` de Meta nunca se escriben en campos YCloud.
 
 ### Ristak Installer
 
-Installer es el unico dueño de la app central y guarda en su configuracion
-cifrada:
+Installer es el unico dueño de la app central de Meta. Guarda en su
+configuracion segura:
 
 - `meta_app_id`
 - `meta_app_secret`
-- `meta_business_login_config_id`
-- version de Graph utilizada por el broker
-- estado operativo de revision OAuth, sin ser un secret
+- `meta_social_login_config_id`
+- `meta_ads_login_config_id`
+- `meta_business_login_config_id` solo para OAuth combinado legacy
+- `meta_webhook_verify_token` para la conexion Social
+- estado operativo de App Review
 
-El App Secret nunca se copia a Render, al navegador ni a la base de una
-instalacion. Installer inicia OAuth, canjea el codigo, inspecciona la credencial,
-calcula `appsecret_proof` y entrega los secretos en un handoff cifrado, de un
-solo uso y ligado a cliente e instalacion.
+Los dos Config IDs nuevos pertenecen a la misma app Business de Meta y usan
+System-user access token. Esto permite una sola App Review y un solo callback,
+sin mezclar los permisos concedidos a cada flujo.
+
+Installer crea y consume `state`, canjea el authorization code server-to-server,
+inspecciona el BISU, calcula `appsecret_proof` y entrega los secretos mediante un
+handoff cifrado, one-time y ligado a cliente, instalacion e
+`integration_kind`. El App Secret nunca se copia a una instalacion ni llega al
+navegador.
 
 ### Ristak instalado
 
-La instalacion guarda localmente la credencial activa cifrada en `meta_config`.
-Para OAuth conserva el modo, BISU/Business/App IDs, permisos, expiraciones si
-Meta las entrega, activos seleccionados, estado del relay y el proof que
-corresponde a cada token. Una sesion temporal separada conserva el handoff
-mientras el usuario elige activos; vence y se consume una sola vez.
+Las conexiones nuevas viven cifradas en tablas separadas del contrato legacy:
 
-El frontend nunca recibe el BISU token, Page token, App Secret ni
-`appsecret_proof`. Los selectores consultan activos a traves del backend.
+- `meta_oauth_integrations`: credenciales y seleccion por `social|ads`, con
+  estados `candidate`, `active` o `replaced`.
+- `meta_oauth_integration_sessions`: sesion temporal cifrada de seleccion por
+  tipo, con TTL y consumo unico.
+- `meta_config`: conexion manual o OAuth combinado anterior; permanece como
+  fallback durante la migracion.
 
-## Flujo oficial
+Solo puede existir una fila `active` por tipo. Social guarda Page, Instagram,
+Page token y proofs; Ads guarda Ad Account y Dataset opcional. Ningun secreto se
+devuelve al frontend: la UI recibe IDs, nombres, capacidades, expiraciones y
+permisos sanitizados.
 
-1. `Configuracion > Meta` consulta el estado OAuth a su backend sin crear
-   `state` ni iniciar una autorizacion.
-2. Solo cuando el usuario pulsa **Conectar con Meta**, el backend pide a
-   Installer una URL central y autenticada por licencia.
-3. Installer crea un `state` aleatorio, hasheado, con TTL y ligado al cliente,
-   instalacion y URL de retorno permitida.
-4. Installer abre el dialogo oficial:
+## Flujo comun
+
+1. Cada pestaña consulta su estado sin crear `state`:
+   `GET /api/meta/oauth/:integrationKind/status`.
+2. Solo al pulsar el boton de esa pestaña, Ristak pide a Installer una URL:
+   `POST /api/meta/oauth/:integrationKind/connect-url`.
+3. Installer crea un `state` aleatorio y hasheado, con TTL y binding de cliente,
+   instalacion, URL de retorno e `integration_kind`. Antes de llamar a Installer,
+   Ristak convierte la ruta de regreso en una URL absoluta usando el host publico
+   de la instalacion que inicio el flujo. Installer vuelve a validar ese origin
+   contra `installations.app_url` y `installations.app_origin_url`; una ruta
+   relativa sola no es suficiente porque podria regresar al dominio generico de
+   la licencia en vez del tenant correcto.
+4. Installer usa el Config ID correspondiente en el dialogo oficial:
 
    ```text
    https://www.facebook.com/v25.0/dialog/oauth
@@ -88,188 +115,292 @@ El frontend nunca recibe el BISU token, Page token, App Secret ni
      &redirect_uri={CALLBACK_EXACTO_DE_INSTALLER}
      &state={STATE_OPACO}
      &response_type=code
-     &config_id={CONFIG_ID}
+     &config_id={CONFIG_ID_SOCIAL_O_ADS}
    ```
 
    `config_id` sustituye a `scope`; no se mandan ambos.
-5. El cliente autoriza la configuracion completa y designa portafolio y activos.
-6. Meta regresa al callback unico de Installer. Installer consume `state`,
-   canjea el codigo server-to-server y valida `app_id`, `is_valid`, permisos,
-   BISU/Business ID y expiraciones.
-7. Installer enumera solo activos delegados, Page/Instagram vinculados y sus
-   tareas. Crea un candidato temporal por `connection_id`; no reemplaza la
-   conexion activa ni su ruta de webhooks.
-8. Los secretos quedan dentro de un handoff cifrado de un solo uso. Ristak
-   vuelve automaticamente a Configuracion con el identificador opaco en el
-   fragmento de la URL, lo elimina del navegador y lo reclama desde su backend.
-   La sesion local temporal responde al frontend solo con IDs, nombres,
-   capacidades y faltantes.
-9. Si existe un solo conjunto coherente, Ristak lo selecciona automaticamente.
-   Si hay varios, el usuario elige; Ristak valida Page ↔ Instagram y
-   Ad Account ↔ Dataset contra el snapshot del handoff.
-10. Ristak prepara `subscribed_apps` y guarda la seleccion local, pero Installer
-    promueve candidato y ruta de relay atomicamente solo cuando todo lo anterior
-    es valido. Repetir la promocion con el mismo `connection_id` es idempotente.
-    Despues se activan crons Meta, defaults CAPI, backfill social y sincronizacion
-    de Ads. Un fallo o timeout ambiguo se reconcilia antes de hacer rollback.
+5. Meta vuelve al callback unico de Installer. Installer consume `state`,
+   canjea el code y valida `is_valid`, `app_id`, tipo `SYSTEM_USER`,
+   `client_business_id`, permisos, expiraciones y `granular_scopes`.
+6. Installer enumera solamente la familia de activos autorizada por el Config
+   ID y crea un candidato central. La conexion anterior de ese tipo sigue activa.
+7. El handoff conserva `integration_kind`; Ristak rechaza un handoff Social en
+   Ads o viceversa, lo reclama desde backend y crea una sesion local cifrada.
+8. El usuario elige el activo requerido. El backend cruza la seleccion con el
+   snapshot del handoff y sus `target_ids` granulares.
+9. Ristak prepara un candidato local y promueve el candidato central. Solo
+   despues activa la fila nueva; una confirmacion central con fallo local queda
+   en reparacion automatica, no en un falso rollback.
 
-No se usa el JavaScript SDK desde dominios de clientes. Hacerlo obligaria a
-registrar cada host en Allowed Domains for JavaScript SDK. El callback central
-usa una sola App Domain y una sola Valid OAuth Redirect URI exacta.
+No se usa el JavaScript SDK desde dominios de clientes. El callback central
+permite una sola App Domain y una sola Valid OAuth Redirect URI exacta.
 
-## Permisos de la configuracion FLFB
+## Conexion Social
 
-La configuracion es **all-or-nothing**. Si el usuario no acepta un permiso, la
-conexion no debe promocionarse parcialmente.
+Social pide exclusivamente Pages e Instagram:
 
-| Capacidad de Ristak | Permisos / feature |
+| Capacidad | Permiso |
 | --- | --- |
-| Descubrir portafolio y activos delegados | `business_management` |
-| Leer Ads e Insights | `ads_read` + Marketing API Access Tier |
-| Enviar eventos server-side a Dataset por Conversions API y administrar el acceso al Dataset/Pixel | `ads_management` |
-| Listar Pages | `pages_show_list` |
-| Leer Page y engagement | `pages_read_engagement` |
+| Mostrar Pages administrables | `pages_show_list` |
+| Suscribir la Page y recibir webhooks | `pages_manage_metadata` |
+| Leer contenido y metadata de Page | `pages_read_engagement` |
 | Leer comentarios/UGC de Facebook | `pages_read_user_content` |
-| Responder/moderar comentarios Facebook | `pages_manage_engagement` |
-| Suscribir la Page a la app | `pages_manage_metadata` |
+| Responder y moderar comentarios Facebook | `pages_manage_engagement` |
 | Messenger | `pages_messaging` |
 | Identificar Instagram profesional enlazado | `instagram_basic` |
 | Instagram Direct | `instagram_manage_messages` |
 | Comentarios Instagram | `instagram_manage_comments` |
 
-No agregar `read_insights`, `pages_manage_posts`, `instagram_content_publish`,
-`leads_retrieval` u otro permiso por comodidad. Cada permiso nuevo necesita un
-caso de uso real, prueba y evidencia separada para App Review.
+No pide `business_management`, `ads_read`, `ads_management`, Ad Account ni
+Dataset. `business_management` solo seria justificable si Ristak administrara o
+reclamara activos mediante Business Manager API, cosa que este flujo no hace.
 
-## Broker central de webhooks
+Reglas de seleccion y promocion:
 
-La configuracion de webhook pertenece a la app Meta, no a cada tenant. Por eso
-Installer recibe todos los eventos en un endpoint central:
+- La Page es obligatoria.
+- Instagram es opcional y debe pertenecer a la Page seleccionada.
+- Si Meta devuelve tareas de Page, deben incluir `MESSAGING` y `MODERATE`.
+  `ANALYZE` no es requisito de inbox ni comentarios.
+- Los permisos `pages_*` granulares deben incluir la Page; los permisos
+  `instagram_*` deben incluir el Instagram seleccionado o su Page enlazada,
+  segun el mapping que devuelve Meta.
+- Antes de activar, Ristak registra `subscribed_apps` y el relay central para
+  esa Page/Instagram.
+- Al terminar arranca el backfill de conversaciones, activa los canales
+  disponibles y sincroniza los crons `meta-social`.
 
-1. GET de verificacion compara `hub.verify_token` y devuelve `hub.challenge`.
-2. POST valida `X-Hub-Signature-256` sobre el body original usando el App Secret.
-3. Installer deduplica el evento y resuelve la instalacion por Page o Instagram
-   ID registrados al finalizar OAuth.
-4. Installer responde a Meta rapidamente y procesa el relay fuera de la ruta
-   critica, con reintentos acotados y estado de entrega.
-5. El relay a Ristak se firma con la licencia de esa instalacion:
+Meta documenta una excepcion para **Facebook User access tokens**: si el rol de
+Page fue concedido mediante Business Manager, ciertos endpoints de comentarios
+de Instagram pueden exigir ademas `ads_read` o `ads_management`. No es un
+requisito general documentado para BISU. Social conserva minimo privilegio y
+debe probarse con una Page real administrada desde Business Manager durante App
+Review; si Meta aplica esa excepcion al caso real, el unico fallback aceptable
+es ampliar explicitamente el Config Social con `ads_read` o separar Instagram
+Login, nunca agregar permisos Ads silenciosamente.
 
-   ```text
-   X-Ristak-Signature: HMAC_SHA256(license_key, timestamp + "." + nonce + "." + rawBody)
-   X-Ristak-Timestamp: instante de entrega
-   X-Ristak-Nonce: identificador unico anti-replay
-   X-Ristak-Installation-Id: instalacion destino
-   ```
+## Conexion Meta Ads
 
-6. `/webhooks/meta/installer-relay` valida timestamp, firma, instalacion, nonce y
-   `X-Ristak-Delivery-Id` en modo fail-closed antes de delegar al procesador
-   social existente. El ID de entrega da idempotencia incluso tras un reintento.
+Ads pide hoy un solo permiso:
 
-El webhook manual `/webhook/meta` sigue funcionando como antes. Si la conexion
-manual tiene App Secret configurado valida la firma nativa; instalaciones legacy
-sin ese dato conservan temporalmente su comportamiento anterior para no romper
-produccion. En modo OAuth, el webhook directo siempre rechaza eventos y solo
-acepta el relay firmado por Installer.
+| Capacidad actual | Permiso |
+| --- | --- |
+| Leer cuentas, campañas e Insights | `ads_read` |
+| Enviar eventos web server-side por Conversions API | `ads_read` |
+
+Reglas de seleccion y promocion:
+
+- La cuenta publicitaria es obligatoria.
+- Page e Instagram no forman parte de esta autorizacion ni de su wizard.
+- El Dataset/Pixel es opcional y nunca se elige automaticamente.
+- Si el usuario elige Dataset, debe aparecer en
+  `GET /act_<AD_ACCOUNT_ID>/adspixels` para la cuenta autorizada. Un ID escrito a
+  mano o perteneciente a otra cuenta se rechaza.
+- Ads no crea `subscribed_apps`, rutas de relay ni entregas de webhook.
+- Al terminar arranca la sincronizacion de Ads y el cron `meta-ads`. Si se
+  eligio Dataset, tambien habilita los defaults de eventos reales para citas y
+  compras; Test Events no es un sustituto de esa activacion operativa.
+
+Una conexion Ads sin Dataset sigue siendo valida para campañas existentes,
+costos y reportes. CAPI se habilita solamente cuando coinciden estas tres
+condiciones:
+
+1. conexion Ads activa y validada;
+2. `ads_read` concedido;
+3. Dataset elegido y comprobado para esa cuenta.
+
+Si el BISU no tiene acceso real al Dataset, Ristak debe pedir ampliar la
+autorizacion o conservar la configuracion manual. No debe agregar
+`business_management`, asumir el primer Dataset ni fingir que el evento fue
+aceptado. Las pruebas reales se hacen con `test_event_code` y las reglas de
+`docs/CONVERSION_ATTRIBUTION.md`.
+
+Los eventos `business_messaging` de WhatsApp conservan la identidad del flujo
+WhatsApp activo: primero usan el WABA legacy explicito si existe y, si no, el
+WABA de WhatsApp Meta Direct. Ads OAuth no sustituye ni mezcla el token de
+WhatsApp; solo aporta Dataset y credencial CAPI.
+
+### `ads_read` frente a `ads_management`
+
+`ads_read` cubre el runtime que existe hoy: lectura de Ads/Insights y Server-Side
+API para eventos web. El Campaign Builder de Ristak sigue en preview y no
+publica, edita ni genera gasto en Meta.
+
+`ads_management` se agregara solamente cuando exista un flujo real de escritura
+que pueda demostrarse en App Review. En ese momento tambien se debera resolver
+la Page del creativo y la tarea `ADVERTISE`; copiar el `page_id` elegido en
+Social no prueba que el token Ads tenga permiso para publicar con esa Page.
+
+No se piden por anticipado `read_insights`, `pages_manage_posts`,
+`instagram_content_publish`, `leads_retrieval` ni permisos de escritura Ads.
+
+## Promocion, reemplazo y desconexion
+
+Cada tipo tiene saga, lock y conexion activa independientes:
+
+- Reconectar Social solo reemplaza la fila Social.
+- Reconectar Ads solo reemplaza la fila Ads.
+- Un candidato abandonado no sustituye la fila activa de su tipo.
+- Un fallo Social deja Ads intacto; un fallo Ads deja Social y su relay intactos.
+- `POST /api/meta/oauth/social/disconnect` desregistra su ruta central, quita
+  `subscribed_apps` y elimina solo credenciales/sesiones Social.
+- `POST /api/meta/oauth/ads/disconnect` elimina solo credenciales/sesiones Ads;
+  no toca rutas ni entregas de webhooks.
+- Despues de desconectar, los resolvers pueden caer a `meta_config` manual o al
+  OAuth combinado legacy si sigue configurado.
+
+Eliminar Ristak desde Connected Apps en Meta puede invalidar todos los tokens de
+la misma app. La independencia garantizada por Ristak es local y operativa; no
+convierte dos Config IDs de la misma app en dos apps distintas.
+
+## Broker central de webhooks Social
+
+La app Meta tiene un solo callback de webhooks, por lo que Installer recibe y
+enruta los eventos Social:
+
+1. GET compara `hub.verify_token` y devuelve `hub.challenge`.
+2. POST valida `X-Hub-Signature-256` sobre el body original con el App Secret.
+3. Installer deduplica y resuelve la instalacion por Page o Instagram activo.
+4. El relay a `/webhooks/meta/installer-relay` se firma con HMAC de la licencia,
+   timestamp, nonce, Installation ID y un Delivery ID estable.
+5. Ristak valida firma, antiguedad, nonce, instalacion, activo seleccionado e
+   idempotencia antes de entregar al procesador social.
+6. Los reintentos agotados destruyen el payload con PII y conservan solo
+   metadata/error sanitizado.
+
+Ads nunca registra rutas en este broker. El webhook manual `/webhook/meta`
+conserva su compatibilidad: valida firma cuando el modo manual tiene App Secret;
+en OAuth Social, el webhook directo falla cerrado y solo se acepta el relay del
+Installer.
 
 ## Tokens y `appsecret_proof`
 
-- BISU es la credencial base para Ads/CAPI y normalmente no expira; aun asi se
-  guardan las expiraciones reales que reporte Meta.
-- Messenger, Instagram y comentarios usan el Page token de la Page elegida.
-- `appsecret_proof` depende del token. El proof de BISU no se reutiliza con el
-  Page token.
-- Installer calcula ambos proofs porque es el unico dueño del App Secret. Ristak
-  guarda cifrado solo el par de la conexion activa.
-- Si Meta invalida la credencial o cambia el conjunto de permisos, el usuario
-  reconecta mediante OAuth; nunca se intenta reconstruir el App Secret localmente.
+- Cada conexion guarda su propio BISU y proof cifrados.
+- Social conserva ademas el Page token de la Page elegida y su proof propio.
+- Messenger, Instagram y comentarios usan el Page token; Ads y CAPI usan el
+  token Ads.
+- Un proof nunca se reutiliza con otro token.
+- Las expiraciones reales de Meta se persisten aunque el BISU normalmente sea
+  de larga duracion.
+- Una credencial invalida exige reconectar ese tipo; Ristak no intenta
+  reconstruir el App Secret.
 
 ## Endpoints internos
 
-Ristak instalado, autenticado y bajo `campaigns`:
+Ristak instalado, autenticado y protegido por el modulo `campaigns`:
 
-- `GET /api/meta/oauth/status`
-- `POST /api/meta/oauth/connect-url`
-- `POST /api/meta/oauth/complete`
-- `POST /api/meta/oauth/finalize`
-- `POST /api/meta/oauth/disconnect`
-- `POST /webhooks/meta/installer-relay` (publico, firmado, acotado a 1 MB y
-  anti-replay)
+- `GET /api/meta/oauth/:integrationKind/status`
+- `POST /api/meta/oauth/:integrationKind/connect-url`
+- `POST /api/meta/oauth/:integrationKind/complete`
+- `POST /api/meta/oauth/:integrationKind/finalize`
+- `POST /api/meta/oauth/:integrationKind/disconnect`
+- `POST /webhooks/meta/installer-relay` publico, firmado, anti-replay y limitado
+
+`:integrationKind` solo acepta `social` o `ads`. Los endpoints sin ese segmento
+se conservan como aliases del OAuth combinado legacy y no deben usarse para
+conexiones nuevas.
 
 Installer, autenticado por licencia salvo callbacks publicos:
 
-- estado/inicio OAuth bajo `/api/license/meta/*`, protegido por licencia y la
-  feature `meta_ads`
-- claim generico `/api/license/oauth-handoff/claim`
-- registro/desregistro de activos para relay
-- callback OAuth central `/api/meta/oauth/callback`
+- `/api/license/meta/status`
+- `/api/license/meta/connect-url`
+- `/api/license/meta/connect`
+- `/api/license/meta/finalize` para promover Ads
+- `/api/license/meta/webhook-subscription` para registrar/desregistrar Social
+- `/api/license/meta/disconnect`
+- `/api/license/oauth-handoff/claim`
+- `/api/meta/oauth/callback`
 - webhook Meta central `/webhooks/meta`
-- preparación/finalización pública firmada por tenant en
-  `/api/meta/whatsapp/session` y `/api/meta/whatsapp/complete`
+- preparación/finalización pública de WhatsApp Meta Direct, firmada por tenant,
+  en `/api/meta/whatsapp/session` y `/api/meta/whatsapp/complete`
 - página central de Embedded Signup `/meta/whatsapp/connect`
 
-Los nombres y payloads son contratos internos. No deben exponerse como API de
-terceros ni reutilizar el MCP externo del cliente.
+Los payloads internos incluyen `integration_kind`. No deben exponerse como API
+de terceros ni reutilizar el MCP externo del cliente.
 
 ## Controles de seguridad
 
-- `state`, handoff y sesion local tienen TTL, uso unico y binding de instalacion.
-- El candidato central dura lo suficiente para reclamar el handoff y elegir
-  activos, pero no toca la conexion anterior hasta la promocion final.
-- La URL de retorno solo acepta origins registrados por Installer y nunca `/api`.
-- Los callbacks y respuestas no incluyen token, codigo OAuth ni proof.
-- Los secretos se cifran con la llave local correspondiente y se limpian al
-  consumir/expirar. Entregas que agotan reintentos destruyen el payload con PII
-  y conservan solo metadata/error sanitizado.
-- No se loguean respuestas de `FB.login`, codes, tokens, payloads completos ni
-  headers de firma.
-- HighLevel no recibe ni reconcilia tokens OAuth. La conexion OAuth es local e
-  independiente de conectar/desconectar HighLevel.
-- Los crons Meta solo arrancan cuando `meta_config` tiene una conexion activa.
-- El broker valida la firma nativa antes de responder y el tenant valida de
-  nuevo la firma del relay.
+- `state`, handoff, candidato y sesion local tienen TTL, uso unico y binding de
+  instalacion y tipo.
+- Un handoff de otro tipo se rechaza antes de guardar secretos.
+- El callback nunca devuelve code, token, Config ID ni proof en query; el
+  handoff opaco viaja en fragmento y se limpia del navegador.
+- La URL de retorno sale absoluta desde la instalacion, solo acepta origins
+  registrados y nunca rutas `/api`. El callback central exacto debe estar en
+  Valid OAuth Redirect URIs de Meta; no basta con allowlistear la raiz del
+  dominio cuando Strict Mode esta activo.
+- Credenciales y sesiones se cifran; expiraciones y compensaciones limpian los
+  secretos.
+- `granular_scopes.target_ids` se cruza con la Page/Instagram o Ad Account
+  seleccionada. Si Meta no devuelve `target_ids`, no se inventa una allowlist
+  vacia.
+- Las mutaciones se serializan por tipo, no con un lock global que bloquee la
+  otra superficie.
+- `meta_oauth_integrations` y `meta_oauth_integration_sessions` estan bloqueadas
+  por completo en el CRUD generico de API externa y en MCP; no basta con
+  redactar sus columnas secretas porque tampoco se pueden alterar estados,
+  activos ni IDs de conexion.
+- HighLevel no recibe, reconcilia ni borra credenciales OAuth.
+- Los crons `meta-social` y `meta-ads` se activan por su conexion local; el cron
+  de version Meta puede seguir activo mientras cualquier superficie lo requiera.
 
-## Checklist de Meta App
+## Checklist de Meta App y App Review
 
 - App tipo Business, App Purpose `Clients` y portafolio verificado.
-- App Domain del Installer.
-- Client OAuth Login y Web OAuth Login activos.
-- Strict Mode y HTTPS.
-- Callback completo de Installer en Valid OAuth Redirect URIs.
-- Config ID versionado de tipo System-user access token con activos y permisos
-  de esta guia.
+- Business Verification y verificacion como Tech Provider para activos de
+  clientes externos.
+- App Domain de Installer, HTTPS, Strict Mode y callback exacto en Valid OAuth
+  Redirect URIs.
+- Config Social de tipo System-user access token con Pages/Instagram y solo los
+  nueve permisos sociales de este documento.
+- Config Ads de tipo System-user access token con Ad Accounts y solo
+  `ads_read` mientras no exista escritura real.
 - Privacy Policy y Data Deletion URL publicas.
-- Webhooks centrales con Pages, Messenger e Instagram configurados.
-- Advanced Access, Business Verification, Marketing API Access Tier, Business
-  Asset User Profile Access y Human Agent cuando el caso de uso lo requiera.
-- Una grabacion y descripcion distintas por permiso durante App Review.
+- Webhooks de Pages, Messenger e Instagram apuntando al broker central.
+- Advanced Access individual para los permisos utilizados y `public_profile`
+  antes de poner Facebook Login for Business en vivo.
+- Advanced Access de `ads_read` y Marketing API Full Access para operar cuentas
+  de clientes. La guia vigente exige al menos 500 llamadas exitosas en 15 dias
+  y menos de 15% de errores en las ultimas 500 para mantener/obtener Full
+  Access; confirmar el requisito actual en App Dashboard antes de enviar.
+- Grabaciones separadas: Social demuestra Page, mensaje y comentarios sin pedir
+  Ad Account; Ads demuestra Ad Account, reportes y CAPI/Test Events sin pedir
+  Page ni Instagram.
+- Instagram profesional enlazado a la Page y **Connected Tools → Allow Access
+  to Messages** habilitado. OAuth no puede cambiar ese ajuste por API.
 
 ## Pruebas de aceptacion
 
-Una autorizacion no se considera completa solo porque Meta devolvio un token.
-Debe validar con activos de prueba:
-
-1. descubrir Ad Account, Dataset, Page e Instagram correctos;
-2. consultar Ads/Insights y enviar un evento controlado a Test Events del
-   Dataset para demostrar `ads_management` sin publicar ni gastar;
-3. suscribir la Page y recibir un webhook en el broker;
-4. recibir y responder Messenger;
-5. leer y responder comentario de Facebook;
-6. recibir y responder Instagram Direct;
-7. leer y responder comentario de Instagram;
-8. confirmar deduplicacion, firma invalida, replay y aislamiento entre tenants;
-9. comprobar que un fallo OAuth deja intacta la conexion manual;
-10. desconectar OAuth sin romper el flujo manual disponible.
-
-Instagram profesional debe estar enlazado a la Page y tener habilitado
-**Connected Tools → Allow Access to Messages**. OAuth no puede activar ese
-ajuste por API.
+1. Social solo devuelve Pages/Instagram y rechaza Ad Account/Dataset.
+2. Ads solo devuelve Ad Accounts/Datasets accesibles y rechaza Page/Instagram.
+3. Social exige Page; Instagram es opcional y debe estar enlazado.
+4. Ads exige Ad Account; Dataset es opcional y nunca se autoselecciona.
+5. Un Dataset seleccionado recibe un evento controlado en Test Events; sin
+   Dataset, CAPI queda desactivado sin invalidar Ads.
+6. Social suscribe la Page, recibe relay firmado y permite Messenger, Instagram
+   Direct y comentarios segun permisos.
+7. Ads no crea ni modifica rutas del broker.
+8. Handoff cruzado, target granular incorrecto, firma invalida y replay se
+   rechazan.
+9. Reconectar o fallar una superficie no altera la otra ni `meta_config`.
+10. Desconectar cada tipo restaura su fallback legacy sin apagar el otro.
+11. El Campaign Builder sigue reportando preview; no promete publicacion real ni
+    solicita `ads_management`.
 
 ## Fuentes oficiales
 
 - [Facebook Login for Business](https://developers.facebook.com/documentation/facebook-login/facebook-login-for-business)
 - [Manual Login Flow](https://developers.facebook.com/documentation/facebook-login/guides/advanced/manual-flow)
-- [Facebook Login Security](https://developers.facebook.com/documentation/facebook-login/security)
 - [Meta permissions](https://developers.facebook.com/docs/permissions/)
+- [Page tasks](https://developers.facebook.com/documentation/pages-api/overview)
+- [Debug Token y granular scopes](https://developers.facebook.com/docs/graph-api/reference/debug_token/)
+- [Marketing API authorization](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization)
+- [Ad Account Pixels](https://developers.facebook.com/documentation/ads-commerce/marketing-api/reference/ad-account/adspixels)
+- [Conversions API](https://developers.facebook.com/documentation/ads-commerce/conversions-api/get-started)
+- [Instagram Comment](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-comment)
+- [Instagram Media Comments](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-media/comments)
+- [Tech Providers](https://developers.facebook.com/docs/development/release/tech-providers/)
+- [Business Verification](https://developers.facebook.com/documentation/development/release/business-verification)
+- [App Review](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review)
 - [Secure Graph requests](https://developers.facebook.com/docs/graph-api/guides/secure-requests/)
 - [Messenger webhooks](https://developers.facebook.com/documentation/business-messaging/messenger-platform/webhooks)
 - [Pages webhooks](https://developers.facebook.com/documentation/pages-api/webhooks-for-pages)

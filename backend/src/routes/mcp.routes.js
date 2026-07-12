@@ -27,7 +27,7 @@ const GHL_MCP_TOOL_PREFIX = 'ghl_mcp__'
 const MCP_PROTOCOL_VERSION = '2025-06-18'
 const HIGHLEVEL_MCP_TIMEOUT_MS = 15000
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash)/i
-const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
+const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|meta_oauth_integrations|meta_oauth_integration_sessions|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 const MCP_TOOL_FEATURES = {
@@ -753,7 +753,7 @@ async function listDataTables() {
       queryableColumns: table.queryableColumns,
       redactedColumns: table.redactedColumns
     })),
-    blockedTables: ['highlevel_config', 'meta_config', 'meta_campaign_templates', 'meta_campaign_drafts', 'meta_campaign_execution_logs', 'ai_agent_config', 'agent_runs', 'agent_steps', 'agent_pending_actions', 'agent_tool_idempotency', 'app_config', 'oauth_clients', 'oauth_authorization_codes', 'oauth_refresh_tokens', 'conversational_agent_goal_links', 'conversational_agent_goal_evidence_claims'],
+    blockedTables: ['highlevel_config', 'meta_config', 'meta_oauth_integrations', 'meta_oauth_integration_sessions', 'meta_campaign_templates', 'meta_campaign_drafts', 'meta_campaign_execution_logs', 'ai_agent_config', 'agent_runs', 'agent_steps', 'agent_pending_actions', 'agent_tool_idempotency', 'app_config', 'oauth_clients', 'oauth_authorization_codes', 'oauth_refresh_tokens', 'conversational_agent_goal_links', 'conversational_agent_goal_evidence_claims'],
     note: 'Se exponen todas las tablas de datos detectadas; las tablas de configuración sensible se bloquean y las columnas tipo token/password/secret/hash se redactan.'
   }
 }

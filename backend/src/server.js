@@ -23,7 +23,7 @@ import { startConversationalAgentTestPaymentsCleanup } from './jobs/conversation
 import { startConversationalAppointmentTestCleanupCron } from './jobs/conversationalAppointmentTestCleanup.cron.js'
 import { startConversationalAgentTestAssignmentsCleanup } from './jobs/conversationalAgentTestAssignmentsCleanup.js'
 import { syncRegisteredIntegrationCrons } from './jobs/integrationCronRegistry.js'
-import { isMetaConnected } from './services/integrationConnectionStateService.js'
+import { isMetaConnected, isMetaSocialConnected } from './services/integrationConnectionStateService.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { runVersionedMigrations } from './startup/runMigrations.js'
@@ -33,6 +33,7 @@ import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxon
 import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
 import { startMetaOAuthPendingSessionCleanupScheduler } from './services/metaOAuthService.js'
+import { startMetaOAuthIntegrationCleanupScheduler } from './services/metaOAuthIntegrationService.js'
 
 // Garantiza un ffmpeg con libopus en CUALQUIER runtime (Render nativo O Docker):
 // apunta FFMPEG_PATH al binario estático empaquetado. Toda la transcodificación
@@ -437,13 +438,6 @@ app.use('/api/chat-events', chatEventsRoutes)
 app.use('/api/payment-events', requireAuth, requireFeature('payments'), paymentEventsRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api/user-config', userConfigRoutes) // (MOB-006) preferencias de notificaciones por usuario
-app.use('/api', costsRoutes)
-app.use('/api/hidden-contacts', hiddenContactsRoutes)
-app.use('/api/ai-agent', requireAuth, requireFeature('app_assistant_ai'), aiAgentRoutes) // (LIC-002) auth antes de feature
-app.use('/api/conversational-agent', requireAuth, requireFeature('conversational_ai'), conversationalAgentRoutes) // (LIC-002) auth antes de feature
-app.use('/api/search', searchRoutes)
-app.use('/api/external', externalRoutes)
-app.use('/api/mcp', mcpRoutes)
 const requireWhatsAppFeatureForWhatsAppApiRoute = (() => {
   const whatsappFeatureGate = requireFeature('whatsapp')
   return (req, res, next) => {
@@ -453,7 +447,19 @@ const requireWhatsAppFeatureForWhatsAppApiRoute = (() => {
     return whatsappFeatureGate(req, res, next)
   }
 })()
-app.use('/api/whatsapp-api', requireAuth, requireWhatsAppFeatureForWhatsAppApiRoute, whatsappApiRoutes) // (LIC-002) auth antes de feature
+// Debe montarse antes de costsRoutes: ese router histórico cuelga de /api y su
+// router.use(requireAuth) intercepta cualquier /api/* que aparezca después.
+// Los callbacks Installer -> tenant viven antes de router.use(requireAuth) y se
+// autentican con HMAC, timestamp, nonce e installation id dentro del router.
+// El resto de /api/whatsapp-api sigue exigiendo la sesión humana ahí mismo.
+app.use('/api/whatsapp-api', requireWhatsAppFeatureForWhatsAppApiRoute, whatsappApiRoutes)
+app.use('/api', costsRoutes)
+app.use('/api/hidden-contacts', hiddenContactsRoutes)
+app.use('/api/ai-agent', requireAuth, requireFeature('app_assistant_ai'), aiAgentRoutes) // (LIC-002) auth antes de feature
+app.use('/api/conversational-agent', requireAuth, requireFeature('conversational_ai'), conversationalAgentRoutes) // (LIC-002) auth antes de feature
+app.use('/api/search', searchRoutes)
+app.use('/api/external', externalRoutes)
+app.use('/api/mcp', mcpRoutes)
 app.use('/api/email', requireAuth, requireFeature('email'), emailRoutes) // (LIC-002) auth antes de feature
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
@@ -516,6 +522,7 @@ async function startRuntimeServices() {
   // Cleanup de sistema: compensa subscribed_apps/relay de OAuth abandonados y
   // garantiza TTL de secretos aunque nadie vuelva a abrir Configuración.
   startMetaOAuthPendingSessionCleanupScheduler()
+  startMetaOAuthIntegrationCleanupScheduler()
 
   runStartupDrainTask(
     'startup:media-runtime-config',
@@ -552,9 +559,9 @@ async function startRuntimeServices() {
   runStartupDrainTask(
     'startup:meta-page-messaging-subscription',
     async () => {
-      if (!(await isMetaConnected())) {
-        logger.info('Suscripción Meta de Messenger omitida: Meta no está conectado')
-        return { skipped: true, reason: 'meta-disconnected' }
+      if (!(await isMetaSocialConnected())) {
+        logger.info('Suscripción Meta de Messenger omitida: Meta Social no está conectado')
+        return { skipped: true, reason: 'meta-social-disconnected' }
       }
 
       const { reconcileMetaPageMessagingSubscription } = await import('./services/metaSocialMessagingService.js')

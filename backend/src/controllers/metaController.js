@@ -8,6 +8,9 @@ import {
   updateRecentAds,
   getMetaSyncProgress,
   getMetaConfig,
+  getLegacyMetaConfig,
+  getMetaSocialConfig,
+  getMetaWhatsAppBusinessAccountId,
   getMetaDeveloperSetup,
   enableMetaSocialChannelsForConnectedProfiles,
   resolveMetaCapiAccessToken,
@@ -52,7 +55,7 @@ import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCr
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js';
 import { normalizeBaseUrl, resolvePublicServiceBaseUrl } from '../utils/publicUrl.js';
 import { getAccountCurrency } from '../utils/accountLocale.js';
-import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js';
+import { describeMetaCapiResponseError, safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js';
 import {
   disconnectMetaOAuthConnection,
   replaceMetaOAuthWithManualConnection
@@ -577,13 +580,15 @@ function hasUsableLocalMetaConfig(metaConfig) {
   return Boolean(metaConfig?.access_token);
 }
 
-function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = '') {
+function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = '', socialConfig = null) {
+  const social = socialConfig || metaConfig
   return {
+    connectionMode: cleanString(metaConfig.connection_mode) || null,
     adAccountId: normalizeMetaAdAccountId(metaConfig.ad_account_id),
     accessToken: maskSecret(metaConfig.access_token),
     pixelId: cleanString(metaConfig.pixel_id),
-    pageId: cleanString(metaConfig.page_id),
-    instagramAccountId: cleanString(metaConfig.instagram_account_id),
+    pageId: cleanString(social?.page_id),
+    instagramAccountId: cleanString(social?.instagram_account_id),
     whatsappBusinessAccountId: cleanString(whatsappBusinessAccountId)
   };
 }
@@ -832,7 +837,7 @@ export const saveConfig = async (req, res) => {
 
     logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}${page_id ? ` con page: ${page_id}` : ''}`);
 
-    const existingConfig = await getMetaConfig().catch(() => null);
+    const existingConfig = await getLegacyMetaConfig().catch(() => null);
     if (['oauth_bisu', 'oauth_user'].includes(cleanString(existingConfig?.connection_mode))) {
       const validation = await verifyMetaToken(access_token);
       if (!validation.valid) {
@@ -854,6 +859,8 @@ export const saveConfig = async (req, res) => {
     }
     await setAppConfig('meta_config_disconnected', '0');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
+    await syncRegisteredIntegrationCronsForProvider('meta-ads', { reason: 'meta-connected' });
+    await syncRegisteredIntegrationCronsForProvider('meta-social', { reason: 'meta-connected' });
     const socialHistoryBackfill = startMetaSocialHistoryBackfillAfterConnection('meta-config-saved');
 
     logger.info('Configuración de Meta guardada exitosamente');
@@ -1093,7 +1100,7 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
     });
     const responsePayload = await response.json().catch(() => ({}));
     if (!response.ok || responsePayload?.error) {
-      return { ok: false, status: response.ok ? 400 : response.status, error: responsePayload?.error?.message || `Meta CAPI ${response.status}`, eventId, eventName: outboundEventName, responsePayload };
+      return { ok: false, status: response.ok ? 400 : response.status, error: describeMetaCapiResponseError(responsePayload, response.status), eventId, eventName: outboundEventName, responsePayload };
     }
     return { ok: true, eventId, eventName: outboundEventName, testEventCode, responsePayload };
   } catch (error) {
@@ -1107,7 +1114,19 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
  */
 export const sendMetaTestEvent = async (req, res) => {
   try {
-    const metaConfig = await getMetaConfig();
+    const [adsConfig, socialConfig, whatsappBusinessAccountId] = await Promise.all([
+      getMetaConfig(),
+      getMetaSocialConfig().catch(() => null),
+      getMetaWhatsAppBusinessAccountId().catch(() => '')
+    ]);
+    const metaConfig = adsConfig
+      ? {
+          ...adsConfig,
+          page_id: socialConfig?.page_id || null,
+          instagram_account_id: socialConfig?.instagram_account_id || null,
+          whatsapp_business_account_id: whatsappBusinessAccountId || null
+        }
+      : adsConfig;
     const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getActiveMetaTestEventCode()).replace(/\s+/g, '');
     const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);
     const eventParameters = normalizeMetaTestEventParameters(req.body?.eventParameters || req.body?.event_parameters);
@@ -1230,7 +1249,13 @@ export const runMetaPixelTestServerEvent = async (req, res) => {
       return res.status(429).json({ success: false, error: 'Demasiados intentos con este enlace. Vuelve a abrir la prueba desde Ajustes → Meta.' });
     }
 
-    const metaConfig = await getMetaConfig();
+    const [adsConfig, socialConfig] = await Promise.all([
+      getMetaConfig(),
+      getMetaSocialConfig().catch(() => null)
+    ]);
+    const metaConfig = adsConfig
+      ? { ...adsConfig, page_id: socialConfig?.page_id || null, instagram_account_id: socialConfig?.instagram_account_id || null }
+      : adsConfig;
     const eventName = normalizeMetaTestEventName(data.eventName);
     const eventParameters = normalizeMetaTestEventParameters(data.eventParameters);
     const testEventCode = cleanString(data.testEventCode).replace(/\s+/g, '');
@@ -1558,7 +1583,7 @@ export const saveMetaMessengerUserToken = async (req, res) => {
       });
     }
 
-    const config = await getMetaConfig();
+    const config = await getMetaSocialConfig();
     if (!config?.page_id) {
       return res.status(409).json({
         success: false,
@@ -1608,7 +1633,7 @@ export const saveMetaMessengerUserToken = async (req, res) => {
  */
 export const deleteMetaConfig = async (req, res) => {
   try {
-    const existingConfig = await getMetaConfig().catch(() => null);
+    const existingConfig = await getLegacyMetaConfig().catch(() => null);
     if (existingConfig && ['oauth_bisu', 'oauth_user'].includes(cleanString(existingConfig.connection_mode))) {
       const result = await disconnectMetaOAuthConnection();
       return res.json({
@@ -1618,9 +1643,20 @@ export const deleteMetaConfig = async (req, res) => {
       });
     }
 
-    await clearMetaIntegrationCredentials();
+    const splitConnections = await db.get(
+      `SELECT COUNT(*) AS total FROM meta_oauth_integrations WHERE status = 'active'`
+    ).catch(() => ({ total: 0 }));
+    if (Number(splitConnections?.total || 0) > 0) {
+      // El botón legacy elimina únicamente su fallback. Las conexiones OAuth
+      // separadas conservan tokens, toggles sociales y estado de relay.
+      await db.run('DELETE FROM meta_config');
+    } else {
+      await clearMetaIntegrationCredentials();
+    }
     await setAppConfig('meta_config_disconnected', '1');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-disconnected' });
+    await syncRegisteredIntegrationCronsForProvider('meta-ads', { reason: 'meta-legacy-disconnected' });
+    await syncRegisteredIntegrationCronsForProvider('meta-social', { reason: 'meta-legacy-disconnected' });
 
     logger.info('Configuración de Meta eliminada');
 
@@ -3292,13 +3328,23 @@ export const getMetaCustomValues = async (req, res) => {
     logger.info('Obteniendo configuración de Meta desde HighLevel o DB local...');
 
     const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-    const localMetaConfig = await getMetaConfig().catch(error => {
-      logger.warn(`No se pudo leer Meta local: ${error.message}`);
-      return null;
-    });
+    const [localMetaConfig, localSocialConfig, localLegacyConfig] = await Promise.all([
+      getMetaConfig().catch(error => {
+        logger.warn(`No se pudo leer Meta Ads local: ${error.message}`);
+        return null;
+      }),
+      getMetaSocialConfig().catch(error => {
+        logger.warn(`No se pudo leer Meta Social local: ${error.message}`);
+        return null;
+      }),
+      getLegacyMetaConfig().catch(error => {
+        logger.warn(`No se pudo leer el método heredado de Meta: ${error.message}`);
+        return null;
+      })
+    ]);
     const metaDisconnected = cleanString(await getAppConfig('meta_config_disconnected')) === '1';
 
-    if (metaDisconnected && !hasUsableLocalMetaConfig(localMetaConfig)) {
+    if (metaDisconnected && !hasUsableLocalMetaConfig(localMetaConfig) && !hasUsableLocalMetaConfig(localSocialConfig)) {
       return res.json({
         success: true,
         data: null,
@@ -3321,11 +3367,15 @@ export const getMetaCustomValues = async (req, res) => {
       logger.info(`Reconciliación Meta/HighLevel al cargar Settings: ${reconciliation.action} - ${reconciliation.message}`);
 
       const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
-      const refreshedLocalConfig = await getMetaConfig().catch(() => null);
+      const [refreshedLocalConfig, refreshedSocialConfig, refreshedLegacyConfig] = await Promise.all([
+        getMetaConfig().catch(() => null),
+        getMetaSocialConfig().catch(() => null),
+        getLegacyMetaConfig().catch(() => null)
+      ]);
 
       // PRIORIDAD: si ya existe configuración de Meta en Ristak, usarla siempre.
       // Los custom values de HighLevel solo se usan cuando no hay config local.
-      if (hasUsableLocalMetaConfig(refreshedLocalConfig)) {
+      if (hasUsableLocalMetaConfig(refreshedLocalConfig) || hasUsableLocalMetaConfig(refreshedSocialConfig)) {
         const whatsappBusinessAccountId = await db.get(
           'SELECT config_value FROM app_config WHERE config_key = ?',
           ['meta_whatsapp_business_account_id']
@@ -3333,7 +3383,11 @@ export const getMetaCustomValues = async (req, res) => {
 
         return res.json({
           success: true,
-          data: toMaskedMetaCredentials(refreshedLocalConfig, whatsappBusinessAccountId?.config_value),
+          data: toMaskedMetaCredentials(
+            refreshedLegacyConfig || {},
+            whatsappBusinessAccountId?.config_value,
+            refreshedLegacyConfig
+          ),
           source: 'local',
           reconciliation
         });
@@ -3356,7 +3410,7 @@ export const getMetaCustomValues = async (req, res) => {
       }
     }
 
-    if (hasUsableLocalMetaConfig(localMetaConfig)) {
+    if (hasUsableLocalMetaConfig(localMetaConfig) || hasUsableLocalMetaConfig(localSocialConfig)) {
       const whatsappBusinessAccountId = await db.get(
         'SELECT config_value FROM app_config WHERE config_key = ?',
         ['meta_whatsapp_business_account_id']
@@ -3364,7 +3418,11 @@ export const getMetaCustomValues = async (req, res) => {
 
       return res.json({
         success: true,
-        data: toMaskedMetaCredentials(localMetaConfig, whatsappBusinessAccountId?.config_value),
+        data: toMaskedMetaCredentials(
+          localLegacyConfig || {},
+          whatsappBusinessAccountId?.config_value,
+          localLegacyConfig
+        ),
         source: 'local',
         reconciliation: {
           success: true,
@@ -3414,7 +3472,7 @@ export const saveAndSyncMeta = async (req, res) => {
       });
     }
 
-    const existingMetaConfig = await getMetaConfig().catch(error => {
+    const existingMetaConfig = await getLegacyMetaConfig().catch(error => {
       logger.warn(`No se pudo leer configuración previa de Meta: ${error.message}`);
       return null;
     });
@@ -3500,6 +3558,8 @@ export const saveAndSyncMeta = async (req, res) => {
     }
     await setAppConfig('meta_config_disconnected', '0');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
+    await syncRegisteredIntegrationCronsForProvider('meta-ads', { reason: 'meta-connected' });
+    await syncRegisteredIntegrationCronsForProvider('meta-social', { reason: 'meta-connected' });
 
     if (normalizedWhatsappBusinessAccountId) {
       await setAppConfig('meta_whatsapp_business_account_id', normalizedWhatsappBusinessAccountId);
@@ -3753,11 +3813,13 @@ function extractExplicitMetaAccessToken(req) {
   return cleanString(req.query?.accessToken);
 }
 
-async function resolveMetaRequestCredentials(req) {
+async function resolveMetaRequestCredentials(req, integrationKind = 'ads') {
   const explicitAccessToken = extractMetaAccessToken(req);
   if (explicitAccessToken) return { accessToken: explicitAccessToken, appSecretProof: '', oauthUserId: '', isOAuth: false, source: 'explicit' };
 
-  const config = await getMetaConfig().catch(() => null);
+  const config = integrationKind === 'social'
+    ? await getMetaSocialConfig().catch(() => null)
+    : await getMetaConfig().catch(() => null);
   return {
     accessToken: cleanString(config?.access_token),
     appSecretProof: ['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode))
@@ -3945,7 +4007,7 @@ async function fetchMetaConnection(initialUrl) {
 export const getPages = async (req, res) => {
   try {
     // (META-005) Token desde header en vez de query string.
-    const { accessToken, appSecretProof, oauthUserId, isOAuth } = await resolveMetaRequestCredentials(req);
+    const { accessToken, appSecretProof, oauthUserId, isOAuth } = await resolveMetaRequestCredentials(req, 'social');
 
     if (!accessToken) {
       return res.status(400).json({

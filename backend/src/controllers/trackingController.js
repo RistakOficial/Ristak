@@ -2,6 +2,7 @@ import { logger } from '../utils/logger.js'
 import { createSession, getRecentSessions, getVisitorIdentityExpression, linkVisitorToContact, getSessionsByDateRange, getSessionMetricsByDateRange } from '../services/trackingService.js'
 import { recordVideoPlaybackEvent } from '../services/videoTrackingService.js'
 import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
+import { getMetaConfig } from '../services/metaAdsService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { resolveDateRangeWithGHLTimezone, sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import { getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js'
@@ -1451,7 +1452,7 @@ export async function getTrackingConfig(req, res) {
     const visitorSource = await getAppConfig('visitor_source') || 'platform'
 
     // Verificar si hay Meta Pixel configurado
-    const metaConfig = await db.get('SELECT pixel_id FROM meta_config LIMIT 1')
+    const metaConfig = await getMetaConfig().catch(() => null)
     const hasMetaPixel = !!(metaConfig && metaConfig.pixel_id)
     const includeMetaPixelPref = await getAppConfig('include_meta_pixel')
     const includeMetaPixel = includeMetaPixelPref === null || includeMetaPixelPref === undefined
@@ -1513,7 +1514,7 @@ export async function configureTracking(req, res) {
     }
 
     // Obtener configuración de Meta para incluir Pixel si está configurado
-    const metaConfig = await db.get('SELECT pixel_id FROM meta_config LIMIT 1')
+    const metaConfig = await getMetaConfig().catch(() => null)
     const hasMetaPixel = metaConfig && metaConfig.pixel_id
 
     // Leer preferencia del usuario: ¿quiere incluir Meta Pixel en el snippet?

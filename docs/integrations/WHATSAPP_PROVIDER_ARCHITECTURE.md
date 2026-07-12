@@ -195,9 +195,14 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
 
 ## Embedded Signup centralizado
 
-La pantalla `Configuración > WhatsApp` abre el onboarding oficial en el dominio
-de Ristak Installer. La instalación crea un `state` firmado con su licencia y
-TTL de 15 minutos; no manda tokens ni App Secret al navegador.
+La pantalla `Configuración > WhatsApp` prepara el onboarding con Ristak
+Installer por llamadas backend-to-backend y ejecuta `FB.login` dentro del tenant.
+Así el clic abre una sola ventana, la oficial de Meta, sin navegar primero por
+`www.ristak.com`. La instalación crea un `state` firmado con su licencia y TTL de
+15 minutos; el navegador recibe únicamente ese state, App ID, Config ID y
+versiones públicas del SDK. Nunca recibe tokens ni App Secret. La pantalla
+central `/meta/whatsapp/connect` permanece como fallback compatible para
+instalaciones anteriores, no como el camino principal.
 
 Installer es dueño de `meta_app_id`, `meta_app_secret`,
 `whatsapp_business_login_config_id` y del webhook central. El JavaScript SDK usa
@@ -214,7 +219,19 @@ sesión, y el backend central:
 
 El token termina cifrado sólo en la base del tenant. Installer conserva metadata
 de sesión y ruteo; un payload de entrega pendiente queda cifrado temporalmente y
-se destruye al recibir el ACK. YCloud y Baileys no participan en este flujo.
+se destruye al recibir el ACK. Si el tenant estuvo caído, el siguiente state
+válido de la misma instalación adopta esa entrega pendiente y vuelve a enviarla
+sin canjear otro code ni reabrir OAuth. YCloud y Baileys no participan en este
+flujo.
+
+Los callbacks Installer -> tenant (`/meta/connect/complete`,
+`/meta/setup-prefill` y `/meta/webhook-relay`) están antes de la autenticación
+humana del router porque usan HMAC, timestamp, nonce e installation ID. Todas las
+rutas operadas por una persona están después de `router.use(requireAuth)`. No se
+debe volver a montar `requireAuth` sobre todo `/api/whatsapp-api`, porque eso
+bloquea los callbacks firmados antes de validarlos. El mount también debe quedar
+antes del router histórico `costsRoutes` montado sobre `/api`, ya que su
+`router.use(requireAuth)` actúa como catch-all para cualquier ruta posterior.
 
 Al finalizar, `meta_direct` pasa a ser el proveedor API activo. La configuración
 YCloud permanece guardada para un cambio explícito posterior; nunca se hacen dos

@@ -9,6 +9,7 @@ import { getMercadoPagoPaymentConfig } from '../services/mercadoPagoPaymentServi
 import { getConektaPaymentConfig } from '../services/conektaPaymentService.js';
 import { getClipPaymentConfig } from '../services/clipPaymentService.js';
 import { getRebillPaymentConfig } from '../services/rebillPaymentService.js';
+import { getMetaConfig, getMetaSocialConfig } from '../services/metaAdsService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -96,17 +97,26 @@ export const getStatus = async (req, res) => {
       }
     }
 
-    const metaConfig = await db.get(
-      'SELECT ad_account_id, access_token, pixel_id, page_id, instagram_account_id FROM meta_config LIMIT 1'
-    );
+    const [metaConfig, metaSocialConfig] = await Promise.all([
+      getMetaConfig().catch(() => null),
+      getMetaSocialConfig().catch(() => null)
+    ]);
 
     const metaStatus = {
-      configured: Boolean(metaConfig?.ad_account_id && metaConfig?.access_token),
-      connected: Boolean(metaConfig?.ad_account_id && metaConfig?.access_token),
+      configured: Boolean(
+        (metaConfig?.ad_account_id && metaConfig?.access_token) ||
+        (metaSocialConfig?.page_id && metaSocialConfig?.access_token)
+      ),
+      connected: Boolean(
+        (metaConfig?.ad_account_id && metaConfig?.access_token) ||
+        (metaSocialConfig?.page_id && metaSocialConfig?.access_token)
+      ),
+      adsConnected: Boolean(metaConfig?.ad_account_id && metaConfig?.access_token),
+      socialConnected: Boolean(metaSocialConfig?.page_id && metaSocialConfig?.access_token),
       adAccountId: metaConfig?.ad_account_id || null,
       pixelId: metaConfig?.pixel_id || null,
-      pageId: metaConfig?.page_id || null,
-      instagramAccountId: metaConfig?.instagram_account_id || null
+      pageId: metaSocialConfig?.page_id || null,
+      instagramAccountId: metaSocialConfig?.instagram_account_id || null
     };
 
     // WhatsApp: se lee directo de app_config (ligero) para no disparar el

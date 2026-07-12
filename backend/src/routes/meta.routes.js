@@ -59,6 +59,13 @@ router.use(requireAuth)
 router.use(requireModuleAccess('campaigns'))
 
 // Facebook Login for Business (BISU) administrado por Ristak Installer.
+router.get('/oauth/:integrationKind/status', getMetaOAuthStatus)
+router.post('/oauth/:integrationKind/connect-url', createMetaOAuthConnectUrl)
+router.post('/oauth/:integrationKind/complete', completeMetaOAuth)
+router.post('/oauth/:integrationKind/finalize', finalizeMetaOAuth)
+router.post('/oauth/:integrationKind/disconnect', disconnectMetaOAuth)
+
+// Aliases legacy del OAuth combinado. No se usan para conexiones nuevas.
 router.get('/oauth/status', getMetaOAuthStatus)
 router.post('/oauth/connect-url', createMetaOAuthConnectUrl)
 router.post('/oauth/complete', completeMetaOAuth)

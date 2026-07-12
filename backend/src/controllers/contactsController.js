@@ -1,4 +1,5 @@
 import { db, getAppConfig } from '../config/database.js'
+import { getMetaSocialConfig } from '../services/metaAdsService.js'
 import { logger } from '../utils/logger.js'
 import { updateContactsStats } from '../utils/updateContactsStats.js'
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
@@ -4217,7 +4218,7 @@ export const getContactPaymentLinkDeliveryOptions = async (req, res) => {
     ] = await Promise.all([
       getEmailStatus().catch(() => ({ connected: false })),
       getWhatsAppApiStatus().catch(() => ({ connected: false, phoneNumbers: [] })),
-      db.get('SELECT access_token, page_id, instagram_account_id FROM meta_config LIMIT 1').catch(() => null),
+      getMetaSocialConfig().catch(() => null),
       isMetaSocialMessagingEnabled('messenger').catch(() => false),
       isMetaSocialMessagingEnabled('instagram').catch(() => false),
       db.all(

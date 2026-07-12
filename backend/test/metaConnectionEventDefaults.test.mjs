@@ -71,6 +71,25 @@ async function snapshotMetaConfig(callback) {
   }
 }
 
+async function snapshotSplitMetaConnections(callback) {
+  const previousRows = await db.all('SELECT * FROM meta_oauth_integrations').catch(() => [])
+
+  try {
+    await db.run('DELETE FROM meta_oauth_integrations')
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM meta_oauth_integrations')
+    for (const row of previousRows) {
+      const columns = Object.keys(row)
+      const placeholders = columns.map(() => '?').join(', ')
+      await db.run(
+        `INSERT INTO meta_oauth_integrations (${columns.join(', ')}) VALUES (${placeholders})`,
+        columns.map(column => row[column])
+      )
+    }
+  }
+}
+
 async function cleanupCreatedSite(siteId) {
   if (!siteId) return
   await db.run('DELETE FROM public_site_blocks WHERE site_id = ?', [siteId])
@@ -257,6 +276,68 @@ test('saving new Meta social profiles enables Page switches and page-backed Inst
         }
         assert.equal(await getAppConfig('meta_instagram_messaging_enabled'), '1')
         assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '1')
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+  }
+})
+
+test('editing the legacy fallback never changes switches owned by split Social OAuth', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotSplitMetaConnections(async () => {
+        await snapshotAppConfig(SOCIAL_CHANNEL_CONFIG_KEYS, async () => {
+          metaServer = http.createServer((req, res) => {
+            if (req.method === 'GET' && req.url.startsWith('/act_123456')) {
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ timezone_name: 'America/Mexico_City' }))
+              return
+            }
+            res.writeHead(404, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: { message: 'unexpected request' } }))
+          })
+          await new Promise(resolve => metaServer.listen(0, '127.0.0.1', resolve))
+          Object.defineProperty(API_URLS, 'META_GRAPH', {
+            value: `http://127.0.0.1:${metaServer.address().port}`,
+            configurable: true
+          })
+
+          await db.run(
+            `INSERT INTO meta_oauth_integrations (
+               id, integration_kind, status, connection_id, access_token,
+               page_id, instagram_account_id, validated, connected_at
+             ) VALUES ('social-switch-owner', 'social', 'active', 'social-switch-owner-connection', ?, 'split-page', 'split-ig', 1, CURRENT_TIMESTAMP)`,
+            [encrypt('split-social-token')]
+          )
+          const expectedSwitches = {
+            meta_messenger_messaging_enabled: '1',
+            meta_instagram_messaging_enabled: '0',
+            meta_facebook_comments_enabled: '0',
+            meta_instagram_comments_enabled: '1'
+          }
+          for (const [key, value] of Object.entries(expectedSwitches)) {
+            await setAppConfig(key, value)
+          }
+
+          await saveMetaConfig(
+            '123456',
+            'legacy-meta-token',
+            null,
+            'legacy-page',
+            'legacy-ig'
+          )
+
+          for (const [key, value] of Object.entries(expectedSwitches)) {
+            assert.equal(await getAppConfig(key), value, `${key} permanece bajo control de Social OAuth`)
+          }
+        })
       })
     })
   } finally {

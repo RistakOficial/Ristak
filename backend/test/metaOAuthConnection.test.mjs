@@ -20,7 +20,13 @@ import {
 } from '../src/services/metaOAuthService.js'
 import { safeMetaGraphTransportError } from '../src/utils/metaGraphSecurity.js'
 
-const TABLES = ['meta_config', 'meta_oauth_pending_sessions', 'meta_oauth_connection_backups']
+const TABLES = [
+  'meta_config',
+  'meta_oauth_pending_sessions',
+  'meta_oauth_connection_backups',
+  'meta_oauth_integrations',
+  'meta_oauth_integration_sessions'
+]
 const CONFIG_KEYS = [
   'meta_config_disconnected',
   'meta_messenger_messaging_enabled',
@@ -327,6 +333,49 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
   })
 })
 
+test('desconectar OAuth combinado conserva subscribed_apps si split Social usa la misma Page', async () => {
+  await initializeMasterKey()
+  await withIsolatedMeta(async () => {
+    await db.run(
+      `INSERT INTO meta_config (
+         access_token, connection_mode, page_id, instagram_account_id,
+         oauth_connection_id, oauth_page_access_token, oauth_page_appsecret_proof,
+         oauth_connected, oauth_validated
+       ) VALUES (?, 'oauth_bisu', 'shared-page', 'shared-ig', 'legacy-combined', ?, ?, 1, 1)`,
+      [encrypt('legacy-combined-token'), encrypt('legacy-page-token'), encrypt('legacy-page-proof')]
+    )
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token,
+         page_access_token, page_appsecret_proof, page_id,
+         instagram_account_id, validated, connected_at
+       ) VALUES (
+         'split-social', 'social', 'active', 'split-social-connection', ?, ?, ?,
+         'shared-page', 'shared-ig', 1, CURRENT_TIMESTAMP
+       )`,
+      [encrypt('split-social-token'), encrypt('split-page-token'), encrypt('split-page-proof')]
+    )
+
+    let removedSubscriptions = 0
+    setMetaOAuthCentralClientForTest({
+      updateWebhookSubscription: async () => ({ registered: false }),
+      disconnect: async () => ({ disconnected: true })
+    })
+    setMetaOAuthRuntimeClientForTest({
+      removePageSubscription: async () => { removedSubscriptions += 1 },
+      syncCrons: async () => undefined
+    })
+
+    const result = await disconnectMetaOAuthConnection()
+    assert.equal(result.disconnected, true)
+    assert.equal(removedSubscriptions, 0)
+    assert.ok(await db.get(
+      `SELECT id FROM meta_oauth_integrations
+       WHERE integration_kind = 'social' AND status = 'active' AND page_id = 'shared-page'`
+    ))
+  })
+})
+
 test('cleanup OAuth compensa subscribed_apps abandonado antes de purgar el secreto', async () => {
   await initializeMasterKey()
   await withIsolatedMeta(async () => {
@@ -425,7 +474,7 @@ test('cleanup OAuth completa efectos idempotentes si el commit central ambiguo s
     })
 
     await cleanupMetaOAuthPendingSessions()
-    assert.deepEqual(effects, { crons: 1, channels: 1, history: 1, ads: 1 })
+    assert.deepEqual(effects, { crons: 3, channels: 1, history: 1, ads: 1 })
     assert.equal(await db.get("SELECT id FROM meta_oauth_pending_sessions WHERE id = 'central-unknown'"), null)
     assert.equal((await db.get('SELECT oauth_relay_status FROM meta_config LIMIT 1')).oauth_relay_status, 'registered')
   })
@@ -539,7 +588,7 @@ test('commit central confirmado nunca restaura A si falla la marca local; schedu
 
     assert.equal(unregisterCalls, 0)
     assert.equal(previousPageCleanupCalls, 1)
-    assert.deepEqual(effects, { crons: 1, channels: 1, history: 1, ads: 1 })
+    assert.deepEqual(effects, { crons: 3, channels: 1, history: 1, ads: 1 })
     assert.equal((await getMetaConfig()).oauth_connection_id, 'connection-b')
     assert.equal((await getMetaConfig()).oauth_relay_status, 'registered')
     assert.equal(await db.get('SELECT id FROM meta_oauth_pending_sessions WHERE id = ?', [sessionId]), null)

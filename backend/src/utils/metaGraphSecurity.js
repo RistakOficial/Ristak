@@ -30,3 +30,17 @@ export function safeMetaGraphTransportError(error, fallback = 'No se pudo contac
   const redacted = redactMetaGraphSecrets(message)
   return redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted
 }
+
+export function describeMetaCapiResponseError(payload = {}, status = 0) {
+  const graphError = payload?.error || {}
+  const message = safeMetaGraphTransportError(
+    { message: graphError?.message || `Meta CAPI ${Number(status) || 'error'}` },
+    `Meta CAPI ${Number(status) || 'error'}`
+  )
+  const permissionDenied = [10, 190, 200].includes(Number(graphError?.code)) ||
+    [401, 403].includes(Number(status)) ||
+    /permission|access|authorized|autoriz|dataset/i.test(message)
+  return permissionDenied
+    ? `Meta rechazó el envío. Amplía el acceso al Dataset seleccionado y vuelve a autorizar Meta Ads. (${message})`
+    : message
+}

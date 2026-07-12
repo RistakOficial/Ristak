@@ -4,7 +4,7 @@ import { API_URLS } from '../config/constants.js'
 import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, businessTodayDateOnly, getAccountTimezone } from '../utils/dateUtils.js'
-import { getMetaConfig } from './metaAdsService.js'
+import { getMetaSocialConfig } from './metaAdsService.js'
 
 const THREADS_GRAPH_URL = 'https://graph.threads.net/v1.0'
 const META_PROFILE_PLATFORMS = new Set(['facebook', 'instagram'])
@@ -271,7 +271,7 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
         page_id: cleanString(options.pageId),
         instagram_account_id: cleanString(options.instagramAccountId)
       }
-    : await getMetaConfig().catch(error => {
+    : await getMetaSocialConfig().catch(error => {
       logger.warn(`No se pudo leer configuración Meta para perfiles sociales: ${error.message}`)
       return null
     })

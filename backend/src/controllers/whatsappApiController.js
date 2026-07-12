@@ -4,7 +4,9 @@ import {
   createWhatsAppQrPhoneNumber,
   deleteWhatsAppQrPhoneNumber,
   completeMetaDirectConnection,
+  completeMetaDirectEmbeddedSignup,
   createMetaDirectConnectUrl,
+  prepareMetaDirectEmbeddedSignup,
   disconnectMetaDirectConnection,
   disconnectWhatsAppQrForPhone,
   disconnectWhatsAppApi,
@@ -331,6 +333,40 @@ export async function getMetaDirectConnectUrlView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo iniciar la conexión con Meta'
+    })
+  }
+}
+
+export async function prepareMetaDirectEmbeddedSignupView(req, res) {
+  try {
+    const data = await prepareMetaDirectEmbeddedSignup({
+      appUrl: req.query?.appUrl || req.body?.appUrl || getPublicBaseUrl(req)
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error preparando Embedded Signup de Meta: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo preparar la conexión con Meta',
+      code: error.code || 'whatsapp_embedded_signup_error'
+    })
+  }
+}
+
+export async function completeMetaDirectEmbeddedSignupView(req, res) {
+  try {
+    const data = await completeMetaDirectEmbeddedSignup({
+      state: req.body?.state,
+      code: req.body?.code,
+      signupData: req.body?.signupData || req.body?.signup_data || {}
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error finalizando Embedded Signup de Meta: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo completar la conexión con Meta',
+      code: error.code || 'whatsapp_embedded_signup_error'
     })
   }
 }

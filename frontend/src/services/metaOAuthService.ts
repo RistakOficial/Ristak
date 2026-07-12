@@ -1,6 +1,8 @@
 export type MetaOAuthConnectionMode = 'manual_system_user' | 'oauth_bisu' | 'oauth_user' | null
+export type MetaOAuthIntegrationKind = 'ads' | 'social'
 
 export interface MetaOAuthStatus {
+  integrationKind: MetaOAuthIntegrationKind
   available: boolean
   mode: 'redirect' | 'js_sdk'
   connectUrl: string
@@ -9,7 +11,15 @@ export interface MetaOAuthStatus {
   reviewPending?: boolean
   connectionMode: MetaOAuthConnectionMode
   manualConfigured: boolean
+  legacyCombinedConnected?: boolean
   manualBackupAvailable?: boolean
+  selected?: {
+    businessId?: string
+    adAccountId?: string
+    pixelId?: string
+    pageId?: string
+    instagramAccountId?: string
+  }
   oauth: {
     connected: boolean
     validated: boolean
@@ -59,6 +69,7 @@ export interface MetaOAuthPage {
 }
 
 export interface MetaOAuthSession {
+  integrationKind: MetaOAuthIntegrationKind
   sessionId: string
   expiresAt: string
   user: { id: string; name: string }
@@ -89,6 +100,7 @@ export interface MetaOAuthFinalizeSelection {
 }
 
 export interface MetaOAuthFinalizeResult {
+  integrationKind: MetaOAuthIntegrationKind
   connectionMode: 'oauth_bisu' | 'oauth_user'
   connected: boolean
   validated: boolean
@@ -108,6 +120,7 @@ export interface MetaOAuthFinalizeResult {
   subscription?: unknown
   socialHistoryBackfill?: unknown
   adsSync?: { syncStarted?: boolean }
+  conversionEvents?: { enabled?: boolean; reason?: string }
 }
 
 async function requestMetaOAuth<T>(url: string, init?: RequestInit): Promise<T> {
@@ -133,17 +146,28 @@ async function requestMetaOAuth<T>(url: string, init?: RequestInit): Promise<T> 
 }
 
 export const metaOAuthService = {
-  getStatus: () => requestMetaOAuth<MetaOAuthStatus>('/api/meta/oauth/status'),
-
-  createConnectUrl: () => requestMetaOAuth<{ connectUrl: string; redirectUri?: string; expiresAt?: string }>(
-    '/api/meta/oauth/connect-url',
-    { method: 'POST', body: JSON.stringify({ returnPath: '/settings/meta-ads/token' }) }
+  getStatus: (integrationKind: MetaOAuthIntegrationKind) => (
+    requestMetaOAuth<MetaOAuthStatus>(`/api/meta/oauth/${integrationKind}/status`)
   ),
 
-  complete: (input: { handoffToken?: string; code?: string; configId?: string }) => (
-    requestMetaOAuth<MetaOAuthSession>('/api/meta/oauth/complete', {
+  createConnectUrl: (integrationKind: MetaOAuthIntegrationKind) => requestMetaOAuth<{ connectUrl: string; redirectUri?: string; expiresAt?: string }>(
+    `/api/meta/oauth/${integrationKind}/connect-url`,
+    {
       method: 'POST',
       body: JSON.stringify({
+        integrationKind,
+        returnPath: integrationKind === 'social'
+          ? '/settings/meta-ads/redes-sociales'
+          : '/settings/meta-ads/ads'
+      })
+    }
+  ),
+
+  complete: (integrationKind: MetaOAuthIntegrationKind, input: { handoffToken?: string; code?: string; configId?: string }) => (
+    requestMetaOAuth<MetaOAuthSession>(`/api/meta/oauth/${integrationKind}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({
+        integrationKind,
         handoffToken: input.handoffToken || undefined,
         code: input.code || undefined,
         configId: input.configId || undefined
@@ -151,10 +175,23 @@ export const metaOAuthService = {
     })
   ),
 
-  finalize: (selection: MetaOAuthFinalizeSelection) => (
-    requestMetaOAuth<MetaOAuthFinalizeResult>('/api/meta/oauth/finalize', {
+  finalize: (integrationKind: MetaOAuthIntegrationKind, selection: MetaOAuthFinalizeSelection) => (
+    requestMetaOAuth<MetaOAuthFinalizeResult>(`/api/meta/oauth/${integrationKind}/finalize`, {
       method: 'POST',
-      body: JSON.stringify(selection)
+      body: JSON.stringify({ integrationKind, ...selection })
+    })
+  ),
+
+  disconnect: (integrationKind: MetaOAuthIntegrationKind) => (
+    requestMetaOAuth<{
+      disconnected: boolean
+      restoredLegacy?: boolean
+      fallbackLegacy?: boolean
+      runtimeWarning?: string | null
+      runtimeWarnings?: string[]
+    }>(`/api/meta/oauth/${integrationKind}/disconnect`, {
+      method: 'POST',
+      body: JSON.stringify({ integrationKind })
     })
   )
 }

@@ -84,7 +84,7 @@ const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|acc
 // por la API externa. Se agregan a la lista de tablas sensibles (bloqueo total de
 // lectura/escritura), no solo a WRITE_BLOCKED, para no filtrar el directorio de
 // empleados ni el mapa de permisos (access_config).
-const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
+const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|meta_oauth_integrations|meta_oauth_integration_sessions|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
 const WRITE_BLOCKED_TABLE_PATTERN = /^(users|payment_methods|conversational_agents|conversational_agent_.*)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 

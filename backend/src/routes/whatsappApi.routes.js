@@ -2,6 +2,7 @@ import express from 'express'
 import {
   cancelScheduledChatMessageView,
   completeMetaDirectConnectionView,
+  completeMetaDirectEmbeddedSignupView,
   connectWhatsAppApiView,
   connectWhatsAppQrView,
   createWhatsAppQrPhoneNumberView,
@@ -11,6 +12,7 @@ import {
   deleteWhatsAppQrPhoneNumberView,
   getWhatsAppApiConnectionStatus,
   getMetaDirectConnectUrlView,
+  prepareMetaDirectEmbeddedSignupView,
   getMetaDirectSetupPrefillView,
   getWhatsAppMetaBusinessAccountView,
   getWhatsAppApiTemplatesView,
@@ -95,6 +97,8 @@ router.use(requireAuth)
 router.get('/status', getWhatsAppApiConnectionStatus)
 router.get('/meta/business-account', requireWhatsAppApiAccess, getWhatsAppMetaBusinessAccountView)
 router.get('/meta/connect-url', requireWhatsAppApiAccess, getMetaDirectConnectUrlView)
+router.get('/meta/signup-session', requireWhatsAppApiAccess, prepareMetaDirectEmbeddedSignupView)
+router.post('/meta/signup-complete', requireWhatsAppApiAccess, completeMetaDirectEmbeddedSignupView)
 router.post('/meta/provider', requireWhatsAppApiAccess, setWhatsAppActiveProviderView)
 router.post('/meta/test', requireWhatsAppApiAccess, testMetaDirectConnectionView)
 router.post('/meta/messages/test', requireWhatsAppApiAccess, sendMetaDirectTestMessageView)
