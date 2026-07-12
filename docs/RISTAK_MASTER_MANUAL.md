@@ -1064,12 +1064,30 @@ usan botones web `PUBLIC_URL/pay/{{1}}`; el ejemplo dinamico del boton sale de
 `payment.public_id` o `payment.receipt_path` segun corresponda, nunca de una URL
 fija de otra instalacion.
 
-Al reenviar a revision una plantilla que ya existe en Meta/YCloud, Ristak debe
-editarla por `wabaId + name + language` en vez de intentar crear otra con el
-mismo nombre. Si la copia local no tiene la identidad remota pero YCloud responde
-que esa plantilla ya existe, el submit debe reintentarse como edicion y dejar la
-plantilla local en revision. Las plantillas archivadas o en revision no se editan
-desde Ristak; se debe esperar el resultado o crear una nueva con otro nombre.
+Al reenviar a revision una plantilla que ya existe, Ristak usa la identidad del
+proveedor que administra esa copia. YCloud edita por
+`wabaId + name + language`; Meta directo edita por `TEMPLATE_ID` con
+`POST /{TEMPLATE_ID}`. Si una plantilla pertenecia a YCloud y el proveedor
+activo cambia a Meta directo, el ID YCloud no se reutiliza: se crea y guarda una
+identidad Meta separada. Si la copia local no tiene identidad remota pero YCloud
+responde que ya existe, el submit puede reintentar como edicion por nombre e
+idioma. Las plantillas archivadas o en revision no se editan desde Ristak; se
+debe esperar el resultado o crear una nueva con otro nombre.
+
+Las columnas neutrales `template_provider`, `provider_template_id`,
+`provider_status` y sus campos relacionados son la fuente de verdad para código
+nuevo. Las columnas `ycloud_*` son compatibilidad histórica y solo reciben datos
+de YCloud. Los webhooks Meta `message_template_status_update`,
+`template_category_update` y `message_template_quality_update` actualizan tanto
+el catálogo remoto como la copia local, sin fingir eventos YCloud.
+
+En plantillas con encabezado multimedia, YCloud usa `header_url`, mientras Meta
+directo exige un `header_handle` cargado previamente a Graph. Ristak guarda ese
+handle en `meta_header_handle` y jamás convierte una URL YCloud en handle. Hasta
+que el flujo de carga Graph entregue un handle real, el adaptador debe rechazar
+la solicitud con un error explícito en lugar de mandar una plantilla inválida.
+La matriz completa y el mapa de campos viven en
+`docs/integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md`.
 
 Cuando una foto, audio o video se envia por WhatsApp API/YCloud usando media ID
 del proveedor, Ristak debe guardar una copia de preview/reproduccion en

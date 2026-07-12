@@ -86,6 +86,56 @@ Compatibilidad histórica:
   identificador estable. Los campos BSUID son opcionales y se rellenan sin
   invalidar contactos históricos.
 
+### Plantillas
+
+Las plantillas comparten el contenido de negocio (`name`, `language`,
+`category`, componentes, variables y ejemplos), pero **no comparten el contrato
+de administración del proveedor**.
+
+| Operación | YCloud | Meta directo |
+| --- | --- | --- |
+| Crear | `POST /v2/whatsapp/templates`; `wabaId` viaja en el body | `POST /{WABA_ID}/message_templates`; el WABA viaja en la ruta y no en el body |
+| Listar | `GET /v2/whatsapp/templates` con `items`/`data` y paginación YCloud | `GET /{WABA_ID}/message_templates` con `data` y cursores Graph |
+| Consultar | Ruta por `wabaId/name/language` | Por `TEMPLATE_ID` o filtro `name` sobre el WABA |
+| Editar | `PATCH /v2/whatsapp/templates/{wabaId}/{name}/{language}` | `POST /{TEMPLATE_ID}` |
+| Eliminar | Ruta por `wabaId/name/language` | `DELETE /{WABA_ID}/message_templates?name=...`; puede incluir `hsm_id` para una versión concreta |
+| Estado | Payload/eventos YCloud normalizados | `message_template_status_update`, `template_category_update` y `message_template_quality_update` |
+
+Modelo local neutral:
+
+- `whatsapp_message_templates.template_provider` dice quién administra la copia
+  remota actual: `ycloud` o `meta_direct`.
+- `provider_template_name`, `provider_template_id`, `provider_status`,
+  `provider_reason`, `provider_status_update_event`, `provider_quality_rating`,
+  `provider_raw_payload_json`, `provider_submitted_at` y `provider_synced_at`
+  son el contrato que debe usar código nuevo.
+- Las columnas `ycloud_*` se conservan para compatibilidad y diagnóstico. Solo
+  se actualizan cuando `template_provider=ycloud`. Un ID de Meta jamás se guarda
+  en `ycloud_template_id`.
+- `whatsapp_api_templates` conserva `provider`, `source_adapter` y
+  `provider_template_id`. `official_template_id` sigue disponible como alias
+  histórico del ID remoto.
+- Cambiar el proveedor activo no convierte una plantilla existente: si la copia
+  remota pertenece a YCloud y se envía por Meta directo, se crea una identidad
+  Meta nueva. Nunca se manda el ID YCloud al endpoint Graph.
+
+Encabezados multimedia:
+
+- YCloud acepta `example.header_url` en el payload que hoy construye el editor.
+- Meta directo exige `example.header_handle`, obtenido mediante una carga previa
+  a Graph. `header_url` y `header_handle` no son equivalentes.
+- Ristak guarda el handle Meta por separado en
+  `whatsapp_message_templates.meta_header_handle`. El adaptador Meta rechaza una
+  URL YCloud con el código `META_TEMPLATE_HEADER_HANDLE_REQUIRED` en lugar de
+  enviar un payload incorrecto.
+- Cuando se conecte la carga multimedia directa, su responsabilidad será obtener
+  el handle y llenar `meta_header_handle`; no debe reemplazar
+  `header_media_url`, porque esa URL sigue siendo útil para preview y YCloud.
+
+Coexistence no cambia estos endpoints. Sirve para mantener WhatsApp Business App
+y Cloud API sobre el mismo número, pero las plantillas siguen perteneciendo al
+WABA y se administran mediante el proveedor activo una sola vez.
+
 ## Contratos de webhook
 
 ### YCloud
@@ -165,6 +215,8 @@ user de Meta ni la API key de YCloud.
   `backend/src/services/whatsapp/providers/providerRegistry.js`.
 - Adaptador de webhook Meta directo:
   `backend/src/services/whatsapp/providers/metaDirectWebhookAdapter.js`.
+- Payloads y normalización de plantillas Meta directo:
+  `backend/src/services/whatsapp/providers/metaDirectTemplateAdapter.js`.
 - Orquestación compartida, persistencia, envíos y compatibilidad:
   `backend/src/services/whatsappApiService.js`.
 - Socket QR/Baileys: `backend/src/services/whatsappQrService.js`.
@@ -172,7 +224,8 @@ user de Meta ni la API key de YCloud.
 - Endpoint público YCloud: `backend/src/routes/webhooks.routes.js`.
 - Esquema compatible con instalaciones existentes:
   `backend/src/config/database.js` y
-  `backend/migrations/versioned/031_whatsapp_provider_foundation.sql`.
+  `backend/migrations/versioned/031_whatsapp_provider_foundation.sql` más
+  `032_whatsapp_template_provider_foundation.sql`.
 
 ## Checklist para terminar Meta directo
 
@@ -197,6 +250,10 @@ Antes de declarar lista la conexión directa:
    atrás sin perder historial.
 10. Verificar soporte con consultas filtradas por `provider`, `source_adapter`,
     `origin`, `provider_message_id` y `wamid`.
+11. Probar creación, consulta, edición, eliminación y webhooks de estado de una
+    plantilla de texto por Meta directo.
+12. Probar una plantilla con imagen/documento/video usando un `header_handle`
+    real y confirmar que `header_media_url` no se manda a Graph como sustituto.
 
 ## Diagnóstico de soporte
 
@@ -216,7 +273,12 @@ No borrar ni “reparar” IDs específicos sin contestar esas preguntas.
 
 - [Meta: WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api/overview)
 - [Meta: colección oficial de WhatsApp Business Platform](https://www.postman.com/meta/whatsapp-business-platform/overview)
+- [Meta: colección oficial de administración de WhatsApp Business](https://www.postman.com/meta/whatsapp-business-platform/documentation/3kru5r6/moved-whatsapp-business-management-api)
+- [Meta: plantilla con encabezado de imagen y `header_handle`](https://www.postman.com/meta/whatsapp-business-platform/request/zwo15hw/create-template-w-image-header-text-body-text-footer-and-2-call-to-action-buttons)
+- [Meta: Resumable Upload API](https://developers.facebook.com/docs/graph-api/guides/upload/)
 - [Meta: referencia oficial de payloads webhook](https://www.postman.com/meta/whatsapp-business-platform/folder/13382743-83ff049c-d89c-4d54-904c-c77964653d6d)
+- [YCloud: crear una plantilla](https://docs.ycloud.com/reference/whatsapp_template-create)
+- [YCloud: editar una plantilla](https://docs.ycloud.com/reference/whatsapp_template-edit)
 - [YCloud: configurar webhooks](https://docs.ycloud.com/reference/configure-webhooks)
 - [YCloud: enviar mensajes](https://docs.ycloud.com/reference/whatsapp_message-send)
 - [YCloud: ecos enviados desde WhatsApp Business](https://docs.ycloud.com/reference/whatsapp-business-app-sent-message-sync-webhook-examples)

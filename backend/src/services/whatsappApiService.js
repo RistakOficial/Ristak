@@ -67,6 +67,12 @@ import {
   resolveWhatsAppSourceAdapter
 } from './whatsapp/providers/providerRegistry.js'
 import { normalizeMetaDirectWebhookPayload } from './whatsapp/providers/metaDirectWebhookAdapter.js'
+import {
+  buildMetaDirectTemplateCreatePayload,
+  buildMetaDirectTemplateEditPayload,
+  normalizeMetaDirectTemplateListResponse,
+  normalizeMetaDirectTemplateRecord
+} from './whatsapp/providers/metaDirectTemplateAdapter.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -2703,16 +2709,21 @@ function mapPhoneNumberForResponse(record = {}) {
   }
 }
 
-function normalizeTemplateRecord(record = {}) {
-  const wabaId = cleanString(record.wabaId)
+function normalizeTemplateRecord(record = {}, options = {}) {
+  const provider = cleanString(options.provider || record.provider) || PROVIDER_NAME
+  const sourceAdapter = cleanString(record.sourceAdapter || record.source_adapter) || resolveWhatsAppSourceAdapter({ provider, transport: 'api' })
+  const wabaId = cleanString(record.wabaId || record.waba_id)
   const name = cleanString(record.name)
-  const language = cleanString(record.language)
-  const officialTemplateId = cleanString(record.officialTemplateId || record.id)
+  const language = cleanString(record.language || record.message_template_language)
+  const officialTemplateId = cleanString(record.officialTemplateId || record.providerTemplateId || record.id || record.message_template_id)
   const id = officialTemplateId || hashId('waapi_tpl', `${wabaId}|${name}|${language}`)
 
   return {
     id,
     officialTemplateId,
+    providerTemplateId: officialTemplateId,
+    provider,
+    sourceAdapter,
     wabaId,
     name,
     language,
@@ -3007,7 +3018,8 @@ async function syncBalance(balanceRecord) {
 }
 
 async function syncTemplates(templates = [], options = {}) {
-  for (const item of templates.map(normalizeTemplateRecord).filter(template => template.wabaId && template.name && template.language)) {
+  const provider = cleanString(options.provider) || PROVIDER_NAME
+  for (const item of templates.map(template => normalizeTemplateRecord(template, { provider })).filter(template => template.wabaId && template.name && template.language)) {
     if (item.status === 'DELETED') {
       await deleteWhatsAppApiTemplateSnapshot({
         wabaId: item.wabaId,
@@ -3021,32 +3033,44 @@ async function syncTemplates(templates = [], options = {}) {
 
     await db.run(`
       INSERT INTO whatsapp_api_templates (
-        id, official_template_id, waba_id, name, language, category,
+        id, official_template_id, provider_template_id, provider, source_adapter,
+        waba_id, name, language, category,
         sub_category, previous_category, message_send_ttl_seconds, status,
         quality_rating, reason, status_update_event, disable_date,
-        components_json, raw_payload_json, ycloud_create_time, ycloud_update_time,
+        components_json, raw_payload_json, provider_create_time, provider_update_time,
+        ycloud_create_time, ycloud_update_time,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(waba_id, name, language) DO UPDATE SET
-        id = excluded.id,
-        official_template_id = excluded.official_template_id,
-        category = excluded.category,
-        sub_category = excluded.sub_category,
-        previous_category = excluded.previous_category,
-        message_send_ttl_seconds = excluded.message_send_ttl_seconds,
-        status = excluded.status,
-        quality_rating = excluded.quality_rating,
-        reason = excluded.reason,
-        status_update_event = excluded.status_update_event,
-        disable_date = excluded.disable_date,
-        components_json = excluded.components_json,
+        official_template_id = COALESCE(excluded.official_template_id, whatsapp_api_templates.official_template_id),
+        provider_template_id = COALESCE(excluded.provider_template_id, whatsapp_api_templates.provider_template_id),
+        provider = excluded.provider,
+        source_adapter = excluded.source_adapter,
+        category = COALESCE(NULLIF(excluded.category, ''), whatsapp_api_templates.category),
+        sub_category = COALESCE(NULLIF(excluded.sub_category, ''), whatsapp_api_templates.sub_category),
+        previous_category = COALESCE(NULLIF(excluded.previous_category, ''), whatsapp_api_templates.previous_category),
+        message_send_ttl_seconds = COALESCE(excluded.message_send_ttl_seconds, whatsapp_api_templates.message_send_ttl_seconds),
+        status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_templates.status),
+        quality_rating = COALESCE(NULLIF(excluded.quality_rating, ''), whatsapp_api_templates.quality_rating),
+        reason = COALESCE(NULLIF(excluded.reason, ''), whatsapp_api_templates.reason),
+        status_update_event = COALESCE(NULLIF(excluded.status_update_event, ''), whatsapp_api_templates.status_update_event),
+        disable_date = COALESCE(excluded.disable_date, whatsapp_api_templates.disable_date),
+        components_json = CASE
+          WHEN excluded.components_json IS NOT NULL AND excluded.components_json != '[]' THEN excluded.components_json
+          ELSE whatsapp_api_templates.components_json
+        END,
         raw_payload_json = excluded.raw_payload_json,
-        ycloud_create_time = excluded.ycloud_create_time,
-        ycloud_update_time = excluded.ycloud_update_time,
+        provider_create_time = COALESCE(excluded.provider_create_time, whatsapp_api_templates.provider_create_time),
+        provider_update_time = COALESCE(excluded.provider_update_time, whatsapp_api_templates.provider_update_time),
+        ycloud_create_time = COALESCE(excluded.ycloud_create_time, whatsapp_api_templates.ycloud_create_time),
+        ycloud_update_time = COALESCE(excluded.ycloud_update_time, whatsapp_api_templates.ycloud_update_time),
         updated_at = CURRENT_TIMESTAMP
     `, [
       item.id,
       item.officialTemplateId || null,
+      item.providerTemplateId || null,
+      item.provider,
+      item.sourceAdapter,
       item.wabaId,
       item.name,
       item.language,
@@ -3062,11 +3086,15 @@ async function syncTemplates(templates = [], options = {}) {
       safeJson(item.components),
       safeJson(item.raw),
       item.createTime,
-      item.updateTime
+      item.updateTime,
+      item.provider === PROVIDER_NAME ? item.createTime : null,
+      item.provider === PROVIDER_NAME ? item.updateTime : null,
     ])
 
     await syncTemplateAlert(item, options)
-    await syncLocalMessageTemplateFromYCloud(item)
+    if (!options.skipLocalSync) {
+      await syncLocalMessageTemplateFromProvider(item)
+    }
   }
 }
 
@@ -3078,11 +3106,13 @@ async function deleteLocalMessageTemplateMirror(template = {}) {
   const result = await db.run(`
     DELETE FROM whatsapp_message_templates
     WHERE language = ?
+      AND template_provider = ?
       AND (
-        ycloud_template_name = ?
-        OR (COALESCE(ycloud_template_name, '') = '' AND name = ?)
+        provider_template_name = ?
+        OR (? = 'ycloud' AND ycloud_template_name = ?)
+        OR (COALESCE(provider_template_name, '') = '' AND COALESCE(ycloud_template_name, '') = '' AND name = ?)
       )
-  `, [language, name, name])
+  `, [language, template.provider || PROVIDER_NAME, name, template.provider || PROVIDER_NAME, name, name])
   return { deleted: Number(result?.changes || 0) }
 }
 
@@ -3136,89 +3166,64 @@ export async function deleteWhatsAppApiTemplateSnapshot({ wabaId, name, language
 
 export async function upsertWhatsAppApiTemplateSnapshot(record = {}) {
   const config = await loadConfig()
-  const wabaId = cleanString(record.wabaId || record.waba_id || config.wabaId)
+  const provider = cleanString(record.provider || config.provider) || PROVIDER_NAME
+  const metaConfig = provider === META_DIRECT_PROVIDER_NAME ? await loadMetaDirectConfig() : null
+  const wabaId = cleanString(record.wabaId || record.waba_id || metaConfig?.wabaId || config.wabaId)
   const item = normalizeTemplateRecord({
     ...record,
+    provider,
     wabaId
-  })
+  }, { provider })
 
   if (!item.wabaId || !item.name || !item.language) return null
 
-  await db.run(`
-    INSERT INTO whatsapp_api_templates (
-      id, official_template_id, waba_id, name, language, category,
-      sub_category, previous_category, message_send_ttl_seconds, status,
-      quality_rating, reason, status_update_event, disable_date,
-      components_json, raw_payload_json, ycloud_create_time, ycloud_update_time,
-      updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(waba_id, name, language) DO UPDATE SET
-      id = excluded.id,
-      official_template_id = COALESCE(excluded.official_template_id, whatsapp_api_templates.official_template_id),
-      category = COALESCE(NULLIF(excluded.category, ''), whatsapp_api_templates.category),
-      sub_category = COALESCE(NULLIF(excluded.sub_category, ''), whatsapp_api_templates.sub_category),
-      previous_category = COALESCE(NULLIF(excluded.previous_category, ''), whatsapp_api_templates.previous_category),
-      message_send_ttl_seconds = COALESCE(excluded.message_send_ttl_seconds, whatsapp_api_templates.message_send_ttl_seconds),
-      status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_templates.status),
-      quality_rating = COALESCE(NULLIF(excluded.quality_rating, ''), whatsapp_api_templates.quality_rating),
-      reason = COALESCE(NULLIF(excluded.reason, ''), whatsapp_api_templates.reason),
-      status_update_event = COALESCE(NULLIF(excluded.status_update_event, ''), whatsapp_api_templates.status_update_event),
-      disable_date = COALESCE(excluded.disable_date, whatsapp_api_templates.disable_date),
-      components_json = CASE
-        WHEN excluded.components_json IS NOT NULL AND excluded.components_json != '[]' THEN excluded.components_json
-        ELSE whatsapp_api_templates.components_json
-      END,
-      raw_payload_json = excluded.raw_payload_json,
-      ycloud_create_time = COALESCE(excluded.ycloud_create_time, whatsapp_api_templates.ycloud_create_time),
-      ycloud_update_time = COALESCE(excluded.ycloud_update_time, whatsapp_api_templates.ycloud_update_time),
-      updated_at = CURRENT_TIMESTAMP
-  `, [
-    item.id,
-    item.officialTemplateId || null,
-    item.wabaId,
-    item.name,
-    item.language,
-    item.category || null,
-    item.subCategory || null,
-    item.previousCategory || null,
-    item.messageSendTtlSeconds,
-    item.status || null,
-    item.qualityRating || null,
-    item.reason || null,
-    item.statusUpdateEvent || null,
-    item.disableDate,
-    safeJson(item.components),
-    safeJson(item.raw),
-    item.createTime,
-    item.updateTime
-  ])
+  await syncTemplates([item], { provider, eventType: 'local_template_snapshot', skipLocalSync: true })
 
   return item.id
 }
 
-async function syncLocalMessageTemplateFromYCloud(template) {
+async function syncLocalMessageTemplateFromProvider(template) {
   if (!template?.name || !template?.language) return
 
   try {
+    const isYCloud = template.provider === PROVIDER_NAME
     await db.run(`
       UPDATE whatsapp_message_templates
       SET
-        ycloud_template_id = COALESCE(?, ycloud_template_id),
-        ycloud_template_name = COALESCE(?, ycloud_template_name),
-        ycloud_status = ?,
-        ycloud_reason = ?,
-        ycloud_status_update_event = ?,
-        ycloud_quality_rating = ?,
-        ycloud_raw_payload_json = ?,
-        ycloud_synced_at = CURRENT_TIMESTAMP,
+        template_provider = ?,
+        provider_template_id = COALESCE(?, provider_template_id),
+        provider_template_name = COALESCE(?, provider_template_name),
+        provider_status = ?,
+        provider_reason = ?,
+        provider_status_update_event = ?,
+        provider_quality_rating = ?,
+        provider_raw_payload_json = ?,
+        provider_synced_at = CURRENT_TIMESTAMP,
+        ycloud_template_id = CASE WHEN ? = 1 THEN COALESCE(?, ycloud_template_id) ELSE ycloud_template_id END,
+        ycloud_template_name = CASE WHEN ? = 1 THEN COALESCE(?, ycloud_template_name) ELSE ycloud_template_name END,
+        ycloud_status = CASE WHEN ? = 1 THEN ? ELSE ycloud_status END,
+        ycloud_reason = CASE WHEN ? = 1 THEN ? ELSE ycloud_reason END,
+        ycloud_status_update_event = CASE WHEN ? = 1 THEN ? ELSE ycloud_status_update_event END,
+        ycloud_quality_rating = CASE WHEN ? = 1 THEN ? ELSE ycloud_quality_rating END,
+        ycloud_raw_payload_json = CASE WHEN ? = 1 THEN ? ELSE ycloud_raw_payload_json END,
+        ycloud_synced_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE ycloud_synced_at END,
         last_error = NULL,
         updated_at = CURRENT_TIMESTAMP
       WHERE language = ?
         AND (
-          ycloud_template_name = ?
-          OR (COALESCE(ycloud_template_name, '') = '' AND name = ?)
+          template_provider = ?
+          OR (
+            COALESCE(NULLIF(provider_template_id, ''), NULLIF(provider_template_name, ''), NULLIF(provider_status, ''), '') = ''
+            AND COALESCE(NULLIF(ycloud_template_id, ''), NULLIF(ycloud_template_name, ''), NULLIF(ycloud_status, ''), '') = ''
+          )
+        )
+        AND (
+          provider_template_name = ?
+          OR ycloud_template_name = ?
+          OR (COALESCE(provider_template_name, '') = '' AND COALESCE(ycloud_template_name, '') = '' AND name = ?)
         )
     `, [
+      template.provider,
       template.officialTemplateId || template.id || null,
       template.name || null,
       template.status || null,
@@ -3226,7 +3231,24 @@ async function syncLocalMessageTemplateFromYCloud(template) {
       template.statusUpdateEvent || null,
       template.qualityRating || null,
       safeJson(template.raw),
+      isYCloud ? 1 : 0,
+      template.officialTemplateId || template.id || null,
+      isYCloud ? 1 : 0,
+      template.name || null,
+      isYCloud ? 1 : 0,
+      template.status || null,
+      isYCloud ? 1 : 0,
+      template.reason || null,
+      isYCloud ? 1 : 0,
+      template.statusUpdateEvent || null,
+      isYCloud ? 1 : 0,
+      template.qualityRating || null,
+      isYCloud ? 1 : 0,
+      safeJson(template.raw),
+      isYCloud ? 1 : 0,
       template.language,
+      template.provider,
+      template.name,
       template.name,
       template.name
     ])
@@ -4406,6 +4428,9 @@ function mapTemplateRow(row = {}) {
   return {
     id: row.id,
     official_template_id: row.official_template_id,
+    provider_template_id: row.provider_template_id || row.official_template_id,
+    provider: row.provider || PROVIDER_NAME,
+    source_adapter: row.source_adapter || row.provider || PROVIDER_NAME,
     waba_id: row.waba_id,
     name: displayName,
     official_name: officialName,
@@ -4421,6 +4446,8 @@ function mapTemplateRow(row = {}) {
     status_update_event: row.status_update_event,
     disable_date: row.disable_date,
     components: parseJsonValue(row.components_json, []),
+    provider_create_time: row.provider_create_time,
+    provider_update_time: row.provider_update_time,
     ycloud_create_time: row.ycloud_create_time,
     ycloud_update_time: row.ycloud_update_time,
     created_at: row.created_at,
@@ -4443,10 +4470,14 @@ async function getTemplatesFromDb({ status, limit = 100 } = {}) {
     SELECT
       t.id,
       t.official_template_id,
+      t.provider_template_id,
+      t.provider,
+      t.source_adapter,
       t.waba_id,
       t.name,
       COALESCE(NULLIF(mt.name, ''), t.name) AS display_name,
       mt.id AS local_template_id,
+      mt.provider_template_name AS local_provider_template_name,
       mt.ycloud_template_name AS local_ycloud_template_name,
       t.language,
       t.category,
@@ -4459,6 +4490,8 @@ async function getTemplatesFromDb({ status, limit = 100 } = {}) {
       t.status_update_event,
       t.disable_date,
       t.components_json,
+      t.provider_create_time,
+      t.provider_update_time,
       t.ycloud_create_time,
       t.ycloud_update_time,
       t.created_at,
@@ -4467,7 +4500,11 @@ async function getTemplatesFromDb({ status, limit = 100 } = {}) {
     LEFT JOIN whatsapp_message_templates mt
       ON mt.language = t.language
       AND (
-        mt.ycloud_template_id = t.id
+        mt.provider_template_id = t.id
+        OR mt.provider_template_id = t.provider_template_id
+        OR mt.provider_template_id = t.official_template_id
+        OR mt.provider_template_name = t.name
+        OR mt.ycloud_template_id = t.id
         OR mt.ycloud_template_id = t.official_template_id
         OR mt.ycloud_template_name = t.name
         OR mt.name = t.name
@@ -4476,8 +4513,9 @@ async function getTemplatesFromDb({ status, limit = 100 } = {}) {
     ORDER BY
       CASE
         WHEN mt.id IS NOT NULL AND (
-          t.name = mt.ycloud_template_name
-          OR (COALESCE(mt.ycloud_template_name, '') = '' AND t.name = mt.name)
+          t.name = mt.provider_template_name
+          OR t.name = mt.ycloud_template_name
+          OR (COALESCE(mt.provider_template_name, mt.ycloud_template_name, '') = '' AND t.name = mt.name)
         ) THEN 0
         WHEN mt.id IS NOT NULL THEN 1
         ELSE 2
@@ -9094,6 +9132,67 @@ export async function syncMetaDirectHistory() {
   }
 }
 
+export async function syncMetaDirectTemplateWebhookChange({ entry = {}, change = {}, eventRowId = '' } = {}) {
+  const field = cleanString(change.field)
+  if (!['message_template_status_update', 'template_category_update', 'message_template_quality_update'].includes(field)) return
+  const value = change.value || {}
+  const templateId = cleanString(value.message_template_id || value.id)
+  const name = cleanString(value.message_template_name || value.name)
+  const language = cleanString(value.message_template_language || value.language)
+  const event = cleanString(value.event || value.new_status || value.status).toUpperCase()
+  const qualityRating = cleanString(
+    value.new_quality_score || value.quality_score?.score || value.quality_rating || value.qualityRating
+  ).toUpperCase()
+  const record = normalizeMetaDirectTemplateRecord({
+    ...value,
+    id: templateId,
+    name,
+    language,
+    wabaId: cleanString(entry.id || value.whatsapp_business_account_id),
+    status: field === 'message_template_status_update' ? event : cleanString(value.status).toUpperCase(),
+    statusUpdateEvent: event,
+    qualityRating,
+    category: cleanString(value.new_category || value.category).toUpperCase(),
+    reason: cleanString(value.reason),
+    rawWebhookEventId: eventRowId
+  }, { wabaId: cleanString(entry.id) })
+
+  if (record.wabaId && record.name && record.language) {
+    await syncTemplates([record], {
+      provider: META_DIRECT_PROVIDER_NAME,
+      eventType: field,
+      sourceEventId: eventRowId
+    })
+    return
+  }
+
+  if (!templateId) return
+  await db.run(`
+    UPDATE whatsapp_api_templates
+    SET status = COALESCE(NULLIF(?, ''), status),
+        category = COALESCE(NULLIF(?, ''), category),
+        quality_rating = COALESCE(NULLIF(?, ''), quality_rating),
+        reason = COALESCE(NULLIF(?, ''), reason),
+        status_update_event = COALESCE(NULLIF(?, ''), status_update_event),
+        raw_payload_json = ?,
+        provider = 'meta_direct',
+        source_adapter = 'meta_direct',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE provider_template_id = ? OR official_template_id = ? OR id = ?
+  `, [record.status, record.category, record.qualityRating, record.reason, record.statusUpdateEvent, safeJson(value), templateId, templateId, templateId])
+  await db.run(`
+    UPDATE whatsapp_message_templates
+    SET provider_status = COALESCE(NULLIF(?, ''), provider_status),
+        provider_reason = COALESCE(NULLIF(?, ''), provider_reason),
+        provider_status_update_event = COALESCE(NULLIF(?, ''), provider_status_update_event),
+        provider_quality_rating = COALESCE(NULLIF(?, ''), provider_quality_rating),
+        provider_raw_payload_json = ?,
+        provider_synced_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE template_provider = 'meta_direct' AND provider_template_id = ?
+  `, [record.status, record.reason, record.statusUpdateEvent, record.qualityRating, safeJson(value), templateId])
+}
+
 async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' } = {}) {
   const config = await loadMetaDirectConfig()
   const businessPhoneHints = await getKnownBusinessPhoneHints({
@@ -9139,6 +9238,7 @@ async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' }
   for (const entry of entries) {
     for (const change of Array.isArray(entry.changes) ? entry.changes : []) {
       if (!alertFields.has(cleanString(change.field))) continue
+      await syncMetaDirectTemplateWebhookChange({ entry, change, eventRowId })
       await upsertAlert({
         severity: change.field.includes('quality') ? 'warning' : 'info',
         alertType: `meta_direct_${change.field}`,
@@ -9614,7 +9714,7 @@ export async function disconnectWhatsAppQrForPhone({ phoneNumberId } = {}) {
   return disconnectWhatsAppQrConnection({ phoneNumberId })
 }
 
-export async function createWhatsAppApiTemplate(templatePayload = {}) {
+async function createYCloudWhatsAppApiTemplate(templatePayload = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
     throw new Error('WhatsApp Business no está conectado con WhatsApp API')
@@ -9636,11 +9736,39 @@ export async function createWhatsAppApiTemplate(templatePayload = {}) {
     body
   })
 
-  await syncTemplates([response], { eventType: 'manual_template_submit' })
-  return response
+  const enriched = { ...response, provider: PROVIDER_NAME, wabaId: cleanString(response?.wabaId) || wabaId }
+  await syncTemplates([enriched], { provider: PROVIDER_NAME, eventType: 'manual_template_submit' })
+  return enriched
 }
 
-export async function editWhatsAppApiTemplate(templatePayload = {}) {
+async function createMetaDirectWhatsAppApiTemplate(templatePayload = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+
+  const body = buildMetaDirectTemplateCreatePayload(templatePayload)
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.wabaId)}/message_templates`, {
+    method: 'POST',
+    token: config.systemUserToken,
+    body
+  })
+  const enriched = normalizeMetaDirectTemplateRecord({
+    ...body,
+    ...response,
+    status: cleanString(response?.status).toUpperCase() || 'PENDING'
+  }, { wabaId: config.wabaId })
+  await syncTemplates([enriched], { provider: META_DIRECT_PROVIDER_NAME, eventType: 'manual_template_submit' })
+  return enriched
+}
+
+export async function createWhatsAppApiTemplate(templatePayload = {}) {
+  const config = await loadConfig()
+  const provider = cleanString(templatePayload.provider || config.provider)
+  return provider === META_DIRECT_PROVIDER_NAME
+    ? createMetaDirectWhatsAppApiTemplate(templatePayload)
+    : createYCloudWhatsAppApiTemplate(templatePayload)
+}
+
+async function editYCloudWhatsAppApiTemplate(templatePayload = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
     throw new Error('WhatsApp Business no está conectado con WhatsApp API')
@@ -9686,11 +9814,43 @@ export async function editWhatsAppApiTemplate(templatePayload = {}) {
     enrichedResponse.id = cleanString(enrichedResponse.officialTemplateId)
   }
 
-  await syncTemplates([enrichedResponse], { eventType: 'manual_template_edit' })
+  enrichedResponse.provider = PROVIDER_NAME
+  await syncTemplates([enrichedResponse], { provider: PROVIDER_NAME, eventType: 'manual_template_edit' })
   return enrichedResponse
 }
 
-export async function deleteWhatsAppApiTemplate({ wabaId, name, language } = {}) {
+async function editMetaDirectWhatsAppApiTemplate(templatePayload = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+
+  const templateId = cleanString(templatePayload.providerTemplateId || templatePayload.officialTemplateId || templatePayload.id)
+  if (!templateId) throw new Error('Meta directo necesita el ID oficial de la plantilla para editarla')
+  const body = buildMetaDirectTemplateEditPayload(templatePayload)
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(templateId)}`, {
+    method: 'POST',
+    token: config.systemUserToken,
+    body
+  })
+  const enriched = normalizeMetaDirectTemplateRecord({
+    ...templatePayload,
+    ...body,
+    ...response,
+    id: templateId,
+    status: cleanString(response?.status).toUpperCase() || 'PENDING'
+  }, { wabaId: config.wabaId })
+  await syncTemplates([enriched], { provider: META_DIRECT_PROVIDER_NAME, eventType: 'manual_template_edit' })
+  return enriched
+}
+
+export async function editWhatsAppApiTemplate(templatePayload = {}) {
+  const config = await loadConfig()
+  const provider = cleanString(templatePayload.provider || config.provider)
+  return provider === META_DIRECT_PROVIDER_NAME
+    ? editMetaDirectWhatsAppApiTemplate(templatePayload)
+    : editYCloudWhatsAppApiTemplate(templatePayload)
+}
+
+async function deleteYCloudWhatsAppApiTemplate({ wabaId, name, language } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
     throw new Error('WhatsApp Business no está conectado con WhatsApp API')
@@ -9736,11 +9896,56 @@ export async function deleteWhatsAppApiTemplate({ wabaId, name, language } = {})
     name: cleanName,
     language: cleanLanguage,
     snapshot,
+    provider: PROVIDER_NAME,
     ycloud
   }
 }
 
-export async function retrieveWhatsAppApiTemplate({ wabaId, name, language } = {}) {
+async function deleteMetaDirectWhatsAppApiTemplate({ wabaId, name, language, providerTemplateId, officialTemplateId } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+  const cleanWabaId = cleanString(wabaId || config.wabaId)
+  const cleanName = cleanString(name)
+  const cleanLanguage = cleanString(language)
+  const templateId = cleanString(providerTemplateId || officialTemplateId)
+  if (!cleanWabaId) throw new Error('Falta el WABA ID de WhatsApp Business')
+  if (!cleanName) throw new Error('Falta el nombre de la plantilla')
+
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(cleanWabaId)}/message_templates`, {
+    method: 'DELETE',
+    token: config.systemUserToken,
+    query: {
+      name: cleanName,
+      ...(templateId ? { hsm_id: templateId } : {})
+    }
+  })
+  const snapshot = await deleteWhatsAppApiTemplateSnapshot({
+    wabaId: cleanWabaId,
+    name: cleanName,
+    language: cleanLanguage,
+    ids: [templateId]
+  })
+  return {
+    deleted: response?.success !== false,
+    notFound: false,
+    provider: META_DIRECT_PROVIDER_NAME,
+    wabaId: cleanWabaId,
+    name: cleanName,
+    language: cleanLanguage,
+    snapshot,
+    metaDirect: response
+  }
+}
+
+export async function deleteWhatsAppApiTemplate(payload = {}) {
+  const config = await loadConfig()
+  const provider = cleanString(payload.provider || config.provider)
+  return provider === META_DIRECT_PROVIDER_NAME
+    ? deleteMetaDirectWhatsAppApiTemplate(payload)
+    : deleteYCloudWhatsAppApiTemplate(payload)
+}
+
+async function retrieveYCloudWhatsAppApiTemplate({ wabaId, name, language } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
     throw new Error('WhatsApp Business no está conectado con WhatsApp API')
@@ -9759,8 +9964,9 @@ export async function retrieveWhatsAppApiTemplate({ wabaId, name, language } = {
     { apiKey: config.apiKey }
   )
 
-  await syncTemplates([response], { eventType: 'manual_template_sync' })
-  return response
+  const enriched = { ...response, provider: PROVIDER_NAME, wabaId: cleanString(response?.wabaId) || cleanWabaId }
+  await syncTemplates([enriched], { provider: PROVIDER_NAME, eventType: 'manual_template_sync' })
+  return enriched
 }
 
 export async function syncWhatsAppApiTemplatesFromYCloud({ wabaId, status } = {}) {
@@ -9773,8 +9979,95 @@ export async function syncWhatsAppApiTemplatesFromYCloud({ wabaId, status } = {}
     wabaId: wabaId || config.wabaId,
     status
   })
-  await syncTemplates(items, { eventType: 'manual_templates_sync' })
+  await syncTemplates(items, { provider: PROVIDER_NAME, eventType: 'manual_templates_sync' })
   return getWhatsAppApiTemplates({ status })
+}
+
+export async function listMetaDirectWhatsAppApiTemplates({ wabaId, status, maxPages = 100 } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+  const cleanWabaId = cleanString(wabaId || config.wabaId)
+  if (!cleanWabaId) throw new Error('Falta el WABA ID de WhatsApp Business')
+
+  const items = []
+  let after = ''
+  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 100, 100))
+  for (let page = 0; page < pageLimit; page += 1) {
+    const response = await metaDirectGraphRequest(`/${encodeURIComponent(cleanWabaId)}/message_templates`, {
+      token: config.systemUserToken,
+      query: {
+        limit: 100,
+        fields: 'id,name,language,category,status,quality_score,rejected_reason,components',
+        ...(status ? { status: cleanString(status).toUpperCase() } : {}),
+        ...(after ? { after } : {})
+      }
+    })
+    const pageItems = normalizeMetaDirectTemplateListResponse(response, { wabaId: cleanWabaId })
+    items.push(...pageItems)
+    const nextAfter = cleanString(response?.paging?.cursors?.after)
+    if (!response?.paging?.next || !nextAfter || nextAfter === after) break
+    after = nextAfter
+  }
+  return items
+}
+
+async function retrieveMetaDirectWhatsAppApiTemplate({ wabaId, name, language, providerTemplateId, officialTemplateId } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+  const cleanWabaId = cleanString(wabaId || config.wabaId)
+  const cleanName = cleanString(name)
+  const cleanLanguage = cleanString(language)
+  const templateId = cleanString(providerTemplateId || officialTemplateId)
+
+  let record
+  if (templateId) {
+    record = await metaDirectGraphRequest(`/${encodeURIComponent(templateId)}`, {
+      token: config.systemUserToken,
+      query: { fields: 'id,name,language,category,status,quality_score,rejected_reason,components' }
+    })
+  } else {
+    if (!cleanName) throw new Error('Falta el nombre de la plantilla')
+    const response = await metaDirectGraphRequest(`/${encodeURIComponent(cleanWabaId)}/message_templates`, {
+      token: config.systemUserToken,
+      query: {
+        name: cleanName,
+        fields: 'id,name,language,category,status,quality_score,rejected_reason,components'
+      }
+    })
+    const candidates = normalizeMetaDirectTemplateListResponse(response, { wabaId: cleanWabaId })
+    record = candidates.find(item => !cleanLanguage || item.language === cleanLanguage)
+    if (!record) {
+      const error = new Error('Meta directo no encontró esa plantilla')
+      error.statusCode = 404
+      throw error
+    }
+  }
+
+  const normalized = normalizeMetaDirectTemplateRecord(record, { wabaId: cleanWabaId })
+  await syncTemplates([normalized], { provider: META_DIRECT_PROVIDER_NAME, eventType: 'manual_template_sync' })
+  return normalized
+}
+
+export async function retrieveWhatsAppApiTemplate(payload = {}) {
+  const config = await loadConfig()
+  const provider = cleanString(payload.provider || config.provider)
+  return provider === META_DIRECT_PROVIDER_NAME
+    ? retrieveMetaDirectWhatsAppApiTemplate(payload)
+    : retrieveYCloudWhatsAppApiTemplate(payload)
+}
+
+export async function syncWhatsAppApiTemplatesFromMetaDirect({ wabaId, status } = {}) {
+  const items = await listMetaDirectWhatsAppApiTemplates({ wabaId, status })
+  await syncTemplates(items, { provider: META_DIRECT_PROVIDER_NAME, eventType: 'manual_templates_sync' })
+  return getWhatsAppApiTemplates({ status })
+}
+
+export async function syncWhatsAppApiTemplates(options = {}) {
+  const config = await loadConfig()
+  const provider = cleanString(options.provider || config.provider)
+  return provider === META_DIRECT_PROVIDER_NAME
+    ? syncWhatsAppApiTemplatesFromMetaDirect(options)
+    : syncWhatsAppApiTemplatesFromYCloud(options)
 }
 
 function normalizeTemplateVariables(value) {

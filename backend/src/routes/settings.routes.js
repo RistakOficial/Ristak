@@ -38,8 +38,8 @@ import {
   getMessageTemplateVariablesView,
   previewMessageTemplateView,
   sendMessageTemplateTestView,
-  submitMessageTemplateToYCloudView,
-  syncAllMessageTemplatesWithYCloudView,
+  submitMessageTemplateToActiveProviderView,
+  syncAllMessageTemplatesWithActiveProviderView,
   syncMessageTemplateStatusView,
   updateMessageTemplateView,
   updateTemplateFolderView
@@ -102,7 +102,7 @@ router.post('/payments/receipt-preview-session', requirePaymentsAccess, createPa
 router.get('/message-templates', requireWhatsAppAccess, requireFeature('whatsapp_templates'), getMessageTemplatesView);
 router.get('/message-templates/variables', requireWhatsAppAccess, requireFeature('whatsapp_templates'), getMessageTemplateVariablesView);
 router.post('/message-templates/preview', requireWhatsAppAccess, requireFeature('whatsapp_templates'), previewMessageTemplateView);
-router.post('/message-templates/sync', requireWhatsAppAccess, requireFeature('whatsapp_templates'), syncAllMessageTemplatesWithYCloudView);
+router.post('/message-templates/sync', requireWhatsAppAccess, requireFeature('whatsapp_templates'), syncAllMessageTemplatesWithActiveProviderView);
 
 router.post('/message-templates/folders', requireWhatsAppAccess, requireFeature('whatsapp_templates'), createTemplateFolderView);
 router.put('/message-templates/folders/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), updateTemplateFolderView);
@@ -112,7 +112,7 @@ router.post('/message-templates/custom-fields', requireWhatsAppAccess, requireFe
 router.delete('/message-templates/custom-fields/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), deleteTemplateCustomFieldView);
 
 router.post('/message-templates', requireWhatsAppAccess, requireFeature('whatsapp_templates'), createMessageTemplateView);
-router.post('/message-templates/:id/submit', requireWhatsAppAccess, requireFeature('whatsapp_templates'), submitMessageTemplateToYCloudView);
+router.post('/message-templates/:id/submit', requireWhatsAppAccess, requireFeature('whatsapp_templates'), submitMessageTemplateToActiveProviderView);
 router.post('/message-templates/:id/sync', requireWhatsAppAccess, requireFeature('whatsapp_templates'), syncMessageTemplateStatusView);
 router.post('/message-templates/:id/send-test', requireWhatsAppAccess, requireFeature('whatsapp_templates'), sendMessageTemplateTestView);
 router.put('/message-templates/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), updateMessageTemplateView);

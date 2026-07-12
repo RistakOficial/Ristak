@@ -2587,8 +2587,8 @@ async function initTables() {
       logger.warn('Advertencia al crear cuota default de almacenamiento:', err.message)
     }
 
-    // Plantillas internas de WhatsApp. Son locales a Ristak y quedan listas para
-    // conectarse a YCloud sin depender de la estructura remota desde el inicio.
+    // Plantillas internas de WhatsApp. Son locales a Ristak y usan campos
+    // neutrales para YCloud o Meta directo; ycloud_* queda solo por compatibilidad.
     await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_template_folders (
         id TEXT PRIMARY KEY,
@@ -2627,6 +2627,7 @@ async function initTables() {
         header_type TEXT DEFAULT 'none',
         header_text TEXT,
         header_media_url TEXT,
+        meta_header_handle TEXT,
         header_location_json TEXT,
         body_text TEXT NOT NULL,
         footer_text TEXT,
@@ -2634,6 +2635,16 @@ async function initTables() {
         variables_json TEXT,
         variable_examples_json TEXT,
         variable_bindings_json TEXT,
+        template_provider TEXT DEFAULT 'ycloud',
+        provider_template_name TEXT,
+        provider_template_id TEXT,
+        provider_status TEXT,
+        provider_reason TEXT,
+        provider_status_update_event TEXT,
+        provider_quality_rating TEXT,
+        provider_raw_payload_json TEXT,
+        provider_submitted_at DATETIME,
+        provider_synced_at DATETIME,
         ycloud_template_name TEXT,
         ycloud_template_id TEXT,
         ycloud_status TEXT,
@@ -2654,6 +2665,17 @@ async function initTables() {
 
     for (const [columnName, columnType] of [
       ['variable_bindings_json', 'TEXT'],
+      ['meta_header_handle', 'TEXT'],
+      ['template_provider', "TEXT DEFAULT 'ycloud'"],
+      ['provider_template_name', 'TEXT'],
+      ['provider_template_id', 'TEXT'],
+      ['provider_status', 'TEXT'],
+      ['provider_reason', 'TEXT'],
+      ['provider_status_update_event', 'TEXT'],
+      ['provider_quality_rating', 'TEXT'],
+      ['provider_raw_payload_json', 'TEXT'],
+      ['provider_submitted_at', 'DATETIME'],
+      ['provider_synced_at', 'DATETIME'],
       ['ycloud_template_name', 'TEXT'],
       ['ycloud_reason', 'TEXT'],
       ['ycloud_status_update_event', 'TEXT'],
@@ -2676,6 +2698,8 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_folder ON whatsapp_message_templates(folder_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_status ON whatsapp_message_templates(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_ycloud ON whatsapp_message_templates(ycloud_status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_provider ON whatsapp_message_templates(template_provider, provider_status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_provider_id ON whatsapp_message_templates(template_provider, provider_template_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_template_custom_fields_key ON whatsapp_template_custom_fields(field_key)')
 
     await db.run(`
@@ -4195,6 +4219,9 @@ async function initTables() {
       CREATE TABLE IF NOT EXISTS whatsapp_api_templates (
         id TEXT PRIMARY KEY,
         official_template_id TEXT,
+        provider_template_id TEXT,
+        provider TEXT DEFAULT 'ycloud',
+        source_adapter TEXT DEFAULT 'ycloud',
         waba_id TEXT NOT NULL,
         name TEXT NOT NULL,
         language TEXT NOT NULL,
@@ -4209,12 +4236,52 @@ async function initTables() {
         disable_date DATETIME,
         components_json TEXT,
         raw_payload_json TEXT,
+        provider_create_time DATETIME,
+        provider_update_time DATETIME,
         ycloud_create_time DATETIME,
         ycloud_update_time DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(waba_id, name, language)
       )
+    `)
+
+    for (const [columnName, columnType] of [
+      ['provider_template_id', 'TEXT'],
+      ['provider', "TEXT DEFAULT 'ycloud'"],
+      ['source_adapter', "TEXT DEFAULT 'ycloud'"],
+      ['provider_create_time', 'DATETIME'],
+      ['provider_update_time', 'DATETIME']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE whatsapp_api_templates ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
+
+    await db.run(`
+      UPDATE whatsapp_message_templates
+      SET template_provider = COALESCE(NULLIF(template_provider, ''), 'ycloud'),
+          provider_template_name = COALESCE(provider_template_name, ycloud_template_name),
+          provider_template_id = COALESCE(provider_template_id, ycloud_template_id),
+          provider_status = COALESCE(provider_status, ycloud_status),
+          provider_reason = COALESCE(provider_reason, ycloud_reason),
+          provider_status_update_event = COALESCE(provider_status_update_event, ycloud_status_update_event),
+          provider_quality_rating = COALESCE(provider_quality_rating, ycloud_quality_rating),
+          provider_raw_payload_json = COALESCE(provider_raw_payload_json, ycloud_raw_payload_json),
+          provider_submitted_at = COALESCE(provider_submitted_at, ycloud_submitted_at),
+          provider_synced_at = COALESCE(provider_synced_at, ycloud_synced_at)
+      WHERE COALESCE(ycloud_template_id, ycloud_template_name, ycloud_status) IS NOT NULL
+    `)
+
+    await db.run(`
+      UPDATE whatsapp_api_templates
+      SET provider = COALESCE(NULLIF(provider, ''), 'ycloud'),
+          source_adapter = COALESCE(NULLIF(source_adapter, ''), 'ycloud'),
+          provider_template_id = COALESCE(provider_template_id, official_template_id, id),
+          provider_create_time = COALESCE(provider_create_time, ycloud_create_time),
+          provider_update_time = COALESCE(provider_update_time, ycloud_update_time)
     `)
 
     await db.run(`
@@ -4504,6 +4571,8 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_balance_updated ON whatsapp_api_balance(updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_templates_status ON whatsapp_api_templates(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_templates_waba ON whatsapp_api_templates(waba_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_templates_provider ON whatsapp_api_templates(provider, status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_templates_provider_id ON whatsapp_api_templates(provider, provider_template_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_alerts_status_severity ON whatsapp_api_alerts(status, severity, updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_alerts_entity ON whatsapp_api_alerts(entity_type, entity_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_created ON whatsapp_api_template_sends(created_at)')

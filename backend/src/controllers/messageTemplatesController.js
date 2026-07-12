@@ -11,8 +11,8 @@ import {
   previewMessageTemplate,
   repairDefaultMessageTemplatesForCurrentConnection,
   sendMessageTemplateTest,
-  submitMessageTemplateToYCloud,
-  syncAllMessageTemplatesWithYCloud,
+  submitMessageTemplateToActiveProvider,
+  syncAllMessageTemplatesWithActiveProvider,
   syncMessageTemplateStatus,
   updateMessageTemplate,
   updateTemplateFolder
@@ -93,12 +93,12 @@ export async function updateMessageTemplateView(req, res) {
   }
 }
 
-export async function submitMessageTemplateToYCloudView(req, res) {
+export async function submitMessageTemplateToActiveProviderView(req, res) {
   try {
-    const data = await submitMessageTemplateToYCloud(req.params.id)
+    const data = await submitMessageTemplateToActiveProvider(req.params.id)
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error enviando plantilla a YCloud: ${error.message}`)
+    logger.error(`Error enviando plantilla al proveedor oficial activo: ${error.message}`)
     sendError(res, error, 'No se pudo enviar la plantilla a revisión')
   }
 }
@@ -108,17 +108,17 @@ export async function syncMessageTemplateStatusView(req, res) {
     const data = await syncMessageTemplateStatus(req.params.id)
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error sincronizando plantilla con YCloud: ${error.message}`)
+    logger.error(`Error sincronizando plantilla con su proveedor oficial: ${error.message}`)
     sendError(res, error, 'No se pudo sincronizar la plantilla')
   }
 }
 
-export async function syncAllMessageTemplatesWithYCloudView(req, res) {
+export async function syncAllMessageTemplatesWithActiveProviderView(req, res) {
   try {
-    const data = await syncAllMessageTemplatesWithYCloud()
+    const data = await syncAllMessageTemplatesWithActiveProvider()
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error sincronizando plantillas con YCloud: ${error.message}`)
+    logger.error(`Error sincronizando plantillas con el proveedor oficial activo: ${error.message}`)
     sendError(res, error, 'No se pudieron sincronizar las plantillas')
   }
 }
