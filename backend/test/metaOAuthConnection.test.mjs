@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
-import { encrypt, initializeMasterKey, isEncrypted } from '../src/utils/encryption.js'
+import { decrypt, encrypt, initializeMasterKey, isEncrypted } from '../src/utils/encryption.js'
 import { getMetaConfig, saveMetaConfig } from '../src/services/metaAdsService.js'
 import { reconcileMetaBusinessWithHighLevel } from '../src/services/highlevelSyncService.js'
 import {
@@ -15,6 +15,7 @@ import {
   getMetaOAuthConnectionStatus,
   setMetaOAuthCentralClientForTest,
   setMetaOAuthFetchForTest,
+  setMetaOAuthMarkLocalRelayForTest,
   setMetaOAuthRuntimeClientForTest
 } from '../src/services/metaOAuthService.js'
 import { safeMetaGraphTransportError } from '../src/utils/metaGraphSecurity.js'
@@ -59,6 +60,7 @@ async function withIsolatedMeta(callback) {
   } finally {
     setMetaOAuthFetchForTest()
     setMetaOAuthCentralClientForTest()
+    setMetaOAuthMarkLocalRelayForTest()
     setMetaOAuthRuntimeClientForTest()
     await db.run(
       `DELETE FROM app_config WHERE config_key IN (${CONFIG_KEYS.map(() => '?').join(', ')})`,
@@ -426,5 +428,120 @@ test('cleanup OAuth completa efectos idempotentes si el commit central ambiguo s
     assert.deepEqual(effects, { crons: 1, channels: 1, history: 1, ads: 1 })
     assert.equal(await db.get("SELECT id FROM meta_oauth_pending_sessions WHERE id = 'central-unknown'"), null)
     assert.equal((await db.get('SELECT oauth_relay_status FROM meta_config LIMIT 1')).oauth_relay_status, 'registered')
+  })
+})
+
+test('commit central confirmado nunca restaura A si falla la marca local; scheduler repara B', async () => {
+  await initializeMasterKey()
+  await withIsolatedMeta(async () => {
+    await db.run(
+      `INSERT INTO meta_config (
+        ad_account_id, access_token, connection_mode, page_id, instagram_account_id,
+        oauth_connection_id, oauth_page_access_token, oauth_page_appsecret_proof,
+        oauth_connected, oauth_validated, oauth_relay_status
+      ) VALUES ('111', ?, 'oauth_bisu', 'page-a', 'ig-a', 'connection-a', ?, ?, 1, 1, 'registered')`,
+      [encrypt('token-a'), encrypt('page-token-a'), encrypt('page-proof-a')]
+    )
+    const sessionId = 'commit-point-session'
+    const webhookUrl = 'https://tenant.test/webhooks/meta/installer-relay'
+    const pendingPayload = {
+      accessToken: 'token-b',
+      appSecretProof: 'proof-b',
+      pageSecrets: { 'page-b': { pageAccessToken: 'page-token-b', pageAppSecretProof: 'page-proof-b' } },
+      connectionId: 'connection-b',
+      appId: 'app-b',
+      configId: 'config-b',
+      user: { id: 'user-b', name: 'User B' },
+      permissions: {
+        granted: [...META_OAUTH_REQUIRED_SCOPES],
+        missing: [],
+        granular: [{ scope: 'pages_messaging', targetIds: ['page-b'] }]
+      },
+      businesses: [{ id: 'business-b', name: 'Business B' }],
+      adAccounts: [{
+        id: 'act_222', businessId: 'business-b', timezoneName: 'UTC',
+        pixels: [{ id: 'pixel-b', name: 'Pixel B' }]
+      }],
+      pages: [{
+        id: 'page-b', businessId: 'business-b', tasksAvailable: true,
+        tasks: ['ANALYZE', 'MESSAGING', 'MODERATE'],
+        instagramAccounts: [{ id: 'ig-b', pageId: 'page-b' }]
+      }],
+      defaults: {
+        businessId: 'business-b', adAccountId: '222', pixelId: 'pixel-b',
+        pageId: 'page-b', instagramAccountId: 'ig-b'
+      }
+    }
+    await db.run(
+      `INSERT INTO meta_oauth_pending_sessions (id, payload_encrypted, status, expires_at)
+       VALUES (?, ?, 'pending', ?)`,
+      [
+        sessionId,
+        encrypt(JSON.stringify(pendingPayload)),
+        new Date(Date.now() + 15 * 60_000).toISOString().replace('T', ' ').replace('Z', '')
+      ]
+    )
+
+    let unregisterCalls = 0
+    let previousPageCleanupCalls = 0
+    const effects = { crons: 0, channels: 0, history: 0, ads: 0 }
+    setMetaOAuthCentralClientForTest({
+      updateWebhookSubscription: async input => {
+        if (input.action === 'unregister') unregisterCalls += 1
+        return { registered: input.action === 'register', connection_id: 'connection-b' }
+      },
+      getStatus: async () => ({
+        connection: {
+          connected: true,
+          connection_id: 'connection-b',
+          webhook_selections: [{
+            page_id: 'page-b', instagram_account_id: 'ig-b', callback_url: webhookUrl, active: true
+          }]
+        }
+      })
+    })
+    setMetaOAuthRuntimeClientForTest({
+      ensurePageSubscription: async () => ({ subscribed: true }),
+      removePageSubscription: async ({ config }) => {
+        if (config.oauth_connection_id === 'connection-a') previousPageCleanupCalls += 1
+      },
+      syncCrons: async () => { effects.crons += 1 },
+      enableSocialChannels: async () => { effects.channels += 1; return { messengerMessaging: true } },
+      startSocialHistory: () => { effects.history += 1; return { syncStarted: true, started: ['messenger', 'instagram'], skipped: [] } },
+      updateRecentAds: async () => { effects.ads += 1; return { success: true } }
+    })
+    setMetaOAuthMarkLocalRelayForTest(async () => {
+      throw new Error('simulated local relay write failure')
+    })
+
+    const repairing = await finalizeMetaOAuthConnection({ sessionId, publicBaseUrl: 'https://tenant.test' })
+    assert.equal(repairing.connected, true)
+    assert.equal(repairing.repairPending, true)
+    assert.equal(unregisterCalls, 0)
+    const localB = await getMetaConfig()
+    assert.equal(localB.oauth_connection_id, 'connection-b')
+    assert.equal(localB.oauth_relay_status, 'repair_pending')
+    assert.equal(localB.access_token, 'token-b')
+
+    setMetaOAuthMarkLocalRelayForTest()
+    const pendingRow = await db.get(
+      'SELECT payload_encrypted FROM meta_oauth_pending_sessions WHERE id = ?',
+      [sessionId]
+    )
+    const repairPayload = JSON.parse(decrypt(pendingRow.payload_encrypted))
+    repairPayload.saga.nextCleanupAt = new Date(Date.now() - 1_000).toISOString()
+    await db.run(
+      `UPDATE meta_oauth_pending_sessions SET payload_encrypted = ?, updated_at = datetime('now', '-3 minutes')
+       WHERE id = ?`,
+      [encrypt(JSON.stringify(repairPayload)), sessionId]
+    )
+    await cleanupMetaOAuthPendingSessions()
+
+    assert.equal(unregisterCalls, 0)
+    assert.equal(previousPageCleanupCalls, 1)
+    assert.deepEqual(effects, { crons: 1, channels: 1, history: 1, ads: 1 })
+    assert.equal((await getMetaConfig()).oauth_connection_id, 'connection-b')
+    assert.equal((await getMetaConfig()).oauth_relay_status, 'registered')
+    assert.equal(await db.get('SELECT id FROM meta_oauth_pending_sessions WHERE id = ?', [sessionId]), null)
   })
 })

@@ -76,7 +76,7 @@ export async function finalizeMetaOAuth(req, res) {
       instagramAccountId: req.body?.instagramAccountId || req.body?.instagram_account_id,
       publicBaseUrl: publicBaseUrl(req)
     })
-    res.json({ success: true, data })
+    res.status(data?.repairPending ? 202 : 200).json({ success: true, data })
   } catch (error) {
     logger.warn(`No se pudo finalizar Meta OAuth: ${error.message}`)
     errorResponse(res, error, 'No se pudo guardar la conexión OAuth de Meta')

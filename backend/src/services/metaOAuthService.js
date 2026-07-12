@@ -91,6 +91,7 @@ const defaultRuntimeClient = {
 let runtimeClient = { ...defaultRuntimeClient }
 let metaConnectionMutationRunning = false
 let metaOAuthCleanupTimer = null
+let markLocalRelayRegisteredForTest = null
 
 export function setMetaOAuthFetchForTest(fetchImpl) {
   metaOAuthFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
@@ -106,6 +107,10 @@ export function setMetaOAuthRuntimeClientForTest(overrides = null) {
   runtimeClient = overrides && typeof overrides === 'object'
     ? { ...defaultRuntimeClient, ...overrides }
     : { ...defaultRuntimeClient }
+}
+
+export function setMetaOAuthMarkLocalRelayForTest(override = null) {
+  markLocalRelayRegisteredForTest = typeof override === 'function' ? override : null
 }
 
 function cleanString(value) {
@@ -588,6 +593,9 @@ async function reconcileCentralPromotion(payload = {}) {
 }
 
 async function markLocalRelayRegistered(payload = {}, registeredAt = new Date().toISOString()) {
+  if (markLocalRelayRegisteredForTest) {
+    return markLocalRelayRegisteredForTest(payload, registeredAt)
+  }
   const result = await db.run(
     `UPDATE meta_config SET oauth_relay_status = 'registered', oauth_relay_registered_at = ?,
      oauth_relay_error = NULL, updated_at = CURRENT_TIMESTAMP
@@ -601,7 +609,7 @@ async function markLocalRelayRegistered(payload = {}, registeredAt = new Date().
 
 async function compensatePendingOAuthSaga(payload = {}) {
   const saga = payload?.saga
-  if (!saga || !['subscribing', 'subscribed', 'local_saved', 'central_unknown'].includes(cleanString(saga.stage))) {
+  if (!saga || !['subscribing', 'subscribed', 'local_saved', 'central_registering', 'central_unknown'].includes(cleanString(saga.stage))) {
     return { compensated: true, errors: [] }
   }
 
@@ -637,7 +645,7 @@ async function compensatePendingOAuthSaga(payload = {}) {
   return { compensated: errors.length === 0, errors }
 }
 
-async function schedulePendingCompensationRetry(row, payload, errors = []) {
+async function schedulePendingCompensationRetry(row, payload, errors = [], { repair = false } = {}) {
   const now = Date.now()
   const saga = payload.saga || {}
   const attempts = Math.max(0, Number(saga.cleanupAttempts || 0)) + 1
@@ -652,7 +660,36 @@ async function schedulePendingCompensationRetry(row, payload, errors = []) {
     cleanupDeadline: saga.cleanupDeadline || new Date(now + META_OAUTH_COMPENSATION_TTL_MS).toISOString()
   }
   await persistPendingPayload(row.id, payload, 'cleanup_pending')
-  logger.warn(`Meta OAuth dejó una compensación pendiente (${errors.map(error => error.split(':')[0]).join(', ') || 'desconocida'}); se reintentará sin exponer credenciales.`)
+  logger.warn(`Meta OAuth dejó una ${repair ? 'reparación del commit' : 'compensación'} pendiente (${errors.map(error => error.split(':')[0]).join(', ') || 'desconocida'}); se reintentará sin exponer credenciales.`)
+}
+
+async function markCentralCommitRepairPending(payload = {}, errorMessage = '') {
+  await db.run(
+    `UPDATE meta_config SET oauth_relay_status = 'repair_pending', oauth_relay_error = ?,
+     updated_at = CURRENT_TIMESTAMP
+     WHERE oauth_connection_id = ? AND connection_mode IN ('oauth_bisu', 'oauth_user')`,
+    [cleanString(errorMessage).slice(0, 500) || 'Falta confirmar el relay local', payload?.connectionId]
+  ).catch(() => undefined)
+}
+
+async function scheduleCentralCommitRepair(row, payload, errors = []) {
+  payload.saga = { ...(payload.saga || {}), stage: 'central_committed' }
+  await markCentralCommitRepairPending(payload, errors.join('; '))
+  return schedulePendingCompensationRetry(row, payload, errors, { repair: true })
+}
+
+function minimizeCentralCommitRepairPayload(payload = {}) {
+  const saga = payload?.saga || {}
+  return {
+    connectionId: cleanString(payload?.connectionId),
+    saga: {
+      stage: 'central_committed',
+      selection: saga.selection || {},
+      webhookUrl: cleanString(saga.webhookUrl),
+      cleanupAttempts: Number(saga.cleanupAttempts || 0),
+      cleanupDeadline: new Date(Date.now() + META_OAUTH_COMPENSATION_TTL_MS).toISOString()
+    }
+  }
 }
 
 export async function cleanupMetaOAuthPendingSessions() {
@@ -680,7 +717,9 @@ export async function cleanupMetaOAuthPendingSessions() {
       logger.warn('Sesión Meta OAuth ilegible durante cleanup; se eliminará sin registrar su contenido.')
     }
     const saga = payload?.saga
-    if (!saga || !['subscribing', 'subscribed', 'local_saved', 'central_unknown'].includes(cleanString(saga.stage))) {
+    const sagaStage = cleanString(saga?.stage)
+    const centralDecisionStage = ['central_registering', 'central_unknown', 'central_committed'].includes(sagaStage)
+    if (!saga || !['subscribing', 'subscribed', 'local_saved', 'central_registering', 'central_unknown', 'central_committed'].includes(sagaStage)) {
       if (expired || stale || row.status === 'cleanup_pending') {
         await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [row.id]).catch(() => undefined)
       }
@@ -695,9 +734,10 @@ export async function cleanupMetaOAuthPendingSessions() {
       : 0
     if (nextCleanupMs > now && cleanupDeadlineMs > now) continue
 
-    if (cleanString(saga.stage) === 'central_unknown') {
+    if (centralDecisionStage) {
       const promotionState = await reconcileCentralPromotion(payload)
       if (promotionState === 'promoted') {
+        payload.saga.stage = 'central_committed'
         try {
           await markLocalRelayRegistered(payload)
           await runMetaOAuthConnectedRuntimeEffects({
@@ -709,26 +749,27 @@ export async function cleanupMetaOAuthPendingSessions() {
           })
           await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [row.id]).catch(() => undefined)
         } catch (error) {
-          if (cleanupDeadlineMs <= now) {
-            const compensation = await compensatePendingOAuthSaga(payload)
-            await restorePreviousStateIfCandidateStillLocal(payload).catch(() => undefined)
-            await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [row.id]).catch(() => undefined)
-            logger.error(`Meta OAuth no pudo confirmar el commit local antes del TTL; compensación final: ${compensation.compensated ? 'completa' : 'incompleta'}.`)
-          } else {
-            await schedulePendingCompensationRetry(row, payload, ['local: falta confirmar relay'])
-          }
+          if (cleanupDeadlineMs <= now) payload = minimizeCentralCommitRepairPayload(payload)
+          await scheduleCentralCommitRepair(row, payload, ['local: falta confirmar relay'])
         }
         continue
       }
       if (promotionState === 'ambiguous') {
-        if (cleanupDeadlineMs <= now) {
-          const compensation = await compensatePendingOAuthSaga(payload)
-          await restorePreviousStateIfCandidateStillLocal(payload).catch(() => undefined)
-          await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [row.id]).catch(() => undefined)
-          logger.error(`Meta OAuth no pudo reconciliar el commit central antes del TTL; compensación final ${compensation.compensated ? 'completa' : 'incompleta'} y relay local fail-closed.`)
-        } else {
-          await schedulePendingCompensationRetry(row, payload, ['central: estado ambiguo'])
+        if (sagaStage === 'central_committed' || cleanupDeadlineMs <= now) {
+          if (cleanupDeadlineMs <= now) payload = minimizeCentralCommitRepairPayload(payload)
+          await scheduleCentralCommitRepair(row, payload, [
+            sagaStage === 'central_committed'
+              ? 'central: commit confirmado, status temporalmente ambiguo'
+              : 'central: respuesta ambigua agotó TTL; se conserva B fail-closed sin rollback destructivo'
+          ])
+          continue
         }
+        await schedulePendingCompensationRetry(row, payload, ['central: estado ambiguo'])
+        continue
+      }
+      if (sagaStage === 'central_committed') {
+        if (cleanupDeadlineMs <= now) payload = minimizeCentralCommitRepairPayload(payload)
+        await scheduleCentralCommitRepair(row, payload, ['central: commit confirmado; ruta aún no visible en status'])
         continue
       }
     }
@@ -1286,6 +1327,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
   let previousState = null
   let previousConfig = null
   let relayResult = null
+  let repairPending = null
   try {
     // La intención se cifra ANTES del POST subscribed_apps. Si el proceso cae
     // después de que Meta acepte la suscripción, el cleanup puede deshacerla
@@ -1343,9 +1385,14 @@ async function finalizeMetaOAuthConnectionUnlocked({
     payload.saga.stage = 'local_saved'
     await persistPendingPayload(sessionId, payload, 'consuming')
 
+    // Desde aquí el POST puede haber hecho commit aunque la respuesta se pierda.
+    // El cleanup DEBE consultar Installer antes de decidir; nunca asume rollback.
+    payload.saga.stage = 'central_registering'
+    await persistPendingPayload(sessionId, payload, 'consuming')
+
     // Installer promueve el candidate connection_id y reemplaza la ruta anterior
-    // atómicamente. Si el ACK o el write local fallan, la compensación manda un
-    // unregister idempotente antes de restaurar la conexión anterior.
+    // atómicamente. Una promoción confirmada es el punto irreversible: después
+    // sólo se repara B localmente; A ya no puede restaurarse como conexión real.
     try {
       relayResult = await centralClient.updateWebhookSubscription({
         action: 'register',
@@ -1373,14 +1420,25 @@ async function finalizeMetaOAuthConnectionUnlocked({
         uncertain.skipMetaOAuthCompensation = true
         throw uncertain
       } else {
+        payload.saga.stage = 'local_saved'
+        await persistPendingPayload(sessionId, payload, 'consuming').catch(() => undefined)
         throw registerError
       }
     }
-    await markLocalRelayRegistered(payload, registeredAt)
     payload.saga.stage = 'central_committed'
     await persistPendingPayload(sessionId, payload, 'consuming').catch(persistError => {
       logger.warn(`Meta OAuth quedó conectado, pero no se pudo marcar la etapa final temporal: ${persistError.message}`)
     })
+    try {
+      await markLocalRelayRegistered(payload, registeredAt)
+    } catch (error) {
+      repairPending = error
+      await scheduleCentralCommitRepair(
+        { id: sessionId },
+        payload,
+        [`local: ${error.message}`]
+      ).catch(() => undefined)
+    }
   } catch (error) {
     if (error.skipMetaOAuthCompensation === true) throw error
     const compensation = await compensatePendingOAuthSaga(payload)
@@ -1391,6 +1449,28 @@ async function finalizeMetaOAuthConnectionUnlocked({
       await schedulePendingCompensationRetry({ id: sessionId }, payload, compensation.errors).catch(() => undefined)
     }
     throw error
+  }
+
+  if (repairPending) {
+    return {
+      connectionMode: 'oauth_bisu',
+      connected: true,
+      validated: true,
+      repairPending: true,
+      selected,
+      permissions: payload.permissions,
+      relay: {
+        status: 'repair_pending',
+        subscribed: true,
+        error: 'Installer ya promovió la conexión; falta confirmar el estado local.',
+        result: relayResult
+      },
+      subscription: { subscribed: true, pageId: selected.pageId },
+      socialChannels: {},
+      socialHistoryBackfill: { syncStarted: false, started: [], skipped: [] },
+      adsSync: { syncStarted: false },
+      runtimeWarnings: ['relay-local-repair: pendiente']
+    }
   }
 
   await db.run(
