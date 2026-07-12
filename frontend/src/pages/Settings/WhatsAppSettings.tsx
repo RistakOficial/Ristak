@@ -266,6 +266,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [apiStatus, setApiStatus] = useState<WhatsAppApiStatus | null>(null)
   const [apiLoading, setApiLoading] = useState(true)
   const [apiConnecting, setApiConnecting] = useState(false)
+  const [metaConnecting, setMetaConnecting] = useState(false)
   const [apiRefreshing, setApiRefreshing] = useState(false)
   const [apiDisconnecting, setApiDisconnecting] = useState(false)
   const [apiKey, setApiKey] = useState('')
@@ -424,6 +425,15 @@ export const WhatsAppSettings: React.FC = () => {
   }, [location.pathname, location.search, navigate, showToast])
 
   useEffect(() => {
+    const params = new URLSearchParams(location.hash.replace(/^#/, ''))
+    if (params.get('whatsapp_meta') !== 'success') return
+
+    showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak mediante Coexistence.')
+    loadApiStatus().catch(() => null)
+    navigate({ pathname: location.pathname, search: location.search, hash: '' }, { replace: true })
+  }, [location.hash, location.pathname, location.search, navigate, showToast])
+
+  useEffect(() => {
     let cancelled = false
 
     const loadMetaBusinessAccount = async () => {
@@ -479,6 +489,68 @@ export const WhatsAppSettings: React.FC = () => {
     } finally {
       setApiConnecting(false)
       setApiLoading(false)
+    }
+  }
+
+  const connectMetaDirect = async () => {
+    if (metaConnecting) return
+
+    const popup = window.open('', 'ristak-whatsapp-meta', 'popup=yes,width=620,height=760,resizable=yes,scrollbars=yes')
+    setMetaConnecting(true)
+    let pollTimer: number | null = null
+    let installerOrigin = ''
+    let finished = false
+
+    const cleanup = () => {
+      if (pollTimer !== null) window.clearInterval(pollTimer)
+      window.removeEventListener('message', onConnected)
+      setMetaConnecting(false)
+    }
+
+    const confirmConnection = async () => {
+      if (finished) return
+      finished = true
+      cleanup()
+      try {
+        const nextStatus = await loadApiStatus()
+        if (nextStatus.metaDirect?.connected) {
+          setConnectionChoice(null)
+          setAddNumberChoice(null)
+          setAddNumberModalOpen(false)
+          selectSection('numbers')
+          showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak mediante Coexistence.')
+        }
+      } catch {
+        // El estado también se refresca al volver a abrir la pantalla.
+      }
+    }
+
+    function onConnected(event: MessageEvent) {
+      if (!installerOrigin || event.origin !== installerOrigin || event.data?.type !== 'RISTAK_WHATSAPP_META_CONNECTED') return
+      void confirmConnection()
+    }
+
+    window.addEventListener('message', onConnected)
+    try {
+      const data = await whatsappApiService.getMetaConnectUrl()
+      const connectUrl = new URL(data.url)
+      const localHttp = connectUrl.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(connectUrl.hostname)
+      if (connectUrl.protocol !== 'https:' && !localHttp) throw new Error('El portal de Meta no tiene una URL segura')
+      installerOrigin = connectUrl.origin
+
+      if (popup) {
+        popup.location.replace(connectUrl.toString())
+        pollTimer = window.setInterval(() => {
+          if (popup.closed) void confirmConnection()
+        }, 700)
+      } else {
+        cleanup()
+        window.location.assign(connectUrl.toString())
+      }
+    } catch (error) {
+      popup?.close()
+      cleanup()
+      showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Intenta nuevamente.')
     }
   }
 
@@ -827,7 +899,7 @@ export const WhatsAppSettings: React.FC = () => {
     </form>
   )
 
-  const renderYCloudGuide = () => (
+  const renderApiGuide = () => (
     <div className={styles.apiTutorial}>
       <div className={styles.apiTutorialHeader}>
         <span>Guia rapida</span>
@@ -837,19 +909,19 @@ export const WhatsAppSettings: React.FC = () => {
         <li>
           <span>1</span>
           <div>
-            <strong>Entra a WhatsApp API</strong>
-            <p>Usa la cuenta del negocio donde tienes tu WhatsApp Business.</p>
-            <a className={styles.apiTutorialButton} href={YCLOUD_REGISTER_URL} target="_blank" rel="noopener noreferrer">
-              Abrir WhatsApp API
-              <ExternalLink size={14} />
-            </a>
+            <strong>Conecta directo con Meta</strong>
+            <p>Usa el login oficial para conservar WhatsApp Business mediante Coexistence.</p>
           </div>
         </li>
         <li>
           <span>2</span>
           <div>
-            <strong>Copia tu llave de conexión</strong>
-            <p>Pégala aquí y Ristak se conectará a tu cuenta.</p>
+            <strong>O usa YCloud</strong>
+            <p>Si prefieres el intermediario, abre YCloud y pega su llave de conexión.</p>
+            <a className={styles.apiTutorialButton} href={YCLOUD_REGISTER_URL} target="_blank" rel="noopener noreferrer">
+              Abrir YCloud
+              <ExternalLink size={14} />
+            </a>
           </div>
         </li>
         <li>
@@ -924,12 +996,12 @@ export const WhatsAppSettings: React.FC = () => {
         <p className={styles.connectionOptionTitle}>Conectar con Meta</p>
         <Button
           type="button"
-          variant="secondary"
-          className={styles.metaConnectButtonDisabled}
-          disabled
+          className={styles.metaConnectButton}
+          onClick={() => void connectMetaDirect()}
+          loading={metaConnecting}
         >
           <Link2 size={17} />
-          Próximamente
+          Conectar con Meta
         </Button>
       </section>
 
@@ -964,10 +1036,15 @@ export const WhatsAppSettings: React.FC = () => {
       return (
         <div className={styles.qrConsentBody}>
           {renderConnectionBack(() => setAddNumberChoice(null))}
-          <p>La conexión directa de otro número por Meta estará disponible pronto.</p>
-          <Button type="button" variant="secondary" className={styles.metaConnectButtonDisabled} disabled>
+          <p>Meta te mostrará los números disponibles y conservará WhatsApp Business mediante Coexistence.</p>
+          <Button
+            type="button"
+            className={styles.metaConnectButton}
+            onClick={() => void connectMetaDirect()}
+            loading={metaConnecting}
+          >
             <Link2 size={17} />
-            Próximamente
+            Conectar con Meta
           </Button>
         </div>
       )
@@ -1039,7 +1116,7 @@ export const WhatsAppSettings: React.FC = () => {
         </div>
         {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
         <div className={styles.connectContent}>
-          {renderYCloudGuide()}
+          {renderApiGuide()}
           {renderApiConnectionOptions()}
         </div>
       </section>

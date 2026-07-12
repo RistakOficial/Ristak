@@ -515,6 +515,19 @@ Todo registro WhatsApp debe distinguir `provider` (`ycloud`, `meta_direct` o
 endpoints, nombres de webhook ni columnas de ID específicas. Baileys nunca debe
 presentarse como proveedor de API oficial.
 
+En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece dos conexiones
+separadas: **Conectar con Meta** abre el Embedded Signup central de Installer con
+Coexistence y **YCloud** conserva su formulario de API key. Meta valida el WABA y
+el número, guarda el token cifrado sólo en la base de esa instalación y activa
+`meta_direct`; el broker central enruta webhooks por WABA sin mezclarlos con
+YCloud ni con las sesiones QR/Baileys. Si la entrega final al tenant falla, el
+usuario puede reintentar sin volver a exponer el token en el navegador.
+
+Las plantillas usan el proveedor API activo. Con Meta directo se administran en
+Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
+propios. El modelo neutral y la UI se comparten, pero IDs remotos, estados,
+payloads y handles multimedia permanecen etiquetados por proveedor.
+
 Cuando el agente conversacional envia una respuesta, los servicios de salida
 deben persistir la marca `sentByAgent`/`agentId` en el payload local y el journey
 debe exponerla como `sent_by_agent`/`agent_id`. `/chat`, `/movil`, `mobile/` e
