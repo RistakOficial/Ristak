@@ -206,8 +206,9 @@ function getPhoneLabel(phone: WhatsAppApiPhoneNumber) {
   return phone.verified_name && phone.verified_name !== number ? `${number} · ${phone.verified_name}` : number
 }
 
-function getOfficialProviderLabel(phone: WhatsAppApiPhoneNumber) {
-  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'Meta Directo' : 'YCloud'
+function getWhatsAppSendLabel(phone: WhatsAppApiPhoneNumber, apiEnabled: boolean, qrConnected: boolean) {
+  if (isStandaloneQrPhone(phone) || (!apiEnabled && qrConnected)) return 'WhatsApp Web'
+  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'WhatsApp API' : 'YCloud'
 }
 
 function getDisconnectApiLabel(phone: WhatsAppApiPhoneNumber) {
@@ -1431,9 +1432,8 @@ export const WhatsAppSettings: React.FC = () => {
                           <td>
                             <div className={styles.apiCell}>
                               <Badge variant={apiEnabled ? 'success' : 'neutral'}>
-                                {apiEnabled ? getOfficialProviderLabel(phone) : isStandaloneQrPhone(phone) ? 'Sin API' : 'No conectado'}
+                                {getWhatsAppSendLabel(phone, apiEnabled, qrConnected)}
                               </Badge>
-                              {apiEnabled && <span>{isSender ? 'Principal' : 'API oficial'}</span>}
                             </div>
                           </td>
                           <td>
