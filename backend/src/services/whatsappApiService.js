@@ -105,6 +105,17 @@ export function setYCloudFetchForTest(fetchImpl) {
 export function setMetaDirectFetchForTest(fetchImpl) {
   metaDirectFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
 }
+
+// PostgreSQL exige un objetivo para DO UPDATE. Cuando ya conocemos la fila
+// canónica actualizamos por su PK; en una carrera entre adaptadores primero
+// insertamos con DO NOTHING, resolvemos la identidad ganadora y repetimos por id.
+// SQLite acepta una actualización de conflicto sin objetivo explícito, pero ese
+// atajo no forma parte del contrato portable de Ristak.
+export function getWhatsAppApiMessageConflictPrefix({ updateOnIdConflict = false } = {}) {
+  return updateOnIdConflict
+    ? 'ON CONFLICT(id) DO UPDATE SET'
+    : 'ON CONFLICT DO NOTHING'
+}
 const WHATSAPP_IMAGE_PUBLIC_PATH = '/uploads/whatsapp-images'
 const MAX_WHATSAPP_IMAGE_INPUT_BYTES = 25 * 1024 * 1024
 const MAX_WHATSAPP_IMAGE_OUTPUT_BYTES = 5 * 1024 * 1024
@@ -7551,6 +7562,9 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     wamid, wamid,
     protocolMessageKeyId, protocolMessageKeyId
   ]).catch(() => null)
+  const existingMessageBeforePersistence = existingMessage
+    ? { ...existingMessage }
+    : null
   let messageId = existingMessage?.id || computedMessageId
   if (attribution.imageUrl || attribution.thumbnailUrl) {
     attribution = await persistWhatsAppAttributionPreview(attribution, messageId).catch(error => {
@@ -7604,7 +7618,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ? existingMessage?.routing_reason
     : routingReason
 
-  await db.run(`
+  const persistWhatsAppMessage = async ({ targetMessageId, updateOnIdConflict }) => db.run(`
     INSERT INTO whatsapp_api_messages (
       id, provider, source_adapter, origin, provider_message_id, ycloud_message_id, meta_message_id, wamid, protocol_message_key_id, waba_id, business_phone_number_id,
       whatsapp_api_contact_id, contact_id,
@@ -7616,9 +7630,17 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       detected_source_app, detected_entry_point, detected_headline, detected_body,
       detected_conversion_data, detected_ctwa_payload, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT DO UPDATE SET
+    ${getWhatsAppApiMessageConflictPrefix({ updateOnIdConflict })}
+    ${updateOnIdConflict ? `
       provider = COALESCE(NULLIF(excluded.provider, ''), whatsapp_api_messages.provider),
-      source_adapter = COALESCE(NULLIF(excluded.source_adapter, ''), whatsapp_api_messages.source_adapter),
+      source_adapter = CASE
+        WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
+          AND LOWER(COALESCE(excluded.transport, '')) = 'api'
+          AND COALESCE(excluded.protocol_message_key_id, '') != ''
+          AND (COALESCE(excluded.business_echo, 0) = 1 OR LOWER(COALESCE(excluded.origin, '')) LIKE '%message%echo%')
+        THEN whatsapp_api_messages.source_adapter
+        ELSE COALESCE(NULLIF(excluded.source_adapter, ''), whatsapp_api_messages.source_adapter)
+      END,
       origin = COALESCE(NULLIF(excluded.origin, ''), whatsapp_api_messages.origin),
       provider_message_id = COALESCE(NULLIF(excluded.provider_message_id, ''), whatsapp_api_messages.provider_message_id),
       ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
@@ -7632,8 +7654,40 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
       to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
       business_phone = COALESCE(NULLIF(excluded.business_phone, ''), whatsapp_api_messages.business_phone),
-      transport = COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport),
-      routing_reason = COALESCE(NULLIF(excluded.routing_reason, ''), whatsapp_api_messages.routing_reason),
+      transport = CASE
+        WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
+          AND LOWER(COALESCE(excluded.transport, '')) = 'api'
+          AND (
+            (
+              COALESCE(excluded.protocol_message_key_id, '') != ''
+              AND (COALESCE(excluded.business_echo, 0) = 1 OR LOWER(COALESCE(excluded.origin, '')) LIKE '%message%echo%')
+            )
+            OR (
+              COALESCE(whatsapp_api_messages.routing_reason, '') != ''
+              AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
+              AND LOWER(COALESCE(excluded.status, '')) = 'failed'
+            )
+          )
+        THEN whatsapp_api_messages.transport
+        ELSE COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport)
+      END,
+      routing_reason = CASE
+        WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
+          AND LOWER(COALESCE(excluded.transport, '')) = 'api'
+          AND (
+            (
+              COALESCE(excluded.protocol_message_key_id, '') != ''
+              AND (COALESCE(excluded.business_echo, 0) = 1 OR LOWER(COALESCE(excluded.origin, '')) LIKE '%message%echo%')
+            )
+            OR (
+              COALESCE(whatsapp_api_messages.routing_reason, '') != ''
+              AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
+              AND LOWER(COALESCE(excluded.status, '')) = 'failed'
+            )
+          )
+        THEN whatsapp_api_messages.routing_reason
+        ELSE COALESCE(NULLIF(excluded.routing_reason, ''), whatsapp_api_messages.routing_reason)
+      END,
       direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
       message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
       message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
@@ -7641,15 +7695,33 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       media_mime_type = COALESCE(NULLIF(excluded.media_mime_type, ''), whatsapp_api_messages.media_mime_type),
       media_filename = COALESCE(NULLIF(excluded.media_filename, ''), whatsapp_api_messages.media_filename),
       media_duration_ms = COALESCE(excluded.media_duration_ms, whatsapp_api_messages.media_duration_ms),
-      status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
+      status = CASE
+        WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
+          AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''
+          AND LOWER(COALESCE(excluded.transport, '')) = 'api'
+          AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
+          AND LOWER(COALESCE(excluded.status, '')) = 'failed'
+        THEN whatsapp_api_messages.status
+        ELSE COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status)
+      END,
       business_echo = COALESCE(excluded.business_echo, whatsapp_api_messages.business_echo),
       relay_event_id = COALESCE(NULLIF(excluded.relay_event_id, ''), whatsapp_api_messages.relay_event_id),
       error_code = CASE
         WHEN LOWER(COALESCE(excluded.transport, whatsapp_api_messages.transport, '')) = 'qr' THEN NULL
+        WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
+          AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''
+          AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
+          AND LOWER(COALESCE(excluded.status, '')) = 'failed'
+        THEN whatsapp_api_messages.error_code
         ELSE COALESCE(NULLIF(excluded.error_code, ''), whatsapp_api_messages.error_code)
       END,
       error_message = CASE
         WHEN LOWER(COALESCE(excluded.transport, whatsapp_api_messages.transport, '')) = 'qr' THEN NULL
+        WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
+          AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''
+          AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
+          AND LOWER(COALESCE(excluded.status, '')) = 'failed'
+        THEN whatsapp_api_messages.error_message
         ELSE COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message)
       END,
       message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
@@ -7667,8 +7739,9 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       detected_conversion_data = COALESCE(NULLIF(excluded.detected_conversion_data, ''), whatsapp_api_messages.detected_conversion_data),
       detected_ctwa_payload = COALESCE(NULLIF(excluded.detected_ctwa_payload, ''), whatsapp_api_messages.detected_ctwa_payload),
       updated_at = CURRENT_TIMESTAMP
+    ` : ''}
   `, [
-    messageId,
+    targetMessageId,
     provider,
     storedSourceAdapter,
     origin || null,
@@ -7715,24 +7788,95 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     attribution.ctwaPayload || null
   ])
 
-  // El índice único de identidad de protocolo también cubre una carrera real
-  // entre el socket Baileys y el webhook oficial. Si ambos hicieron el SELECT
-  // antes de que existiera la fila, `ON CONFLICT` conserva una sola y aquí
-  // recuperamos su ID canónico para que eventos, atribución y respuesta usen el
-  // registro que realmente quedó en la base.
-  if (protocolMessageKeyId) {
-    const canonicalMessage = await db.get(`
-      SELECT id, contact_id, status, transport, routing_reason, message_type,
+  const hadExistingMessage = Boolean(existingMessage)
+  const initialPersistenceResult = await persistWhatsAppMessage({
+    targetMessageId: messageId,
+    updateOnIdConflict: hadExistingMessage
+  })
+  const insertedByThisCall = !hadExistingMessage && Number(initialPersistenceResult?.changes || 0) > 0
+
+  // Si dos adaptadores hicieron el SELECT al mismo tiempo, el primero insertó
+  // y el segundo cayó en DO NOTHING. Resolvemos la fila ganadora por cualquiera
+  // de sus identidades y, si esta llamada no conocía una fila previa, repetimos
+  // por PK con un DO UPDATE válido tanto en PostgreSQL como en SQLite.
+  let canonicalMessage = await db.get(`
+    SELECT id, provider, source_adapter, origin, provider_message_id,
+           ycloud_message_id, meta_message_id, wamid, protocol_message_key_id,
+           contact_id, status, transport, routing_reason, message_type,
+           raw_payload_json, error_code, error_message
+    FROM whatsapp_api_messages
+    WHERE id = ?
+      OR (? != '' AND provider = ? AND provider_message_id = ?)
+      OR (? != '' AND ycloud_message_id = ?)
+      OR (? != '' AND meta_message_id = ?)
+      OR (? != '' AND wamid = ?)
+      OR (? != '' AND protocol_message_key_id = ?)
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [
+    messageId,
+    providerMessageId, provider, providerMessageId,
+    ycloudMessageId, ycloudMessageId,
+    metaMessageId, metaMessageId,
+    wamid, wamid,
+    protocolMessageKeyId, protocolMessageKeyId
+  ]).catch(() => null)
+
+  if (!canonicalMessage?.id) {
+    throw new Error('No se pudo resolver la fila canónica del mensaje de WhatsApp después de persistirlo.')
+  }
+
+  messageId = canonicalMessage.id
+  existingMessage = canonicalMessage
+
+  if (!hadExistingMessage) {
+    await persistWhatsAppMessage({
+      targetMessageId: messageId,
+      updateOnIdConflict: true
+    })
+    canonicalMessage = await db.get(`
+      SELECT id, provider, source_adapter, origin, provider_message_id,
+             ycloud_message_id, meta_message_id, wamid, protocol_message_key_id,
+             contact_id, status, transport, routing_reason, message_type,
              raw_payload_json, error_code, error_message
       FROM whatsapp_api_messages
-      WHERE protocol_message_key_id = ?
+      WHERE id = ?
       LIMIT 1
-    `, [protocolMessageKeyId]).catch(() => null)
-    if (canonicalMessage?.id && canonicalMessage.id !== messageId) {
-      messageId = canonicalMessage.id
-      existingMessage = canonicalMessage
-    }
+    `, [messageId]).catch(() => canonicalMessage)
+    existingMessage = canonicalMessage || existingMessage
   }
+
+  const canonicalQrFallbackApplied = existingQrFallbackApplied || (
+    cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
+    Boolean(cleanString(existingMessage?.routing_reason)) &&
+    cleanTransport === 'api' &&
+    identity.direction === 'outbound' &&
+    incomingStatus === 'failed'
+  )
+  const canonicalCoexistenceBusinessAppEcho = coexistenceBusinessAppEcho || (
+    cleanTransport === 'api' &&
+    cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
+    Boolean(protocolMessageKeyId) &&
+    protocolMessageKeyId === cleanString(existingMessage?.protocol_message_key_id) &&
+    (
+      businessEcho ||
+      /(?:^|[._])(?:smb[._])?message[._]echo(?:es)?(?:$|[._])/i.test(origin)
+    )
+  )
+  const canonicalStatus = canonicalQrFallbackApplied
+    ? (normalizeMessageDeliveryStatus(existingMessage?.status) || status)
+    : pickBestMessageDeliveryStatus(existingMessage?.status, incomingStatus)
+  const fallbackExistingMessage = existingMessageBeforePersistence
+    ? {
+        ...existingMessage,
+        status: existingMessageBeforePersistence.status || existingMessage?.status,
+        raw_payload_json: existingMessageBeforePersistence.raw_payload_json || existingMessage?.raw_payload_json,
+        media_url: existingMessageBeforePersistence.media_url || existingMessage?.media_url,
+        media_mime_type: existingMessageBeforePersistence.media_mime_type || existingMessage?.media_mime_type,
+        media_filename: existingMessageBeforePersistence.media_filename || existingMessage?.media_filename,
+        media_duration_ms: existingMessageBeforePersistence.media_duration_ms || existingMessage?.media_duration_ms
+      }
+    : existingMessage
 
   // Si el webhook falló antes de que terminara la llamada de envío, esta
   // segunda conciliación ya trae el payload completo (incluido el permiso de
@@ -7751,7 +7895,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const conversationWindowReason = effectiveFailure && !restrictionReason
     ? getOfficialApiConversationWindowReason({ message: failureText })
     : ''
-  const existingPayload = parseJsonValue(existingMessage?.raw_payload_json, {}) || {}
+  const existingPayload = parseJsonValue(fallbackExistingMessage?.raw_payload_json, {}) || {}
   const existingAudio = {
     ...(isPlainObject(existingPayload?.whatsappMessage?.audio) ? existingPayload.whatsappMessage.audio : {}),
     ...(isPlainObject(existingPayload?.audio) ? existingPayload.audio : {}),
@@ -7768,7 +7912,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   if (
     cleanTransport === 'api' &&
     identity.direction === 'outbound' &&
-    !existingQrFallbackApplied &&
+    !canonicalQrFallbackApplied &&
     (restrictionReason || conversationWindowReason || mediaFallbackAllowed)
   ) {
     if (restrictionReason) {
@@ -7787,19 +7931,19 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       messageType,
       messageText,
       reason: restrictionReason || conversationWindowReason || mediaProcessingReason,
-      existingMessage,
+      existingMessage: fallbackExistingMessage,
       agentMetadata: preservedAgentMetadata
     })
   }
 
-  const finalTransport = qrFallbackResponse || existingQrFallbackApplied || coexistenceBusinessAppEcho ? 'qr' : cleanTransport
+  const finalTransport = qrFallbackResponse || canonicalQrFallbackApplied || canonicalCoexistenceBusinessAppEcho ? 'qr' : cleanTransport
   const finalSourceAdapter = resolveWhatsAppSourceAdapter({ provider, transport: finalTransport })
   const finalRoutingReason = cleanString(
     qrFallbackResponse?.routingReason ||
     qrFallbackResponse?.fallbackReason ||
-    (existingQrFallbackApplied ? existingMessage?.routing_reason : routingReason)
+    (canonicalQrFallbackApplied ? existingMessage?.routing_reason : routingReason)
   )
-  const finalStatus = qrFallbackResponse?.status || status
+  const finalStatus = qrFallbackResponse?.status || canonicalStatus
 
   if (finalSourceAdapter !== sourceAdapter) {
     await db.run(`
@@ -7883,11 +8027,11 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     })
     : null
   const existingRenderableMessage = Boolean(
-    existingMessage && cleanString(existingMessage.message_type).toLowerCase() !== 'status'
+    existingMessageBeforePersistence && cleanString(existingMessageBeforePersistence.message_type).toLowerCase() !== 'status'
   )
   const isNewMessage = identity.direction === 'inbound'
     ? Boolean(inboundClaim?.claimed)
-    : !existingRenderableMessage
+    : (insertedByThisCall || !existingRenderableMessage)
 
   if (identity.direction !== 'inbound' || isNewMessage) {
     publishChatMessageEvent({

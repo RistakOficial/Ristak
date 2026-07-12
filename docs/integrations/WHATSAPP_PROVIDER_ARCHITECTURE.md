@@ -266,6 +266,13 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
    rellena esa llave y fusiona sólo pares históricos QR + eco SMB demostrables.
    Dos mensajes iguales o dos envíos del mismo archivo permanecen separados si
    WhatsApp les asignó identidades distintas.
+10. La persistencia compartida debe funcionar igual en PostgreSQL y SQLite.
+    Cuando todavía no existe una fila conocida, hace `INSERT ... ON CONFLICT DO
+    NOTHING`, resuelve la fila canónica por ID de proveedor, WAMID o
+    `protocol_message_key_id`, y sólo entonces actualiza por la llave primaria
+    con `ON CONFLICT(id) DO UPDATE`. Nunca se usa una actualización de conflicto
+    sin objetivo: PostgreSQL la rechaza y el mensaje quedaría enviado por el
+    proveedor pero marcado como error dentro de Ristak.
 
 ## Embedded Signup centralizado
 
