@@ -2625,9 +2625,16 @@ export const getChatContacts = async (req, res) => {
       const clauses = [...whatsappMessageConditions, ...extraConditions].filter(Boolean)
       return clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     }
-    const whatsappBaseWhereClause = buildWhatsAppWhereClause()
+    const whatsappMessageContactWhereClause = buildWhatsAppWhereClause(['msg.contact_id IS NOT NULL'])
+    const whatsappProfileContactWhereClause = buildWhatsAppWhereClause([
+      'msg.contact_id IS NULL',
+      'api_profile.contact_id IS NOT NULL'
+    ])
     const whatsappDirectWhereClause = buildWhatsAppWhereClause([`${directWhatsAppContactIdSql} IS NOT NULL`])
-    const whatsappPhoneLookupWhereClause = buildWhatsAppWhereClause([`${directWhatsAppContactIdSql} IS NULL`])
+    const whatsappPhoneLookupWhereClause = buildWhatsAppWhereClause([
+      'msg.contact_id IS NULL',
+      'api_profile.contact_id IS NULL'
+    ])
     const whatsappStatsSourceRowsSql = `
         SELECT
           msg.id AS message_id,
@@ -2639,17 +2646,27 @@ export const getChatContacts = async (req, res) => {
           COALESCE(msg.message_timestamp, msg.created_at) AS message_date
         FROM whatsapp_api_messages msg
         LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
-        ${whatsappBaseWhereClause}
+        ${whatsappPhoneLookupWhereClause}
     `
     const messageStatsRowsSql = `
         SELECT
-          direct_contact_id AS contact_id,
+          msg.contact_id AS contact_id,
           COUNT(*) AS message_count,
-          MAX(message_date) AS last_message_date,
-          MAX(${timestampSortExpression('message_date')}) AS last_message_sort
-        FROM whatsapp_stats_source_rows
-        WHERE direct_contact_id IS NOT NULL
-        GROUP BY direct_contact_id
+          MAX(COALESCE(msg.message_timestamp, msg.created_at)) AS last_message_date,
+          MAX(${timestampSortExpression('COALESCE(msg.message_timestamp, msg.created_at)')}) AS last_message_sort
+        FROM whatsapp_api_messages msg
+        ${whatsappMessageContactWhereClause}
+        GROUP BY msg.contact_id
+        UNION ALL
+        SELECT
+          api_profile.contact_id AS contact_id,
+          COUNT(*) AS message_count,
+          MAX(COALESCE(msg.message_timestamp, msg.created_at)) AS last_message_date,
+          MAX(${timestampSortExpression('COALESCE(msg.message_timestamp, msg.created_at)')}) AS last_message_sort
+        FROM whatsapp_api_messages msg
+        JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
+        ${whatsappProfileContactWhereClause}
+        GROUP BY api_profile.contact_id
         UNION ALL
         SELECT
           contact_id,
@@ -3001,6 +3018,8 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
       LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
       ORDER BY ranked_chats.last_message_sort DESC, ranked_chats.contact_id DESC
     `, [
+      ...whatsappMessageParams,
+      ...whatsappMessageParams,
       ...whatsappMessageParams,
       ...params,
       limitNumber,

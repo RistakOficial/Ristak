@@ -526,6 +526,13 @@ Ristak maneja varias superficies de comunicacion:
 La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
 
+La bandeja de chats debe resolver primero los mensajes de WhatsApp que ya tienen
+`contact_id` directo y reservar la búsqueda por teléfono exclusivamente para
+filas heredadas sin identidad. Una cuenta con historial grande no debe
+materializar todo el historial para volver a resolver contactos ya conocidos:
+ese patrón puede agotar el timeout del endpoint `/api/contacts/chats` y dejar
+vacías las apps móviles durante su primera carga.
+
 El contrato canónico de proveedores, webhooks, IDs, Coexistence y soporte vive
 en [integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md](./integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md).
 Todo registro WhatsApp debe distinguir `provider` (`ycloud`, `meta_direct` o
