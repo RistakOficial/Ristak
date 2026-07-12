@@ -563,6 +563,13 @@ el historial, composer ni acciones rapidas del chat. El asistente interno sigue
 disponible desde la pestaña principal `Chatbot`, seccion `Configuracion`, y
 desde `Configuración > Inteligencia Artificial`.
 
+Los avisos flotantes de `/chat` desktop se anclan al lado izquierdo y deben
+ajustar textos largos sin aumentar el ancho del documento. El historial de la
+conversacion solo admite desplazamiento vertical: globos, errores, menus y
+contenido del mensaje nunca deben crear scroll horizontal. El detalle de error
+de cada mensaje se abre hacia el interior del hilo (a la izquierda para mensajes
+salientes y a la derecha para entrantes), con ancho limitado al viewport.
+
 En `/chat` desktop y `/movil`, el avatar del contacto no debe llevar aro,
 contorno ni relleno coloreado por red social. La identidad del canal vive en el
 badge inferior derecho usando los mismos assets WebP de canal que `mobile/` e

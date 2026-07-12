@@ -970,6 +970,7 @@
 .conversationPanel {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: linear-gradient(180deg, var(--color-background-secondary), var(--color-background-primary));
 }
 
@@ -1007,12 +1008,18 @@
   position: relative;
   display: flex;
   flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .messagePane {
   --chat-message-surface-gap: 14px;
   --chat-message-surface-padding: 18px 18px 12px;
+  min-width: 0;
+  max-width: 100%;
+  overscroll-behavior-x: none;
   overflow-anchor: none;
 }
 
@@ -2098,11 +2105,10 @@
 .messageErrorBadge::after {
   content: attr(data-tooltip);
   position: absolute;
-  left: 0;
   bottom: calc(100% + 8px);
   z-index: 30;
   width: max-content;
-  max-width: min(320px, 58vw);
+  max-width: min(320px, calc(100vw - 32px));
   padding: 8px 10px;
   border: 1px solid var(--chat-border);
   border-radius: var(--radius-sm);
@@ -2112,10 +2118,22 @@
   font-size: var(--font-size-xs);
   font-weight: 550;
   line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
   opacity: 0;
   pointer-events: none;
   transform: translateY(3px);
   transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.messageErrorBadge[data-tooltip-side='left']::after {
+  right: 0;
+  left: auto;
+}
+
+.messageErrorBadge[data-tooltip-side='right']::after {
+  right: auto;
+  left: 0;
 }
 
 .messageErrorBadge:hover::after,

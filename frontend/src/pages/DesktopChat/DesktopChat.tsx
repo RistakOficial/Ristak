@@ -3136,6 +3136,14 @@ export const DesktopChat: React.FC = () => {
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
+
+  useEffect(() => {
+    document.body.dataset.desktopChatActive = 'true'
+    return () => {
+      delete document.body.dataset.desktopChatActive
+    }
+  }, [])
+
   const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
   const customersLabel = labels.customers?.trim() || DEFAULT_CRM_LABELS.customers
   const leadsLabel = labels.leads?.trim() || DEFAULT_CRM_LABELS.leads
@@ -8391,6 +8399,7 @@ export const DesktopChat: React.FC = () => {
         className={styles.messageErrorBadge}
         aria-label={`Error del mensaje: ${errorText}`}
         data-tooltip={errorText}
+        data-tooltip-side={message.direction === 'outbound' ? 'left' : 'right'}
       >
         <CircleAlert size={14} />
       </button>

@@ -5,8 +5,10 @@
   flex: 1 1 auto;
   flex-direction: column;
   gap: var(--chat-message-surface-gap, 14px);
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--chat-message-surface-padding, 18px 18px 12px);
   background:
     radial-gradient(

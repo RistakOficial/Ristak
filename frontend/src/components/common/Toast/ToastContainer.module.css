@@ -6,6 +6,7 @@
   flex-direction: column-reverse;
   gap: 14px;
   pointer-events: none;
+  box-sizing: border-box;
   width: 420px;
   max-width: calc(100vw - 48px);
   z-index: var(--z-index-toast, 10200);
@@ -17,6 +18,11 @@
 
 :global(body[data-ai-agent-launcher='visible']:not([data-phone-app='active'])) .container {
   bottom: 92px;
+}
+
+:global(body[data-desktop-chat-active='true']:not([data-phone-app='active'])) .container {
+  right: auto;
+  left: 24px;
 }
 
 :global(body[data-phone-app='active']) .container {

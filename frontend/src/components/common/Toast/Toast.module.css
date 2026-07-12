@@ -2,6 +2,9 @@
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   padding: 14px 16px;
   border-radius: var(--radius-card);
   width: 100%;
@@ -73,6 +76,7 @@
 
 .icon {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   width: 20px;
   height: 20px;
@@ -80,6 +84,7 @@
 
 .content {
   flex: 1;
+  min-width: 0;
 }
 
 .title {
@@ -87,15 +92,19 @@
   font-size: 14px;
   margin-bottom: 2px;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .message {
   font-size: 13px;
   color: var(--text-dim);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .closeButton {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   width: 20px;
   height: 20px;
