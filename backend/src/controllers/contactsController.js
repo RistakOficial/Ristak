@@ -2049,6 +2049,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
         LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
         JOIN picked_contacts pc ON pc.contact_id = ${directWhatsAppContactIdSql}
         WHERE ${directWhatsAppContactIdSql} IS NOT NULL
+          AND LOWER(COALESCE(msg.message_type, '')) <> 'status'
         UNION ALL
         SELECT
           MIN(picked_contact_phones.contact_id) AS contact_id,
@@ -2067,6 +2068,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
           ON picked_contact_phones.phone IN (msg.phone, msg.from_phone, msg.to_phone, api_profile.phone)
         WHERE ${directWhatsAppContactIdSql} IS NULL
           AND TRIM(COALESCE(picked_contact_phones.phone, '')) != ''
+          AND LOWER(COALESCE(msg.message_type, '')) <> 'status'
         GROUP BY
           msg.id,
           msg.message_text,
@@ -2586,7 +2588,7 @@ export const getChatContacts = async (req, res) => {
       businessPhone: businessPhoneFilter || businessPhone
     })
     const directWhatsAppContactIdSql = 'COALESCE(msg.contact_id, api_profile.contact_id)'
-    const whatsappMessageConditions = []
+    const whatsappMessageConditions = ["LOWER(COALESCE(msg.message_type, '')) <> 'status'"]
     const whatsappMessageParams = []
     const conditions = []
     const params = []
@@ -5920,6 +5922,7 @@ export const getContactJourney = async (req, res) => {
        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
        LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
        WHERE ${whatsappApiMessageContactMatch.condition}
+         AND LOWER(COALESCE(msg.message_type, '')) <> 'status'
          AND (
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})

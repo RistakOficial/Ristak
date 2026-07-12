@@ -27,6 +27,7 @@ test('normalizes inbound messages and preserves Meta user identity', () => {
   }), config)
 
   assert.equal(item.direction, 'inbound')
+  assert.equal(item.kind, 'message')
   assert.equal(item.historyImport, false)
   assert.equal(item.message.provider, 'meta_direct')
   assert.equal(item.message.metaMessageId, 'wamid.inbound')
@@ -46,7 +47,35 @@ test('normalizes app echoes and delivery statuses separately', () => {
   assert.equal(items[0].direction, 'business_echo')
   assert.equal(items[0].message.businessEcho, true)
   assert.equal(items[1].direction, 'outbound')
+  assert.equal(items[1].kind, 'status')
   assert.equal(items[1].message.status, 'delivered')
+})
+
+test('preserves the official Click to WhatsApp referral payload', () => {
+  const referral = {
+    source_url: 'https://www.facebook.com/ads/example',
+    source_id: '120123456789',
+    source_type: 'ad',
+    headline: 'Agenda tu cita',
+    body: 'Conoce la promoción',
+    media_type: 'image',
+    image_url: 'https://lookaside.fbsbx.com/ad-preview.jpg',
+    thumbnail_url: 'https://lookaside.fbsbx.com/ad-thumb.jpg'
+  }
+  const [item] = normalizeMetaDirectWebhookPayload(envelope({
+    metadata: { display_phone_number: '+15550001111', phone_number_id: 'phone-number-id' },
+    contacts: [{ wa_id: '5215551234567', profile: { name: 'Ana' } }],
+    messages: [{
+      id: 'wamid.ctwa',
+      from: '5215551234567',
+      timestamp: '1710000000',
+      type: 'text',
+      text: { body: 'Quiero información' },
+      referral
+    }]
+  }), config)
+
+  assert.deepEqual(item.message.referral, referral)
 })
 
 test('marks Coexistence history as import so it cannot trigger live side effects', () => {

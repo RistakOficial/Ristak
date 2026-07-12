@@ -555,6 +555,16 @@ automáticamente porque la API pudo aceptar el mensaje y se evitarían dobles
 envíos. Cuando Meta pierde permisos, sólo su fila queda inactiva y YCloud/QR
 continúan operando.
 
+En Meta directo, la respuesta síncrona de Graph se guarda como el mensaje
+saliente real con su texto, `wamid`, `meta_message_id`, `contact_id` y
+`localMessageId`. Los objetos `value.statuses[]` de webhook son solamente ACK de
+`sent`/`delivered`/`read`/`failed`: actualizan esa fila por `wamid` y jamás se
+renderizan como otro globo. Si un ACK gana la carrera y llega antes del INSERT,
+queda como recibo `message_type=status` invisible y se transforma en el mensaje
+real cuando termina el POST. Conversación, bandeja y frontend filtran cualquier
+residuo `status` para que una fila antigua vacía no vuelva a aparecer como
+`Mensaje`.
+
 En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece dos conexiones
 separadas: **Conectar con Meta** precarga el Embedded Signup desde el backend del
 tenant, usa la misma pestaña para pasar por el dominio central autorizado y abre
@@ -592,6 +602,11 @@ Las plantillas usan el proveedor API activo. Con Meta directo se administran en
 Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
 propios. El modelo neutral y la UI se comparten, pero IDs remotos, estados,
 payloads y handles multimedia permanecen etiquetados por proveedor.
+
+El selector de canal del composer desktop muestra cada WhatsApp con su número
+exacto además de la etiqueta o nombre verificado. Dos filas del mismo negocio no
+pueden verse idénticas; la opción elegida conserva su `phoneNumberId` y por tanto
+su proveedor y transporte reales.
 
 Cuando el agente conversacional envia una respuesta, los servicios de salida
 deben persistir la marca `sentByAgent`/`agentId` en el payload local y el journey
@@ -672,7 +687,8 @@ la atribucion vieja del contacto. La tarjeta se arma con `is_ad_attributed`,
 `referral_source_id`, `referral_ctwa_clid`, `referral_source_url`,
 `referral_headline` y `referral_body`, pero `headline`/`body`/`source_app`/
 `entry_point` no son senal suficiente por si solos. En WhatsApp la preview solo
-se dispara con referral CTWA/YCloud real (`ctwa_clid`, `source_id`/`ad_id` con
+se dispara con referral CTWA real de YCloud o Meta directo (`ctwa_clid`,
+`source_id`/`ad_id` con
 senal de anuncio), `is_ad_attributed=true` o el marcador Ristak; `transport='api'`
 o `source_app='api'` nunca deben pintar anuncio. En Messenger/Instagram salen del
 `referral_json` de `meta_social_messages` (`ad_id`, `source='ADS'`,
@@ -1303,7 +1319,8 @@ el cuerpo visible, footer y acciones legibles y persistirlos en
 `whatsapp_api_messages.message_text` para que `/chat` y `/movil` pinten el mismo
 contenido que el usuario ve en WhatsApp.
 
-Cuando un envio saliente intenta WhatsApp API/YCloud y la API lo rechaza por una
+Cuando un envio saliente intenta WhatsApp API oficial por YCloud o Meta directo
+y la API lo rechaza por una
 restriccion recuperable o por la ventana de 24 horas, `whatsappApiService` debe
 usar WhatsApp QR/Baileys como respaldo si el numero tiene QR habilitado y
 conectado. Si el respaldo QR confirma el envio, el historial y la respuesta al

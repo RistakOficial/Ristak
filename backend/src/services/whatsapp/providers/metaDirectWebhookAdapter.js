@@ -48,6 +48,7 @@ function normalizeMessage({ message = {}, direction, field, value, entry, config
   const id = clean(message.id || message.message_id)
 
   return {
+    kind: 'message',
     direction,
     historyImport,
     message: {
@@ -119,14 +120,17 @@ export function normalizeMetaDirectWebhookPayload(payload = {}, config = {}) {
       }
 
       for (const status of Array.isArray(value.statuses) ? value.statuses : []) {
-        results.push(normalizeMessage({
-          message: { ...status, id: status.id, recipient_id: status.recipient_id, type: 'status' },
-          direction: 'outbound',
-          field: field || 'statuses',
-          value,
-          entry,
-          config
-        }))
+        results.push({
+          ...normalizeMessage({
+            message: { ...status, id: status.id, recipient_id: status.recipient_id, type: 'status' },
+            direction: 'outbound',
+            field: field || 'statuses',
+            value,
+            entry,
+            config
+          }),
+          kind: 'status'
+        })
       }
 
       for (const message of historyMessages(value)) {

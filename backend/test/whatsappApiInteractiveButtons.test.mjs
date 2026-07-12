@@ -293,6 +293,8 @@ test('Meta directo exige reconexión y deshabilita el número cuando Graph revoc
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()
   const phoneNumberId = `phone_meta_permission_${randomUUID()}`
+  const contactId = `contact_meta_permission_${randomUUID()}`
+  const customerPhone = '+526561111111'
   const configKeys = [
     keys.provider,
     keys.metaStatus,
@@ -318,6 +320,19 @@ test('Meta directo exige reconexión y deshabilita el número cuando Graph revoc
       ) VALUES (?, 'meta_direct', 'waba_meta_permission_test', '+526568619478', '+52 656 861 9478',
         'Meta Permission Test', 'CONNECTED', 1, CURRENT_TIMESTAMP)
     `, [phoneNumberId])
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Meta Permission Contact', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, customerPhone])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, source_adapter, contact_id, phone, from_phone, to_phone,
+        business_phone, business_phone_number_id, transport, direction,
+        message_type, message_text, message_timestamp, created_at, updated_at
+      ) VALUES (?, 'meta_direct', 'meta_direct', ?, ?, ?, '+526568619478',
+        '+526568619478', ?, 'api', 'inbound', 'text', 'Respuesta reciente',
+        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [`meta_permission_inbound_${randomUUID()}`, contactId, customerPhone, customerPhone, phoneNumberId])
 
     setMetaDirectFetchForTest(async () => ycloudJsonResponse({
       error: {
@@ -330,8 +345,9 @@ test('Meta directo exige reconexión y deshabilita el número cuando Graph revoc
     try {
       await assert.rejects(
         () => sendWhatsAppApiTextMessage({
-          to: '+526561111111',
+          to: customerPhone,
           text: 'Mensaje que no debe salir',
+          contactId,
           allowQrFallback: false
         }),
         /perdió permisos en Meta/
@@ -351,6 +367,8 @@ test('Meta directo exige reconexión y deshabilita el número cuando Graph revoc
       ), { status: 'AUTHORIZATION_REQUIRED', api_send_enabled: 0 })
     } finally {
       setMetaDirectFetchForTest(null)
+      await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
       await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
     }
   })
@@ -468,6 +486,8 @@ test('un número YCloud elegido no se envía por Meta aunque la bandera global h
 test('un número Meta elegido no se envía por YCloud aunque la preferencia global diga YCloud', async () => {
   const keys = getWhatsAppApiConfigKeys()
   await withMetaDirectMessageCapture(async (captures) => {
+    const contactId = `contact_meta_route_${randomUUID()}`
+    const customerPhone = '+525510101010'
     await setAppConfig(keys.provider, 'ycloud')
     await db.run(`
       INSERT INTO whatsapp_api_phone_numbers (
@@ -481,12 +501,26 @@ test('un número Meta elegido no se envía por YCloud aunque la preferencia glob
         api_send_enabled = 1,
         status = 'CONNECTED'
     `)
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Meta Route Contact', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, customerPhone])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, source_adapter, contact_id, phone, from_phone, to_phone,
+        business_phone, business_phone_number_id, transport, direction,
+        message_type, message_text, message_timestamp, created_at, updated_at
+      ) VALUES (?, 'meta_direct', 'meta_direct', ?, ?, ?, '+526561234567',
+        '+526561234567', 'phone_meta_direct_buttons_test', 'api', 'inbound',
+        'text', 'Respuesta reciente', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [`meta_route_inbound_${randomUUID()}`, contactId, customerPhone, customerPhone])
 
     try {
       const result = await sendWhatsAppApiTextMessage({
-        to: '+5215510101010',
+        to: customerPhone,
         text: 'Este mensaje pertenece a Meta',
         phoneNumberId: 'phone_meta_direct_buttons_test',
+        contactId,
         allowQrFallback: false
       })
 
@@ -495,9 +529,9 @@ test('un número Meta elegido no se envía por YCloud aunque la preferencia glob
       assert.equal(captures[0].text.body, 'Este mensaje pertenece a Meta')
       assert.equal(result.messages?.[0]?.id, 'wamid.meta_direct_1')
     } finally {
-      await db.run('DELETE FROM whatsapp_api_messages WHERE business_phone_number_id = ? OR phone = ?', ['phone_meta_direct_buttons_test', '+5215510101010']).catch(() => undefined)
-      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', ['+5215510101010']).catch(() => undefined)
-      await db.run('DELETE FROM contacts WHERE phone = ?', ['+5215510101010']).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_messages WHERE business_phone_number_id = ? OR phone = ?', ['phone_meta_direct_buttons_test', customerPhone]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [customerPhone]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, customerPhone]).catch(() => undefined)
       await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', ['phone_meta_direct_buttons_test']).catch(() => undefined)
     }
   })

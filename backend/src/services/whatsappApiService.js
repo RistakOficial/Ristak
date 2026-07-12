@@ -3463,20 +3463,29 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
 // siempre a la fila del número elegido en el chat.
 async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
   const config = await loadConfig({ includeSecrets: true })
-  const selectedPhoneNumberId = cleanString(phoneNumberId || config.phoneNumberId)
+  const configuredProvider = cleanString(config.provider).toLowerCase() || PROVIDER_NAME
+  const configuredMetaDirect = configuredProvider === META_DIRECT_PROVIDER_NAME
+    ? await loadMetaDirectConfig()
+    : null
+  const selectedPhoneNumberId = cleanString(
+    phoneNumberId ||
+    (configuredProvider === META_DIRECT_PROVIDER_NAME ? configuredMetaDirect?.phoneNumberId : '') ||
+    config.phoneNumberId
+  )
   const selectedFromPhone = cleanString(fromPhone || config.senderPhone)
   const phoneRow = await findBusinessPhoneRowForSender({
     phoneNumberId: selectedPhoneNumberId,
     fromPhone: selectedFromPhone
   })
   if (!phoneRow?.id) {
-    const provider = cleanString(config.provider).toLowerCase() || PROVIDER_NAME
-    const metaDirect = provider === META_DIRECT_PROVIDER_NAME
-      ? await loadMetaDirectConfig()
-      : null
+    const provider = configuredProvider
+    const metaDirect = provider === META_DIRECT_PROVIDER_NAME ? configuredMetaDirect : null
     return {
       ...config,
       provider,
+      senderPhone: metaDirect?.displayPhoneNumber || selectedFromPhone,
+      phoneNumberId: metaDirect?.phoneNumberId || selectedPhoneNumberId,
+      wabaId: metaDirect?.wabaId || config.wabaId,
       selectedPhoneRow: null,
       officialApiAvailable: provider === META_DIRECT_PROVIDER_NAME
         ? Boolean(metaDirect?.connected)
@@ -3487,7 +3496,7 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
   const provider = cleanString(phoneRow.provider).toLowerCase() || PROVIDER_NAME
   const rowApiEnabled = Number(phoneRow.api_send_enabled ?? 1) === 1
   const metaDirect = provider === META_DIRECT_PROVIDER_NAME
-    ? await loadMetaDirectConfig()
+    ? (configuredMetaDirect || await loadMetaDirectConfig())
     : null
   const officialApiAvailable = rowApiEnabled && (
     provider === META_DIRECT_PROVIDER_NAME
@@ -7509,7 +7518,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const wamid = identifiers.wamid
   const computedMessageId = hashId('waapi_msg', providerMessageId || wamid || `${provider}|${payload.id}|${identity.direction}|${identity.phone}`)
   const existingMessage = await db.get(`
-    SELECT id, status, transport, routing_reason, raw_payload_json,
+    SELECT id, contact_id, status, transport, routing_reason, message_type, raw_payload_json,
            media_url, media_mime_type, media_filename, media_duration_ms,
            error_code, error_message
     FROM whatsapp_api_messages
@@ -7536,6 +7545,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   }
   const incomingAgentMarker = extractConversationalAgentMessageMetadata(normalizedMessage)
   const existingAgentMarker = extractConversationalAgentMessageMetadata(existingMessage?.raw_payload_json)
+  const existingRawPayload = parseJsonValue(existingMessage?.raw_payload_json, {}) || {}
+  const preservedDeliveryReceipt = isPlainObject(existingRawPayload.deliveryReceipt)
+    ? { deliveryReceipt: existingRawPayload.deliveryReceipt }
+    : {}
   const preservedAgentMetadata = formatConversationalAgentMessageMetadata(
     incomingAgentMarker.sentByAgent ? incomingAgentMarker : existingAgentMarker
   )
@@ -7654,7 +7667,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     existingQrFallbackApplied ? null : (errorCode || null),
     existingQrFallbackApplied ? null : (errorMessage || null),
     messageTimestamp,
-    existingQrFallbackApplied ? null : safeJson({ ...normalizedMessage, ...preservedAgentMetadata }),
+    existingQrFallbackApplied ? null : safeJson({ ...normalizedMessage, ...preservedAgentMetadata, ...preservedDeliveryReceipt }),
     safeJson(normalizedMessage.context || normalizedMessage.contextInfo || null),
     safeJson(attribution.referral || null),
     attribution.ctwaClid || null,
@@ -7817,9 +7830,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       incrementUnread: !historyImport
     })
     : null
+  const existingRenderableMessage = Boolean(
+    existingMessage && cleanString(existingMessage.message_type).toLowerCase() !== 'status'
+  )
   const isNewMessage = identity.direction === 'inbound'
     ? Boolean(inboundClaim?.claimed)
-    : !existingMessage
+    : !existingRenderableMessage
 
   if (identity.direction !== 'inbound' || isNewMessage) {
     publishChatMessageEvent({
@@ -7890,7 +7906,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
 // fallback desaparece: nunca queda registro en la conversación. Se guarda como
 // saliente con status 'failed' y el detalle del error para que el operador lo
 // vea en el historial y pueda reintentarlo.
-async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'text', content = {}, externalId, contactId, error } = {}) {
+async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'text', content = {}, externalId, contactId, error, provider = PROVIDER_NAME } = {}) {
   try {
     const errorMessage = cleanString(error?.message || error)
     const errorCode = cleanString(error?.code || error?.statusCode)
@@ -7898,6 +7914,7 @@ async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'tex
       payload: {
         id: externalId || hashId('waapi_send_failed_event', `${fromPhone}|${toPhone}|${type}|${nowIso()}`),
         type: 'whatsapp.message.failed',
+        provider,
         createTime: nowIso()
       },
       message: {
@@ -7906,6 +7923,7 @@ async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'tex
         type,
         ...content,
         status: 'failed',
+        provider,
         transport: 'api',
         createTime: nowIso(),
         error: { code: errorCode || undefined, message: errorMessage || 'Envío por API fallido' }
@@ -9690,7 +9708,179 @@ export async function syncMetaDirectTemplateWebhookChange({ entry = {}, change =
   `, [record.status, record.reason, record.statusUpdateEvent, record.qualityRating, safeJson(value), templateId])
 }
 
-async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' } = {}) {
+async function reconcileMetaDirectMessageStatus({ item } = {}) {
+  const message = item?.message || {}
+  const wamid = cleanString(message.wamid || message.metaMessageId || message.id)
+  if (!wamid) {
+    return { ignored: true, reason: 'meta_status_without_wamid', direction: 'outbound', isNew: false }
+  }
+
+  const incomingStatus = normalizeMessageDeliveryStatus(message.status)
+  const error = Array.isArray(message.errors) ? message.errors[0] : message.error
+  const errorCode = cleanString(error?.code || message.errorCode)
+  const errorMessage = cleanString(error?.message || error?.title || message.errorMessage)
+  const receipt = {
+    ...message,
+    id: wamid,
+    wamid,
+    metaMessageId: wamid,
+    provider: META_DIRECT_PROVIDER_NAME,
+    origin: cleanString(message.origin) || 'statuses',
+    type: 'status'
+  }
+  const existing = await db.get(`
+    SELECT id, contact_id, status, message_type, message_text, transport,
+           source_adapter, business_phone_number_id, message_timestamp,
+           phone, from_phone, to_phone, business_phone, routing_reason,
+           raw_payload_json
+    FROM whatsapp_api_messages
+    WHERE provider = ?
+      AND (provider_message_id = ? OR meta_message_id = ? OR wamid = ?)
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [META_DIRECT_PROVIDER_NAME, wamid, wamid, wamid]).catch(() => null)
+  const status = pickBestMessageDeliveryStatus(existing?.status, incomingStatus)
+  const existingRaw = parseJsonValue(existing?.raw_payload_json, {}) || {}
+  const rawPayload = safeJson({
+    ...existingRaw,
+    deliveryReceipt: receipt
+  })
+  const successfulStatus = ['sent', 'delivered', 'read'].includes(status)
+
+  if (existing?.id) {
+    const renderable = cleanString(existing.message_type).toLowerCase() !== 'status'
+    if (renderable && ['failed', 'error', 'undelivered', 'rejected'].includes(incomingStatus)) {
+      const existingText = cleanString(existing.message_text)
+      return upsertMessage({
+        payload: {
+          id: wamid,
+          provider: META_DIRECT_PROVIDER_NAME,
+          origin: cleanString(message.origin) || 'statuses',
+          field: cleanString(message.origin) || 'statuses'
+        },
+        message: {
+          ...existingRaw,
+          ...message,
+          id: wamid,
+          wamid,
+          metaMessageId: wamid,
+          provider: META_DIRECT_PROVIDER_NAME,
+          origin: cleanString(message.origin) || 'statuses',
+          from: existing.from_phone || message.from,
+          to: existing.to_phone || message.to || message.recipient_id,
+          type: existing.message_type || 'text',
+          ...(existingText ? { text: { body: existingText } } : {}),
+          status: incomingStatus,
+          sendTime: existing.message_timestamp || message.sendTime,
+          phoneNumberId: existing.business_phone_number_id || message.phoneNumberId,
+          transport: existing.transport || 'api',
+          deliveryReceipt: receipt
+        },
+        direction: 'outbound',
+        businessPhoneHints: [existing.business_phone, existing.from_phone].filter(Boolean),
+        transport: existing.transport || 'api',
+        contactId: existing.contact_id || null
+      })
+    }
+
+    await db.run(`
+      UPDATE whatsapp_api_messages
+      SET status = COALESCE(NULLIF(?, ''), status),
+          error_code = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(NULLIF(?, ''), error_code) END,
+          error_message = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(NULLIF(?, ''), error_message) END,
+          raw_payload_json = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [status, successfulStatus ? 1 : 0, errorCode, successfulStatus ? 1 : 0, errorMessage, rawPayload, existing.id])
+
+    if (renderable && existing.contact_id) {
+      publishChatMessageEvent({
+        contactId: existing.contact_id,
+        messageId: existing.id,
+        channel: 'whatsapp',
+        provider: META_DIRECT_PROVIDER_NAME,
+        transport: existing.transport || 'api',
+        sourceAdapter: existing.source_adapter || META_DIRECT_PROVIDER_NAME,
+        direction: 'outbound',
+        messageType: existing.message_type || 'text',
+        messageTimestamp: existing.message_timestamp,
+        isNew: false,
+        historyImport: false
+      })
+    }
+
+    return {
+      messageId: existing.id,
+      contactId: existing.contact_id || null,
+      direction: 'outbound',
+      provider: META_DIRECT_PROVIDER_NAME,
+      status,
+      messageText: existing.message_text || '',
+      messageType: existing.message_type || 'status',
+      messageTimestamp: existing.message_timestamp,
+      statusOnly: true,
+      isNew: false
+    }
+  }
+
+  // El ACK puede ganarle por milisegundos al INSERT del envío. Guardamos un
+  // recibo no renderizable con el WAMID; cuando termine la llamada de envío,
+  // upsertMessage lo convierte en el mensaje real sin crear una segunda fila.
+  const messageId = hashId('waapi_msg', wamid)
+  const customerPhone = normalizePhoneForStorage(message.to || message.recipient_id) || cleanString(message.to || message.recipient_id)
+  const businessPhone = normalizePhoneForStorage(message.from) || cleanString(message.from)
+  const businessPhoneNumberId = cleanString(message.phoneNumberId) || await findBusinessPhoneNumberId(businessPhone)
+  const messageTimestamp = toDateTime(message.sendTime || message.timestamp) || nowIso()
+
+  await db.run(`
+    INSERT INTO whatsapp_api_messages (
+      id, provider, source_adapter, origin, provider_message_id, meta_message_id,
+      wamid, waba_id, business_phone_number_id, phone, from_phone, to_phone,
+      business_phone, transport, direction, message_type, status, error_code,
+      error_message, message_timestamp, raw_payload_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'api', 'outbound', 'status', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
+      error_code = COALESCE(NULLIF(excluded.error_code, ''), whatsapp_api_messages.error_code),
+      error_message = COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message),
+      raw_payload_json = excluded.raw_payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    messageId,
+    META_DIRECT_PROVIDER_NAME,
+    META_DIRECT_PROVIDER_NAME,
+    cleanString(message.origin) || 'statuses',
+    wamid,
+    wamid,
+    wamid,
+    cleanString(message.wabaId) || null,
+    businessPhoneNumberId || null,
+    customerPhone || null,
+    businessPhone || null,
+    customerPhone || null,
+    businessPhone || null,
+    status || null,
+    errorCode || null,
+    errorMessage || null,
+    messageTimestamp,
+    rawPayload
+  ])
+
+  return {
+    messageId,
+    contactId: null,
+    direction: 'outbound',
+    provider: META_DIRECT_PROVIDER_NAME,
+    status,
+    messageText: '',
+    messageType: 'status',
+    messageTimestamp,
+    statusOnly: true,
+    isNew: false
+  }
+}
+
+export async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' } = {}) {
   const config = await loadMetaDirectConfig()
   const businessPhoneHints = await getKnownBusinessPhoneHints({
     senderPhone: config.displayPhoneNumber,
@@ -9701,21 +9891,23 @@ async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' }
   const results = []
 
   for (const item of normalized) {
-    const result = await upsertMessage({
-      payload: {
-        ...payload,
-        id: payload.id || eventRowId,
-        provider: META_DIRECT_PROVIDER_NAME,
-        origin: item.message.origin,
-        field: item.message.origin,
-        relayEventId: eventRowId
-      },
-      message: item.message,
-      direction: item.direction,
-      businessPhoneHints,
-      transport: 'api',
-      historyImport: item.historyImport === true
-    })
+    const result = item.kind === 'status'
+      ? await reconcileMetaDirectMessageStatus({ item })
+      : await upsertMessage({
+        payload: {
+          ...payload,
+          id: payload.id || eventRowId,
+          provider: META_DIRECT_PROVIDER_NAME,
+          origin: item.message.origin,
+          field: item.message.origin,
+          relayEventId: eventRowId
+        },
+        message: item.message,
+        direction: item.direction,
+        businessPhoneHints,
+        transport: 'api',
+        historyImport: item.historyImport === true
+      })
     results.push(result)
   }
 
@@ -9874,7 +10066,7 @@ async function sendTextViaMetaDirect({ to, text, from, externalId, replyContext 
   if (!toPhone) throw new Error('Falta el número destino')
   if (!body) throw new Error('Falta el texto del mensaje')
 
-  return metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
     operational: true,
@@ -9888,6 +10080,22 @@ async function sendTextViaMetaDirect({ to, text, from, externalId, replyContext 
       ...(externalId ? { biz_opaque_callback_data: externalId } : {})
     }
   })
+  const message = Array.isArray(response?.messages) ? response.messages[0] : null
+  const contact = Array.isArray(response?.contacts) ? response.contacts[0] : null
+  const messageId = cleanString(response?.id || response?.messageId || response?.message_id || message?.id)
+
+  return {
+    ...response,
+    id: messageId || cleanString(externalId),
+    wamid: cleanString(response?.wamid || response?.waMessageId || message?.id) || messageId || null,
+    status: cleanString(response?.status || message?.message_status) || 'sent',
+    from: normalizePhoneForStorage(config.displayPhoneNumber || from) || cleanString(config.displayPhoneNumber || from),
+    to: normalizePhoneForStorage(contact?.input || toPhone) || cleanString(contact?.input || toPhone),
+    type: 'text',
+    text: { body },
+    provider: META_DIRECT_PROVIDER_NAME,
+    transport: 'api'
+  }
 }
 
 async function sendAudioViaMetaDirect({ to, audio, from, externalId } = {}) {
@@ -11782,7 +11990,116 @@ export async function sendWhatsAppApiTextMessage({
   }
 
   if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
-    return sendTextViaMetaDirect({ to: toPhone, text: body, from, externalId, replyContext })
+    if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp API')
+    const metaPhoneNumberId = cleanString(phoneNumberId || config.phoneNumberId)
+
+    const fallbackDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId: metaPhoneNumberId,
+      toPhone,
+      contactId,
+      checkReplyWindow: true
+    })
+    if (allowQrFallback && fallbackDecision.shouldFallback) {
+      return sendTextViaQrFallback({
+        phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || metaPhoneNumberId,
+        fromPhone,
+        toPhone,
+        body,
+        externalId,
+        contactId,
+        replyToMessageId,
+        replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
+        fallbackReason: fallbackDecision.reason,
+        skipQrSendProtection,
+        agentId
+      })
+    }
+    throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
+
+    rememberOfficialApiOutboundForQrEcho({
+      phoneNumberId: metaPhoneNumberId,
+      toPhone,
+      type: 'text',
+      text: body
+    })
+
+    let response
+    try {
+      response = await sendTextViaMetaDirect({
+        to: toPhone,
+        text: body,
+        from: fromPhone,
+        externalId,
+        replyContext
+      })
+    } catch (error) {
+      const retryDecision = await getOfficialApiFallbackDecision({
+        config,
+        fromPhone,
+        phoneNumberId: metaPhoneNumberId,
+        error
+      })
+      if (allowQrFallback && retryDecision.shouldFallback) {
+        logger.warn(`[WhatsApp API] Meta directo falló; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+        return sendTextViaQrFallback({
+          phoneNumberId: retryDecision.fallbackPhoneRow?.id || metaPhoneNumberId,
+          fromPhone,
+          toPhone,
+          body,
+          externalId,
+          contactId,
+          replyToMessageId,
+          replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
+          fallbackReason: retryDecision.reason,
+          originalError: error,
+          skipQrSendProtection,
+          agentId
+        })
+      }
+      await persistFailedOutboundApiMessage({
+        fromPhone,
+        toPhone,
+        type: 'text',
+        content: { text: { body } },
+        externalId,
+        contactId,
+        error,
+        provider: META_DIRECT_PROVIDER_NAME
+      })
+      throw error
+    }
+
+    const persistedMessage = await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waapi_meta_send_event', `${fromPhone}|${toPhone}|${body}`),
+        type: 'whatsapp.message.updated',
+        provider: META_DIRECT_PROVIDER_NAME,
+        ...(externalId ? { externalId } : {}),
+        ...agentMetadata,
+        createTime: nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        ...agentMetadata,
+        provider: META_DIRECT_PROVIDER_NAME,
+        origin: response.origin || 'manual_text_send',
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: 'text',
+        text: response.text || { body },
+        ...(replyContext ? { context: replyContext } : {}),
+        transport: 'api',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'api',
+      contactId
+    })
+
+    return { ...response, localMessageId: persistedMessage?.messageId || null }
   }
 
   if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {

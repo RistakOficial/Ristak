@@ -2533,6 +2533,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const text = cleanLocationMessageText(cleanAttachmentMessageText(removeRistakAdIdMarkersFromMessageText(rawText), attachment), location)
   const messageType = String(data.message_type || data.messageType || data.type || '').trim()
   const normalizedMessageType = messageType.toLowerCase()
+  if (normalizedMessageType === 'status') return null
   const subject = String(data.subject || '').trim()
   const direction = normalizeWhatsAppBusinessDirection(data.direction || data.message_direction || data.from_type)
   const date = pickMessageTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date
@@ -3981,7 +3982,7 @@ export const DesktopChat: React.FC = () => {
       if (whatsappComposerPhones.length === 0) return [{ ...option, icon: renderComposerChannelIcon(option.value), disabled: whatsappDisabled }]
       return whatsappComposerPhones.map((phone) => ({
         value: `whatsapp:${phone.id}`,
-        label: `${option.label} · ${getBusinessPhoneLabel(phone)}`,
+        label: `${option.label} · ${getBusinessPhoneDisplay(phone)}`,
         icon: renderComposerChannelIcon(option.value),
         disabled: whatsappDisabled || !getBusinessPhoneValue(phone)
       }))

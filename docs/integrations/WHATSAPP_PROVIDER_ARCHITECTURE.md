@@ -194,6 +194,30 @@ Meta entrega el envelope `object=whatsapp_business_account` con
   desde la app WhatsApp Business durante Coexistence.
 - `value.history[]`: lotes históricos aceptados durante onboarding.
 
+`value.statuses[]` es un recibo de entrega, no un mensaje visible. Debe buscar la
+fila saliente por `wamid`/`meta_message_id`, actualizar únicamente estado y error,
+y publicar un refresh con `isNew=false`. Nunca debe pasar por el alta normal de
+mensajes ni crear una burbuja vacía. Si el ACK llega antes de que termine el POST
+a Graph, se permite guardar temporalmente una fila `message_type=status` sin
+contacto; esa fila es invisible para conversación, bandeja y conteos, y el
+INSERT del envío la convierte en el mensaje real usando el mismo `wamid`.
+
+Todo envío de texto aceptado por Graph debe persistirse de inmediato con el texto
+visible, `provider=meta_direct`, `source_adapter=meta_direct`,
+`meta_message_id`, `wamid`, `contact_id` y `localMessageId`. Los ACK posteriores
+se fusionan con esa misma fila. El fallback QR aplica con las mismas reglas de
+seguridad que YCloud: ventana cerrada, API no disponible o rechazo 4xx; no se
+duplica ante timeout, error de red o 5xx ambiguo.
+
+Los mensajes Click to WhatsApp llegan en `value.messages[].referral`. Meta
+entrega el contrato plano `source_id`, `source_url`, `source_type`, `headline`,
+`body`, `media_type`, `image_url`, `video_url` y `thumbnail_url`. El adaptador
+debe conservar ese objeto sin renombrarlo como evento YCloud; la capa neutral
+extrae los mismos campos `detected_*`, crea el touch en
+`whatsapp_api_attribution`, actualiza la atribución del contacto y expone el
+preview por mensaje. Si la URL visual es temporal de Meta, se re-hospeda antes
+de guardarla.
+
 No se deben renombrar estos campos como eventos YCloud. Ambos pipelines terminan
 en el mismo modelo interno, pero conservan `provider`, `source_adapter`,
 `origin`, payload crudo e IDs propios.
@@ -371,6 +395,8 @@ Antes de declarar lista la conexión directa:
    incluidos BSUID, parent BSUID y username opcionales.
 5. Confirmar dedupe cruzado por `wamid` cuando el mismo mensaje aparezca como
    respuesta Graph, status, echo de Coexistence o captura QR.
+   El status debe actualizar una fila existente o quedar como recibo invisible
+   hasta que llegue el INSERT del envío; nunca debe aparecer como `Mensaje`.
 6. Probar texto, plantilla, botones, reacción, imagen, video, documento, audio y
    nota de voz con estados `sent`, `delivered`, `read` y `failed`.
 7. Probar un lote `history` real y demostrar que no dispara efectos vivos.
@@ -384,6 +410,10 @@ Antes de declarar lista la conexión directa:
     plantilla de texto por Meta directo.
 12. Probar una plantilla con imagen/documento/video usando un `header_handle`
     real y confirmar que `header_media_url` no se manda a Graph como sustituto.
+13. Probar un mensaje CTWA real por Meta directo y verificar `source_id`,
+    headline, body, preview visual y un solo touch por mensaje.
+14. Confirmar que cada opción del selector de envío muestra el teléfono exacto,
+    aunque dos números compartan nombre verificado o etiqueta.
 
 ## Diagnóstico de soporte
 
