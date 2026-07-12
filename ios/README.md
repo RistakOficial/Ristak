@@ -106,7 +106,9 @@ solo en capa flotante; copy en español.
   swipe nativo por fila: izquierda **Más → Archivar/Restaurar** y derecha
   **No leído → Fijar/Desfijar**, con fijados arriba y estado local persistente,
   cache en disco para arranque en frío, progreso real por etapas durante la
-  primera conexión sin snapshot, SSE + polling 20s, badge de no leídos.
+  primera conexión sin snapshot; si los contactos ya están listos pero la
+  bandeja sufre timeout, abre en modo degradado y la reintenta silenciosamente
+  en vez de bloquear toda la app en 78 %. SSE + polling 20s, badge de no leídos.
   Conversación: todos los tipos de mensaje (texto, foto, video, nota de voz,
   documento, ubicación, email desplegable, comentarios FB/IG, sistema), texto
   con formato WhatsApp en globos y previews (`*negrita*`, `_italica_`,
@@ -156,7 +158,8 @@ solo en capa flotante; copy en español.
 - **Rendimiento cotidiano**: directorio cache-first para nuevo chat, citas y
   pagos, con la foto persistida de WhatsApp/Meta y conservación del avatar ya
   hidratado en la bandeja para no degradar citas/pagos a iniciales; hidratación
-  puntual/coalescida de un chat fuera de la página al llegar
+  externa de avatares fuera del request de listas, en cola backend deduplicada;
+  hidratación puntual/coalescida de un chat fuera de la página al llegar
   SSE; historial primario visible antes de cargar datos secundarios; adjuntos
   por multipart directo a storage/CDN con fallback legacy fuera del hilo visual.
 - **Calidad operativa**: `mxSignpost` agregado por `MetricKit`, `OSLog`, ring local

@@ -33,7 +33,8 @@ struct ChatsService: Sendable {
                 "businessPhoneNumberId": businessPhoneNumberId,
                 "businessPhone": businessPhone,
                 "warmProfilePictures": warmProfilePictures ? "true" : "false",
-            ]
+            ],
+            timeout: APIClient.dashboardTimeout
         )
     }
 

@@ -7474,7 +7474,9 @@ export const PhoneChat: React.FC = () => {
       const params: Record<string, string> = {
         ...(trimmed ? { q: trimmed } : {}),
         ...phoneFilterParams,
-        warmProfilePictures: 'true',
+        // Una lista nunca debe esperar proveedores externos. El backend nuevo
+        // usa esta señal solo para encolar avatares faltantes en segundo plano.
+        warmProfilePictures: pageOffset === 0 && !showedCachedChats ? 'true' : 'false',
         limit: String(CHAT_LIST_PAGE_SIZE),
         ...(pageOffset > 0 ? { offset: String(pageOffset) } : {})
       }

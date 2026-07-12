@@ -20,12 +20,25 @@ test('el progreso inicial avanza por etapas reales y termina en 100%', () => {
   }
 });
 
-test('la pantalla solo marca completo después de guardar chats y la copia local', () => {
-  const inboxWrite = appSource.indexOf('writeCacheNow(NATIVE_INBOX_CACHE_KEY');
-  const completionWrite = appSource.indexOf('writeCacheNow(MOBILE_CACHE_KEYS.firstSyncCompleted');
-  const completeStage = appSource.indexOf("stage: 'complete'", completionWrite);
+test('la pantalla guarda una copia útil antes de salir, incluso si la bandeja falla', () => {
+  const contactsWrite = appSource.indexOf('writeCacheNow(MOBILE_CACHE_KEYS.firstSyncContacts');
+  const degradedBranch = appSource.indexOf('if (!loadedChats)');
+  const degradedCompletionWrite = appSource.indexOf(
+    'writeCacheNow(MOBILE_CACHE_KEYS.firstSyncCompleted',
+    degradedBranch,
+  );
+  const inboxWrite = appSource.indexOf('writeCacheNow(NATIVE_INBOX_CACHE_KEY', degradedCompletionWrite);
+  const successCompletionWrite = appSource.indexOf(
+    'writeCacheNow(MOBILE_CACHE_KEYS.firstSyncCompleted',
+    inboxWrite,
+  );
+  const completeStage = appSource.indexOf("stage: 'complete'", successCompletionWrite);
 
+  assert.ok(contactsWrite >= 0);
+  assert.ok(degradedBranch > contactsWrite);
+  assert.ok(degradedCompletionWrite > degradedBranch);
   assert.ok(inboxWrite >= 0);
-  assert.ok(completionWrite > inboxWrite);
-  assert.ok(completeStage > completionWrite);
+  assert.ok(successCompletionWrite > inboxWrite);
+  assert.ok(completeStage > successCompletionWrite);
+  assert.match(appSource, /Las conversaciones seguirán cargando en segundo plano/);
 });

@@ -828,7 +828,10 @@ const MANUAL_UNREAD_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.manualUnreadIds.v
 const CHAT_ROW_SWIPE_ACTION_WIDTH = 184;
 const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000;
 const CHAT_REALTIME_REFRESH_DEBOUNCE_MS = 80;
-const CHAT_INBOX_REQUEST_TIMEOUT_MS = 8000;
+// El backend protege sus consultas con 15 s. El cliente debe darle margen para
+// devolver un error real en redes móviles lentas, no abortar una respuesta sana
+// antes que PostgreSQL en cuentas grandes.
+const CHAT_INBOX_REQUEST_TIMEOUT_MS = 20000;
 // Última bandeja cargada por cliente API (WeakMap: una sesión nueva crea otro
 // cliente y no hereda la bandeja de la cuenta anterior). Permite pintar la
 // lista al instante cuando ChatScreen se remonta al cambiar de sección.
@@ -2952,7 +2955,25 @@ function ChatScreen({
           : 'El directorio está listo. Buscando conversaciones.',
       });
       const loadedChats = await loadChats(false);
-      if (!loadedChats) throw new Error('No se pudieron cargar las conversaciones.');
+      if (!loadedChats) {
+        // El directorio ya quedó guardado. Un timeout de la bandeja no debe
+        // bloquear todo el producto: terminamos el bootstrap degradado y el
+        // efecto normal de inbox reintenta en segundo plano al cerrar el overlay.
+        setFirstSyncProgress({
+          stage: 'localCopy',
+          detail: 'Tus contactos ya están disponibles. Las conversaciones seguirán cargando en segundo plano.',
+        });
+        await writeCacheNow(MOBILE_CACHE_KEYS.firstSyncCompleted, true);
+        if (!chatMountedRef.current) return;
+        setFirstSyncProgress({
+          stage: 'complete',
+          detail: 'Ristak está listo. Reintentaremos la bandeja automáticamente.',
+        });
+        setTimeout(() => {
+          if (chatMountedRef.current) setFirstSyncProgress(null);
+        }, 450);
+        return;
+      }
       if (!chatMountedRef.current) return;
 
       setFirstSyncProgress({

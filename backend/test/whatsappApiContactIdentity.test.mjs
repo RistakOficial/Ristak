@@ -13,6 +13,7 @@ import {
   normalizeWhatsAppProfileName
 } from '../src/utils/whatsappContactProfile.js'
 import {
+  YCLOUD_HISTORY_BACKFILL_VERSION,
   captureQrChatMessage,
   getWhatsAppApiConfigKeys,
   getWhatsAppApiRequiredWebhookEvents,
@@ -2919,6 +2920,35 @@ test('backfill YCloud reanuda desde la siguiente pagina sin repetir el historial
         [`ycloud_batch_${id}_%`]
       )
       assert.equal(Number(count.count), 101)
+
+      // YCloud rechaza page=101. Una cuenta con más de 10,000 salientes debe
+      // cerrar el backfill en el límite documentado, no reintentar para siempre.
+      requestedPages.length = 0
+      await setAppConfig(repairConfigKey, '')
+      await setAppConfig(stateConfigKey, JSON.stringify({
+        version: YCLOUD_HISTORY_BACKFILL_VERSION,
+        page: 100,
+        webhookUpdated: true,
+        total: 14892
+      }))
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        const path = parsed.pathname.replace(/^\/v2/, '')
+        const method = String(options.method || 'GET').toUpperCase()
+        if (path === '/whatsapp/messages' && method === 'GET') {
+          requestedPages.push(Number(parsed.searchParams.get('page')))
+          return ycloudJsonResponse({ total: 14892, items: records.slice(0, 100) })
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      const capped = await runYCloudHistoryBackfillBatch({ maxPages: 3 })
+      assert.equal(capped.completed, true)
+      assert.equal(capped.truncated, true)
+      assert.equal(capped.providerPageLimitReached, true)
+      assert.deepEqual(requestedPages, [100])
+      assert.equal(await getAppConfig(repairConfigKey), YCLOUD_HISTORY_BACKFILL_VERSION)
+      assert.equal(await getAppConfig(stateConfigKey), '')
     })
   } finally {
     setYCloudFetchForTest(null)

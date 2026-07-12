@@ -387,6 +387,7 @@ const CONFIG_KEYS = {
 
 const HISTORY_DIRECTION_REPAIR_CONFIG_KEY = 'whatsapp_api_history_direction_repair_version'
 const YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY = 'whatsapp_api_ycloud_history_backfill_state'
+const YCLOUD_MESSAGES_MAX_PAGE = 100
 export const YCLOUD_HISTORY_BACKFILL_VERSION = '2026-07-11-ycloud-smb-echoes-backfill'
 const HISTORY_DIRECTION_REPAIR_VERSION = YCLOUD_HISTORY_BACKFILL_VERSION
 
@@ -8705,6 +8706,23 @@ async function syncYCloudMessagesPage(apiKey, {
 } = {}) {
   const limit = 100
   const cleanPage = Math.max(1, Number(page) || 1)
+  if (cleanPage > YCLOUD_MESSAGES_MAX_PAGE) {
+    return {
+      records: 0,
+      messages: 0,
+      created: 0,
+      updated: 0,
+      attributed: 0,
+      skipped: 0,
+      failed: 0,
+      page: cleanPage,
+      total: null,
+      completed: true,
+      truncated: true,
+      providerPageLimitReached: true,
+      nextPage: null
+    }
+  }
   const data = await ycloudRequest('/whatsapp/messages', {
     apiKey,
     query: {
@@ -8730,7 +8748,9 @@ async function syncYCloudMessagesPage(apiKey, {
     total,
     records: items.length,
     completed,
-    nextPage: completed ? null : cleanPage + 1
+    truncated: !completed && cleanPage >= YCLOUD_MESSAGES_MAX_PAGE,
+    providerPageLimitReached: !completed && cleanPage >= YCLOUD_MESSAGES_MAX_PAGE,
+    nextPage: completed || cleanPage >= YCLOUD_MESSAGES_MAX_PAGE ? null : cleanPage + 1
   }
 }
 
@@ -8783,7 +8803,9 @@ export async function runYCloudHistoryBackfillBatch({ maxPages = 3 } = {}) {
     failed: 0,
     pageStart: page,
     pageEnd: page,
-    total
+    total,
+    truncated: false,
+    providerPageLimitReached: false
   }
 
   if (!webhookUpdated) {
@@ -8816,6 +8838,19 @@ export async function runYCloudHistoryBackfillBatch({ maxPages = 3 } = {}) {
     summary.failed += result.failed
     summary.pageEnd = result.page
     summary.total = total
+
+    if (result.providerPageLimitReached) {
+      summary.completed = true
+      summary.truncated = true
+      summary.providerPageLimitReached = true
+      await setAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY, HISTORY_DIRECTION_REPAIR_VERSION)
+      await setAppConfig(YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY, '')
+      logger.warn(
+        `WhatsApp API cerró el backfill YCloud en la página ${result.page}: ` +
+        'el proveedor no permite consultar páginas mayores a 100. Los eventos nuevos continúan por webhook.'
+      )
+      return summary
+    }
 
     if (result.completed) {
       summary.completed = true

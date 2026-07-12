@@ -993,8 +993,12 @@ principal muestra una barra de bootstrap por etapas reales: sesion conectada,
 configuracion/catalogos, directorio inicial de contactos, primer lote de
 conversaciones y escritura de la copia local. El porcentaje cambia unicamente
 cuando termina la operacion correspondiente, muestra cantidades obtenidas y se
-queda en la etapa fallida con `Reintentar`; nunca avanza por un timer. Tras
-completar —incluso con cero chats— la marca evita repetir el overlay mientras
+queda en la etapa fallida con `Reintentar` cuando todavía no existe información
+útil; nunca avanza por un timer. Si el directorio ya se guardó y solo falla la
+primera página de conversaciones, el bootstrap termina de forma degradada: abre
+la app con esos contactos y reintenta la bandeja silenciosamente, en vez de
+encerrar al negocio en 78 %. Tras completar —incluso con cero chats o con ese
+fallback parcial— la marca evita repetir el overlay mientras
 exista esa cache. Logout o cambio de cuenta elimina snapshots y marca, asi que la
 nueva descarga vuelve a ser visible. Este flujo no contradice la paginacion: no
 descarga todos los mensajes de todos los hilos al dispositivo.
@@ -1058,7 +1062,10 @@ hecho de incluir la fila; cada actividad se compara con el estado/fecha del
 servidor y la señal de hilo visible gana al deduplicar. Los
 refresh vivos de bandeja mandan
 `warmProfilePictures=false` para no consultar proveedores externos en cada
-poll/SSE; el calentamiento de fotos se reserva para arranque frio y paginacion.
+poll/SSE. Incluso cuando un arranque frío solicita calentamiento, la lista
+responde con fotos cacheadas y el backend encola las faltantes en segundo plano,
+en tandas deduplicadas; ninguna llamada a YCloud/QR forma parte del tiempo de
+respuesta de chats, contactos o búsqueda.
 La codificacion de fotos, videos, audios y documentos corre fuera del hilo
 visual, el composer bloquea enviar mientras prepara y el tray conserva el limite
 de 4 adjuntos con tope acumulado de 40 MB binarios. La app sube el multipart
@@ -1152,8 +1159,10 @@ entregan foto, Ristak conserva el avatar anterior o cae a iniciales. Si un
 refresh QR falla y la foto guardada es una URL temporal de WhatsApp
 (`pps.whatsapp.net`), el backend la limpia para que no quede una imagen caducada
 en la base. Las listas de contactos y chats pueden pedir
-`warmProfilePictures=true` para hidratar y guardar avatares mientras cargan, con
-limites por pagina para no bloquear la UI. Para corregir contactos ya existentes
+`warmProfilePictures=true` para encolar la hidratación y guardado de avatares,
+pero devuelven primero la página con el mejor avatar ya cacheado. La cola está
+acotada, deduplica contacto y procesa tandas de ocho fuera del request; el avatar
+nuevo aparece en refrescos posteriores sin provocar timeouts. Para corregir contactos ya existentes
 sin esperar a que vuelvan a escribir, el endpoint protegido
 `POST /api/whatsapp-api/contacts/profile-pictures/backfill` ejecuta un backfill
 manual sobre el CRM completo por default (`scope: all_crm`): cualquier contacto
@@ -1229,7 +1238,11 @@ El cron solo corre con YCloud conectado, guarda la siguiente pagina en
 reinicios sin volver a recorrer el historial completo. Cada lote esta acotado
 para no bloquear el arranque ni el drenado de Render; solo al llegar a la ultima
 pagina marca la version como terminada. Si YCloud o el webhook fallan, conserva
-el punto y reintenta en el siguiente tick mientras la integracion siga activa. WhatsApp
+el punto y reintenta en el siguiente tick mientras la integracion siga activa.
+YCloud limita `/whatsapp/messages` a 100 páginas; si el total supera 10,000,
+Ristak cierra ese backfill como truncado al procesar la página 100 y conserva los
+eventos nuevos por webhook, en vez de solicitar indefinidamente la página 101.
+WhatsApp
 Cloud API directo no ofrece un
 endpoint Graph para descargar retroactivamente toda la cuenta: en ese proveedor
 la fuente historica disponible son los webhooks `history` del onboarding,

@@ -218,8 +218,12 @@ progreso inicial visible y determinista. La barra solo avanza al completar
 trabajo real: cuenta conectada, configuracion/catalogos, directorio inicial de
 contactos, primera pagina de conversaciones y escritura de la copia local. Cada
 etapa muestra su nombre y cantidades obtenidas cuando aplican; no usa un timer
-para inventar porcentaje. Un fallo conserva la etapa exacta y ofrece
-`Reintentar`. Al completar se guarda `mobile:first-sync:completed` dentro del
+para inventar porcentaje. Si configuración o directorio fallan sin ninguna copia
+útil, conserva la etapa exacta y ofrece `Reintentar`. Si el directorio ya quedó
+guardado pero la primera página de conversaciones sufre timeout, no secuestra la
+app en 78 %: termina como arranque degradado, abre el producto con los contactos
+disponibles y reintenta la bandeja por SSE/polling en segundo plano. Al completar
+o entrar en ese modo degradado se guarda `mobile:first-sync:completed` dentro del
 namespace de esa cuenta, por lo que los siguientes arranques pintan cache y
 revalidan en silencio. Una cuenta con cero chats tambien puede completar. Logout
 o cambio de cuenta limpia la marca junto con sus snapshots.
@@ -227,6 +231,9 @@ o cambio de cuenta limpia la marca junto con sus snapshots.
 Este bootstrap prepara el directorio y el indice reciente de conversaciones;
 no descarga todos los mensajes de todos los hilos. El historial detallado se
 pagina al abrir cada chat, como exige el limite de almacenamiento y privacidad.
+Las listas nunca esperan consultas externas de fotos: devuelven inmediatamente
+el avatar ya cacheado y el backend encola faltantes en tandas pequeñas para un
+refresh posterior.
 
 Regla de dueño unico del teclado: en cada ruta visible solo puede haber UN
 keyboard avoider habilitado. Dos `KeyboardAvoidingView` apilados (p. ej. el

@@ -2199,6 +2199,103 @@ const warmWhatsAppProfilePicturesForRows = async (rows = [], {
   return hydratedRows
 }
 
+// Consultar fotos en YCloud/QR implica red externa y, para API, puede requerir
+// varios lookups secuenciales. Nunca debe formar parte del tiempo de respuesta
+// de una lista de chats/contactos: devolvemos la foto ya cacheada y calentamos
+// las faltantes por lotes para que aparezcan en refresh posteriores.
+const PROFILE_PICTURE_WARMUP_BATCH_SIZE = 8
+const PROFILE_PICTURE_WARMUP_QUEUE_LIMIT = 400
+const pendingProfilePictureWarmups = new Map()
+const activeProfilePictureWarmups = new Set()
+let profilePictureWarmupScheduled = false
+let profilePictureWarmupRunning = false
+let profilePictureWarmupRunner = warmWhatsAppProfilePicturesForRows
+
+const profilePictureWarmupKey = (row = {}) => cleanString(row?.id) || cleanString(row?.phone)
+
+const scheduleProfilePictureWarmupDrain = () => {
+  if (profilePictureWarmupScheduled || profilePictureWarmupRunning || pendingProfilePictureWarmups.size === 0) return
+  profilePictureWarmupScheduled = true
+  const run = () => {
+    profilePictureWarmupScheduled = false
+    void drainProfilePictureWarmups()
+  }
+  if (typeof setImmediate === 'function') setImmediate(run)
+  else setTimeout(run, 0)
+}
+
+async function drainProfilePictureWarmups() {
+  if (profilePictureWarmupRunning) return
+  profilePictureWarmupRunning = true
+
+  try {
+    while (pendingProfilePictureWarmups.size > 0) {
+      const batch = []
+      for (const [key, row] of pendingProfilePictureWarmups) {
+        pendingProfilePictureWarmups.delete(key)
+        activeProfilePictureWarmups.add(key)
+        batch.push(row)
+        if (batch.length >= PROFILE_PICTURE_WARMUP_BATCH_SIZE) break
+      }
+
+      try {
+        await profilePictureWarmupRunner(batch, {
+          apiLimit: batch.length,
+          qrLimit: batch.length
+        })
+      } finally {
+        batch.forEach(row => activeProfilePictureWarmups.delete(profilePictureWarmupKey(row)))
+      }
+      await new Promise(resolve => {
+        if (typeof setImmediate === 'function') setImmediate(resolve)
+        else setTimeout(resolve, 0)
+      })
+    }
+  } catch (error) {
+    logger.warn(`No se pudo completar el calentamiento de avatares en segundo plano: ${error.message}`)
+  } finally {
+    profilePictureWarmupRunning = false
+    scheduleProfilePictureWarmupDrain()
+  }
+}
+
+const queueWhatsAppProfilePictureWarmup = (rows = [], { limit = 60 } = {}) => {
+  const safeLimit = Math.max(0, Number(limit) || 0)
+  if (!Array.isArray(rows) || rows.length === 0 || safeLimit === 0) return 0
+
+  let queued = 0
+  for (const row of rows) {
+    const key = profilePictureWarmupKey(row)
+    if (!key || pendingProfilePictureWarmups.has(key) || activeProfilePictureWarmups.has(key)) continue
+    if (pendingProfilePictureWarmups.size >= PROFILE_PICTURE_WARMUP_QUEUE_LIMIT) break
+    pendingProfilePictureWarmups.set(key, row)
+    queued += 1
+    if (queued >= safeLimit) break
+  }
+
+  scheduleProfilePictureWarmupDrain()
+  return queued
+}
+
+export const setProfilePictureWarmupRunnerForTest = (runner = null) => {
+  profilePictureWarmupRunner = typeof runner === 'function'
+    ? runner
+    : warmWhatsAppProfilePicturesForRows
+}
+
+export const waitForProfilePictureWarmupsForTest = async ({ maxTurns = 100 } = {}) => {
+  for (let turn = 0; turn < maxTurns; turn += 1) {
+    if (
+      !profilePictureWarmupScheduled &&
+      !profilePictureWarmupRunning &&
+      pendingProfilePictureWarmups.size === 0 &&
+      activeProfilePictureWarmups.size === 0
+    ) return true
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  return false
+}
+
 const mapMetaAttributionRow = (row, matchType) => {
   if (!row) return null
 
@@ -3030,13 +3127,10 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
       ...whatsappMessageParams
     ])
 
-    const responseRows = shouldWarmProfilePictures
-      ? await warmWhatsAppProfilePicturesForRows(rows, {
-          apiLimit: 60,
-          qrLimit: 24
-        })
-      : rows
-    const responseRowsWithPhones = await attachContactPhoneNumbers(responseRows)
+    if (shouldWarmProfilePictures) {
+      queueWhatsAppProfilePictureWarmup(rows, { limit: Math.min(limitNumber, 60) })
+    }
+    const responseRowsWithPhones = await attachContactPhoneNumbers(rows)
     const unreadCounts = await getChatUnreadCountsForUser({
       userId: getRequestUserId(req),
       contactIds: responseRowsWithPhones.map(row => row.id)
@@ -3292,13 +3386,10 @@ ${CONTACT_META_PROFILE_SELECT},
 
     const contactsParams = [...mainWhere.params, ...(searchRank?.params ?? []), limitNumber, offset]
     const contacts = await db.all(contactsQuery, contactsParams)
-    const hydratedContacts = shouldWarmProfilePictures
-      ? await warmWhatsAppProfilePicturesForRows(contacts, {
-          apiLimit: Math.min(limitNumber, 80),
-          qrLimit: Math.min(limitNumber, 24)
-        })
-      : contacts
-    const contactsWithPhones = await attachContactPhoneNumbers(hydratedContacts)
+    if (shouldWarmProfilePictures) {
+      queueWhatsAppProfilePictureWarmup(contacts, { limit: Math.min(limitNumber, 80) })
+    }
+    const contactsWithPhones = await attachContactPhoneNumbers(contacts)
 
     const firstSessionsByContact = new Map()
     const firstSessionsByVisitor = new Map()
@@ -4189,11 +4280,8 @@ ${CONTACT_META_PROFILE_SELECT},
       LIMIT 20`,
       [...searchClause.params, ...searchRank.params]
     )
-    const hydratedContacts = await warmWhatsAppProfilePicturesForRows(contacts, {
-      apiLimit: 20,
-      qrLimit: 10
-    })
-    const contactsWithPhones = await attachContactPhoneNumbers(hydratedContacts)
+    queueWhatsAppProfilePictureWarmup(contacts, { limit: 20 })
+    const contactsWithPhones = await attachContactPhoneNumbers(contacts)
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedContacts = contactsWithPhones.map(c => {

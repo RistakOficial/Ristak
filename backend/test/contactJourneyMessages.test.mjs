@@ -6,7 +6,9 @@ import {
   getChatContacts,
   getContactConversation,
   getContactJourney,
-  updateContact
+  setProfilePictureWarmupRunnerForTest,
+  updateContact,
+  waitForProfilePictureWarmupsForTest
 } from '../src/controllers/contactsController.js'
 
 function createMockResponse() {
@@ -526,6 +528,68 @@ test('contact conversation exposes Messenger and Instagram ad touches for chat p
     assert.equal(instagramMessage.data.creative_preview_url, 'https://example.test/instagram-preview')
   } finally {
     await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [messengerAdId, instagramAdId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+  }
+})
+
+test('chat contacts responds before external avatar warming finishes', async () => {
+  const id = randomUUID()
+  const contactId = `chat_avatar_async_${id}`
+  const phone = `+52997${Date.now().toString().slice(-7)}`
+  let releaseWarmup = () => {}
+  const warmupGate = new Promise(resolve => { releaseWarmup = resolve })
+  let warmupStartedResolve = () => {}
+  const warmupStarted = new Promise(resolve => { warmupStartedResolve = resolve })
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Avatar Asíncrono',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-06-30T12:00:00.000Z',
+      updated_at: '2099-06-30T12:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_avatar_async_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'La bandeja no espera mi avatar',
+      message_timestamp: '2099-06-30T12:01:00.000Z',
+      created_at: '2099-06-30T12:01:00.000Z'
+    })
+
+    setProfilePictureWarmupRunnerForTest(async rows => {
+      warmupStartedResolve()
+      await warmupGate
+      return rows
+    })
+
+    const responsePromise = readChatContacts({
+      limit: '10',
+      warmProfilePictures: 'true'
+    })
+    const chats = await Promise.race([
+      responsePromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('La bandeja esperó el proveedor de avatares')), 1500))
+    ])
+    assert.ok(chats.some(chat => chat.id === contactId))
+    await Promise.race([
+      warmupStarted,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('No se encoló el calentamiento de avatares')), 1500))
+    ])
+  } finally {
+    releaseWarmup()
+    assert.equal(await waitForProfilePictureWarmupsForTest(), true)
+    setProfilePictureWarmupRunnerForTest(null)
     await cleanup(contactId, phone)
   }
 })

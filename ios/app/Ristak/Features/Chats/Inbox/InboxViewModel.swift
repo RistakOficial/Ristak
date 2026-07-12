@@ -366,15 +366,24 @@ final class InboxViewModel {
                     : "\(directoryContacts.count) contactos listos. Cargando la bandeja y el historial reciente."
             ))
             let loaded = await reloadFromServer(showSpinner: rows.isEmpty)
-            guard loaded else {
-                let message = loadErrorMessage ?? "No se pudieron cargar las conversaciones."
+            if !loaded {
+                // El directorio ya está disponible y cacheado. Un timeout de la
+                // bandeja no debe secuestrar toda la app en el 78 %: abrimos el
+                // shell con esos datos y dejamos que SSE/polling reintenten la
+                // primera página silenciosamente.
+                RistakSnapshotCache.shared.store(true, for: ChatSnapshotKey.firstSyncCompleted)
                 firstSyncProgress(.init(
-                    stage: .conversations,
-                    detail: "La descarga se interrumpió.",
-                    errorMessage: message
+                    stage: .localCopy,
+                    detail: "Tus contactos ya están disponibles. Las conversaciones seguirán cargando en segundo plano."
                 ))
-                performanceSpan.finish(outcome: .failed, itemCount: rows.count)
-                return false
+                firstSyncProgress(.init(
+                    stage: .complete,
+                    detail: "Ristak está listo. Reintentaremos la bandeja automáticamente."
+                ))
+                performanceSpan.finish(outcome: .unavailable, itemCount: rows.count)
+                requestSilentRefresh()
+                restorePersistedPhoneFilter()
+                return true
             }
 
             firstSyncProgress(.init(
