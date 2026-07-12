@@ -31,6 +31,27 @@ function publicBaseUrl(req) {
   ])
 }
 
+function safeReturnPath(value, fallback) {
+  const requested = String(value || '').trim()
+  const safeFallback = String(fallback || '/settings/meta-ads/ads').trim()
+  if (
+    !requested.startsWith('/') ||
+    requested.startsWith('//') ||
+    requested.startsWith('/api/') ||
+    /[\\\u0000-\u001f\u007f]/.test(requested)
+  ) {
+    return safeFallback
+  }
+  return requested
+}
+
+export function buildMetaOAuthReturnUrl(req, value, fallback) {
+  const returnPath = safeReturnPath(value, fallback)
+  const baseUrl = publicBaseUrl(req)
+  if (!baseUrl) return returnPath
+  return new URL(returnPath, `${baseUrl}/`).toString()
+}
+
 function errorResponse(res, error, fallback) {
   const statusCode = Number(error?.statusCode) || 500
   return res.status(statusCode).json({
@@ -56,7 +77,12 @@ export async function getMetaOAuthStatus(req, res) {
 export async function createMetaOAuthConnectUrl(req, res) {
   try {
     const kind = integrationKind(req)
-    const returnPath = req.body?.returnPath || req.body?.return_path || defaultReturnPath(kind)
+    const fallbackReturnPath = defaultReturnPath(kind)
+    const returnPath = buildMetaOAuthReturnUrl(
+      req,
+      req.body?.returnPath || req.body?.return_path || fallbackReturnPath,
+      fallbackReturnPath
+    )
     const data = kind
       ? await createMetaOAuthIntegrationUrl({ integrationKind: kind, returnPath })
       : await createMetaOAuthConnectionUrl({ returnPath })
@@ -70,6 +96,7 @@ export async function createMetaOAuthConnectUrl(req, res) {
 export async function completeMetaOAuth(req, res) {
   try {
     const kind = integrationKind(req)
+    const fallbackReturnPath = defaultReturnPath(kind)
     const options = {
       integrationKind: kind,
       code: req.body?.code,
@@ -78,7 +105,11 @@ export async function completeMetaOAuth(req, res) {
         req.body?.handoffToken ||
         req.body?.handoff_token ||
         req.body?.meta_oauth_handoff_token,
-      returnPath: req.body?.returnPath || req.body?.return_path || defaultReturnPath(kind)
+      returnPath: buildMetaOAuthReturnUrl(
+        req,
+        req.body?.returnPath || req.body?.return_path || fallbackReturnPath,
+        fallbackReturnPath
+      )
     }
     const data = kind
       ? await completeMetaOAuthIntegration(options)

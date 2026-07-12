@@ -101,7 +101,12 @@ permisos sanitizados.
 2. Solo al pulsar el boton de esa pestaña, Ristak pide a Installer una URL:
    `POST /api/meta/oauth/:integrationKind/connect-url`.
 3. Installer crea un `state` aleatorio y hasheado, con TTL y binding de cliente,
-   instalacion, URL de retorno e `integration_kind`.
+   instalacion, URL de retorno e `integration_kind`. Antes de llamar a Installer,
+   Ristak convierte la ruta de regreso en una URL absoluta usando el host publico
+   de la instalacion que inicio el flujo. Installer vuelve a validar ese origin
+   contra `installations.app_url` y `installations.app_origin_url`; una ruta
+   relativa sola no es suficiente porque podria regresar al dominio generico de
+   la licencia en vez del tenant correcto.
 4. Installer usa el Config ID correspondiente en el dialogo oficial:
 
    ```text
@@ -319,7 +324,10 @@ de terceros ni reutilizar el MCP externo del cliente.
 - Un handoff de otro tipo se rechaza antes de guardar secretos.
 - El callback nunca devuelve code, token, Config ID ni proof en query; el
   handoff opaco viaja en fragmento y se limpia del navegador.
-- La URL de retorno solo acepta origins registrados y nunca rutas `/api`.
+- La URL de retorno sale absoluta desde la instalacion, solo acepta origins
+  registrados y nunca rutas `/api`. El callback central exacto debe estar en
+  Valid OAuth Redirect URIs de Meta; no basta con allowlistear la raiz del
+  dominio cuando Strict Mode esta activo.
 - Credenciales y sesiones se cifran; expiraciones y compensaciones limpian los
   secretos.
 - `granular_scopes.target_ids` se cruza con la Page/Instagram o Ad Account

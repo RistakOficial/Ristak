@@ -2207,6 +2207,12 @@ Ristak usa Meta en varias areas:
   hasta finalizar. Un handoff cruzado se rechaza. Cancelar, expirar o fallar
   deja intactas la conexion activa del mismo tipo, la otra superficie y el
   fallback legacy.
+- Al iniciar OAuth, Ristak convierte la ruta de regreso en una URL absoluta del
+  host publico que origino la solicitud. Installer valida ese origin contra la
+  instalacion antes de guardarlo en `state`; asi el callback central no manda al
+  usuario al dominio generico `app.ristak.com` cuando conecto desde un tenant
+  Render. Con Strict Mode de Meta, la lista de redirects debe incluir el callback
+  central completo, no solo la raiz de `www.ristak.com`.
 - Social prepara `subscribed_apps`, Page token/proof y ruta del broker antes de
   promocionarse. Ads promueve Ad Account/Dataset sin tocar el broker. Una
   confirmacion central con fallo local queda en reparacion automatica en lugar
