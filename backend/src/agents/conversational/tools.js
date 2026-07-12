@@ -24,8 +24,12 @@ import {
 } from '../../utils/contactCustomFields.js'
 import {
   bindConversationalPaymentSourceEvent,
+  claimConversationalTerminalMutationAuthority,
   completeConversationalAgentSalePaymentFromInvoice,
+  consumeConversationalAppointmentDepositForHumanBooking,
   consumeConversationalAppointmentDepositEvidence,
+  notifyConversationalAiBookingDeposit,
+  notifyConversationalHumanBookingDeposit,
   releaseConversationalAppointmentDepositEvidence,
   reserveConversationalAppointmentDepositEvidence,
   setConversationSignal,
@@ -90,6 +94,20 @@ function settleAction(action, status, detail = {}) {
     ...detail
   }
   return action.outcome
+}
+
+function buildNativeTerminalAuthorityToken(ctx = {}, config = {}, terminalToolName = '') {
+  const contactId = String(ctx.contactId || '').trim()
+  const agentId = String(config.id || ctx.agentId || '').trim()
+  const channel = String(ctx.channel || 'whatsapp').trim().toLowerCase()
+  const executionId = String(ctx.executionId || '').trim()
+  const reconciliationId = String(ctx.paymentResumeClaim?.reconciliationId || '').trim()
+  const claimToken = String(ctx.paymentResumeClaim?.claimToken || '').trim()
+  if (!contactId || !agentId || !executionId || !terminalToolName) return ''
+  const digest = createHash('sha256')
+    .update([contactId, agentId, channel, executionId, reconciliationId, claimToken, terminalToolName].join('\u0000'))
+    .digest('hex')
+  return `conv_terminal_${digest.slice(0, 48)}`
 }
 
 function cleanAppointmentText(value, maxLength) {
@@ -784,6 +802,137 @@ const appointmentPersonSchema = z.object({
   relation: z.string().nullable().describe('Relación o contexto breve; null si no aplica')
 })
 
+const NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION = 1
+
+function nullableAppointmentDraftText(value, maxLength) {
+  return cleanAppointmentText(value, maxLength) || null
+}
+
+function normalizeNativeAppointmentPersonDraft(value) {
+  const participant = cleanParticipant(value)
+  if (!participant) return null
+  return {
+    name: participant.name || null,
+    phone: participant.phone || null,
+    phoneSourceQuote: participant.phone && participant.phoneSourceQuote
+      ? participant.phoneSourceQuote
+      : null,
+    email: participant.email || null,
+    emailSourceQuote: participant.email && participant.emailSourceQuote
+      ? participant.emailSourceQuote
+      : null,
+    relation: participant.relation || null
+  }
+}
+
+function normalizeNativeAppointmentRequestDraft(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const rawGuests = Array.isArray(value.guests) ? value.guests : []
+  if (rawGuests.length > 20) return null
+  return {
+    version: NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION,
+    title: nullableAppointmentDraftText(value.title, 240),
+    notes: nullableAppointmentDraftText(value.notes, 2000),
+    attendeeName: nullableAppointmentDraftText(value.attendeeName, 180),
+    attendeeContext: nullableAppointmentDraftText(value.attendeeContext, 1000),
+    primaryAttendee: normalizeNativeAppointmentPersonDraft(value.primaryAttendee),
+    guests: rawGuests.map(normalizeNativeAppointmentPersonDraft).filter(Boolean)
+  }
+}
+
+function buildValidatedNativeAppointmentPersonDraft(rawValue, validatedValue) {
+  const raw = cleanParticipant(rawValue)
+  if (!raw || !validatedValue || typeof validatedValue !== 'object') return null
+  const validatedPhone = cleanAppointmentText(validatedValue.phone, 80)
+  const validatedEmail = cleanAppointmentText(validatedValue.email, 180).toLowerCase()
+  return normalizeNativeAppointmentPersonDraft({
+    name: validatedValue.name || raw.name || null,
+    phone: validatedPhone || null,
+    phoneSourceQuote: validatedPhone ? raw.phoneSourceQuote || null : null,
+    email: validatedEmail || null,
+    emailSourceQuote: validatedEmail ? raw.emailSourceQuote || null : null,
+    relation: validatedValue.relation || raw.relation || null
+  })
+}
+
+function buildValidatedNativeAppointmentRequestDraft({
+  title,
+  notes,
+  attendeeName,
+  attendeeContext,
+  primaryAttendee,
+  guests,
+  participants
+} = {}) {
+  if (!participants?.ok) return null
+  const legacyPrimary = attendeeName
+    ? { name: attendeeName, relation: attendeeContext || null }
+    : null
+  const rawPrimary = primaryAttendee || legacyPrimary
+  const boundPrimary = participants.primary?.contactId === null
+    ? buildValidatedNativeAppointmentPersonDraft(rawPrimary, participants.primary)
+    : null
+  const rawGuests = (Array.isArray(guests) ? guests : [])
+    .map((guest) => ({ raw: guest, normalized: cleanParticipant(guest) }))
+    .filter((entry) => entry.normalized)
+  const validatedGuests = Array.isArray(participants.guests) ? participants.guests : []
+  if (rawGuests.length !== validatedGuests.length) return null
+  const boundGuests = rawGuests.map((entry, index) => (
+    buildValidatedNativeAppointmentPersonDraft(entry.raw, validatedGuests[index])
+  ))
+  if (boundGuests.some((guest) => !guest)) return null
+  return normalizeNativeAppointmentRequestDraft({
+    title,
+    notes,
+    attendeeName: null,
+    attendeeContext: null,
+    primaryAttendee: boundPrimary,
+    guests: boundGuests
+  })
+}
+
+function nativeAppointmentRequestDraftHash(draft = null) {
+  return draft
+    ? createHash('sha256').update(JSON.stringify(draft)).digest('hex')
+    : ''
+}
+
+function readBoundNativeAppointmentRequestDraft(detail = {}) {
+  const draft = normalizeNativeAppointmentRequestDraft(detail?.appointmentRequestDraft)
+  const expectedHash = String(detail?.appointmentRequestDraftHash || '').trim()
+  if (!draft || !expectedHash || nativeAppointmentRequestDraftHash(draft) !== expectedHash) return null
+  return draft
+}
+
+const NATIVE_APPOINTMENT_TERMINAL_TOOL_BY_OWNER = Object.freeze({
+  ai: 'book_appointment',
+  human: 'request_human_booking'
+})
+
+function normalizeNativeAppointmentTerminalBinding(value = {}) {
+  const bookingOwner = String(value?.bookingOwner || '').trim().toLowerCase()
+  const terminalToolName = String(value?.terminalToolName || '').trim()
+  if (!Object.hasOwn(NATIVE_APPOINTMENT_TERMINAL_TOOL_BY_OWNER, bookingOwner)) return null
+  if (NATIVE_APPOINTMENT_TERMINAL_TOOL_BY_OWNER[bookingOwner] !== terminalToolName) return null
+  return { bookingOwner, terminalToolName }
+}
+
+function readBoundNativeAppointmentTerminalBinding(detail = {}) {
+  return normalizeNativeAppointmentTerminalBinding({
+    bookingOwner: detail?.bookingOwner,
+    terminalToolName: detail?.terminalToolName
+  })
+}
+
+function buildNativeAppointmentTerminalBinding(scheduleCapability = {}, terminalToolName = '') {
+  const bookingOwner = scheduleCapability?.bookingOwner === 'human' ? 'human' : 'ai'
+  return normalizeNativeAppointmentTerminalBinding({ bookingOwner, terminalToolName })
+}
+
+function appointmentResumeUsesBoundDraft(evidence = {}) {
+  return evidence?.reusedForPaymentResume === true || evidence?.reusedForTestPaymentResume === true
+}
+
 function getToolRuntimeConfig(ctx = {}, config = {}) {
   return {
     ...config,
@@ -1118,10 +1267,20 @@ async function assignNativeHandoffUser({ contactId, capability } = {}) {
 }
 
 let nativeHandoffAfterAssignmentHookForTest = null
+let nativeHumanBookingAfterCommitHookForTest = null
+let nativePaymentResumeBeforeTerminalCommitHookForTest = null
 let nativePaymentReceiptAnalysisHookForTest = null
 
 export function setNativeHandoffAfterAssignmentHookForTest(hook = null) {
   nativeHandoffAfterAssignmentHookForTest = typeof hook === 'function' ? hook : null
+}
+
+export function setNativeHumanBookingAfterCommitHookForTest(hook = null) {
+  nativeHumanBookingAfterCommitHookForTest = typeof hook === 'function' ? hook : null
+}
+
+export function setNativePaymentResumeBeforeTerminalCommitHookForTest(hook = null) {
+  nativePaymentResumeBeforeTerminalCommitHookForTest = typeof hook === 'function' ? hook : null
 }
 
 export function setNativePaymentReceiptAnalysisHookForTest(hook = null) {
@@ -1145,10 +1304,48 @@ async function commitNativeHandoff({
   signal = 'ready_for_human',
   signalOptions = {},
   assignmentEventSource = 'handoff_human',
-  evidenceEvent = null
+  evidenceEvent = null,
+  beforeAssignment = null,
+  afterEvidence = null,
+  terminalAuthorityToken = ''
 } = {}) {
   return db.transaction(async () => {
     let evidenceInserted = null
+    const cleanTerminalAuthorityToken = String(terminalAuthorityToken || '').trim()
+    if (cleanTerminalAuthorityToken && evidenceEvent?.eventId && typeof afterEvidence === 'function') {
+      const existingEvidence = await db.get(
+        `SELECT id FROM conversational_agent_events
+         WHERE id = ? AND contact_id = ? AND event_type = ?`,
+        [evidenceEvent.eventId, ctx.contactId, evidenceEvent.eventType]
+      )
+      if (existingEvidence?.id) {
+        const afterEvidenceResult = await afterEvidence({
+          assignment: { assigned: false, alreadyAssigned: true, userName: null },
+          state: null,
+          evidenceInserted: false,
+          beforeAssignmentResult: null
+        })
+        return {
+          assignment: { assigned: false, alreadyAssigned: true, userName: null },
+          state: null,
+          evidenceInserted: false,
+          beforeAssignmentResult: null,
+          afterEvidenceResult
+        }
+      }
+    }
+    const beforeAssignmentResult = typeof beforeAssignment === 'function'
+      ? await beforeAssignment()
+      : null
+    if (cleanTerminalAuthorityToken) {
+      await claimConversationalTerminalMutationAuthority({
+        contactId: ctx.contactId,
+        agentId: config.id || ctx.agentId || '',
+        channel: ctx.channel || 'whatsapp',
+        authorityToken: cleanTerminalAuthorityToken,
+        database: db
+      })
+    }
     const assignment = await assignNativeHandoffUser({
       contactId: ctx.contactId,
       capability
@@ -1168,7 +1365,8 @@ async function commitNativeHandoff({
       ...signalOptions,
       agentId: config.id || ctx.agentId || '',
       channel: ctx.channel || 'whatsapp',
-      strictEvent: true
+      strictEvent: true,
+      expectedUpdatedBy: cleanTerminalAuthorityToken
     })
     if (!state?.id) {
       const error = new Error('No se pudo confirmar el estado de la conversación. No se completó la transferencia.')
@@ -1205,8 +1403,52 @@ async function commitNativeHandoff({
       evidenceInserted = evidenceResult?.inserted === true
     }
 
-    return { assignment, state, evidenceInserted }
+    const afterEvidenceResult = typeof afterEvidence === 'function'
+      ? await afterEvidence({ assignment, state, evidenceInserted, beforeAssignmentResult })
+      : null
+
+    return { assignment, state, evidenceInserted, beforeAssignmentResult, afterEvidenceResult }
   })
+}
+
+async function assertNativeHumanBookingDepositEvent({
+  eventId,
+  contactId,
+  agentId,
+  reconciliationId,
+  paymentId,
+  calendarId,
+  startTime,
+  selectionRequestDraftHash,
+  sourceMessageId
+} = {}) {
+  const row = await db.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [String(eventId || '').trim()]
+  )
+  const detail = parseNativeEventDetail(row?.detail_json)
+  const valid = Boolean(
+    row?.event_type === 'human_booking_requested' &&
+    String(row?.contact_id || '') === String(contactId || '').trim() &&
+    String(row?.agent_id || '') === String(agentId || '').trim() &&
+    detail.bookingOwner === 'human' &&
+    detail.terminalToolName === 'request_human_booking' &&
+    String(detail.depositReconciliationId || '') === String(reconciliationId || '').trim() &&
+    String(detail.depositPaymentId || '') === String(paymentId || '').trim() &&
+    String(detail.calendarId || '') === String(calendarId || '').trim() &&
+    String(detail.startTime || '') === String(startTime || '').trim() &&
+    String(detail.selectionRequestDraftHash || '') === String(selectionRequestDraftHash || '').trim() &&
+    String(detail.sourceMessageId || '') === String(sourceMessageId || '').trim() &&
+    detail.appointmentCreated === false
+  )
+  if (!valid) {
+    throw Object.assign(new Error('La solicitud humana durable ya existe con otro contrato'), {
+      statusCode: 409,
+      code: 'human_booking_event_contract_conflict'
+    })
+  }
+  return { row, detail }
 }
 
 async function resolveNativeScheduleCalendar(capability = {}) {
@@ -1337,7 +1579,7 @@ async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTim
         String(current?.agent_id || '') !== agentId ||
         String(currentDetail.previewScopeId || '') !== previewScopeId ||
         (String(currentDetail.channel || '') && String(currentDetail.channel || '') !== String(detail.channel || '')) ||
-        ['materializing', 'materialized'].includes(String(currentDetail.status || ''))
+        ['accepted', 'materializing', 'materialized'].includes(String(currentDetail.status || ''))
       ) {
         previewConflict = true
         return
@@ -1414,6 +1656,7 @@ function verifiedTestPaymentAuthorizesPreviewOffer({ ctx, offer, detail } = {}) 
     ? ctx.testVerifiedPaymentEvidence
     : null
   if (!evidence || !offer?.detail_json) return false
+  const terminalBinding = readBoundNativeAppointmentTerminalBinding(detail)
   return Boolean(
     String(evidence.paymentMode || '').toLowerCase() === 'test' &&
     String(evidence.paymentPurpose || '') === 'appointment_deposit' &&
@@ -1423,6 +1666,9 @@ function verifiedTestPaymentAuthorizesPreviewOffer({ ctx, offer, detail } = {}) 
     String(evidence.appointmentOfferFingerprint || '') === createHash('sha256').update(String(offer.detail_json)).digest('hex') &&
     String(evidence.calendarId || '') === String(detail?.calendarId || '') &&
     String(evidence.startTime || '') === String(detail?.startTime || '') &&
+    terminalBinding &&
+    String(evidence.bookingOwner || '') === terminalBinding.bookingOwner &&
+    String(evidence.terminalToolName || '') === terminalBinding.terminalToolName &&
     String(evidence.testRunId || '').trim() &&
     String(evidence.testEffectId || '').trim()
   )
@@ -1858,6 +2104,130 @@ async function persistNativeAppointmentSelection({
   }
 }
 
+async function bindNativeAppointmentRequestDraft({
+  ctx,
+  config,
+  confirmationEvidence,
+  requestDraft,
+  terminalBinding
+} = {}) {
+  const draft = normalizeNativeAppointmentRequestDraft(requestDraft)
+  const draftHash = nativeAppointmentRequestDraftHash(draft)
+  const normalizedTerminalBinding = normalizeNativeAppointmentTerminalBinding(terminalBinding)
+  const preview = ctx?.dryRun === true
+  const eventId = String(
+    preview ? confirmationEvidence?.offerEventId : confirmationEvidence?.selectionEventId
+  ).trim()
+  const agentId = String(config?.id || ctx?.agentId || '').trim()
+  const contactId = String(ctx?.contactId || '').trim()
+  const executionId = String(ctx?.executionId || '').trim()
+  const calendarId = String(confirmationEvidence?.calendarId || '').trim()
+  const startTime = String(confirmationEvidence?.selectedStartTime || '').trim()
+  const previewScopeId = preview ? String(ctx?.previewScopeId || '').trim() : ''
+  if (!draft || !draftHash || !normalizedTerminalBinding || !eventId || !agentId || !contactId || !executionId || !calendarId || !startTime) {
+    return appointmentSelectionError(
+      'No se pudo ligar de forma segura para quién es la cita y quién debe terminar de agendar antes de cobrar el anticipo. No se creó ningún cobro.',
+      'appointment_request_contract_identity_missing'
+    )
+  }
+
+  const eventType = preview
+    ? CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT
+    : NATIVE_APPOINTMENT_SELECTION_EVENT
+  const identityMatches = (row, detail) => Boolean(
+    row?.event_type === eventType &&
+    String(row?.contact_id || '') === contactId &&
+    String(row?.agent_id || '') === agentId &&
+    String(detail?.status || '') === (preview ? 'accepted' : 'active') &&
+    String(detail?.calendarId || '') === calendarId &&
+    String(detail?.startTime || '') === startTime &&
+    (
+      preview
+        ? String(detail?.previewScopeId || '') === previewScopeId &&
+          String(detail?.acceptedExecutionId || '') === executionId
+        : String(detail?.executionId || '') === executionId
+    )
+  )
+  const exactDraftAlreadyBound = (detail) => {
+    const storedDraft = readBoundNativeAppointmentRequestDraft(detail)
+    const storedTerminalBinding = readBoundNativeAppointmentTerminalBinding(detail)
+    return Boolean(
+      storedDraft &&
+      storedTerminalBinding &&
+      String(detail?.appointmentRequestDraftHash || '') === draftHash &&
+      JSON.stringify(storedDraft) === JSON.stringify(draft) &&
+      storedTerminalBinding.bookingOwner === normalizedTerminalBinding.bookingOwner &&
+      storedTerminalBinding.terminalToolName === normalizedTerminalBinding.terminalToolName
+    )
+  }
+
+  const current = await db.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [eventId]
+  )
+  const currentDetail = parseNativeEventDetail(current?.detail_json)
+  if (!identityMatches(current, currentDetail)) {
+    return appointmentSelectionError(
+      'La selección cambió antes de ligar los datos de la cita al anticipo. No se creó ningún cobro.',
+      'appointment_request_draft_selection_changed'
+    )
+  }
+  if (
+    currentDetail.appointmentRequestDraft ||
+    currentDetail.appointmentRequestDraftHash ||
+    currentDetail.bookingOwner ||
+    currentDetail.terminalToolName
+  ) {
+    return exactDraftAlreadyBound(currentDetail)
+      ? {
+          ...confirmationEvidence,
+          ok: true,
+          appointmentRequestDraft: draft,
+          appointmentRequestDraftHash: draftHash,
+          ...normalizedTerminalBinding
+        }
+      : appointmentSelectionError(
+          'Los datos o el responsable de la cita cambiaron después de aceptar el horario. No se creó otro cobro; vuelve a confirmar la cita.',
+          'appointment_request_contract_conflict'
+        )
+  }
+
+  const nextDetail = {
+    ...currentDetail,
+    appointmentRequestDraft: draft,
+    appointmentRequestDraftHash: draftHash,
+    ...normalizedTerminalBinding,
+    appointmentRequestDraftBoundAt: new Date().toISOString()
+  }
+  const updated = await db.run(
+    `UPDATE conversational_agent_events SET detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [JSON.stringify(nextDetail), eventId, eventType, current.detail_json]
+  )
+  if (Number(updated?.changes ?? updated?.rowCount ?? 0) !== 1) {
+    const replay = await db.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [eventId]
+    )
+    const replayDetail = parseNativeEventDetail(replay?.detail_json)
+    if (!identityMatches(replay, replayDetail) || !exactDraftAlreadyBound(replayDetail)) {
+      return appointmentSelectionError(
+        'Otro proceso cambió los datos ligados a la cita mientras se preparaba el anticipo. No se creó ningún cobro.',
+        'appointment_request_draft_race'
+      )
+    }
+  }
+  return {
+    ...confirmationEvidence,
+    ok: true,
+    appointmentRequestDraft: draft,
+    appointmentRequestDraftHash: draftHash,
+    ...normalizedTerminalBinding
+  }
+}
+
 async function listNativeAppointmentSelections({ agentId = '', contactId = '' } = {}) {
   const rows = await db.all(
     `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
@@ -1902,12 +2272,16 @@ async function ensureNativeAppointmentDepositIntent({
     [selectionEventId]
   )
   const selectionDetail = parseNativeEventDetail(selection?.detail_json)
+  const selectionRequestDraft = readBoundNativeAppointmentRequestDraft(selectionDetail)
+  const selectionTerminalBinding = readBoundNativeAppointmentTerminalBinding(selectionDetail)
   if (
     selection?.event_type !== NATIVE_APPOINTMENT_SELECTION_EVENT ||
     String(selection?.contact_id || '') !== contactId ||
     String(selection?.agent_id || '') !== agentId ||
     String(selectionDetail.status || '') !== 'active' ||
-    String(selectionDetail.executionId || '') !== executionId
+    String(selectionDetail.executionId || '') !== executionId ||
+    !selectionRequestDraft ||
+    !selectionTerminalBinding
   ) {
     return appointmentSelectionError(
       'La selección del horario ya no está activa para iniciar este anticipo. Vuelve a consultar horarios.',
@@ -1933,6 +2307,9 @@ async function ensureNativeAppointmentDepositIntent({
     calendarId: selectionDetail.calendarId,
     startTime: selectionDetail.startTime,
     selectionVerifiedAt: selectionDetail.verifiedAt,
+    selectionRequestDraftHash: selectionDetail.appointmentRequestDraftHash,
+    selectionBookingOwner: selectionTerminalBinding.bookingOwner,
+    selectionTerminalToolName: selectionTerminalBinding.terminalToolName,
     executionId,
     methods: {
       paymentLink: methods.paymentLink === true,
@@ -1985,6 +2362,9 @@ async function ensureNativeAppointmentDepositIntent({
     String(storedDetail.calendarId || '') !== String(selectionDetail.calendarId || '') ||
     String(storedDetail.startTime || '') !== String(selectionDetail.startTime || '') ||
     String(storedDetail.selectionVerifiedAt || '') !== String(selectionDetail.verifiedAt || '') ||
+    String(storedDetail.selectionRequestDraftHash || '') !== String(selectionDetail.appointmentRequestDraftHash || '') ||
+    String(storedDetail.selectionBookingOwner || '') !== selectionTerminalBinding.bookingOwner ||
+    String(storedDetail.selectionTerminalToolName || '') !== selectionTerminalBinding.terminalToolName ||
     storedDetail.methods?.paymentLink !== (methods.paymentLink === true) ||
     storedDetail.methods?.bankTransfer !== (methods.bankTransfer === true) ||
     !recoverableReplayStatus
@@ -2058,6 +2438,8 @@ async function validateNativeAppointmentDepositIntent({
     [String(detail.selectionEventId || '')]
   )
   const selectionDetail = parseNativeEventDetail(selection?.detail_json)
+  const selectionRequestDraft = readBoundNativeAppointmentRequestDraft(selectionDetail)
+  const selectionTerminalBinding = readBoundNativeAppointmentTerminalBinding(selectionDetail)
   const configuredCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
   const startMs = Date.parse(selectionDetail.startTime || '')
   const verifiedMs = Date.parse(selectionDetail.verifiedAt || '')
@@ -2069,6 +2451,11 @@ async function validateNativeAppointmentDepositIntent({
     String(selectionDetail.calendarId || '') !== String(detail.calendarId || '') ||
     String(selectionDetail.startTime || '') !== String(detail.startTime || '') ||
     String(selectionDetail.verifiedAt || '') !== String(detail.selectionVerifiedAt || '') ||
+    !selectionRequestDraft ||
+    !selectionTerminalBinding ||
+    String(selectionDetail.appointmentRequestDraftHash || '') !== String(detail.selectionRequestDraftHash || '') ||
+    selectionTerminalBinding.bookingOwner !== String(detail.selectionBookingOwner || '') ||
+    selectionTerminalBinding.terminalToolName !== String(detail.selectionTerminalToolName || '') ||
     (!sourceAlreadyBound && String(configuredCalendar?.id || '') !== String(detail.calendarId || '')) ||
     !Number.isFinite(startMs) ||
     (!sourceAlreadyBound && startMs <= now) ||
@@ -2188,6 +2575,9 @@ async function resolveAndBindNativeAppointmentDepositIntentForReceipt({
       calendarId: intent?.detail?.calendarId || null,
       startTime: intent?.detail?.startTime || null,
       selectionVerifiedAt: intent?.detail?.selectionVerifiedAt || null,
+      selectionRequestDraftHash: intent?.detail?.selectionRequestDraftHash || null,
+      selectionBookingOwner: intent?.detail?.selectionBookingOwner || null,
+      selectionTerminalToolName: intent?.detail?.selectionTerminalToolName || null,
       ambiguousIntent: candidates.length !== 1 && !alternateSourceIntent,
       alternateSource: Boolean(alternateSourceIntent),
       possibleDoublePayment: Boolean(alternateSourceIntent),
@@ -2242,6 +2632,7 @@ async function resolveAndBindNativeAppointmentDepositIntentForReceipt({
       )
     : null
   const selection = selectionRow ? { ...selectionRow, detail: parseNativeEventDetail(selectionRow.detail_json) } : null
+  const selectionTerminalBinding = readBoundNativeAppointmentTerminalBinding(selection?.detail)
   if (
     intent?.event_type !== NATIVE_APPOINTMENT_DEPOSIT_INTENT_EVENT ||
     String(intent?.contact_id || '') !== contactId ||
@@ -2249,7 +2640,15 @@ async function resolveAndBindNativeAppointmentDepositIntentForReceipt({
     selection?.event_type !== NATIVE_APPOINTMENT_SELECTION_EVENT ||
     String(selection?.contact_id || '') !== contactId ||
     String(selection?.agent_id || '') !== agentId ||
-    String(selection?.id || '') !== String(bindingDetail.selectionEventId || '')
+    String(selection?.id || '') !== String(bindingDetail.selectionEventId || '') ||
+    !readBoundNativeAppointmentRequestDraft(selection?.detail) ||
+    !selectionTerminalBinding ||
+    String(selection?.detail?.appointmentRequestDraftHash || '') !== String(intent?.detail?.selectionRequestDraftHash || '') ||
+    String(selection?.detail?.appointmentRequestDraftHash || '') !== String(bindingDetail.selectionRequestDraftHash || '') ||
+    selectionTerminalBinding.bookingOwner !== String(intent?.detail?.selectionBookingOwner || '') ||
+    selectionTerminalBinding.bookingOwner !== String(bindingDetail.selectionBookingOwner || '') ||
+    selectionTerminalBinding.terminalToolName !== String(intent?.detail?.selectionTerminalToolName || '') ||
+    selectionTerminalBinding.terminalToolName !== String(bindingDetail.selectionTerminalToolName || '')
   ) {
     return {
       ok: true,
@@ -2281,6 +2680,13 @@ async function resolveAndBindNativeAppointmentDepositIntentForReceipt({
   if (Date.parse(intent.detail?.expiresAt || '') <= Date.now()) staleReasons.push('intent_expired')
   if (Date.parse(selection.detail?.startTime || '') <= Date.now()) staleReasons.push('appointment_start_passed')
   if (String(configuredCalendar?.id || '') !== String(selection.detail?.calendarId || '')) staleReasons.push('calendar_changed')
+  const configuredTerminalBinding = buildNativeAppointmentTerminalBinding(
+    scheduleCapability,
+    selectionTerminalBinding.terminalToolName
+  )
+  if (configuredTerminalBinding?.bookingOwner !== selectionTerminalBinding.bookingOwner) {
+    staleReasons.push('booking_owner_changed')
+  }
   const claim = await claimNativeAppointmentDepositIntent({
     intent,
     selection,
@@ -2321,6 +2727,8 @@ async function claimNativeAppointmentDepositIntent({ intent, selection, method, 
     cleanMethod,
     cleanClaimKey
   ].join('\u0000')).digest('hex')
+  const selectionTerminalBinding = readBoundNativeAppointmentTerminalBinding(selection?.detail)
+  if (!selectionTerminalBinding) return { ok: false }
   return db.transaction(async () => {
     const current = await db.get('SELECT detail_json FROM conversational_agent_events WHERE id = ?', [intent.id])
     const detail = parseNativeEventDetail(current?.detail_json)
@@ -2328,7 +2736,9 @@ async function claimNativeAppointmentDepositIntent({ intent, selection, method, 
       String(detail.status || '') === 'source_bound' &&
       String(detail.collectionMethod || '') === cleanMethod &&
       String(detail.sourceEventId || '') === cleanClaimKey &&
-      String(detail.claimToken || '') === claimToken
+      String(detail.claimToken || '') === claimToken &&
+      String(detail.selectionBookingOwner || '') === selectionTerminalBinding.bookingOwner &&
+      String(detail.selectionTerminalToolName || '') === selectionTerminalBinding.terminalToolName
     ) {
       return { ok: true, claimToken, reused: true, sourceAlreadyBound: true, intent: { ...intent, detail } }
     }
@@ -2336,7 +2746,9 @@ async function claimNativeAppointmentDepositIntent({ intent, selection, method, 
       String(detail.status || '') === 'collecting' &&
       String(detail.claimToken || '') === claimToken &&
       String(detail.collectionMethod || '') === cleanMethod &&
-      String(detail.claimKey || '') === cleanClaimKey
+      String(detail.claimKey || '') === cleanClaimKey &&
+      String(detail.selectionBookingOwner || '') === selectionTerminalBinding.bookingOwner &&
+      String(detail.selectionTerminalToolName || '') === selectionTerminalBinding.terminalToolName
     ) {
       return { ok: true, claimToken, reused: true, intent: { ...intent, detail } }
     }
@@ -2345,7 +2757,9 @@ async function claimNativeAppointmentDepositIntent({ intent, selection, method, 
     )
     if (
       !claimableStatus ||
-      String(detail.selectionEventId || '') !== String(selection.id)
+      String(detail.selectionEventId || '') !== String(selection.id) ||
+      String(detail.selectionBookingOwner || '') !== selectionTerminalBinding.bookingOwner ||
+      String(detail.selectionTerminalToolName || '') !== selectionTerminalBinding.terminalToolName
     ) return { ok: false }
     const next = {
       ...detail,
@@ -2369,18 +2783,24 @@ async function claimNativeAppointmentDepositIntent({ intent, selection, method, 
 
 async function markNativeAppointmentDepositIntentBound({ intent, selection, sourceEventId, method, claimToken } = {}) {
   if (!intent?.id || !selection?.id || !sourceEventId) return false
+  const selectionTerminalBinding = readBoundNativeAppointmentTerminalBinding(selection?.detail)
+  if (!selectionTerminalBinding) return false
   const current = await db.get('SELECT detail_json FROM conversational_agent_events WHERE id = ?', [intent.id])
   const detail = parseNativeEventDetail(current?.detail_json)
   if (
     String(detail.status || '') === 'source_bound' &&
     String(detail.selectionEventId || '') === String(selection.id) &&
-    String(detail.sourceEventId || '') === String(sourceEventId)
+    String(detail.sourceEventId || '') === String(sourceEventId) &&
+    String(detail.selectionBookingOwner || '') === selectionTerminalBinding.bookingOwner &&
+    String(detail.selectionTerminalToolName || '') === selectionTerminalBinding.terminalToolName
   ) return true
   if (
     String(detail.status || '') !== 'collecting' ||
     String(detail.selectionEventId || '') !== String(selection.id) ||
     String(detail.claimToken || '') !== String(claimToken || '') ||
-    String(detail.collectionMethod || '') !== String(method || '')
+    String(detail.collectionMethod || '') !== String(method || '') ||
+    String(detail.selectionBookingOwner || '') !== selectionTerminalBinding.bookingOwner ||
+    String(detail.selectionTerminalToolName || '') !== selectionTerminalBinding.terminalToolName
   ) return false
   const result = await db.run(
     `UPDATE conversational_agent_events SET detail_json = ?
@@ -2448,6 +2868,7 @@ async function verifyPaymentResumeAppointmentSelection({
   )
   const detail = parseNativeEventDetail(selection?.detail_json)
   const durableStartTime = String(detail.startTime || '').trim()
+  const terminalBinding = readBoundNativeAppointmentTerminalBinding(detail)
   const identityMatches = Boolean(
     selection?.event_type === NATIVE_APPOINTMENT_SELECTION_EVENT &&
     String(selection?.contact_id || '') === cleanContactId &&
@@ -2458,12 +2879,25 @@ async function verifyPaymentResumeAppointmentSelection({
     durableStartTime &&
     !Number.isNaN(new Date(durableStartTime).getTime()) &&
     String(sourceDetail.appointmentSelectionStartTime || '') === durableStartTime &&
-    String(sourceDetail.appointmentSelectionVerifiedAt || '') === String(detail.verifiedAt || '')
+    String(sourceDetail.appointmentSelectionVerifiedAt || '') === String(detail.verifiedAt || '') &&
+    String(sourceDetail.appointmentSelectionRequestDraftHash || '') === String(detail.appointmentRequestDraftHash || '') &&
+    terminalBinding &&
+    String(sourceDetail.appointmentSelectionBookingOwner || '') === terminalBinding.bookingOwner &&
+    String(sourceDetail.appointmentSelectionTerminalToolName || '') === terminalBinding.terminalToolName &&
+    String(reconciliationDetail.appointmentSelectionBookingOwner || '') === terminalBinding.bookingOwner &&
+    String(reconciliationDetail.appointmentSelectionTerminalToolName || '') === terminalBinding.terminalToolName
   )
   if (!identityMatches) {
     return appointmentSelectionError(
       'La selección ligada al pago no coincide con agente, contacto, calendario y horario solicitados. No se agendó nada.',
       'payment_resume_selection_mismatch'
+    )
+  }
+  const appointmentRequestDraft = readBoundNativeAppointmentRequestDraft(detail)
+  if (!appointmentRequestDraft) {
+    return appointmentSelectionError(
+      'El anticipo sí está confirmado, pero el intento anterior no conserva de forma segura para quién era la cita. No se agendó nada; confirma de nuevo los asistentes o pasa el caso al equipo.',
+      'payment_resume_appointment_request_draft_missing'
     )
   }
   return {
@@ -2482,6 +2916,10 @@ async function verifyPaymentResumeAppointmentSelection({
     durable: true,
     reusedForPaymentResume: true,
     selectionEventId: selection.id,
+    appointmentRequestDraft,
+    appointmentRequestDraftHash: String(detail.appointmentRequestDraftHash || '').trim(),
+    bookingOwner: terminalBinding.bookingOwner,
+    terminalToolName: terminalBinding.terminalToolName,
     paymentSourceEventId: source.id,
     reconciliationId: reconciliation.id
   }
@@ -2524,6 +2962,14 @@ async function resolveNativeAppointmentSelection({
     // reinterpretarse como una segunda confirmación textual. La identidad, el
     // fingerprint, el calendario y el UTC ya fueron revalidados en el loader y
     // volverán a comprobarse al persistir/materializar el efecto temporal.
+    const appointmentRequestDraft = readBoundNativeAppointmentRequestDraft(candidate.offer.detail)
+    const terminalBinding = readBoundNativeAppointmentTerminalBinding(candidate.offer.detail)
+    if (!appointmentRequestDraft || !terminalBinding) {
+      return appointmentSelectionError(
+        'El pago sandbox sí está confirmado, pero la prueba anterior no conserva de forma segura para quién era la cita o quién debía terminarla. Reinicia el tester y vuelve a intentarlo.',
+        'appointment_test_payment_resume_contract_missing'
+      )
+    }
     return {
       ok: true,
       evidenceVerified: true,
@@ -2537,6 +2983,10 @@ async function resolveNativeAppointmentSelection({
       timezone: offerTimezone || null,
       offerMessageId: candidate.offer.detail.offerMessageId || null,
       offerEventId: candidate.offer.id,
+      appointmentRequestDraft,
+      appointmentRequestDraftHash: String(candidate.offer.detail.appointmentRequestDraftHash || '').trim(),
+      bookingOwner: terminalBinding.bookingOwner,
+      terminalToolName: terminalBinding.terminalToolName,
       durable: true,
       preview: true,
       reusedForTestPaymentResume: true,
@@ -2638,6 +3088,11 @@ async function rejectMissingDepositIfNeeded(
   const paymentLabel = getDepositRequirementLabel(ctx, config)
   if (ctx.dryRun && ctx.testVerifiedPaymentEvidence && typeof ctx.testVerifiedPaymentEvidence === 'object') {
     const evidence = ctx.testVerifiedPaymentEvidence
+    const evidenceTerminalBinding = normalizeNativeAppointmentTerminalBinding(evidence)
+    const configuredTerminalBinding = buildNativeAppointmentTerminalBinding(
+      getNativeCapability(ctx, config, 'schedule_appointment'),
+      evidenceTerminalBinding?.terminalToolName
+    )
     const expectedCurrency = String(deposit.currency || accountLocale.currency || '').trim().toUpperCase()
     const testEvidenceMatches = Boolean(
       String(evidence.paymentMode || '').toLowerCase() === 'test' &&
@@ -2645,6 +3100,9 @@ async function rejectMissingDepositIfNeeded(
       String(evidence.previewScopeId || '') === String(ctx.previewScopeId || '') &&
       String(evidence.calendarId || '') === String(calendarId || '') &&
       String(evidence.startTime || '') === String(startTime || '') &&
+      evidenceTerminalBinding &&
+      configuredTerminalBinding &&
+      configuredTerminalBinding.bookingOwner === evidenceTerminalBinding.bookingOwner &&
       String(evidence.currency || '').trim().toUpperCase() === expectedCurrency &&
       depositRequirementAmountMatches(deposit, evidence.amount) &&
       String(evidence.testRunId || '').trim() &&
@@ -2662,7 +3120,8 @@ async function rejectMissingDepositIfNeeded(
       agentId: config.id || ctx.agentId || null,
       requiredPurpose: nativePaymentPurpose,
       reconciliationId,
-      appointmentRequestId
+      appointmentRequestId,
+      expectedReconciliationClaimToken: String(ctx.paymentResumeClaim?.claimToken || '').trim()
     })
     if (verification.ok) {
       ctx.verifiedPaymentEvidence = verification.evidence
@@ -3003,7 +3462,13 @@ async function commitNativePaymentProofEscalation({
   }
 }
 
-async function syncNativeAppointmentCompletion({ ctx, config, appointment, calendarId }) {
+async function syncNativeAppointmentCompletion({
+  ctx,
+  config,
+  appointment,
+  calendarId,
+  terminalAuthorityToken = ''
+}) {
   const appointmentId = String(appointment?.id || '').trim()
   const agentId = String(config?.id || ctx?.agentId || '').trim()
   if (!ctx?.contactId || !appointmentId || !agentId) {
@@ -3022,6 +3487,18 @@ async function syncNativeAppointmentCompletion({ ctx, config, appointment, calen
     [appointmentEventId]
   ).catch(() => null))
 
+  if (eventAlreadyRecorded) return { completed: true, replayed: true }
+  const cleanTerminalAuthorityToken = String(terminalAuthorityToken || '').trim()
+  if (cleanTerminalAuthorityToken) {
+    await claimConversationalTerminalMutationAuthority({
+      contactId: ctx.contactId,
+      agentId,
+      channel: ctx.channel || 'whatsapp',
+      authorityToken: cleanTerminalAuthorityToken,
+      database: db
+    })
+  }
+
   await setConversationSignal(ctx.contactId, 'appointment_booked', {
     reason: 'Cita agendada por el agente',
     actionSummarySource: technicalSummary,
@@ -3030,7 +3507,8 @@ async function syncNativeAppointmentCompletion({ ctx, config, appointment, calen
     agentId,
     channel: ctx.channel,
     eventId: `cae_appointment_signal_${digest}`,
-    strictEvent: true
+    strictEvent: true,
+    expectedUpdatedBy: cleanTerminalAuthorityToken
   })
   await recordConversationalAgentEvent({
     eventId: appointmentEventId,
@@ -3044,7 +3522,15 @@ async function syncNativeAppointmentCompletion({ ctx, config, appointment, calen
     },
     throwOnError: true
   })
-  if (!eventAlreadyRecorded) {
+  const paymentReconciliationId = String(ctx.paymentResumeClaim?.reconciliationId || '').trim()
+  if (paymentReconciliationId) {
+    await notifyConversationalAiBookingDeposit({
+      reconciliationId: paymentReconciliationId,
+      contactId: ctx.contactId,
+      title,
+      startTime
+    })
+  } else {
     await notifyHumanPriority(ctx, {
       reason: 'Cita agendada por el agente',
       summary: technicalSummary,
@@ -3085,8 +3571,22 @@ async function consumeReservedDepositForExistingNativeAppointment({ ctx, config,
   if (!matches.length) return { consumed: false, reason: 'no_payment_reservation' }
   if (matches.length !== 1) throw new Error('La cita tiene más de una reserva de anticipo')
   const [{ detail }] = matches
+  const currentReconciliationClaimToken = String(ctx.paymentResumeClaim?.claimToken || '').trim()
+  const currentReconciliationId = String(ctx.paymentResumeClaim?.reconciliationId || '').trim()
+  if (currentReconciliationId && String(detail.reconciliationId || '') !== currentReconciliationId) {
+    throw new Error('La cita pertenece a otra reconciliación de anticipo')
+  }
+  // Un consumo ya confirmado junto con esta misma cita es el efecto durable
+  // que un claim nuevo debe recuperar tras un crash. El token viejo ya no
+  // autoriza mutaciones, pero tampoco invalida una cita que sí quedó creada.
   if (detail.status === 'consumed' && detail.appointmentId === appointmentId) {
     return { consumed: true, replayed: true }
+  }
+  if (
+    currentReconciliationClaimToken &&
+    String(detail.reconciliationClaimToken || '') !== currentReconciliationClaimToken
+  ) {
+    throw new Error('La reserva de la cita pertenece a otro intento de reconciliación')
   }
   if (detail.status !== 'reserved') {
     throw new Error('La reserva del anticipo no coincide con la cita canónica')
@@ -3096,6 +3596,8 @@ async function consumeReservedDepositForExistingNativeAppointment({ ctx, config,
     contactId: ctx.contactId,
     agentId: config.id || ctx.agentId || '',
     paymentId: detail.ledgerPaymentId,
+    reconciliationClaimToken: currentReconciliationClaimToken,
+    reservationClaimToken: currentReconciliationClaimToken ? detail.claimToken : '',
     appointmentRequestId: request.client_request_id,
     appointmentId
   })
@@ -4072,7 +4574,7 @@ export function createConversationalTools(ctx) {
     execute: async (args) => {
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
       if (safetyFence) return safetyFence
-      const {
+      let {
         title,
         notes,
         attendeeName,
@@ -4093,6 +4595,28 @@ export function createConversationalTools(ctx) {
         timezone: businessTimezone
       })
       if (!confirmationEvidence.ok) return confirmationEvidence
+      if (appointmentResumeUsesBoundDraft(confirmationEvidence)) {
+        const terminalBinding = normalizeNativeAppointmentTerminalBinding(confirmationEvidence)
+        if (terminalBinding?.terminalToolName !== 'book_appointment') {
+          return appointmentSelectionError(
+            'El anticipo quedó ligado a otra forma de terminar la cita. No se agendó nada; el caso requiere revisión humana.',
+            'payment_resume_terminal_tool_mismatch'
+          )
+        }
+        const boundDraft = normalizeNativeAppointmentRequestDraft(confirmationEvidence.appointmentRequestDraft)
+        if (!boundDraft) {
+          return appointmentSelectionError(
+            'El pago está confirmado, pero no se pudo recuperar de forma segura para quién era la cita. No se agendó nada; pasa el caso al equipo.',
+            'payment_resume_appointment_request_draft_invalid'
+          )
+        }
+        title = boundDraft.title
+        notes = boundDraft.notes
+        attendeeName = boundDraft.attendeeName
+        attendeeContext = boundDraft.attendeeContext
+        primaryAttendee = boundDraft.primaryAttendee
+        guests = boundDraft.guests
+      }
       const startTime = String(confirmationEvidence.selectedStartTime || '').trim()
       const start = new Date(startTime)
       if (Number.isNaN(start.getTime())) {
@@ -4137,6 +4661,28 @@ export function createConversationalTools(ctx) {
         attendeeContext,
         primaryAttendee
       })
+      const depositRequired = Boolean(getDepositRequirementForRuntime(ctx, config))
+      const terminalBinding = buildNativeAppointmentTerminalBinding(scheduleCapability, 'book_appointment')
+      const terminalAuthorityToken = ctx.paymentResumeClaim
+        ? buildNativeTerminalAuthorityToken(ctx, config, 'book_appointment')
+        : ''
+      const appointmentRequestDraft = depositRequired
+        ? buildValidatedNativeAppointmentRequestDraft({
+            title,
+            notes,
+            attendeeName,
+            attendeeContext,
+            primaryAttendee,
+            guests,
+            participants
+          })
+        : null
+      if (depositRequired && (!appointmentRequestDraft || !terminalBinding)) {
+        return appointmentSelectionError(
+          'No se pudieron fijar de forma segura los asistentes y el responsable antes de cobrar el anticipo. No se agendó ni se cobró nada; pasa el caso al equipo.',
+          'appointment_request_contract_invalid'
+        )
+      }
 
       const nativeExecutionId = String(ctx.executionId || '').trim()
       const nativeOverlapsAllowed = scheduleCapability?.allowOverlaps === true
@@ -4305,13 +4851,14 @@ export function createConversationalTools(ctx) {
             ctx,
             config,
             appointment: existing,
-            calendarId: existing.calendar_id
+            calendarId: existing.calendar_id,
+            terminalAuthorityToken
           })
         } catch (error) {
           completionSyncWarning = true
           logger.error(`[Agente conversacional] La cita ${existing.id} ya existía, pero no se pudo reparar su cierre: ${error.message}`)
         }
-        settleAction(existingAction, 'ok', {
+        settleAction(existingAction, completionSyncWarning ? 'error' : 'ok', {
           appointmentId: existing.id,
           calendarId: existing.calendar_id,
           startTime: existing.start_time,
@@ -4321,8 +4868,9 @@ export function createConversationalTools(ctx) {
           completionSyncWarning
         })
         return {
-          ok: true,
-          actionCompleted: true,
+          ok: !completionSyncWarning,
+          actionCompleted: !completionSyncWarning,
+          durableEffectCommitted: true,
           alreadyBooked: true,
           verifiedExistingAction: true,
           appointment: {
@@ -4332,7 +4880,11 @@ export function createConversationalTools(ctx) {
             status: existing.appointment_status || existing.status || 'confirmed'
           },
           ...(completionSyncWarning
-            ? { completionSyncWarning: true, note: 'La cita real ya existe y no se duplicó; el cierre interno seguirá reintentándose.' }
+            ? {
+                completionSyncWarning: true,
+                requiresRecovery: true,
+                error: 'La cita real existe y no se duplicó, pero todavía no se confirmó el cierre interno. No envíes una confirmación; Ristak la recuperará de forma durable.'
+              }
             : { note: 'La cita real ya existía y su cierre quedó confirmado; no crees otra.' })
         }
       }
@@ -4390,6 +4942,19 @@ export function createConversationalTools(ctx) {
         }
       )
       if (depositError) {
+        const boundDraft = await bindNativeAppointmentRequestDraft({
+          ctx,
+          config,
+          confirmationEvidence: {
+            ...confirmationEvidence,
+            calendarId,
+            selectedStartTime: start.toISOString()
+          },
+          requestDraft: appointmentRequestDraft,
+          terminalBinding
+        })
+        if (!boundDraft.ok) return boundDraft
+        confirmationEvidence = boundDraft
         if (!ctx.dryRun && confirmationEvidence?.durable === true) {
           const intent = await ensureNativeAppointmentDepositIntent({
             ctx,
@@ -4434,6 +4999,17 @@ export function createConversationalTools(ctx) {
         }
       }
 
+      if (ctx.paymentResumeClaim && nativePaymentResumeBeforeTerminalCommitHookForTest) {
+        await nativePaymentResumeBeforeTerminalCommitHookForTest({
+          terminalToolName: 'book_appointment',
+          contactId: ctx.contactId,
+          agentId: config.id || ctx.agentId || '',
+          channel: ctx.channel || 'whatsapp',
+          reconciliationId: ctx.paymentResumeClaim.reconciliationId,
+          reconciliationClaimToken: ctx.paymentResumeClaim.claimToken
+        })
+      }
+
       let depositReservation = null
       if (ctx.verifiedPaymentEvidence?.paymentPurpose === 'appointment_deposit') {
         try {
@@ -4442,7 +5018,13 @@ export function createConversationalTools(ctx) {
             contactId: ctx.contactId,
             agentId: config.id || ctx.agentId || '',
             paymentId: ctx.verifiedPaymentEvidence.paymentId,
-            appointmentRequestId: clientRequestId
+            reconciliationClaimToken: String(ctx.paymentResumeClaim?.claimToken || '').trim(),
+            appointmentRequestId: clientRequestId,
+            calendarId,
+            startTime: start.toISOString(),
+            selectionRequestDraftHash: confirmationEvidence.appointmentRequestDraftHash,
+            bookingOwner: terminalBinding?.bookingOwner,
+            terminalToolName: terminalBinding?.terminalToolName
           })
         } catch (error) {
           const reservationError = {
@@ -4453,6 +5035,23 @@ export function createConversationalTools(ctx) {
           }
           settleAction(action, 'error', { error: error.message, transferRequired: true })
           return reservationError
+        }
+        if (depositReservation?.consumed) {
+          const consumedError = 'El anticipo ya quedó consumido por una cita anterior. No se creó otra cita; Ristak debe recuperar el efecto canónico o pasar el caso a una persona.'
+          settleAction(action, 'error', {
+            error: consumedError,
+            transferRequired: true,
+            durableEffectCommitted: true,
+            appointmentId: depositReservation.appointmentId || null
+          })
+          return {
+            ok: false,
+            actionCompleted: false,
+            durableEffectCommitted: true,
+            requiresRecovery: true,
+            transferRequired: true,
+            error: consumedError
+          }
         }
       }
 
@@ -4471,6 +5070,8 @@ export function createConversationalTools(ctx) {
           agentId: config.id || ctx.agentId || '',
           paymentId: ctx.verifiedPaymentEvidence.paymentId,
           appointmentRequestId: clientRequestId,
+          reservationClaimToken: depositReservation.claimToken,
+          reconciliationClaimToken: String(ctx.paymentResumeClaim?.claimToken || '').trim(),
           reason
         }).catch((error) => {
           logger.warn(`[Agente conversacional] No se pudo liberar la reserva del anticipo: ${error.message}`)
@@ -4509,7 +5110,13 @@ export function createConversationalTools(ctx) {
             contactId: ctx.contactId,
             agentId: config.id || ctx.agentId || '',
             paymentId: ctx.verifiedPaymentEvidence.paymentId,
-            appointmentRequestId: clientRequestId
+            reconciliationClaimToken: String(ctx.paymentResumeClaim?.claimToken || '').trim(),
+            appointmentRequestId: clientRequestId,
+            calendarId,
+            startTime: start.toISOString(),
+            selectionRequestDraftHash: confirmationEvidence.appointmentRequestDraftHash,
+            bookingOwner: terminalBinding?.bookingOwner,
+            terminalToolName: terminalBinding?.terminalToolName
           })
         } catch (error) {
           settleAction(action, 'error', { error: error.message, transferRequired: true })
@@ -4541,10 +5148,19 @@ export function createConversationalTools(ctx) {
               ? {
                   depositReservationEventId: depositReservation.eventId,
                   depositReservationClaimToken: depositReservation.claimToken,
-                  depositReservationAgentId: config.id || ctx.agentId || ''
+                  depositReservationAgentId: config.id || ctx.agentId || '',
+                  depositReservationRequestDraftHash: confirmationEvidence.appointmentRequestDraftHash
+                }
+              : {}),
+            ...(terminalAuthorityToken
+              ? {
+                  conversationTerminalAuthorityToken: terminalAuthorityToken,
+                  conversationTerminalAgentId: config.id || ctx.agentId || '',
+                  conversationTerminalChannel: ctx.channel || 'whatsapp'
                 }
               : {})
-          }
+          },
+          internalContext: { conversationalAgentAppointment: true }
         })
         toolResult = toToolResult(result, (data) => ({
           id: data?.id,
@@ -4582,6 +5198,8 @@ export function createConversationalTools(ctx) {
                   contactId: ctx.contactId,
                   agentId: config.id || ctx.agentId || '',
                   paymentId: ctx.verifiedPaymentEvidence.paymentId,
+                  reconciliationClaimToken: String(ctx.paymentResumeClaim?.claimToken || '').trim(),
+                  reservationClaimToken: depositReservation.claimToken,
                   appointmentRequestId: clientRequestId,
                   appointmentId: toolResult.data.id
                 })
@@ -4597,13 +5215,14 @@ export function createConversationalTools(ctx) {
                   endTime: toolResult.data.endTime,
                   status: toolResult.data.status
                 },
-                calendarId: toolResult.data.calendarId
+                calendarId: toolResult.data.calendarId,
+                terminalAuthorityToken
               })
             } catch (error) {
               completionSyncWarning = true
               logger.error(`[Agente conversacional] La cita reprogramada ${toolResult.data.id} existe, pero falló su cierre durable: ${error.message}`)
             }
-            settleAction(action, 'ok', {
+            settleAction(action, completionSyncWarning ? 'error' : 'ok', {
               appointmentCreated: false,
               appointmentRescheduled: true,
               verifiedExistingAction: true,
@@ -4617,8 +5236,9 @@ export function createConversationalTools(ctx) {
               }
             })
             return {
-              ok: true,
-              actionCompleted: true,
+              ok: !completionSyncWarning,
+              actionCompleted: !completionSyncWarning,
+              durableEffectCommitted: true,
               alreadyBooked: true,
               appointmentRescheduled: true,
               appointment: {
@@ -4627,7 +5247,12 @@ export function createConversationalTools(ctx) {
                 endTime: toolResult.data.endTime || null,
                 status: toolResult.data.status || null
               },
-              note: 'La cita ya existía y fue reprogramada; confirma únicamente estos datos canónicos y no reserves el horario anterior.'
+              ...(completionSyncWarning
+                ? {
+                    requiresRecovery: true,
+                    error: 'La cita canónica existe, pero todavía no se confirmó el cierre interno. No envíes una confirmación; Ristak la recuperará de forma durable.'
+                  }
+                : { note: 'La cita ya existía y fue reprogramada; confirma únicamente estos datos canónicos y no reserves el horario anterior.' })
             }
           }
           if (depositReservation?.reserved && ctx.verifiedPaymentEvidence) {
@@ -4636,6 +5261,8 @@ export function createConversationalTools(ctx) {
               contactId: ctx.contactId,
               agentId: config.id || ctx.agentId || '',
               paymentId: ctx.verifiedPaymentEvidence.paymentId,
+              reconciliationClaimToken: String(ctx.paymentResumeClaim?.claimToken || '').trim(),
+              reservationClaimToken: depositReservation.claimToken,
               appointmentRequestId: clientRequestId,
               reason: replayState
             }).catch((error) => {
@@ -4694,6 +5321,8 @@ export function createConversationalTools(ctx) {
               contactId: ctx.contactId,
               agentId: config.id || ctx.agentId || '',
               paymentId: ctx.verifiedPaymentEvidence.paymentId,
+              reconciliationClaimToken: String(ctx.paymentResumeClaim?.claimToken || '').trim(),
+              reservationClaimToken: depositReservation.claimToken,
               appointmentRequestId: clientRequestId,
               appointmentId: toolResult.data.id
             })
@@ -4709,14 +5338,15 @@ export function createConversationalTools(ctx) {
               endTime: toolResult.data.endTime || end.toISOString(),
               status: toolResult.data.status || 'confirmed'
             },
-            calendarId
+            calendarId,
+            terminalAuthorityToken
           })
         } catch (error) {
           completionSyncWarning = true
           logger.error(`[Agente conversacional] La cita ${toolResult.data?.id} sí se creó, pero falló la sincronización durable del cierre: ${error.message}`)
         }
       }
-      settleAction(action, 'ok', {
+      settleAction(action, completionSyncWarning ? 'error' : 'ok', {
         appointmentId: toolResult.data?.id || null,
         calendarId,
         startTime: start.toISOString(),
@@ -4725,8 +5355,9 @@ export function createConversationalTools(ctx) {
         completionSyncWarning
       })
       return {
-        ok: true,
-        actionCompleted: true,
+        ok: !completionSyncWarning,
+        actionCompleted: !completionSyncWarning,
+        durableEffectCommitted: true,
         appointment: {
           title: toolResult.data?.title || finalTitle,
           startTime: toolResult.data?.startTime || start.toISOString(),
@@ -4734,7 +5365,11 @@ export function createConversationalTools(ctx) {
           status: toolResult.data?.status || 'confirmed'
         },
         ...(completionSyncWarning
-          ? { completionSyncWarning: true, note: 'La cita sí fue creada. No la repitas; el cierre interno necesita revisión humana.' }
+          ? {
+              completionSyncWarning: true,
+              requiresRecovery: true,
+              error: 'La cita sí fue creada y no debe repetirse, pero todavía no se confirmó el cierre interno. No envíes una confirmación; Ristak la recuperará de forma durable.'
+            }
           : {})
       }
     }
@@ -4757,7 +5392,8 @@ export function createConversationalTools(ctx) {
         z.array(appointmentPersonSchema).nullable()
       ).describe('Invitados adicionales confirmados; null o [] si no hay')
     }),
-    execute: async ({ title, notes, attendeeName, attendeeContext, primaryAttendee, guests }) => {
+    execute: async (args = {}) => {
+      let { title, notes, attendeeName, attendeeContext, primaryAttendee, guests } = args
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
       if (safetyFence) return safetyFence
       const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
@@ -4774,6 +5410,28 @@ export function createConversationalTools(ctx) {
         timezone: businessTimezone
       })
       if (!confirmationEvidence.ok) return confirmationEvidence
+      if (appointmentResumeUsesBoundDraft(confirmationEvidence)) {
+        const terminalBinding = normalizeNativeAppointmentTerminalBinding(confirmationEvidence)
+        if (terminalBinding?.terminalToolName !== 'request_human_booking') {
+          return appointmentSelectionError(
+            'El anticipo quedó ligado a otra forma de terminar la cita. No se entregó nada; el caso requiere revisión humana.',
+            'payment_resume_terminal_tool_mismatch'
+          )
+        }
+        const boundDraft = normalizeNativeAppointmentRequestDraft(confirmationEvidence.appointmentRequestDraft)
+        if (!boundDraft) {
+          return appointmentSelectionError(
+            'El pago está confirmado, pero no se pudo recuperar de forma segura para quién era la cita. No se entregó la solicitud; pasa el caso al equipo.',
+            'payment_resume_appointment_request_draft_invalid'
+          )
+        }
+        title = boundDraft.title
+        notes = boundDraft.notes
+        attendeeName = boundDraft.attendeeName
+        attendeeContext = boundDraft.attendeeContext
+        primaryAttendee = boundDraft.primaryAttendee
+        guests = boundDraft.guests
+      }
       const startTime = String(confirmationEvidence.selectedStartTime || '').trim()
       const start = new Date(startTime)
       if (Number.isNaN(start.getTime())) {
@@ -4818,6 +5476,25 @@ export function createConversationalTools(ctx) {
         attendeeContext,
         primaryAttendee
       })
+      const depositRequired = Boolean(getDepositRequirementForRuntime(ctx, config))
+      const terminalBinding = buildNativeAppointmentTerminalBinding(scheduleCapability, 'request_human_booking')
+      const appointmentRequestDraft = depositRequired
+        ? buildValidatedNativeAppointmentRequestDraft({
+            title,
+            notes,
+            attendeeName,
+            attendeeContext,
+            primaryAttendee,
+            guests,
+            participants
+          })
+        : null
+      if (depositRequired && (!appointmentRequestDraft || !terminalBinding)) {
+        return appointmentSelectionError(
+          'No se pudieron fijar de forma segura los asistentes y el responsable antes de cobrar el anticipo. No se entregó ni se cobró nada; pasa el caso al equipo.',
+          'appointment_request_contract_invalid'
+        )
+      }
 
       const durationMinutes = Number(nativeCalendar.slot_duration) > 0 ? Number(nativeCalendar.slot_duration) : 60
       const startMs = start.getTime()
@@ -4848,6 +5525,40 @@ export function createConversationalTools(ctx) {
           evidence: confirmationEvidence
         })
         if (!confirmationEvidence.ok && confirmationEvidence.actionCompleted === false) return confirmationEvidence
+      }
+      const depositError = await rejectMissingDepositIfNeeded(
+        ctx,
+        config,
+        ctx.accountLocale,
+        {
+          calendarId,
+          startTime: start.toISOString()
+        }
+      )
+      if (depositError) {
+        const boundDraft = await bindNativeAppointmentRequestDraft({
+          ctx,
+          config,
+          confirmationEvidence: {
+            ...confirmationEvidence,
+            calendarId,
+            selectedStartTime: start.toISOString()
+          },
+          requestDraft: appointmentRequestDraft,
+          terminalBinding
+        })
+        if (!boundDraft.ok) return boundDraft
+        confirmationEvidence = boundDraft
+        if (!ctx.dryRun && confirmationEvidence?.durable === true) {
+          const intent = await ensureNativeAppointmentDepositIntent({
+            ctx,
+            config,
+            selectionEvidence: confirmationEvidence,
+            methods: getDepositPaymentMethodsForRuntime(ctx, config)
+          })
+          if (!intent.ok) return intent
+        }
+        return depositError
       }
       const end = new Date(start.getTime() + durationMinutes * 60000)
 
@@ -4895,11 +5606,35 @@ export function createConversationalTools(ctx) {
       }
 
       const agentId = String(config.id || ctx.agentId || '').trim()
+      const terminalAuthorityToken = buildNativeTerminalAuthorityToken(ctx, config, 'request_human_booking')
       const requestDigest = createHash('sha256')
         .update([agentId, ctx.contactId, calendarId, start.toISOString(), executionId].join('\u0000'))
         .digest('hex')
         .slice(0, 48)
       const evidenceEventId = `cae_human_booking_${requestDigest}`
+      const verifiedDeposit = ctx.verifiedPaymentEvidence?.paymentPurpose === 'appointment_deposit'
+        ? {
+            reconciliationId: String(ctx.verifiedPaymentEvidence.reconciliationId || '').trim(),
+            paymentId: String(ctx.verifiedPaymentEvidence.paymentId || '').trim(),
+            reconciliationClaimToken: String(
+              ctx.verifiedPaymentEvidence.reconciliationClaimToken || ctx.paymentResumeClaim?.claimToken || ''
+            ).trim(),
+            selectionRequestDraftHash: String(confirmationEvidence.appointmentRequestDraftHash || '').trim()
+          }
+        : null
+      if (
+        depositRequired &&
+        (
+          !verifiedDeposit?.reconciliationId ||
+          !verifiedDeposit?.paymentId ||
+          !verifiedDeposit?.reconciliationClaimToken ||
+          !/^[a-f0-9]{64}$/i.test(verifiedDeposit.selectionRequestDraftHash)
+        )
+      ) {
+        const error = 'El anticipo confirmado no conserva su vínculo exclusivo con la solicitud humana. No se entregó la conversación; requiere revisión.'
+        settleAction(action, 'error', { transferRequired: true, error })
+        return { ok: false, actionCompleted: false, transferRequired: true, error }
+      }
       const assignmentCapability = {
         userId: scheduleCapability?.handoffUserId || '',
         userName: scheduleCapability?.handoffUserName || ''
@@ -4908,6 +5643,16 @@ export function createConversationalTools(ctx) {
       let assignment = { assigned: false, alreadyAssigned: false, userName: null }
       let evidenceInserted = true
       try {
+        if (verifiedDeposit && nativePaymentResumeBeforeTerminalCommitHookForTest) {
+          await nativePaymentResumeBeforeTerminalCommitHookForTest({
+            terminalToolName: 'request_human_booking',
+            contactId: ctx.contactId,
+            agentId,
+            channel: ctx.channel || 'whatsapp',
+            reconciliationId: verifiedDeposit.reconciliationId,
+            reconciliationClaimToken: verifiedDeposit.reconciliationClaimToken
+          })
+        }
         const committed = await commitNativeHandoff({
           ctx,
           config,
@@ -4924,6 +5669,7 @@ export function createConversationalTools(ctx) {
             eventType: 'human_booking_requested',
             detail: {
               bookingOwner: 'human',
+              terminalToolName: 'request_human_booking',
               calendarId,
               startTime: start.toISOString(),
               endTime: end.toISOString(),
@@ -4934,9 +5680,44 @@ export function createConversationalTools(ctx) {
               participants: participants.all,
               appointmentCreated: false,
               objectiveCompleted: false,
-              sourceMessageId: executionId
+              sourceMessageId: executionId,
+              ...(verifiedDeposit
+                ? {
+                    depositReconciliationId: verifiedDeposit.reconciliationId,
+                    depositPaymentId: verifiedDeposit.paymentId,
+                    selectionRequestDraftHash: verifiedDeposit.selectionRequestDraftHash
+                  }
+                : {})
             }
-          }
+          },
+          beforeAssignment: verifiedDeposit
+            ? () => consumeConversationalAppointmentDepositForHumanBooking({
+                reconciliationId: verifiedDeposit.reconciliationId,
+                contactId: ctx.contactId,
+                agentId,
+                paymentId: verifiedDeposit.paymentId,
+                reconciliationClaimToken: verifiedDeposit.reconciliationClaimToken,
+                humanBookingEventId: evidenceEventId,
+                calendarId,
+                startTime: start.toISOString(),
+                selectionRequestDraftHash: verifiedDeposit.selectionRequestDraftHash,
+                sourceMessageId: executionId
+              })
+            : null,
+          afterEvidence: verifiedDeposit
+            ? () => assertNativeHumanBookingDepositEvent({
+                eventId: evidenceEventId,
+                contactId: ctx.contactId,
+                agentId,
+                reconciliationId: verifiedDeposit.reconciliationId,
+                paymentId: verifiedDeposit.paymentId,
+                calendarId,
+                startTime: start.toISOString(),
+                selectionRequestDraftHash: verifiedDeposit.selectionRequestDraftHash,
+                sourceMessageId: executionId
+              })
+            : null,
+          terminalAuthorityToken: verifiedDeposit ? terminalAuthorityToken : ''
         })
         assignment = committed.assignment
         evidenceInserted = committed.evidenceInserted !== false
@@ -4955,14 +5736,34 @@ export function createConversationalTools(ctx) {
         return errorResult
       }
 
+      if (verifiedDeposit && nativeHumanBookingAfterCommitHookForTest) {
+        await nativeHumanBookingAfterCommitHookForTest({
+          reconciliationId: verifiedDeposit.reconciliationId,
+          contactId: ctx.contactId,
+          agentId,
+          evidenceEventId,
+          calendarId,
+          startTime: start.toISOString()
+        })
+      }
+
       let notificationWarning = false
-      if (evidenceInserted) {
+      if (verifiedDeposit || evidenceInserted) {
         try {
-          await notifyHumanPriority(ctx, {
-            reason: 'Horario elegido pendiente de confirmación humana',
-            summary: `${participant.title}: ${start.toISOString()}`,
-            signal: 'ready_for_human'
-          })
+          if (verifiedDeposit) {
+            await notifyConversationalHumanBookingDeposit({
+              reconciliationId: verifiedDeposit.reconciliationId,
+              contactId: ctx.contactId,
+              title: participant.title,
+              startTime: start.toISOString()
+            })
+          } else {
+            await notifyHumanPriority(ctx, {
+              reason: 'Horario elegido pendiente de confirmación humana',
+              summary: `${participant.title}: ${start.toISOString()}`,
+              signal: 'ready_for_human'
+            })
+          }
         } catch (error) {
           notificationWarning = true
           logger.warn(`[Agente conversacional] La solicitud humana quedó guardada, pero falló la notificación: ${error.message}`)
@@ -4975,6 +5776,7 @@ export function createConversationalTools(ctx) {
         objectiveCompleted: false,
         evidenceEventId,
         replayed: !evidenceInserted,
+        depositConsumed: Boolean(verifiedDeposit),
         ...(assignment.assigned
           ? {
               assignedUserId: assignment.assignedUserId,
@@ -5236,6 +6038,9 @@ export function createConversationalTools(ctx) {
               appointmentSelectionCalendarId: appointmentSelection.detail.calendarId,
               appointmentSelectionStartTime: appointmentSelection.detail.startTime,
               appointmentSelectionVerifiedAt: appointmentSelection.detail.verifiedAt,
+              appointmentSelectionRequestDraftHash: appointmentSelection.detail.appointmentRequestDraftHash,
+              appointmentSelectionBookingOwner: appointmentSelection.detail.bookingOwner,
+              appointmentSelectionTerminalToolName: appointmentSelection.detail.terminalToolName,
               appointmentDepositIntentEventId: appointmentDepositIntent?.id || null
             }
           : {}),
@@ -5287,6 +6092,9 @@ export function createConversationalTools(ctx) {
             appointmentSelectionCalendarId: appointmentSelection?.detail?.calendarId || null,
             appointmentSelectionStartTime: appointmentSelection?.detail?.startTime || null,
             appointmentSelectionVerifiedAt: appointmentSelection?.detail?.verifiedAt || null,
+            appointmentSelectionRequestDraftHash: appointmentSelection?.detail?.appointmentRequestDraftHash || null,
+            appointmentSelectionBookingOwner: appointmentSelection?.detail?.bookingOwner || null,
+            appointmentSelectionTerminalToolName: appointmentSelection?.detail?.terminalToolName || null,
             appointmentDepositIntentEventId: appointmentDepositIntent?.id || null,
             appointmentDepositIntentClaimKey: paymentSourceEventId || null,
             appointmentDepositIntentClaimToken: appointmentDepositClaim?.claimToken || null
@@ -5390,6 +6198,9 @@ export function createConversationalTools(ctx) {
             appointmentSelectionCalendarId: appointmentSelection?.detail?.calendarId || null,
             appointmentSelectionStartTime: appointmentSelection?.detail?.startTime || null,
             appointmentSelectionVerifiedAt: appointmentSelection?.detail?.verifiedAt || null,
+            appointmentSelectionRequestDraftHash: appointmentSelection?.detail?.appointmentRequestDraftHash || null,
+            appointmentSelectionBookingOwner: appointmentSelection?.detail?.bookingOwner || null,
+            appointmentSelectionTerminalToolName: appointmentSelection?.detail?.terminalToolName || null,
             appointmentDepositIntentEventId: appointmentDepositIntent?.id || null,
             appointmentDepositIntentClaimKey: paymentSourceEventId || null,
             appointmentDepositIntentClaimToken: appointmentDepositClaim?.claimToken || null,
@@ -6070,6 +6881,9 @@ export function createConversationalTools(ctx) {
             appointmentSelectionCalendarId: appointmentSelection?.detail?.calendarId || null,
             appointmentSelectionStartTime: appointmentSelection?.detail?.startTime || null,
             appointmentSelectionVerifiedAt: appointmentSelection?.detail?.verifiedAt || null,
+            appointmentSelectionRequestDraftHash: appointmentSelection?.detail?.appointmentRequestDraftHash || null,
+            appointmentSelectionBookingOwner: appointmentSelection?.detail?.bookingOwner || null,
+            appointmentSelectionTerminalToolName: appointmentSelection?.detail?.terminalToolName || null,
             appointmentDepositIntentEventId: appointmentDepositIntent?.id || null,
             appointmentDepositIntentClaimKey: receiptIntentBindingEventId,
             appointmentDepositIntentClaimToken: appointmentDepositClaim?.claimToken || null,

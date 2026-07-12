@@ -39,6 +39,8 @@ import {
   claimConversationalReplyDelivery,
   checkpointConversationalReplyDelivery,
   settleConversationalReplyDelivery,
+  recoverInterruptedConversationalPaymentReplyDelivery,
+  assertConversationalPaymentReconciliationClaim,
   recoverPendingConversationalPaymentSourceBindings,
   recoverPendingConversationalPaymentReconciliations,
   runWithConversationStateChannel,
@@ -131,6 +133,19 @@ function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
       isInterrupted: undefined,
       finalOutput: String(structuredOffer.output.visibleReply).trim()
     }
+  }
+  const completedPreviewAppointment = (Array.isArray(toolResults) ? toolResults : []).some((result) => {
+    const toolName = String(result?.tool?.name || '').trim()
+    if (!['book_appointment', 'request_human_booking'].includes(toolName)) return false
+    return result?.output?.ok === true &&
+      result?.output?.simulated === true &&
+      (
+        result?.output?.wouldMarkObjectiveCompleted === true ||
+        result?.output?.wouldTransferToHuman === true
+      )
+  })
+  if (completedPreviewAppointment) {
+    return { isFinalOutput: true, isInterrupted: undefined, finalOutput: '' }
   }
   const mustStop = (Array.isArray(toolResults) ? toolResults : []).some((result) => {
     const toolName = String(result?.tool?.name || '').trim()
@@ -1451,6 +1466,14 @@ function nativeActionFailed(action = {}) {
   return outcome.status === 'error' || outcome.ok === false || action?.ok === false || Boolean(action?.error || outcome?.error)
 }
 
+function nativePreviewAppointmentSucceeded(action = {}) {
+  const outcome = action?.outcome || {}
+  if (nativeActionFailed(action) || outcome.status !== 'simulated') return false
+  if (action?.type === 'book_appointment') return outcome.wouldMarkObjectiveCompleted === true
+  if (action?.type === 'request_human_booking') return outcome.wouldTransferToHuman === true
+  return false
+}
+
 function hasStructuredAppointmentOffer(actions = []) {
   return (Array.isArray(actions) ? actions : []).some((action) => (
     action?.type === 'offer_appointment_slot' &&
@@ -1495,8 +1518,11 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
     return 'tuve un problema para abrir la información de este chat. no te voy a pedir datos que ya deberían estar registrados; necesito que una persona del equipo lo revise'
   }
   const confirmed = (Array.isArray(actions) ? actions : []).find(nativeActionSucceeded)
+  const completedPreviewAppointment = (Array.isArray(actions) ? actions : []).find(nativePreviewAppointmentSucceeded)
   if (!visible) {
-    if (confirmed?.type === 'book_appointment') visible = 'listo, la cita quedó confirmada'
+    if (completedPreviewAppointment?.type === 'book_appointment') visible = 'listo, la cita de prueba quedó confirmada'
+    else if (completedPreviewAppointment?.type === 'request_human_booking') visible = 'el horario de prueba seguía disponible y ya quedó preparada la entrega al equipo'
+    else if (confirmed?.type === 'book_appointment') visible = 'listo, la cita quedó confirmada'
     else if (confirmed?.type === 'request_human_booking') visible = 'el horario seguía disponible y ya dejé la solicitud con el equipo para que te confirme la cita'
     else if (confirmed?.type === 'register_deposit_payment_proof') visible = 'recibí el comprobante y quedó pendiente de revisión; todavía no confirma el pago'
     else if (confirmed?.type === 'create_payment_link') visible = 'listo, ya preparé el enlace de pago. el pago seguirá pendiente hasta que el sistema lo confirme'
@@ -1528,11 +1554,110 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   return visible
 }
 
-export function createToolCallingV2Agent({ model, instructions, tools = [], dryRun = false } = {}) {
+const APPOINTMENT_TERMINAL_TOOL_BY_OWNER = Object.freeze({
+  ai: 'book_appointment',
+  human: 'request_human_booking'
+})
+
+function normalizeAppointmentTerminalBinding(value = {}) {
+  const bookingOwner = String(value?.bookingOwner || '').trim().toLowerCase()
+  const terminalToolName = String(value?.terminalToolName || '').trim()
+  if (!Object.hasOwn(APPOINTMENT_TERMINAL_TOOL_BY_OWNER, bookingOwner)) return null
+  if (APPOINTMENT_TERMINAL_TOOL_BY_OWNER[bookingOwner] !== terminalToolName) return null
+  return { bookingOwner, terminalToolName }
+}
+
+function hasSuccessfulLiveAppointmentTerminal(actions = [], terminalBinding = null) {
+  const expectedToolName = String(terminalBinding?.terminalToolName || '').trim()
+  if (!expectedToolName) return false
+  const terminalToolNames = new Set(Object.values(APPOINTMENT_TERMINAL_TOOL_BY_OWNER))
+  const terminalActions = (Array.isArray(actions) ? actions : []).filter((action) => (
+    terminalToolNames.has(String(action?.type || '').trim())
+  ))
+  if (!terminalActions.length) return false
+  if (terminalActions.some((action) => String(action?.type || '').trim() !== expectedToolName)) return false
+  return terminalActions.some((action) => {
+    const outcome = action?.outcome
+    return outcome &&
+      typeof outcome === 'object' &&
+      outcome.status === 'ok' &&
+      outcome.ok === true &&
+      outcome.simulated !== true &&
+      outcome.actionCompleted === true
+  })
+}
+
+function getAppointmentTerminalBinding(config = {}) {
+  const scheduleCapability = getConversationalCapabilitiesConfig(config).items
+    .find((item) => item.id === 'schedule_appointment' && item.enabled)
+  if (!scheduleCapability) return null
+  const bookingOwner = scheduleCapability.bookingOwner === 'human' ? 'human' : 'ai'
+  return normalizeAppointmentTerminalBinding({
+    bookingOwner,
+    terminalToolName: APPOINTMENT_TERMINAL_TOOL_BY_OWNER[bookingOwner]
+  })
+}
+
+function getAppointmentTerminalToolName(config = {}) {
+  return getAppointmentTerminalBinding(config)?.terminalToolName || ''
+}
+
+function hasVerifiedTestAppointmentDeposit(evidence = null) {
+  const terminalBinding = normalizeAppointmentTerminalBinding(evidence)
+  return Boolean(
+    evidence &&
+    typeof evidence === 'object' &&
+    String(evidence.paymentMode || '').trim().toLowerCase() === 'test' &&
+    String(evidence.paymentPurpose || '').trim() === 'appointment_deposit' &&
+    String(evidence.testRunId || '').trim() &&
+    String(evidence.testEffectId || '').trim() &&
+    String(evidence.previewScopeId || '').trim() &&
+    String(evidence.appointmentOfferEventId || '').trim() &&
+    String(evidence.appointmentOfferFingerprint || '').trim() &&
+    String(evidence.calendarId || '').trim() &&
+    String(evidence.startTime || '').trim() &&
+    terminalBinding
+  )
+}
+
+function resolvePaymentResumeToolChoice({
+  config,
+  dryRun = false,
+  testVerifiedPaymentEvidence = null,
+  forcedToolName = ''
+} = {}) {
+  const appointmentBinding = getAppointmentTerminalBinding(config)
+  const appointmentToolName = appointmentBinding?.terminalToolName || ''
+  if (!appointmentToolName) return ''
+  const cleanForcedToolName = String(forcedToolName || '').trim()
+  if (cleanForcedToolName) {
+    return cleanForcedToolName === appointmentToolName ? appointmentToolName : ''
+  }
+  const verifiedTerminalBinding = normalizeAppointmentTerminalBinding(testVerifiedPaymentEvidence)
+  return dryRun && hasVerifiedTestAppointmentDeposit(testVerifiedPaymentEvidence) &&
+    verifiedTerminalBinding?.bookingOwner === appointmentBinding?.bookingOwner
+    ? verifiedTerminalBinding.terminalToolName
+    : ''
+}
+
+export function createToolCallingV2Agent({
+  model,
+  instructions,
+  tools = [],
+  dryRun = false,
+  forcedToolName = ''
+} = {}) {
+  const cleanForcedToolName = String(forcedToolName || '').trim()
+  const toolChoice = cleanForcedToolName && tools.some((item) => String(item?.name || '').trim() === cleanForcedToolName)
+    ? cleanForcedToolName
+    : ''
   return new Agent({
     name: 'Ristak · Agente conversacional nativo',
     model,
-    modelSettings: { ...TOOL_CALLING_V2_MODEL_SETTINGS },
+    modelSettings: {
+      ...TOOL_CALLING_V2_MODEL_SETTINGS,
+      ...(toolChoice ? { toolChoice } : {})
+    },
     instructions,
     tools,
     toolUseBehavior: stopAfterCommittedLiveMutation
@@ -1550,6 +1675,8 @@ async function buildToolCallingV2AgentForRun({
   executionId = '',
   previewScopeId = '',
   testVerifiedPaymentEvidence = null,
+  paymentResumeClaim = null,
+  forcedToolName = '',
   virtualContact = null,
   followUpContext = null,
   historyContext = null,
@@ -1594,6 +1721,14 @@ async function buildToolCallingV2AgentForRun({
     testVerifiedPaymentEvidence: dryRun && testVerifiedPaymentEvidence && typeof testVerifiedPaymentEvidence === 'object'
       ? { ...testVerifiedPaymentEvidence }
       : null,
+    paymentResumeClaim: !dryRun && paymentResumeClaim && typeof paymentResumeClaim === 'object'
+      ? {
+          reconciliationId: String(paymentResumeClaim.reconciliationId || '').trim(),
+          claimToken: String(paymentResumeClaim.claimToken || '').trim(),
+          agentId: String(paymentResumeClaim.agentId || '').trim(),
+          channel: normalizeConversationalChannel(paymentResumeClaim.channel || channel)
+        }
+      : null,
     virtualContact,
     accountLocale,
     runtimeMode: TOOL_CALLING_V2_RUNTIME_MODE,
@@ -1604,7 +1739,39 @@ async function buildToolCallingV2AgentForRun({
     loadConversationHistoryPage: historyContext?.loadOlderPage || null,
     actions: [],
   }
+  const previewAppointmentPaymentResume = Boolean(
+    dryRun &&
+    ctx.testVerifiedPaymentEvidence &&
+    String(ctx.testVerifiedPaymentEvidence.paymentMode || '').trim().toLowerCase() === 'test' &&
+    String(ctx.testVerifiedPaymentEvidence.paymentPurpose || '').trim() === 'appointment_deposit'
+  )
+  if (previewAppointmentPaymentResume) {
+    const boundTerminal = normalizeAppointmentTerminalBinding(ctx.testVerifiedPaymentEvidence)
+    const configuredTerminal = getAppointmentTerminalBinding(config)
+    if (!boundTerminal) {
+      throw Object.assign(
+        new Error('El anticipo de prueba no conserva quién debía terminar de agendar. Reinicia el tester; no se ejecutó ninguna acción.'),
+        { statusCode: 409, code: 'test_payment_terminal_binding_missing' }
+      )
+    }
+    if (
+      !configuredTerminal ||
+      configuredTerminal.bookingOwner !== boundTerminal.bookingOwner ||
+      configuredTerminal.terminalToolName !== boundTerminal.terminalToolName
+    ) {
+      throw Object.assign(
+        new Error('Cambió quién debe terminar de agendar mientras el pago de prueba estaba pendiente. Reinicia el tester; no se ejecutó ninguna acción.'),
+        { statusCode: 409, code: 'test_payment_terminal_config_changed' }
+      )
+    }
+  }
   const tools = createConversationalTools(ctx)
+  const paymentResumeToolChoice = resolvePaymentResumeToolChoice({
+    config,
+    dryRun,
+    testVerifiedPaymentEvidence: ctx.testVerifiedPaymentEvidence,
+    forcedToolName
+  })
   const knowledge = retrieveRelevantBusinessKnowledge({
     businessProfile,
     fallbackContext: buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile),
@@ -1630,13 +1797,20 @@ async function buildToolCallingV2AgentForRun({
     ? `${baseInstructions}\n\n## Estado factual verificado por Ristak\n${cleanRuntimeEventContext}\n- Este bloque es contexto interno del sistema, no un mensaje del cliente. No lo cites, no muestres IDs ni expliques la maquinaria interna.`
     : baseInstructions
 
-  const agent = createToolCallingV2Agent({ model, instructions, tools, dryRun })
+  const agent = createToolCallingV2Agent({
+    model,
+    instructions,
+    tools,
+    dryRun,
+    forcedToolName: paymentResumeToolChoice
+  })
 
   return {
     agent,
     ctx,
     model,
     aiProvider,
+    forcedToolName: paymentResumeToolChoice,
     capabilityManifest,
     validationErrors: getConversationalNativeRuntimeValidationErrors(config),
     knowledge
@@ -1659,6 +1833,8 @@ export async function runToolCallingV2Turn({
   executionId = '',
   previewScopeId = '',
   testVerifiedPaymentEvidence = null,
+  paymentResumeClaim = null,
+  forcedToolName = '',
   virtualContact = null,
   conversationModel = null,
   followUpContext = null,
@@ -1687,6 +1863,8 @@ export async function runToolCallingV2Turn({
     executionId,
     previewScopeId,
     testVerifiedPaymentEvidence,
+    paymentResumeClaim,
+    forcedToolName,
     virtualContact,
     followUpContext,
     historyContext,
@@ -2897,6 +3075,151 @@ async function handleToolCallingV2InboundTurn({
   return { sent: true, delivery, turn }
 }
 
+function verifiedPaymentTerminalReplyText(terminalType = '') {
+  if (terminalType === 'human') {
+    return 'Listo, tu anticipo quedó confirmado y el equipo ya recibió el horario que elegiste. La cita todavía está pendiente de confirmación.'
+  }
+  if (terminalType === 'ai') {
+    return 'Listo, tu pago quedó confirmado y la cita ya quedó agendada.'
+  }
+  if (terminalType === 'manual_review') {
+    return 'Tu pago quedó confirmado, pero el equipo necesita revisar la cita antes de confirmarla. No necesitas volver a pagar.'
+  }
+  return ''
+}
+
+/**
+ * Entrega (o recupera) la confirmación visible posterior al pago con la misma
+ * identidad durable usada por el Runner. Si el proceso cayó después de enviar,
+ * el plan existente manda y el proveedor no recibe una segunda copia.
+ */
+export async function deliverVerifiedPaymentTerminalReply({
+  reconciliationId = '',
+  reconciliationClaimToken = '',
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  terminalType = '',
+  reply = ''
+} = {}, dependencies = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanReconciliationClaimToken = String(reconciliationClaimToken || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const fallbackReply = String(reply || '').trim() || verifiedPaymentTerminalReplyText(terminalType)
+  if (!cleanReconciliationId || !cleanReconciliationClaimToken || !cleanContactId || !cleanAgentId || !fallbackReply) {
+    throw new Error('La confirmación visible del pago no conserva su identidad durable completa')
+  }
+
+  const getAgent = dependencies.getAgent || getConversationalAgent
+  const getContact = dependencies.getContact || ((id) => db.get(
+    'SELECT id, full_name, phone, email FROM contacts WHERE id = ?',
+    [id]
+  ))
+  const getLatestInbound = dependencies.getLatestInbound || loadLatestInboundMessage
+  const deliverReply = dependencies.deliverReply || sendReplyParts
+  const recordEvent = dependencies.recordEvent || recordConversationalAgentEvent
+  const assertClaim = dependencies.assertClaim || assertConversationalPaymentReconciliationClaim
+  await assertClaim({
+    reconciliationId: cleanReconciliationId,
+    claimToken: cleanReconciliationClaimToken,
+    contactId: cleanContactId,
+    agentId: cleanAgentId
+  })
+  const [storedAgent, contact, latestInbound] = await Promise.all([
+    Promise.resolve().then(() => getAgent(cleanAgentId)).catch(() => null),
+    Promise.resolve().then(() => getContact(cleanContactId)).catch(() => null),
+    Promise.resolve().then(() => getLatestInbound(cleanContactId, normalizedChannel)).catch(() => null)
+  ])
+  const agentConfig = storedAgent || {
+    id: cleanAgentId,
+    enabled: false,
+    replyDelivery: { splitMessagesEnabled: false }
+  }
+  const syntheticLatest = {
+    ...(latestInbound || {}),
+    id: cleanReconciliationId,
+    phone: latestInbound?.phone || contact?.phone || '',
+    channel: normalizedChannel
+  }
+  await (dependencies.recoverInterruptedDelivery || recoverInterruptedConversationalPaymentReplyDelivery)({
+    contactId: cleanContactId,
+    agentId: cleanAgentId,
+    channel: normalizedChannel,
+    sourceMessageId: cleanReconciliationId,
+    externalIdPrefix: 'convagent_payment_resume'
+  })
+  const delivery = await deliverReply({
+    contactId: cleanContactId,
+    phone: contact?.phone || latestInbound?.phone || '',
+    latest: syntheticLatest,
+    agentConfig,
+    reply: fallbackReply,
+    apiKey: null,
+    model: null,
+    channel: normalizedChannel,
+    externalIdPrefix: 'convagent_payment_resume',
+    dependencies: {
+      splitter: splitMessageIntoBubbles,
+      forceSingleMessage: true,
+      // La terminal ya ocurrió. Un inbound posterior no vuelve obsoleta esta
+      // confirmación factual; debe llegar antes de continuar la conversación.
+      loadNewerInbound: async () => null,
+      ...(dependencies.deliveryDependencies || {}),
+      recordEvent: (event) => recordEvent({
+        ...event,
+        eventId: `${cleanReconciliationId}_${event.eventType}_${event.detail?.partIndex || 0}`
+      }),
+      markReplyComplete: async () => {
+        await db.run(
+          `UPDATE conversational_agent_state
+           SET last_reply_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           WHERE contact_id = ? AND agent_id = ?
+             AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?`,
+          [cleanContactId, cleanAgentId, normalizedChannel]
+        )
+      }
+    }
+  })
+  if (delivery?.inProgress) {
+    throw new Error('La confirmación visible del pago sigue en proceso de entrega')
+  }
+  if (delivery?.suppressedByPreventiveMeasure) {
+    await recordEvent({
+      eventId: `${cleanReconciliationId}_reply_suppressed`,
+      contactId: cleanContactId,
+      eventType: 'payment_resume_reply_suppressed',
+      detail: {
+        agentId: cleanAgentId,
+        channel: normalizedChannel,
+        reconciliationId: cleanReconciliationId,
+        terminalType,
+        reason: 'preventive_measure'
+      },
+      throwOnError: true
+    })
+    return { sent: false, suppressed: true, terminal: true, delivery }
+  }
+  if (delivery?.interruptedBy || !delivery?.parts?.length) {
+    throw new Error('No se pudo completar la confirmación visible del pago')
+  }
+  await recordEvent({
+    eventId: `${cleanReconciliationId}_reply`,
+    contactId: cleanContactId,
+    eventType: 'payment_resume_reply_sent',
+    detail: {
+      agentId: cleanAgentId,
+      channel: normalizedChannel,
+      reconciliationId: cleanReconciliationId,
+      terminalType,
+      partCount: delivery.parts.length
+    },
+    throwOnError: true
+  })
+  return { sent: true, delivery }
+}
+
 /**
  * Reanuda un único turno del runtime principal v2 después de que el ledger de
  * pagos confirmó un anticipo. No fabrica un inbound ni invoca capas legacy: el
@@ -2906,20 +3229,39 @@ async function handleToolCallingV2InboundTurn({
  */
 export async function resumeToolCallingV2AfterVerifiedPayment({
   reconciliationId = '',
+  reconciliationClaimToken = '',
   contactId = '',
   agentId = '',
   channel = 'whatsapp',
   amount = null,
   currency = '',
   paymentEnvironment = '',
-  paymentPurpose = 'appointment_deposit'
+  paymentPurpose = 'appointment_deposit',
+  bookingOwner = '',
+  terminalToolName = ''
 } = {}, dependencies = {}) {
   const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanReconciliationClaimToken = String(reconciliationClaimToken || '').trim()
   const cleanContactId = String(contactId || '').trim()
   const cleanAgentId = String(agentId || '').trim()
+  const boundTerminal = normalizeAppointmentTerminalBinding({ bookingOwner, terminalToolName })
   const normalizedChannel = normalizeConversationalChannel(channel)
   if (!cleanReconciliationId || !cleanContactId || !cleanAgentId) {
     return { resumed: false, reason: 'payment_resume_identity_missing' }
+  }
+  if (paymentPurpose === 'appointment_deposit' && !boundTerminal) {
+    return {
+      resumed: false,
+      manualReviewRequired: true,
+      reason: 'appointment_terminal_binding_missing'
+    }
+  }
+  if (paymentPurpose === 'appointment_deposit' && !cleanReconciliationClaimToken) {
+    return {
+      resumed: false,
+      manualReviewRequired: true,
+      reason: 'payment_reconciliation_claim_missing'
+    }
   }
 
   const runKey = getRunKey(cleanContactId, normalizedChannel)
@@ -2942,19 +3284,42 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
 
   try {
     const runtimeDefaults = await getRuntimeConfig()
-    if (!(await featureEnabled('conversational_ai'))) return { resumed: false, reason: 'feature_disabled' }
+    if (!(await featureEnabled('conversational_ai'))) {
+      return { resumed: false, manualReviewRequired: true, reason: 'feature_disabled' }
+    }
 
     let agentConfig = await getAgent(cleanAgentId).catch(() => null)
     if (!agentConfig?.enabled) {
-      return { resumed: false, reason: 'native_agent_unavailable' }
+      return { resumed: false, manualReviewRequired: true, reason: 'native_agent_unavailable' }
+    }
+    const configuredTerminal = getAppointmentTerminalBinding(agentConfig)
+    if (
+      paymentPurpose === 'appointment_deposit' &&
+      (
+        !configuredTerminal ||
+        configuredTerminal.bookingOwner !== boundTerminal.bookingOwner ||
+        configuredTerminal.terminalToolName !== boundTerminal.terminalToolName
+      )
+    ) {
+      return {
+        resumed: false,
+        manualReviewRequired: true,
+        reason: 'appointment_terminal_configuration_changed',
+        bookingOwner: boundTerminal.bookingOwner,
+        terminalToolName: boundTerminal.terminalToolName,
+        currentBookingOwner: configuredTerminal?.bookingOwner || null,
+        currentTerminalToolName: configuredTerminal?.terminalToolName || null
+      }
     }
     const state = await getState(cleanContactId, { agentId: cleanAgentId, channel: normalizedChannel })
     if (!state || state.status !== 'active' || state.signal) {
-      return { resumed: false, reason: 'conversation_state_not_runnable' }
+      return { resumed: false, manualReviewRequired: true, reason: 'conversation_state_not_runnable' }
     }
 
     const latest = await getLatestInbound(cleanContactId, normalizedChannel)
-    if (!latest?.id) return { resumed: false, reason: 'conversation_history_missing' }
+    if (!latest?.id) {
+      return { resumed: false, manualReviewRequired: true, reason: 'conversation_history_missing' }
+    }
     const contact = await db.get(
       'SELECT id, full_name, phone, email FROM contacts WHERE id = ?',
       [cleanContactId]
@@ -2973,7 +3338,9 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       visualAnalysisApiKey: openAIFallbackApiKey,
       includeBinary: shouldIncludeConversationalBinaryMedia({ runtime })
     })
-    if (!hydrated.length) return { resumed: false, reason: 'conversation_history_empty' }
+    if (!hydrated.length) {
+      return { resumed: false, manualReviewRequired: true, reason: 'conversation_history_empty' }
+    }
 
     const messages = hydrated
     const runtimeEventContext = [
@@ -2992,11 +3359,31 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       channel: normalizedChannel,
       traceMessage: 'Pago verificado: retomar el paso conversacional pendiente',
       executionId: `payment-resume:${cleanReconciliationId}`,
+      paymentResumeClaim: {
+        reconciliationId: cleanReconciliationId,
+        claimToken: cleanReconciliationClaimToken,
+        agentId: cleanAgentId,
+        channel: normalizedChannel
+      },
+      forcedToolName: paymentPurpose === 'appointment_deposit'
+        ? boundTerminal.terminalToolName
+        : '',
       conversationModel: agentConfig.model,
       historyEnvelope: { ...historyEnvelope, messages },
       runtimeEventContext
     })
     const { ctx, model, reply } = turn
+
+    if (
+      paymentPurpose === 'appointment_deposit' &&
+      !hasSuccessfulLiveAppointmentTerminal(ctx?.actions, boundTerminal)
+    ) {
+      return {
+        resumed: false,
+        manualReviewRequired: true,
+        reason: 'payment_resume_terminal_failed'
+      }
+    }
 
     await recordEvent({
       eventId: `${cleanReconciliationId}_turn`,
@@ -3008,7 +3395,9 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
         runtimeMode: turn.runtimeMode,
         modelCallCount: turn.modelCallCount,
         actionTypes: ctx.actions.map((action) => action?.type).filter(Boolean),
-        reconciliationId: cleanReconciliationId
+        reconciliationId: cleanReconciliationId,
+        bookingOwner: boundTerminal?.bookingOwner || null,
+        terminalToolName: boundTerminal?.terminalToolName || null
       },
       throwOnError: true
     })
@@ -3031,6 +3420,13 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       return { resumed: false, reason: 'conversation_state_changed_during_resume', turn }
     }
 
+    await (dependencies.assertReconciliationClaim || assertConversationalPaymentReconciliationClaim)({
+      reconciliationId: cleanReconciliationId,
+      claimToken: cleanReconciliationClaimToken,
+      contactId: cleanContactId,
+      agentId: cleanAgentId
+    })
+
     const syntheticLatest = {
       ...latest,
       id: cleanReconciliationId,
@@ -3049,7 +3445,9 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       dependencies: {
         splitter: splitMessageIntoBubbles,
         forceSingleMessage: hasStructuredAppointmentOffer(ctx.actions),
-        loadNewerInbound: () => loadNewerInboundMessage(cleanContactId, latest.id, normalizedChannel),
+        // La terminal ya confirmó un hecho real. Un inbound que llegue después
+        // no vuelve obsoleta esta confirmación; se encola y se procesa aparte.
+        loadNewerInbound: async () => null,
         recordEvent: (event) => recordEvent({
           ...event,
           eventId: `${cleanReconciliationId}_${event.eventType}_${event.detail?.partIndex || 0}`
@@ -3065,6 +3463,22 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
         }
       }
     })
+    if (delivery.suppressedByPreventiveMeasure) {
+      await recordEvent({
+        eventId: `${cleanReconciliationId}_reply_suppressed`,
+        contactId: cleanContactId,
+        eventType: 'payment_resume_reply_suppressed',
+        detail: {
+          agentId: cleanAgentId,
+          channel: normalizedChannel,
+          reconciliationId: cleanReconciliationId,
+          terminalType: boundTerminal?.bookingOwner || null,
+          reason: 'preventive_measure'
+        },
+        throwOnError: true
+      })
+      return { resumed: true, sent: false, suppressed: true, delivery, turn }
+    }
     if (delivery.interruptedBy) {
       scheduleConversationalAgentRerun({
         contactId: cleanContactId,
@@ -3106,6 +3520,7 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
     runningContacts.delete(runKey)
   }
 }
+
 
 function isRunnableConversationState(state) {
   return Boolean(state?.agentId && state.status === 'active' && !state.signal)

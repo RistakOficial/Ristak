@@ -8,6 +8,8 @@ import {
   buildNativeFreeSlotDays,
   createConversationalTools,
   setNativeHandoffAfterAssignmentHookForTest,
+  setNativeHumanBookingAfterCommitHookForTest,
+  setNativePaymentResumeBeforeTerminalCommitHookForTest,
   setNativePaymentReceiptAnalysisHookForTest
 } from '../src/agents/conversational/tools.js'
 import {
@@ -24,11 +26,16 @@ import { registerAgentTransferPaymentProofForReview } from '../src/services/paym
 import { setConversationalAgentLivePaymentDependenciesForTests } from '../src/services/conversationalAgentLivePaymentService.js'
 import {
   completeConversationalAgentSalePaymentFromInvoice,
+  consumeConversationalAppointmentDepositForHumanBooking,
   consumeConversationalAppointmentDepositEvidence,
   createConversationalAgent,
+  deleteConversationalAgent,
   recordConversationalAgentEvent,
   reserveConversationalAppointmentDepositEvidence,
-  setConversationalPaymentResumeHandlerForTest
+  setConversationalPaymentAfterStateInspectionHookForTest,
+  setConversationalPriorityNotificationSenderForTest,
+  setConversationalPaymentResumeHandlerForTest,
+  setConversationalPaymentTerminalReplyHandlerForTest
 } from '../src/services/conversationalAgentService.js'
 import { getAccountCurrency } from '../src/utils/accountLocale.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
@@ -39,6 +46,14 @@ import {
   rejectTransferProof,
   voidTransaction
 } from '../src/controllers/transactionsController.js'
+
+test.beforeEach(() => {
+  setConversationalPaymentTerminalReplyHandlerForTest(async () => ({ sent: true, testDelivery: true }))
+})
+
+test.afterEach(() => {
+  setConversationalPaymentTerminalReplyHandlerForTest(null)
+})
 
 function mockResponse() {
   return {
@@ -123,6 +138,57 @@ async function authorizeAppointmentOffer(ctx, startTime, timezone, customerQuote
   }
 }
 
+async function createSyntheticAppointmentDepositSourceBinding({
+  contactId,
+  agentId,
+  calendarId,
+  bookingOwner = 'ai',
+  suffix = randomUUID()
+} = {}) {
+  const startTime = DateTime.now().plus({ days: 20 }).startOf('hour').toUTC().toISO()
+  const verifiedAt = new Date().toISOString()
+  const appointmentRequestDraft = {
+    title: 'Cita ligada a anticipo',
+    notes: null,
+    attendeeName: null,
+    attendeeContext: null,
+    primaryAttendee: null,
+    guests: []
+  }
+  const appointmentRequestDraftHash = createHash('sha256')
+    .update(JSON.stringify(appointmentRequestDraft))
+    .digest('hex')
+  const terminalToolName = bookingOwner === 'human' ? 'request_human_booking' : 'book_appointment'
+  const selectionEventId = `cae_test_selection_${suffix}`
+  await recordConversationalAgentEvent({
+    eventId: selectionEventId,
+    contactId,
+    eventType: 'appointment_slot_selection_verified',
+    detail: {
+      agentId,
+      contactId,
+      calendarId,
+      startTime,
+      verifiedAt,
+      status: 'active',
+      appointmentRequestDraft,
+      appointmentRequestDraftHash,
+      bookingOwner,
+      terminalToolName
+    },
+    throwOnError: true
+  })
+  return {
+    appointmentSelectionEventId: selectionEventId,
+    appointmentSelectionCalendarId: calendarId,
+    appointmentSelectionStartTime: startTime,
+    appointmentSelectionVerifiedAt: verifiedAt,
+    appointmentSelectionRequestDraftHash: appointmentRequestDraftHash,
+    appointmentSelectionBookingOwner: bookingOwner,
+    appointmentSelectionTerminalToolName: terminalToolName
+  }
+}
+
 async function createLiveDepositSelection({ calendarId, contactId, agentId, startTime, timezone, executionId }) {
   const currency = await getAccountCurrency()
   const capabilities = [
@@ -178,6 +244,434 @@ async function createLiveDepositSelection({ calendarId, contactId, agentId, star
   assert.equal(result.ok, false, JSON.stringify(result))
   assert.equal(result.paymentEvidenceRequired, true)
   return { ctx, capabilities, currency }
+}
+
+async function createPaymentResumeTerminalRaceFixture({
+  bookingOwner = 'ai',
+  suffix = randomUUID()
+} = {}) {
+  const terminalToolName = bookingOwner === 'human' ? 'request_human_booking' : 'book_appointment'
+  const calendarId = `calendar_payment_resume_race_${bookingOwner}_${suffix}`
+  const contactId = `contact_payment_resume_race_${bookingOwner}_${suffix}`
+  const agentId = `agent_payment_resume_race_${bookingOwner}_${suffix}`
+  const paymentId = `payment_payment_resume_race_${bookingOwner}_${suffix}`
+  const sourceEventId = `source_payment_resume_race_${bookingOwner}_${suffix}`
+  const reconciliationId = `carec_payment_resume_race_${bookingOwner}_${suffix}`
+  const reconciliationClaimToken = `claim_a_${bookingOwner}_${suffix}`
+  const replacementClaimToken = `claim_b_${bookingOwner}_${suffix}`
+  const currency = await getAccountCurrency()
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 55 }).startOf('day')
+  const nextThursday = baseDay.plus({ days: (4 - baseDay.weekday + 7) % 7 })
+  const startTime = nextThursday.set({ hour: 16, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO()
+  const capabilities = [
+    { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner, allowOverlaps: false },
+    {
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'deposit',
+      collectionMethod: 'payment_link',
+      deposit: {
+        enabled: true,
+        mode: 'fixed',
+        amount: 100,
+        currency,
+        methods: { paymentLink: true }
+      }
+    }
+  ]
+
+  await upsertLocalCalendar({
+    id: calendarId,
+    locationId: `location_payment_resume_race_${bookingOwner}_${suffix}`,
+    name: `Agenda carrera ${bookingOwner}`,
+    source: 'ristak',
+    slotDuration: 60,
+    slotInterval: 60,
+    openHours: [{ daysOfTheWeek: [4], hours: [{ openHour: 15, openMinute: 0, closeHour: 18, closeMinute: 0 }] }]
+  }, { source: 'ristak', syncStatus: 'synced' })
+  await db.run(
+    `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+     VALUES (?, 'Cliente carrera de anticipo', '+526560001234', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId]
+  )
+
+  const selectionCtx = v2Context(capabilities, {
+    contactId,
+    agentId,
+    dryRun: false,
+    executionId: `message_payment_resume_race_${bookingOwner}_${suffix}`,
+    accountLocale: { currency }
+  })
+  selectionCtx.config.id = agentId
+  const selectionEvidence = await authorizeAppointmentOffer(selectionCtx, startTime, timezone)
+  const first = await createConversationalTools(selectionCtx)
+    .find((item) => item.name === terminalToolName)
+    .invoke(null, JSON.stringify({
+      startTime,
+      selectionEvidence,
+      title: 'Valoración ligada al anticipo',
+      notes: 'Contrato original que no puede cambiar durante la reanudación',
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: null,
+      guests: []
+    }))
+  assert.equal(first.ok, false, JSON.stringify(first))
+  assert.equal(first.paymentEvidenceRequired, true, JSON.stringify(first))
+
+  const selection = await db.get(
+    `SELECT id, detail_json FROM conversational_agent_events
+     WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_selection_verified'
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [contactId, agentId]
+  )
+  assert.ok(selection?.id)
+  const selectionDetail = JSON.parse(selection.detail_json)
+  const sourceBinding = {
+    appointmentSelectionEventId: selection.id,
+    appointmentSelectionCalendarId: selectionDetail.calendarId,
+    appointmentSelectionStartTime: selectionDetail.startTime,
+    appointmentSelectionVerifiedAt: selectionDetail.verifiedAt,
+    appointmentSelectionRequestDraftHash: selectionDetail.appointmentRequestDraftHash,
+    appointmentSelectionBookingOwner: selectionDetail.bookingOwner,
+    appointmentSelectionTerminalToolName: selectionDetail.terminalToolName
+  }
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, paid_at, created_at, updated_at
+    ) VALUES (?, ?, 100, ?, 'paid', 'card', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [paymentId, contactId, currency]
+  )
+  await recordConversationalAgentEvent({
+    eventId: sourceEventId,
+    contactId,
+    eventType: 'payment_link_created',
+    detail: {
+      agentId,
+      ledgerPaymentId: paymentId,
+      amount: 100,
+      currency,
+      paymentEnvironment: 'live',
+      paymentMode: 'deposit',
+      paymentPurpose: 'appointment_deposit',
+      appointmentDeposit: true,
+      ...sourceBinding
+    },
+    throwOnError: true
+  })
+  await recordConversationalAgentEvent({
+    eventId: reconciliationId,
+    contactId,
+    eventType: 'payment_reconciliation_v2',
+    detail: {
+      agentId,
+      sourceEventId,
+      status: 'processing',
+      claimToken: reconciliationClaimToken,
+      leaseUntilAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      verifiedEventAppliedAt: new Date().toISOString(),
+      ledgerPaymentId: paymentId,
+      amount: 100,
+      currency,
+      paymentEnvironment: 'live',
+      paymentPurpose: 'appointment_deposit',
+      appointmentDeposit: true,
+      autoResumeAllowed: true,
+      manualReviewOnly: false,
+      ...sourceBinding
+    },
+    throwOnError: true
+  })
+  await db.run(
+    `INSERT INTO conversational_agent_state (
+      contact_id, agent_id, channel, status, signal, updated_by, updated_at
+    ) VALUES (?, ?, 'whatsapp', 'active', NULL, NULL, CURRENT_TIMESTAMP)`,
+    [contactId, agentId]
+  )
+
+  return {
+    bookingOwner,
+    terminalToolName,
+    calendarId,
+    contactId,
+    agentId,
+    paymentId,
+    reconciliationId,
+    reconciliationClaimToken,
+    replacementClaimToken,
+    currency,
+    startTime,
+    capabilities,
+    selectionDetail,
+    contexts: [selectionCtx]
+  }
+}
+
+async function invokePaymentResumeTerminalFixture(fixture, claimToken = fixture.reconciliationClaimToken) {
+  const ctx = v2Context(fixture.capabilities, {
+    contactId: fixture.contactId,
+    agentId: fixture.agentId,
+    dryRun: false,
+    executionId: `payment-resume:${fixture.reconciliationId}`,
+    accountLocale: { currency: fixture.currency },
+    paymentResumeClaim: {
+      reconciliationId: fixture.reconciliationId,
+      claimToken,
+      agentId: fixture.agentId,
+      channel: 'whatsapp'
+    }
+  })
+  ctx.config.id = fixture.agentId
+  fixture.contexts.push(ctx)
+  const result = await createConversationalTools(ctx)
+    .find((item) => item.name === fixture.terminalToolName)
+    .invoke(null, JSON.stringify({
+      title: 'Dato nuevo que no debe sustituir el contrato pagado',
+      notes: null,
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: null,
+      guests: []
+    }))
+  return { ctx, result }
+}
+
+async function cleanupPaymentResumeTerminalRaceFixture(fixture) {
+  setNativePaymentResumeBeforeTerminalCommitHookForTest(null)
+  const requestIds = fixture.contexts
+    .flatMap((ctx) => ctx.actions || [])
+    .map((action) => String(action?.clientRequestId || '').trim())
+    .filter(Boolean)
+  for (const requestId of new Set(requestIds)) {
+    await db.run('DELETE FROM appointment_creation_requests WHERE client_request_id = ?', [requestId]).catch(() => {})
+  }
+  await db.run(
+    `DELETE FROM appointment_creation_requests
+     WHERE appointment_id IN (SELECT id FROM appointments WHERE contact_id = ?)`,
+    [fixture.contactId]
+  ).catch(() => {})
+  await db.run('DELETE FROM appointments WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM payments WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM calendars WHERE id = ?', [fixture.calendarId]).catch(() => {})
+  await db.run('DELETE FROM contacts WHERE id = ?', [fixture.contactId]).catch(() => {})
+}
+
+for (const bookingOwner of ['ai', 'human']) {
+  const terminalToolName = bookingOwner === 'human' ? 'request_human_booking' : 'book_appointment'
+
+  test(`claim A pierde ante claim B justo antes de ${terminalToolName} y el replay viejo no responde`, async () => {
+    let fixture = null
+    try {
+      fixture = await createPaymentResumeTerminalRaceFixture({ bookingOwner })
+      let hookCalls = 0
+      setNativePaymentResumeBeforeTerminalCommitHookForTest(async (hookContext) => {
+        hookCalls += 1
+        assert.equal(hookContext.terminalToolName, terminalToolName)
+        assert.equal(hookContext.reconciliationId, fixture.reconciliationId)
+        assert.equal(hookContext.reconciliationClaimToken, fixture.reconciliationClaimToken)
+        const row = await db.get(
+          'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+          [fixture.reconciliationId]
+        )
+        const detail = JSON.parse(row.detail_json)
+        assert.equal(detail.status, 'processing')
+        assert.equal(detail.claimToken, fixture.reconciliationClaimToken)
+        await db.run(
+          'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+          [JSON.stringify({
+            ...detail,
+            claimToken: fixture.replacementClaimToken,
+            leaseUntilAt: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+          }), fixture.reconciliationId]
+        )
+      })
+
+      const staleAttempt = await invokePaymentResumeTerminalFixture(fixture)
+      assert.equal(hookCalls, 1)
+      assert.equal(staleAttempt.result.ok, false, JSON.stringify(staleAttempt.result))
+      assert.notEqual(staleAttempt.ctx.actions.at(-1)?.outcome?.actionCompleted, true)
+      setNativePaymentResumeBeforeTerminalCommitHookForTest(null)
+
+      const reconciliation = JSON.parse((await db.get(
+        'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+        [fixture.reconciliationId]
+      )).detail_json)
+      assert.equal(reconciliation.claimToken, fixture.replacementClaimToken)
+      assert.equal(Number((await db.get(
+        'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+        [fixture.contactId]
+      )).total), 0)
+      assert.equal(Number((await db.get(
+        `SELECT COUNT(*) AS total FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
+        [fixture.contactId]
+      )).total), 0)
+      const consumptionRow = await db.get(
+        'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+        [`${fixture.reconciliationId}_consumed`]
+      )
+      if (consumptionRow?.detail_json) {
+        assert.notEqual(JSON.parse(consumptionRow.detail_json).status, 'consumed')
+      }
+      const untouchedState = await db.get(
+        `SELECT status, signal, updated_by FROM conversational_agent_state
+         WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+        [fixture.contactId, fixture.agentId]
+      )
+      assert.equal(untouchedState.status, 'active')
+      assert.equal(untouchedState.signal, null)
+
+      let deliveryCalls = 0
+      const recordedEvents = []
+      const replay = await resumeToolCallingV2AfterVerifiedPayment({
+        reconciliationId: fixture.reconciliationId,
+        reconciliationClaimToken: fixture.reconciliationClaimToken,
+        contactId: fixture.contactId,
+        agentId: fixture.agentId,
+        channel: 'whatsapp',
+        amount: 100,
+        currency: fixture.currency,
+        paymentEnvironment: 'live',
+        paymentPurpose: 'appointment_deposit',
+        bookingOwner,
+        terminalToolName
+      }, {
+        getRuntimeConfig: async () => ({ enabled: true, aiProvider: 'openai' }),
+        hasFeature: async () => true,
+        getAgent: async () => ({
+          id: fixture.agentId,
+          enabled: true,
+          runtimeMode: 'tool_calling_v2',
+          aiProvider: 'openai',
+          model: 'fake-payment-resume-race-model',
+          capabilitiesConfig: { schemaVersion: 3, items: fixture.capabilities },
+          replyDelivery: { mode: 'single', splitMessagesEnabled: false }
+        }),
+        getState: async () => db.get(
+          `SELECT status, signal FROM conversational_agent_state
+           WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+          [fixture.contactId, fixture.agentId]
+        ),
+        getLatestInbound: async () => ({
+          id: `inbound_payment_resume_race_${fixture.bookingOwner}`,
+          phone: '+526560001234',
+          message_text: 'ok'
+        }),
+        getHistoryEnvelope: async () => ({
+          messages: [{ role: 'user', content: 'ok' }],
+          telemetry: { totalMessages: 1, includedMessages: 1, omittedMessages: 0 }
+        }),
+        hydrateMessages: async (messages) => messages,
+        resolveRuntime: async () => ({ apiKey: 'stored-test-key-not-real', modelProvider: { kind: 'fake' } }),
+        runNativeTurn: async (input) => {
+          assert.equal(input.paymentResumeClaim.claimToken, fixture.reconciliationClaimToken)
+          const oldClaimAttempt = await invokePaymentResumeTerminalFixture(
+            fixture,
+            input.paymentResumeClaim.claimToken
+          )
+          return {
+            ctx: oldClaimAttempt.ctx,
+            reply: 'No debe enviarse porque este worker perdió el claim.',
+            model: 'fake-payment-resume-race-model',
+            runtimeMode: 'tool_calling_v2',
+            modelCallCount: 1
+          }
+        },
+        deliverReply: async () => {
+          deliveryCalls += 1
+          return { parts: ['respuesta indebida'], sentParts: 1, interruptedBy: null }
+        },
+        recordEvent: async (event) => {
+          recordedEvents.push(event)
+          return event
+        }
+      })
+      assert.deepEqual(replay, {
+        resumed: false,
+        manualReviewRequired: true,
+        reason: 'payment_resume_terminal_failed'
+      })
+      assert.equal(deliveryCalls, 0)
+      assert.equal(
+        recordedEvents.some((event) => event.eventId === `${fixture.reconciliationId}_reply`),
+        false
+      )
+      assert.equal(Number((await db.get(
+        `SELECT COUNT(*) AS total FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'payment_resume_reply_sent'`,
+        [fixture.contactId]
+      )).total), 0)
+    } finally {
+      if (fixture) await cleanupPaymentResumeTerminalRaceFixture(fixture)
+      else setNativePaymentResumeBeforeTerminalCommitHookForTest(null)
+    }
+  })
+
+  for (const takeoverStatus of ['human', 'paused']) {
+    test(`takeover ${takeoverStatus} justo antes de ${terminalToolName} conserva el control y bloquea todo efecto`, async () => {
+      let fixture = null
+      try {
+        fixture = await createPaymentResumeTerminalRaceFixture({ bookingOwner })
+        const takeoverSignal = takeoverStatus === 'human' ? 'ready_for_human' : null
+        const takeoverReason = `Takeover ${takeoverStatus} concurrente antes de ${terminalToolName}`
+        setNativePaymentResumeBeforeTerminalCommitHookForTest(async (hookContext) => {
+          assert.equal(hookContext.terminalToolName, terminalToolName)
+          assert.equal(hookContext.reconciliationClaimToken, fixture.reconciliationClaimToken)
+          const updated = await db.run(
+            `UPDATE conversational_agent_state
+             SET status = ?, signal = ?, signal_reason = ?, updated_by = 'human_takeover_test',
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+            [takeoverStatus, takeoverSignal, takeoverReason, fixture.contactId, fixture.agentId]
+          )
+          assert.equal(Number(updated?.changes ?? updated?.rowCount ?? 0), 1)
+        })
+
+        const attempt = await invokePaymentResumeTerminalFixture(fixture)
+        assert.equal(attempt.result.ok, false, JSON.stringify(attempt.result))
+        assert.notEqual(attempt.ctx.actions.at(-1)?.outcome?.actionCompleted, true)
+
+        const state = await db.get(
+          `SELECT status, signal, signal_reason, updated_by FROM conversational_agent_state
+           WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+          [fixture.contactId, fixture.agentId]
+        )
+        assert.equal(state.status, takeoverStatus)
+        assert.equal(state.signal, takeoverSignal)
+        assert.equal(state.signal_reason, takeoverReason)
+        assert.equal(state.updated_by, 'human_takeover_test')
+        assert.equal(Number((await db.get(
+          'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+          [fixture.contactId]
+        )).total), 0)
+        assert.equal(Number((await db.get(
+          `SELECT COUNT(*) AS total FROM conversational_agent_events
+           WHERE contact_id = ? AND event_type IN ('appointment_booked', 'human_booking_requested')`,
+          [fixture.contactId]
+        )).total), 0)
+        const consumptionRow = await db.get(
+          'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+          [`${fixture.reconciliationId}_consumed`]
+        )
+        if (consumptionRow?.detail_json) {
+          assert.notEqual(JSON.parse(consumptionRow.detail_json).status, 'consumed')
+        }
+        const contact = await db.get(
+          'SELECT assigned_user_id, assignment_test_effect_id FROM contacts WHERE id = ?',
+          [fixture.contactId]
+        )
+        assert.equal(contact.assigned_user_id, null)
+        assert.equal(contact.assignment_test_effect_id, null)
+      } finally {
+        if (fixture) await cleanupPaymentResumeTerminalRaceFixture(fixture)
+        else setNativePaymentResumeBeforeTerminalCommitHookForTest(null)
+      }
+    })
+  }
 }
 
 test('v2 presenta la hora local del servidor y conserva el startTime UTC sin recalcularlo', () => {
@@ -647,6 +1141,7 @@ test('una oferta canónica de un slot ya ocupado no crea selección durable ni p
     assert.equal(ctx.actions.filter((action) => action.type === 'create_payment_link').length, 0)
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactId, competitorId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
@@ -1565,6 +2060,417 @@ test('agenda humana revalida, asigna y transfiere sin crear cita ni cerrar conve
   }
 })
 
+test('un anticipo ligado a agenda humana reanuda request_human_booking y nunca book_appointment', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_human_deposit_${suffix}`
+  const contactId = `contact_human_deposit_${suffix}`
+  let agent = null
+  let agentId = ''
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 25 }).startOf('day')
+  const nextWednesday = baseDay.plus({ days: (3 - baseDay.weekday + 7) % 7 })
+  const slot = nextWednesday.set({ hour: 16, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO()
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto anticipo humano', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'location_human_deposit',
+      name: 'Agenda humana con anticipo',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [3], hours: [{ openHour: 15, openMinute: 0, closeHour: 18, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    agent = await createConversationalAgent({
+      name: `Agenda humana con anticipo ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      objective: 'citas',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [
+          { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'human' },
+          {
+            id: 'collect_payment',
+            enabled: true,
+            paymentMode: 'deposit',
+            collectionMethod: 'payment_link',
+            deposit: { enabled: true, mode: 'fixed', amount: 100, currency: 'MXN', methods: { paymentLink: true } }
+          }
+        ]
+      }
+    })
+    agentId = agent.id
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'human' },
+      {
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'deposit',
+        collectionMethod: 'payment_link',
+        deposit: { enabled: true, mode: 'fixed', amount: 100, currency: 'MXN', methods: { paymentLink: true } }
+      }
+    ], {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `message_human_deposit_${suffix}`,
+      accountLocale: { currency: 'MXN' }
+    })
+    ctx.config.id = agentId
+    const selectionEvidence = await authorizeAppointmentOffer(ctx, slot, timezone)
+    const first = await createConversationalTools(ctx)
+      .find((item) => item.name === 'request_human_booking')
+      .invoke(null, JSON.stringify({
+        startTime: slot,
+        selectionEvidence,
+        title: 'Valoración de rodilla',
+        notes: 'Anticipo antes de entregar al equipo',
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(first.ok, false, JSON.stringify(first))
+    assert.equal(first.paymentEvidenceRequired, true)
+    const selection = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_selection_verified'`,
+      [contactId, agentId]
+    )
+    const detail = JSON.parse(selection.detail_json)
+    assert.equal(detail.bookingOwner, 'human')
+    assert.equal(detail.terminalToolName, 'request_human_booking')
+    const paymentId = `payment_human_deposit_${suffix}`
+    const sourceEventId = `source_human_deposit_${suffix}`
+    const reconciliationId = `carec_${createHash('sha256')
+      .update([contactId, agentId, sourceEventId, paymentId].join('|'))
+      .digest('hex')
+      .slice(0, 48)}`
+    const reconciliationClaimToken = `capr_${suffix}`
+    const sourceBinding = {
+      appointmentSelectionEventId: selection.id,
+      appointmentSelectionCalendarId: detail.calendarId,
+      appointmentSelectionStartTime: detail.startTime,
+      appointmentSelectionVerifiedAt: detail.verifiedAt,
+      appointmentSelectionRequestDraftHash: detail.appointmentRequestDraftHash,
+      appointmentSelectionBookingOwner: detail.bookingOwner,
+      appointmentSelectionTerminalToolName: detail.terminalToolName
+    }
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, paid_at, created_at, updated_at
+      ) VALUES (?, ?, 100, 'MXN', 'paid', 'card', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    await recordConversationalAgentEvent({
+      eventId: sourceEventId,
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId,
+        ledgerPaymentId: paymentId,
+        amount: 100,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        ...sourceBinding
+      },
+      throwOnError: true
+    })
+    await recordConversationalAgentEvent({
+      eventId: reconciliationId,
+      contactId,
+      eventType: 'payment_reconciliation_v2',
+      detail: {
+        agentId,
+        sourceEventId,
+        status: 'processing',
+        claimToken: reconciliationClaimToken,
+        leaseUntilAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        verifiedEventAppliedAt: new Date().toISOString(),
+        ledgerPaymentId: paymentId,
+        amount: 100,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        autoResumeAllowed: true,
+        manualReviewOnly: false,
+        ...sourceBinding
+      },
+      throwOnError: true
+    })
+
+    const resumedCtx = {
+      ...ctx,
+      executionId: `payment-resume:${reconciliationId}`,
+      paymentResumeClaim: {
+        reconciliationId,
+        claimToken: reconciliationClaimToken,
+        agentId,
+        channel: 'whatsapp'
+      },
+      actions: []
+    }
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+        contact_id, agent_id, channel, status, signal, updated_at
+      ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, agentId]
+    )
+    const humanBookingEventId = `cae_human_booking_${createHash('sha256')
+      .update([agentId, contactId, calendarId, detail.startTime, resumedCtx.executionId].join('\u0000'))
+      .digest('hex')
+      .slice(0, 48)}`
+    setNativeHandoffAfterAssignmentHookForTest(async () => {
+      throw new Error('fallo después de reservar anticipo humano')
+    })
+    const failed = await createConversationalTools(resumedCtx)
+      .find((item) => item.name === 'request_human_booking')
+      .invoke(null, JSON.stringify({
+        title: 'Dato distinto que no debe sustituir el contrato',
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(failed.ok, false, JSON.stringify(failed))
+    assert.equal(await db.get(
+      `SELECT id FROM conversational_agent_events WHERE id = ?`,
+      [`${reconciliationId}_consumed`]
+    ), null)
+    assert.equal(await db.get(
+      `SELECT id FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
+      [contactId]
+    ), null)
+    setNativeHandoffAfterAssignmentHookForTest(null)
+
+    await recordConversationalAgentEvent({
+      eventId: humanBookingEventId,
+      contactId,
+      eventType: 'human_booking_requested',
+      detail: {
+        agentId,
+        bookingOwner: 'human',
+        terminalToolName: 'request_human_booking',
+        calendarId,
+        startTime: detail.startTime,
+        depositReconciliationId: reconciliationId,
+        depositPaymentId: paymentId,
+        selectionRequestDraftHash: '0'.repeat(64),
+        sourceMessageId: resumedCtx.executionId,
+        appointmentCreated: false
+      },
+      throwOnError: true
+    })
+    const collision = await createConversationalTools(resumedCtx)
+      .find((item) => item.name === 'request_human_booking')
+      .invoke(null, JSON.stringify({
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(collision.ok, false, JSON.stringify(collision))
+    assert.equal(collision.code, 'human_booking_event_contract_conflict')
+    assert.equal(await db.get(
+      'SELECT id FROM conversational_agent_events WHERE id = ?',
+      [`${reconciliationId}_consumed`]
+    ), null)
+    await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [humanBookingEventId])
+
+    resumedCtx.actions = []
+    setNativeHumanBookingAfterCommitHookForTest(async () => {
+      throw new Error('crash después del commit humano y antes del push')
+    })
+    const crashResult = await createConversationalTools(resumedCtx)
+        .find((item) => item.name === 'request_human_booking')
+        .invoke(null, JSON.stringify({
+          title: 'Dato distinto que no debe sustituir el contrato',
+          notes: null,
+          attendeeName: null,
+          attendeeContext: null,
+          primaryAttendee: null,
+          guests: []
+        }))
+    assert.match(String(crashResult), /crash después del commit humano/)
+    setNativeHumanBookingAfterCommitHookForTest(null)
+    assert.equal(resumedCtx.actions.some((action) => action.type === 'book_appointment'), false)
+    assert.equal(resumedCtx.actions[0]?.confirmationEvidence?.terminalToolName, 'request_human_booking')
+    assert.equal((await db.get(
+      `SELECT event_type FROM conversational_agent_events WHERE id = ?`,
+      [humanBookingEventId]
+    )).event_type, 'human_booking_requested')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE id LIKE ? AND event_type IN (
+         'priority_push_notification_pending',
+         'priority_push_notification',
+         'priority_push_notification_failed'
+       )`,
+      [`${reconciliationId}_human_booking_notification%`]
+    )).total), 0)
+    const consumption = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events WHERE id = ?`,
+      [`${reconciliationId}_consumed`]
+    )).detail_json)
+    assert.equal(consumption.status, 'consumed')
+    assert.equal(consumption.consumptionType, 'human_booking_request')
+    assert.equal(consumption.appointmentId, null)
+    assert.equal(consumption.sourceMessageId, `payment-resume:${reconciliationId}`)
+    const replayedConsumption = await consumeConversationalAppointmentDepositForHumanBooking({
+      reconciliationId,
+      contactId,
+      agentId,
+      paymentId,
+      reconciliationClaimToken,
+      humanBookingEventId,
+      calendarId,
+      startTime: detail.startTime,
+      selectionRequestDraftHash: detail.appointmentRequestDraftHash,
+      sourceMessageId: resumedCtx.executionId
+    })
+    assert.equal(replayedConsumption.replayed, true)
+    await assert.rejects(
+      consumeConversationalAppointmentDepositForHumanBooking({
+        reconciliationId,
+        contactId,
+        agentId,
+        paymentId,
+        reconciliationClaimToken,
+        humanBookingEventId: `cae_human_booking_conflict_${suffix}`,
+        calendarId,
+        startTime: detail.startTime,
+        selectionRequestDraftHash: detail.appointmentRequestDraftHash,
+        sourceMessageId: resumedCtx.executionId
+      }),
+      (error) => error?.code === 'human_booking_deposit_consumption_conflict'
+    )
+    assert.equal((await findVerifiedPaymentEvidence({
+      database: db,
+      contactId,
+      agentId,
+      requiredPurpose: 'appointment_deposit'
+    })).ok, false)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+      [contactId]
+    )).total), 0)
+
+    const beforeRecovery = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [reconciliationId]
+    )).detail_json)
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify({
+        ...beforeRecovery,
+        status: 'pending',
+        result: null,
+        claimToken: null,
+        leaseUntilAt: null,
+        resumeCompletedAt: null,
+        completedAt: null
+      }), reconciliationId]
+    )
+    await db.run(
+      `UPDATE conversational_agent_state
+       SET status = 'paused', signal = NULL, signal_reason = NULL,
+           signal_summary = NULL, signal_at = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE contact_id = ? AND agent_id = ?`,
+      [contactId, agentId]
+    )
+    let recoveryResumeCalls = 0
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      recoveryResumeCalls += 1
+      throw new Error('el recovery humano no debe volver a ejecutar el agente')
+    })
+    const recovered = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 100,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(recovered.resumed, true)
+    assert.equal(recoveryResumeCalls, 0)
+    const recoveredState = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agentId]
+    )
+    assert.equal(recoveredState.status, 'paused')
+    assert.equal(recoveredState.signal, null)
+    const recoveredDetail = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [reconciliationId]
+    )).detail_json)
+    assert.equal(recoveredDetail.status, 'completed')
+    assert.equal(recoveredDetail.resumeResult.reason, 'human_booking_already_requested')
+    assert.equal((await db.get(
+      'SELECT event_type FROM conversational_agent_events WHERE id = ?',
+      [`${reconciliationId}_human_booking_notification_pending`]
+    )).event_type, 'priority_push_notification_pending')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE id IN (?, ?)`,
+      [
+        `${reconciliationId}_human_booking_notification`,
+        `${reconciliationId}_human_booking_notification_failed`
+      ]
+    )).total), 1)
+    const recoveryRetry = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 100,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(recoveryRetry.alreadyCompleted, true)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE id IN (?, ?, ?)`,
+      [
+        `${reconciliationId}_human_booking_notification_pending`,
+        `${reconciliationId}_human_booking_notification`,
+        `${reconciliationId}_human_booking_notification_failed`
+      ]
+    )).total), 2)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
+      [contactId]
+    )).total), 1)
+  } finally {
+    setNativeHandoffAfterAssignmentHookForTest(null)
+    setNativeHumanBookingAfterCommitHookForTest(null)
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
 test('agenda humana rechaza un slot ocupado y no usa la asignación del handoff general', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_human_stale_${suffix}`
@@ -2379,6 +3285,118 @@ test('confirmación real de pago v2 no levanta sub-IA ni aplica asignación o ex
   }
 })
 
+test('un pago completo conserva su cierre histórico sin reasignar el contacto a un agente eliminado', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_deleted_sales_agent_${suffix}`
+  const paymentId = `payment_deleted_sales_agent_${suffix}`
+  let agent = null
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+       VALUES (?, 'Cliente de ventas con agente eliminado', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    agent = await createConversationalAgent({
+      name: `Agente de ventas eliminado ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{
+          id: 'collect_payment',
+          enabled: true,
+          productId: `product_deleted_agent_${suffix}`,
+          priceId: `price_deleted_agent_${suffix}`,
+          paymentMode: 'full_payment'
+        }]
+      }
+    })
+    const deletedAgentId = agent.id
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+        contact_id, agent_id, channel, status, signal, updated_at
+      ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, deletedAgentId]
+    )
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: deletedAgentId,
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 725,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'full_payment',
+        paymentPurpose: 'purchase',
+        appointmentDeposit: false,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_mode, payment_provider,
+        paid_at, created_at, updated_at
+      ) VALUES (?, ?, 725, 'MXN', 'paid', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    assert.equal(await deleteConversationalAgent(deletedAgentId), true)
+
+    const input = {
+      contactId,
+      paymentId,
+      amount: 725,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+    const result = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(result.matched, true)
+    assert.equal(result.signal, 'purchase_completed')
+    const state = await db.get(
+      'SELECT agent_id, status, signal FROM conversational_agent_state WHERE contact_id = ?',
+      [contactId]
+    )
+    assert.equal(state.agent_id, null)
+    assert.equal(state.status, 'completed')
+    assert.equal(state.signal, 'purchase_completed')
+    assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [paymentId])).status, 'paid')
+    const history = await db.get(
+      `SELECT
+         SUM(CASE WHEN event_type = 'payment_link_goal_completed' THEN 1 ELSE 0 END) AS completions,
+         SUM(CASE WHEN event_type IN ('priority_push_notification', 'priority_push_notification_failed') THEN 1 ELSE 0 END) AS notifications
+       FROM conversational_agent_events WHERE contact_id = ?`,
+      [contactId]
+    )
+    assert.equal(Number(history.completions), 1)
+    assert.equal(Number(history.notifications), 1)
+    const completion = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_link_goal_completed'`,
+      [contactId]
+    )).detail_json)
+    assert.equal(completion.agentId, deletedAgentId)
+    const retry = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(retry.alreadyCompleted, true)
+    assert.equal((await db.get(
+      'SELECT agent_id FROM conversational_agent_state WHERE contact_id = ?',
+      [contactId]
+    )).agent_id, null)
+  } finally {
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
 test('reconciliación v2 falla cerrado ante status, monto, moneda, ambiente o ledger insuficientes', async () => {
   const suffix = randomUUID()
   const contactId = `contact_payment_reject_v2_${suffix}`
@@ -2531,6 +3549,12 @@ test('anticipo de cita v2 conserva la conversación activa y reanuda una sola ve
       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
       [contactId, agent.id]
     )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: agent.id,
+      calendarId: `calendar_${suffix}`,
+      suffix: `resume_${suffix}`
+    })
     await recordConversationalAgentEvent({
       contactId,
       eventType: 'deposit_transfer_pending_review',
@@ -2544,6 +3568,7 @@ test('anticipo de cita v2 conserva la conversación activa y reanuda una sola ve
         paymentMode: 'deposit',
         paymentPurpose: 'appointment_deposit',
         appointmentDeposit: true,
+        ...sourceBinding,
         runtimeMode: 'tool_calling_v2'
       }
     })
@@ -2604,7 +3629,661 @@ test('anticipo de cita v2 conserva la conversación activa y reanuda una sola ve
   }
 })
 
-test('un comprobante ambiguo conserva propósito de cita pero jamás autoagenda ni cierra una venta', async () => {
+test('si cambia la terminal con el anticipo pendiente, conserva el pago y cierra en revisión humana sin retries', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_terminal_review_${suffix}`
+  const paymentId = `payment_terminal_review_${suffix}`
+  const signalTriggerName = `fail_manual_review_signal_${suffix.replaceAll('-', '_')}`
+  let agent = null
+  let resumeCalls = 0
+  let pushCalls = 0
+  let replyCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente cambio de terminal', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    agent = await createConversationalAgent({
+      name: `Cambio de terminal ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      objective: 'citas',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{ id: 'schedule_appointment', enabled: true, calendarId: `calendar_${suffix}`, bookingOwner: 'human' }]
+      }
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+        contact_id, agent_id, channel, status, signal, updated_at
+      ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: agent.id,
+      calendarId: `calendar_${suffix}`,
+      bookingOwner: 'ai',
+      suffix: `terminal_change_${suffix}`
+    })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        ledgerPaymentId: paymentId,
+        amount: 100,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        ...sourceBinding,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, paid_at, created_at, updated_at
+      ) VALUES (?, ?, 100, 'MXN', 'paid', 'card', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    await recordConversationalAgentEvent({
+      eventId: `recent_generic_notification_${suffix}`,
+      contactId,
+      eventType: 'priority_push_notification',
+      detail: {
+        agentId: agent.id,
+        signal: 'ready_for_human',
+        sent: 1,
+        reason: 'notificación genérica previa'
+      },
+      throwOnError: true
+    })
+    setConversationalPaymentResumeHandlerForTest(async (payload) => {
+      resumeCalls += 1
+      assert.equal(payload.bookingOwner, 'ai')
+      assert.equal(payload.terminalToolName, 'book_appointment')
+      return {
+        resumed: false,
+        manualReviewRequired: true,
+        reason: 'appointment_terminal_configuration_changed'
+      }
+    })
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      pushCalls += 1
+      if (pushCalls === 1) throw new Error('push manual review falló')
+      return { sent: 1 }
+    })
+    setConversationalPaymentTerminalReplyHandlerForTest(async () => {
+      replyCalls += 1
+      return { sent: true, testDelivery: true }
+    })
+    const input = {
+      contactId,
+      paymentId,
+      amount: 100,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+    await db.exec(`
+      CREATE TRIGGER ${signalTriggerName}
+      BEFORE INSERT ON conversational_agent_events
+      WHEN NEW.contact_id = '${contactId}' AND NEW.event_type = 'signal_set'
+      BEGIN
+        SELECT RAISE(ABORT, 'manual review signal insert failure injected');
+      END
+    `)
+    await assert.rejects(
+      completeConversationalAgentSalePaymentFromInvoice(input),
+      /manual review signal insert failure injected/
+    )
+    await db.exec(`DROP TRIGGER IF EXISTS ${signalTriggerName}`)
+    const rolledBackState = await db.get(
+      'SELECT status, signal, updated_by FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agent.id]
+    )
+    assert.equal(rolledBackState.status, 'active')
+    assert.equal(rolledBackState.signal, null)
+    assert.equal(rolledBackState.updated_by, null)
+    assert.equal(pushCalls, 0)
+    assert.equal(replyCalls, 0)
+
+    await assert.rejects(
+      completeConversationalAgentSalePaymentFromInvoice(input),
+      /push manual review falló/
+    )
+    const failedReconciliation = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )
+    assert.equal(JSON.parse(failedReconciliation.detail_json).status, 'pending')
+    const signaledState = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agent.id]
+    )
+    assert.equal(signaledState.status, 'human')
+    assert.equal(signaledState.signal, 'ready_for_human')
+    await db.run(
+      `UPDATE conversational_agent_state
+       SET status = 'paused', signal = NULL, signal_reason = NULL,
+           signal_summary = NULL, signal_at = NULL, updated_by = 'staff_after_push_failure',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE contact_id = ? AND agent_id = ?`,
+      [contactId, agent.id]
+    )
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(result.signal, 'appointment_deposit_manual_review_required')
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(result.resumed, false)
+    assert.equal(resumeCalls, 1)
+    assert.equal(pushCalls, 2)
+    assert.equal(replyCalls, 1)
+    const state = await db.get(
+      'SELECT status, signal, updated_by FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agent.id]
+    )
+    assert.equal(state.status, 'paused')
+    assert.equal(state.signal, null)
+    assert.equal(state.updated_by, 'staff_after_push_failure')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'appointment_deposit_manual_review_required'`,
+      [contactId]
+    )).total), 1)
+    assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [paymentId])).status, 'paid')
+    const reconciliation = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )
+    const reconciliationDetail = JSON.parse(reconciliation.detail_json)
+    assert.equal(reconciliationDetail.status, 'completed')
+    assert.equal(reconciliationDetail.autoResumeAllowed, false)
+    assert.equal(reconciliationDetail.manualReviewOnly, true)
+    assert.equal((await findVerifiedPaymentEvidence({
+      database: db,
+      contactId,
+      agentId: agent.id,
+      requiredPurpose: 'appointment_deposit'
+    })).ok, false)
+    assert.equal((await db.get(
+      'SELECT event_type FROM conversational_agent_events WHERE id = ?',
+      [`${reconciliation.id}_manual_review_notification_pending`]
+    )).event_type, 'priority_push_notification_pending')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE id IN (?, ?)`,
+      [
+        `${reconciliation.id}_manual_review_notification`,
+        `${reconciliation.id}_manual_review_notification_failed`
+      ]
+    )).total), 2)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE id = ? AND event_type = 'signal_set'`,
+      [`${reconciliation.id}_manual_review_signal`]
+    )).total), 1)
+
+    await db.run(
+      `UPDATE conversational_agent_state
+       SET status = 'active', signal = NULL, signal_reason = NULL, signal_summary = NULL, signal_at = NULL
+       WHERE contact_id = ? AND agent_id = ?`,
+      [contactId, agent.id]
+    )
+    await db.run(
+      `DELETE FROM conversational_agent_events WHERE id LIKE ?`,
+      [`${reconciliation.id}_manual_review%`]
+    )
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify({
+        ...reconciliationDetail,
+        status: 'pending',
+        result: null,
+        claimToken: null,
+        leaseUntilAt: null,
+        completedAt: null,
+        resumeCompletedAt: null,
+        resumeResult: null,
+        manualReviewEventAppliedAt: null,
+        manualReviewNotification: null,
+        autoResumeAllowed: false,
+        manualReviewOnly: true
+      }), reconciliation.id]
+    )
+    const recoveredFreeze = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(recoveredFreeze.manualReviewRequired, true)
+    assert.equal(recoveredFreeze.resumed, false)
+    assert.equal(resumeCalls, 1)
+    const retry = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(retry.alreadyCompleted, true)
+    assert.equal(resumeCalls, 1)
+  } finally {
+    await db.exec(`DROP TRIGGER IF EXISTS ${signalTriggerName}`).catch(() => {})
+    setConversationalPriorityNotificationSenderForTest(null)
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('el webhook respeta un chat ya tomado por humano y congela el anticipo sin relanzar al agente', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_preexisting_human_${suffix}`
+  const paymentId = `payment_preexisting_human_${suffix}`
+  const calendarId = `calendar_preexisting_human_${suffix}`
+  let agent = null
+  let resumeCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente ya atendido por humano', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_preexisting_human_${suffix}`,
+      name: 'Agenda para respetar takeover humano',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 18, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    agent = await createConversationalAgent({
+      name: `Chat humano antes del pago ${suffix}`,
+      enabled: true,
+      runtimeMode: 'tool_calling_v2',
+      objective: 'citas',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{ id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai' }]
+      }
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+        contact_id, agent_id, channel, status, signal, signal_reason, updated_at
+      ) VALUES (?, ?, 'whatsapp', 'human', 'ready_for_human', 'Un humano ya tomó el chat', CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: agent.id,
+      calendarId,
+      bookingOwner: 'ai',
+      suffix: `preexisting_human_${suffix}`
+    })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        ledgerPaymentId: paymentId,
+        amount: 100,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        ...sourceBinding,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, paid_at, created_at, updated_at
+      ) VALUES (?, ?, 100, 'MXN', 'paid', 'card', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      throw new Error('un pago no debe reactivar un chat que ya tomó una persona')
+    })
+
+    const input = {
+      contactId,
+      paymentId,
+      amount: 100,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+    const result = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(result.signal, 'appointment_deposit_manual_review_required')
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(result.resumed, false)
+    assert.equal(resumeCalls, 0)
+    const state = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agent.id]
+    )
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+    assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [paymentId])).status, 'paid')
+    const reconciliation = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )
+    const reconciliationDetail = JSON.parse(reconciliation.detail_json)
+    assert.equal(reconciliationDetail.status, 'completed')
+    assert.equal(reconciliationDetail.autoResumeAllowed, false)
+    assert.equal(reconciliationDetail.manualReviewOnly, true)
+    assert.equal(reconciliationDetail.resumeResult.reason, 'conversation_state_not_runnable_before_payment_resume')
+    assert.equal((await findVerifiedPaymentEvidence({
+      database: db,
+      contactId,
+      agentId: agent.id,
+      requiredPurpose: 'appointment_deposit'
+    })).ok, false)
+    const retry = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(retry.alreadyCompleted, true)
+    assert.equal(resumeCalls, 0)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('un takeover humano entre la lectura y la reanudación nunca es borrado por el webhook', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_takeover_race_${suffix}`
+  const paymentId = `payment_takeover_race_${suffix}`
+  const calendarId = `calendar_takeover_race_${suffix}`
+  let agent = null
+  let resumeCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente con takeover concurrente', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_takeover_race_${suffix}`,
+      name: 'Agenda takeover concurrente',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 18, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    agent = await createConversationalAgent({
+      name: `Takeover concurrente ${suffix}`,
+      enabled: true,
+      runtimeMode: 'tool_calling_v2',
+      objective: 'citas',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{ id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai' }]
+      }
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+        contact_id, agent_id, channel, status, signal, updated_at
+      ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: agent.id,
+      calendarId,
+      bookingOwner: 'ai',
+      suffix: `takeover_race_${suffix}`
+    })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        ledgerPaymentId: paymentId,
+        amount: 100,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        ...sourceBinding,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, paid_at, created_at, updated_at
+      ) VALUES (?, ?, 100, 'MXN', 'paid', 'card', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPaymentAfterStateInspectionHookForTest(async ({ contactId: inspectedContactId }) => {
+      assert.equal(inspectedContactId, contactId)
+      await db.run(
+        `UPDATE conversational_agent_state
+         SET status = 'human', signal = 'ready_for_human', signal_reason = 'Takeover concurrente',
+             updated_by = 'human', updated_at = CURRENT_TIMESTAMP
+         WHERE contact_id = ? AND agent_id = ?`,
+        [contactId, agent.id]
+      )
+    })
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      const current = await db.get(
+        'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+        [contactId, agent.id]
+      )
+      assert.equal(current.status, 'human')
+      assert.equal(current.signal, 'ready_for_human')
+      return {
+        resumed: false,
+        manualReviewRequired: true,
+        reason: 'conversation_state_not_runnable'
+      }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 100,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(result.resumed, false)
+    assert.equal(resumeCalls, 1)
+    const state = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agent.id]
+    )
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+      [contactId]
+    )).total), 0)
+  } finally {
+    setConversationalPaymentAfterStateInspectionHookForTest(null)
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('si eliminan el agente con un anticipo pendiente, el webhook conserva el pago y escala el chat liberado', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_deleted_agent_deposit_${suffix}`
+  const paymentId = `payment_deleted_agent_deposit_${suffix}`
+  const calendarId = `calendar_deleted_agent_deposit_${suffix}`
+  let agent = null
+  let resumeCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente de agente eliminado', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_deleted_agent_${suffix}`,
+      name: 'Agenda con anticipo y agente eliminado',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 18, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    agent = await createConversationalAgent({
+      name: `Agente que se elimina con anticipo ${suffix}`,
+      enabled: true,
+      runtimeMode: 'tool_calling_v2',
+      objective: 'citas',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{ id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai' }]
+      }
+    })
+    const deletedAgentId = agent.id
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+        contact_id, agent_id, channel, status, signal, updated_at
+      ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, deletedAgentId]
+    )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: deletedAgentId,
+      calendarId,
+      bookingOwner: 'ai',
+      suffix: `deleted_agent_${suffix}`
+    })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: deletedAgentId,
+        ledgerPaymentId: paymentId,
+        amount: 100,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        ...sourceBinding,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, paid_at, created_at, updated_at
+      ) VALUES (?, ?, 100, 'MXN', 'paid', 'card', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    assert.equal(await deleteConversationalAgent(deletedAgentId), true)
+    assert.equal(await db.get('SELECT id FROM conversational_agents WHERE id = ?', [deletedAgentId]), null)
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      throw new Error('un agente eliminado nunca debe reanudarse')
+    })
+
+    const input = {
+      contactId,
+      paymentId,
+      amount: 100,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+    const result = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(result.matched, true)
+    assert.equal(result.signal, 'appointment_deposit_manual_review_required')
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(result.resumed, false)
+    assert.equal(resumeCalls, 0)
+    assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [paymentId])).status, 'paid')
+    const state = await db.get(
+      'SELECT agent_id, status, signal FROM conversational_agent_state WHERE contact_id = ?',
+      [contactId]
+    )
+    assert.equal(state.agent_id, null)
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+    const reconciliation = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )
+    const reconciliationDetail = JSON.parse(reconciliation.detail_json)
+    assert.equal(reconciliationDetail.status, 'completed')
+    assert.equal(reconciliationDetail.agentId, deletedAgentId)
+    assert.equal(reconciliationDetail.autoResumeAllowed, false)
+    assert.equal(reconciliationDetail.manualReviewOnly, true)
+    const review = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'appointment_deposit_manual_review_required'`,
+      [contactId]
+    )
+    assert.equal(JSON.parse(review.detail_json).reason, 'native_agent_missing_or_changed')
+    assert.equal((await db.get(
+      'SELECT event_type FROM conversational_agent_events WHERE id = ?',
+      [`${reconciliation.id}_manual_review_notification_pending`]
+    )).event_type, 'priority_push_notification_pending')
+    assert.equal((await findVerifiedPaymentEvidence({
+      database: db,
+      contactId,
+      agentId: deletedAgentId,
+      requiredPurpose: 'appointment_deposit'
+    })).ok, false)
+    const retry = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(retry.alreadyCompleted, true)
+    assert.equal(resumeCalls, 0)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('un anticipo legado sin selección ni draft completos pasa a revisión y jamás recicla el pago', async () => {
   const suffix = randomUUID()
   const contactId = `contact_manual_appointment_deposit_${suffix}`
   const paymentId = `payment_manual_appointment_deposit_${suffix}`
@@ -2647,8 +4326,6 @@ test('un comprobante ambiguo conserva propósito de cita pero jamás autoagenda 
         paymentMode: 'deposit',
         paymentPurpose: 'appointment_deposit',
         appointmentDeposit: true,
-        manualReviewOnly: true,
-        autoResumeAllowed: false,
         runtimeMode: 'tool_calling_v2'
       },
       throwOnError: true
@@ -2682,6 +4359,22 @@ test('un comprobante ambiguo conserva propósito de cita pero jamás autoagenda 
       agentId: agent.id,
       requiredPurpose: 'appointment_deposit'
     })).ok, false)
+    const reconciliation = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )
+    const reconciliationDetail = JSON.parse(reconciliation.detail_json)
+    assert.equal(reconciliationDetail.status, 'completed')
+    assert.equal(reconciliationDetail.autoResumeAllowed, false)
+    assert.equal(reconciliationDetail.manualReviewOnly, true)
+    const manualReview = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'appointment_deposit_manual_review_required'`,
+      [contactId]
+    )
+    assert.equal(JSON.parse(manualReview.detail_json).reason, 'appointment_source_binding_missing')
+    assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [paymentId])).status, 'paid')
     const purchaseSignals = await db.get(
       `SELECT COUNT(*) AS total FROM conversational_agent_events
        WHERE contact_id = ? AND event_type = 'signal_set' AND detail_json LIKE '%purchase_completed%'`,
@@ -2707,6 +4400,9 @@ test('recovery después de book_appointment no borra appointment_booked ni reenv
   const paymentId = `transfer_recovery_${suffix}`
   let agent = null
   let resumeCalls = 0
+  let terminalReplyCalls = 0
+  let appointmentRequestId = ''
+  let appointmentId = ''
   try {
     await db.run(
       `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
@@ -2732,6 +4428,12 @@ test('recovery después de book_appointment no borra appointment_booked ni reenv
       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
       [contactId, agent.id]
     )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: agent.id,
+      calendarId: `calendar_recovery_${suffix}`,
+      suffix: `recovery_${suffix}`
+    })
     await recordConversationalAgentEvent({
       contactId,
       eventType: 'deposit_transfer_pending_review',
@@ -2745,6 +4447,7 @@ test('recovery después de book_appointment no borra appointment_booked ni reenv
         paymentMode: 'deposit',
         paymentPurpose: 'appointment_deposit',
         appointmentDeposit: true,
+        ...sourceBinding,
         runtimeMode: 'tool_calling_v2'
       }
     })
@@ -2769,10 +4472,58 @@ test('recovery después de book_appointment no borra appointment_booked ni reenv
        ORDER BY created_at DESC LIMIT 1`,
       [contactId]
     )
-    assert.equal(JSON.parse(reconciliation.detail_json).status, 'pending')
+    const reconciliationDetail = JSON.parse(reconciliation.detail_json)
+    assert.equal(reconciliationDetail.status, 'pending')
+    appointmentRequestId = `conv-v2-appointment:recovery:${suffix}`
+    appointmentId = `appointment_recovery_${suffix}`
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, booking_channel, date_added, date_updated
+      ) VALUES (?, ?, ?, 'Consulta', 'confirmed', 'confirmed', ?, ?, 'whatsapp', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        appointmentId,
+        reconciliationDetail.appointmentSelectionCalendarId,
+        contactId,
+        reconciliationDetail.appointmentSelectionStartTime,
+        new Date(Date.parse(reconciliationDetail.appointmentSelectionStartTime) + 60 * 60 * 1000).toISOString()
+      ]
+    )
+    await db.run(
+      `INSERT INTO appointment_creation_requests (
+        client_request_id, request_hash, status, processing_token
+      ) VALUES (?, ?, 'processing', ?)`,
+      [appointmentRequestId, '0'.repeat(64), `crashed_${suffix}`]
+    )
+    await recordConversationalAgentEvent({
+      eventId: `${reconciliation.id}_consumed`,
+      contactId,
+      eventType: 'deposit_payment_consumed',
+      detail: {
+        agentId: agent.id,
+        status: 'consumed',
+        reconciliationId: reconciliation.id,
+        ledgerPaymentId: paymentId,
+        appointmentRequestId,
+        appointmentId,
+        calendarId: reconciliationDetail.appointmentSelectionCalendarId,
+        startTime: reconciliationDetail.appointmentSelectionStartTime,
+        selectionRequestDraftHash: reconciliationDetail.appointmentSelectionRequestDraftHash,
+        bookingOwner: 'ai',
+        terminalToolName: 'book_appointment'
+      },
+      throwOnError: true
+    })
+    const rescheduledStart = new Date(
+      Date.parse(reconciliationDetail.appointmentSelectionStartTime) + 24 * 60 * 60 * 1000
+    ).toISOString()
+    await db.run(
+      `UPDATE appointments SET start_time = ?, end_time = ?, date_updated = CURRENT_TIMESTAMP WHERE id = ?`,
+      [rescheduledStart, new Date(Date.parse(rescheduledStart) + 60 * 60 * 1000).toISOString(), appointmentId]
+    )
     await db.run(
       `UPDATE conversational_agent_state
-       SET status = 'completed', signal = 'appointment_booked', updated_at = CURRENT_TIMESTAMP
+       SET status = 'completed', signal = 'appointment_booked', updated_by = 'agent', updated_at = CURRENT_TIMESTAMP
        WHERE contact_id = ? AND agent_id = ?`,
       [contactId, agent.id]
     )
@@ -2786,10 +4537,15 @@ test('recovery después de book_appointment no borra appointment_booked ni reenv
       resumeCalls += 1
       throw new Error('no debe reanudarse otra vez')
     })
+    setConversationalPaymentTerminalReplyHandlerForTest(async () => {
+      terminalReplyCalls += 1
+      return { sent: true, testDelivery: true }
+    })
 
     const recovered = await completeConversationalAgentSalePaymentFromInvoice(input)
     assert.equal(recovered.resumed, true)
     assert.equal(resumeCalls, 1)
+    assert.equal(terminalReplyCalls, 1)
     const state = await db.get(
       'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
       [contactId, agent.id]
@@ -2797,11 +4553,27 @@ test('recovery después de book_appointment no borra appointment_booked ni reenv
     assert.equal(state.status, 'completed')
     assert.equal(state.signal, 'appointment_booked')
     assert.equal(JSON.parse((await db.get('SELECT detail_json FROM conversational_agent_events WHERE id = ?', [reconciliation.id])).detail_json).status, 'completed')
+    const repairedRequest = await db.get(
+      'SELECT status, appointment_id, processing_token, response_json FROM appointment_creation_requests WHERE client_request_id = ?',
+      [appointmentRequestId]
+    )
+    assert.equal(repairedRequest.status, 'completed')
+    assert.equal(repairedRequest.appointment_id, appointmentId)
+    assert.equal(repairedRequest.processing_token, null)
+    assert.equal(JSON.parse(repairedRequest.response_json).id, appointmentId)
+    assert.equal(JSON.parse(repairedRequest.response_json).startTime, rescheduledStart)
+    const retry = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(retry.alreadyCompleted, true)
+    assert.equal(terminalReplyCalls, 1)
   } finally {
     setConversationalPaymentResumeHandlerForTest(null)
     await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (appointmentRequestId) {
+      await db.run('DELETE FROM appointment_creation_requests WHERE client_request_id = ?', [appointmentRequestId]).catch(() => {})
+    }
+    if (appointmentId) await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     if (agent?.id) {
       await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
       await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
@@ -2868,6 +4640,12 @@ test('aprobar o rechazar comprobante usa endpoints explícitos, sella auditoría
         [paymentId, contactId, metadata]
       )
     }
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: agent.id,
+      calendarId: `calendar_review_${suffix}`,
+      suffix: `review_${suffix}`
+    })
     await recordConversationalAgentEvent({
       contactId,
       eventType: 'deposit_transfer_pending_review',
@@ -2881,6 +4659,7 @@ test('aprobar o rechazar comprobante usa endpoints explícitos, sella auditoría
         paymentMode: 'deposit',
         paymentPurpose: 'appointment_deposit',
         appointmentDeposit: true,
+        ...sourceBinding,
         runtimeMode: 'tool_calling_v2'
       }
     })
@@ -3000,13 +4779,16 @@ test('la reanudación por pago usa el mismo Agent/Runner, el hilo completo y ent
     )
     const result = await resumeToolCallingV2AfterVerifiedPayment({
       reconciliationId,
+      reconciliationClaimToken: `claim_${suffix}`,
       contactId,
       agentId,
       channel: 'whatsapp',
       amount: 300,
       currency: 'MXN',
       paymentEnvironment: 'live',
-      paymentPurpose: 'appointment_deposit'
+      paymentPurpose: 'appointment_deposit',
+      bookingOwner: 'ai',
+      terminalToolName: 'book_appointment'
     }, {
       getRuntimeConfig: async () => ({ enabled: true, aiProvider: 'openai' }),
       hasFeature: async () => true,
@@ -3016,7 +4798,15 @@ test('la reanudación por pago usa el mismo Agent/Runner, el hilo completo y ent
         runtimeMode: 'tool_calling_v2',
         model: 'test-model',
         aiProvider: 'openai',
-        capabilitiesConfig: { schemaVersion: 1, items: [] },
+        capabilitiesConfig: {
+          schemaVersion: 3,
+          items: [{
+            id: 'schedule_appointment',
+            enabled: true,
+            calendarId: `calendar_${suffix}`,
+            bookingOwner: 'ai'
+          }]
+        },
         replyDelivery: { mode: 'single', splitMessagesEnabled: false }
       }),
       getState: async () => ({ status: 'active', signal: null }),
@@ -3035,14 +4825,21 @@ test('la reanudación por pago usa el mismo Agent/Runner, el hilo completo y ent
         assert.match(args.runtimeEventContext, /servidor recupera el horario exacto ligado al pago/i)
         assert.doesNotMatch(args.runtimeEventContext, /vuelve a consultar disponibilidad real/i)
         assert.equal(args.executionId, `payment-resume:${reconciliationId}`)
+        assert.equal(args.forcedToolName, 'book_appointment')
         return {
-          ctx: { actions: [{ type: 'book_appointment', outcome: { status: 'ok', ok: true } }] },
+          ctx: {
+            actions: [{
+              type: 'book_appointment',
+              outcome: { status: 'ok', ok: true, simulated: false, actionCompleted: true }
+            }]
+          },
           model: 'test-model',
           reply: 'listo, tu cita quedó confirmada',
           runtimeMode: 'tool_calling_v2',
           modelCallCount: 1
         }
       },
+      assertReconciliationClaim: async () => ({ valid: true }),
       deliverReply: async ({ reply }) => {
         deliveryCalls += 1
         assert.equal(reply, 'listo, tu cita quedó confirmada')
@@ -3056,6 +4853,129 @@ test('la reanudación por pago usa el mismo Agent/Runner, el hilo completo y ent
     assert.equal(deliveryCalls, 1)
   } finally {
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('la reanudación detecta cambios IA↔humano antes de ejecutar cualquier terminal', async () => {
+  const cases = [
+    {
+      boundBookingOwner: 'ai',
+      boundTool: 'book_appointment',
+      currentBookingOwner: 'human',
+      currentTool: 'request_human_booking'
+    },
+    {
+      boundBookingOwner: 'human',
+      boundTool: 'request_human_booking',
+      currentBookingOwner: 'ai',
+      currentTool: 'book_appointment'
+    }
+  ]
+  for (const entry of cases) {
+    const suffix = randomUUID()
+    let nativeTurnCalls = 0
+    const result = await resumeToolCallingV2AfterVerifiedPayment({
+      reconciliationId: `reconciliation_terminal_change_${suffix}`,
+      reconciliationClaimToken: `claim_terminal_change_${suffix}`,
+      contactId: `contact_terminal_change_${suffix}`,
+      agentId: `agent_terminal_change_${suffix}`,
+      paymentPurpose: 'appointment_deposit',
+      bookingOwner: entry.boundBookingOwner,
+      terminalToolName: entry.boundTool
+    }, {
+      getRuntimeConfig: async () => ({ enabled: true, aiProvider: 'openai' }),
+      hasFeature: async () => true,
+      getAgent: async () => ({
+        id: `agent_terminal_change_${suffix}`,
+        enabled: true,
+        runtimeMode: 'tool_calling_v2',
+        capabilitiesConfig: {
+          schemaVersion: 3,
+          items: [{
+            id: 'schedule_appointment',
+            enabled: true,
+            calendarId: `calendar_terminal_change_${suffix}`,
+            bookingOwner: entry.currentBookingOwner
+          }]
+        }
+      }),
+      runNativeTurn: async () => {
+        nativeTurnCalls += 1
+        return null
+      }
+    })
+    assert.equal(result.resumed, false)
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(result.reason, 'appointment_terminal_configuration_changed')
+    assert.equal(result.terminalToolName, entry.boundTool)
+    assert.equal(result.currentTerminalToolName, entry.currentTool)
+    assert.equal(nativeTurnCalls, 0)
+  }
+})
+
+test('la reanudación pagada exige feature, agente y conversación ejecutables o escala a revisión humana', async () => {
+  const cases = [
+    {
+      label: 'feature apagada',
+      featureEnabled: false,
+      agentEnabled: true,
+      state: { status: 'active', signal: null },
+      reason: 'feature_disabled'
+    },
+    {
+      label: 'agente apagado',
+      featureEnabled: true,
+      agentEnabled: false,
+      state: { status: 'active', signal: null },
+      reason: 'native_agent_unavailable'
+    },
+    {
+      label: 'estado entregado a humano',
+      featureEnabled: true,
+      agentEnabled: true,
+      state: { status: 'human', signal: 'ready_for_human' },
+      reason: 'conversation_state_not_runnable'
+    }
+  ]
+  for (const entry of cases) {
+    const suffix = randomUUID()
+    const agentId = `agent_blocked_resume_${suffix}`
+    let nativeTurnCalls = 0
+    const result = await resumeToolCallingV2AfterVerifiedPayment({
+      reconciliationId: `reconciliation_blocked_resume_${suffix}`,
+      reconciliationClaimToken: `claim_blocked_resume_${suffix}`,
+      contactId: `contact_blocked_resume_${suffix}`,
+      agentId,
+      paymentPurpose: 'appointment_deposit',
+      bookingOwner: 'ai',
+      terminalToolName: 'book_appointment'
+    }, {
+      getRuntimeConfig: async () => ({ enabled: true, aiProvider: 'openai' }),
+      hasFeature: async () => entry.featureEnabled,
+      getAgent: async () => ({
+        id: agentId,
+        enabled: entry.agentEnabled,
+        runtimeMode: 'tool_calling_v2',
+        capabilitiesConfig: {
+          schemaVersion: 3,
+          items: [{
+            id: 'schedule_appointment',
+            enabled: true,
+            calendarId: `calendar_blocked_resume_${suffix}`,
+            bookingOwner: 'ai'
+          }]
+        }
+      }),
+      getState: async () => entry.state,
+      runNativeTurn: async () => {
+        nativeTurnCalls += 1
+        return null
+      }
+    })
+    assert.equal(result.resumed, false, entry.label)
+    assert.equal(result.manualReviewRequired, true, entry.label)
+    assert.equal(result.reason, entry.reason, entry.label)
+    assert.equal(nativeTurnCalls, 0, entry.label)
   }
 })
 
@@ -3750,6 +5670,9 @@ test('consume del anticipo revalida el ledger y conserva la reserva si el pago d
   const reconciliationId = `carec_consume_revalidation_${suffix}`
   const appointmentId = `appointment_consume_revalidation_${suffix}`
   const appointmentRequestId = `conv-v2-attempt:${createHash('sha256').update(suffix).digest('hex')}`
+  const calendarId = `calendar_consume_revalidation_${suffix}`
+  const startTime = '2026-08-04T22:00:00.000Z'
+  const selectionRequestDraftHash = createHash('sha256').update(`draft_${suffix}`).digest('hex')
 
   try {
     await db.run(
@@ -3777,6 +5700,11 @@ test('consume del anticipo revalida el ledger y conserva la reserva si el pago d
         paymentEnvironment: 'live',
         paymentPurpose: 'appointment_deposit',
         appointmentDeposit: true,
+        appointmentSelectionCalendarId: calendarId,
+        appointmentSelectionStartTime: startTime,
+        appointmentSelectionRequestDraftHash: selectionRequestDraftHash,
+        appointmentSelectionBookingOwner: 'ai',
+        appointmentSelectionTerminalToolName: 'book_appointment',
         result: { matched: true, signal: 'deposit_payment_verified' }
       },
       throwOnError: true
@@ -3786,7 +5714,12 @@ test('consume del anticipo revalida el ledger y conserva la reserva si el pago d
       contactId,
       agentId,
       paymentId,
-      appointmentRequestId
+      appointmentRequestId,
+      calendarId,
+      startTime,
+      selectionRequestDraftHash,
+      bookingOwner: 'ai',
+      terminalToolName: 'book_appointment'
     })
     await db.run(
       `INSERT INTO appointments (
@@ -3847,13 +5780,21 @@ test('lease vencida recupera un anticipo sólo antes de la cita y una cita activ
   ))
   const finalRequestId = `conv-v2-attempt:${createHash('sha256').update(`final_${suffix}`).digest('hex')}`
   const appointmentId = `appointment_deposit_lease_${suffix}`
+  const calendarId = `calendar_deposit_lease_${suffix}`
+  const startTime = '2026-08-11T22:00:00.000Z'
+  const selectionRequestDraftHash = createHash('sha256').update(`draft_${suffix}`).digest('hex')
 
   const reserve = (appointmentRequestId) => reserveConversationalAppointmentDepositEvidence({
     reconciliationId,
     contactId,
     agentId,
     paymentId,
-    appointmentRequestId
+    appointmentRequestId,
+    calendarId,
+    startTime,
+    selectionRequestDraftHash,
+    bookingOwner: 'ai',
+    terminalToolName: 'book_appointment'
   })
   const expireReservation = async () => {
     const row = await db.get(
@@ -3896,10 +5837,35 @@ test('lease vencida recupera un anticipo sólo antes de la cita y una cita activ
         paymentEnvironment: 'live',
         paymentPurpose: 'appointment_deposit',
         appointmentDeposit: true,
+        appointmentSelectionCalendarId: calendarId,
+        appointmentSelectionStartTime: startTime,
+        appointmentSelectionRequestDraftHash: selectionRequestDraftHash,
+        appointmentSelectionBookingOwner: 'ai',
+        appointmentSelectionTerminalToolName: 'book_appointment',
         result: { matched: true, signal: 'deposit_payment_verified' }
       },
       throwOnError: true
     })
+
+    await assert.rejects(
+      reserveConversationalAppointmentDepositEvidence({
+        reconciliationId,
+        contactId,
+        agentId,
+        paymentId,
+        appointmentRequestId: initialRequestId,
+        calendarId: `${calendarId}_otro`,
+        startTime,
+        selectionRequestDraftHash,
+        bookingOwner: 'ai',
+        terminalToolName: 'book_appointment'
+      }),
+      (error) => error?.code === 'appointment_deposit_binding_mismatch'
+    )
+    assert.equal(await db.get(
+      'SELECT id FROM conversational_agent_events WHERE id = ?',
+      [`${reconciliationId}_consumed`]
+    ), null)
 
     const initial = await reserve(initialRequestId)
     assert.equal(initial.reserved, true)
@@ -4033,12 +5999,26 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
       .invoke(null, JSON.stringify({
         startTime: slot.toUTC().toISO(),
         selectionEvidence: await authorizeAppointmentOffer(selectionCtx, slot.toUTC().toISO(), timezone),
-        title: null,
-        notes: null,
+        title: 'Valoración de rodilla',
+        notes: 'Dolor de rodilla desde hace meses',
         attendeeName: null,
         attendeeContext: null,
-        primaryAttendee: null,
-        guests: []
+        primaryAttendee: {
+          name: 'Paty Jiménez',
+          phone: null,
+          phoneSourceQuote: null,
+          email: null,
+          emailSourceQuote: null,
+          relation: 'Mamá del contacto'
+        },
+        guests: [{
+          name: 'Ana Jiménez',
+          phone: null,
+          phoneSourceQuote: null,
+          email: null,
+          emailSourceQuote: null,
+          relation: 'Acompañante'
+        }]
       }))
     assert.equal(selectionAttempt.ok, false)
     assert.equal(selectionAttempt.paymentEvidenceRequired, true)
@@ -4063,7 +6043,10 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
         appointmentSelectionEventId: selectionEvent.id,
         appointmentSelectionCalendarId: selectionDetail.calendarId,
         appointmentSelectionStartTime: selectionDetail.startTime,
-        appointmentSelectionVerifiedAt: selectionDetail.verifiedAt
+        appointmentSelectionVerifiedAt: selectionDetail.verifiedAt,
+        appointmentSelectionRequestDraftHash: selectionDetail.appointmentRequestDraftHash,
+        appointmentSelectionBookingOwner: selectionDetail.bookingOwner,
+        appointmentSelectionTerminalToolName: selectionDetail.terminalToolName
       },
       throwOnError: true
     })
@@ -4081,6 +6064,11 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
         paymentEnvironment: 'live',
         paymentPurpose: 'appointment_deposit',
         appointmentDeposit: true,
+        appointmentSelectionCalendarId: selectionDetail.calendarId,
+        appointmentSelectionStartTime: selectionDetail.startTime,
+        appointmentSelectionRequestDraftHash: selectionDetail.appointmentRequestDraftHash,
+        appointmentSelectionBookingOwner: selectionDetail.bookingOwner,
+        appointmentSelectionTerminalToolName: selectionDetail.terminalToolName,
         result: { matched: true, signal: 'deposit_payment_verified' }
       },
       throwOnError: true
@@ -4090,13 +6078,53 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
       contactId,
       agentId,
       paymentId,
-      appointmentRequestId: oldRequestId
+      appointmentRequestId: oldRequestId,
+      calendarId: selectionDetail.calendarId,
+      startTime: selectionDetail.startTime,
+      selectionRequestDraftHash: selectionDetail.appointmentRequestDraftHash,
+      bookingOwner: selectionDetail.bookingOwner,
+      terminalToolName: selectionDetail.terminalToolName
     })
     const reservationId = `${reconciliationId}_consumed`
     const reservation = await db.get('SELECT detail_json FROM conversational_agent_events WHERE id = ?', [reservationId])
     const expired = JSON.parse(reservation.detail_json)
     expired.leaseUntilAt = '2000-01-01T00:00:00.000Z'
     await db.run('UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?', [JSON.stringify(expired), reservationId])
+
+    const tamperedSelectionDetail = JSON.parse(selectionEvent.detail_json)
+    tamperedSelectionDetail.appointmentRequestDraft.primaryAttendee.name = 'Persona adulterada'
+    tamperedSelectionDetail.appointmentRequestDraftHash = createHash('sha256')
+      .update(JSON.stringify(tamperedSelectionDetail.appointmentRequestDraft))
+      .digest('hex')
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify(tamperedSelectionDetail), selectionEvent.id]
+    )
+    const tamperedCtx = v2Context(capabilities, {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `payment-resume:${reconciliationId}`,
+      accountLocale: { currency }
+    })
+    tamperedCtx.config.id = agentId
+    const tamperedResume = await createConversationalTools(tamperedCtx)
+      .find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify({
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(tamperedResume.ok, false, JSON.stringify(tamperedResume))
+    assert.equal(tamperedResume.code, 'payment_resume_selection_mismatch')
+    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 0)
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [selectionEvent.detail_json, selectionEvent.id]
+    )
 
     const ctx = v2Context(capabilities, {
       contactId,
@@ -4122,6 +6150,17 @@ test('book_appointment recupera end-to-end una lease vencida y el controller con
     assert.equal(ctx.actions[0]?.confirmationEvidence?.reusedForPaymentResume, true)
     assert.equal(ctx.actions[0]?.confirmationEvidence?.selectionEventId, selectionEvent.id)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 1)
+    const createdAppointment = await db.get(
+      'SELECT id FROM appointments WHERE contact_id = ? ORDER BY start_time DESC LIMIT 1',
+      [contactId]
+    )
+    const participantNames = (await db.all(
+      `SELECT role, name_snapshot FROM appointment_participants
+       WHERE appointment_id = ? ORDER BY role, position`,
+      [createdAppointment.id]
+    )).map((participant) => `${participant.role}:${participant.name_snapshot}`)
+    assert.ok(participantNames.includes('primary_attendee:Paty Jiménez'), JSON.stringify(participantNames))
+    assert.ok(participantNames.includes('guest:Ana Jiménez'), JSON.stringify(participantNames))
     const finalReservation = JSON.parse((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [reservationId]
@@ -4227,7 +6266,7 @@ test('binding de comprobante v2 es atómico, idempotente por mensaje y falla cer
   }
 })
 
-test('si el cierre de una cita v2 falla, el siguiente inbound repara la cita existente sin duplicarla', async () => {
+test('si el cierre de una cita v2 falla, no confirma al cliente y el siguiente inbound repara sin duplicar', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_completion_recovery_${suffix}`
   const contactId = `contact_completion_recovery_${suffix}`
@@ -4282,7 +6321,9 @@ test('si el cierre de una cita v2 falla, el siguiente inbound repara la cita exi
         attendeeName: null,
         attendeeContext: null
       }))
-    assert.equal(first.ok, true, JSON.stringify(first))
+    assert.equal(first.ok, false, JSON.stringify(first))
+    assert.equal(first.actionCompleted, false)
+    assert.equal(first.durableEffectCommitted, true)
     assert.equal(first.completionSyncWarning, true)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 1)
     const failedState = await db.get(

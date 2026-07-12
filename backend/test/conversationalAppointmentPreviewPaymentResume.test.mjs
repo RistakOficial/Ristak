@@ -5,6 +5,7 @@ import { DateTime } from 'luxon'
 
 import { db } from '../src/config/database.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
+import { runToolCallingV2Turn } from '../src/agents/conversational/runner.js'
 import {
   getConversationalAgentTestVerifiedPaymentEvidence,
   prepareConversationalAgentTestRun,
@@ -40,6 +41,24 @@ function terminalBookingArgs() {
       emailSourceQuote: null,
       relation: 'Mamá del contacto'
     },
+    guests: [{
+      name: 'Ana Jiménez',
+      phone: null,
+      phoneSourceQuote: null,
+      email: null,
+      emailSourceQuote: null,
+      relation: 'Acompañante'
+    }]
+  }
+}
+
+function alteredResumeBookingArgs() {
+  return {
+    title: 'Cita para el contacto equivocado',
+    notes: null,
+    attendeeName: null,
+    attendeeContext: null,
+    primaryAttendee: null,
     guests: []
   }
 }
@@ -61,19 +80,20 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
   const slot = monday.set({ hour: 11, minute: 0, second: 0, millisecond: 0 })
   const startTime = slot.toUTC().toISO()
   const capabilitiesConfig = {
-    schemaVersion: 2,
-    testMode: { enabled: true, cleanupAfterMinutes: 5, notify: false },
+    schemaVersion: 3,
     items: [
       {
         id: 'schedule_appointment',
         enabled: true,
         calendarId,
         bookingOwner: 'ai',
-        allowOverlaps: false
+        allowOverlaps: false,
+        testMode: { enabled: true, cleanupAfterMinutes: 5, notify: false }
       },
       {
         id: 'collect_payment',
         enabled: true,
+        collectionMethod: 'payment_link',
         paymentMode: 'deposit',
         chargeType: 'deposit',
         gateway: 'stripe',
@@ -86,7 +106,8 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
         },
         installments: { enabled: false, maxInstallments: 0 },
         expirationMinutes: 60,
-        afterPayment: 'continue'
+        afterPayment: 'continue',
+        testMode: { enabled: true, cleanupAfterMinutes: 5, notify: false }
       }
     ]
   }
@@ -201,7 +222,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       executionId: offerRun.executionId,
       virtualContact,
       conversationMessages: [
-        { id: offerRun.executionId, role: 'user', content: 'Quiero agendar a mi mamá Paty.' }
+        { id: offerRun.executionId, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' }
       ],
       accountLocale: { currency },
       actions: [],
@@ -225,9 +246,9 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       executionId: confirmationRun.executionId,
       actions: [],
       conversationMessages: [
-        { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty.' },
+        { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' },
         { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
-        { id: confirmationRun.executionId, role: 'user', content: 'Sí, ese horario le funciona. Agéndala por favor.' }
+        { id: confirmationRun.executionId, role: 'user', content: 'ok' }
       ]
     }
     const missingDeposit = await createConversationalTools(confirmationCtx)
@@ -235,6 +256,23 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       .invoke(null, JSON.stringify(terminalBookingArgs()))
     assert.equal(missingDeposit.ok, false, JSON.stringify(missingDeposit))
     assert.equal(missingDeposit.paymentEvidenceRequired, true)
+
+    const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+    const boundBeforeConflictingReplay = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )
+    const conflictingDraftReplay = await createConversationalTools({
+      ...confirmationCtx,
+      actions: []
+    }).find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify(alteredResumeBookingArgs()))
+    assert.equal(conflictingDraftReplay.ok, false, JSON.stringify(conflictingDraftReplay))
+    assert.equal(conflictingDraftReplay.code, 'appointment_request_contract_conflict')
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, boundBeforeConflictingReplay.detail_json)
 
     const paymentLink = await createConversationalTools(confirmationCtx)
       .find((item) => item.name === 'create_payment_link')
@@ -278,33 +316,84 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     assert.equal(testVerifiedPaymentEvidence.testEffectId, paymentEffectId)
     assert.equal(testVerifiedPaymentEvidence.startTime, startTime)
 
-    const resumeCtx = {
+    const acceptedBeforeResume = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )
+    const acceptedDetail = JSON.parse(acceptedBeforeResume.detail_json)
+    assert.equal(acceptedDetail.appointmentRequestDraft.primaryAttendee.name, 'Paty Jiménez')
+    assert.equal(acceptedDetail.appointmentRequestDraft.guests[0].name, 'Ana Jiménez')
+    assert.match(acceptedDetail.appointmentRequestDraftHash, /^[a-f0-9]{64}$/)
+    assert.equal(acceptedDetail.bookingOwner, 'ai')
+    assert.equal(acceptedDetail.terminalToolName, 'book_appointment')
+    assert.equal(testVerifiedPaymentEvidence.bookingOwner, 'ai')
+    assert.equal(testVerifiedPaymentEvidence.terminalToolName, 'book_appointment')
+    const rejectedReofferCtx = {
       ...offerCtx,
       executionId: resumeRun.executionId,
       testVerifiedPaymentEvidence,
-      actions: [],
-      conversationMessages: [
-        { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty.' },
-        { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
-        { id: confirmationRun.executionId, role: 'user', content: 'Sí, ese horario le funciona. Agéndala por favor.' },
-        { id: `assistant_payment_${suffix}`, role: 'assistant', content: 'Aquí está el enlace sandbox para pagar el anticipo.' },
-        { id: resumeRun.executionId, role: 'user', content: 'Ya pagué, ¿quedó lista?' }
-      ]
+      actions: []
     }
-    const resumedBooking = await createConversationalTools(resumeCtx)
-      .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify(terminalBookingArgs()))
+    const rejectedReoffer = await createConversationalTools(rejectedReofferCtx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime }))
+    assert.equal(rejectedReoffer.ok, false, JSON.stringify(rejectedReoffer))
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, acceptedBeforeResume.detail_json)
 
-    assert.equal(resumedBooking.ok, true, JSON.stringify(resumedBooking))
-    assert.equal(resumedBooking.simulated, true)
-    const bookingAction = resumeCtx.actions.find((action) => action.type === 'book_appointment')
+    const resumeMessages = [
+      { id: `opening_${suffix}`, role: 'user', content: 'Hola quisiera agendar' },
+      { id: `assistant_question_${suffix}`, role: 'assistant', content: 'Claro. ¿Qué día entre semana te queda mejor para la cita?' },
+      { id: `availability_${suffix}`, role: 'user', content: 'que fechas hay' },
+      { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
+      { id: confirmationRun.executionId, role: 'user', content: 'ok' },
+      { id: `assistant_payment_${suffix}`, role: 'assistant', content: `Para confirmar la cita se requiere un anticipo. ${paymentLink.paymentUrl}` }
+    ]
+    let forcedToolCalls = 0
+    const resumedTurn = await runToolCallingV2Turn({
+      config,
+      runtime: { modelProvider: {} },
+      messages: resumeMessages,
+      contactId,
+      contactName: 'Contacto que agenda',
+      dryRun: true,
+      channel: 'whatsapp',
+      traceMessage: 'Pago sandbox confirmado por webhook',
+      executionId: resumeRun.executionId,
+      previewScopeId,
+      testVerifiedPaymentEvidence,
+      virtualContact,
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      executeAgent: async ({ agent }) => {
+        assert.equal(agent.modelSettings.toolChoice, 'book_appointment')
+        const terminalTool = agent.tools.find((item) => item.name === agent.modelSettings.toolChoice)
+        assert.ok(terminalTool)
+        forcedToolCalls += 1
+        const result = await terminalTool.invoke(null, JSON.stringify(alteredResumeBookingArgs()))
+        assert.equal(result.ok, true, JSON.stringify(result))
+        assert.equal(result.simulated, true)
+        return ''
+      },
+      runInChannel: (_channel, callback) => callback()
+    })
+
+    assert.equal(forcedToolCalls, 1)
+    assert.doesNotMatch(resumedTurn.reply, /tengo disponible|te funciona|preparo el enlace/i)
+    assert.match(resumedTurn.reply, /cita(?: de prueba)? quedó confirmada/i)
+    const bookingAction = resumedTurn.ctx.actions.find((action) => action.type === 'book_appointment')
     assert.ok(bookingAction)
     assert.equal(bookingAction.startTime, startTime)
     assert.equal(bookingAction.confirmationEvidence.reusedForTestPaymentResume, true)
+    assert.equal(bookingAction.title, 'Cita para Paty Jiménez · Valoración de rodilla')
+    assert.ok(bookingAction.participants.some((participant) => participant.role === 'primary_attendee' && participant.name === 'Paty Jiménez'))
+    assert.ok(bookingAction.participants.some((participant) => participant.role === 'guest' && participant.name === 'Ana Jiménez'))
 
     const appointmentEffects = await recordConversationalAgentPreviewEffects({
       runContext: resumeRun,
-      actions: resumeCtx.actions
+      actions: resumedTurn.ctx.actions
     })
     assert.equal(appointmentEffects.length, 1, JSON.stringify(appointmentEffects))
     assert.equal(appointmentEffects[0].type, 'appointment')
@@ -314,8 +403,19 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
       [calendarId, contactId]
     )).total), 1)
+    const createdAppointment = await db.get(
+      `SELECT id FROM appointments
+       WHERE calendar_id = ? AND contact_id = ? ORDER BY start_time DESC LIMIT 1`,
+      [calendarId, contactId]
+    )
+    const materializedParticipants = await db.all(
+      `SELECT role, name_snapshot FROM appointment_participants
+       WHERE appointment_id = ? ORDER BY role, position`,
+      [createdAppointment.id]
+    )
+    assert.ok(materializedParticipants.some((participant) => participant.role === 'primary_attendee' && participant.name_snapshot === 'Paty Jiménez'))
+    assert.ok(materializedParticipants.some((participant) => participant.role === 'guest' && participant.name_snapshot === 'Ana Jiménez'))
 
-    const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
     const materialized = JSON.parse((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerEventId]

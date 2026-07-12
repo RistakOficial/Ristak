@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-09.
+Ultima consolidacion: 2026-07-12.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -3602,7 +3602,44 @@ nunca un booleano escrito por el modelo.
   horario que debe decirle a la persona. Después de un anticipo confirmado,
   `book_appointment` recupera el mismo UTC de la cadena durable reconciliacion →
   fuente de cobro → seleccion → oferta y vuelve a validar disponibilidad; no le
-  pide al modelo reconstruirlo ni consultar otro horario. En Modo test, el efecto
+  pide al modelo reconstruirlo ni consultar otro horario. Antes de abrir el cobro,
+  la primera llamada terminal guarda juntos el borrador canonico de titulo, notas,
+  titular e invitados y el contrato terminal `bookingOwner` + `terminalToolName`.
+  La oferta preview o seleccion live, el intento de anticipo, el request de
+  pasarela, el evento fuente y la reconciliacion conservan esa misma pareja. Si la
+  configuracion vigente sigue coincidiendo, el primer paso de la reanudacion fija
+  `toolChoice` exactamente en `book_appointment` o `request_human_booking`; no
+  analiza otra vez el texto del cliente para elegir terminal. Si el dueño cambia
+  IA ↔ humano mientras el pago esta pendiente, o falta el binding en una fuente
+  antigua, no ejecuta ninguna de las dos terminales: conserva el pago confirmado,
+  deja la conversacion en estado humano con señal durable de revision y manda la
+  notificacion prioritaria sin reintentar el webhook indefinidamente.
+  El borrador vive una sola vez dentro de la oferta preview aceptada o de la
+  seleccion live; el intento y el evento fuente del cobro arrastran su hash. Al
+  reanudar, ese borrador manda sobre cualquier argumento nuevo del modelo. Cambiar
+  a Paty por el contacto, perder un invitado o alterar draft, hash o terminal en
+  cualquier eslabon falla cerrado antes de reservar o consumir el anticipo. El SDK
+  puede volver a `auto` despues de una tool fallida para explicar el problema u
+  ofrecer una alternativa real; una terminal exitosa corta la vuelta, y ninguna
+  continuacion puede volver a cobrar ni religar el pago a otro horario. La reserva
+  IA compara otra vez calendario, UTC, huella del borrador, responsable y tool
+  terminal contra la reconciliacion pagada. La reconciliacion entrega a la tool un
+  claim con lease renovable; el Runner mantiene heartbeat mientras el modelo y la
+  entrega estan trabajando y comprueba el mismo claim justo antes de responder.
+  La reserva del anticipo tiene un segundo fencing token. El controller vuelve a
+  validar ambos candados y el estado `active` sin señal dentro de la transaccion
+  que crea la cita; el INSERT de la cita y el consumo del anticipo confirman o se
+  revierten juntos. Un claim vencido no puede crear, consumir, liberar ni contestar
+  usando la lease de su reemplazo. Si una persona pausa o toma el chat antes del
+  commit, no se crea la cita; si la cita confirma primero, cualquier takeover
+  posterior conserva la cita real pero nunca es sobrescrito por el cierre del bot.
+  Aunque una reanudacion falle y después exista otra oferta, ese anticipo no puede
+  pagar a otra persona ni otra cita.
+  En Modo test, una oferta `accepted` es inmutable: intentar ofrecerla otra vez no
+  cambia su JSON, huella, ejecucion de aceptacion ni UTC. La tool terminal exitosa
+  termina esa vuelta del Runner y la respuesta visible sale del resultado
+  estructurado; despues el controller materializa el efecto temporal antes de
+  responder. En Modo test, el efecto
   del link sandbox conserva la huella exacta de la oferta aceptada. Sólo un
   webhook `paid_test` del mismo run, scope, evento, calendario, UTC y huella puede
   reanudar esa cita en otro request; la ejecución que materializa queda registrada
@@ -3671,6 +3708,59 @@ nunca un booleano escrito por el modelo.
   mensaje puede reentrar despues de un crash con ese intento ya `collecting` o
   `source_bound`: vuelve a pedir `create_payment_link` y recupera el mismo link,
   ledger y evento, sin crear un segundo cobro ni dejar el turno varado.
+  `request_human_booking` aplica el mismo requisito de anticipo que
+  `book_appointment`: primero fija asistentes y terminal, cobra una sola vez y,
+  después de confirmarse el pago, entrega el horario al equipo sin afirmar que la
+  cita ya fue creada. Esa entrega consume el anticipo con el mismo evento durable
+  `${reconciliationId}_consumed`, marcado como `human_booking_request` y sin un
+  `appointmentId`. Consumo, estado humano y evento `human_booking_requested`
+  confirman o se revierten dentro de una sola transacción. Si el proceso cae
+  después del commit, la reconciliación reconoce esos tres hechos, se cierra sin
+  volver a ejecutar al agente, repara con identidad durable la notificación
+  prioritaria y la respuesta visible al cliente que hayan quedado pendientes, y
+  conserva la conversación en manos del equipo. La agenda automatica tiene la
+  recuperacion simetrica: consumo, request idempotente y cita local activa son la
+  prueba terminal aun si el proceso cayó antes de actualizar el estado. Recovery
+  puede sellar un request que quedó `processing` o `failed` sólo cuando el consumo
+  exacto y el `appointmentId` prueban la misma cita activa; si el staff ya la
+  reprogramó, conserva fecha/calendario canónicos actuales. Una cita consumida que
+  fue cancelada, eliminada o ya no existe deja el request como tombstone
+  `completed` y pasa a revisión humana, sin volver al modelo ni reciclar el
+  anticipo. Sólo repara `appointment_booked` si el estado conserva la autoridad interna de
+  esa terminal; un estado humano o pausado posterior manda. Tanto la agenda IA
+  como la humana usan el mismo identificador de entrega para que una respuesta ya
+  confirmada no vuelva a enviarse.
+  El consumo y el evento humano bastan
+  para reconocer esa terminal aunque después el staff haya limpiado la señal,
+  pausado o cerrado el chat; recovery preserva ese estado más nuevo.
+  Las rutas de revisión manual congelan la reconciliación con
+  `autoResumeAllowed=false` y `manualReviewOnly=true`; desde ese momento el pago
+  sigue registrado, pero ya no puede reaparecer como evidencia disponible para
+  otra cita. Esto aplica también a fuentes antiguas o incompletas sin selección,
+  calendario, UTC, borrador/huella o terminal verificables, y a reanudaciones con
+  feature apagada, agente apagado o conversación en un estado no ejecutable. Si
+  alguien ya tomó o pausó el chat antes de que llegue el webhook, el pago no lo
+  reactiva. La reconciliación nunca reescribe `active` ni limpia la señal después
+  de observar el estado: la señal de revisión manual se reclama por CAS y su
+  cambio de estado + evento `signal_set` confirman en una sola transacción, o se
+  revierten juntos. Se aplica una sola vez. Si después falla el push o la
+  respuesta, el retry sólo recupera esas entregas y conserva cualquier pausa o
+  takeover posterior. El Runner valida
+  el estado otra vez, así que un takeover humano concurrente tampoco se pierde. Si
+  el agente fue eliminado mientras el link estaba pendiente, el
+  webhook valida igualmente monto, moneda, proveedor y ledger usando el `agentId`
+  durable de la fuente, conserva el pago, mantiene liberado el contacto y escala
+  el caso a una persona; nunca abandona el pago como un rechazo sin seguimiento.
+  En un pago completo conserva igualmente el cierre y la notificación histórica,
+  pero no vuelve a asignar el contacto al identificador de un agente inexistente.
+  Las alertas criticas usan una outbox por evento con claim y lease. Sólo `sent`
+  deduplica para siempre; `pending`, `failed` o un `processing` vencido pueden ser
+  retomados. La deduplicacion generica de notificaciones recientes no bloquea esa
+  recuperacion. El payload guardado por el primer intento manda durante los
+  retries, aunque después cambien el título o la hora de una cita. Como el
+  proveedor push no ofrece idempotencia transaccional, el
+  contrato es al menos una entrega ante un crash ambiguo, pero nunca se pierde una
+  alerta solo porque ya existia su marcador `pending`.
   Una combinacion sin
   soporte falla cerrada en vez de degradarse en silencio. HighLevel no promete
   MSI porque su API de invoices no permite fijar ese maximo.

@@ -41,7 +41,11 @@ import {
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js';
 import { runIdempotentAppointmentCreation } from '../services/appointmentCreationSafetyService.js';
-import { assertConversationalAppointmentDepositReservationFence } from '../services/conversationalAgentService.js';
+import {
+  assertConversationalAppointmentDepositReservationFence,
+  claimConversationalTerminalMutationAuthority,
+  consumeConversationalAppointmentDepositEvidence
+} from '../services/conversationalAgentService.js';
 import {
   dispatchAppointmentAutomationEvent,
   dispatchAppointmentCreatedAutomations
@@ -2055,6 +2059,10 @@ export async function createAppointment(req, res) {
       depositReservationEventId,
       depositReservationClaimToken,
       depositReservationAgentId,
+      depositReservationRequestDraftHash,
+      conversationTerminalAuthorityToken,
+      conversationTerminalAgentId,
+      conversationTerminalChannel,
       ...appointmentData
     } = req.body;
     const carriesTestMetadata = Boolean(
@@ -2076,8 +2084,29 @@ export async function createAppointment(req, res) {
     const strictAvailabilityCheck = appointmentData.strictAvailabilityCheck === true
       || appointmentData.source === 'conversational_agent_v2';
     const depositFenceProvided = Boolean(
-      depositReservationEventId || depositReservationClaimToken || depositReservationAgentId
+      depositReservationEventId || depositReservationClaimToken || depositReservationAgentId ||
+      depositReservationRequestDraftHash
     );
+    const terminalAuthorityProvided = Boolean(
+      conversationTerminalAuthorityToken || conversationTerminalAgentId || conversationTerminalChannel
+    );
+    if (
+      terminalAuthorityProvided &&
+      req[INTERNAL_CONTROLLER_CONTEXT]?.conversationalAgentAppointment !== true
+    ) {
+      return res.status(403).json({
+        success: false,
+        code: 'conversational_terminal_authority_internal_only',
+        error: 'La autoridad terminal sólo puede usarse desde el agente interno.'
+      });
+    }
+    if (terminalAuthorityProvided && !depositFenceProvided) {
+      return res.status(409).json({
+        success: false,
+        code: 'conversational_payment_resume_deposit_fence_missing',
+        error: 'La reanudación pagada no conserva la reserva exclusiva del anticipo.'
+      });
+    }
     const context = await getHighLevelContext(req, { locationId, accessToken });
     const createdAppointment = await runIdempotentAppointmentCreation({
       clientRequestId: clientRequestId || legacyClientRequestId,
@@ -2131,13 +2160,28 @@ export async function createAppointment(req, res) {
       || appointmentData.confirmDoubleBooking === true;
     const localCalendarId = localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id;
     const createLocalWithAvailability = async () => {
+      let depositFence = null;
       if (depositFenceProvided) {
-        await assertConversationalAppointmentDepositReservationFence({
+        depositFence = await assertConversationalAppointmentDepositReservationFence({
           eventId: depositReservationEventId,
           claimToken: depositReservationClaimToken,
           appointmentRequestId: clientRequestId || legacyClientRequestId,
           contactId: appointmentData.contactId || appointmentData.contact_id,
           agentId: depositReservationAgentId,
+          calendarId: appointmentData.calendarId || appointmentData.calendar_id,
+          startTime: appointmentData.startTime || appointmentData.start_time,
+          selectionRequestDraftHash: depositReservationRequestDraftHash,
+          bookingOwner: 'ai',
+          terminalToolName: 'book_appointment',
+          database: db
+        });
+      }
+      if (terminalAuthorityProvided) {
+        await claimConversationalTerminalMutationAuthority({
+          contactId: appointmentData.contactId || appointmentData.contact_id,
+          agentId: conversationTerminalAgentId,
+          channel: conversationTerminalChannel || 'whatsapp',
+          authorityToken: conversationTerminalAuthorityToken,
           database: db
         });
       }
@@ -2171,7 +2215,7 @@ export async function createAppointment(req, res) {
         }
       }
 
-      return localCalendarService.createLocalAppointment({
+      const localAppointment = await localCalendarService.createLocalAppointment({
         ...localAppointmentData,
         calendarId: localCalendar?.id || appointmentData.calendarId,
         locationId: context.locationId
@@ -2179,9 +2223,24 @@ export async function createAppointment(req, res) {
         locationId: context.locationId,
         syncStatus: 'pending'
       });
+      if (depositFence) {
+        await consumeConversationalAppointmentDepositEvidence({
+          reconciliationId: depositFence.reconciliationId,
+          contactId: appointmentData.contactId || appointmentData.contact_id,
+          agentId: depositReservationAgentId,
+          paymentId: depositFence.paymentId,
+          reconciliationClaimToken: depositFence.reconciliationClaimToken,
+          reservationClaimToken: depositReservationClaimToken,
+          appointmentRequestId: clientRequestId || legacyClientRequestId,
+          appointmentId: localAppointment.id,
+          allowProcessingAppointmentRequest: true,
+          database: db
+        });
+      }
+      return localAppointment;
     };
 
-    let appointment = localCalendarId && (!forceDoubleBooking || depositFenceProvided)
+    let appointment = localCalendarId && (!forceDoubleBooking || depositFenceProvided || terminalAuthorityProvided)
       ? await db.transaction(createLocalWithAvailability)
       : await createLocalWithAvailability();
 

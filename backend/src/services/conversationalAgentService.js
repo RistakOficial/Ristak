@@ -113,6 +113,7 @@ export const CONVERSATIONAL_INBOUND_PROCESSING_LEASE_MS = 10 * 60 * 1000
 export const CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE = 'reply_delivery_plan_v1'
 export const CONVERSATIONAL_REPLY_DELIVERY_LEASE_MS = 10 * 60 * 1000
 export const CONVERSATIONAL_REPLY_DELIVERY_MAX_DETAIL_BYTES = 32 * 1024
+const CONVERSATIONAL_REPLY_PREVENTIVE_INTERRUPTION_ID = 'preventive_measure'
 const EXPLICIT_ASSIGNMENT_SOURCES = new Set(['automatic', 'manual'])
 const CONVERSATION_STATE_CHANNEL_ALIASES = new Map([
   ['wa', 'whatsapp'],
@@ -2092,9 +2093,24 @@ const CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT = 'payment_reconciliation_v2'
 const CONVERSATIONAL_PAYMENT_RECONCILIATION_LEASE_MS = 10 * 60 * 1000
 const CONVERSATIONAL_APPOINTMENT_DEPOSIT_RESERVATION_LEASE_MS = 10 * 60 * 1000
 let conversationalPaymentResumeHandlerForTest = null
+let conversationalPaymentAfterStateInspectionHookForTest = null
+let conversationalPaymentTerminalReplyHandlerForTest = null
+let conversationalPriorityNotificationSenderForTest = null
 
 export function setConversationalPaymentResumeHandlerForTest(handler) {
   conversationalPaymentResumeHandlerForTest = typeof handler === 'function' ? handler : null
+}
+
+export function setConversationalPaymentAfterStateInspectionHookForTest(handler) {
+  conversationalPaymentAfterStateInspectionHookForTest = typeof handler === 'function' ? handler : null
+}
+
+export function setConversationalPaymentTerminalReplyHandlerForTest(handler) {
+  conversationalPaymentTerminalReplyHandlerForTest = typeof handler === 'function' ? handler : null
+}
+
+export function setConversationalPriorityNotificationSenderForTest(sender) {
+  conversationalPriorityNotificationSenderForTest = typeof sender === 'function' ? sender : null
 }
 
 function normalizeVerifiedPaymentStatus(value) {
@@ -2111,6 +2127,75 @@ function normalizeVerifiedPaymentEnvironment(value) {
 function normalizeVerifiedCurrency(value) {
   const currency = String(value || '').trim().toUpperCase()
   return /^[A-Z]{3}$/.test(currency) ? currency : ''
+}
+
+function normalizeAppointmentTerminalBinding(value = {}) {
+  const bookingOwner = String(value?.bookingOwner || '').trim().toLowerCase()
+  const terminalToolName = String(value?.terminalToolName || '').trim()
+  const expectedToolName = bookingOwner === 'human'
+    ? 'request_human_booking'
+    : bookingOwner === 'ai'
+      ? 'book_appointment'
+      : ''
+  return expectedToolName && terminalToolName === expectedToolName
+    ? { bookingOwner, terminalToolName }
+    : null
+}
+
+async function inspectAppointmentDepositSourceBinding({
+  sourceEvent,
+  sourceDetail = {},
+  contactId = '',
+  agentId = ''
+} = {}) {
+  const selectionEventId = String(sourceDetail.appointmentSelectionEventId || '').trim()
+  const sourceTerminal = normalizeAppointmentTerminalBinding({
+    bookingOwner: sourceDetail.appointmentSelectionBookingOwner,
+    terminalToolName: sourceDetail.appointmentSelectionTerminalToolName
+  })
+  if (
+    !selectionEventId ||
+    !String(sourceDetail.appointmentSelectionCalendarId || '').trim() ||
+    !String(sourceDetail.appointmentSelectionStartTime || '').trim() ||
+    !String(sourceDetail.appointmentSelectionVerifiedAt || '').trim() ||
+    !String(sourceDetail.appointmentSelectionRequestDraftHash || '').trim() ||
+    !sourceTerminal
+  ) {
+    return { ok: false, reason: 'appointment_source_binding_missing' }
+  }
+  const selection = await db.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [selectionEventId]
+  )
+  const detail = parseJsonField(selection?.detail_json, {})
+  const draft = detail.appointmentRequestDraft
+  const draftValid = draft && typeof draft === 'object' && !Array.isArray(draft)
+  const draftHash = draftValid
+    ? createHash('sha256').update(JSON.stringify(draft)).digest('hex')
+    : ''
+  const selectionTerminal = normalizeAppointmentTerminalBinding(detail)
+  const valid = Boolean(
+    ['payment_link_created', 'payment_link_reused', 'deposit_transfer_pending_review'].includes(sourceEvent?.event_type) &&
+    String(sourceEvent?.contact_id || '') === String(contactId || '').trim() &&
+    String(sourceEvent?.agent_id || '') === String(agentId || '').trim() &&
+    selection?.event_type === 'appointment_slot_selection_verified' &&
+    String(selection?.contact_id || '') === String(contactId || '').trim() &&
+    String(selection?.agent_id || '') === String(agentId || '').trim() &&
+    String(detail.status || '') === 'active' &&
+    String(detail.calendarId || '') === String(sourceDetail.appointmentSelectionCalendarId || '') &&
+    String(detail.startTime || '') === String(sourceDetail.appointmentSelectionStartTime || '') &&
+    Number.isFinite(Date.parse(detail.startTime || '')) &&
+    String(detail.verifiedAt || '') === String(sourceDetail.appointmentSelectionVerifiedAt || '') &&
+    String(detail.appointmentRequestDraftHash || '') === String(sourceDetail.appointmentSelectionRequestDraftHash || '') &&
+    draftHash === String(detail.appointmentRequestDraftHash || '') &&
+    selectionTerminal &&
+    selectionTerminal.bookingOwner === sourceTerminal.bookingOwner &&
+    selectionTerminal.terminalToolName === sourceTerminal.terminalToolName
+  )
+  return valid
+    ? { ok: true, selection, selectionDetail: detail, terminalBinding: sourceTerminal }
+    : { ok: false, reason: 'appointment_source_selection_mismatch' }
 }
 
 function currencyFractionDigits(currency) {
@@ -2144,6 +2229,11 @@ export async function bindConversationalPaymentSourceEvent({
   const appointmentDepositIntentEventId = String(detail.appointmentDepositIntentEventId || '').trim()
   const appointmentDepositIntentClaimKey = String(detail.appointmentDepositIntentClaimKey || '').trim()
   const appointmentDepositIntentClaimToken = String(detail.appointmentDepositIntentClaimToken || '').trim()
+  const appointmentSelectionRequestDraftHash = String(detail.appointmentSelectionRequestDraftHash || '').trim()
+  const appointmentTerminalBinding = normalizeAppointmentTerminalBinding({
+    bookingOwner: detail.appointmentSelectionBookingOwner,
+    terminalToolName: detail.appointmentSelectionTerminalToolName
+  })
   const purposeConsistent = (
     paymentPurpose === 'appointment_deposit'
       ? paymentMode === 'deposit' && detail.appointmentDeposit === true
@@ -2161,6 +2251,8 @@ export async function bindConversationalPaymentSourceEvent({
       !appointmentDepositIntentEventId ||
       !appointmentDepositIntentClaimKey ||
       !appointmentDepositIntentClaimToken ||
+      !appointmentSelectionRequestDraftHash ||
+      !appointmentTerminalBinding ||
       appointmentDepositIntentClaimKey !== cleanEventId
     ))
   ) {
@@ -2192,6 +2284,9 @@ export async function bindConversationalPaymentSourceEvent({
         String(appointmentDepositIntent?.contact_id || '') !== cleanContactId ||
         String(appointmentDepositIntent?.agent_id || '') !== cleanAgentId ||
         String(appointmentDepositIntentDetail.selectionEventId || '') !== String(detail.appointmentSelectionEventId || '') ||
+        String(appointmentDepositIntentDetail.selectionRequestDraftHash || '') !== appointmentSelectionRequestDraftHash ||
+        String(appointmentDepositIntentDetail.selectionBookingOwner || '') !== appointmentTerminalBinding.bookingOwner ||
+        String(appointmentDepositIntentDetail.selectionTerminalToolName || '') !== appointmentTerminalBinding.terminalToolName ||
         !intentCollecting && !intentAlreadyBound
       ) {
         throw new Error('El intento durable del anticipo no coincide con el link')
@@ -2255,6 +2350,9 @@ export async function bindConversationalPaymentSourceEvent({
       'appointmentSelectionCalendarId',
       'appointmentSelectionStartTime',
       'appointmentSelectionVerifiedAt',
+      'appointmentSelectionRequestDraftHash',
+      'appointmentSelectionBookingOwner',
+      'appointmentSelectionTerminalToolName',
       'appointmentDepositIntentEventId',
       'appointmentDepositIntentClaimKey',
       'appointmentDepositIntentClaimToken'
@@ -2304,6 +2402,9 @@ export async function bindConversationalPaymentSourceEvent({
       String(requestDetail.appointmentSelectionCalendarId || '') !== String(detail.appointmentSelectionCalendarId || '') ||
       String(requestDetail.appointmentSelectionStartTime || '') !== String(detail.appointmentSelectionStartTime || '') ||
       String(requestDetail.appointmentSelectionVerifiedAt || '') !== String(detail.appointmentSelectionVerifiedAt || '') ||
+      String(requestDetail.appointmentSelectionRequestDraftHash || '') !== String(detail.appointmentSelectionRequestDraftHash || '') ||
+      String(requestDetail.appointmentSelectionBookingOwner || '') !== String(detail.appointmentSelectionBookingOwner || '') ||
+      String(requestDetail.appointmentSelectionTerminalToolName || '') !== String(detail.appointmentSelectionTerminalToolName || '') ||
       String(requestDetail.appointmentDepositIntentEventId || '') !== String(detail.appointmentDepositIntentEventId || '') ||
       String(requestDetail.appointmentDepositIntentClaimKey || '') !== String(detail.appointmentDepositIntentClaimKey || '') ||
       String(requestDetail.appointmentDepositIntentClaimToken || '') !== String(detail.appointmentDepositIntentClaimToken || '') ||
@@ -2487,6 +2588,9 @@ export async function recoverPendingConversationalPaymentSourceBindings({
         appointmentSelectionCalendarId: request.appointmentSelectionCalendarId || null,
         appointmentSelectionStartTime: request.appointmentSelectionStartTime || null,
         appointmentSelectionVerifiedAt: request.appointmentSelectionVerifiedAt || null,
+        appointmentSelectionRequestDraftHash: request.appointmentSelectionRequestDraftHash || null,
+        appointmentSelectionBookingOwner: request.appointmentSelectionBookingOwner || null,
+        appointmentSelectionTerminalToolName: request.appointmentSelectionTerminalToolName || null,
         appointmentDepositIntentEventId: request.appointmentDepositIntentEventId || null,
         appointmentDepositIntentClaimKey: request.appointmentDepositIntentClaimKey || null,
         appointmentDepositIntentClaimToken: request.appointmentDepositIntentClaimToken || null,
@@ -2581,7 +2685,14 @@ async function claimConversationalPaymentReconciliation({ eventId, contactId, ag
     normalizeVerifiedCurrency(stored.currency) !== normalizeVerifiedCurrency(detail.currency) ||
     normalizeVerifiedPaymentEnvironment(stored.paymentEnvironment) !== normalizeVerifiedPaymentEnvironment(detail.paymentEnvironment) ||
     String(stored.paymentPurpose || '').trim() !== String(detail.paymentPurpose || '').trim() ||
-    stored.appointmentDeposit !== detail.appointmentDeposit
+    stored.appointmentDeposit !== detail.appointmentDeposit ||
+    String(stored.appointmentSelectionEventId || '') !== String(detail.appointmentSelectionEventId || '') ||
+    String(stored.appointmentSelectionCalendarId || '') !== String(detail.appointmentSelectionCalendarId || '') ||
+    String(stored.appointmentSelectionStartTime || '') !== String(detail.appointmentSelectionStartTime || '') ||
+    String(stored.appointmentSelectionVerifiedAt || '') !== String(detail.appointmentSelectionVerifiedAt || '') ||
+    String(stored.appointmentSelectionRequestDraftHash || '') !== String(detail.appointmentSelectionRequestDraftHash || '') ||
+    String(stored.appointmentSelectionBookingOwner || '') !== String(detail.appointmentSelectionBookingOwner || '') ||
+    String(stored.appointmentSelectionTerminalToolName || '') !== String(detail.appointmentSelectionTerminalToolName || '')
   ) {
     throw Object.assign(new Error('El ledger de reconciliación ya existe con otra evidencia'), { statusCode: 409 })
   }
@@ -2659,7 +2770,14 @@ async function checkpointConversationalPaymentReconciliation(eventId, claimToken
   if (stored.status !== 'processing' || stored.claimToken !== claimToken) {
     throw new Error('Otro proceso tomó la reconciliación del pago')
   }
-  const next = { ...stored, ...patch }
+  const renewedAt = new Date()
+  const next = {
+    ...stored,
+    leaseUntilAt: new Date(renewedAt.getTime() + CONVERSATIONAL_PAYMENT_RECONCILIATION_LEASE_MS).toISOString(),
+    leaseRenewedAt: renewedAt.toISOString(),
+    heartbeatCount: Math.max(0, Number(stored.heartbeatCount) || 0) + 1,
+    ...patch
+  }
   const update = await db.run(
     `UPDATE conversational_agent_events
      SET detail_json = ?
@@ -2668,6 +2786,76 @@ async function checkpointConversationalPaymentReconciliation(eventId, claimToken
   )
   if (dbMutationCount(update) !== 1) throw new Error('No se pudo guardar el avance durable de la reconciliación')
   return next
+}
+
+export async function assertConversationalPaymentReconciliationClaim({
+  reconciliationId = '',
+  claimToken = '',
+  contactId = '',
+  agentId = ''
+} = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanClaimToken = String(claimToken || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  if (!cleanReconciliationId || !cleanClaimToken || !cleanContactId || !cleanAgentId) {
+    throw Object.assign(new Error('Falta el claim durable para entregar la confirmación del pago'), {
+      code: 'payment_reconciliation_claim_missing'
+    })
+  }
+  const row = await db.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [cleanReconciliationId]
+  )
+  const detail = parseJsonField(row?.detail_json, {})
+  const leaseUntilMs = Date.parse(detail.leaseUntilAt || '')
+  if (
+    row?.event_type !== CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT ||
+    String(row?.contact_id || '') !== cleanContactId ||
+    String(row?.agent_id || '') !== cleanAgentId ||
+    detail.status !== 'processing' ||
+    detail.claimToken !== cleanClaimToken ||
+    !Number.isFinite(leaseUntilMs) ||
+    leaseUntilMs <= Date.now()
+  ) {
+    throw Object.assign(new Error('La reconciliación perdió autoridad antes de entregar la confirmación'), {
+      code: 'payment_reconciliation_claim_lost'
+    })
+  }
+  return { valid: true, detail }
+}
+
+async function renewConversationalPaymentReconciliationLease(eventId, claimToken) {
+  return checkpointConversationalPaymentReconciliation(eventId, claimToken)
+}
+
+async function withConversationalPaymentReconciliationHeartbeat(eventId, claimToken, callback) {
+  await renewConversationalPaymentReconciliationLease(eventId, claimToken)
+  const intervalMs = Math.max(1000, Math.floor(CONVERSATIONAL_PAYMENT_RECONCILIATION_LEASE_MS / 3))
+  let heartbeatError = null
+  let heartbeatInFlight = null
+  const renew = () => {
+    if (heartbeatInFlight || heartbeatError) return
+    heartbeatInFlight = renewConversationalPaymentReconciliationLease(eventId, claimToken)
+      .catch((error) => {
+        heartbeatError = error
+      })
+      .finally(() => {
+        heartbeatInFlight = null
+      })
+  }
+  const timer = setInterval(renew, intervalMs)
+  timer.unref?.()
+  try {
+    const result = await callback()
+    if (heartbeatInFlight) await heartbeatInFlight
+    if (heartbeatError) throw heartbeatError
+    return result
+  } finally {
+    clearInterval(timer)
+    if (heartbeatInFlight) await heartbeatInFlight.catch(() => {})
+  }
 }
 
 function resolveConversationalPaymentPurpose(matchedDetail = {}) {
@@ -2698,11 +2886,609 @@ async function resumeConversationalAppointmentAfterVerifiedPayment(payload) {
   return resumeToolCallingV2AfterVerifiedPayment(payload)
 }
 
+async function deliverConversationalPaymentTerminalReply(payload) {
+  if (conversationalPaymentTerminalReplyHandlerForTest) {
+    return conversationalPaymentTerminalReplyHandlerForTest(payload)
+  }
+  const { deliverVerifiedPaymentTerminalReply } = await import('../agents/conversational/runner.js')
+  return deliverVerifiedPaymentTerminalReply(payload)
+}
+
+async function applyManualReviewSignalOnce({
+  reconciliationId,
+  contactId,
+  agentId,
+  conversationAgentId,
+  channel = 'whatsapp',
+  summary,
+  preserveExistingState = false
+} = {}) {
+  const signalEventId = `${String(reconciliationId || '').trim()}_manual_review_signal`
+  const effectiveAgentId = conversationAgentId === undefined ? agentId : conversationAgentId
+  return db.transaction(async (tx) => {
+    const existingEvent = await tx.get(
+      `SELECT contact_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [signalEventId]
+    )
+    let state = await getConversationState(contactId, {
+      agentId: effectiveAgentId || null,
+      channel
+    }).catch(() => null)
+    if (!state && effectiveAgentId) {
+      state = await getConversationState(contactId, { channel }).catch(() => null)
+    }
+    if (existingEvent) {
+      const detail = parseJsonField(existingEvent.detail_json, {})
+      if (
+        existingEvent.event_type !== 'signal_set' ||
+        String(existingEvent.contact_id || '') !== String(contactId || '').trim() ||
+        detail.signal !== 'ready_for_human' ||
+        detail.status !== 'human'
+      ) {
+        throw new Error('La identidad durable de revisión manual pertenece a otro cambio de estado')
+      }
+      if (state?.status === 'active' && !state.signal && String(state.updatedBy || '').startsWith('conv_manual_review_')) {
+        throw new Error('La señal durable de revisión no coincide con el estado de la conversación')
+      }
+      return { applied: false, preserved: true, reason: 'signal_already_applied' }
+    }
+    if (preserveExistingState) return { applied: false, preserved: true, reason: 'preserve_requested' }
+    if (!state?.id || state.status !== 'active' || state.signal) {
+      return { applied: false, preserved: true, reason: 'conversation_state_changed' }
+    }
+    const authorityToken = `conv_manual_review_${createHash('sha256')
+      .update([reconciliationId, contactId, state.id].join('\u0000'))
+      .digest('hex')
+      .slice(0, 48)}`
+    const previousUpdatedBy = String(state.updatedBy || '')
+    const claimed = await tx.run(
+      `UPDATE conversational_agent_state
+       SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND status = 'active' AND signal IS NULL
+         AND COALESCE(updated_by, '') = ?`,
+      [authorityToken, state.id, previousUpdatedBy]
+    )
+    if (dbMutationCount(claimed) !== 1) {
+      return { applied: false, preserved: true, reason: 'conversation_state_changed' }
+    }
+    await setConversationSignal(contactId, 'ready_for_human', {
+      reason: 'El anticipo ya fue confirmado y la cita requiere revisión humana',
+      summary,
+      status: 'human',
+      agentId: effectiveAgentId,
+      channel,
+      eventId: signalEventId,
+      strictEvent: true,
+      expectedUpdatedBy: authorityToken
+    })
+    return { applied: true, preserved: false, reason: 'signal_applied' }
+  })
+}
+
+async function routeVerifiedAppointmentDepositToHumanReview({
+  reconciliationId,
+  reconciliationClaimToken,
+  contactId,
+  agentId,
+  channel = 'whatsapp',
+  sourceEventId,
+  ledgerPaymentId,
+  amount,
+  currency,
+  conversationAgentId,
+  reason = 'appointment_deposit_manual_review_required',
+  preserveExistingState = false
+} = {}) {
+  const summary = `Anticipo confirmado por ${Number(amount)} ${normalizeVerifiedCurrency(currency)}; la cita necesita revisión humana antes de continuar.`
+  await recordConversationalAgentEvent({
+    eventId: `${reconciliationId}_manual_review`,
+    contactId,
+    eventType: 'appointment_deposit_manual_review_required',
+    detail: {
+      agentId,
+      sourceEventId,
+      ledgerPaymentId,
+      amount: Number(amount),
+      currency: normalizeVerifiedCurrency(currency),
+      reconciliationId,
+      autoResumeAllowed: false,
+      needsNewSlot: true,
+      reason
+    },
+    throwOnError: true
+  })
+  const signalResult = await applyManualReviewSignalOnce({
+    reconciliationId,
+    contactId,
+    agentId,
+    conversationAgentId,
+    channel,
+    summary,
+    preserveExistingState
+  })
+  const notification = await notifyConversationalCompletion({
+    contactId,
+    reason: 'Anticipo confirmado; revisar la cita manualmente',
+    summary,
+    signal: 'ready_for_human',
+    eventId: `${reconciliationId}_manual_review_notification`,
+    throwOnFailure: true,
+    eventScopedDedupe: true
+  })
+  const reply = await deliverConversationalPaymentTerminalReply({
+    reconciliationId,
+    reconciliationClaimToken,
+    contactId,
+    agentId,
+    channel,
+    terminalType: 'manual_review'
+  })
+  return { signalResult, notification, reply }
+}
+
+export async function notifyConversationalHumanBookingDeposit({
+  reconciliationId,
+  contactId,
+  title,
+  startTime
+} = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanTitle = String(title || '').trim()
+  const cleanStartTime = String(startTime || '').trim()
+  if (!cleanReconciliationId || !cleanContactId || !cleanTitle || !cleanStartTime) {
+    throw new Error('La notificación de la cita humana no conserva su identidad durable completa')
+  }
+  return notifyConversationalCompletion({
+    contactId: cleanContactId,
+    reason: 'Horario elegido pendiente de confirmación humana',
+    summary: `${cleanTitle}: ${cleanStartTime}`,
+    signal: 'ready_for_human',
+    eventId: `${cleanReconciliationId}_human_booking_notification`,
+    throwOnFailure: true,
+    eventScopedDedupe: true
+  })
+}
+
+export async function notifyConversationalAiBookingDeposit({
+  reconciliationId,
+  contactId,
+  title,
+  startTime
+} = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanTitle = String(title || '').trim()
+  const cleanStartTime = String(startTime || '').trim()
+  if (!cleanReconciliationId || !cleanContactId || !cleanTitle || !cleanStartTime) {
+    throw new Error('La notificación de la cita automática no conserva su identidad durable completa')
+  }
+  return notifyConversationalCompletion({
+    contactId: cleanContactId,
+    reason: 'Cita agendada por el agente',
+    summary: `${cleanTitle}: ${cleanStartTime}`,
+    signal: 'appointment_booked',
+    eventId: `${cleanReconciliationId}_ai_booking_notification`,
+    throwOnFailure: true,
+    eventScopedDedupe: true
+  })
+}
+
+async function inspectCompletedHumanBookingDepositTerminal({
+  reconciliationId,
+  contactId,
+  agentId,
+  paymentId,
+  reconciliationDetail = {}
+} = {}) {
+  if (
+    reconciliationDetail.appointmentSelectionBookingOwner !== 'human' ||
+    reconciliationDetail.appointmentSelectionTerminalToolName !== 'request_human_booking'
+  ) return { ok: false, reason: 'not_human_terminal' }
+  const consumption = await db.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [`${reconciliationId}_consumed`]
+  )
+  const consumed = parseJsonField(consumption?.detail_json, {})
+  const sourceMessageId = `payment-resume:${reconciliationId}`
+  const consumptionValid = Boolean(
+    consumption?.event_type === 'deposit_payment_consumed' &&
+    String(consumption?.contact_id || '') === String(contactId || '').trim() &&
+    String(consumption?.agent_id || '') === String(agentId || '').trim() &&
+    consumed.status === 'consumed' &&
+    consumed.consumptionType === 'human_booking_request' &&
+    consumed.reconciliationId === String(reconciliationId || '').trim() &&
+    consumed.ledgerPaymentId === String(paymentId || '').trim() &&
+    consumed.bookingOwner === 'human' &&
+    consumed.terminalToolName === 'request_human_booking' &&
+    consumed.calendarId === String(reconciliationDetail.appointmentSelectionCalendarId || '') &&
+    consumed.startTime === String(reconciliationDetail.appointmentSelectionStartTime || '') &&
+    consumed.selectionRequestDraftHash === String(reconciliationDetail.appointmentSelectionRequestDraftHash || '') &&
+    consumed.sourceMessageId === sourceMessageId &&
+    String(consumed.humanBookingEventId || '').startsWith('cae_human_booking_')
+  )
+  if (!consumptionValid) return { ok: false, reason: 'human_consumption_missing_or_invalid' }
+  const humanEvent = await db.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [consumed.humanBookingEventId]
+  )
+  const human = parseJsonField(humanEvent?.detail_json, {})
+  const humanValid = Boolean(
+    humanEvent?.event_type === 'human_booking_requested' &&
+    String(humanEvent?.contact_id || '') === String(contactId || '').trim() &&
+    String(humanEvent?.agent_id || '') === String(agentId || '').trim() &&
+    human.bookingOwner === 'human' &&
+    human.terminalToolName === 'request_human_booking' &&
+    human.depositReconciliationId === String(reconciliationId || '').trim() &&
+    human.depositPaymentId === String(paymentId || '').trim() &&
+    human.calendarId === consumed.calendarId &&
+    human.startTime === consumed.startTime &&
+    human.selectionRequestDraftHash === consumed.selectionRequestDraftHash &&
+    human.sourceMessageId === sourceMessageId &&
+    human.appointmentCreated === false
+  )
+  return humanValid
+    ? { ok: true, consumption: consumed, humanEvent: human }
+    : { ok: false, reason: 'human_booking_event_missing_or_invalid' }
+}
+
+async function inspectCompletedAiBookingDepositTerminal({
+  reconciliationId,
+  contactId,
+  agentId,
+  paymentId,
+  reconciliationDetail = {}
+} = {}) {
+  if (
+    reconciliationDetail.appointmentSelectionBookingOwner !== 'ai' ||
+    reconciliationDetail.appointmentSelectionTerminalToolName !== 'book_appointment'
+  ) return { ok: false, reason: 'not_ai_terminal' }
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanPaymentId = String(paymentId || '').trim()
+  return db.transaction(async (tx) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const consumption = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [`${cleanReconciliationId}_consumed`]
+    )
+    const consumed = parseJsonField(consumption?.detail_json, {})
+    const consumptionValid = Boolean(
+      consumption?.event_type === 'deposit_payment_consumed' &&
+      String(consumption?.contact_id || '') === cleanContactId &&
+      String(consumption?.agent_id || '') === cleanAgentId &&
+      consumed.status === 'consumed' &&
+      consumed.reconciliationId === cleanReconciliationId &&
+      consumed.ledgerPaymentId === cleanPaymentId &&
+      consumed.bookingOwner === 'ai' &&
+      consumed.terminalToolName === 'book_appointment' &&
+      consumed.calendarId === String(reconciliationDetail.appointmentSelectionCalendarId || '') &&
+      consumed.startTime === String(reconciliationDetail.appointmentSelectionStartTime || '') &&
+      consumed.selectionRequestDraftHash === String(reconciliationDetail.appointmentSelectionRequestDraftHash || '') &&
+      String(consumed.appointmentRequestId || '').trim() &&
+      String(consumed.appointmentId || '').trim()
+    )
+    if (!consumptionValid) return { ok: false, reason: 'ai_consumption_missing_or_invalid' }
+
+    const request = await tx.get(
+      `SELECT status, appointment_id, response_json
+       FROM appointment_creation_requests WHERE client_request_id = ?${rowLock}`,
+      [consumed.appointmentRequestId]
+    )
+    const appointment = await tx.get(
+      `SELECT id, contact_id, calendar_id, title, start_time, end_time,
+              appointment_status, status, deleted_at
+       FROM appointments WHERE id = ?${rowLock}`,
+      [consumed.appointmentId]
+    )
+    const appointmentStatus = normalizeVerifiedPaymentStatus(
+      appointment?.appointment_status || appointment?.status
+    )
+    const expectedStartMs = Date.parse(consumed.startTime || '')
+    const actualStartMs = Date.parse(appointment?.start_time || '')
+    const appointmentBelongsToContact = Boolean(
+      appointment?.id &&
+      String(appointment.contact_id || '') === cleanContactId
+    )
+    const appointmentActive = Boolean(
+      appointmentBelongsToContact &&
+      !appointment.deleted_at &&
+      !['cancelled', 'canceled', 'deleted'].includes(appointmentStatus)
+    )
+    const requestCanBeRepaired = Boolean(
+      request &&
+      ['processing', 'failed'].includes(String(request.status || '')) &&
+      (!request.appointment_id || String(request.appointment_id) === String(consumed.appointmentId))
+    )
+    if (!appointmentActive) {
+      if (requestCanBeRepaired) {
+        const tombstoneResponse = {
+          id: consumed.appointmentId,
+          calendarId: appointment?.calendar_id || consumed.calendarId,
+          contactId: cleanContactId,
+          title: appointment?.title || 'Cita',
+          status: appointment?.appointment_status || appointment?.status || 'cancelled',
+          appointmentStatus: appointment?.appointment_status || appointment?.status || 'cancelled',
+          startTime: appointment?.start_time || consumed.startTime,
+          endTime: appointment?.end_time || appointment?.start_time || consumed.startTime,
+          idempotencyReplay: {
+            replayed: true,
+            canonicalChanged: true,
+            state: appointment?.id ? 'appointment_cancelled' : 'appointment_missing'
+          }
+        }
+        const tombstoned = await tx.run(
+          `UPDATE appointment_creation_requests
+           SET status = 'completed', processing_token = NULL, appointment_id = ?,
+               response_json = ?, error_status = NULL,
+               error_message = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE client_request_id = ? AND status IN ('processing', 'failed')
+             AND (appointment_id IS NULL OR appointment_id = ?)`,
+          [
+            consumed.appointmentId,
+            JSON.stringify(tombstoneResponse),
+            consumed.appointmentRequestId,
+            consumed.appointmentId
+          ]
+        )
+        if (dbMutationCount(tombstoned) !== 1) {
+          throw new Error('Otro proceso cambió la solicitud idempotente mientras se bloqueaba la cita inactiva')
+        }
+      }
+      return {
+        ok: false,
+        manualReviewRequired: true,
+        terminalConsumed: true,
+        reason: appointment?.id
+          ? 'canonical_ai_appointment_inactive_or_reassigned'
+          : 'canonical_ai_appointment_missing'
+      }
+    }
+
+    const canonicalChanged = Boolean(
+      String(appointment.calendar_id || '') !== String(consumed.calendarId || '') ||
+      !Number.isFinite(expectedStartMs) ||
+      !Number.isFinite(actualStartMs) ||
+      actualStartMs !== expectedStartMs
+    )
+
+    let requestRepaired = false
+    if (requestCanBeRepaired) {
+      const canonicalResponse = {
+        id: appointment.id,
+        calendarId: appointment.calendar_id,
+        contactId: appointment.contact_id,
+        title: appointment.title || 'Cita',
+        status: appointment.appointment_status || appointment.status || 'confirmed',
+        appointmentStatus: appointment.appointment_status || appointment.status || 'confirmed',
+        startTime: appointment.start_time,
+        endTime: appointment.end_time || appointment.start_time
+      }
+      const repaired = await tx.run(
+        `UPDATE appointment_creation_requests
+         SET status = 'completed', processing_token = NULL, appointment_id = ?,
+             response_json = ?, error_status = NULL, error_message = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE client_request_id = ? AND status IN ('processing', 'failed')
+           AND (appointment_id IS NULL OR appointment_id = ?)`,
+        [
+          appointment.id,
+          JSON.stringify(canonicalResponse),
+          consumed.appointmentRequestId,
+          appointment.id
+        ]
+      )
+      if (dbMutationCount(repaired) !== 1) {
+        throw new Error('Otro proceso cambió la solicitud idempotente mientras se reparaba la cita pagada')
+      }
+      request.status = 'completed'
+      request.appointment_id = appointment.id
+      requestRepaired = true
+    }
+    if (
+      request?.status !== 'completed' ||
+      String(request?.appointment_id || '') !== String(consumed.appointmentId || '')
+    ) {
+      return {
+        ok: false,
+        manualReviewRequired: true,
+        terminalConsumed: true,
+        reason: 'ai_appointment_request_not_completed'
+      }
+    }
+
+    return { ok: true, consumption: consumed, appointment, requestRepaired, canonicalChanged }
+  })
+}
+
+async function repairCompletedAiBookingConversationState({
+  contactId,
+  agentId,
+  channel = 'whatsapp',
+  appointment
+} = {}) {
+  const state = await getConversationState(contactId, { agentId, channel }).catch(() => null)
+  if (!state || state.status !== 'active' || state.signal) {
+    return { repaired: false, preserved: true, state }
+  }
+  const expectedUpdatedBy = String(state.updatedBy || '').trim()
+  if (!expectedUpdatedBy.startsWith('conv_terminal_')) {
+    return { repaired: false, preserved: true, state }
+  }
+  try {
+    const repaired = await setConversationSignal(contactId, 'appointment_booked', {
+      reason: 'Cita agendada por el agente',
+      actionSummarySource: `${appointment?.title || 'Cita'} · ${appointment?.start_time || ''}`,
+      status: 'completed',
+      agentId,
+      channel,
+      eventId: `cae_appointment_signal_recovery_${createHash('sha256')
+        .update([contactId, agentId, appointment?.id || ''].join('\u0000'))
+        .digest('hex')
+        .slice(0, 48)}`,
+      strictEvent: true,
+      expectedUpdatedBy
+    })
+    return { repaired: true, preserved: false, state: repaired }
+  } catch (error) {
+    if (error?.code !== 'conversational_terminal_authority_lost') throw error
+    return {
+      repaired: false,
+      preserved: true,
+      state: await getConversationState(contactId, { agentId, channel }).catch(() => null)
+    }
+  }
+}
+
+async function completeDurableAppointmentPaymentTerminalEffects({
+  reconciliationId,
+  reconciliationClaimToken,
+  contactId,
+  agentId,
+  paymentId,
+  channel = 'whatsapp',
+  reconciliationDetail = {}
+} = {}) {
+  const bookingOwner = String(reconciliationDetail.appointmentSelectionBookingOwner || '')
+  const terminal = bookingOwner === 'ai'
+    ? await inspectCompletedAiBookingDepositTerminal({
+        reconciliationId,
+        contactId,
+        agentId,
+        paymentId,
+        reconciliationDetail
+      })
+    : bookingOwner === 'human'
+      ? await inspectCompletedHumanBookingDepositTerminal({
+          reconciliationId,
+          contactId,
+          agentId,
+          paymentId,
+          reconciliationDetail
+        })
+      : { ok: false, reason: 'appointment_terminal_binding_missing' }
+  if (!terminal.ok) return terminal
+
+  const terminalType = bookingOwner
+  const ai = terminalType === 'ai' ? terminal : null
+  const human = terminalType === 'human' ? terminal : null
+  const stateRepair = ai
+    ? await repairCompletedAiBookingConversationState({
+        contactId,
+        agentId,
+        channel,
+        appointment: ai.appointment
+      })
+    : null
+  if (ai) {
+    const appointmentEventDigest = createHash('sha256')
+      .update([contactId, agentId, ai.appointment.id].join('\u0000'))
+      .digest('hex')
+      .slice(0, 48)
+    await recordConversationalAgentEvent({
+      eventId: `cae_appointment_booked_${appointmentEventDigest}`,
+      contactId,
+      eventType: 'appointment_booked',
+      detail: {
+        agentId,
+        appointmentId: ai.appointment.id,
+        startTime: ai.appointment.start_time,
+        calendarId: ai.appointment.calendar_id,
+        recoveredFromPaymentReconciliation: true
+      },
+      throwOnError: true
+    })
+  }
+  const notification = ai
+    ? await notifyConversationalAiBookingDeposit({
+        reconciliationId,
+        contactId,
+        title: ai.appointment.title || 'Cita',
+        startTime: ai.appointment.start_time
+      })
+    : await notifyConversationalHumanBookingDeposit({
+        reconciliationId,
+        contactId,
+        title: human.humanEvent.title || 'Cita',
+        startTime: human.humanEvent.startTime
+      })
+  const reply = await deliverConversationalPaymentTerminalReply({
+    reconciliationId,
+    reconciliationClaimToken,
+    contactId,
+    agentId,
+    channel,
+    terminalType
+  })
+  return {
+    ok: true,
+    terminalType,
+    terminal,
+    stateRepair,
+    notification,
+    reply,
+    reason: ai ? 'appointment_already_booked' : 'human_booking_already_requested'
+  }
+}
+
+export async function claimConversationalTerminalMutationAuthority({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  authorityToken = '',
+  database = db
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanChannel = normalizeConversationStateChannel(channel)
+  const cleanAuthorityToken = String(authorityToken || '').trim().slice(0, 180)
+  if (!cleanContactId || !cleanAgentId || !cleanAuthorityToken) {
+    throw Object.assign(new Error('Falta la autoridad durable para ejecutar la terminal'), {
+      statusCode: 409,
+      code: 'conversational_terminal_authority_missing'
+    })
+  }
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const state = await database.get(
+    `SELECT id, status, signal, agent_id, channel
+     FROM conversational_agent_state
+     WHERE contact_id = ? AND agent_id = ?
+       AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}
+     LIMIT 1`,
+    [cleanContactId, cleanAgentId, cleanChannel]
+  )
+  if (!state?.id || state.status !== 'active' || state.signal) {
+    throw Object.assign(new Error('La conversación ya no está bajo control ejecutable del agente'), {
+      statusCode: 409,
+      code: 'conversational_terminal_authority_lost'
+    })
+  }
+  const claimed = await database.run(
+    `UPDATE conversational_agent_state
+     SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND status = 'active' AND signal IS NULL`,
+    [cleanAuthorityToken, state.id]
+  )
+  if (dbMutationCount(claimed) !== 1) {
+    throw Object.assign(new Error('Un humano cambió la conversación antes de ejecutar la terminal'), {
+      statusCode: 409,
+      code: 'conversational_terminal_authority_lost'
+    })
+  }
+  return { stateId: state.id, authorityToken: cleanAuthorityToken }
+}
+
 async function assertConversationalAppointmentDepositEvidence({
   reconciliationId = '',
   contactId = '',
   agentId = '',
   paymentId = '',
+  reconciliationClaimToken = '',
   database = db,
   lockRows = false
 } = {}) {
@@ -2710,6 +3496,7 @@ async function assertConversationalAppointmentDepositEvidence({
   const cleanContactId = String(contactId || '').trim()
   const cleanAgentId = String(agentId || '').trim()
   const cleanPaymentId = String(paymentId || '').trim()
+  const cleanReconciliationClaimToken = String(reconciliationClaimToken || '').trim()
   if (!cleanReconciliationId || !cleanContactId || !cleanAgentId || !cleanPaymentId) {
     throw new Error('Falta la identidad durable del anticipo de la cita')
   }
@@ -2731,12 +3518,14 @@ async function assertConversationalAppointmentDepositEvidence({
     [cleanPaymentId, cleanContactId]
   )
   const reconciliationDetail = parseJsonField(reconciliation?.detail_json, {})
-  const validStatus = reconciliationDetail.status === 'completed' || (
-    reconciliationDetail.status === 'processing' &&
-    reconciliationDetail.verifiedEventAppliedAt &&
-    reconciliationDetail.claimToken &&
-    Date.parse(reconciliationDetail.leaseUntilAt || '') > Date.now()
-  )
+  const validStatus = cleanReconciliationClaimToken
+    ? (
+        reconciliationDetail.status === 'processing' &&
+        reconciliationDetail.verifiedEventAppliedAt &&
+        reconciliationDetail.claimToken === cleanReconciliationClaimToken &&
+        Date.parse(reconciliationDetail.leaseUntilAt || '') > Date.now()
+      )
+    : reconciliationDetail.status === 'completed'
   if (
     reconciliation?.event_type !== CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT ||
     String(reconciliation?.contact_id || '') !== cleanContactId ||
@@ -2822,6 +3611,11 @@ export async function assertConversationalAppointmentDepositReservationFence({
   appointmentRequestId = '',
   contactId = '',
   agentId = '',
+  calendarId = '',
+  startTime = '',
+  selectionRequestDraftHash = '',
+  bookingOwner = 'ai',
+  terminalToolName = 'book_appointment',
   database = db
 } = {}) {
   const cleanEventId = String(eventId || '').trim()
@@ -2829,7 +3623,17 @@ export async function assertConversationalAppointmentDepositReservationFence({
   const cleanAppointmentRequestId = String(appointmentRequestId || '').trim()
   const cleanContactId = String(contactId || '').trim()
   const cleanAgentId = String(agentId || '').trim()
-  if (!cleanEventId || !cleanClaimToken || !cleanAppointmentRequestId || !cleanContactId || !cleanAgentId) {
+  const cleanCalendarId = String(calendarId || '').trim()
+  const cleanStartTime = String(startTime || '').trim()
+  const cleanDraftHash = String(selectionRequestDraftHash || '').trim()
+  const cleanBookingOwner = String(bookingOwner || '').trim()
+  const cleanTerminalToolName = String(terminalToolName || '').trim()
+  if (
+    !cleanEventId || !cleanClaimToken || !cleanAppointmentRequestId || !cleanContactId || !cleanAgentId ||
+    !cleanCalendarId || !Number.isFinite(Date.parse(cleanStartTime)) ||
+    !/^[a-f0-9]{64}$/i.test(cleanDraftHash) || cleanBookingOwner !== 'ai' ||
+    cleanTerminalToolName !== 'book_appointment'
+  ) {
     throw Object.assign(new Error('Falta el fencing token del anticipo'), { status: 409, code: 'deposit_fence_missing' })
   }
 
@@ -2846,6 +3650,7 @@ export async function assertConversationalAppointmentDepositReservationFence({
     contactId: cleanContactId,
     agentId: cleanAgentId,
     paymentId: preliminaryDetail.ledgerPaymentId,
+    reconciliationClaimToken: preliminaryDetail.reconciliationClaimToken,
     database,
     lockRows: true
   })
@@ -2862,6 +3667,11 @@ export async function assertConversationalAppointmentDepositReservationFence({
     String(stored?.agent_id || '') !== cleanAgentId ||
     detail.status !== 'reserved' ||
     detail.appointmentRequestId !== cleanAppointmentRequestId ||
+    detail.calendarId !== cleanCalendarId ||
+    detail.startTime !== cleanStartTime ||
+    detail.selectionRequestDraftHash !== cleanDraftHash ||
+    detail.bookingOwner !== cleanBookingOwner ||
+    detail.terminalToolName !== cleanTerminalToolName ||
     detail.claimToken !== cleanClaimToken ||
     Date.parse(detail.leaseUntilAt || '') <= Date.now()
   ) {
@@ -2870,7 +3680,12 @@ export async function assertConversationalAppointmentDepositReservationFence({
       code: 'deposit_fence_lost'
     })
   }
-  return { ok: true, reconciliationId: detail.reconciliationId, paymentId: detail.ledgerPaymentId }
+  return {
+    ok: true,
+    reconciliationId: detail.reconciliationId,
+    reconciliationClaimToken: detail.reconciliationClaimToken,
+    paymentId: detail.ledgerPaymentId
+  }
 }
 
 export async function reserveConversationalAppointmentDepositEvidence({
@@ -2878,27 +3693,66 @@ export async function reserveConversationalAppointmentDepositEvidence({
   contactId = '',
   agentId = '',
   paymentId = '',
-  appointmentRequestId = ''
+  reconciliationClaimToken = '',
+  appointmentRequestId = '',
+  calendarId = '',
+  startTime = '',
+  selectionRequestDraftHash = '',
+  bookingOwner = '',
+  terminalToolName = ''
 } = {}) {
   const cleanReconciliationId = String(reconciliationId || '').trim()
   const cleanContactId = String(contactId || '').trim()
   const cleanAgentId = String(agentId || '').trim()
   const cleanPaymentId = String(paymentId || '').trim()
+  const cleanReconciliationClaimToken = String(reconciliationClaimToken || '').trim()
   const cleanAppointmentRequestId = String(appointmentRequestId || '').trim()
+  const cleanCalendarId = String(calendarId || '').trim()
+  const cleanStartTime = String(startTime || '').trim()
+  const cleanDraftHash = String(selectionRequestDraftHash || '').trim()
+  const cleanBookingOwner = String(bookingOwner || '').trim()
+  const cleanTerminalToolName = String(terminalToolName || '').trim()
   if (!cleanAppointmentRequestId.startsWith('conv-v2-attempt:')) {
     throw new Error('Falta la llave durable del intento de cita')
+  }
+  if (
+    !cleanCalendarId ||
+    !cleanStartTime ||
+    Number.isNaN(new Date(cleanStartTime).getTime()) ||
+    !/^[a-f0-9]{64}$/i.test(cleanDraftHash) ||
+    cleanBookingOwner !== 'ai' ||
+    cleanTerminalToolName !== 'book_appointment'
+  ) {
+    throw Object.assign(new Error('La reserva no conserva el contrato exacto de la cita pagada'), {
+      statusCode: 409,
+      code: 'appointment_deposit_binding_missing'
+    })
   }
 
   const eventId = `${cleanReconciliationId}_consumed`
   return db.transaction(async (tx) => {
-    await assertConversationalAppointmentDepositEvidence({
+    const { reconciliationDetail } = await assertConversationalAppointmentDepositEvidence({
       reconciliationId: cleanReconciliationId,
       contactId: cleanContactId,
       agentId: cleanAgentId,
       paymentId: cleanPaymentId,
+      reconciliationClaimToken: cleanReconciliationClaimToken,
       database: tx,
       lockRows: true
     })
+    const paymentBindingMatches = Boolean(
+      String(reconciliationDetail.appointmentSelectionCalendarId || '') === cleanCalendarId &&
+      String(reconciliationDetail.appointmentSelectionStartTime || '') === cleanStartTime &&
+      String(reconciliationDetail.appointmentSelectionRequestDraftHash || '') === cleanDraftHash &&
+      String(reconciliationDetail.appointmentSelectionBookingOwner || '') === cleanBookingOwner &&
+      String(reconciliationDetail.appointmentSelectionTerminalToolName || '') === cleanTerminalToolName
+    )
+    if (!paymentBindingMatches) {
+      throw Object.assign(new Error('El anticipo pertenece a otro horario, borrador o terminal de cita'), {
+        statusCode: 409,
+        code: 'appointment_deposit_binding_mismatch'
+      })
+    }
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
     const claimToken = `cadr_${randomUUID()}`
@@ -2907,9 +3761,15 @@ export async function reserveConversationalAppointmentDepositEvidence({
       agentId: cleanAgentId,
       reconciliationId: cleanReconciliationId,
       ledgerPaymentId: cleanPaymentId,
+      reconciliationClaimToken: cleanReconciliationClaimToken || null,
       appointmentRequestId: cleanAppointmentRequestId,
       appointmentId: null,
       paymentPurpose: 'appointment_deposit',
+      calendarId: cleanCalendarId,
+      startTime: cleanStartTime,
+      selectionRequestDraftHash: cleanDraftHash,
+      bookingOwner: cleanBookingOwner,
+      terminalToolName: cleanTerminalToolName,
       claimToken,
       leaseUntilAt: new Date(nowMs + CONVERSATIONAL_APPOINTMENT_DEPOSIT_RESERVATION_LEASE_MS).toISOString(),
       reservedAt: nowIso,
@@ -2942,7 +3802,12 @@ export async function reserveConversationalAppointmentDepositEvidence({
       String(stored?.contact_id || '') === cleanContactId &&
       String(stored?.agent_id || '') === cleanAgentId &&
       storedDetail.reconciliationId === cleanReconciliationId &&
-      storedDetail.ledgerPaymentId === cleanPaymentId
+      storedDetail.ledgerPaymentId === cleanPaymentId &&
+      storedDetail.calendarId === cleanCalendarId &&
+      storedDetail.startTime === cleanStartTime &&
+      storedDetail.selectionRequestDraftHash === cleanDraftHash &&
+      storedDetail.bookingOwner === cleanBookingOwner &&
+      storedDetail.terminalToolName === cleanTerminalToolName
     if (!sameEvidence) throw Object.assign(new Error('El anticipo ya está ligado a otra operación'), { statusCode: 409 })
     if (storedDetail.status === 'consumed' && storedDetail.appointmentRequestId === cleanAppointmentRequestId) {
       return {
@@ -2954,9 +3819,14 @@ export async function reserveConversationalAppointmentDepositEvidence({
       }
     }
     if (storedDetail.status === 'reserved' && storedDetail.appointmentRequestId === cleanAppointmentRequestId) {
+      const reconciliationClaimChanged = Boolean(
+        cleanReconciliationClaimToken &&
+        String(storedDetail.reconciliationClaimToken || '') !== cleanReconciliationClaimToken
+      )
       const renewed = {
         ...storedDetail,
-        claimToken: storedDetail.claimToken || claimToken,
+        reconciliationClaimToken: cleanReconciliationClaimToken || storedDetail.reconciliationClaimToken || null,
+        claimToken: reconciliationClaimChanged ? claimToken : (storedDetail.claimToken || claimToken),
         leaseUntilAt: detail.leaseUntilAt,
         lastRenewedAt: nowIso
       }
@@ -3030,25 +3900,158 @@ export async function reserveConversationalAppointmentDepositEvidence({
   })
 }
 
-export async function consumeConversationalAppointmentDepositEvidence({
+export async function consumeConversationalAppointmentDepositForHumanBooking({
   reconciliationId = '',
   contactId = '',
   agentId = '',
   paymentId = '',
-  appointmentRequestId = '',
-  appointmentId = ''
+  reconciliationClaimToken = '',
+  humanBookingEventId = '',
+  calendarId = '',
+  startTime = '',
+  selectionRequestDraftHash = '',
+  sourceMessageId = ''
 } = {}) {
   const cleanReconciliationId = String(reconciliationId || '').trim()
   const cleanContactId = String(contactId || '').trim()
   const cleanAgentId = String(agentId || '').trim()
   const cleanPaymentId = String(paymentId || '').trim()
+  const cleanReconciliationClaimToken = String(reconciliationClaimToken || '').trim()
+  const cleanHumanBookingEventId = String(humanBookingEventId || '').trim()
+  const cleanCalendarId = String(calendarId || '').trim()
+  const cleanStartTime = String(startTime || '').trim()
+  const cleanDraftHash = String(selectionRequestDraftHash || '').trim()
+  const cleanSourceMessageId = String(sourceMessageId || '').trim()
+  if (
+    !cleanReconciliationId ||
+    !cleanContactId ||
+    !cleanAgentId ||
+    !cleanPaymentId ||
+    !cleanReconciliationClaimToken ||
+    !cleanHumanBookingEventId.startsWith('cae_human_booking_') ||
+    !cleanCalendarId ||
+    !Number.isFinite(Date.parse(cleanStartTime)) ||
+    !/^[a-f0-9]{64}$/i.test(cleanDraftHash) ||
+    cleanSourceMessageId !== `payment-resume:${cleanReconciliationId}`
+  ) {
+    throw Object.assign(new Error('Falta la identidad durable de la solicitud humana ligada al anticipo'), {
+      statusCode: 409,
+      code: 'human_booking_deposit_identity_missing'
+    })
+  }
+
+  const eventId = `${cleanReconciliationId}_consumed`
+  return db.transaction(async (tx) => {
+    const { reconciliationDetail } = await assertConversationalAppointmentDepositEvidence({
+      reconciliationId: cleanReconciliationId,
+      contactId: cleanContactId,
+      agentId: cleanAgentId,
+      paymentId: cleanPaymentId,
+      reconciliationClaimToken: cleanReconciliationClaimToken,
+      database: tx,
+      lockRows: true
+    })
+    if (
+      reconciliationDetail.appointmentSelectionBookingOwner !== 'human' ||
+      reconciliationDetail.appointmentSelectionTerminalToolName !== 'request_human_booking' ||
+      String(reconciliationDetail.appointmentSelectionCalendarId || '') !== cleanCalendarId ||
+      String(reconciliationDetail.appointmentSelectionStartTime || '') !== cleanStartTime ||
+      String(reconciliationDetail.appointmentSelectionRequestDraftHash || '') !== cleanDraftHash
+    ) {
+      throw Object.assign(new Error('El anticipo no pertenece a esta solicitud humana de cita'), {
+        statusCode: 409,
+        code: 'human_booking_deposit_contract_mismatch'
+      })
+    }
+    const detail = {
+      status: 'consumed',
+      consumptionType: 'human_booking_request',
+      agentId: cleanAgentId,
+      reconciliationId: cleanReconciliationId,
+      ledgerPaymentId: cleanPaymentId,
+      reconciliationClaimToken: cleanReconciliationClaimToken,
+      humanBookingEventId: cleanHumanBookingEventId,
+      calendarId: cleanCalendarId,
+      startTime: cleanStartTime,
+      selectionRequestDraftHash: cleanDraftHash,
+      bookingOwner: 'human',
+      terminalToolName: 'request_human_booking',
+      sourceMessageId: cleanSourceMessageId,
+      appointmentId: null,
+      consumedAt: new Date().toISOString()
+    }
+    const inserted = await tx.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, 'deposit_payment_consumed', ?)
+       ON CONFLICT(id) DO NOTHING`,
+      [eventId, cleanContactId, cleanAgentId, JSON.stringify(detail)]
+    )
+    if (dbMutationCount(inserted) === 1) {
+      return { consumed: true, replayed: false, eventId, detail }
+    }
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const stored = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [eventId]
+    )
+    const storedDetail = parseJsonField(stored?.detail_json, {})
+    const sameContract = stored?.event_type === 'deposit_payment_consumed' &&
+      String(stored?.contact_id || '') === cleanContactId &&
+      String(stored?.agent_id || '') === cleanAgentId &&
+      storedDetail.status === 'consumed' &&
+      storedDetail.consumptionType === 'human_booking_request' &&
+      storedDetail.reconciliationId === cleanReconciliationId &&
+      storedDetail.ledgerPaymentId === cleanPaymentId &&
+      storedDetail.reconciliationClaimToken === cleanReconciliationClaimToken &&
+      storedDetail.humanBookingEventId === cleanHumanBookingEventId &&
+      storedDetail.calendarId === cleanCalendarId &&
+      storedDetail.startTime === cleanStartTime &&
+      storedDetail.selectionRequestDraftHash === cleanDraftHash &&
+      storedDetail.bookingOwner === 'human' &&
+      storedDetail.terminalToolName === 'request_human_booking' &&
+      storedDetail.sourceMessageId === cleanSourceMessageId
+    if (!sameContract) {
+      throw Object.assign(new Error('El anticipo ya fue consumido por otra operación'), {
+        statusCode: 409,
+        code: 'human_booking_deposit_consumption_conflict'
+      })
+    }
+    return { consumed: true, replayed: true, eventId, detail: storedDetail }
+  })
+}
+
+export async function consumeConversationalAppointmentDepositEvidence({
+  reconciliationId = '',
+  contactId = '',
+  agentId = '',
+  paymentId = '',
+  reconciliationClaimToken = '',
+  reservationClaimToken = '',
+  appointmentRequestId = '',
+  appointmentId = '',
+  allowProcessingAppointmentRequest = false,
+  database = db
+} = {}) {
+  const cleanReconciliationId = String(reconciliationId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanPaymentId = String(paymentId || '').trim()
+  const cleanReconciliationClaimToken = String(reconciliationClaimToken || '').trim()
+  const cleanReservationClaimToken = String(reservationClaimToken || '').trim()
   const cleanAppointmentRequestId = String(appointmentRequestId || '').trim()
   const cleanAppointmentId = String(appointmentId || '').trim()
   if (!cleanAppointmentRequestId || !cleanAppointmentId) {
     throw new Error('Falta la cita canónica para consumir el anticipo')
   }
+  if (cleanReconciliationClaimToken && !cleanReservationClaimToken) {
+    throw Object.assign(new Error('Falta el fencing token de la reserva del anticipo'), {
+      statusCode: 409,
+      code: 'appointment_deposit_consume_fence_missing'
+    })
+  }
 
-  return db.transaction(async (tx) => {
+  return database.transaction(async (tx) => {
     // Revalidar el ledger dentro de la misma transaccion que consume la
     // evidencia. La validacion inicial del Runner no basta: el pago pudo ser
     // reembolsado o anulado mientras se creaba la cita.
@@ -3057,6 +4060,7 @@ export async function consumeConversationalAppointmentDepositEvidence({
       contactId: cleanContactId,
       agentId: cleanAgentId,
       paymentId: cleanPaymentId,
+      reconciliationClaimToken: cleanReconciliationClaimToken,
       database: tx,
       lockRows: true
     })
@@ -3073,9 +4077,11 @@ export async function consumeConversationalAppointmentDepositEvidence({
       [cleanAppointmentId]
     )
     const appointmentStatus = normalizeVerifiedPaymentStatus(appointment?.appointment_status || appointment?.status)
+    const appointmentRequestMatches = appointmentRequest?.status === 'completed'
+      ? String(appointmentRequest?.appointment_id || '') === cleanAppointmentId
+      : allowProcessingAppointmentRequest === true && appointmentRequest?.status === 'processing'
     if (
-      appointmentRequest?.status !== 'completed' ||
-      String(appointmentRequest?.appointment_id || '') !== cleanAppointmentId ||
+      !appointmentRequestMatches ||
       !appointment ||
       String(appointment.contact_id || '') !== cleanContactId ||
       appointment.deleted_at ||
@@ -3097,7 +4103,9 @@ export async function consumeConversationalAppointmentDepositEvidence({
       String(stored?.agent_id || '') !== cleanAgentId ||
       storedDetail.reconciliationId !== cleanReconciliationId ||
       storedDetail.ledgerPaymentId !== cleanPaymentId ||
-      storedDetail.appointmentRequestId !== cleanAppointmentRequestId
+      storedDetail.appointmentRequestId !== cleanAppointmentRequestId ||
+      (cleanReservationClaimToken && storedDetail.claimToken !== cleanReservationClaimToken) ||
+      (cleanReconciliationClaimToken && storedDetail.reconciliationClaimToken !== cleanReconciliationClaimToken)
     ) {
       throw Object.assign(new Error('El anticipo no está reservado para este intento de cita'), { statusCode: 409 })
     }
@@ -3134,6 +4142,8 @@ export async function releaseConversationalAppointmentDepositEvidence({
   agentId = '',
   paymentId = '',
   appointmentRequestId = '',
+  reservationClaimToken = '',
+  reconciliationClaimToken = '',
   reason = 'appointment_not_created'
 } = {}) {
   const eventId = `${String(reconciliationId || '').trim()}_consumed`
@@ -3144,11 +4154,16 @@ export async function releaseConversationalAppointmentDepositEvidence({
   )
   if (!stored) return { released: false, missing: true }
   const detail = parseJsonField(stored.detail_json, {})
+  const cleanReservationClaimToken = String(reservationClaimToken || '').trim()
+  const cleanReconciliationClaimToken = String(reconciliationClaimToken || '').trim()
   const sameReservation = stored.event_type === 'deposit_payment_consumed' &&
     String(stored.contact_id || '') === String(contactId || '').trim() &&
     String(stored.agent_id || '') === String(agentId || '').trim() &&
     detail.ledgerPaymentId === String(paymentId || '').trim() &&
-    detail.appointmentRequestId === String(appointmentRequestId || '').trim()
+    detail.appointmentRequestId === String(appointmentRequestId || '').trim() &&
+    cleanReservationClaimToken &&
+    detail.claimToken === cleanReservationClaimToken &&
+    (!cleanReconciliationClaimToken || detail.reconciliationClaimToken === cleanReconciliationClaimToken)
   if (!sameReservation) throw Object.assign(new Error('No se puede liberar el anticipo de otra cita'), { statusCode: 409 })
   if (detail.status === 'released') return { released: true, replayed: true }
   if (detail.status !== 'reserved') return { released: false, consumed: detail.status === 'consumed' }
@@ -3187,7 +4202,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
   }
 
   let rows = await db.all(
-    `SELECT id, contact_id, event_type, detail_json
+    `SELECT id, contact_id, agent_id, event_type, detail_json
      FROM conversational_agent_events
      WHERE contact_id = ? AND event_type IN (
        'payment_link_created',
@@ -3221,7 +4236,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
       reconcilePaid: false
     }).catch(() => {})
     rows = await db.all(
-      `SELECT id, contact_id, event_type, detail_json
+      `SELECT id, contact_id, agent_id, event_type, detail_json
        FROM conversational_agent_events
        WHERE contact_id = ? AND event_type IN (
          'payment_link_created',
@@ -3254,17 +4269,9 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     : await getConversationState(cleanContactId)
   const agentId = matchedAgentId || state?.agentId || null
   const agent = agentId ? await getConversationalAgent(agentId).catch(() => null) : null
+  const agentMissing = !agent
   const cleanCurrency = normalizeVerifiedCurrency(currency || matchedDetail.currency || '')
   const cleanInvoiceId = String(matchedDetail.invoiceId || matchedDetail.paymentId || invoiceCandidates[0]).trim()
-
-    if (!agent) {
-      return rejectConversationalPaymentReconciliation({
-        contactId: cleanContactId,
-        agentId,
-        sourceEventId: matchedSourceEvent?.id,
-        reason: 'native_agent_missing_or_changed'
-      })
-    }
 
     const reportedStatus = normalizeVerifiedPaymentStatus(status)
     if (!reportedStatus || !VERIFIED_CONVERSATIONAL_PAYMENT_STATUSES.has(reportedStatus)) {
@@ -3387,6 +4394,16 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
         reason: 'payment_purpose_missing_or_invalid'
       })
     }
+    const appointmentSourceBinding = purpose.appointmentDeposit
+      ? await inspectAppointmentDepositSourceBinding({
+          sourceEvent: matchedSourceEvent,
+          sourceDetail: matchedDetail,
+          contactId: cleanContactId,
+          agentId
+        })
+      : { ok: true, terminalBinding: null }
+    const appointmentTerminalBinding = appointmentSourceBinding.terminalBinding || null
+    const appointmentSourceBindingInvalid = purpose.appointmentDeposit && !appointmentSourceBinding.ok
     const reconciliationId = paymentReconciliationEventId({
       contactId: cleanContactId,
       agentId,
@@ -3406,8 +4423,15 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
         paymentEnvironment: ledgerEnvironment,
         paymentPurpose: purpose.paymentPurpose,
         appointmentDeposit: purpose.appointmentDeposit,
-        autoResumeAllowed: purpose.autoResumeAllowed !== false,
-        manualReviewOnly: purpose.manualReviewOnly === true,
+        autoResumeAllowed: purpose.autoResumeAllowed !== false && !appointmentSourceBindingInvalid && !agentMissing,
+        manualReviewOnly: purpose.manualReviewOnly === true || appointmentSourceBindingInvalid || agentMissing,
+        appointmentSelectionEventId: appointmentSourceBinding.ok ? matchedDetail.appointmentSelectionEventId : null,
+        appointmentSelectionCalendarId: appointmentSourceBinding.ok ? matchedDetail.appointmentSelectionCalendarId : null,
+        appointmentSelectionStartTime: appointmentSourceBinding.ok ? matchedDetail.appointmentSelectionStartTime : null,
+        appointmentSelectionVerifiedAt: appointmentSourceBinding.ok ? matchedDetail.appointmentSelectionVerifiedAt : null,
+        appointmentSelectionRequestDraftHash: appointmentSourceBinding.ok ? matchedDetail.appointmentSelectionRequestDraftHash : null,
+        appointmentSelectionBookingOwner: appointmentTerminalBinding?.bookingOwner || null,
+        appointmentSelectionTerminalToolName: appointmentTerminalBinding?.terminalToolName || null,
         channel: state?.channel || 'whatsapp',
         reportedStatus
       }
@@ -3422,26 +4446,41 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     try {
       let progress = claim.detail
       if (purpose.appointmentDeposit) {
-        if (purpose.autoResumeAllowed === false || purpose.manualReviewOnly === true) {
+        if (
+          progress.autoResumeAllowed === false ||
+          progress.manualReviewOnly === true ||
+          purpose.autoResumeAllowed === false ||
+          purpose.manualReviewOnly === true ||
+          appointmentSourceBindingInvalid ||
+          agentMissing
+        ) {
           if (!progress.manualReviewEventAppliedAt) {
-            await recordConversationalAgentEvent({
-              eventId: `${reconciliationId}_manual_review`,
+            progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+              autoResumeAllowed: false,
+              manualReviewOnly: true
+            })
+            const review = await routeVerifiedAppointmentDepositToHumanReview({
+              reconciliationId,
+              reconciliationClaimToken: claim.claimToken,
               contactId: cleanContactId,
-              eventType: 'appointment_deposit_manual_review_required',
-              detail: {
-                agentId,
-                sourceEventId: matchedSourceEvent.id,
-                ledgerPaymentId: ledger.id,
-                amount: Number(ledger.amount),
-                currency: ledgerCurrency,
-                reconciliationId,
-                autoResumeAllowed: false,
-                needsNewSlot: true
-              },
-              throwOnError: true
+              agentId,
+              channel: state?.channel || 'whatsapp',
+              sourceEventId: matchedSourceEvent.id,
+              ledgerPaymentId: ledger.id,
+              amount: Number(ledger.amount),
+              currency: ledgerCurrency,
+              ...(agentMissing ? { conversationAgentId: null } : {}),
+              reason: agentMissing
+                ? 'native_agent_missing_or_changed'
+                : appointmentSourceBindingInvalid
+                  ? appointmentSourceBinding.reason
+                  : 'payment_source_requires_manual_review'
             })
             progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
-              manualReviewEventAppliedAt: new Date().toISOString()
+              autoResumeAllowed: false,
+              manualReviewOnly: true,
+              manualReviewEventAppliedAt: new Date().toISOString(),
+              manualReviewNotification: review.notification || null
             })
           }
           const result = {
@@ -3458,22 +4497,21 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
           await settleConversationalPaymentReconciliation(reconciliationId, claim.claimToken, { result })
           return result
         }
-        const [currentAppointmentState, completedResumeEvent] = await Promise.all([
-          getConversationState(cleanContactId, { agentId, channel: state?.channel || 'whatsapp' }).catch(() => null),
-          db.get(
-            `SELECT id, event_type, detail_json
-             FROM conversational_agent_events
-             WHERE id IN (?, ?)
-             ORDER BY CASE WHEN event_type = 'payment_resume_reply_sent' THEN 0 ELSE 1 END
-             LIMIT 1`,
-            [`${reconciliationId}_reply`, `${reconciliationId}_turn`]
-          ).catch(() => null)
-        ])
-        const durableAppointmentBooked = currentAppointmentState?.status === 'completed' &&
-          currentAppointmentState?.signal === 'appointment_booked'
-        const terminalAppointmentAction = durableAppointmentBooked
-        const replyAlreadySent = completedResumeEvent?.event_type === 'payment_resume_reply_sent'
-        if (!progress.resumeCompletedAt && (terminalAppointmentAction || replyAlreadySent)) {
+        const currentAppointmentState = await getConversationState(
+          cleanContactId,
+          { agentId, channel: state?.channel || 'whatsapp' }
+        ).catch(() => null)
+        const recoveredTerminal = await completeDurableAppointmentPaymentTerminalEffects({
+          reconciliationId,
+          reconciliationClaimToken: claim.claimToken,
+          contactId: cleanContactId,
+          agentId,
+          paymentId: ledger.id,
+          channel: state?.channel || 'whatsapp',
+          reconciliationDetail: progress
+        })
+        const terminalAppointmentAction = recoveredTerminal.ok === true || recoveredTerminal.terminalConsumed === true
+        if (!progress.resumeCompletedAt && recoveredTerminal.ok) {
           progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
             conversationActivatedAt: progress.conversationActivatedAt || new Date().toISOString(),
             verifiedEventAppliedAt: progress.verifiedEventAppliedAt || new Date().toISOString(),
@@ -3482,17 +4520,110 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
               resumed: true,
               queued: false,
               recoveredFromDurableEvent: true,
-              reason: terminalAppointmentAction ? 'appointment_already_booked' : 'reply_already_sent'
+              reason: recoveredTerminal.reason,
+              terminalType: recoveredTerminal.terminalType,
+              notification: recoveredTerminal.notification || null,
+              replyDelivered: recoveredTerminal.reply?.sent === true
             }
           })
         }
-        if (!progress.conversationActivatedAt) {
-          await setConversationStatus(cleanContactId, 'active', {
-            updatedBy: 'payment_reconciliation',
-            clearSignal: true,
-            agentId,
-            channel: state?.channel || 'whatsapp'
+        if (!progress.resumeCompletedAt && recoveredTerminal.manualReviewRequired) {
+          progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            autoResumeAllowed: false,
+            manualReviewOnly: true
           })
+          const review = await routeVerifiedAppointmentDepositToHumanReview({
+            reconciliationId,
+            reconciliationClaimToken: claim.claimToken,
+            contactId: cleanContactId,
+            agentId,
+            channel: state?.channel || 'whatsapp',
+            sourceEventId: matchedSourceEvent.id,
+            ledgerPaymentId: ledger.id,
+            amount: Number(ledger.amount),
+            currency: ledgerCurrency,
+            reason: recoveredTerminal.reason || 'durable_appointment_requires_manual_review',
+            preserveExistingState: Boolean(
+              !currentAppointmentState ||
+              currentAppointmentState.status !== 'active' ||
+              currentAppointmentState.signal
+            )
+          })
+          progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            autoResumeAllowed: false,
+            manualReviewOnly: true,
+            manualReviewEventAppliedAt: new Date().toISOString(),
+            manualReviewNotification: review.notification || null,
+            resumeCompletedAt: new Date().toISOString(),
+            resumeResult: {
+              resumed: false,
+              queued: false,
+              manualReviewRequired: true,
+              reason: recoveredTerminal.reason,
+              notification: review.notification || null,
+              replyDelivered: review.reply?.sent === true
+            }
+          })
+        }
+        const preexistingStateBlocksResume = Boolean(
+          !progress.resumeCompletedAt &&
+          !terminalAppointmentAction &&
+          (
+            !currentAppointmentState ||
+            currentAppointmentState.status !== 'active' ||
+            Boolean(currentAppointmentState.signal)
+          )
+        )
+        if (preexistingStateBlocksResume) {
+          progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            autoResumeAllowed: false,
+            manualReviewOnly: true
+          })
+          const review = await routeVerifiedAppointmentDepositToHumanReview({
+            reconciliationId,
+            reconciliationClaimToken: claim.claimToken,
+            contactId: cleanContactId,
+            agentId,
+            channel: state?.channel || 'whatsapp',
+            sourceEventId: matchedSourceEvent.id,
+            ledgerPaymentId: ledger.id,
+            amount: Number(ledger.amount),
+            currency: ledgerCurrency,
+            reason: 'conversation_state_not_runnable_before_payment_resume',
+            preserveExistingState: true
+          })
+          progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            autoResumeAllowed: false,
+            manualReviewOnly: true,
+            manualReviewEventAppliedAt: new Date().toISOString(),
+            manualReviewNotification: review.notification || null,
+            resumeCompletedAt: new Date().toISOString(),
+            resumeResult: {
+              resumed: false,
+              queued: false,
+              manualReviewRequired: true,
+              reason: 'conversation_state_not_runnable_before_payment_resume',
+              notification: review.notification || null
+            }
+          })
+        }
+        if (
+          !progress.resumeCompletedAt &&
+          !preexistingStateBlocksResume &&
+          conversationalPaymentAfterStateInspectionHookForTest
+        ) {
+          await conversationalPaymentAfterStateInspectionHookForTest({
+            reconciliationId,
+            contactId: cleanContactId,
+            agentId,
+            channel: state?.channel || 'whatsapp',
+            inspectedState: currentAppointmentState
+          })
+        }
+        if (!progress.conversationActivatedAt && !progress.resumeCompletedAt) {
+          // No escribimos el estado aquí. Ya se observó active/null y el Runner
+          // lo vuelve a validar; reactivarlo abriría una carrera capaz de pisar
+          // un takeover o una pausa humana ocurridos después de la lectura.
           progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
             conversationActivatedAt: new Date().toISOString()
           })
@@ -3511,6 +4642,8 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
               sourceEventId: matchedSourceEvent.id,
               paymentPurpose: purpose.paymentPurpose,
               appointmentDeposit: purpose.appointmentDeposit,
+              appointmentSelectionBookingOwner: appointmentTerminalBinding.bookingOwner,
+              appointmentSelectionTerminalToolName: appointmentTerminalBinding.terminalToolName,
               reconciliationId
             },
             throwOnError: true
@@ -3521,35 +4654,102 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
         }
         let resumed = progress.resumeResult || null
         if (!progress.resumeCompletedAt) {
-          resumed = await resumeConversationalAppointmentAfterVerifiedPayment({
+          resumed = await withConversationalPaymentReconciliationHeartbeat(
             reconciliationId,
+            claim.claimToken,
+            () => resumeConversationalAppointmentAfterVerifiedPayment({
+              reconciliationId,
+              reconciliationClaimToken: claim.claimToken,
+              contactId: cleanContactId,
+              agentId,
+              channel: state?.channel || 'whatsapp',
+              amount: Number(ledger.amount),
+              currency: ledgerCurrency,
+              paymentEnvironment: ledgerEnvironment,
+              paymentPurpose: 'appointment_deposit',
+              bookingOwner: appointmentTerminalBinding.bookingOwner,
+              terminalToolName: appointmentTerminalBinding.terminalToolName
+            })
+          )
+          const durableAfterRun = await completeDurableAppointmentPaymentTerminalEffects({
+            reconciliationId,
+            reconciliationClaimToken: claim.claimToken,
             contactId: cleanContactId,
             agentId,
+            paymentId: ledger.id,
             channel: state?.channel || 'whatsapp',
-            amount: Number(ledger.amount),
-            currency: ledgerCurrency,
-            paymentEnvironment: ledgerEnvironment,
-            paymentPurpose: 'appointment_deposit'
+            reconciliationDetail: progress
           })
-          if (!resumed?.resumed && !resumed?.queued) {
+          if (durableAfterRun.ok) {
+            resumed = {
+              resumed: true,
+              queued: false,
+              recoveredFromDurableEvent: true,
+              reason: durableAfterRun.reason,
+              terminalType: durableAfterRun.terminalType,
+              notification: durableAfterRun.notification || null,
+              replyDelivered: durableAfterRun.reply?.sent === true
+            }
+          } else if (durableAfterRun.manualReviewRequired || resumed?.manualReviewRequired) {
+            progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+              autoResumeAllowed: false,
+              manualReviewOnly: true
+            })
+            const stateBeforeReview = await getConversationState(
+              cleanContactId,
+              { agentId, channel: state?.channel || 'whatsapp' }
+            ).catch(() => null)
+            const review = await routeVerifiedAppointmentDepositToHumanReview({
+              reconciliationId,
+              reconciliationClaimToken: claim.claimToken,
+              contactId: cleanContactId,
+              agentId,
+              channel: state?.channel || 'whatsapp',
+              sourceEventId: matchedSourceEvent.id,
+              ledgerPaymentId: ledger.id,
+              amount: Number(ledger.amount),
+              currency: ledgerCurrency,
+              reason: durableAfterRun.reason || resumed?.reason || 'appointment_terminal_configuration_changed',
+              preserveExistingState: Boolean(
+                !stateBeforeReview ||
+                stateBeforeReview.status !== 'active' ||
+                stateBeforeReview.signal
+              )
+            })
+            resumed = {
+              resumed: false,
+              queued: false,
+              manualReviewRequired: true,
+              reason: durableAfterRun.reason || resumed?.reason || 'appointment_terminal_configuration_changed',
+              notification: review.notification || null
+            }
+          } else if (!resumed?.resumed && !resumed?.queued) {
             throw new Error(resumed?.reason || 'No se pudo reanudar la cita después de verificar el anticipo')
+          } else if (!(conversationalPaymentResumeHandlerForTest && resumed?.resumed && resumed?.sent)) {
+            throw new Error('La terminal reportó éxito sin conservar una cita o solicitud humana durable')
           }
           progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+            ...(resumed?.manualReviewRequired
+              ? { autoResumeAllowed: false, manualReviewOnly: true }
+              : {}),
             resumeCompletedAt: new Date().toISOString(),
             resumeResult: {
               resumed: Boolean(resumed?.resumed),
               queued: Boolean(resumed?.queued),
-              reason: resumed?.reason || null
+              reason: resumed?.reason || null,
+              manualReviewRequired: resumed?.manualReviewRequired === true,
+              notification: resumed?.notification || null
             }
           })
           resumed = progress.resumeResult
         }
         const result = {
           matched: true,
-          signal: 'deposit_payment_verified',
+          signal: resumed?.manualReviewRequired ? 'appointment_deposit_manual_review_required' : 'deposit_payment_verified',
           objectiveCompleted: false,
           resumed: Boolean(resumed?.resumed),
           queued: Boolean(resumed?.queued),
+          manualReviewRequired: resumed?.manualReviewRequired === true,
           agentId,
           invoiceId: cleanInvoiceId
         }
@@ -3567,7 +4767,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
           actionSummarySource: technicalSummary,
           originalSummary: technicalSummary,
           status: 'completed',
-          agentId,
+          agentId: agentMissing ? null : agentId,
           eventId: `${reconciliationId}_signal`,
           strictEvent: true
         })
@@ -5970,6 +7170,155 @@ export async function listAgentFilterOptions() {
 }
 
 const COMPLETION_NOTIFICATION_DEDUP_MS = 10 * 60 * 1000
+const EVENT_SCOPED_NOTIFICATION_LEASE_MS = 60 * 1000
+
+function criticalNotificationIdentityMatches(row, { contactId, signal, reason, summary } = {}) {
+  const detail = parseJsonField(row?.detail_json, {})
+  return Boolean(
+    row?.event_type === 'priority_push_notification_pending' &&
+    String(row?.contact_id || '') === String(contactId || '') &&
+    String(detail.signal || '') === String(signal || '') &&
+    String(detail.reason || '') === String(reason || '')
+  )
+}
+
+async function claimCriticalConversationalNotification({
+  eventId,
+  contactId,
+  signal,
+  reason,
+  summary,
+  nowMs = Date.now(),
+  leaseMs = EVENT_SCOPED_NOTIFICATION_LEASE_MS
+} = {}) {
+  const pendingEventId = `${eventId}_pending`
+  const initialDetail = {
+    version: 1,
+    status: 'pending',
+    signal,
+    reason,
+    summary,
+    attempts: 0,
+    claimToken: null,
+    leaseUntilAt: null,
+    lastError: null
+  }
+  await recordConversationalAgentEvent({
+    eventId: pendingEventId,
+    contactId,
+    eventType: 'priority_push_notification_pending',
+    detail: initialDetail,
+    throwOnError: true
+  })
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const [row, completed] = await Promise.all([
+      db.get(
+        `SELECT contact_id, event_type, detail_json
+         FROM conversational_agent_events WHERE id = ?`,
+        [pendingEventId]
+      ),
+      db.get(
+        `SELECT contact_id, event_type, detail_json
+         FROM conversational_agent_events WHERE id = ?`,
+        [eventId]
+      )
+    ])
+    if (!criticalNotificationIdentityMatches(row, { contactId, signal, reason, summary })) {
+      throw new Error('La identidad durable de la notificación crítica ya pertenece a otro evento')
+    }
+    const detail = parseJsonField(row.detail_json, {})
+    if (completed) {
+      const completedDetail = parseJsonField(completed.detail_json, {})
+      if (
+        completed.event_type !== 'priority_push_notification' ||
+        String(completed.contact_id || '') !== String(contactId || '') ||
+        String(completedDetail.signal || '') !== String(signal || '')
+      ) {
+        throw new Error('La identidad final de la notificación crítica pertenece a otro evento')
+      }
+      if (detail.status !== 'sent') {
+        await db.run(
+          `UPDATE conversational_agent_events SET detail_json = ?
+           WHERE id = ? AND event_type = 'priority_push_notification_pending' AND detail_json = ?`,
+          [JSON.stringify({
+            ...detail,
+            version: 1,
+            status: 'sent',
+            claimToken: null,
+            leaseUntilAt: null,
+            sentAt: detail.sentAt || new Date(nowMs).toISOString(),
+            lastError: null
+          }), pendingEventId, row.detail_json]
+        ).catch(() => {})
+      }
+      return { claimed: false, completed: true, reason: 'deduped_event_id', detail }
+    }
+    if (detail.status === 'sent') {
+      return { claimed: false, completed: true, reason: 'deduped_event_id', detail }
+    }
+    const leaseUntilMs = Date.parse(detail.leaseUntilAt || '')
+    const activeLease = detail.status === 'processing' &&
+      Number.isFinite(leaseUntilMs) && leaseUntilMs > nowMs
+    if (activeLease) {
+      return { claimed: false, processing: true, reason: 'notification_delivery_in_progress' }
+    }
+    const status = String(detail.status || 'pending')
+    if (!['pending', 'processing', 'failed'].includes(status)) {
+      throw new Error(`Estado durable inválido de la notificación crítica: ${status}`)
+    }
+    const claimToken = `canp_${randomUUID()}`
+    const next = {
+      ...detail,
+      version: 1,
+      status: 'processing',
+      attempts: Math.max(0, Number(detail.attempts) || 0) + 1,
+      claimToken,
+      claimedAt: new Date(nowMs).toISOString(),
+      leaseUntilAt: new Date(nowMs + leaseMs).toISOString(),
+      lastError: null
+    }
+    const updated = await db.run(
+      `UPDATE conversational_agent_events SET detail_json = ?
+       WHERE id = ? AND event_type = 'priority_push_notification_pending' AND detail_json = ?`,
+      [JSON.stringify(next), pendingEventId, row.detail_json]
+    )
+    if (dbMutationCount(updated) === 1) {
+      return { claimed: true, claimToken, pendingEventId, detail: next }
+    }
+  }
+  return { claimed: false, processing: true, reason: 'notification_claim_conflict' }
+}
+
+async function settleCriticalConversationalNotification({
+  pendingEventId,
+  claimToken,
+  status,
+  error = ''
+} = {}) {
+  const row = await db.get(
+    `SELECT detail_json FROM conversational_agent_events
+     WHERE id = ? AND event_type = 'priority_push_notification_pending'`,
+    [pendingEventId]
+  )
+  const detail = parseJsonField(row?.detail_json, {})
+  if (detail.status !== 'processing' || detail.claimToken !== claimToken) return false
+  const next = {
+    ...detail,
+    status,
+    claimToken: null,
+    leaseUntilAt: null,
+    ...(status === 'sent'
+      ? { sentAt: new Date().toISOString(), lastError: null }
+      : { failedAt: new Date().toISOString(), lastError: String(error || '').slice(0, 1200) })
+  }
+  const updated = await db.run(
+    `UPDATE conversational_agent_events SET detail_json = ?
+     WHERE id = ? AND event_type = 'priority_push_notification_pending' AND detail_json = ?`,
+    [JSON.stringify(next), pendingEventId, row.detail_json]
+  )
+  return dbMutationCount(updated) === 1
+}
 
 async function notifyConversationalCompletion({
   contactId,
@@ -5977,9 +7326,35 @@ async function notifyConversationalCompletion({
   summary = '',
   signal = 'ready_for_human',
   eventId = '',
-  throwOnFailure = false
+  throwOnFailure = false,
+  eventScopedDedupe = false
 } = {}) {
   if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
+  const cleanEventId = String(eventId || '').trim()
+  let criticalClaim = null
+  if (eventScopedDedupe) {
+    if (!cleanEventId) {
+      const error = new Error('La notificación crítica requiere una identidad durable')
+      if (throwOnFailure) throw error
+      return { sent: 0, skipped: true, reason: 'notification_event_id_missing' }
+    }
+    criticalClaim = await claimCriticalConversationalNotification({
+      eventId: cleanEventId,
+      contactId,
+      signal,
+      reason,
+      summary
+    })
+    if (criticalClaim.completed) {
+      return { sent: 0, skipped: true, reason: criticalClaim.reason }
+    }
+    if (!criticalClaim.claimed) {
+      const error = new Error('La notificación crítica sigue en proceso de entrega')
+      error.notificationDeliveryAttempted = false
+      if (throwOnFailure) throw error
+      return { sent: 0, skipped: true, inProgress: true, reason: criticalClaim.reason }
+    }
+  }
   // [Fase 1 — nunca fantasma] Idempotencia: como ahora una conversación cumplida se reabre
   // para seguir contestando (ver shouldReopenCompletedConversationState), el modelo podría
   // volver a marcar el objetivo en un follow-up. No re-avisamos a un humano si ya le avisamos
@@ -6000,7 +7375,7 @@ async function notifyConversationalCompletion({
       throw error
     }
   }
-  if (recentNotification) {
+  if (recentNotification && !eventScopedDedupe) {
     try {
       await recordConversationalAgentEvent({
         eventId: eventId ? `${eventId}_deduped` : '',
@@ -6017,18 +7392,43 @@ async function notifyConversationalCompletion({
   }
   let deliveryAttempted = false
   try {
-    const { sendConversationalAgentPriorityNotification } = await import('./pushNotificationsService.js')
+    const deliveryReason = criticalClaim?.detail?.reason ?? reason
+    const deliverySummary = criticalClaim?.detail?.summary ?? summary
+    const sender = conversationalPriorityNotificationSenderForTest ||
+      (await import('./pushNotificationsService.js')).sendConversationalAgentPriorityNotification
     deliveryAttempted = true
-    const result = await sendConversationalAgentPriorityNotification({ contactId, reason, summary, signal })
+    const result = await sender({ contactId, reason: deliveryReason, summary: deliverySummary, signal })
     await recordConversationalAgentEvent({
       eventId,
       contactId,
       eventType: 'priority_push_notification',
-      detail: { signal, sent: result?.sent || 0, skipped: Boolean(result?.skipped), reason: result?.reason || null },
-      throwOnError: throwOnFailure
+      detail: {
+        signal,
+        requestedReason: deliveryReason,
+        requestedSummary: deliverySummary,
+        sent: result?.sent || 0,
+        skipped: Boolean(result?.skipped),
+        reason: result?.reason || null
+      },
+      throwOnError: throwOnFailure || eventScopedDedupe
     })
+    if (criticalClaim?.claimed) {
+      await settleCriticalConversationalNotification({
+        pendingEventId: criticalClaim.pendingEventId,
+        claimToken: criticalClaim.claimToken,
+        status: 'sent'
+      })
+    }
     return result
   } catch (error) {
+    if (criticalClaim?.claimed) {
+      await settleCriticalConversationalNotification({
+        pendingEventId: criticalClaim.pendingEventId,
+        claimToken: criticalClaim.claimToken,
+        status: 'failed',
+        error: error.message
+      }).catch(() => {})
+    }
     await recordConversationalAgentEvent({
       eventId: eventId ? `${eventId}_failed` : '',
       contactId,
@@ -6714,6 +8114,44 @@ async function compareAndSetConversationalReplyDeliveryPlan(row, nextDetail) {
   return dbMutationCount(result) === 1
 }
 
+export async function recoverInterruptedConversationalPaymentReplyDelivery(identityInput = {}) {
+  const identity = normalizeConversationalReplyDeliveryIdentity(identityInput)
+  if (identity.externalIdPrefix !== 'convagent_payment_resume') {
+    return { recovered: false, reason: 'not_payment_resume_delivery' }
+  }
+  const planId = buildConversationalReplyDeliveryPlanId(identity)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const row = await readConversationalReplyDeliveryPlanRow(planId)
+    if (!row) return { recovered: false, reason: 'missing_plan' }
+    assertConversationalReplyDeliveryPlanRow(row, identity)
+    const detail = parseJsonField(row.detail_json, {})
+    const plan = mapConversationalReplyDeliveryPlan(row)
+    if (plan.status !== 'interrupted') {
+      return { recovered: false, reason: plan.status, plan }
+    }
+    if (plan.interruptedByMessageId === CONVERSATIONAL_REPLY_PREVENTIVE_INTERRUPTION_ID) {
+      return { recovered: false, reason: 'preventive_measure', plan }
+    }
+    if (plan.parts.some((part) => part?.status !== 'pending')) {
+      return { recovered: false, reason: 'delivery_already_attempted', plan }
+    }
+    const next = {
+      ...detail,
+      status: 'pending',
+      claimToken: null,
+      leaseUntilAt: null,
+      interruptedAt: null,
+      interruptedByMessageId: null,
+      lastError: null,
+      recoveredFromInboundInterruptionAt: new Date().toISOString()
+    }
+    if (await compareAndSetConversationalReplyDeliveryPlan(row, next)) {
+      return { recovered: true, reason: 'inbound_interruption_cleared', plan: mapConversationalReplyDeliveryPlan(row, next) }
+    }
+  }
+  return { recovered: false, reason: 'claim_conflict' }
+}
+
 function terminalConversationalReplyDeliveryClaim(plan) {
   if (!CONVERSATIONAL_REPLY_DELIVERY_TERMINAL_STATUSES.has(plan.status)) return null
   return {
@@ -7232,7 +8670,8 @@ export async function setConversationSignal(contactId, signal, {
   agentId = '',
   channel = null,
   eventId = '',
-  strictEvent = false
+  strictEvent = false,
+  expectedUpdatedBy = ''
 } = {}) {
   const cleanChannel = normalizeOptionalConversationStateChannel(channel)
   const state = await ensureConversationState(contactId, { agentId, channel: cleanChannel })
@@ -7254,7 +8693,8 @@ export async function setConversationSignal(contactId, signal, {
   const cleanActionSummary = cleanCompletionDisplayText(completionSummary.actionSummary)
   const cleanSummary = cleanCompletionDisplayText(completionSummary.summary)
   const cleanStateSummary = cleanCompletionDisplayText(completionSummary.stateSummary || cleanSummary || cleanActionSummary)
-  await db.run(`
+  const cleanExpectedUpdatedBy = String(expectedUpdatedBy || '').trim()
+  const updated = await db.run(`
     UPDATE conversational_agent_state
     SET signal = ?, signal_reason = ?, signal_summary = ?, signal_at = CURRENT_TIMESTAMP,
         status = ?, updated_by = 'agent',
@@ -7263,7 +8703,21 @@ export async function setConversationSignal(contactId, signal, {
         activated_by = COALESCE(activated_by, 'agent'),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [signal, cleanReason, cleanStateSummary, cleanStatus, currentState.id])
+      ${cleanExpectedUpdatedBy ? "AND status = 'active' AND signal IS NULL AND updated_by = ?" : ''}
+  `, [
+    signal,
+    cleanReason,
+    cleanStateSummary,
+    cleanStatus,
+    currentState.id,
+    ...(cleanExpectedUpdatedBy ? [cleanExpectedUpdatedBy] : [])
+  ])
+  if (cleanExpectedUpdatedBy && dbMutationCount(updated) !== 1) {
+    throw Object.assign(new Error('La conversación cambió antes de confirmar la acción terminal'), {
+      statusCode: 409,
+      code: 'conversational_terminal_authority_lost'
+    })
+  }
 
   const cleanOriginalSummary = cleanCompletionDisplayText(originalSummary || actionSummarySource)
   const detail = {

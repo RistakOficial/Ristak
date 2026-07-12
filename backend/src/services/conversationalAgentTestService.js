@@ -602,6 +602,8 @@ async function claimPreviewAppointmentOfferForTestEffect({ runContext, request, 
     cleanString(verifiedPaymentEvidence.appointmentOfferFingerprint) === sha256(row?.detail_json || '') &&
     cleanString(verifiedPaymentEvidence.calendarId) === cleanString(detail.calendarId) &&
     cleanString(verifiedPaymentEvidence.startTime) === cleanString(detail.startTime) &&
+    cleanString(verifiedPaymentEvidence.bookingOwner) === cleanString(detail.bookingOwner) &&
+    cleanString(verifiedPaymentEvidence.terminalToolName) === cleanString(detail.terminalToolName) &&
     cleanString(verifiedPaymentEvidence.testEffectId)
   )
   const identityMatches = baseIdentityMatches && (acceptedByCurrentTurn || acceptedByVerifiedTestPayment)
@@ -821,6 +823,14 @@ async function resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig
       )
     : null
   const detail = parseJson(offer?.detail_json, {})
+  const configuredBookingOwner = schedule?.bookingOwner === 'human' ? 'human' : 'ai'
+  const configuredTerminalToolName = configuredBookingOwner === 'human'
+    ? 'request_human_booking'
+    : 'book_appointment'
+  const terminalBindingMatches = Boolean(
+    cleanString(detail.bookingOwner) === configuredBookingOwner &&
+    cleanString(detail.terminalToolName) === configuredTerminalToolName
+  )
   const configuredCalendarId = cleanString(schedule?.calendarId)
   const calendar = configuredCalendarId
     ? await db.get(
@@ -843,13 +853,16 @@ async function resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig
     cleanString(detail.acceptedExecutionId) === cleanString(runContext?.executionId) &&
     Date.parse(detail.expiresAt || '') > Date.now() &&
     Number.isFinite(Date.parse(detail.startTime || '')) &&
-    calendarMatches
+    calendarMatches &&
+    terminalBindingMatches
   )
   if (!identityMatches) {
     throw testError(
-      'El anticipo de prueba no conserva una selección exacta de horario en esta sesión. Vuelve a ofrecer un horario y confírmalo antes de crear el link.',
+      terminalBindingMatches
+        ? 'El anticipo de prueba no conserva una selección exacta de horario en esta sesión. Vuelve a ofrecer un horario y confírmalo antes de crear el link.'
+        : 'Cambió quién debe terminar de agendar durante la prueba. No se creó otro cobro; reinicia el tester.',
       409,
-      'test_payment_appointment_offer_missing'
+      terminalBindingMatches ? 'test_payment_appointment_offer_missing' : 'test_payment_terminal_config_changed'
     )
   }
   return {
@@ -858,7 +871,9 @@ async function resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig
     offerFingerprint: sha256(offer.detail_json),
     calendarId: cleanString(detail.calendarId),
     startTime: cleanString(detail.startTime),
-    acceptedExecutionId: cleanString(detail.acceptedExecutionId)
+    acceptedExecutionId: cleanString(detail.acceptedExecutionId),
+    bookingOwner: configuredBookingOwner,
+    terminalToolName: configuredTerminalToolName
   }
 }
 
@@ -1347,6 +1362,8 @@ export async function getConversationalAgentTestVerifiedPaymentEvidence({ runCon
       cleanString(detail.startTime) === cleanString(binding.startTime) &&
       cleanString(detail.status) === 'accepted' &&
       cleanString(detail.acceptedExecutionId) === cleanString(binding.acceptedExecutionId) &&
+      cleanString(detail.bookingOwner) === cleanString(binding.bookingOwner) &&
+      cleanString(detail.terminalToolName) === cleanString(binding.terminalToolName) &&
       sha256(offer.detail_json) === cleanString(binding.offerFingerprint) &&
       Date.parse(detail.expiresAt || '') > Date.now()
     )
@@ -1362,7 +1379,9 @@ export async function getConversationalAgentTestVerifiedPaymentEvidence({ runCon
       appointmentOfferEventId: offer.id,
       appointmentOfferFingerprint: cleanString(binding.offerFingerprint),
       calendarId: cleanString(binding.calendarId),
-      startTime: cleanString(binding.startTime)
+      startTime: cleanString(binding.startTime),
+      bookingOwner: cleanString(binding.bookingOwner),
+      terminalToolName: cleanString(binding.terminalToolName)
     }
   }
   return null

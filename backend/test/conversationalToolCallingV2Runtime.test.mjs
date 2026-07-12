@@ -15,6 +15,7 @@ import {
   estimateToolCallingV2HistoryMessageBytes,
   ensureToolCallingV2VisibleReply,
   loadToolCallingV2ConversationEnvelope,
+  resumeToolCallingV2AfterVerifiedPayment,
   runConversationalAgentPreview,
   runToolCallingV2Turn,
   sanitizeToolCallingV2Reply
@@ -27,6 +28,112 @@ function conversationMessages(count) {
   }))
 }
 
+async function runVerifiedAppointmentPaymentResumeFixture({
+  bookingOwner,
+  terminalToolName,
+  actions,
+  assertReconciliationClaim = async () => ({ valid: true }),
+  onDelivery = null
+}) {
+  const suffix = randomUUID()
+  const reconciliationId = `resume_${suffix}`
+  const contactId = `contact_${suffix}`
+  const agentId = `agent_${suffix}`
+  const events = []
+  const deliveries = []
+  const latest = {
+    id: `inbound_${suffix}`,
+    phone: '+526560000000',
+    message_text: 'ok'
+  }
+  const result = await resumeToolCallingV2AfterVerifiedPayment({
+    reconciliationId,
+    reconciliationClaimToken: `claim_${suffix}`,
+    contactId,
+    agentId,
+    channel: 'whatsapp',
+    amount: 100,
+    currency: 'MXN',
+    paymentEnvironment: 'test',
+    paymentPurpose: 'appointment_deposit',
+    bookingOwner,
+    terminalToolName
+  }, {
+    getRuntimeConfig: async () => ({ aiProvider: 'openai', model: 'fake-model' }),
+    hasFeature: async () => true,
+    getAgent: async () => ({
+      id: agentId,
+      enabled: true,
+      runtimeMode: 'tool_calling_v2',
+      aiProvider: 'openai',
+      model: 'fake-model',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{
+          id: 'schedule_appointment',
+          enabled: true,
+          calendarId: `calendar_${suffix}`,
+          bookingOwner
+        }]
+      }
+    }),
+    getState: async () => ({ status: 'active', signal: null }),
+    getLatestInbound: async () => latest,
+    getHistoryEnvelope: async () => ({
+      messages: [{ role: 'user', content: 'ok' }],
+      telemetry: { totalMessages: 1, includedMessages: 1, omittedMessages: 0 }
+    }),
+    hydrateMessages: async (messages) => messages,
+    resolveRuntime: async () => ({ apiKey: 'stored-test-key-not-real', modelProvider: { kind: 'fake' } }),
+    runNativeTurn: async (input) => {
+      assert.equal(input.forcedToolName, terminalToolName)
+      return {
+        reply: 'listo, el paso de agenda quedó terminado',
+        ctx: { actions },
+        model: 'fake-model',
+        runtimeMode: 'tool_calling_v2',
+        modelCallCount: 1
+      }
+    },
+    assertReconciliationClaim,
+    deliverReply: async (input) => {
+      deliveries.push(input)
+      onDelivery?.(input)
+      return {
+        parts: [input.reply],
+        sentParts: 1,
+        interruptedBy: null,
+        inProgress: false
+      }
+    },
+    recordEvent: async (event) => {
+      events.push(event)
+      return event
+    }
+  })
+  return { result, reconciliationId, events, deliveries }
+}
+
+test('si el claim se pierde después de la terminal, el Runner no entrega ni sella respuesta', async () => {
+  let deliveryCalls = 0
+  await assert.rejects(
+    runVerifiedAppointmentPaymentResumeFixture({
+      bookingOwner: 'ai',
+      terminalToolName: 'book_appointment',
+      actions: [{
+        type: 'book_appointment',
+        outcome: { status: 'ok', ok: true, simulated: false, actionCompleted: true }
+      }],
+      assertReconciliationClaim: async () => {
+        throw Object.assign(new Error('claim reemplazado'), { code: 'payment_reconciliation_claim_lost' })
+      },
+      onDelivery: () => { deliveryCalls += 1 }
+    }),
+    (error) => error?.code === 'payment_reconciliation_claim_lost'
+  )
+  assert.equal(deliveryCalls, 0)
+})
+
 test('Agent v2 desactiva tool calls paralelas para serializar mutaciones', () => {
   const agent = createToolCallingV2Agent({
     model: 'gpt-4.1-mini',
@@ -38,6 +145,133 @@ test('Agent v2 desactiva tool calls paralelas para serializar mutaciones', () =>
   assert.equal(agent.modelSettings.parallelToolCalls, false)
   assert.equal(typeof agent.toolUseBehavior, 'function')
 })
+
+test('Agent v2 puede exigir una herramienta terminal exacta sin aceptar nombres que no estén habilitados', () => {
+  const bookTool = { type: 'function', name: 'book_appointment' }
+  const forcedAgent = createToolCallingV2Agent({
+    model: 'gpt-4.1-mini',
+    instructions: 'Prueba',
+    tools: [bookTool],
+    forcedToolName: 'book_appointment'
+  })
+  assert.equal(forcedAgent.modelSettings.toolChoice, 'book_appointment')
+
+  const unavailableAgent = createToolCallingV2Agent({
+    model: 'gpt-4.1-mini',
+    instructions: 'Prueba',
+    tools: [bookTool],
+    forcedToolName: 'request_human_booking'
+  })
+  assert.equal(unavailableAgent.modelSettings.toolChoice, undefined)
+})
+
+test('un anticipo sandbox verificado exige la terminal humana cuando bookingOwner es human', async () => {
+  let calls = 0
+  const result = await runToolCallingV2Turn({
+    config: {
+      id: 'agent_human_payment_resume',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{
+          id: 'schedule_appointment',
+          enabled: true,
+          calendarId: 'calendar_human_payment_resume',
+          bookingOwner: 'human'
+        }]
+      }
+    },
+    runtime: { modelProvider: {} },
+    messages: [{ role: 'user', content: 'ok' }],
+    contactId: 'contact_human_payment_resume',
+    dryRun: true,
+    channel: 'whatsapp',
+    executionId: 'preview_execution_human_payment_resume',
+    previewScopeId: 'cap_preview_human_payment_resume',
+    testVerifiedPaymentEvidence: {
+      paymentMode: 'test',
+      paymentPurpose: 'appointment_deposit',
+      testRunId: 'test_run_human_payment_resume',
+      testEffectId: 'test_effect_human_payment_resume',
+      previewScopeId: 'cap_preview_human_payment_resume',
+      appointmentOfferEventId: 'offer_human_payment_resume',
+      appointmentOfferFingerprint: 'fingerprint_human_payment_resume',
+      calendarId: 'calendar_human_payment_resume',
+      startTime: '2026-08-10T16:00:00.000Z',
+      bookingOwner: 'human',
+      terminalToolName: 'request_human_booking'
+    },
+    conversationModel: 'gpt-4.1-mini'
+  }, {
+    executeAgent: async ({ agent }) => {
+      calls += 1
+      assert.equal(agent.modelSettings.toolChoice, 'request_human_booking')
+      assert.ok(agent.tools.some((item) => item.name === 'request_human_booking'))
+      assert.ok(!agent.tools.some((item) => item.name === 'book_appointment'))
+      return 'el equipo continuará con la solicitud'
+    },
+    runInChannel: (_channel, callback) => callback()
+  })
+  assert.equal(calls, 1)
+  assert.equal(result.forcedToolName, 'request_human_booking')
+})
+
+for (const variant of [
+  { bookingOwner: 'ai', terminalToolName: 'book_appointment' },
+  { bookingOwner: 'human', terminalToolName: 'request_human_booking' }
+]) {
+  test(`reanudación de pago bloquea entrega si ${variant.terminalToolName} falta o falla`, async () => {
+    for (const actions of [
+      [],
+      [{
+        type: variant.terminalToolName,
+        outcome: {
+          status: 'error',
+          ok: false,
+          simulated: false,
+          actionCompleted: false,
+          error: 'fallo terminal reproducible'
+        }
+      }]
+    ]) {
+      const execution = await runVerifiedAppointmentPaymentResumeFixture({
+        ...variant,
+        actions
+      })
+      assert.deepEqual(execution.result, {
+        resumed: false,
+        manualReviewRequired: true,
+        reason: 'payment_resume_terminal_failed'
+      })
+      assert.equal(execution.deliveries.length, 0)
+      assert.equal(
+        execution.events.some((event) => event.eventId === `${execution.reconciliationId}_reply`),
+        false
+      )
+    }
+  })
+
+  test(`reanudación de pago sólo entrega tras ${variant.terminalToolName} live exitoso`, async () => {
+    const execution = await runVerifiedAppointmentPaymentResumeFixture({
+      ...variant,
+      actions: [{
+        type: variant.terminalToolName,
+        outcome: {
+          status: 'ok',
+          ok: true,
+          simulated: false,
+          actionCompleted: true
+        }
+      }]
+    })
+    assert.equal(execution.result.resumed, true)
+    assert.equal(execution.result.sent, true)
+    assert.equal(execution.deliveries.length, 1)
+    assert.equal(
+      execution.events.some((event) => event.eventId === `${execution.reconciliationId}_reply`),
+      true
+    )
+  })
+}
 
 test('una mutación confirmada y una oferta estructurada de preview cierran la vuelta', async () => {
   const liveAgent = createToolCallingV2Agent({
@@ -83,6 +317,17 @@ test('una mutación confirmada y una oferta estructurada de preview cierran la v
     output: { ok: true, simulated: true, actionCompleted: false }
   }])
   assert.equal(previewRead.isFinalOutput, false)
+  const previewBooking = await previewAgent.toolUseBehavior(null, [{
+    tool: { name: 'book_appointment' },
+    output: {
+      ok: true,
+      simulated: true,
+      actionCompleted: false,
+      wouldMarkObjectiveCompleted: true
+    }
+  }])
+  assert.equal(previewBooking.isFinalOutput, true)
+  assert.equal(previewBooking.finalOutput, '')
 })
 
 test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silencio o descarte', () => {

@@ -363,7 +363,8 @@ export async function findVerifiedPaymentEvidence({
   agentId = null,
   requiredPurpose = '',
   reconciliationId = '',
-  appointmentRequestId = ''
+  appointmentRequestId = '',
+  expectedReconciliationClaimToken = ''
 }) {
   if (!database || !contactId) return { ok: false, reason: 'missing_contact' }
 
@@ -407,6 +408,7 @@ export async function findVerifiedPaymentEvidence({
   const cleanRequiredPurpose = String(requiredPurpose || '').trim().toLowerCase()
   const cleanReconciliationId = String(reconciliationId || '').trim()
   const cleanAppointmentRequestId = String(appointmentRequestId || '').trim()
+  const cleanExpectedClaimToken = String(expectedReconciliationClaimToken || '').trim()
   if (!cleanAgentId || !cleanRequiredPurpose) {
     return { ok: false, reason: 'native_payment_binding_missing' }
   }
@@ -453,9 +455,10 @@ export async function findVerifiedPaymentEvidence({
       status === 'processing' &&
       detail.verifiedEventAppliedAt &&
       detail.claimToken &&
+      (!cleanExpectedClaimToken || detail.claimToken === cleanExpectedClaimToken) &&
       timestampToMs(detail.leaseUntilAt) > nowMs
     )
-    const completed = status === 'completed' && detail.result?.matched === true
+    const completed = !cleanExpectedClaimToken && status === 'completed' && detail.result?.matched === true
     if (!completed && !exactProcessingResume) continue
     if (purpose !== cleanRequiredPurpose) continue
     if (cleanRequiredPurpose === 'appointment_deposit' && detail.appointmentDeposit !== true) continue
@@ -487,7 +490,8 @@ export async function findVerifiedPaymentEvidence({
         currency: paymentCurrency,
         status: paymentStatus,
         provider: payment.payment_provider || null,
-        paidAt: payment.paid_at || payment.date || payment.created_at || null
+        paidAt: payment.paid_at || payment.date || payment.created_at || null,
+        reconciliationClaimToken: exactProcessingResume ? detail.claimToken : null
       }
     }
   }

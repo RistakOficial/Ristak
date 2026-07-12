@@ -1669,6 +1669,13 @@ export async function registerAgentTransferPaymentProofForReview({
   const appointmentSelectionCalendarId = String(binding?.appointmentSelectionCalendarId || '').trim()
   const appointmentSelectionStartTime = String(binding?.appointmentSelectionStartTime || '').trim()
   const appointmentSelectionVerifiedAt = String(binding?.appointmentSelectionVerifiedAt || '').trim()
+  const appointmentSelectionRequestDraftHash = String(binding?.appointmentSelectionRequestDraftHash || '').trim()
+  const appointmentSelectionBookingOwner = String(binding?.appointmentSelectionBookingOwner || '').trim().toLowerCase()
+  const appointmentSelectionTerminalToolName = String(binding?.appointmentSelectionTerminalToolName || '').trim()
+  const appointmentTerminalBindingValid = (
+    (appointmentSelectionBookingOwner === 'ai' && appointmentSelectionTerminalToolName === 'book_appointment') ||
+    (appointmentSelectionBookingOwner === 'human' && appointmentSelectionTerminalToolName === 'request_human_booking')
+  )
   const appointmentDepositIntentEventId = String(binding?.appointmentDepositIntentEventId || '').trim()
   const appointmentDepositIntentClaimKey = String(binding?.appointmentDepositIntentClaimKey || '').trim()
   const appointmentDepositIntentClaimToken = String(binding?.appointmentDepositIntentClaimToken || '').trim()
@@ -1699,6 +1706,8 @@ export async function registerAgentTransferPaymentProofForReview({
         !appointmentSelectionCalendarId ||
         !appointmentSelectionStartTime ||
         !appointmentSelectionVerifiedAt ||
+        !appointmentSelectionRequestDraftHash ||
+        !appointmentTerminalBindingValid ||
         !appointmentDepositIntentEventId ||
         !appointmentDepositIntentClaimKey ||
         !appointmentDepositIntentClaimToken ||
@@ -1745,6 +1754,9 @@ export async function registerAgentTransferPaymentProofForReview({
             appointmentSelectionCalendarId: appointmentSelectionCalendarId || null,
             appointmentSelectionStartTime: appointmentSelectionStartTime || null,
             appointmentSelectionVerifiedAt: appointmentSelectionVerifiedAt || null,
+            appointmentSelectionRequestDraftHash: appointmentSelectionRequestDraftHash || null,
+            appointmentSelectionBookingOwner: appointmentSelectionBookingOwner || null,
+            appointmentSelectionTerminalToolName: appointmentSelectionTerminalToolName || null,
             appointmentDepositIntentEventId: appointmentDepositIntentEventId || null,
             appointmentDepositIntentClaimKey: appointmentDepositIntentClaimKey || null,
             appointmentDepositIntentClaimToken: appointmentDepositIntentClaimToken || null,
@@ -1804,6 +1816,9 @@ export async function registerAgentTransferPaymentProofForReview({
             String(appointmentDepositIntent?.contact_id || '') !== cleanContactId ||
             String(appointmentDepositIntent?.agent_id || '') !== cleanAgentId ||
             String(appointmentDepositIntentDetail.selectionEventId || '') !== appointmentSelectionEventId ||
+            String(appointmentDepositIntentDetail.selectionRequestDraftHash || '') !== appointmentSelectionRequestDraftHash ||
+            String(appointmentDepositIntentDetail.selectionBookingOwner || '') !== appointmentSelectionBookingOwner ||
+            String(appointmentDepositIntentDetail.selectionTerminalToolName || '') !== appointmentSelectionTerminalToolName ||
             !intentCollecting && !intentAlreadyBound
           ) {
             throw new Error('El intento durable del anticipo no coincide con este comprobante')
@@ -1824,6 +1839,9 @@ export async function registerAgentTransferPaymentProofForReview({
           appointmentSelectionCalendarId: appointmentSelectionCalendarId || null,
           appointmentSelectionStartTime: appointmentSelectionStartTime || null,
           appointmentSelectionVerifiedAt: appointmentSelectionVerifiedAt || null,
+          appointmentSelectionRequestDraftHash: appointmentSelectionRequestDraftHash || null,
+          appointmentSelectionBookingOwner: appointmentSelectionBookingOwner || null,
+          appointmentSelectionTerminalToolName: appointmentSelectionTerminalToolName || null,
           appointmentDepositIntentEventId: appointmentDepositIntentEventId || null,
           appointmentDepositIntentClaimKey: appointmentDepositIntentClaimKey || null,
           appointmentDepositIntentClaimToken: appointmentDepositIntentClaimToken || null,
@@ -1861,6 +1879,9 @@ export async function registerAgentTransferPaymentProofForReview({
             String(existingDetail.appointmentSelectionCalendarId || '').trim() !== appointmentSelectionCalendarId ||
             String(existingDetail.appointmentSelectionStartTime || '').trim() !== appointmentSelectionStartTime ||
             String(existingDetail.appointmentSelectionVerifiedAt || '').trim() !== appointmentSelectionVerifiedAt ||
+            String(existingDetail.appointmentSelectionRequestDraftHash || '').trim() !== appointmentSelectionRequestDraftHash ||
+            String(existingDetail.appointmentSelectionBookingOwner || '').trim() !== appointmentSelectionBookingOwner ||
+            String(existingDetail.appointmentSelectionTerminalToolName || '').trim() !== appointmentSelectionTerminalToolName ||
             String(existingDetail.appointmentDepositIntentEventId || '').trim() !== appointmentDepositIntentEventId ||
             String(existingDetail.appointmentDepositIntentClaimKey || '').trim() !== appointmentDepositIntentClaimKey ||
             String(existingDetail.appointmentDepositIntentClaimToken || '').trim() !== appointmentDepositIntentClaimToken ||
