@@ -10,7 +10,6 @@ import { downloadSafeOutboundMediaUrl } from './outboundMediaReferenceService.js
 const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak podrá usarla para mensajes configurados cuando QR sea el canal principal, o como respaldo si hay WhatsApp API conectada y yo activo ese respaldo.'
 const CONNECT_TIMEOUT_MS = 20000
 const QR_RECENT_ACK_RETENTION_MS = 90000
-const QR_RECENT_RISTAK_OUTBOUND_RETENTION_MS = 90000
 const QR_ACK_PERSIST_RETRY_DELAYS_MS = [75, 300, 1000]
 const QR_PROFILE_PICTURE_TIMEOUT_MS = 4500
 const QR_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
@@ -76,7 +75,6 @@ const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 
 const liveSessions = new Map()
 const qrRecentMessageAcks = new Map()
-const qrRecentRistakOutboundAttempts = new Map()
 let baileysRuntime = null
 let reconnectDelayOverrideForTest = null
 const connectionOpenListeners = new Set()
@@ -349,45 +347,6 @@ function buildOutboundPhoneCandidates(value = '') {
   }
 
   return [...candidates]
-}
-
-function normalizeQrAttemptText(value = '') {
-  return cleanString(value).toLowerCase().replace(/\s+/g, ' ').trim()
-}
-
-function qrOutboundAttemptKey({ phoneId, contactPhone, type, text = '' } = {}) {
-  // WhatsApp puede devolver el mismo numero mexicano como 52... o 521...
-  // dependiendo de si el evento viene del JID principal, remoteJidAlt o un
-  // dispositivo vinculado. La memoria de dedupe debe usar la identidad canonica
-  // que tambien usamos al guardar contactos; si se queda con digitos crudos, el
-  // eco QR no encuentra el intento original y crea otro globo multimedia.
-  const contact = normalizePhoneDigits(normalizePhoneForStorage(contactPhone) || contactPhone)
-  const cleanType = cleanString(type || 'text').toLowerCase()
-  return `${cleanString(phoneId)}|${contact}|${cleanType}|${normalizeQrAttemptText(text)}`
-}
-
-function cleanupRecentRistakQrOutboundAttempts() {
-  const now = Date.now()
-  for (const [key, entry] of qrRecentRistakOutboundAttempts.entries()) {
-    if (!entry?.expiresAt || entry.expiresAt <= now) {
-      qrRecentRistakOutboundAttempts.delete(key)
-    }
-  }
-}
-
-export function rememberRistakQrOutboundAttempt({ phoneId, contactPhone, type, text = '' } = {}) {
-  if (!cleanString(phoneId) || !normalizePhoneDigits(contactPhone)) return
-  const key = qrOutboundAttemptKey({ phoneId, contactPhone, type, text })
-  cleanupRecentRistakQrOutboundAttempts()
-  qrRecentRistakOutboundAttempts.set(key, {
-    expiresAt: Date.now() + QR_RECENT_RISTAK_OUTBOUND_RETENTION_MS
-  })
-}
-
-function isRecentRistakQrOutboundAttempt({ phoneId, contactPhone, type, text = '' } = {}) {
-  cleanupRecentRistakQrOutboundAttempts()
-  const key = qrOutboundAttemptKey({ phoneId, contactPhone, type, text })
-  return qrRecentRistakOutboundAttempts.has(key)
 }
 
 function getJidPhoneDigits(jid = '') {
@@ -1154,16 +1113,6 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null, { histo
       const content = describeBaileysMessageContent(message?.message)
       if (!content) continue
 
-      if (key.fromMe && isRecentRistakQrOutboundAttempt({
-        phoneId: phone.id,
-        contactPhone,
-        type: content.type,
-        text: content.text
-      })) {
-        logger.info(`[WhatsApp QR] Mensaje saliente ${wamid} omitido del sync porque lo está confirmando Ristak (${phone.id})`)
-        continue
-      }
-
       const { captureQrChatMessage } = await loadWhatsAppApiService()
       const result = await captureQrChatMessage({
         phoneNumberId: phone.id,
@@ -1556,7 +1505,6 @@ export function resetWhatsAppQrServiceForTest() {
   baileysRuntime = null
   reconnectDelayOverrideForTest = null
   qrRecentMessageAcks.clear()
-  qrRecentRistakOutboundAttempts.clear()
   connectionOpenListeners.clear()
 }
 
@@ -3127,12 +3075,6 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
     providerMessageId: replyToProviderMessageId,
     recipientJid: recipient.jid
   })
-  rememberRistakQrOutboundAttempt({
-    phoneId: phone.id,
-    contactPhone: recipient.verifiedPhone || toPhone,
-    type: 'text',
-    text: body
-  })
   const response = await sendProtectedQrMessage({
     sock,
     phone,
@@ -3188,12 +3130,6 @@ export async function sendWhatsAppQrReactionMessage({ phoneNumberId, from, to, e
   const key = quoted?.key
   if (!key?.id) throw new Error('No encontramos el mensaje original para reaccionar')
 
-  rememberRistakQrOutboundAttempt({
-    phoneId: phone.id,
-    contactPhone: recipient.verifiedPhone || toPhone,
-    type: 'reaction',
-    text: reactionEmoji
-  })
   const response = await sendProtectedQrMessage({
     sock,
     phone,
@@ -3246,12 +3182,6 @@ export async function sendWhatsAppQrLocationMessage({ phoneNumberId, from, to, l
 
   const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de ubicación' })
   const recipient = await resolveRecipientJid(sock, toPhone)
-  rememberRistakQrOutboundAttempt({
-    phoneId: phone.id,
-    contactPhone: recipient.verifiedPhone || toPhone,
-    type: 'location',
-    text: location.name || location.address || 'Ubicación'
-  })
   const response = await sendProtectedQrMessage({
     sock,
     phone,
@@ -3304,12 +3234,6 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
   })
   const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de imagen' })
   const recipient = await resolveRecipientJid(sock, toPhone)
-  rememberRistakQrOutboundAttempt({
-    phoneId: phone.id,
-    contactPhone: recipient.verifiedPhone || toPhone,
-    type: 'image',
-    text: cleanCaption
-  })
   const response = await sendProtectedQrMessage({
     sock,
     phone,
@@ -3364,12 +3288,6 @@ export async function sendWhatsAppQrVideoMessage({ phoneNumberId, from, to, vide
   const videoMimeType = inferVideoMimeType({ mimeType: media.mimeType || mimeType, url: media.sourceUrl || videoUrl })
   const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de video' })
   const recipient = await resolveRecipientJid(sock, toPhone)
-  rememberRistakQrOutboundAttempt({
-    phoneId: phone.id,
-    contactPhone: recipient.verifiedPhone || toPhone,
-    type: 'video',
-    text: cleanCaption
-  })
   const response = await sendProtectedQrMessage({
     sock,
     phone,
@@ -3451,12 +3369,6 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
   const seconds = getAudioDurationSeconds(durationMs)
   const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de audio' })
   const recipient = await resolveRecipientJid(sock, toPhone)
-  rememberRistakQrOutboundAttempt({
-    phoneId: phone.id,
-    contactPhone: recipient.verifiedPhone || toPhone,
-    type: 'audio',
-    text: ''
-  })
   const response = await sendProtectedQrMessage({
     sock,
     phone,
@@ -3522,12 +3434,6 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
   })
   const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de documento' })
   const recipient = await resolveRecipientJid(sock, toPhone)
-  rememberRistakQrOutboundAttempt({
-    phoneId: phone.id,
-    contactPhone: recipient.verifiedPhone || toPhone,
-    type: 'document',
-    text: cleanCaption || cleanFilename
-  })
   const response = await sendProtectedQrMessage({
     sock,
     phone,

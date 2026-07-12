@@ -54,8 +54,14 @@ No puede sobreescribir el `provider` de la fila seleccionada. En particular:
   conectado, revocado o haya quedado como preferencia global;
 - una fila `provider=meta_direct` siempre llama Graph y nunca usa la API key de
   YCloud;
-- una fila `provider=qr` sólo usa Baileys;
+- una fila `provider=qr` sin conexión API oficial hermana sólo usa Baileys;
 - desactivar o revocar una fila no debe apagar ni secuestrar las otras.
+
+Si una fila QR representa el mismo teléfono que una fila oficial sana, la fila
+oficial toma la salida aunque el consumidor histórico haya solicitado
+`transport=qr`. QR es respaldo, no un segundo remitente: sólo toma el mensaje
+cuando la API no está disponible, la ventana de 24 horas está cerrada o el
+proveedor confirma un rechazo definitivo.
 
 Si Meta pierde permisos, además de marcar su fila `AUTHORIZATION_REQUIRED`, se
 reconcilia la preferencia global a YCloud cuando esa conexión sigue disponible.
@@ -90,8 +96,11 @@ neutrales son:
 - `provider`: proveedor dueño del número.
 - `source_adapter`: implementación que procesó el mensaje.
 - `provider_message_id`: ID devuelto por ese proveedor/adaptador.
-- `wamid`: ID original de WhatsApp cuando exista; es la mejor llave de dedupe
-  entre ecos de diferentes superficies.
+- `wamid`: ID original de WhatsApp cuando exista. En Coexistence, el WAMID
+  oficial y el `key.id` de Baileys no son cadenas iguales.
+- `protocol_message_key_id`: identidad interna que WhatsApp incluye dentro del
+  WAMID oficial y que Baileys entrega directamente como `key.id`. Es la llave
+  exacta para reconciliar ambos adaptadores sin comparar contenido ni tiempo.
 - `transport`: `api` o `qr`.
 - `origin`: evento concreto (`whatsapp.message.updated`, `messages`, `history`,
   `smb_message_echoes`, etc.).
@@ -105,6 +114,9 @@ Compatibilidad histórica:
 - Un ID de Meta jamás se debe escribir en `ycloud_message_id`.
 - Un ID de Baileys jamás se debe escribir en `ycloud_message_id` ni
   `meta_message_id`.
+- `protocol_message_key_id` tiene unicidad local cuando la reparación histórica
+  terminó. El upsert sin target de conflicto cierra la carrera en la que webhook
+  y socket intentan insertar el mismo mensaje al mismo tiempo.
 
 ### Eventos, envíos de plantilla y contactos
 
@@ -235,8 +247,9 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
    refrescar UI, pero no incrementa no leídos ni dispara push, confirmaciones,
    automatizaciones o agente conversacional.
 3. `smb_message_echoes` sí es tráfico nuevo enviado manualmente desde la app y
-   debe aparecer como `business_echo` sin duplicar una burbuja ya conocida por
-   `wamid`.
+   debe aparecer sin duplicar la captura `fromMe` que Baileys pudo guardar antes.
+   La unión se hace exclusivamente por `protocol_message_key_id`; nunca por
+   texto, minuto, tipo de media, `fileSha256` o parecido visual.
 4. El historial puede llegar por lotes grandes, duplicado o fuera de orden. El
    procesamiento debe ser idempotente y asíncrono cuando el volumen lo exija.
 5. No existe un endpoint Graph genérico para volver a descargar toda la cuenta
@@ -249,6 +262,10 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
    `transport=qr` y `source_adapter=baileys`.
 8. La preferencia global del tenant no decide el proveedor de salida. Cada
    mensaje usa el proveedor de la fila `phoneNumberId` elegida.
+9. Al arrancar una versión que introduce la identidad de protocolo, Ristak
+   rellena esa llave y fusiona sólo pares históricos QR + eco SMB demostrables.
+   Dos mensajes iguales o dos envíos del mismo archivo permanecen separados si
+   WhatsApp les asignó identidades distintas.
 
 ## Embedded Signup centralizado
 

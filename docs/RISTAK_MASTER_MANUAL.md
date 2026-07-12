@@ -563,8 +563,10 @@ presentarse como proveedor de API oficial.
 Al enviar, el `phoneNumberId` elegido manda. El backend toma `provider`, teléfono
 emisor, WABA y disponibilidad desde esa fila; la preferencia global histórica
 `whatsapp_api_provider` no puede convertir un envío YCloud en Meta ni viceversa.
-Una fila QR usa Baileys. Si la API de la fila está indisponible y ese mismo
-número tiene respaldo QR listo, el mensaje puede salir por QR. Un rechazo HTTP
+Una fila solamente QR usa Baileys. Si el mismo teléfono también tiene una fila
+oficial sana, API conserva prioridad aunque una ruta histórica solicite QR; esa
+sesión queda como respaldo. Si la API está indisponible y ese mismo número tiene
+respaldo QR listo, el mensaje puede salir por QR. Un rechazo HTTP
 4xx permite respaldo; un timeout, error de red o 5xx no lo dispara
 automáticamente porque la API pudo aceptar el mensaje y se evitarían dobles
 envíos. Cuando Meta pierde permisos, sólo su fila queda inactiva y YCloud/QR
@@ -1332,13 +1334,14 @@ visible, recargar toda la conversacion, desmontar la imagen ni mover el scroll;
 el siguiente SSE/poll silencioso solo completa los datos remotos.
 Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el eco saliente
 que WhatsApp Web emite para esa foto no debe crear una segunda burbuja `QR` con
-el texto generico `Foto`. El backend debe marcar los envios API originados por
-Ristak y deduplicar ecos recientes de media sin caption por telefono canonico,
-direccion, tipo de mensaje y ventana temporal antes de persistirlos como
-mensajes nuevos. Para envios QR directos, donde WhatsApp puede cambiar el WAMID
-entre la respuesta de Baileys y el eco de otro dispositivo, la reconciliacion
-debe comparar `fileSha256`/`fileEncSha256` del archivo; no basta agrupar por
-minuto porque el operador puede mandar dos fotos distintas seguidas.
+el texto generico `Foto`. En Coexistence, el WAMID de YCloud/Meta contiene la
+misma identidad interna que Baileys entrega como `key.id`; Ristak la guarda en
+`protocol_message_key_id` y ambos adaptadores hacen upsert sobre una sola fila.
+No se comparan texto, minuto, telefono, tipo de media ni hashes del archivo para
+decidir que dos globos son el mismo: dos mensajes iguales o dos envios del mismo
+archivo siguen separados cuando WhatsApp les dio IDs distintos. Al arrancar, la
+reparacion historica fusiona exclusivamente pares QR + `smb.message.echoes`
+demostrables y activa la unicidad que cierra carreras simultaneas.
 
 Los mensajes entrantes estructurados de WhatsApp (plantillas, botones, listas,
 OTP/copy-code e interactivos) no deben degradarse a la etiqueta generica
@@ -1355,10 +1358,10 @@ conectado. Si el respaldo QR confirma el envio, el historial y la respuesta al
 frontend deben quedar como mensaje `qr` exitoso, sin exponer el error de la API
 en el globo del chat. La burbuja del chat debe mostrar solo el contenido y la
 etiqueta `QR`; la razon tecnica de ruteo/fallback no debe pintarse como nota
-debajo del mensaje cuando el envio QR fue exitoso. Si Baileys captura despues el
-eco saliente de un mensaje que coincide con un registro API fallido, ese
-registro debe repararse como enviado por `qr`, limpiando `error_code` y
-`error_message`. El fallo asíncrono de media `131053` en una nota de voz también
+debajo del mensaje cuando el envio QR fue exitoso. La ruta de fallback conserva
+la misma fila mediante su claim e identidad de despacho; no intenta enlazar un
+eco posterior porque tenga el mismo texto o haya llegado cerca. El fallo
+asíncrono de media `131053` en una nota de voz también
 debe usar este respaldo cuando el envío permitió QR: el webhook suele traer solo
 `audio.id`, así que el backend recupera de la fila original la URL de entrega o
 preview y reintenta una sola vez con `ptt=true`. Ante webhooks duplicados o

@@ -18,6 +18,7 @@ import {
   getWhatsAppApiConfigKeys,
   getWhatsAppApiRequiredWebhookEvents,
   processYCloudWhatsAppWebhook,
+  repairWhatsAppProtocolMessageIdentities,
   repairStoredYCloudHistoryMessageDirections,
   runYCloudHistoryBackfillBatch,
   sendWhatsAppApiImageMessage,
@@ -747,38 +748,41 @@ test('webhook fallido repetido conserva el globo respaldado por QR', async () =>
   }
 })
 
-test('eco QR repara un globo API fallido duplicado', async () => {
+test('Coexistence reconcilia el eco YCloud y la captura QR por identidad exacta', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52991${suffix}`
   const businessPhone = `+52654${suffix}`
-  const phoneNumberId = `phone_qr_echo_repair_${id}`
-  const contactId = `rstk_contact_qr_echo_repair_${id}`
-  const messageId = `api_failed_qr_echo_${id}`
-  const body = 'Hola, esto ya salió por QR'
+  const phoneNumberId = `phone_protocol_echo_${id}`
+  const contactId = `rstk_contact_protocol_echo_${id}`
+  const providerMessageId = `ycloud_protocol_echo_${id}`
+  const eventId = `evt_protocol_echo_${id}`
+  const qrMessageKey = '2AB6D0F198A01CB993EA'
+  const officialWamid = 'wamid.HBgNNTIxNDQ0MjA3Njc4NhUCABEYFDJBQjZEMEYxOThBMDFDQjk5M0VBAA=='
+  const body = 'Mensaje escrito desde WhatsApp Business'
   const messageAt = '2024-05-07T08:09:10.000Z'
   const keys = getWhatsAppApiConfigKeys()
   const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
 
-  await cleanup({ contactId, messageId, phone })
+  await cleanup({ contactId, phone, eventId })
   await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
 
   try {
     await snapshotAppConfig(configKeys, async () => {
       await initializeMasterKey()
       await setAppConfig(keys.enabled, '1')
-      await setAppConfig(keys.apiKey, encrypt('ycloud_qr_echo_repair_secret'))
+      await setAppConfig(keys.apiKey, encrypt('ycloud_protocol_echo_secret'))
       await setAppConfig(keys.senderPhone, businessPhone)
       await setAppConfig(keys.phoneNumberId, phoneNumberId)
-      await setAppConfig(keys.wabaId, 'waba_qr_echo_repair_test')
+      await setAppConfig(keys.wabaId, 'waba_protocol_echo_test')
       await setAppConfig(keys.provider, 'ycloud')
 
       await db.run(`
         INSERT INTO whatsapp_api_phone_numbers (
           id, provider, waba_id, phone_number, display_phone_number, verified_name,
           is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
-        ) VALUES (?, 'ycloud', 'waba_qr_echo_repair_test', ?, ?, 'QR Echo Repair Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
-      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+        ) VALUES (?, 'ycloud', 'waba_protocol_echo_test', ?, ?, 'Protocol Echo Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone])
 
       await db.run(`
         INSERT INTO contacts (
@@ -794,72 +798,123 @@ test('eco QR repara un globo API fallido duplicado', async () => {
         messageAt
       ])
 
-      await db.run(`
-        INSERT INTO whatsapp_api_messages (
-          id, provider, ycloud_message_id, wamid, contact_id, phone, from_phone, to_phone,
-          business_phone, business_phone_number_id, transport, direction, message_type,
-          message_text, status, error_code, error_message, message_timestamp, created_at, updated_at
-        ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, ?, 'api', 'outbound', 'text', ?, 'failed', '131047', ?, ?, ?, ?)
-      `, [
-        messageId,
-        messageId,
-        `api_${id}`,
-        contactId,
-        phone,
-        businessPhone,
-        phone,
-        businessPhone,
-        phoneNumberId,
-        body,
-        'Message failed to send because more than 24 hours have passed since the customer last replied to this number.',
-        messageAt,
-        messageAt,
-        messageAt
-      ])
-
-      const result = await captureQrChatMessage({
+      const qrResult = await captureQrChatMessage({
         phoneNumberId,
         businessPhone,
         direction: 'outbound',
-        wamid: `qr_echo_${id}`,
+        wamid: qrMessageKey,
         messageType: 'text',
         text: body,
         contactPhone: phone,
         timestamp: messageAt
       })
 
-      assert.equal(result.repaired, true)
-      assert.equal(result.messageId, messageId)
-      assert.equal(result.transport, 'qr')
+      const payload = {
+        id: eventId,
+        type: 'whatsapp.smb.message.echoes',
+        apiVersion: 'v2',
+        createTime: messageAt,
+        whatsappMessage: {
+          id: providerMessageId,
+          wamid: officialWamid,
+          from: businessPhone,
+          to: phone,
+          wabaId: 'waba_protocol_echo_test',
+          status: 'sent',
+          type: 'text',
+          text: { body },
+          createTime: messageAt,
+          sendTime: messageAt
+        }
+      }
+      await processYCloudWhatsAppWebhook({
+        payload,
+        rawBody: JSON.stringify(payload),
+        signatureHeader: '',
+        endpointId: ''
+      })
 
-      const message = await db.get(`
-        SELECT transport, routing_reason, status, error_code, error_message, wamid, raw_payload_json
+      const rows = await db.all(`
+        SELECT id, provider_message_id, ycloud_message_id, wamid,
+               protocol_message_key_id, transport, source_adapter, message_text
         FROM whatsapp_api_messages
-        WHERE id = ?
-      `, [messageId])
+        WHERE contact_id = ? AND message_text = ?
+      `, [contactId, body])
 
-      assert.equal(message.transport, 'qr')
-      assert.equal(message.routing_reason, 'Capturado desde la sesión de WhatsApp Web.')
-      assert.equal(message.status, 'sent')
-      assert.equal(message.error_code, null)
-      assert.equal(message.error_message, null)
-      assert.equal(message.wamid, `qr_echo_${id}`)
-      const rawPayload = JSON.parse(message.raw_payload_json)
-      assert.equal(rawPayload.fallbackFrom, 'api')
-      assert.equal(rawPayload.fallbackTransport, 'qr')
-      assert.equal(rawPayload.qrEcho, true)
-      assert.equal(rawPayload.clearedApiError.code, '131047')
+      assert.equal(rows.length, 1)
+      assert.equal(rows[0].id, qrResult.messageId)
+      assert.equal(rows[0].provider_message_id, providerMessageId)
+      assert.equal(rows[0].ycloud_message_id, providerMessageId)
+      assert.equal(rows[0].wamid, officialWamid)
+      assert.equal(rows[0].protocol_message_key_id, qrMessageKey)
+      assert.equal(rows[0].transport, 'qr')
+      assert.equal(rows[0].source_adapter, 'baileys')
     })
   } finally {
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
-    await cleanup({ contactId, messageId, phone })
+    await cleanup({ contactId, phone, eventId })
+  }
+})
+
+test('el mantenimiento historico fusiona los pares QR y SMB exactos ya guardados', async () => {
+  const id = randomUUID()
+  const phone = `+52985${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526541234567'
+  const contactId = `rstk_contact_protocol_history_${id}`
+  const qrRowId = `qr_protocol_history_${id}`
+  const apiRowId = `api_protocol_history_${id}`
+  const qrMessageKey = '2A107A68B47DA3E71797'
+  const officialWamid = 'wamid.HBgNNTIxNDQ0MjA3Njc4NhUCABEYFDJBMTA3QTY4QjQ3REEzRTcxNzk3AA=='
+  const body = `Historial exacto ${id}`
+
+  await cleanup({ contactId, phone })
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Cliente histórico', 'Cliente', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, phone])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, source_adapter, origin, provider_message_id, wamid,
+        contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, status, message_timestamp
+      ) VALUES (?, 'ycloud', 'baileys', 'whatsapp.qr.message.synced', ?, ?,
+        ?, ?, ?, ?, ?, 'qr', 'outbound', 'text', ?, 'sent', CURRENT_TIMESTAMP)
+    `, [qrRowId, qrMessageKey, qrMessageKey, contactId, phone, businessPhone, phone, businessPhone, body])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, source_adapter, origin, provider_message_id, ycloud_message_id,
+        wamid, contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, status, message_timestamp
+      ) VALUES (?, 'ycloud', 'ycloud', 'whatsapp.smb.message.echoes', ?, ?, ?,
+        ?, ?, ?, ?, ?, 'api', 'outbound', 'text', ?, 'sent', CURRENT_TIMESTAMP)
+    `, [apiRowId, apiRowId, apiRowId, officialWamid, contactId, phone, businessPhone, phone, businessPhone, body])
+
+    const repair = await repairWhatsAppProtocolMessageIdentities({ force: true })
+    assert.ok(repair.backfilled >= 2)
+    assert.ok(repair.merged >= 1)
+
+    const rows = await db.all(`
+      SELECT id, ycloud_message_id, wamid, protocol_message_key_id, transport, source_adapter
+      FROM whatsapp_api_messages
+      WHERE contact_id = ? AND message_text = ?
+    `, [contactId, body])
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].id, qrRowId)
+    assert.equal(rows[0].ycloud_message_id, apiRowId)
+    assert.equal(rows[0].wamid, officialWamid)
+    assert.equal(rows[0].protocol_message_key_id, qrMessageKey)
+    assert.equal(rows[0].transport, 'qr')
+    assert.equal(rows[0].source_adapter, 'baileys')
+  } finally {
+    await cleanup({ contactId, phone })
   }
 })
 
 test('eco QR saliente escrito en el teléfono se captura aunque la API oficial esté operativa', async () => {
-  // Regresión: la API oficial NO reporta por webhook los mensajes que el operador escribe
-  // directamente en el teléfono; su único origen es el eco fromMe de Baileys. El skip
-  // 'official_api_active' solo debe aplicar al inbound (que el webhook sí cubre).
+  // Baileys debe capturarlo de inmediato aunque después llegue un eco SMB del
+  // proveedor. El skip 'official_api_active' sólo aplica al inbound; el
+  // outbound se reconcilia después por identidad exacta de protocolo.
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52993${suffix}`
@@ -895,7 +950,7 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
           id, provider, waba_id, phone_number, display_phone_number, verified_name,
           is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
         ) VALUES (?, 'ycloud', 'waba_qr_outbound_echo_test', ?, ?, 'QR Outbound Echo Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
-      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+      `, [phoneNumberId, businessPhone, businessPhone])
 
       await db.run(`
         INSERT INTO contacts (
@@ -1053,7 +1108,7 @@ test('eco QR saliente de WhatsApp normal conserva phoneNumberId para la bandeja 
   }
 })
 
-test('eco QR de foto API sin caption no crea globo Foto duplicado', async () => {
+test('dos fotos sin identidad de protocolo compartida permanecen como mensajes distintos', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52992${suffix}`
@@ -1128,12 +1183,11 @@ test('eco QR de foto API sin caption no crea globo Foto duplicado', async () => 
         timestamp: messageAt
       })
 
-      assert.equal(result.skipped, true)
-      assert.equal(result.reason, 'duplicate_recent')
-      assert.equal(result.messageId, apiMessageId)
+      assert.equal(result.skipped, false)
+      assert.notEqual(result.messageId, apiMessageId)
 
       const duplicate = await db.get('SELECT id FROM whatsapp_api_messages WHERE wamid = ?', [qrEchoWamid])
-      assert.ok(!duplicate)
+      assert.ok(duplicate)
 
       const row = await db.get('SELECT transport, message_type, message_text FROM whatsapp_api_messages WHERE id = ?', [apiMessageId])
       assert.equal(row.transport, 'api')
@@ -1147,7 +1201,7 @@ test('eco QR de foto API sin caption no crea globo Foto duplicado', async () => 
   }
 })
 
-test('eco QR tardio de la misma foto reconcilia por sha aunque WhatsApp cambie el wamid', async () => {
+test('dos envios de la misma foto no se fusionan por contenido ni cercania temporal', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52656${suffix}`
@@ -1223,22 +1277,176 @@ test('eco QR tardio de la misma foto reconcilia por sha aunque WhatsApp cambie e
       }
     })
 
-    assert.equal(result.skipped, true)
-    assert.equal(result.reason, 'duplicate_recent')
-    assert.equal(result.messageId, originalMessageId)
+    assert.equal(result.skipped, false)
+    assert.notEqual(result.messageId, originalMessageId)
 
     const rows = await db.all(`
       SELECT id, wamid, media_url
       FROM whatsapp_api_messages
       WHERE contact_id = ? AND direction = 'outbound' AND message_type = 'image'
     `, [contactId])
-    assert.equal(rows.length, 1)
-    assert.equal(rows[0].wamid, originalWamid)
-    assert.equal(rows[0].media_url, 'https://cdn.example.com/original-photo.jpg')
+    assert.equal(rows.length, 2)
+    assert.ok(rows.some(row => row.wamid === originalWamid && row.media_url === 'https://cdn.example.com/original-photo.jpg'))
+    assert.ok(rows.some(row => row.wamid === echoWamid))
   } finally {
     await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [originalWamid, echoWamid]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
     await cleanup({ contactId, messageId: originalMessageId, phone })
+  }
+})
+
+test('si API y QR viven en filas hermanas, una solicitud QR usa primero la API oficial', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52987${suffix}`
+  const businessPhone = `+52657${suffix}`
+  const phoneNumberId = `phone_api_priority_${id}`
+  const qrPhoneNumberId = `phone_qr_backup_priority_${id}`
+  const contactId = `rstk_contact_api_priority_${id}`
+  const body = 'Este mensaje debe salir una sola vez por API'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+  let apiPostCalls = 0
+
+  await cleanup({ contactId, phone })
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [qrPhoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_api_priority_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_api_priority_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_api_priority_test', ?, ?, 'API Priority Test', 1, 1, 0, 'disconnected', NULL, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone])
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'qr', ?, ?, 'QR Backup Priority Test', 0, 0, 1, 'connected', ?, 'QR_ONLY')
+      `, [qrPhoneNumberId, businessPhone, businessPhone, businessPhone])
+      await insertInboundMessageForOpenReplyWindow({ id, contactId, phone, businessPhone, phoneNumberId })
+
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        if (parsed.pathname.endsWith('/whatsapp/messages') && String(options.method || '').toUpperCase() === 'POST') {
+          apiPostCalls += 1
+          return ycloudJsonResponse({
+            id: `ycloud_api_priority_${id}`,
+            from: businessPhone,
+            to: phone,
+            status: 'sent',
+            type: 'text',
+            text: { body },
+            createTime: new Date().toISOString()
+          })
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      const result = await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: body,
+        transport: 'qr',
+        contactId,
+        phoneNumberId: qrPhoneNumberId
+      })
+
+      assert.equal(apiPostCalls, 1)
+      assert.equal(result.id, `ycloud_api_priority_${id}`)
+      const saved = await db.get(`
+        SELECT transport, message_text
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [`ycloud_api_priority_${id}`])
+      assert.equal(saved.transport, 'api')
+      assert.equal(saved.message_text, body)
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [qrPhoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, phone })
+  }
+})
+
+test('un timeout o 5xx ambiguo de API nunca dispara tambien el respaldo QR', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52986${suffix}`
+  const businessPhone = `+52658${suffix}`
+  const phoneNumberId = `phone_ambiguous_failure_${id}`
+  const contactId = `rstk_contact_ambiguous_failure_${id}`
+  const body = 'No se debe duplicar por un error ambiguo'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+
+  await cleanup({ contactId, phone })
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_ambiguous_failure_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_ambiguous_failure_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_ambiguous_failure_test', ?, ?, 'Ambiguous Failure Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+      await insertInboundMessageForOpenReplyWindow({ id, contactId, phone, businessPhone, phoneNumberId })
+
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        if (parsed.pathname.endsWith('/whatsapp/messages') && String(options.method || '').toUpperCase() === 'POST') {
+          return ycloudJsonResponse(
+            { message: 'Temporary upstream failure after accepting the request' },
+            { status: 500, statusText: 'Internal Server Error' }
+          )
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      await assert.rejects(
+        sendWhatsAppApiTextMessage({
+          to: phone,
+          from: businessPhone,
+          text: body,
+          transport: 'api',
+          contactId,
+          phoneNumberId,
+          allowQrFallback: true
+        }),
+        /Temporary upstream failure|500|Internal Server Error/i
+      )
+
+      const qrRows = await db.all(`
+        SELECT id
+        FROM whatsapp_api_messages
+        WHERE contact_id = ? AND transport = 'qr' AND message_text = ?
+      `, [contactId, body])
+      assert.equal(qrRows.length, 0)
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, phone })
   }
 })
 

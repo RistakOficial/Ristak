@@ -9,6 +9,11 @@ import {
   resolveWhatsAppMessageIdentifiers,
   resolveWhatsAppSourceAdapter
 } from '../src/services/whatsapp/providers/providerRegistry.js'
+import {
+  extractWhatsAppClientMessageKeyFromWamid,
+  resolveWhatsAppProtocolMessageKey,
+  wamidContainsWhatsAppClientMessageKey
+} from '../src/utils/whatsappProtocolIdentity.js'
 
 test('declares YCloud and Meta Direct as distinct official providers', () => {
   const providers = getWhatsAppProviderDefinitions()
@@ -66,4 +71,21 @@ test('labels every QR transport as Baileys without impersonating an official ada
     metaMessageId: '',
     wamid: ''
   })
+})
+
+test('reconciles the YCloud coexistence WAMID with the exact Baileys message key', () => {
+  const baileysKey = '2AB6D0F198A01CB993EA'
+  const coexistenceWamid = 'wamid.HBgNNTIxNDQ0MjA3Njc4NhUCABEYFDJBQjZEMEYxOThBMDFDQjk5M0VBAA=='
+
+  assert.equal(extractWhatsAppClientMessageKeyFromWamid(coexistenceWamid), baileysKey)
+  assert.equal(resolveWhatsAppProtocolMessageKey({ transport: 'api', wamid: coexistenceWamid }), baileysKey)
+  assert.equal(resolveWhatsAppProtocolMessageKey({ transport: 'qr', wamid: baileysKey }), baileysKey)
+  assert.equal(wamidContainsWhatsAppClientMessageKey(coexistenceWamid, baileysKey), true)
+  assert.equal(wamidContainsWhatsAppClientMessageKey(coexistenceWamid, '2A107A68B47DA3E71797'), false)
+})
+
+test('does not invent protocol identities for opaque provider IDs', () => {
+  assert.equal(extractWhatsAppClientMessageKeyFromWamid('ycloud-message-id'), '')
+  assert.equal(resolveWhatsAppProtocolMessageKey({ transport: 'qr', wamid: 'wamid.not-base64' }), '')
+  assert.equal(resolveWhatsAppProtocolMessageKey({ transport: 'qr', wamid: 'short' }), '')
 })

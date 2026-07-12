@@ -15,7 +15,6 @@ import {
   disconnectWhatsAppQrConnection,
   getWhatsAppQrSession,
   getWhatsAppQrSessions,
-  rememberRistakQrOutboundAttempt,
   sendWhatsAppQrAudioMessage,
   sendWhatsAppQrDocumentMessage,
   sendWhatsAppQrImageMessage,
@@ -30,6 +29,7 @@ import { getWhatsAppQrDripSettings } from './whatsappQrDripService.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
+import { resolveWhatsAppProtocolMessageKey } from '../utils/whatsappProtocolIdentity.js'
 import { logger } from '../utils/logger.js'
 import { normalizeYCloudApiKeyInput } from '../utils/ycloudApiKey.js'
 import {
@@ -89,6 +89,8 @@ const DEFAULT_INSTALLER_PUBLIC_URL = 'https://www.ristak.com'
 const META_EMBEDDED_SIGNUP_TIMEOUT_MS = 20_000
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
+const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
+const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-07-12-v1'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
@@ -3465,7 +3467,7 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
 async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const configuredProvider = cleanString(config.provider).toLowerCase() || PROVIDER_NAME
-  const configuredMetaDirect = configuredProvider === META_DIRECT_PROVIDER_NAME
+  let configuredMetaDirect = configuredProvider === META_DIRECT_PROVIDER_NAME
     ? await loadMetaDirectConfig()
     : null
   const selectedPhoneNumberId = cleanString(
@@ -3474,10 +3476,45 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
     config.phoneNumberId
   )
   const selectedFromPhone = cleanString(fromPhone || config.senderPhone)
-  const phoneRow = await findBusinessPhoneRowForSender({
+  const requestedPhoneRow = await findBusinessPhoneRowForSender({
     phoneNumberId: selectedPhoneNumberId,
     fromPhone: selectedFromPhone
   })
+  let phoneRow = requestedPhoneRow
+
+  // Una fila QR puede representar el respaldo del mismo número que vive en una
+  // fila API separada. Si la API oficial está realmente disponible, esa fila es
+  // la autoridad de salida y QR queda reservado para un rechazo definitivo o
+  // una ventana de 24 horas cerrada.
+  if (cleanString(requestedPhoneRow?.provider).toLowerCase() === 'qr') {
+    const requestedPhones = getPhoneRowMatchValues(requestedPhoneRow)
+    const officialRows = requestedPhones.length
+      ? await db.all(`
+          SELECT ${BUSINESS_PHONE_ROW_SELECT}
+          FROM whatsapp_api_phone_numbers
+          WHERE LOWER(COALESCE(provider, '')) IN (?, ?)
+            AND api_send_enabled = 1
+          ORDER BY is_default_sender DESC, updated_at DESC
+        `, [PROVIDER_NAME, META_DIRECT_PROVIDER_NAME]).catch(() => [])
+      : []
+
+    for (const candidate of officialRows) {
+      if (!rowMatchesAnyPhone(candidate, requestedPhones)) continue
+      const candidateProvider = cleanString(candidate.provider).toLowerCase()
+      if (candidateProvider === PROVIDER_NAME && config.enabled && config.apiKey) {
+        phoneRow = candidate
+        break
+      }
+      if (candidateProvider === META_DIRECT_PROVIDER_NAME) {
+        configuredMetaDirect ||= await loadMetaDirectConfig()
+        if (configuredMetaDirect?.connected && cleanString(configuredMetaDirect.phoneNumberId) === cleanString(candidate.id)) {
+          phoneRow = candidate
+          break
+        }
+      }
+    }
+  }
+
   if (!phoneRow?.id) {
     const provider = configuredProvider
     const metaDirect = provider === META_DIRECT_PROVIDER_NAME ? configuredMetaDirect : null
@@ -3488,6 +3525,7 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
       phoneNumberId: metaDirect?.phoneNumberId || selectedPhoneNumberId,
       wabaId: metaDirect?.wabaId || config.wabaId,
       selectedPhoneRow: null,
+      requestedPhoneRow: null,
       officialApiAvailable: provider === META_DIRECT_PROVIDER_NAME
         ? Boolean(metaDirect?.connected)
         : Boolean(config.enabled && config.apiKey)
@@ -3512,6 +3550,7 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
     phoneNumberId: phoneRow.id,
     wabaId: phoneRow.waba_id || config.wabaId,
     selectedPhoneRow: phoneRow,
+    requestedPhoneRow,
     officialApiAvailable
   }
 }
@@ -3829,14 +3868,13 @@ async function getOfficialApiFallbackDecision({
 
 async function shouldPreferOfficialApiOverRequestedQr({
   cleanTransport,
-  preferOfficialApiWhenReplyWindowOpen = false,
   config,
   fromPhone,
   phoneNumberId,
   toPhone,
   contactId
 } = {}) {
-  if (cleanTransport !== 'qr' || !preferOfficialApiWhenReplyWindowOpen) return false
+  if (cleanTransport !== 'qr') return false
   const officialApiAvailable = config?.officialApiAvailable !== undefined
     ? config.officialApiAvailable
     : config?.provider === META_DIRECT_PROVIDER_NAME || Boolean(config?.enabled && config?.apiKey)
@@ -5852,210 +5890,6 @@ function getMessageMediaId(message = {}) {
 }
 
 const QR_MEDIA_MESSAGE_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
-const OUTBOUND_API_MEDIA_QR_ECHO_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
-const QR_MEDIA_FINGERPRINT_KEYS = new Set(['filesha256', 'fileencsha256', 'sha256'])
-
-function recentMessageWindowExpressions() {
-  return {
-    lowerBoundExpr: isPostgres() ? "(?::timestamp - INTERVAL '2 minutes')" : "datetime(?, '-2 minutes')",
-    upperBoundExpr: isPostgres() ? "(?::timestamp + INTERVAL '2 minutes')" : "datetime(?, '+2 minutes')",
-    messageTimeExpr: isPostgres()
-      ? 'COALESCE(message_timestamp, created_at)::timestamp'
-      : 'datetime(COALESCE(message_timestamp, created_at))'
-  }
-}
-
-function storedMessageLooksFailed(row = {}) {
-  const status = normalizeMessageDeliveryStatus(row.status)
-  const hasError = Boolean(cleanString(row.error_code || row.error_message))
-  return ['failed', 'error', 'undelivered', 'rejected', 'cancelled'].includes(status) || hasError
-}
-
-async function handleRecentQrEchoDuplicate({
-  duplicate,
-  cleanDirection,
-  cleanWamid,
-  raw,
-  messageType,
-  messageTimestamp
-} = {}) {
-  const duplicateTransport = cleanString(duplicate?.transport).toLowerCase()
-  if (cleanDirection === 'outbound' && duplicateTransport !== 'qr' && storedMessageLooksFailed(duplicate)) {
-    await db.run(`
-      UPDATE whatsapp_api_messages
-      SET transport = 'qr',
-          routing_reason = ?,
-          status = 'sent',
-          error_code = NULL,
-          error_message = NULL,
-          wamid = COALESCE(NULLIF(?, ''), wamid),
-          raw_payload_json = ?,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [
-      'Capturado desde la sesión de WhatsApp Web.',
-      cleanWamid,
-      safeJson({
-        fallbackFrom: 'api',
-        fallbackTransport: 'qr',
-        qrEcho: true,
-        clearedApiError: {
-          code: cleanString(duplicate.error_code) || null,
-          message: cleanString(duplicate.error_message) || null
-        },
-        whatsappMessage: {
-          id: cleanWamid,
-          status: 'sent',
-          transport: 'qr'
-        },
-        ...(raw ? { raw } : {})
-      }),
-      duplicate.id
-    ])
-
-    publishChatMessageEvent({
-      contactId: duplicate.contact_id,
-      messageId: duplicate.id,
-      channel: 'whatsapp',
-      provider: PROVIDER_NAME,
-      transport: 'qr',
-      direction: duplicate.direction || cleanDirection,
-      messageType: cleanString(duplicate.message_type || messageType) || messageType,
-      messageTimestamp: duplicate.message_timestamp || duplicate.created_at || messageTimestamp,
-      isNew: false
-    })
-
-    return {
-      skipped: false,
-      repaired: true,
-      reason: 'duplicate_failed_api_repaired',
-      messageId: duplicate.id,
-      contactId: duplicate.contact_id,
-      transport: 'qr',
-      status: 'sent'
-    }
-  }
-
-  return { skipped: true, reason: 'duplicate_recent', messageId: duplicate?.id }
-}
-
-function collectQrMediaFingerprints(value, fingerprints = new Set(), depth = 0) {
-  if (value == null || depth > 12) return fingerprints
-
-  if (typeof value === 'string') {
-    const cleanValue = value.trim()
-    if ((cleanValue.startsWith('{') && cleanValue.endsWith('}')) || (cleanValue.startsWith('[') && cleanValue.endsWith(']'))) {
-      try {
-        collectQrMediaFingerprints(JSON.parse(cleanValue), fingerprints, depth + 1)
-      } catch {
-        // El raw de proveedores puede traer strings que parecen JSON sin serlo.
-      }
-    }
-    return fingerprints
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) collectQrMediaFingerprints(item, fingerprints, depth + 1)
-    return fingerprints
-  }
-
-  if (!isPlainObject(value)) return fingerprints
-
-  for (const [key, child] of Object.entries(value)) {
-    const normalizedKey = cleanString(key).toLowerCase()
-    if (QR_MEDIA_FINGERPRINT_KEYS.has(normalizedKey) && typeof child === 'string') {
-      const fingerprint = cleanString(child)
-      if (fingerprint) fingerprints.add(fingerprint)
-    }
-    collectQrMediaFingerprints(child, fingerprints, depth + 1)
-  }
-
-  return fingerprints
-}
-
-function qrMediaFingerprints(value) {
-  return collectQrMediaFingerprints(value)
-}
-
-function sharesQrMediaFingerprint(left, right) {
-  if (!left?.size || !right?.size) return false
-  for (const fingerprint of left) {
-    if (right.has(fingerprint)) return true
-  }
-  return false
-}
-
-async function findRecentOutboundMediaDuplicate({
-  cleanContactPhone,
-  cleanDirection,
-  cleanMessageType,
-  cleanWamid,
-  messageTimestamp,
-  raw
-} = {}) {
-  if (cleanDirection !== 'outbound') return null
-  if (!OUTBOUND_API_MEDIA_QR_ECHO_TYPES.has(cleanMessageType)) return null
-
-  const {
-    lowerBoundExpr,
-    upperBoundExpr,
-    messageTimeExpr
-  } = recentMessageWindowExpressions()
-
-  const candidates = await db.all(`
-    SELECT
-      id,
-      contact_id,
-      status,
-      transport,
-      routing_reason,
-      error_code,
-      error_message,
-      direction,
-      message_type,
-      message_timestamp,
-      created_at,
-      raw_payload_json
-    FROM whatsapp_api_messages
-    WHERE phone = ?
-      AND direction = ?
-      AND LOWER(COALESCE(message_type, '')) = ?
-      AND COALESCE(message_text, '') = ''
-      AND COALESCE(wamid, '') != ?
-      AND ${messageTimeExpr} BETWEEN ${lowerBoundExpr} AND ${upperBoundExpr}
-    ORDER BY updated_at DESC, created_at DESC
-    LIMIT 8
-  `, [cleanContactPhone, cleanDirection, cleanMessageType, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => [])
-
-  if (!candidates?.length) return null
-
-  // Para ecos de un envío QR directo no basta "mismo tipo + mismo minuto": el
-  // operador puede mandar dos fotos seguidas sin caption. Baileys sí entrega la
-  // huella criptográfica del archivo en ambos eventos, aunque use WAMID distintos.
-  // La usamos para reconciliar exactamente la misma media sin comernos otra foto.
-  const incomingFingerprints = qrMediaFingerprints(raw)
-  if (incomingFingerprints.size) {
-    const exactMediaMatch = candidates.find(candidate => sharesQrMediaFingerprint(
-      incomingFingerprints,
-      qrMediaFingerprints(candidate.raw_payload_json)
-    ))
-    if (exactMediaMatch) return exactMediaMatch
-  }
-
-  // La API oficial no siempre expone la huella que devuelve el eco de WhatsApp
-  // Web. Conservamos el dedupe previo para esa ruta, pero no lo aplicamos a filas
-  // QR sin fingerprint porque podría ocultar una segunda foto real.
-  return candidates.find(candidate => cleanString(candidate.transport).toLowerCase() !== 'qr') || null
-}
-
-function rememberOfficialApiOutboundForQrEcho({ phoneNumberId, toPhone, type, text = '' } = {}) {
-  rememberRistakQrOutboundAttempt({
-    phoneId: phoneNumberId,
-    contactPhone: toPhone,
-    type,
-    text
-  })
-}
 
 // Traduce el tipo de mensaje a la clave que `extractMessageMedia` sabe leer en el objeto
 // del mensaje (message.image / message.audio / etc.).
@@ -7433,6 +7267,169 @@ function normalizeWebhookMessage(rawMessage = {}) {
   return normalized
 }
 
+function isStoredCoexistenceBusinessEcho(row = {}) {
+  return Number(row.business_echo || 0) === 1 ||
+    /(?:^|[._])(?:smb[._])?message[._]echo(?:es)?(?:$|[._])/i.test(cleanString(row.origin))
+}
+
+function rowsBelongToSameWhatsAppConversation(left = {}, right = {}) {
+  const leftPhone = normalizePhoneForStorage(left.phone) || cleanString(left.phone)
+  const rightPhone = normalizePhoneForStorage(right.phone) || cleanString(right.phone)
+  if (leftPhone && rightPhone && leftPhone !== rightPhone) return false
+
+  const leftBusiness = normalizePhoneForStorage(left.business_phone) || cleanString(left.business_phone)
+  const rightBusiness = normalizePhoneForStorage(right.business_phone) || cleanString(right.business_phone)
+  return !(leftBusiness && rightBusiness && leftBusiness !== rightBusiness)
+}
+
+// Repara el historial creado antes de que Ristak conociera la identidad interna
+// compartida por Coexistence. Sólo fusiona pares demostrables: una captura QR y
+// un `smb.message.echoes` cuyo WAMID contiene exactamente el mismo key.id.
+// No compara contenido, hora, tipo de media ni nombres de contacto.
+export async function repairWhatsAppProtocolMessageIdentities({ force = false } = {}) {
+  return db.withAdvisoryLock('whatsapp-protocol-message-identities', async () => {
+    const appliedVersion = await getAppConfig(WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY).catch(() => '')
+    if (!force && appliedVersion === WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION) {
+      return { skipped: true, version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION, backfilled: 0, merged: 0 }
+    }
+
+    let lastId = ''
+    let backfilled = 0
+    while (true) {
+      const rows = await db.all(`
+        SELECT id, transport, wamid
+        FROM whatsapp_api_messages
+        WHERE id > ?
+          AND COALESCE(protocol_message_key_id, '') = ''
+          AND COALESCE(wamid, '') != ''
+        ORDER BY id
+        LIMIT 250
+      `, [lastId])
+      if (!rows.length) break
+
+      for (const row of rows) {
+        const protocolKey = resolveWhatsAppProtocolMessageKey({
+          transport: row.transport,
+          wamid: row.wamid
+        })
+        if (!protocolKey) continue
+        const result = await db.run(`
+          UPDATE whatsapp_api_messages
+          SET protocol_message_key_id = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND COALESCE(protocol_message_key_id, '') = ''
+        `, [protocolKey, row.id])
+        backfilled += Number(result?.changes || 0)
+      }
+
+      lastId = cleanString(rows.at(-1)?.id) || lastId
+    }
+
+    const duplicateKeys = await db.all(`
+      SELECT protocol_message_key_id
+      FROM whatsapp_api_messages
+      WHERE COALESCE(protocol_message_key_id, '') != ''
+      GROUP BY protocol_message_key_id
+      HAVING COUNT(*) > 1
+    `)
+    let merged = 0
+
+    for (const duplicateKey of duplicateKeys) {
+      const protocolKey = cleanString(duplicateKey.protocol_message_key_id)
+      const rows = await db.all(`
+        SELECT *
+        FROM whatsapp_api_messages
+        WHERE protocol_message_key_id = ?
+        ORDER BY created_at ASC, id ASC
+      `, [protocolKey])
+      const qrRows = rows.filter(row => cleanString(row.transport).toLowerCase() === 'qr')
+      const officialEchoRows = rows.filter(row =>
+        cleanString(row.transport).toLowerCase() === 'api' && isStoredCoexistenceBusinessEcho(row)
+      )
+      if (!qrRows.length || !officialEchoRows.length) continue
+
+      for (const officialEcho of officialEchoRows) {
+        const canonical = qrRows.find(qrRow => rowsBelongToSameWhatsAppConversation(qrRow, officialEcho))
+        if (!canonical || canonical.id === officialEcho.id) continue
+        const bestStatus = pickBestMessageDeliveryStatus(canonical.status, officialEcho.status)
+
+        await db.transaction(async tx => {
+          await tx.run(`
+            UPDATE whatsapp_api_messages
+            SET provider = COALESCE(NULLIF(?, ''), provider),
+                origin = COALESCE(NULLIF(?, ''), origin),
+                provider_message_id = COALESCE(NULLIF(?, ''), provider_message_id),
+                ycloud_message_id = COALESCE(NULLIF(?, ''), ycloud_message_id),
+                meta_message_id = COALESCE(NULLIF(?, ''), meta_message_id),
+                wamid = COALESCE(NULLIF(?, ''), wamid),
+                waba_id = COALESCE(NULLIF(?, ''), waba_id),
+                business_phone_number_id = COALESCE(business_phone_number_id, ?),
+                whatsapp_api_contact_id = COALESCE(whatsapp_api_contact_id, ?),
+                contact_id = COALESCE(contact_id, ?),
+                status = COALESCE(NULLIF(?, ''), status),
+                business_echo = CASE WHEN ? = 1 THEN 1 ELSE business_echo END,
+                error_code = NULL,
+                error_message = NULL,
+                source_adapter = 'baileys',
+                transport = 'qr',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `, [
+            officialEcho.provider,
+            officialEcho.origin,
+            officialEcho.provider_message_id,
+            officialEcho.ycloud_message_id,
+            officialEcho.meta_message_id,
+            officialEcho.wamid,
+            officialEcho.waba_id,
+            officialEcho.business_phone_number_id,
+            officialEcho.whatsapp_api_contact_id,
+            officialEcho.contact_id,
+            bestStatus,
+            Number(officialEcho.business_echo || 0) === 1 ? 1 : 0,
+            canonical.id
+          ])
+          await tx.run(`
+            UPDATE whatsapp_api_attribution
+            SET whatsapp_api_message_id = ?
+            WHERE whatsapp_api_message_id = ?
+          `, [canonical.id, officialEcho.id])
+          await tx.run(`
+            UPDATE scheduled_chat_messages
+            SET sent_message_id = ?
+            WHERE sent_message_id = ?
+          `, [canonical.id, officialEcho.id]).catch(() => undefined)
+          await tx.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [officialEcho.id])
+        })
+        merged += 1
+      }
+    }
+
+    const unresolvedDuplicate = await db.get(`
+      SELECT protocol_message_key_id
+      FROM whatsapp_api_messages
+      WHERE COALESCE(protocol_message_key_id, '') != ''
+      GROUP BY protocol_message_key_id
+      HAVING COUNT(*) > 1
+      LIMIT 1
+    `)
+    if (!unresolvedDuplicate) {
+      await db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_api_messages_protocol_key_unique
+        ON whatsapp_api_messages (protocol_message_key_id)
+        WHERE protocol_message_key_id IS NOT NULL AND protocol_message_key_id <> ''
+      `)
+    } else {
+      logger.warn(`[WhatsApp] La identidad ${unresolvedDuplicate.protocol_message_key_id} requiere revisión manual antes de activar el índice único.`)
+    }
+
+    await setAppConfig(WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY, WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION)
+    if (backfilled || merged) {
+      logger.info(`[WhatsApp] Identidades de protocolo: ${backfilled} filas preparadas y ${merged} ecos históricos fusionados.`)
+    }
+    return { skipped: false, version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION, backfilled, merged }
+  }, { pinConnection: false })
+}
+
 async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api', contactId = null, historyImport = false }) {
   const normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
@@ -7517,9 +7514,15 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const metaMessageId = identifiers.metaMessageId
   const ycloudMessageId = identifiers.ycloudMessageId
   const wamid = identifiers.wamid
+  const protocolMessageKeyId = resolveWhatsAppProtocolMessageKey({
+    transport: cleanTransport,
+    wamid
+  })
   const computedMessageId = hashId('waapi_msg', providerMessageId || wamid || `${provider}|${payload.id}|${identity.direction}|${identity.phone}`)
-  const existingMessage = await db.get(`
-    SELECT id, contact_id, status, transport, routing_reason, message_type, raw_payload_json,
+  let existingMessage = await db.get(`
+    SELECT id, provider, source_adapter, origin, provider_message_id, ycloud_message_id,
+           meta_message_id, wamid, protocol_message_key_id, contact_id, status,
+           transport, routing_reason, message_type, raw_payload_json,
            media_url, media_mime_type, media_filename, media_duration_ms,
            error_code, error_message
     FROM whatsapp_api_messages
@@ -7528,6 +7531,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       OR (? != '' AND ycloud_message_id = ?)
       OR (? != '' AND meta_message_id = ?)
       OR (? != '' AND wamid = ?)
+      OR (? != '' AND protocol_message_key_id = ?)
     ORDER BY updated_at DESC
     LIMIT 1
   `, [
@@ -7535,9 +7539,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     providerMessageId, provider, providerMessageId,
     ycloudMessageId, ycloudMessageId,
     metaMessageId, metaMessageId,
-    wamid, wamid
+    wamid, wamid,
+    protocolMessageKeyId, protocolMessageKeyId
   ]).catch(() => null)
-  const messageId = existingMessage?.id || computedMessageId
+  let messageId = existingMessage?.id || computedMessageId
   if (attribution.imageUrl || attribution.thumbnailUrl) {
     attribution = await persistWhatsAppAttributionPreview(attribution, messageId).catch(error => {
       logger.warn(`[WhatsApp API] No se pudo persistir el preview del anuncio ${messageId}: ${error.message}`)
@@ -7574,10 +7579,25 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   )
   const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true || normalizedMessage.business_echo === true
   const relayEventId = cleanString(payload.relayEventId || payload.relay_event_id)
+  const coexistenceBusinessAppEcho = cleanTransport === 'api' &&
+    cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
+    Boolean(protocolMessageKeyId) &&
+    protocolMessageKeyId === cleanString(existingMessage?.protocol_message_key_id) &&
+    (
+      businessEcho ||
+      /(?:^|[._])(?:smb[._])?message[._]echo(?:es)?(?:$|[._])/i.test(origin)
+    )
+  const storedTransport = existingQrFallbackApplied || coexistenceBusinessAppEcho ? 'qr' : cleanTransport
+  const storedSourceAdapter = coexistenceBusinessAppEcho
+    ? (cleanString(existingMessage?.source_adapter) || 'baileys')
+    : sourceAdapter
+  const storedRoutingReason = existingQrFallbackApplied || coexistenceBusinessAppEcho
+    ? existingMessage?.routing_reason
+    : routingReason
 
   await db.run(`
     INSERT INTO whatsapp_api_messages (
-      id, provider, source_adapter, origin, provider_message_id, ycloud_message_id, meta_message_id, wamid, waba_id, business_phone_number_id,
+      id, provider, source_adapter, origin, provider_message_id, ycloud_message_id, meta_message_id, wamid, protocol_message_key_id, waba_id, business_phone_number_id,
       whatsapp_api_contact_id, contact_id,
       phone, from_phone, to_phone, business_phone, transport, routing_reason, direction, message_type,
       message_text, media_url, media_mime_type, media_filename, media_duration_ms,
@@ -7586,14 +7606,16 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       detected_ctwa_clid, detected_source_id, detected_source_url, detected_source_type,
       detected_source_app, detected_entry_point, detected_headline, detected_body,
       detected_conversion_data, detected_ctwa_payload, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(id) DO UPDATE SET
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT DO UPDATE SET
       provider = COALESCE(NULLIF(excluded.provider, ''), whatsapp_api_messages.provider),
       source_adapter = COALESCE(NULLIF(excluded.source_adapter, ''), whatsapp_api_messages.source_adapter),
       origin = COALESCE(NULLIF(excluded.origin, ''), whatsapp_api_messages.origin),
       provider_message_id = COALESCE(NULLIF(excluded.provider_message_id, ''), whatsapp_api_messages.provider_message_id),
       ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
       meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), whatsapp_api_messages.meta_message_id),
+      wamid = COALESCE(NULLIF(excluded.wamid, ''), whatsapp_api_messages.wamid),
+      protocol_message_key_id = COALESCE(NULLIF(excluded.protocol_message_key_id, ''), whatsapp_api_messages.protocol_message_key_id),
       business_phone_number_id = COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id),
       whatsapp_api_contact_id = COALESCE(excluded.whatsapp_api_contact_id, whatsapp_api_messages.whatsapp_api_contact_id),
       contact_id = COALESCE(excluded.contact_id, whatsapp_api_messages.contact_id),
@@ -7639,12 +7661,13 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   `, [
     messageId,
     provider,
-    sourceAdapter,
+    storedSourceAdapter,
     origin || null,
     providerMessageId || null,
     ycloudMessageId || null,
     metaMessageId || null,
     wamid || null,
+    protocolMessageKeyId || null,
     cleanString(message.wabaId) || null,
     businessPhoneNumberId,
     apiContactId,
@@ -7653,8 +7676,8 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     identity.fromPhone || null,
     identity.toPhone || null,
     identity.businessPhone || null,
-    existingQrFallbackApplied ? 'qr' : cleanTransport,
-    existingQrFallbackApplied ? existingMessage.routing_reason : (routingReason || null),
+    storedTransport,
+    storedRoutingReason || null,
     identity.direction,
     messageType,
     messageText || null,
@@ -7682,6 +7705,25 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     attribution.conversionData || null,
     attribution.ctwaPayload || null
   ])
+
+  // El índice único de identidad de protocolo también cubre una carrera real
+  // entre el socket Baileys y el webhook oficial. Si ambos hicieron el SELECT
+  // antes de que existiera la fila, `ON CONFLICT` conserva una sola y aquí
+  // recuperamos su ID canónico para que eventos, atribución y respuesta usen el
+  // registro que realmente quedó en la base.
+  if (protocolMessageKeyId) {
+    const canonicalMessage = await db.get(`
+      SELECT id, contact_id, status, transport, routing_reason, message_type,
+             raw_payload_json, error_code, error_message
+      FROM whatsapp_api_messages
+      WHERE protocol_message_key_id = ?
+      LIMIT 1
+    `, [protocolMessageKeyId]).catch(() => null)
+    if (canonicalMessage?.id && canonicalMessage.id !== messageId) {
+      messageId = canonicalMessage.id
+      existingMessage = canonicalMessage
+    }
+  }
 
   // Si el webhook falló antes de que terminara la llamada de envío, esta
   // segunda conciliación ya trae el payload completo (incluido el permiso de
@@ -7741,7 +7783,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     })
   }
 
-  const finalTransport = qrFallbackResponse || existingQrFallbackApplied ? 'qr' : cleanTransport
+  const finalTransport = qrFallbackResponse || existingQrFallbackApplied || coexistenceBusinessAppEcho ? 'qr' : cleanTransport
   const finalSourceAdapter = resolveWhatsAppSourceAdapter({ provider, transport: finalTransport })
   const finalRoutingReason = cleanString(
     qrFallbackResponse?.routingReason ||
@@ -7939,12 +7981,12 @@ async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'tex
 }
 
 // Persiste en el historial unificado un mensaje visto por la sesión de WhatsApp Web (Baileys).
-// Para el INBOUND: si la API oficial de ese número está sana, el webhook de YCloud ya registra el
-// mensaje y guardarlo aquí duplicaría el chat, así que se omite. Para el OUTBOUND escrito
-// directamente en el teléfono (eco fromMe de Baileys) NO existe webhook equivalente —la API oficial
-// solo reporta lo que se envía A TRAVÉS de ella— por lo que la sesión QR es su única fuente y debe
-// capturarse SIEMPRE, incluso con la API operativa. El dedupe difuso de abajo evita duplicar cuando
-// Ristak además lo envió por la API.
+// Para el INBOUND: si la API oficial de ese número está sana, su webhook ya registra el mensaje y
+// guardarlo aquí duplicaría el chat, así que se omite. El OUTBOUND escrito en WhatsApp Business sí
+// puede llegar dos veces durante Coexistence: primero como `fromMe` de Baileys y después como
+// `smb.message.echoes` de YCloud/Meta. Ambos se persisten con la llave interna exacta de WhatsApp
+// (`protocol_message_key_id`) para que el upsert los reconozca como un solo evento sin comparar
+// texto, hora ni huellas de archivo.
 export async function captureQrChatMessage({
   phoneNumberId,
   businessPhone,
@@ -7973,80 +8015,15 @@ export async function captureQrChatMessage({
   const cleanMessageType = cleanString(messageType).toLowerCase()
   const messageTimestamp = toDateTime(timestamp) || nowIso()
 
-  // Dedupe difusa: el mismo mensaje pudo entrar por webhook con otro wamid durante una transición.
-  // Las reacciones se identifican por su WAMID y mensaje objetivo: dos reacciones
-  // iguales dentro de la misma ventana son acciones distintas, no ecos duplicados.
-  if (messageText && cleanMessageType !== 'reaction') {
-    // PAY-006-DB-005: datetime(?, '±2 minutes') es SQLite-only y truena en Postgres
-    // (la query iba en un .catch que ocultaba el error => el dedupe nunca corría en prod).
-    // Se ramifica a INTERVAL en Postgres manteniendo el mismo orden de parámetros.
-    const {
-      lowerBoundExpr,
-      upperBoundExpr,
-      messageTimeExpr
-    } = recentMessageWindowExpressions()
-    const duplicate = await db.get(`
-      SELECT
-        id,
-        contact_id,
-        status,
-        transport,
-        routing_reason,
-        error_code,
-        error_message,
-        direction,
-        message_type,
-        message_timestamp,
-        created_at
-      FROM whatsapp_api_messages
-      WHERE phone = ?
-        AND direction = ?
-        AND message_text = ?
-        AND COALESCE(wamid, '') != ?
-        AND ${messageTimeExpr} BETWEEN ${lowerBoundExpr} AND ${upperBoundExpr}
-      LIMIT 1
-    `, [cleanContactPhone, cleanDirection, messageText, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
-    if (duplicate) {
-      return handleRecentQrEchoDuplicate({
-        duplicate,
-        cleanDirection,
-        cleanWamid,
-        raw,
-        messageType,
-        messageTimestamp
-      })
-    }
-  } else if (cleanMessageType !== 'reaction') {
-    const duplicate = await findRecentOutboundMediaDuplicate({
-      cleanContactPhone,
-      cleanDirection,
-      cleanMessageType,
-      cleanWamid,
-      messageTimestamp,
-      raw
-    })
-    if (duplicate) {
-      return handleRecentQrEchoDuplicate({
-        duplicate,
-        cleanDirection,
-        cleanWamid,
-        raw,
-        messageType: cleanMessageType || messageType,
-        messageTimestamp
-      })
-    }
-  }
-
   const officialApiOperational = Boolean(config.enabled && config.apiKey) &&
     Boolean(phoneRow?.id) &&
     Number(phoneRow.api_send_enabled ?? 1) === 1 &&
     !(await getOfficialApiRestrictionReason({ phoneRow, config }))
-  // Solo el inbound lo cubre de forma redundante el webhook de YCloud. Un mensaje saliente
-  // escrito directamente en el teléfono llega únicamente como eco fromMe de Baileys y no tiene
-  // copia por webhook, así que jamás debe omitirse aquí: es su única fuente para el chat.
-  // En vivo, la API oficial es la fuente primaria y evita duplicar el webhook.
+  // El inbound lo cubre de forma redundante el webhook oficial. El outbound se captura aquí para
+  // que aparezca de inmediato y después se reconcilia por identidad de protocolo con el eco SMB.
+  // En vivo, la API oficial sigue siendo la fuente primaria del inbound.
   // Durante un HistorySync QR no podemos asumir que la API ya tenga ese pasado:
-  // se importa y el dedupe por IDs/contenido decide si ya existía.
+  // se importa y la identidad exacta de WhatsApp decide si ya existía.
   if (officialApiOperational && cleanDirection === 'inbound' && !historyImport) {
     // El número usa WhatsApp API (YCloud/oficial): la media entrante llega hospedada por el
     // proveedor a través del webhook, así que NO descargamos ni rehospedamos en Bunny.
@@ -12053,13 +12030,6 @@ export async function sendWhatsAppApiTextMessage({
     }
     throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
-    rememberOfficialApiOutboundForQrEcho({
-      phoneNumberId: metaPhoneNumberId,
-      toPhone,
-      type: 'text',
-      text: body
-    })
-
     let response
     try {
       response = await sendTextViaMetaDirect({
@@ -12182,13 +12152,6 @@ export async function sendWhatsAppApiTextMessage({
     })
   }
   throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
-
-  rememberOfficialApiOutboundForQrEcho({
-    phoneNumberId,
-    toPhone,
-    type: 'text',
-    text: body
-  })
 
   let response
   try {
@@ -12853,13 +12816,6 @@ export async function sendWhatsAppApiImageMessage({
     ...(externalId ? { externalId } : {})
   }
 
-  rememberOfficialApiOutboundForQrEcho({
-    phoneNumberId,
-    toPhone,
-    type: 'image',
-    text: cleanCaption
-  })
-
   let response
   try {
     response = await ycloudRequest('/whatsapp/messages', {
@@ -13090,13 +13046,6 @@ export async function sendWhatsAppApiDocumentMessage({
     filterBlocked: true,
     ...(externalId ? { externalId } : {})
   }
-
-  rememberOfficialApiOutboundForQrEcho({
-    phoneNumberId,
-    toPhone,
-    type: 'document',
-    text: cleanCaption || requestDocument.filename || ''
-  })
 
   let response
   try {
@@ -13345,13 +13294,6 @@ export async function sendWhatsAppApiVideoMessage({
     filterBlocked: true,
     ...(externalId ? { externalId } : {})
   }
-
-  rememberOfficialApiOutboundForQrEcho({
-    phoneNumberId,
-    toPhone,
-    type: 'video',
-    text: cleanCaption
-  })
 
   let response
   try {
@@ -13659,13 +13601,6 @@ export async function sendWhatsAppApiAudioMessage({
     filterBlocked: true,
     ...(externalId ? { externalId } : {})
   }
-
-  rememberOfficialApiOutboundForQrEcho({
-    phoneNumberId,
-    toPhone,
-    type: 'audio',
-    text: ''
-  })
 
   let response
   try {

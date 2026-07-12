@@ -33,6 +33,7 @@ import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageServi
 import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxonomyMigration.js'
 import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
+import { repairWhatsAppProtocolMessageIdentities } from './services/whatsappApiService.js'
 import { startMetaOAuthPendingSessionCleanupScheduler } from './services/metaOAuthService.js'
 import { startMetaOAuthIntegrationCleanupScheduler } from './services/metaOAuthIntegrationService.js'
 
@@ -506,6 +507,11 @@ async function startRuntimeServices() {
   // (DB-001) Aplicar migraciones versionadas (cambios de esquema aditivos) sobre el
   // schema base ya creado por initTables, antes de habilitar tráfico.
   await runVersionedMigrations()
+
+  // Coexistence puede entregar el mismo mensaje por Baileys y por el webhook
+  // oficial. Antes de aceptar tráfico, fusiona únicamente identidades exactas y
+  // activa la unicidad que cierra carreras entre ambos adaptadores.
+  await repairWhatsAppProtocolMessageIdentities()
 
   // Inicializar clave maestra de encriptación (DEBE ser lo primero)
   await initializeMasterKey()
