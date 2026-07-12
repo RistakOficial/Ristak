@@ -22,6 +22,8 @@ struct ConversationScreen: View {
     /// (no saltan a las pestañas de Calendarios/Pagos, User #2).
     @State private var showsScheduleForContact = false
     @State private var showsPaymentForContact = false
+    /// Invalida reposicionamientos tardíos de una animación anterior del teclado.
+    @State private var keyboardReanchorGeneration = 0
 
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(AccessStore.self) private var access
@@ -209,7 +211,10 @@ struct ConversationScreen: View {
             }
             .background { ChatWallpaperBackground() }
             .accessibilityIdentifier("ristak-conversation-history")
-            .defaultScrollAnchor(.bottom)
+            // El fondo manda SOLO al entrar. Si también gobierna cambios de
+            // tamaño, la animación del teclado puede enviar el LazyVStack a una
+            // región todavía no materializada y dejar el hilo visualmente vacío.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             // El teclado se cierra al arrastrar el hilo…
             .scrollDismissesKeyboard(.interactively)
             // …y también al tocar fuera del composer/campo de texto (paridad
@@ -256,18 +261,11 @@ struct ConversationScreen: View {
                 }
                 quoteScrollTargetID = nil
             }
-            // Bug del teclado: mostrar/ocultar el teclado anima el `safeAreaInset`
-            // inferior (composer) y con `.defaultScrollAnchor(.bottom)` sobre un
-            // `LazyVStack` el ScrollView puede aterrizar en una región NO
-            // materializada → las burbujas quedan EN BLANCO hasta que arrastras.
-            // Re-anclamos al centinela del fondo en cada cambio de teclado, lo que
-            // fuerza al LazyVStack a re-dibujar las filas visibles. Gateado por
-            // `isNearBottom` para no tironear a quien está leyendo el historial.
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                reanchorIfNearBottom(proxy)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                reanchorIfNearBottom(proxy)
+            // `willChangeFrame` cubre abrir, cerrar, QuickType y cambios de
+            // teclado. Capturamos el estado ANTES del relayout y estabilizamos el
+            // fondo al principio y al terminar la animación del safe-area inset.
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+                stabilizeForKeyboardTransition(notification, proxy: proxy)
             }
             // La cascada necesita el ORDEN de mensajes (solo mensajes, sin días ni
             // markers) para saber cuál audio encadenar al terminar el actual.
@@ -283,17 +281,27 @@ struct ConversationScreen: View {
         )
     }
 
-    /// Re-ancla el hilo al centinela del fondo cuando el teclado cambia, para que
-    /// el `LazyVStack` vuelva a materializar sus filas y las burbujas no queden en
-    /// blanco. Solo si el usuario ya estaba abajo (no roba la posición a quien lee
-    /// mensajes viejos). El salto a `main` deja terminar la animación del
-    /// `safeAreaInset` antes de reposicionar.
-    private func reanchorIfNearBottom(_ proxy: ScrollViewProxy) {
+    /// Conserva visible el final si el usuario estaba abajo antes de que el
+    /// teclado cambiara el viewport. El segundo salto ocurre después de la
+    /// duración reportada por UIKit: ahí el `LazyVStack` ya conoce su geometría
+    /// definitiva y no puede quedarse apuntando a un hueco sin materializar.
+    private func stabilizeForKeyboardTransition(
+        _ notification: Notification,
+        proxy: ScrollViewProxy
+    ) {
         guard viewModel.isNearBottom else { return }
+        keyboardReanchorGeneration &+= 1
+        let generation = keyboardReanchorGeneration
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+
+        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
         DispatchQueue.main.async {
-            withAnimation(.snappy(duration: 0.2)) {
-                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-            }
+            guard generation == keyboardReanchorGeneration else { return }
+            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, duration) + 0.05) {
+            guard generation == keyboardReanchorGeneration else { return }
+            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
         }
     }
 

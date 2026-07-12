@@ -902,6 +902,11 @@ mientras termina la hidratacion de caché, mensajes, media y actividad; no usa
 animación para corregir una posición intermedia. Al insertar mensajes antiguos
 arriba del hilo, la UI debe conservar la posición visible del usuario y nunca
 forzar scroll al último mensaje.
+En iOS, abrir o cerrar el teclado no reutiliza el ancla inicial como política de
+redimensionamiento: si el usuario estaba abajo, el hilo estabiliza el centinela
+inferior antes y después de la animación real de UIKit. Esto evita que el
+`LazyVStack` apunte a una región no materializada y deje temporalmente invisibles
+las burbujas mientras se escribe.
 
 El mismo contrato aplica al chat dentro del modal de contacto: debe usar
 `/contacts/:id/conversation` para no mezclar eventos de viaje, visitas, compras

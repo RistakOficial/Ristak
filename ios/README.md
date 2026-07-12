@@ -106,6 +106,8 @@ solo en capa flotante; copy en español.
   swipe, reacciones por canal, mensajes programados
   (crear/editar/cancelar), info de mensaje, reintento de fallidos, carga de
   historial hacia atrás, polling 7s + presencia (suprime push y marca leído).
+  El teclado conserva materializadas las burbujas al primer enfoque: el ancla al
+  fondo es solo inicial y los cambios de frame se estabilizan con la duración de UIKit.
   Composer: adjuntos (cámara/galería/documentos/ubicación), notas de voz,
   plantillas cuando la ventana de 24h está cerrada, selector de número/canal,
   sugerencia IA, controles del agente (pausar/tomar/omitir/continuar + confirm

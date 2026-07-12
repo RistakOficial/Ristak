@@ -1341,6 +1341,12 @@ ubicaciones. El auto-scroll de la conversacion solo debe llevar al ultimo
 mensaje durante la carga inicial o cuando el usuario ya esta abajo; si el
 usuario esta arrastrando o navegando el historial, ningun recalculo de contenido
 debe devolverlo forzosamente al ultimo mensaje.
+En iOS, el ancla inferior por defecto se usa solo para la posición inicial, no
+para cada cambio de tamaño del `ScrollView`. Al abrir, cerrar o redimensionar el
+teclado, la conversación captura si el usuario estaba abajo antes del relayout y
+reafirma el centinela inferior al inicio y al final de la animación reportada por
+UIKit. Así el `LazyVStack` conserva materializadas las burbujas visibles; nunca
+debe quedar el fondo vacío hasta cerrar y volver a abrir el teclado.
 Las fotos, videos, documentos, archivos y enlaces tocados desde el hilo o desde
 `Archivos del chat` no deben abrir Safari/Chrome en el primer tap: deben abrir el
 modal de enfoque propio de Ristak. Imagenes y videos se presentan dentro del
