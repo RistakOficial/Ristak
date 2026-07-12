@@ -3848,6 +3848,12 @@ si completan metricas, grafica, embudo y origen. Si algun panel falla, conserva
 el snapshot pero lo advierte y vuelve a intentar al regresar a foreground. La
 consulta de numeros de WhatsApp es independiente de Origen y solo reemplaza su
 cache cuando responde con exito.
+Los filtros horizontales de grafica, scope, embudo y origen ocupan el ancho
+completo de su tarjeta sin gutter, pero se recortan exactamente en el viewport
+de esa tarjeta y nunca invaden el fondo de la ventana. Las series de Swift
+Charts se escalan con 20 % de techo libre —el maximo queda al 80 % de altura— y
+usan relleno degradado sutil hasta la base; la escala no altera datos, leyendas
+ni valores del scrub interactivo.
 
 En Android, contexto, KPIs, grafica, embudo y origen fallan por separado: cada
 panel muestra error y reintento sin fabricar ceros ni presentar `Sin datos`

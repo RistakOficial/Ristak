@@ -74,7 +74,7 @@ struct AnalyticsChartPanel: View {
                 }
             }
         }
-        .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+        .ristakContainedEdgeToEdgeChips()
         .padding(.horizontal, -RistakTheme.Spacing.md)
     }
 
@@ -91,7 +91,7 @@ struct AnalyticsChartPanel: View {
                 }
             }
         }
-        .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+        .ristakContainedEdgeToEdgeChips()
         .padding(.horizontal, -RistakTheme.Spacing.md)
     }
 
@@ -127,11 +127,12 @@ struct AnalyticsChartPanel: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// Valor máximo en formato compacto (`$152.3 k` / `4.2 k`).
+    /// Techo visible en formato compacto (`$152.3 k` / `4.2 k`).
     private var maxScaleLabel: String {
-        model.chartKind.isCurrency
-            ? formatters.compactCurrency(model.chartMaxValue)
-            : formatters.compactNumber(model.chartMaxValue)
+        let upperBound = AnalyticsChartScale.upperBound(for: model.chartPoints)
+        return model.chartKind.isCurrency
+            ? formatters.compactCurrency(upperBound)
+            : formatters.compactNumber(upperBound)
     }
 
     // MARK: Contenido
@@ -167,9 +168,9 @@ struct AnalyticsChartPanel: View {
 
 // MARK: - Gráfica de doble línea (Swift Charts, estilo Stocks)
 
-/// Dos polylines limpias (sin puntos visibles), 3 gridlines horizontales
-/// (25/50/75 %), eje X con 3 etiquetas (primera, central, última) y escala Y
-/// desde 0 hasta el máximo de ambas series (paridad del SVG de /movil).
+/// Dos polylines con relleno degradado (sin puntos visibles), 3 gridlines
+/// horizontales (25/50/75 %), eje X con 3 etiquetas (primera, central, última)
+/// y 20 % de aire sobre el dato máximo.
 ///
 /// Interacción tipo app Stocks de Apple: al mantener presionado y arrastrar
 /// sobre la gráfica aparece una regla vertical + un punto circular sobre cada
@@ -186,9 +187,7 @@ struct AnalyticsDualLineChart: View {
     /// Índice del punto que el dedo está tocando (nil = sin scrubbing).
     @State private var scrubIndex: Int?
 
-    private var maxY: Double {
-        max(1, points.flatMap { [$0.value1, $0.value2] }.max() ?? 1)
-    }
+    private var maxY: Double { AnalyticsChartScale.upperBound(for: points) }
 
     /// Índices del eje X: primera, central y última muestra (sin duplicados).
     private var axisIndices: [Double] {
@@ -199,6 +198,40 @@ struct AnalyticsDualLineChart: View {
 
     var body: some View {
         Chart {
+            ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                AreaMark(
+                    x: .value("Fecha", Double(index)),
+                    yStart: .value("Base", 0),
+                    yEnd: .value("Valor", point.value1),
+                    series: .value("Serie", "serie-1-area")
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [color1.opacity(0.22), color1.opacity(0.02)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .interpolationMethod(.linear)
+            }
+
+            ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                AreaMark(
+                    x: .value("Fecha", Double(index)),
+                    yStart: .value("Base", 0),
+                    yEnd: .value("Valor", point.value2),
+                    series: .value("Serie", "serie-2-area")
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [color2.opacity(0.16), color2.opacity(0.015)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .interpolationMethod(.linear)
+            }
+
             ForEach(Array(points.enumerated()), id: \.offset) { index, point in
                 LineMark(
                     x: .value("Fecha", Double(index)),
@@ -375,6 +408,17 @@ struct AnalyticsDualLineChart: View {
     private func axisLabel(at index: Int) -> String {
         guard points.indices.contains(index) else { return "" }
         return AnalyticsViewModel.chartAxisLabel(points[index].label)
+    }
+}
+
+/// Escala compartida y comprobable: el punto más alto ocupa como máximo 80 %
+/// del plot, dejando un techo visual constante sin alterar los datos.
+enum AnalyticsChartScale {
+    static let maximumDataFillRatio = 0.8
+
+    static func upperBound(for points: [AnalyticsChartPoint]) -> Double {
+        let dataMaximum = max(1, points.flatMap { [$0.value1, $0.value2] }.max() ?? 1)
+        return dataMaximum / maximumDataFillRatio
     }
 }
 

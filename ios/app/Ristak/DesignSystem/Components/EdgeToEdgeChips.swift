@@ -27,4 +27,15 @@ extension View {
             .scrollClipDisabled()
             .contentMargins(.horizontal, horizontalInset, for: .scrollContent)
     }
+
+    /// Variante para carruseles que deben ocupar todo el ancho de una card,
+    /// pero jamás dibujar fuera de ella. El contenido llega al borde exacto
+    /// del viewport y se recorta ahí, sin el gutter de reposo de la variante
+    /// general.
+    func ristakContainedEdgeToEdgeChips() -> some View {
+        self
+            .scrollClipDisabled(false)
+            .contentMargins(.horizontal, 0, for: .scrollContent)
+            .clipped()
+    }
 }
