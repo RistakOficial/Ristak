@@ -205,8 +205,15 @@ test('los campos configurados de participantes aplican al titular distinto y a i
 
   const missingGuest = __conversationalToolsTestHooks.buildAppointmentParticipants({
     contact,
-    primaryAttendee: { name: 'Paty Jiménez', email: 'paty@example.com', phone: null, relation: 'mamá' },
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      email: 'paty@example.com',
+      emailSourceQuote: 'El correo de Paty es paty@example.com',
+      phone: null,
+      relation: 'mamá'
+    },
     guests: [{ name: 'Luis', phone: null, email: null, relation: 'hijo' }],
+    conversationMessages: [{ role: 'user', content: 'El correo de Paty es paty@example.com' }],
     requirements: configured
   })
   assert.equal(missingGuest.ok, false)
@@ -296,13 +303,225 @@ test('los campos configurados de participantes aplican al titular distinto y a i
 
   const normalizedPhones = __conversationalToolsTestHooks.buildAppointmentParticipants({
     contact,
-    primaryAttendee: { name: 'Paty Jiménez', phone: '(656) 742-6612', relation: 'mamá' },
-    guests: [{ name: 'Luis', phone: '+52 656 111 2233', relation: 'hijo' }],
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '(656) 742-6612',
+      phoneSourceQuote: 'Para Paty usa el (656) 742-6612',
+      relation: 'mamá'
+    },
+    guests: [{
+      name: 'Luis',
+      phone: '+52 656 111 2233',
+      phoneSourceQuote: 'Luis usa el +52 656 111 2233',
+      relation: 'hijo'
+    }],
+    conversationMessages: [
+      { role: 'user', content: 'Para Paty usa el (656) 742-6612' },
+      { role: 'user', content: 'Luis usa el +52 656 111 2233' }
+    ],
     requirements: { participants: { enabled: false, guestFields: [], maxGuests: 10 } }
   })
   assert.equal(normalizedPhones.ok, true)
   assert.equal(normalizedPhones.primary.phone.replace(/\D/g, ''), '526567426612')
   assert.equal(normalizedPhones.guests[0].phone.replace(/\D/g, ''), '526561112233')
+})
+
+test('titular distinto e invitados nunca heredan teléfono o correo del solicitante sin evidencia literal', () => {
+  const contact = {
+    id: 'requester_identity_guard',
+    full_name: 'Raúl Gómez',
+    phone: '+526561111111',
+    email: 'raul@example.com'
+  }
+  const copiedWithoutEvidence = __conversationalToolsTestHooks.buildAppointmentParticipants({
+    contact,
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '+52 656 111 1111',
+      email: 'raul@example.com',
+      relation: 'mamá'
+    },
+    guests: [{
+      name: 'Luis',
+      phone: '+526561111111',
+      email: 'raul@example.com',
+      relation: 'hermano'
+    }],
+    conversationMessages: [
+      { role: 'user', content: 'La cita es para mi mamá Paty y también irá Luis' }
+    ],
+    requirements: { participants: { enabled: false, guestFields: [], maxGuests: 10 } }
+  })
+  assert.equal(copiedWithoutEvidence.ok, true)
+  assert.equal(copiedWithoutEvidence.requester.email, 'raul@example.com')
+  assert.equal(copiedWithoutEvidence.requester.phone.replace(/\D/g, ''), '526561111111')
+  assert.equal(copiedWithoutEvidence.primary.email, '')
+  assert.equal(copiedWithoutEvidence.primary.phone, '')
+  assert.equal(copiedWithoutEvidence.guests[0].email, '')
+  assert.equal(copiedWithoutEvidence.guests[0].phone, '')
+
+  const requiredCopiedValue = __conversationalToolsTestHooks.buildAppointmentParticipants({
+    contact,
+    primaryAttendee: { name: 'Paty Jiménez', email: 'raul@example.com', relation: 'mamá' },
+    conversationMessages: [{ role: 'user', content: 'La cita es para Paty' }],
+    requirements: { participants: { enabled: true, guestFields: ['name', 'email'], maxGuests: 10 } }
+  })
+  assert.equal(requiredCopiedValue.ok, false)
+  assert.match(requiredCopiedValue.error, /titular distinto.*email/i)
+
+  const explicitlyShared = __conversationalToolsTestHooks.buildAppointmentParticipants({
+    contact,
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '+526561111111',
+      phoneSourceQuote: 'Para Paty usa raul@example.com y el 656 111 1111',
+      email: 'raul@example.com',
+      emailSourceQuote: 'Para Paty usa raul@example.com y el 656 111 1111',
+      relation: 'mamá'
+    },
+    conversationMessages: [
+      { role: 'assistant', content: '¿Qué datos uso para Paty?' },
+      { role: 'user', content: 'Para Paty usa raul@example.com y el 656 111 1111' }
+    ],
+    requirements: { participants: { enabled: true, guestFields: ['name', 'email', 'phone'], maxGuests: 10 } }
+  })
+  assert.equal(explicitlyShared.ok, true)
+  assert.equal(explicitlyShared.primary.email, 'raul@example.com')
+  assert.equal(explicitlyShared.primary.phone.replace(/\D/g, ''), '526561111111')
+
+  const dispersedDigitsAndPartialEmail = __conversationalToolsTestHooks.buildAppointmentParticipants({
+    contact,
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '+526561111111',
+      phoneSourceQuote: 'El folio 52656 y luego 1111111 no es un teléfono',
+      email: 'raul@example.com',
+      emailSourceQuote: 'Mi otro correo es notraul@example.com.mx',
+      relation: 'mamá'
+    },
+    conversationMessages: [
+      { role: 'user', content: 'El folio 52656 y luego 1111111 no es un teléfono' },
+      { role: 'user', content: 'Mi otro correo es notraul@example.com.mx' },
+      { role: 'assistant', content: 'Para Paty usa raul@example.com y +52 656 111 1111' }
+    ],
+    requirements: { participants: { enabled: false, guestFields: [], maxGuests: 10 } }
+  })
+  assert.equal(dispersedDigitsAndPartialEmail.ok, true)
+  assert.equal(dispersedDigitsAndPartialEmail.primary.phone, '')
+  assert.equal(dispersedDigitsAndPartialEmail.primary.email, '')
+
+  const assistantIsNeverEvidence = __conversationalToolsTestHooks.buildAppointmentParticipants({
+    contact,
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '+526561111111',
+      phoneSourceQuote: 'Para Paty usa raul@example.com y el 656 111 1111',
+      email: 'raul@example.com',
+      emailSourceQuote: 'Para Paty usa raul@example.com y el 656 111 1111',
+      relation: 'mamá'
+    },
+    conversationMessages: [
+      { role: 'assistant', content: 'Para Paty usa raul@example.com y el 656 111 1111' }
+    ],
+    requirements: { participants: { enabled: false, guestFields: [], maxGuests: 10 } }
+  })
+  assert.equal(assistantIsNeverEvidence.ok, true)
+  assert.equal(assistantIsNeverEvidence.primary.phone, '')
+  assert.equal(assistantIsNeverEvidence.primary.email, '')
+})
+
+test('la evidencia literal de participante puede vivir en el historial omitido', async () => {
+  const sourceQuote = 'Para Paty usa paty@example.com y el 656 111 1111'
+  const historyCalls = []
+  const ctx = {
+    conversationMessages: [{ role: 'user', content: 'sí, ese horario está bien' }],
+    loadConversationHistoryPage: async (request) => {
+      historyCalls.push(request)
+      return {
+        ok: true,
+        messages: [{ role: 'inbound', content: sourceQuote }],
+        hasMore: false,
+        nextCursor: null
+      }
+    }
+  }
+  const evidenceMessages = await __conversationalToolsTestHooks.resolveAppointmentParticipantEvidenceMessages({
+    ctx,
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '+526561111111',
+      phoneSourceQuote: sourceQuote,
+      email: 'paty@example.com',
+      emailSourceQuote: sourceQuote,
+      relation: 'mamá'
+    }
+  })
+  const participants = __conversationalToolsTestHooks.buildAppointmentParticipants({
+    contact: {
+      id: 'requester_history_guard',
+      full_name: 'Raúl Gómez',
+      phone: '+526567426612',
+      email: 'raul@example.com'
+    },
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '+526561111111',
+      phoneSourceQuote: sourceQuote,
+      email: 'paty@example.com',
+      emailSourceQuote: sourceQuote,
+      relation: 'mamá'
+    },
+    conversationMessages: evidenceMessages,
+    requirements: { participants: { enabled: true, guestFields: ['name', 'phone', 'email'], maxGuests: 10 } }
+  })
+  assert.equal(participants.ok, true)
+  assert.equal(participants.primary.phone, '+526561111111')
+  assert.equal(participants.primary.email, 'paty@example.com')
+  assert.equal(historyCalls.length, 1)
+  assert.equal(historyCalls[0].query, '656 111 1111')
+
+  const fallbackCalls = []
+  const fallbackMessages = await __conversationalToolsTestHooks.resolveAppointmentParticipantEvidenceMessages({
+    ctx: {
+      conversationMessages: [],
+      historyContext: { telemetry: { omittedMessages: 1 } },
+      loadConversationHistoryPage: async (request) => {
+        fallbackCalls.push(request)
+        if (request.mode === 'search') {
+          return { ok: true, messages: [], hasMore: false, nextCursor: null }
+        }
+        return {
+          ok: true,
+          messages: [{ role: 'user', content: sourceQuote }],
+          hasMore: false,
+          nextCursor: null
+        }
+      }
+    },
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '+526561111111',
+      phoneSourceQuote: sourceQuote,
+      email: null,
+      emailSourceQuote: null,
+      relation: 'mamá'
+    }
+  })
+  const fallbackParticipants = __conversationalToolsTestHooks.buildAppointmentParticipants({
+    contact: { id: 'requester_fallback_guard', full_name: 'Raúl', phone: '+526567426612' },
+    primaryAttendee: {
+      name: 'Paty Jiménez',
+      phone: '+526561111111',
+      phoneSourceQuote: sourceQuote,
+      email: null,
+      emailSourceQuote: null,
+      relation: 'mamá'
+    },
+    conversationMessages: fallbackMessages,
+    requirements: { participants: { enabled: true, guestFields: ['name', 'phone'], maxGuests: 10 } }
+  })
+  assert.equal(fallbackParticipants.ok, true)
+  assert.deepEqual(fallbackCalls.map((call) => call.mode), ['search', 'oldest'])
 })
 
 test('prompt blindado respeta titular distinto apagado y límite de invitados sin truncado', () => {

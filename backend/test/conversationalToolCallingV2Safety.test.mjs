@@ -102,7 +102,12 @@ async function authorizeAppointmentOffer(ctx, startTime, timezone, customerQuote
     .find((item) => item.name === 'offer_appointment_slot')
     .invoke(null, JSON.stringify({ startTime }))
   assert.equal(offered.ok, true, JSON.stringify(offered))
+  assert.doesNotMatch(offered.visibleReply, /[ap]\.\s?m\.\./i)
   const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
+  assert.equal(
+    offered.visibleReply,
+    `Tengo disponible ${localLabel}${/[.!?]$/u.test(localLabel) ? ' ' : '. '}¿Te funciona ese horario?`
+  )
   ctx.executionId = confirmationExecutionId
   ctx.conversationMessages = [
     { id: `offer_visible_${randomUUID()}`, role: 'assistant', content: offered.visibleReply },

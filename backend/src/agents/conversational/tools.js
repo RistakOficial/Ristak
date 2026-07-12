@@ -188,13 +188,197 @@ function cleanParticipant(input = {}) {
   const phone = phoneValid ? normalizedPhone : ''
   const email = cleanAppointmentText(input.email, 180).toLowerCase()
   const relation = cleanAppointmentText(input.relation || input.context, 180)
+  const phoneSourceQuote = cleanAppointmentText(input.phoneSourceQuote, 4000)
+  const emailSourceQuote = cleanAppointmentText(input.emailSourceQuote, 4000)
   if (!name && !rawPhone && !email && !relation) return null
-  return { name, phone, email, relation, phoneProvided: Boolean(rawPhone), phoneValid }
+  return {
+    name,
+    phone,
+    email,
+    relation,
+    phoneSourceQuote,
+    emailSourceQuote,
+    phoneProvided: Boolean(rawPhone),
+    phoneValid
+  }
 }
 
 function publicAppointmentParticipant(participant = {}) {
-  const { phoneProvided: _phoneProvided, phoneValid: _phoneValid, ...publicParticipant } = participant
+  const {
+    phoneProvided: _phoneProvided,
+    phoneValid: _phoneValid,
+    phoneSourceQuote: _phoneSourceQuote,
+    emailSourceQuote: _emailSourceQuote,
+    ...publicParticipant
+  } = participant
   return publicParticipant
+}
+
+function appointmentMessageText(message = {}) {
+  return cleanAppointmentText(message?.content ?? message?.text ?? message?.message_text ?? '', 4000)
+}
+
+function isCustomerAppointmentMessage(message = {}) {
+  const role = String(message?.role || message?.direction || '').trim().toLowerCase()
+  return role === 'user' || role === 'inbound'
+}
+
+function emailTokens(value = '') {
+  return String(value || '').match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || []
+}
+
+function phoneLikeSpans(value = '') {
+  return String(value || '').match(/(?:\+|00)?\d(?:[\s().\/-]*\d){6,14}/g) || []
+}
+
+function participantValueAppearsInQuote(value = '', type = '', sourceQuote = '') {
+  const normalizedValue = cleanAppointmentText(value, 180)
+  const normalizedQuote = cleanAppointmentText(sourceQuote, 4000)
+  if (!normalizedValue || !normalizedQuote) return false
+  if (type === 'phone') {
+    const canonicalValue = normalizePhoneForStorage(normalizedValue)
+    if (!canonicalValue) return false
+    return phoneLikeSpans(normalizedQuote).some((span) => normalizePhoneForStorage(span) === canonicalValue)
+  }
+  if (type === 'email') {
+    const canonicalValue = normalizedValue.toLowerCase()
+    return emailTokens(normalizedQuote).some((token) => token.toLowerCase() === canonicalValue)
+  }
+  return false
+}
+
+function customerQuoteSupportsParticipantValue(messages = [], value = '', type = '', sourceQuote = '') {
+  const normalizedQuote = cleanAppointmentText(sourceQuote, 4000)
+  if (!participantValueAppearsInQuote(value, type, normalizedQuote)) return false
+  return (Array.isArray(messages) ? messages : []).some((message) => {
+    if (!isCustomerAppointmentMessage(message)) return false
+    return appointmentMessageText(message) === normalizedQuote
+  })
+}
+
+function removeUnverifiedParticipantContactData(participant = {}, conversationMessages = []) {
+  const sanitized = { ...participant }
+  if (
+    sanitized.email &&
+    !customerQuoteSupportsParticipantValue(
+      conversationMessages,
+      sanitized.email,
+      'email',
+      sanitized.emailSourceQuote
+    )
+  ) {
+    sanitized.email = ''
+  }
+  if (
+    sanitized.phone &&
+    !customerQuoteSupportsParticipantValue(
+      conversationMessages,
+      sanitized.phone,
+      'phone',
+      sanitized.phoneSourceQuote
+    )
+  ) {
+    sanitized.phone = ''
+    sanitized.phoneProvided = false
+    sanitized.phoneValid = true
+  }
+  return sanitized
+}
+
+function participantEvidenceSearchQuery(value = '', type = '', sourceQuote = '') {
+  const normalizedQuote = cleanAppointmentText(sourceQuote, 4000)
+  if (!participantValueAppearsInQuote(value, type, normalizedQuote)) return ''
+  if (type === 'email') {
+    const canonicalValue = cleanAppointmentText(value, 180).toLowerCase()
+    return emailTokens(normalizedQuote).find((token) => token.toLowerCase() === canonicalValue) || ''
+  }
+  if (type === 'phone') {
+    const canonicalValue = normalizePhoneForStorage(value)
+    return phoneLikeSpans(normalizedQuote).find((span) => normalizePhoneForStorage(span) === canonicalValue) || ''
+  }
+  return ''
+}
+
+function participantContactEvidenceRequests(primaryAttendee = null, guests = []) {
+  const participants = [primaryAttendee, ...(Array.isArray(guests) ? guests : [])]
+    .map((participant) => cleanParticipant(participant))
+    .filter(Boolean)
+  const requests = []
+  for (const participant of participants) {
+    if (participant.phone) {
+      requests.push({ type: 'phone', value: participant.phone, sourceQuote: participant.phoneSourceQuote })
+    }
+    if (participant.email) {
+      requests.push({ type: 'email', value: participant.email, sourceQuote: participant.emailSourceQuote })
+    }
+  }
+  const seen = new Set()
+  return requests.filter((request) => {
+    const key = `${request.type}:${request.value}:${request.sourceQuote}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+async function resolveAppointmentParticipantEvidenceMessages({ ctx, primaryAttendee = null, guests = [] } = {}) {
+  const messages = [...(Array.isArray(ctx?.conversationMessages) ? ctx.conversationMessages : [])]
+  const loadOlderPage = ctx?.loadConversationHistoryPage
+  if (typeof loadOlderPage !== 'function') return messages
+
+  const loadEvidencePages = async ({ mode, query = null, request }) => {
+    let cursor = null
+    const seenCursors = new Set()
+    const omittedMessages = Math.max(0, Number(ctx?.historyContext?.telemetry?.omittedMessages) || 0)
+    const maxPages = omittedMessages > 0
+      ? Math.max(1, Math.ceil(omittedMessages / 30) + 1)
+      : 1000
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+      let page
+      try {
+        page = await loadOlderPage({ mode, cursor, offset: null, query, limit: 30 })
+      } catch (error) {
+        logger.warn(`[Agente conversacional] No se pudo verificar el origen histórico de un dato de participante: ${error.message}`)
+        break
+      }
+      if (!page?.ok) break
+      messages.push(...(Array.isArray(page.messages) ? page.messages : []))
+      if (customerQuoteSupportsParticipantValue(
+        messages,
+        request.value,
+        request.type,
+        request.sourceQuote
+      )) return true
+      const nextCursor = String(page.nextCursor || '').trim()
+      if (!page.hasMore || !nextCursor || seenCursors.has(nextCursor)) break
+      seenCursors.add(nextCursor)
+      cursor = nextCursor
+    }
+    return false
+  }
+
+  for (const request of participantContactEvidenceRequests(primaryAttendee, guests)) {
+    if (customerQuoteSupportsParticipantValue(
+      messages,
+      request.value,
+      request.type,
+      request.sourceQuote
+    )) continue
+    const query = participantEvidenceSearchQuery(
+      request.value,
+      request.type,
+      request.sourceQuote
+    )
+    if (!query) continue
+    const foundBySearch = await loadEvidencePages({ mode: 'search', query, request })
+    if (!foundBySearch) {
+      // La búsqueda literal puede no encontrar mensajes con saltos de línea o
+      // formatos raros. El fallback recorre sólo el tramo omitido del mismo
+      // contacto/canal y vuelve a comparar la cita completa, siempre fail-closed.
+      await loadEvidencePages({ mode: 'oldest', request })
+    }
+  }
+  return messages
 }
 
 function buildAppointmentParticipants({
@@ -203,7 +387,8 @@ function buildAppointmentParticipants({
   guests = [],
   attendeeName = '',
   attendeeContext = '',
-  requirements = {}
+  requirements = {},
+  conversationMessages = []
 } = {}) {
   const requesterRawPhone = cleanAppointmentText(contact?.phone, 80)
   const requesterNormalizedPhone = requesterRawPhone ? normalizePhoneForStorage(requesterRawPhone) : ''
@@ -221,7 +406,10 @@ function buildAppointmentParticipants({
   const legacyPrimary = attendeeName
     ? { name: attendeeName, relation: attendeeContext }
     : null
-  const requestedPrimary = cleanParticipant(primaryAttendee || legacyPrimary)
+  const requestedPrimaryRaw = cleanParticipant(primaryAttendee || legacyPrimary)
+  const requestedPrimary = requestedPrimaryRaw
+    ? removeUnverifiedParticipantContactData(requestedPrimaryRaw, conversationMessages)
+    : null
   const allowDifferentPrimary = requirements?.participants?.allowPrimaryAttendeeDifferentFromRequester !== false
   if (requestedPrimary && !allowDifferentPrimary) {
     return {
@@ -266,8 +454,9 @@ function buildAppointmentParticipants({
   }
   const normalizedGuests = []
   for (const rawGuest of rawGuests) {
-    const guest = cleanParticipant(rawGuest)
-    if (!guest) continue
+    const rawGuestParticipant = cleanParticipant(rawGuest)
+    if (!rawGuestParticipant) continue
+    const guest = removeUnverifiedParticipantContactData(rawGuestParticipant, conversationMessages)
     if (guest.phoneProvided && !guest.phoneValid) {
       return {
         ok: false,
@@ -578,7 +767,15 @@ function wrapMutableToolWithPreventiveFence(toolDefinition, ctx = {}) {
 const appointmentPersonSchema = z.object({
   name: z.string().nullable().describe('Nombre confirmado; null si no está disponible'),
   phone: z.string().nullable().describe('Teléfono confirmado; null si no fue requerido ni proporcionado'),
+  phoneSourceQuote: z.preprocess(
+    (value) => value ?? null,
+    z.string().max(4000).nullable()
+  ).describe('Mensaje COMPLETO y literal del cliente que proporcionó este teléfono; null si phone es null'),
   email: z.string().nullable().describe('Correo confirmado; null si no fue requerido ni proporcionado'),
+  emailSourceQuote: z.preprocess(
+    (value) => value ?? null,
+    z.string().max(4000).nullable()
+  ).describe('Mensaje COMPLETO y literal del cliente que proporcionó este correo; null si email es null'),
   relation: z.string().nullable().describe('Relación o contexto breve; null si no aplica')
 })
 
@@ -1078,7 +1275,9 @@ function appointmentSelectionError(message, code = 'appointment_selection_requir
 }
 
 function nativeAppointmentOfferText(localLabel = '') {
-  return `Tengo disponible ${String(localLabel || '').trim()}. ¿Te funciona ese horario?`
+  const label = String(localLabel || '').trim()
+  const separator = /[.!?]$/u.test(label) ? ' ' : '. '
+  return `Tengo disponible ${label}${separator}¿Te funciona ese horario?`
 }
 
 async function persistNativeAppointmentOffer({ ctx, config, calendarId, startTime, localLabel, timezone } = {}) {
@@ -3576,13 +3775,19 @@ export function createConversationalTools(ctx) {
       confirmationEvidence = { ...confirmationEvidence, offerEventId: offerAuthorization.offerEventId }
       const threadContact = await getThreadContact(ctx)
       if (!threadContact) return missingThreadContactResult(ctx)
+      const participantEvidenceMessages = await resolveAppointmentParticipantEvidenceMessages({
+        ctx,
+        primaryAttendee,
+        guests
+      })
       const participants = buildAppointmentParticipants({
         contact: threadContact,
         primaryAttendee,
         guests,
         attendeeName,
         attendeeContext,
-        requirements: dataRequirements
+        requirements: dataRequirements,
+        conversationMessages: participantEvidenceMessages
       })
       if (!participants.ok) return { ok: false, actionCompleted: false, error: participants.error }
       const requiredDataError = await enforceRequiredContactData({
@@ -4262,13 +4467,19 @@ export function createConversationalTools(ctx) {
       confirmationEvidence = { ...confirmationEvidence, offerEventId: offerAuthorization.offerEventId }
       const threadContact = await getThreadContact(ctx)
       if (!threadContact) return missingThreadContactResult(ctx)
+      const participantEvidenceMessages = await resolveAppointmentParticipantEvidenceMessages({
+        ctx,
+        primaryAttendee,
+        guests
+      })
       const participants = buildAppointmentParticipants({
         contact: threadContact,
         primaryAttendee,
         guests,
         attendeeName,
         attendeeContext,
-        requirements: dataRequirements
+        requirements: dataRequirements,
+        conversationMessages: participantEvidenceMessages
       })
       if (!participants.ok) return { ok: false, actionCompleted: false, error: participants.error }
       const requiredDataError = await enforceRequiredContactData({
@@ -5699,6 +5910,7 @@ export const __conversationalToolsTestHooks = Object.freeze({
   isPlaceholderContactName,
   buildAppointmentParticipant,
   buildAppointmentParticipants,
+  resolveAppointmentParticipantEvidenceMessages,
   appointmentRequirementFacts,
   paymentRequirementFacts
 })

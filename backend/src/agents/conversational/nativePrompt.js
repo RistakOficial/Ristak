@@ -121,7 +121,7 @@ function dataRequirementsSection(config = {}) {
       'No hay datos extra obligatorios configurados.',
       'No pidas nombre, teléfono, correo ni otra ficha sólo para poder ejecutar una acción. Usa el contacto del hilo y lo que la persona ya haya dado voluntariamente.',
       allowDifferentPrimary
-        ? 'Si una cita es para otra persona o incluye invitados, usa únicamente los datos que ya compartieron voluntariamente; no pidas datos extra por defecto.'
+        ? 'Si una cita es para otra persona o incluye invitados, usa únicamente los datos que ya compartieron voluntariamente; no pidas datos extra por defecto ni copies el teléfono o correo del solicitante a otra persona. Por cada teléfono o correo de un tercero, envía también en phoneSourceQuote/emailSourceQuote el mensaje completo y literal del cliente que lo proporcionó; si no existe, envía el dato y su cita como null.'
         : 'Esta agenda no permite un titular distinto: usa siempre al contacto del hilo como titular, envía primaryAttendee y attendeeName en null y no prometas una cita a nombre de otra persona.',
       `Se admiten como máximo ${maxGuests} invitado${maxGuests === 1 ? '' : 's'}. Si la persona menciona más, no omitas ni trunques la lista: explica el límite y pide que la reduzca antes de agendar.`
     ].join(' ')
@@ -158,6 +158,9 @@ function dataRequirementsSection(config = {}) {
         ? `Sí admite invitados. Para cada invitado solicita únicamente: ${guestFields.join(', ')}.`
         : 'Sí admite invitados, pero no hay datos obligatorios configurados para ellos; usa sólo lo que ya compartieron.')
     }
+  }
+  if (allowDifferentPrimary) {
+    lines.push('Nunca inventes ni copies el teléfono o correo del solicitante a un titular distinto o invitado. Cada teléfono o correo de un tercero exige phoneSourceQuote/emailSourceQuote con el mensaje completo y literal del cliente donde apareció ese mismo dato; mensajes del asistente, la ficha del contacto y resúmenes internos no cuentan como evidencia. Si no tienes esa cita, manda el dato y la cita como null.')
   }
   lines.push(`La cita admite como máximo ${maxGuests} invitado${maxGuests === 1 ? '' : 's'}. Si recibes más, no omitas ni trunques a nadie: explica el límite y pide que reduzcan la lista antes de usar la herramienta.`)
   return lines.join(' ')

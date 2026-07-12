@@ -3471,8 +3471,15 @@ nunca un booleano escrito por el modelo.
   `appointment_participants` conserva snapshots separados para `requester`,
   `primary_attendee` y cualquier cantidad acotada de `guest`; nombre es el unico
   dato base y telefono, correo o relacion sólo se exigen cuando el dueño los
-  activo. Google deduplica invitados por correo y envia updates reales. Un
-  familiar o tercero nunca reemplaza silenciosamente la ficha del solicitante.
+  activo. Un titular distinto o invitado tampoco hereda silenciosamente el
+  telefono o correo de quien escribe. Todo telefono o correo de un tercero lleva
+  como evidencia el mensaje completo y literal del cliente que lo proporciono;
+  el servidor comprueba la cita contra el hilo real, incluido el tramo omitido de
+  la ventana del modelo, y exige coincidencia exacta del correo o del telefono
+  normalizado. Sin evidencia, elimina el dato; si era obligatorio, la cita se
+  detiene y pide sólo ese dato. Google deduplica invitados por correo y envia
+  updates reales. Un familiar o tercero nunca reemplaza silenciosamente la ficha
+  del solicitante.
   Cuando `bookingOwner=human`, `request_human_booking` comparte la
   misma revalidacion estricta y el mismo slot UTC, pero sella una solicitud humana
   idempotente en lugar de llamar al controller de creacion. Un retry exacto no
