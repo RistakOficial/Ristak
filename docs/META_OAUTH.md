@@ -12,10 +12,13 @@ para cubrir:
 - Facebook Pages e Instagram profesional enlazado;
 - Messenger, Instagram Direct y comentarios de Facebook e Instagram.
 
-La experiencia de producto es un unico boton **Conectar con Meta**. Meta pide
-acceso una vez; al regresar, Ristak muestra todos los activos autorizados y el
-usuario elige una cuenta publicitaria, una Page, un Dataset opcional y una
-cuenta de Instagram opcional.
+Mientras la app termina la revision de Meta, la experiencia principal sigue
+siendo el wizard manual con System User Token. Debajo aparece de forma discreta
+el boton **Probar OAuth**. Si el usuario lo usa, Meta pide acceso una vez; al
+regresar, Ristak muestra todos los activos autorizados y el usuario elige una
+cuenta publicitaria, una Page, un Dataset opcional y una cuenta de Instagram
+opcional. Al finalizar, OAuth sustituye la conexion visible y conserva el
+metodo anterior como fallback cifrado.
 
 La migracion es gradual y no elimina lo que ya funciona:
 
@@ -30,17 +33,22 @@ La migracion es gradual y no elimina lo que ya funciona:
 
 `Configuracion > Meta` se divide por funcion, no por credencial:
 
-1. **Cuenta Meta**: login unificado, seleccion de activos, estado de Ads y
-   controles de Messenger, Instagram y comentarios.
-2. **Rastreo web**: parametros UTM e inclusion del Dataset en el snippet de
+1. **Cuenta Meta**: configuracion manual principal, tabla unica de la conexion
+   activa y acceso discreto al login OAuth en revision.
+2. **Redes sociales**: credencial de Messenger en modo manual, activos sociales
+   y switches de Messenger, comentarios de Facebook, Instagram DM y comentarios
+   de Instagram. En OAuth las credenciales de Page quedan incluidas y no se
+   vuelven a pedir.
+3. **Rastreo web**: parametros UTM e inclusion del Dataset en el snippet de
    tracking.
-3. **Dataset Test**: codigo temporal de Test Events y envio controlado de
+4. **Dataset Test**: codigo temporal de Test Events y envio controlado de
    eventos de navegador/servidor.
 
-Las rutas anteriores `/ads`, `/social`, `/redes-sociales` y `/mensajes` son
-aliases de `/settings/meta-ads/cuenta`. No deben volver a presentar dos botones
-OAuth. El wizard manual permanece dentro de **Cuenta Meta** y se identifica
-claramente como respaldo heredado.
+`/ads` es alias de `/settings/meta-ads/cuenta`; `/social` y `/mensajes` son
+aliases de `/settings/meta-ads/redes-sociales`. Ninguna ruta debe volver a
+presentar dos botones OAuth. El wizard manual permanece como entrada principal
+dentro de **Cuenta Meta** y el OAuth unificado queda debajo, sin una tabla de
+capacidades duplicada.
 
 ## WhatsApp Embedded Signup especializado
 
@@ -142,9 +150,9 @@ https://www.facebook.com/v25.0/dialog/oauth
 
 ## Flujo completo
 
-1. **Cuenta Meta** consulta el estado con `GET /api/meta/oauth/status` sin crear
-   `state`.
-2. Al pulsar **Conectar con Meta**, Ristak solicita
+1. **Cuenta Meta** carga primero el metodo manual y consulta en segundo plano el
+   estado con `GET /api/meta/oauth/status` sin crear `state`.
+2. Al pulsar **Probar OAuth**, Ristak solicita
    `POST /api/meta/oauth/connect-url` y manda como retorno absoluto
    `/settings/meta-ads/cuenta` en el host publico de la instalacion.
 3. Installer valida ese origin contra la instalacion, crea un `state` opaco con

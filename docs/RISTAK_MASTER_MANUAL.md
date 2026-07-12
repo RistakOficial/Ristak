@@ -2210,10 +2210,15 @@ Ristak usa Meta en varias areas:
 
 ### Conexion OAuth y convivencia manual
 
-- `Configuracion > Meta` usa **un solo OAuth** para anuncios, Dataset/CAPI,
-  Facebook, Instagram, mensajes y comentarios. La interfaz se divide en
-  **Cuenta Meta**, **Rastreo web** y **Dataset Test**; son funciones distintas
-  de la misma credencial, no conexiones separadas.
+- `Configuracion > Meta` conserva el wizard manual con System User Token como
+  experiencia principal mientras termina la revision oficial. Debajo queda el
+  boton discreto **Probar OAuth**; el flujo OAuth sigue siendo unico para
+  anuncios, Dataset/CAPI, Facebook, Instagram, mensajes y comentarios.
+- La interfaz se divide en **Cuenta Meta**, **Redes sociales**, **Rastreo web**
+  y **Dataset Test**. Cuenta Meta muestra una sola tabla de la conexion activa;
+  no muestra una tabla separada de capacidades OAuth. Redes sociales concentra
+  credenciales manuales, activos y switches de Messenger, comentarios de
+  Facebook, Instagram DM y comentarios de Instagram.
 - El Config ID unificado pide `ads_read`, `business_management`,
   `pages_show_list`, `pages_manage_metadata`, `pages_messaging`,
   `pages_read_engagement`, `pages_read_user_content`,
@@ -2292,8 +2297,8 @@ Ristak usa Meta en varias areas:
   habilita DMs y comentarios de Instagram. Ristak no pide un token separado de
   Instagram.
 - En OAuth la suscripcion de Page/webhooks es programatica y la UI no pide
-  copiar valores manuales. En modo manual, **Cuenta Meta** conserva la guia de
-  Meta Developers. La suscripcion canonica del inbox pide
+  copiar valores manuales. En modo manual, **Redes sociales** conserva las
+  credenciales y la guia de Meta Developers. La suscripcion canonica del inbox pide
   `messages`, `message_echoes`, `message_edits`, `message_reactions`,
   `message_reads`, `message_deliveries`, `messaging_postbacks`,
   `messaging_referrals` y `feed`: los primeros ocho mantienen DMs, estados y
@@ -2308,7 +2313,7 @@ Ristak usa Meta en varias areas:
   que Meta vuelva a emitir los mensajes viejos por Webhook.
 - **Messenger externo** depende del modo. En manual usa un User Token humano
   distinto del System User Token: el usuario lo pega en
-  `Configuracion > Meta > Cuenta Meta`, Ristak valida la Page y lo cifra en
+  `Configuracion > Meta > Redes sociales`, Ristak valida la Page y lo cifra en
   `meta_config.messenger_user_token`. En OAuth unificado, Installer entrega el
   Page Token y su proof; no aparece un segundo campo. Ads/CAPI usan el BISU y
   Messenger/Instagram/comentarios usan el Page Token. El toggle solo se
