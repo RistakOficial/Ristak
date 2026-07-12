@@ -3994,11 +3994,14 @@ La Notification Service Extension serializa tareas/callbacks para finalizar una
 sola vez, descarga con timeouts de 6–7 s y limita el avatar a 5 MB y la media
 adjunta a 12 MB; si no puede enriquecer, entrega la notificacion base.
 El login de `com.ristak.app` muestra el isotipo Ristak libre de contenedores y el
-wordmark oficial adaptado a claro/oscuro. Solo presenta los campos `Correo` y
-`Contrasena`, sin subtitulo explicativo, correo de ejemplo ni configuracion
-avanzada de servidor. La app resuelve automaticamente la instalacion correcta
-por correo via `https://www.ristak.com/api/mobile/resolve` antes de autenticar
-contra el backend del cliente.
+wordmark oficial adaptado a claro/oscuro dentro de una cabecera pequena y
+compacta. `Iniciar sesion` se presenta como subtitulo ligero, y la separacion
+entre cabecera, subtitulo, campos y boton es corta y uniforme. Solo presenta los
+campos `Correo` y `Contrasena`, sin subtitulo explicativo, correo de ejemplo ni
+configuracion avanzada de servidor. La app resuelve automaticamente la
+instalacion correcta por correo via
+`https://www.ristak.com/api/mobile/resolve` antes de autenticar contra el backend
+del cliente.
 En Android hay dos contratos: el legacy Capacitor (`frontend/android`,
 `com.ristak.app`) sigue usando FCM data-only para que
 `RistakFirebaseMessagingService` dibuje la notificacion nativa; la app Play/Expo

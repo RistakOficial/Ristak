@@ -17,10 +17,14 @@ struct LoginView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let topInset = min(
+                proxy.size.height * 0.08,
+                RistakTheme.Spacing.xxl * 2
+            )
+
             ScrollView {
-                VStack(spacing: RistakTheme.Spacing.xxl) {
+                VStack(spacing: RistakTheme.Spacing.md) {
                     brandHeader
-                        .padding(.top, RistakTheme.Spacing.xxl)
 
                     heading
 
@@ -39,8 +43,13 @@ struct LoginView: View {
                 }
                 .frame(maxWidth: 420)
                 .padding(.horizontal, RistakTheme.Spacing.xl)
+                .padding(.top, topInset)
                 .padding(.bottom, RistakTheme.Spacing.xxl)
-                .frame(maxWidth: .infinity, minHeight: proxy.size.height * 0.9)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: proxy.size.height * 0.9,
+                    alignment: .top
+                )
             }
             .scrollDismissesKeyboard(.interactively)
         }
@@ -52,16 +61,16 @@ struct LoginView: View {
     // MARK: - Marca
 
     private var brandHeader: some View {
-        VStack(spacing: RistakTheme.Spacing.md) {
+        VStack(spacing: -RistakTheme.Spacing.sm) {
             Image("LoginLogo")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 112, height: 112)
+                .frame(width: 84, height: 84)
 
             Image("LoginWordmark")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 170)
+                .frame(width: 136)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Ristak")
@@ -69,8 +78,8 @@ struct LoginView: View {
 
     private var heading: some View {
         Text("Iniciar sesión")
-            .font(.title2.bold())
-            .foregroundStyle(RistakTheme.textPrimary)
+            .font(.subheadline)
+            .foregroundStyle(RistakTheme.textDim)
     }
 
     // MARK: - Campos

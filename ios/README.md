@@ -44,6 +44,9 @@ xcrun devicectl device process launch --device <UDID> com.ristak.app
   y usa el wordmark oficial negro/blanco según el modo de apariencia. La pantalla
   no explica la resolución automática ni muestra correos de ejemplo: los campos
   visibles son únicamente `Correo` y `Contraseña`.
+- Isotipo y wordmark forman un bloque compacto, pequeño y de separación mínima;
+  `Iniciar sesión` funciona como subtítulo ligero. La marca, el subtítulo, los
+  campos y el botón conservan una separación corta y uniforme.
 
 ### Pruebas de calidad y carga
 
