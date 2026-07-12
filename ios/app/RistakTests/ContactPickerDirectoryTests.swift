@@ -16,6 +16,13 @@ final class ContactPickerDirectoryTests: XCTestCase {
         try JSONDecoder().decode([ChatContact].self, from: Data(contactsJSON.utf8))
     }
 
+    private func contact(id: String, profilePhotoUrl: String? = nil) throws -> ChatContact {
+        var object: [String: Any] = ["id": id, "name": "Contacto"]
+        if let profilePhotoUrl { object["profilePhotoUrl"] = profilePhotoUrl }
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(ChatContact.self, from: data)
+    }
+
     func testFilterMatchesNamesWithoutDependingOnAccentsOrCase() throws {
         let result = ContactPickerDirectory.filter(try contacts(), query: "ANGEL NUNEZ")
         XCTAssertEqual(result.map(\.id), ["accent"])
@@ -45,5 +52,26 @@ final class ContactPickerDirectoryTests: XCTestCase {
 
     func testTextWithoutDigitsDoesNotMatchEveryPhone() throws {
         XCTAssertTrue(ContactPickerDirectory.filter(try contacts(), query: "sin coincidencia").isEmpty)
+    }
+
+    func testPreservingAvatarsFillsMissingPhotoFromInbox() throws {
+        let fresh = try contact(id: "same-contact")
+        let inbox = try contact(
+            id: "same-contact",
+            profilePhotoUrl: "https://cdn.example.com/avatar.jpg"
+        )
+
+        let result = ContactPickerDirectory.preservingAvatars([fresh], from: [inbox])
+
+        XCTAssertEqual(result.first?.profilePhotoUrl, "https://cdn.example.com/avatar.jpg")
+    }
+
+    func testPreservingAvatarsKeepsFreshServerPhoto() throws {
+        let fresh = try contact(id: "same-contact", profilePhotoUrl: "https://cdn.example.com/fresh.jpg")
+        let inbox = try contact(id: "same-contact", profilePhotoUrl: "https://cdn.example.com/old.jpg")
+
+        let result = ContactPickerDirectory.preservingAvatars([fresh], from: [inbox])
+
+        XCTAssertEqual(result.first?.profilePhotoUrl, "https://cdn.example.com/fresh.jpg")
     }
 }

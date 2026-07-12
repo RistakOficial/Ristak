@@ -988,7 +988,11 @@ revalidan sin bloquear y no vuelven a pedir la bandeja de chats. El backend
 omite agregados de pagos/citas y calentamiento de avatares, limita el payload y
 devuelve todos los telefonos del contacto junto con las señales mínimas del
 último mensaje (`lastMessageChannel`, tipo, transporte y fecha) para pintar el
-badge de canal sin recalcular la bandeja completa. Solo una consulta con forma real de
+badge de canal sin recalcular la bandeja completa. Si WhatsApp o Meta ya tienen
+una foto persistida, el directorio la devuelve sin I/O externo; iOS también
+rellena URLs ausentes con el último avatar válido del snapshot de la bandeja.
+Por ello los selectores de cita y pagos mantienen paridad visual con Nuevo chat
+y solo recurren a iniciales cuando realmente no existe una foto conocida. Solo una consulta con forma real de
 telefono puede producir `matchedPhone`; digitos dentro de un nombre no cambian
 el destinatario.
 El cache de queries exactas es LRU en memoria; solo los recientes se guardan en

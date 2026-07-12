@@ -3991,7 +3991,9 @@ export const searchContacts = async (req, res) => {
           c.created_at,
           c.updated_at,
           c.source,
-          c.preferred_whatsapp_phone_number_id
+          c.preferred_whatsapp_phone_number_id,
+${CONTACT_WHATSAPP_PROFILE_SELECTS},
+${CONTACT_META_PROFILE_SELECT}
         FROM contacts c
         WHERE ${conditions.join(' AND ')}
         ORDER BY ${orderBy}
@@ -4056,7 +4058,9 @@ export const searchContacts = async (req, res) => {
             hasAttendedAppointment: false,
             hasUpcomingConfirmedAppointmentBadge: false,
             source: contact.source || null,
-            profilePhotoUrl: null,
+            // Solo reutiliza fotos ya persistidas por WhatsApp/Meta. El picker
+            // sigue sin hacer I/O externo ni calentamiento de proveedores.
+            profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
             preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
             phones,
             phoneNumbers: phones,

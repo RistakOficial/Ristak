@@ -163,6 +163,19 @@ struct ContactsService: Sendable {
                 cacheData = Self.encodePickerContacts(legacyRecents) ?? responseData
             }
 
+            // El directorio es intencionalmente ligero, pero no debe degradar
+            // una foto que la bandeja o un snapshot anterior ya hidrataron.
+            // La foto fresca del servidor siempre gana; solo rellenamos huecos.
+            let previousContacts = Self.decodeCachedPickerContacts(
+                for: Self.pickerCacheKey(trimmed),
+                volatile: !trimmed.isEmpty
+            ) ?? []
+            contacts = ContactPickerDirectory.preservingAvatars(
+                contacts,
+                from: previousContacts + ChatInboxDiskCache.load()
+            )
+            cacheData = Self.encodePickerContacts(contacts) ?? cacheData
+
             let cacheKey = Self.pickerCacheKey(trimmed)
             if trimmed.isEmpty {
                 // Solo el directorio reciente cruza lanzamientos.
@@ -214,7 +227,10 @@ struct ContactsService: Sendable {
             for: Self.pickerCacheKey(trimmed),
             volatile: !trimmed.isEmpty
         ) {
-            return exact
+            return ContactPickerDirectory.preservingAvatars(
+                exact,
+                from: ChatInboxDiskCache.load()
+            )
         }
 
         guard !trimmed.isEmpty,
@@ -224,7 +240,11 @@ struct ContactsService: Sendable {
               ) else {
             return []
         }
-        return ContactPickerDirectory.filter(recent, query: trimmed)
+        let hydratedRecent = ContactPickerDirectory.preservingAvatars(
+            recent,
+            from: ChatInboxDiskCache.load()
+        )
+        return ContactPickerDirectory.filter(hydratedRecent, query: trimmed)
     }
 
     @MainActor
@@ -295,6 +315,29 @@ struct ContactsService: Sendable {
 /// Lógica pura del directorio compartida por los tres selectores y cubierta por
 /// unit tests. No conoce caché, red ni actores; solo normaliza texto/teléfonos.
 enum ContactPickerDirectory {
+    /// Conserva avatares ya conocidos al refrescar un directorio ligero. La
+    /// respuesta fresca manda y una fuente auxiliar solo llena URLs vacías.
+    static func preservingAvatars(
+        _ contacts: [ChatContact],
+        from sources: [ChatContact]
+    ) -> [ChatContact] {
+        let photosByID = sources.reduce(into: [String: String]()) { photos, contact in
+            let id = contact.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            let photo = contact.profilePhotoUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !id.isEmpty, !photo.isEmpty, photos[id] == nil else { return }
+            photos[id] = photo
+        }
+
+        return contacts.map { contact in
+            var hydrated = contact
+            let currentPhoto = contact.profilePhotoUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if currentPhoto.isEmpty, let preservedPhoto = photosByID[contact.id] {
+                hydrated.profilePhotoUrl = preservedPhoto
+            }
+            return hydrated
+        }
+    }
+
     static func filter(_ contacts: [ChatContact], query: String) -> [ChatContact] {
         let folded = query.folding(
             options: [.caseInsensitive, .diacriticInsensitive],

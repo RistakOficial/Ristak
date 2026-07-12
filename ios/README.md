@@ -144,7 +144,9 @@ solo en capa flotante; copy en español.
   `chat-events` + `payment-events` con reconexión. `OSLog` y el ring sanitizado
   registran hitos de configuración/token/registro/recepción sin guardar secretos.
 - **Rendimiento cotidiano**: directorio cache-first para nuevo chat, citas y
-  pagos; hidratación puntual/coalescida de un chat fuera de la página al llegar
+  pagos, con la foto persistida de WhatsApp/Meta y conservación del avatar ya
+  hidratado en la bandeja para no degradar citas/pagos a iniciales; hidratación
+  puntual/coalescida de un chat fuera de la página al llegar
   SSE; historial primario visible antes de cargar datos secundarios; adjuntos
   por multipart directo a storage/CDN con fallback legacy fuera del hilo visual.
 - **Calidad operativa**: `mxSignpost` agregado por `MetricKit`, `OSLog`, ring local

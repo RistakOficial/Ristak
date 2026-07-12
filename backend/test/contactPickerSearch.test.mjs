@@ -34,11 +34,14 @@ test('el directorio picker busca identidad y teléfono alterno sin métricas pes
   const contactId = `contact_picker_${suffix}`
   const phoneId = `contact_phone_picker_${suffix}`
   const messageId = `contact_picker_message_${suffix}`
+  const profileId = `contact_picker_profile_${suffix}`
+  const profilePhotoUrl = `https://images.example.invalid/${suffix}.jpg`
   const alternatePhone = `+5299${suffix.replace(/\D/g, '').padEnd(10, '7').slice(0, 10)}`
   const uniqueName = `Selector Veloz ${suffix.slice(0, 10)}`
 
   const cleanup = async () => {
     await db.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ?', [profileId]).catch(() => undefined)
     await db.run('DELETE FROM contact_phone_numbers WHERE id = ?', [phoneId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
@@ -73,6 +76,13 @@ test('el directorio picker busca identidad y teléfono alterno sin métricas pes
       ) VALUES (?, ?, ?, 'inbound', 'text', 'Hola desde WhatsApp', 'api', ?, ?)`,
       [messageId, contactId, '+526561234567', '2099-09-01T10:03:00.000Z', '2099-09-01T10:03:00.000Z']
     )
+    await db.run(
+      `INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, profile_picture_url,
+        profile_picture_updated_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [profileId, contactId, '+526561234567', uniqueName, profilePhotoUrl]
+    )
 
     const byName = await runSearch({ picker: 'true', q: uniqueName, limit: '60' })
     assert.equal(byName.length, 1)
@@ -80,7 +90,7 @@ test('el directorio picker busca identidad y teléfono alterno sin métricas pes
     assert.equal(byName[0].name.toLocaleLowerCase('es'), uniqueName.toLocaleLowerCase('es'))
     assert.equal(byName[0].ltv, 0)
     assert.equal(byName[0].purchases, 0)
-    assert.equal(byName[0].profilePhotoUrl, null)
+    assert.equal(byName[0].profilePhotoUrl, profilePhotoUrl)
     assert.equal(byName[0].phones[0].phone, '+526561234567')
     assert.equal(byName[0].phones.some(entry => entry.phone === alternatePhone), true)
     assert.equal(byName[0].lastMessageChannel, 'whatsapp')

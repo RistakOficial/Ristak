@@ -411,7 +411,12 @@ ultimo snapshot de esa cuenta, revalidan en segundo plano y buscan en servidor
 despues de un debounce corto. No deben recargar la bandeja de chats para obtener
 contactos. El resultado fresco es autoritativo sobre contactos borrados u
 ocultos y debe incluir todos sus telefonos para no iniciar la conversacion con
-un numero distinto al que hizo match. `matchedPhone` solo se usa cuando el texto
+un numero distinto al que hizo match. El backend incluye la foto de perfil de
+WhatsApp o Meta que ya este persistida, sin consultar proveedores al abrir el
+selector; iOS conserva ademas el ultimo avatar valido del snapshot de la bandeja
+cuando una respuesta ligera no trae foto. Asi `Nueva cita` y pagos muestran el
+mismo avatar disponible en `Nuevo chat`, en lugar de degradarlo a iniciales.
+`matchedPhone` solo se usa cuando el texto
 es realmente un telefono; cifras dentro de un nombre no pueden cambiar el
 destinatario, y la eleccion explicita se conserva por contacto y cuenta para que
 cerrar/reabrir el hilo no regrese silenciosamente al telefono principal. Antes
