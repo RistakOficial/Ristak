@@ -47,7 +47,7 @@ test('imported HTML code files are listed and saved through the code editor endp
   }
 })
 
-test('AI HTML draft edit returns edited draft without saving imported code', async () => {
+test('AI HTML draft edit never saves code when the full-page assistant cannot produce a draft', async () => {
   const {
     createImportedSiteFromHtml,
     deleteSite,
@@ -58,7 +58,7 @@ test('AI HTML draft edit returns edited draft without saving imported code', asy
   let siteId = ''
 
   try {
-    const html = '<!doctype html><html><head><title>AI draft test</title></head><body><main><h1 data-rstk-editable="true" data-rstk-edit-type="heading">Original heading</h1><button data-rstk-editable="true" data-rstk-edit-type="button">Original CTA</button></main></body></html>'
+    const html = '<!doctype html><html><head><title>AI draft test</title></head><body><main><h1 id="hero-title">Original heading</h1><button id="hero-cta">Original CTA</button></main></body></html>'
     const created = await createImportedSiteFromHtml({
       filename: 'ai-draft-test.html',
       fileBase64: Buffer.from(html, 'utf8').toString('base64'),
@@ -70,10 +70,6 @@ test('AI HTML draft edit returns edited draft without saving imported code', asy
     const storedHtml = created.import.codeFiles[0].content
     const currentDraftHtml = storedHtml.replace('Original heading', 'Draft heading from editor')
     const prompt = [
-      'Elementos detectados dentro de la zona:',
-      '1. tag=h1, role=titular, editId=heading_original_heading, editType=heading, label=Original heading, rect=x=10 y=10 w=200 h=40, text=Draft heading from editor',
-      'HTML: <h1 data-rstk-editable="true" data-rstk-edit-type="heading" data-rstk-edit-id="heading_original_heading">Draft heading from editor</h1>',
-      '',
       'Solicitud del usuario:',
       'cambia el título a "AI assistant heading"',
       '',
@@ -81,20 +77,17 @@ test('AI HTML draft edit returns edited draft without saving imported code', asy
       '- Devuelve el HTML completo actualizado.'
     ].join('\n')
 
-    const result = await updateImportedSiteHtmlWithAI(siteId, {
-      siteKind: 'landing',
-      pageId: 'page-1',
-      draftOnly: true,
-      currentHtml: currentDraftHtml,
-      aiRegionRequest: 'cambia el título a "AI assistant heading"',
-      messages: [{ role: 'user', content: prompt }]
-    })
-
-    assert.equal(result.status, 'updated')
-    assert.match(result.draftHtml, /AI assistant heading/)
-    assert.doesNotMatch(result.draftHtml, />Draft heading from editor</)
-    assert.equal(result.site, undefined)
-    assert.equal(result.import, undefined)
+    await assert.rejects(
+      () => updateImportedSiteHtmlWithAI(siteId, {
+        siteKind: 'landing',
+        pageId: 'page-1',
+        draftOnly: true,
+        currentHtml: currentDraftHtml,
+        aiRegionRequest: 'cambia el título a "AI assistant heading"',
+        messages: [{ role: 'user', content: prompt }]
+      }),
+      error => error?.code === 'OPENAI_CREDENTIAL_REQUIRED'
+    )
 
     const storedAfterDraft = await getImportedSiteBySiteId(siteId)
     assert.match(storedAfterDraft.htmlSanitized, /Original heading/)
@@ -331,10 +324,12 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /No tienes acceso al contexto del negocio/)
   assert.match(instructions, /Esta prohibido responderle al usuario dentro del HTML/)
   assert.match(instructions, /Aplica cambios en silencio/)
-  assert.match(instructions, /NUNCA dejes un <video>/)
-  assert.match(instructions, /rstk-imported-video-slot/)
-  assert.match(instructions, /data-rstk-video-url/)
-  assert.match(instructions, /Mantén el mismo valor en data-rstk-video-url y en src/)
+  assert.match(instructions, /El HTML es el resultado final/)
+  assert.match(instructions, /data-rstk-asset-id="CLAVE"/)
+  assert.match(instructions, /data-rstk-background-asset-id="CLAVE"/)
+  assert.match(instructions, /data-rstk-native-element="video"/)
+  assert.match(instructions, /Un video HTML propio queda opaco/)
+  assert.doesNotMatch(instructions, /data-rstk-editable="true"/)
   assert.match(instructions, /action="disqualify"/)
   assert.match(instructions, /disqualifyOutcome="specific_page"/)
   assert.match(instructions, /data-rstk-conversion-condition="qualified_only"/)

@@ -174,6 +174,7 @@ import {
   type SiteMetaEventParameters,
   type SiteMetaSubmitCondition,
   type SiteMetaTrigger,
+  type SiteContentAsset,
   type SiteOptionAction,
   type SitePage,
   type SiteSubmission,
@@ -1969,6 +1970,26 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
   }
 }
 
+const detectImportedNativeElementDuplicateIds = (html = '') => {
+  if (!html || typeof DOMParser === 'undefined') return []
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const seen = new Set<string>()
+    const duplicates = new Set<string>()
+    Array.from(doc.querySelectorAll(importedNativeElementSelector)).forEach((element, index) => {
+      const type = getImportedNativeElementTypeFromElement(element)
+      if (!type) return
+      const id = getImportedNativeElementSlotId(element, type, index)
+      const key = `${type}:${id}`
+      if (seen.has(key)) duplicates.add(`${importedNativeElementTypeLabels[type]} · ${id}`)
+      seen.add(key)
+    })
+    return [...duplicates]
+  } catch {
+    return []
+  }
+}
+
 const getImportedNativeElementBlockSettings = (slot: ImportedNativeElementSlot, pageId = '') => ({
   importedHtmlNativeElement: true,
   importedHtmlNativeSlotId: slot.id,
@@ -2073,8 +2094,8 @@ const textToFileDataUrl = (content: string, mimeType: string) => {
 }
 
 const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
-- Marca textos editables con data-rstk-editable="true", data-rstk-edit-type="heading|text|button|placeholder|form_field|image|video" y data-rstk-edit-id único.
-- Botones: usa <button type="button" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-principal" data-rstk-label="Botón principal">Texto</button>.
+- El HTML es una superficie cerrada: no agregues data-rstk-editable ni contratos de edición visual por texto, imagen, botón o campo.
+- Devuelve siempre el documento o los documentos HTML completos. Los cambios posteriores se hacen reemplazando el código completo, manualmente o con IA.
 - Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
 - Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
 - Formularios HTML propios: usa <form data-rstk-form-id="lead-form"> y campos con name, id, data-rstk-edit-type="form_field", data-rstk-label y placeholder.
@@ -2084,10 +2105,10 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Slots nativos renderizados por Ristak (form, calendar con data-rstk-native-render="ristak", payment y video): deja el contenedor limpio y vacío. No agregues texto tipo "aquí va...", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima. El HTML solo define la ubicación; Ristak insertará el diseño completo del elemento real. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.
 - Formularios nativos Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacío; no pongas <form>, campos ni botones de envío dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio botón y sus acciones "Al enviar"; si necesitas ir a otra página, configúralo en el editor.
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
-- Para usar tu propio frontend de calendario pero mapearlo a Ristak: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. Esta excepción sí puede tener UI propia porque no usa el calendario visual de Ristak. Tu JS debe usar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre es ISO UTC del slot confirmado; timezone es la zona del negocio/visitante que eligió la cita.
+- Para calendario HTML conectado a Ristak usa un contenedor data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom". Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton con data-rstk-calendar-load-slots y form con data-rstk-calendar-book-form. Nombre/email/telefono usan data-rstk-calendar-name/email/phone y el mensaje data-rstk-calendar-message. No escribas JavaScript: Ristak conecta disponibilidad y reserva de forma segura con la zona horaria del negocio.
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
 - Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, acciones por tiempo, formulario de video y eventos Meta/CAPI configurados.
-- Targets para acciones de video: todo botón, contenedor, imagen, sección o formulario que quieras mostrar/ocultar desde un video debe tener id único o data-rstk-edit-id único. Ejemplo: <button id="cta-final" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-final">Continuar</button>. Los fondos/decoración deben marcarse como data-rstk-edit-type="background_image" o aria-hidden="true" para que no salgan como targets.
+- Targets para acciones de video: todo botón, contenedor, imagen, sección o formulario que quieras mostrar/ocultar debe tener id único. Ejemplo: <button id="cta-final">Continuar</button>.
 - Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
 - Para cita agendada usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC si ya conoces la hora exacta.
@@ -2099,24 +2120,12 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Resultado del descarte: usa disqualifyOutcome="message" + buttonMessage, disqualifyOutcome="specific_page" + buttonPageId, o disqualifyOutcome="url" + buttonUrl. Ejemplo: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
 - Si cualquier respuesta puede descalificar, el <form> final debe llevar data-rstk-conversion-condition="qualified_only". Ristak guardará todos los submits, pero solo enviará Pixel/CAPI cuando el resultado sea calificado.
 - Nunca dispares fbq, gtag, dataLayer ni eventos de conversión manuales al click o submit. Ristak emite el evento después de conocer el resultado real.
-- Imágenes: usa <img src="..." alt="..." data-rstk-editable="true" data-rstk-edit-type="image" data-rstk-edit-id="imagen-hero">.
-- Videos: NUNCA dejes un <video>, <iframe>, <embed> u <object> suelto. Siempre envuélvelo en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id único, data-rstk-label y data-rstk-video-url.
-- Video MP4/WebM/MOV correcto:
-  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://cdn.ejemplo.com/video.mp4" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
-    <video src="https://cdn.ejemplo.com/video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;display:block;object-fit:cover;background:#000;"></video>
-  </div>
-- Video iframe/embed correcto:
-  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://www.youtube.com/embed/VIDEO_ID" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
-    <iframe src="https://www.youtube.com/embed/VIDEO_ID" title="Video principal" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="width:100%;height:100%;display:block;border:0;background:#000;"></iframe>
-  </div>
-- Mantén el mismo valor en data-rstk-video-url y en src para que Ristak pueda reemplazar el video desde el editor.
-- Secciones: usa data-rstk-section="Hero|Formulario|Gracias" para que el editor ubique rápido cada bloque.
-- Evita scripts de navegación automática dentro del editor; Ristak bloquea clicks, submits y window.open mientras se edita.`.trim()
+- Multimedia del Panel de contenido: usa únicamente las claves exactas que Ristak entregue. Imagen/medio: <img data-rstk-asset-id="CLAVE" alt="...">. Fondo: <section data-rstk-background-asset-id="CLAVE">...</section>. Descarga: <a data-rstk-asset-id="CLAVE">Descargar</a>. Nunca sustituyas una clave por la URL física de Storage o Bunny.
+- Para video configurable, reproductor, acciones y formularios sobre video usa siempre el slot nativo de video. Un video HTML propio queda opaco y no se configura desde Ristak.
+- Secciones que sean targets de video deben usar id único.
+- Evita navegación automática, submits automáticos y window.open.`.trim()
 
 const BLANK_IMPORTED_HTML = `<!doctype html>
-<!--
-${IMPORTED_HTML_AI_GUIDE}
--->
 <html lang="es">
 <head>
   <meta charset="utf-8">
@@ -2185,10 +2194,10 @@ const DEFAULT_IMPORTED_POPUP_HTML = `<!doctype html>
   </style>
 </head>
 <body>
-  <section class="popup" data-rstk-editable="true" data-rstk-edit-type="section" data-rstk-label="Pop up">
-    <h2 data-rstk-editable="true" data-rstk-edit-type="heading" data-rstk-edit-id="popup_title" data-rstk-label="Título del pop up">Título del pop up</h2>
-    <p data-rstk-editable="true" data-rstk-edit-type="text" data-rstk-edit-id="popup_copy" data-rstk-label="Texto del pop up">Escribe aquí el mensaje que quieres mostrar.</p>
-    <button type="button" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="popup_cta" data-rstk-label="Botón del pop up" data-rstk-button-action="close_popup">Cerrar</button>
+  <section class="popup" id="popup-principal">
+    <h2 id="popup-title">Título del pop up</h2>
+    <p id="popup-copy">Escribe aquí el mensaje que quieres mostrar.</p>
+    <button type="button" id="popup-cta" data-rstk-button-action="close_popup">Cerrar</button>
   </section>
 </body>
 </html>`
@@ -18643,7 +18652,7 @@ Reglas para esta edición:
 - No respondas con needs_more_info ni con preguntas para cambios de posición, alineación, orden, tamaño, video, botón, titular o layout. Haz tu mejor edición con el HTML actual.
 - Si el usuario pide titular arriba, video debajo y botón debajo, convierte esa zona en un layout vertical centrado y conserva los estilos visuales importantes.
 - Si el usuario menciona que algo "se transparenta", "se ve muy transparente", "no se lee", "se pierde", "muy claro" o "poco contraste", usa el resumen visual para localizar fondos/textos con alpha u opacidad baja y vuelve esa parte más sólida/legible sin cambiar contenido.
-- Si la solicitud pide insertar un video, acepta URL o código iframe/embed y colócalo como un elemento editable de video con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-label y data-rstk-edit-id.
+- Si la solicitud pide un video configurable, agrega un slot nativo de video. Un video HTML propio queda bajo control exclusivo del código.
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
   `.trim()
 }
@@ -19297,6 +19306,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const previewVisualContextRef = useRef<SitesAIPreviewVisualContext | null>(null)
   const inlineImageFileInputRef = useRef<HTMLInputElement | null>(null)
   const codeAssistantAttachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const contentAssetInputRef = useRef<HTMLInputElement | null>(null)
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(true)
   const [previewError, setPreviewError] = useState('')
@@ -19340,6 +19350,14 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [codeAssistantWorkSteps, setCodeAssistantWorkSteps] = useState<ImportedCodeAssistantWorkStep[]>([])
   const [codeAssistantAttachments, setCodeAssistantAttachments] = useState<SitesAICreationAttachment[]>([])
   const [codeAssistantAttachmentError, setCodeAssistantAttachmentError] = useState('')
+  const [contentAssets, setContentAssets] = useState<SiteContentAsset[]>([])
+  const [contentAssetsLoading, setContentAssetsLoading] = useState(true)
+  const [contentAssetsUploading, setContentAssetsUploading] = useState(false)
+  const [contentAssetsError, setContentAssetsError] = useState('')
+  const [contentAssetPickerKind, setContentAssetPickerKind] = useState<'image' | 'video' | null>(null)
+  const [contentAssetReplacingId, setContentAssetReplacingId] = useState('')
+  const [contentElementType, setContentElementType] = useState<ImportedNativeElementType>('form')
+  const [contentElementMode, setContentElementMode] = useState<ImportedNativeElementRenderMode>('ristak')
   const [selectedImportedNativeElementKey, setSelectedImportedNativeElementKey] = useState('')
   const [importedVideoFormGateActiveBlockId, setImportedVideoFormGateActiveBlockId] = useState('')
   const [importedVideoFormGateActiveElement, setImportedVideoFormGateActiveElement] = useState<EmbeddedFormActiveElement>('field')
@@ -19407,7 +19425,86 @@ const ImportedHtmlEditorPanel: React.FC<{
         key: `${pageId}:${slot.key}`
       }))
   }, [activeImportedPage?.id, activePageId, importedNativeElementDetectionHtml])
+  const importedNativeElementDuplicateIds = useMemo(
+    () => detectImportedNativeElementDuplicateIds(importedNativeElementDetectionHtml),
+    [importedNativeElementDetectionHtml]
+  )
   const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || null
+  const loadContentAssets = useCallback(async () => {
+    setContentAssetsLoading(true)
+    setContentAssetsError('')
+    try {
+      setContentAssets(await sitesService.listContentAssets(site.id))
+    } catch (error) {
+      setContentAssetsError(error instanceof Error ? error.message : 'No se pudo cargar el contenido multimedia.')
+    } finally {
+      setContentAssetsLoading(false)
+    }
+  }, [site.id])
+
+  useEffect(() => {
+    void loadContentAssets()
+  }, [loadContentAssets])
+
+  const connectContentMediaAsset = useCallback(async (asset: MediaAsset, bindingId = '') => {
+    setContentAssetsUploading(true)
+    setContentAssetsError('')
+    try {
+      const binding = await sitesService.saveContentAsset(site.id, {
+        id: bindingId || undefined,
+        mediaAssetId: asset.id,
+        label: getMediaPickerAssetName(asset),
+        kind: asset.mediaType
+      })
+      setContentAssets(current => [binding, ...current.filter(item => item.id !== binding.id)])
+      showToast('success', bindingId ? 'Archivo reemplazado' : 'Contenido conectado', bindingId
+        ? 'La clave del HTML no cambió.'
+        : 'Ya tiene una referencia estable para usarla en el HTML.')
+      return binding
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo conectar el archivo al sitio.'
+      setContentAssetsError(message)
+      showToast('error', 'No se pudo conectar', message)
+      return null
+    } finally {
+      setContentAssetsUploading(false)
+    }
+  }, [showToast, site.id])
+
+  const handleContentAssetUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setContentAssetsUploading(true)
+    setContentAssetsError('')
+    try {
+      const asset = await mediaService.uploadFile({
+        file,
+        module: 'sites',
+        moduleEntityId: site.id,
+        isPublic: true
+      })
+      await connectContentMediaAsset(asset)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo subir el archivo.'
+      setContentAssetsError(message)
+      showToast('error', 'No se pudo subir', message)
+    } finally {
+      setContentAssetsUploading(false)
+    }
+  }, [connectContentMediaAsset, showToast, site.id])
+
+  const contentAssetsCatalog = useMemo(() => {
+    if (!contentAssets.length) return 'No hay recursos multimedia conectados a esta página.'
+    return [
+      'Catálogo de contenido estable de esta página (usa la clave; nunca pegues la URL física):',
+      ...contentAssets.map(asset => `- ${asset.label} [${asset.kind}] => ${asset.assetKey}`),
+      '',
+      'Imagen/medio: <img data-rstk-asset-id="CLAVE" alt="...">',
+      'Fondo: <section data-rstk-background-asset-id="CLAVE">...</section>',
+      'Archivo descargable: <a data-rstk-asset-id="CLAVE">Descargar</a>'
+    ].join('\n')
+  }, [contentAssets])
   const guardedEditorPreviewHtml = useMemo(
     () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
     [editorPreviewHtml]
@@ -19542,7 +19639,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [])
 
   const validateImportedNativeElementSlotSettings = useCallback((slot: ImportedNativeElementSlot, settings: Record<string, unknown>) => {
-    if (slot.type === 'form' && !getEmbeddedFormSourceId({ settings } as SiteBlock) && !Array.isArray(settings.embeddedBlocks) && !Array.isArray(settings.embeddedPages)) {
+    if (slot.type === 'form' && !getEmbeddedFormSourceId({ settings } as SiteBlock)) {
       return 'Elige qué formulario de Ristak va en esta zona.'
     }
     if (slot.type === 'calendar' && !getSettingString(settings, 'calendarSlug') && !getSettingString(settings, 'calendarId')) {
@@ -19760,7 +19857,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!container) return
     event.preventDefault()
 
-    const hasInspector = Boolean(selectedImportedNativeElementSlot)
+    const hasInspector = true
     let frame = 0
     let latestWidth = codeEditorWidthRef.current
     const rect = container.getBoundingClientRect()
@@ -20766,42 +20863,27 @@ const ImportedHtmlEditorPanel: React.FC<{
       previewVisualContextRef.current?.pageId === activeCodePageId
       ? previewVisualContextRef.current
       : null
-    const selectedRange = buttonEditor?.selection.codeRange || codeElementEditor?.range || null
-    const selectedSnippet = selectedRange
-      ? activeCodeValue.slice(selectedRange.start, selectedRange.end).slice(0, 9000)
-      : ''
-    const selectedContext = selectedRange
-      ? [
-        `Elemento seleccionado en vista previa: ${selectedRange.label}.`,
-        `Linea aproximada: ${selectedRange.line}.`,
-        `HTML del elemento o contenedor seleccionado:\n${selectedSnippet}`
-      ].join('\n')
-      : codeSelectionNotice
-        ? `Elemento seleccionado en vista previa: ${codeSelectionNotice}.`
-        : popupCodeActive
-          ? 'No hay elemento seleccionado; aplica el cambio al pop up solo si la instrucción lo pide.'
-          : 'No hay elemento seleccionado; aplica el cambio a la página activa solo si la instrucción lo pide.'
+    const selectedContext = popupCodeActive
+      ? 'Superficie cerrada: modifica el pop up completo y devuelve su HTML final.'
+      : 'Superficie cerrada: modifica la página activa completa y devuelve su HTML final.'
     const assistantInstruction = [
       'Eres el asistente de código HTML de Ristak.',
       'Edita el HTML actual que Ristak te manda como currentHtml. No reconstruyas toda la página salvo que el usuario lo pida de forma explícita.',
       'No respondas al prompt dentro del HTML. Prohibido agregar "Claro", "Aquí tienes", resúmenes, explicaciones, notas del asistente o la solicitud del usuario como texto visible en la página.',
       'Trabaja en silencio: solo modifica el código necesario y devuelve el HTML final.',
-      'Si el usuario menciona "este", "ese botón", "este campo" o una sección seleccionada, usa primero el contexto del elemento seleccionado.',
-      'Conserva scripts de Ristak, atributos data-rstk/data-ristak, formularios, tracking y acciones existentes salvo que el usuario pida cambiarlos.',
+      'No existe edición visual por elemento. Conserva todo lo que el usuario no haya pedido cambiar.',
+      'Conserva atributos data-rstk/data-ristak, formularios, tracking, referencias multimedia y slots nativos salvo que el usuario pida cambiarlos.',
       `Archivo activo: ${activeCodeFile.label || activeCodeFile.path || 'HTML principal'}.`,
       popupCodeActive ? 'Superficie activa: Pop up.' : `Página activa: ${activeImportedPage?.title || 'Página actual'}.`,
       selectedContext,
+      contentAssetsCatalog,
       buildCodeAssistantAttachmentNotes(codeAssistantAttachments),
       'Usa los archivos adjuntos solo como referencia para modificar el HTML activo. No insertes respuestas, resúmenes ni explicaciones del asistente dentro de la página salvo que el usuario lo pida explícitamente.',
       `Solicitud del usuario: ${prompt}`
     ].join('\n\n')
-    const selectedStepDetail = selectedRange
-      ? `${selectedRange.label || 'Elemento seleccionado'} cerca de la línea ${selectedRange.line || 'detectada'}.`
-      : codeSelectionNotice
-        ? codeSelectionNotice
-        : popupCodeActive
-          ? 'Sin elemento seleccionado: revisando el pop up completo.'
-          : 'Sin elemento seleccionado: revisando la página activa completa.'
+    const selectedStepDetail = popupCodeActive
+      ? 'Revisando el pop up completo.'
+      : 'Revisando la página activa completa.'
     const selectedModelLabel = getChatGPTSiteModelOption(codeAssistantModel, true).label
     const selectedModelDisplay = selectedModelLabel.replace(/\s*·\s*\$+.*$/, '').trim() || selectedModelLabel
     const workPlan: ImportedCodeAssistantWorkStep[] = [
@@ -22797,17 +22879,9 @@ const ImportedHtmlEditorPanel: React.FC<{
       const style = doc.createElement('style')
       style.setAttribute('data-rstk-imported-code-overlay', 'true')
       style.textContent = `
-        ${importedCodeSelectableSelector} {
-          cursor: pointer !important;
-        }
         ${importedNativeElementSelector} {
           cursor: pointer !important;
           scroll-margin: 42px !important;
-        }
-        ${importedCodeSelectableSelector}:hover {
-          outline: 1px dashed rgba(100, 116, 139, 0.5) !important;
-          outline-offset: 4px !important;
-          border-radius: 4px !important;
         }
         .rstk-imported-code-selected {
           outline: 2px dashed #2563eb !important;
@@ -23050,30 +23124,10 @@ const ImportedHtmlEditorPanel: React.FC<{
         if (rawTarget && typeof rawTarget.closest === 'function' && rawTarget.closest('.rstk-imported-text-toolbar')) return
         if (selectImportedNativeElementFromPreviewTarget(rawTarget, 'code')) return
 
-        const actionTarget = getActionTarget(rawTarget)
-        const choiceInput = rawTarget ? getImportedChoiceInputFromTarget(rawTarget, doc) : null
-        const formFieldTarget = choiceInput || getImportedCodeFormFieldElementFromTarget(rawTarget, doc)
-        const target = actionTarget || formFieldTarget || getSelectableTarget(rawTarget)
-        if (!target) {
-          clearInlineSelection()
-          return
-        }
-        const descriptor = getImportedFrameElementDescriptor(target, 'code', event.type)
-        const range = selectImportedCodePreviewElement(target, descriptor)
-        if (actionTarget && range) {
-          openCodeButtonEditorForElement(actionTarget, descriptor, range)
-        } else if (range) {
-          const editor = readImportedCodeElementEditor(target, descriptor, range, doc)
-          if (editor?.mode === 'text') {
-            beginCodePreviewTextEdit(target, editor)
-          } else {
-            openCodeElementEditorForElement(target, descriptor, range)
-          }
-        } else {
-          setButtonEditor(null)
-          setCodeElementEditor(null)
-          setContentError('')
-        }
+        // El HTML importado es una superficie cerrada. El preview solo permite
+        // seleccionar slots funcionales de Ristak; texto, imágenes y botones se
+        // cambian reemplazando el código completo (manual o con IA).
+        clearInlineSelection()
       }
 
       doc.addEventListener('click', handleCodePreviewClick, true)
@@ -23096,30 +23150,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (!doc) return
       const element = findImportedFrameElementByDescriptor(doc, event.data)
       if (!element) return
-      if (selectImportedNativeElementFromPreviewTarget(element, 'code')) return
-
-      const actionElement = element.matches(importedEditorActionSelector) ? element : null
-      const choiceInput = getImportedChoiceInputFromTarget(element, doc)
-      const formFieldElement = choiceInput || getImportedCodeFormFieldElementFromTarget(element, doc)
-      const targetElement = actionElement || formFieldElement || element
-      const descriptor = targetElement === element
-        ? event.data
-        : getImportedFrameElementDescriptor(targetElement, 'code')
-      const range = selectImportedCodePreviewElement(targetElement, descriptor)
-      if (actionElement) {
-        if (range) openCodeButtonEditorForElement(actionElement, descriptor, range)
-      } else if (range) {
-        const editor = readImportedCodeElementEditor(targetElement, descriptor, range, doc)
-        if (editor?.mode === 'text' && beginCodePreviewTextEditForMessage) {
-          beginCodePreviewTextEditForMessage(targetElement, editor)
-        } else {
-          openCodeElementEditorForElement(targetElement, descriptor, range)
-        }
-      } else {
-        setButtonEditor(null)
-        setCodeElementEditor(null)
-        setContentError('')
-      }
+      selectImportedNativeElementFromPreviewTarget(element, 'code')
     }
 
     iframe.addEventListener('load', installCodePreviewHooks)
@@ -23136,7 +23167,47 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeCodeFile, activeCodePreviewHtml, activeCodeValue, clearInlineSelection, codeEditorOpen, guardedCodePreviewHtml, onCodeDraftChange, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement, selectImportedNativeElementFromPreviewTarget, showToast])
 
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
-  const importedNativeElementsPanel = selectedImportedNativeElementSlot ? (() => {
+  const copyContentAssetReference = async (asset: SiteContentAsset, target: 'media' | 'background' = 'media') => {
+    const snippet = target === 'background'
+      ? `<section data-rstk-background-asset-id="${asset.assetKey}">...</section>`
+      : asset.kind === 'document' || asset.kind === 'other'
+        ? `<a data-rstk-asset-id="${asset.assetKey}">Descargar ${asset.label}</a>`
+        : asset.kind === 'audio'
+          ? `<audio data-rstk-asset-id="${asset.assetKey}" controls></audio>`
+          : asset.kind === 'video'
+            ? `<video data-rstk-asset-id="${asset.assetKey}" controls playsinline></video>`
+            : `<img data-rstk-asset-id="${asset.assetKey}" alt="${asset.label.replace(/"/g, '&quot;')}">`
+    try {
+      await copyTextToClipboard(snippet)
+      showToast('success', 'Referencia copiada', 'La clave seguirá funcionando aunque reemplaces el archivo.')
+    } catch (error) {
+      showToast('error', 'No se pudo copiar', error instanceof Error ? error.message : 'Cópiala manualmente.')
+    }
+  }
+
+  const removeContentAssetBinding = async (asset: SiteContentAsset) => {
+    try {
+      await sitesService.deleteContentAsset(site.id, asset.id)
+      setContentAssets(current => current.filter(item => item.id !== asset.id))
+      showToast('success', 'Referencia quitada', 'El archivo sigue en Media; solo se desconectó de esta página.')
+    } catch (error) {
+      showToast('error', 'No se pudo quitar', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+    }
+  }
+
+  const prepareContentElementWithAI = () => {
+    const label = importedNativeElementTypeLabels[contentElementType].toLowerCase()
+    const nativeId = `${contentElementType}-principal`
+    const instruction = contentElementMode === 'ristak'
+      ? `Agrega un ${label} nativo de Ristak en el lugar correcto del diseño. Usa un slot vacío: <div data-rstk-native-element="${contentElementType}" data-rstk-native-id="${nativeId}" data-rstk-label="${importedNativeElementTypeLabels[contentElementType]} principal"></div>. No inventes datos, mocks ni un ${label} alterno. Conserva el resto del HTML.`
+      : contentElementType === 'calendar'
+        ? `Agrega un calendario HTML personalizado conectado a Ristak con data-rstk-native-element="calendar", data-rstk-native-id="calendar-principal" y data-rstk-native-render="custom". Conserva el resto del HTML y no agregues scripts externos.`
+        : `Agrega un ${label} hecho en HTML dentro del diseño, sin convertirlo en slot nativo. Debe usar el contrato HTML seguro de Ristak y conservar el resto de la página.`
+    setCodeAssistantPrompt(instruction)
+    showToast('success', 'Instrucción preparada', 'Revísala y envíala al asistente de código.')
+  }
+
+  const importedNativeElementsPanel = (() => {
     const selectedSlot = selectedImportedNativeElementSlot
     const nativeElementSite = importedNativeElementSiteRef.current || site
     const nativeElementBlocks = nativeElementSite.blocks || []
@@ -23197,13 +23268,130 @@ const ImportedHtmlEditorPanel: React.FC<{
         <div className={styles.importedButtonActionHeader}>
           <SlidersHorizontal size={17} />
           <div>
-            <span>Elementos Ristak</span>
-            <strong>{importedNativeElementSlots.length} {importedNativeElementSlots.length === 1 ? 'zona detectada' : 'zonas detectadas'}</strong>
+            <span>Panel de contenido</span>
+            <strong>Multimedia y elementos inteligentes</strong>
           </div>
         </div>
         <p className={styles.importedFormFieldsHint}>
-          Estas zonas del HTML se conectan a elementos reales de Ristak para que formularios, citas, cobros y videos usen la misma configuración del editor.
+          El HTML se mantiene cerrado. Desde aquí conectas archivos estables y configuras las zonas que Ristak controla.
         </p>
+
+        <section className={styles.importedContentHubSection}>
+          <div className={styles.importedContentHubSectionHeader}>
+            <div>
+              <span>Multimedia</span>
+              <strong>{contentAssets.length} {contentAssets.length === 1 ? 'recurso conectado' : 'recursos conectados'}</strong>
+            </div>
+            <button type="button" onClick={() => void loadContentAssets()} disabled={contentAssetsLoading || contentAssetsUploading} aria-label="Actualizar contenido">
+              <RefreshCw size={14} className={contentAssetsLoading ? styles.previewSpin : ''} />
+            </button>
+          </div>
+          <div className={styles.importedContentHubActions}>
+            <Button type="button" size="sm" variant="secondary" onClick={() => { setContentAssetReplacingId(''); setContentAssetPickerKind('image') }} disabled={contentAssetsUploading}>
+              <Image size={14} /> Imagen
+            </Button>
+            <Button type="button" size="sm" variant="secondary" onClick={() => { setContentAssetReplacingId(''); setContentAssetPickerKind('video') }} disabled={contentAssetsUploading}>
+              <Video size={14} /> Video
+            </Button>
+            <input
+              ref={contentAssetInputRef}
+              type="file"
+              accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
+              className={styles.hiddenFileInput}
+              onChange={handleContentAssetUpload}
+            />
+            <Button type="button" size="sm" variant="secondary" onClick={() => contentAssetInputRef.current?.click()} loading={contentAssetsUploading} disabled={contentAssetsUploading}>
+              <Upload size={14} /> Subir archivo
+            </Button>
+          </div>
+          {contentAssetsError && <p className={styles.importedContentHubError}>{contentAssetsError}</p>}
+          {!contentAssetsLoading && !contentAssets.length && (
+            <p className={styles.importedFormFieldsHint}>Sube o elige un archivo. Ristak creará una clave estable para que el HTML nunca dependa de una URL física.</p>
+          )}
+          <div className={styles.importedContentAssetList}>
+            {contentAssets.map(asset => (
+              <div key={asset.id} className={styles.importedContentAssetRow}>
+                <span className={styles.importedContentAssetIcon}>
+                  {asset.kind === 'video' ? <Video size={15} /> : asset.kind === 'image' ? <Image size={15} /> : <FileText size={15} />}
+                </span>
+                <span className={styles.importedFormFieldRowMain}>
+                  <strong>{asset.label}</strong>
+                  <small>{asset.assetKey}</small>
+                </span>
+                <button type="button" onClick={() => void copyContentAssetReference(asset)} aria-label={`Copiar referencia de ${asset.label}`} title="Copiar referencia">
+                  <Copy size={13} />
+                </button>
+                {asset.kind === 'image' && (
+                  <button type="button" onClick={() => void copyContentAssetReference(asset, 'background')} aria-label={`Copiar fondo de ${asset.label}`} title="Copiar como fondo">
+                    <LayoutTemplate size={13} />
+                  </button>
+                )}
+                {(asset.kind === 'image' || asset.kind === 'video') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContentAssetReplacingId(asset.id)
+                      setContentAssetPickerKind(asset.kind as 'image' | 'video')
+                    }}
+                    aria-label={`Reemplazar ${asset.label}`}
+                    title="Reemplazar sin cambiar la clave"
+                  >
+                    <RefreshCw size={13} />
+                  </button>
+                )}
+                <button type="button" onClick={() => void removeContentAssetBinding(asset)} aria-label={`Desconectar ${asset.label}`} title="Desconectar">
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className={styles.importedContentHubSection}>
+          <div className={styles.importedContentHubSectionHeader}>
+            <div>
+              <span>Agregar al HTML</span>
+              <strong>Nativo o diseñado por IA</strong>
+            </div>
+          </div>
+          <div className={styles.importedContentElementBuilder}>
+            <CustomSelect value={contentElementType} onChange={(event) => {
+              const nextType = event.target.value as ImportedNativeElementType
+              setContentElementType(nextType)
+              if (nextType === 'payment') setContentElementMode('ristak')
+            }}>
+              <option value="form">Formulario</option>
+              <option value="calendar">Calendario</option>
+              <option value="payment">Pasarela de pago</option>
+              <option value="video">Video</option>
+            </CustomSelect>
+            <CustomSelect value={contentElementMode} onChange={(event) => setContentElementMode(event.target.value as ImportedNativeElementRenderMode)}>
+              <option value="ristak">Nativo de Ristak</option>
+              {contentElementType !== 'payment' && <option value="custom">HTML diseñado por IA</option>}
+            </CustomSelect>
+            <Button type="button" size="sm" onClick={prepareContentElementWithAI} disabled={!activeCodeFile || codeAssistantSaving}>
+              <Sparkles size={14} /> Preparar con IA
+            </Button>
+          </div>
+          {contentElementType === 'payment' && (
+            <p className={styles.importedFormFieldsHint}>Los cobros reales siempre usan la pasarela segura de Ristak. La IA solo decide dónde va.</p>
+          )}
+        </section>
+
+        <div className={styles.importedContentHubSectionHeader}>
+          <div>
+            <span>Elementos detectados</span>
+            <strong>{importedNativeElementSlots.length} {importedNativeElementSlots.length === 1 ? 'zona' : 'zonas'}</strong>
+          </div>
+        </div>
+        {!importedNativeElementSlots.length && (
+          <p className={styles.importedFormFieldsHint}>Todavía no hay slots nativos. Prepáralos con IA y aparecerán aquí para configurarlos.</p>
+        )}
+        {importedNativeElementDuplicateIds.length > 0 && (
+          <p className={styles.importedContentHubError}>
+            IDs duplicados: {importedNativeElementDuplicateIds.join(', ')}. Cada zona necesita un ID único en esta página.
+          </p>
+        )}
         <div className={styles.importedFormFieldsList}>
           {importedNativeElementSlots.map(slot => {
             const block = findImportedNativeElementBlock(nativeElementBlocks, slot)
@@ -23244,6 +23432,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                   site={nativeElementSite}
                   block={draftBlock}
                   forms={forms}
+                  existingOnly
                   pages={pages}
                   activePageId={activeImportedPage?.id || activePageId}
                   onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
@@ -23437,7 +23626,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         )}
       </div>
     )
-  })() : null
+  })()
 
   const codeEditorHasNativeInspector = Boolean(importedNativeElementsPanel)
   const codeEditorCollapsed = codeEditorWidth <= 0
@@ -23469,7 +23658,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         >
           <div className={styles.importedCodePaneHeader}>
             <div className={styles.importedCodeTitleBlock}>
-              <span>Editor HTML</span>
+              <span>HTML final</span>
               <strong>{activeCodeFile?.label || activeImportedPage?.title || 'Código de la página'}</strong>
             </div>
             <div className={styles.importedCodeHeaderActions}>
@@ -23529,11 +23718,10 @@ const ImportedHtmlEditorPanel: React.FC<{
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="off"
-                disabled={saving}
+                readOnly
                 wrap="soft"
-                aria-label={`Código de ${activeCodeFile.label || activeCodeFile.path || 'archivo principal'}`}
+                aria-label={`Código de solo lectura de ${activeCodeFile.label || activeCodeFile.path || 'archivo principal'}`}
                 onScroll={syncCodeHighlightScroll}
-                onChange={(event) => onCodeDraftChange(activeCodeFile.path, event.target.value, activeCodeFile.content)}
               />
             </div>
           ) : (
@@ -23750,7 +23938,19 @@ const ImportedHtmlEditorPanel: React.FC<{
             {importedNativeElementsPanel}
           </aside>
         )}
-        {codeElementFloatingPanel}
+        {contentAssetPickerKind && (
+          <SitesMediaPickerModal
+            kind={contentAssetPickerKind}
+            moduleEntityId={site.id}
+            onClose={() => {
+              setContentAssetPickerKind(null)
+              setContentAssetReplacingId('')
+            }}
+            onSelect={(_url, asset) => {
+              if (asset) void connectContentMediaAsset(asset, contentAssetReplacingId)
+            }}
+          />
+        )}
       </div>
     )
   }
@@ -26091,7 +26291,8 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     'Reglas generales:',
     '- Entrega HTML, CSS y JavaScript estático. Si hay varios archivos, organízalos para que se puedan comprimir en un ZIP e importar en Ristak.',
     '- No dependas de un build step, servidor propio, framework que requiera compilación ni rutas privadas.',
-    '- Marca textos, imágenes, botones, campos y videos editables con data-rstk-editable="true", data-rstk-edit-type y data-rstk-edit-id único.',
+    '- Trata el HTML como código final y cerrado. No uses data-rstk-editable ni dependas de un editor visual por elemento.',
+    '- Para multimedia usa las claves exactas del Panel de contenido: data-rstk-asset-id="CLAVE" o data-rstk-background-asset-id="CLAVE". Nunca pegues la URL física de Storage o Bunny.',
     '- Para botones usa data-rstk-button-actions como JSON cuando conozcas la acción. Acciones válidas: url, next_page, specific_page, submit, disqualify, open_popup y close_popup.',
     '- Solo uses next_page cuando la página tenga claramente otra página después en el orden del embudo. En la última página no pongas next_page; usa specific_page, url o deja la acción configurable.',
     '- Si generas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.',
@@ -26123,7 +26324,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     sections.push(
       'Formularios:',
       '- La página usará campos HTML personalizados compatibles.',
-      '- Usa <form data-rstk-form-id="lead-form"> y campos con name, id, placeholder, data-rstk-editable="true", data-rstk-edit-type="form_field", data-rstk-edit-id y data-rstk-label.',
+      '- Usa <form data-rstk-form-id="lead-form"> y campos con name, id, label visible y placeholder.',
       '- Marca email y teléfono con data-rstk-field="email" o data-rstk-field="phone" cuando existan.',
       '- Si un botón envía el formulario, debe estar dentro del mismo <form> y usar una acción submit compatible.',
       '- Para radio, checkbox o select que filtren candidatos, agrega data-rstk-choice-actions al input u option descartado con action="disqualify". No uses specific_page o url solos para un descarte porque no marcan el resultado como no calificado.',
@@ -26154,8 +26355,9 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       'Calendario:',
       '- La página usará un calendario diseñado por la IA pero conectado a Ristak.',
       '- Envuelve el calendario custom con: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>.',
-      '- El JavaScript debe pedir horarios con window.ristakCalendarGetSlots("agenda-custom", { startDate:"YYYY-MM-DD", endDate:"YYYY-MM-DD", timezone:"Zona/Del_Negocio" }).',
-      '- Para agendar debe llamar window.ristakCalendarBook("agenda-custom", { startTime:"YYYY-MM-DDTHH:mm:ssZ", timezone:"Zona/Del_Negocio", name, email, phone }). startTime debe ser ISO UTC.',
+      '- Dentro usa input date con data-rstk-calendar-date, select con data-rstk-calendar-time, botón con data-rstk-calendar-load-slots y form con data-rstk-calendar-book-form.',
+      '- Nombre/email/teléfono usan data-rstk-calendar-name, data-rstk-calendar-email y data-rstk-calendar-phone; el estado usa data-rstk-calendar-message.',
+      '- No agregues JavaScript. Ristak conecta disponibilidad y reserva de forma segura; el slot confirmado se envía como ISO UTC y la zona horaria sale de la configuración del negocio.',
       ''
     )
   } else {
@@ -26178,8 +26380,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     sections.push(
       'Video:',
       '- La página usará video HTML compatible.',
-      '- No dejes <video>, <iframe>, <embed> u <object> sueltos. Envuélvelos en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id, data-rstk-label y data-rstk-video-url.',
-      '- Mantén el mismo URL en data-rstk-video-url y en src para que Ristak pueda reemplazarlo desde el editor.',
+      '- El video HTML queda bajo control total del código y no se edita desde Ristak. Para reproductor, acciones y formularios sobre video usa el video nativo.',
       ''
     )
   } else {
@@ -26376,15 +26577,15 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
 
           <section className={styles.createChoiceCategory}>
             <div className={styles.createChoiceCategoryHeader}>
-              <span>Editor HTML</span>
-              <strong>Trae o escribe tu propio código</strong>
-              <p>Abre una hoja HTML limpia, importa archivos o genera una página completa con IA.</p>
+              <span>Páginas HTML</span>
+              <strong>Importa o genera el código completo</strong>
+              <p>Sube tu HTML/ZIP o deja que la IA prepare la página completa con contenido conectado.</p>
             </div>
             <div className={styles.choiceGrid}>
               <button type="button" disabled={creating} onClick={() => onCreateBlankHtml('landing_page')}>
                 <Code2 size={22} />
-                <strong>Hoja HTML en blanco</strong>
-                <p>Escribe tu código o pega una versión editada con ChatGPT en otra ventana.</p>
+                <strong>Proyecto HTML para IA</strong>
+                <p>Abre una base limpia para generar la página completa con el asistente de código.</p>
                 <ChevronRight size={18} />
               </button>
               <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
@@ -36867,16 +37068,17 @@ const FormEmbedToolbarControls: React.FC<{
   site: PublicSite
   block: SiteBlock
   forms: PublicSite[]
+  existingOnly?: boolean
   pages: SitePage[]
   activePageId: string
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ site, block, forms, pages, activePageId, onPatchSettings, onSave }) => {
+}> = ({ site, block, forms, existingOnly = false, pages, activePageId, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
   const selectedFormId = getEmbeddedFormSourceId(block)
   const selectedForm = selectedFormId ? forms.find(form => form.id === selectedFormId) : null
   const hasDraftForm = Array.isArray(settings.embeddedBlocks) || Array.isArray(settings.embeddedPages)
-  const sourceValue = selectedFormId || (hasDraftForm ? FORM_EMBED_DRAFT_SOURCE_VALUE : '')
+  const sourceValue = selectedFormId || (!existingOnly && hasDraftForm ? FORM_EMBED_DRAFT_SOURCE_VALUE : '')
   const availableForms = forms.filter(form => form.id !== site.id)
 
   const commitSoon = () => {
@@ -36893,6 +37095,7 @@ const FormEmbedToolbarControls: React.FC<{
             const nextFormId = event.target.value
             if (nextFormId === FORM_EMBED_DRAFT_SOURCE_VALUE) return
             if (!nextFormId) {
+              if (existingOnly) return
               onPatchSettings(createEmbeddedFormDraftSettings(site.id))
               commitSoon()
               return
@@ -36911,8 +37114,8 @@ const FormEmbedToolbarControls: React.FC<{
           }}
           onBlur={onSave}
         >
-          <option value="">Crear nuevo</option>
-          {hasDraftForm && !selectedFormId && (
+          <option value="">{existingOnly ? (availableForms.length ? 'Selecciona un formulario' : 'No hay formularios') : 'Crear nuevo'}</option>
+          {!existingOnly && hasDraftForm && !selectedFormId && (
             <option value={FORM_EMBED_DRAFT_SOURCE_VALUE}>Formulario interno</option>
           )}
           {selectedFormId && !selectedForm && (

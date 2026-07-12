@@ -11,6 +11,7 @@ import {
   createSiteWithAIHtmlHandler,
   createPreviewSessionHandler,
   deleteBlockHandler,
+  deleteSiteContentAssetHandler,
   deleteSiteHandler,
   getSitesDomainHandler,
   getImportedSiteMappingHandler,
@@ -18,10 +19,12 @@ import {
   getSiteFoldersHandler,
   getSitesAnalyticsSummaryHandler,
   getSitesHandler,
+  getSiteContentAssetsHandler,
   getSitesVideoAnalyticsHandler,
   getSitesVideoAssetsHandler,
   getSitesVideoViewersHandler,
   importedSiteAssetHandler,
+  publicSiteContentAssetHandler,
   metaPageEventPublicHandler,
   previewCalendarHandler,
   previewSiteHandler,
@@ -48,6 +51,7 @@ import {
   updateImportedSiteHtmlWithAIHandler,
   updateImportedSiteMappingHandler,
   updateSiteHandler,
+  saveSiteContentAssetHandler,
   verifySitesPublicDomainByIdHandler,
   verifySitesAppDomainHandler,
   verifySitesDomainHandler,
@@ -60,8 +64,7 @@ function containsSitePaymentFeature(value, depth = 0) {
   if (!value || depth > 8) return false
   if (typeof value === 'string') {
     const normalized = value.toLowerCase()
-    return normalized.includes('data-rstk-native-element="payment"') ||
-      normalized.includes("data-rstk-native-element='payment'") ||
+    return /data-(?:rstk|ristak|ristack)-(?:native-element|element|element-type|component|widget)\s*=\s*(?:"payment"|'payment'|payment(?:\s|>))/.test(normalized) ||
       normalized.includes('data-rstk-payment-gate') ||
       normalized.includes('site-payment-checkout')
   }
@@ -104,6 +107,7 @@ router.get('/public/fonts.css', sitesFontCssHandler)
 router.get('/public/font-file', sitesFontFileHandler)
 router.get('/public/calendar-preview/:slug', requireFeature('appointments'), previewCalendarHandler)
 router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
+router.get('/public/content-assets/:siteId/:assetKey', publicSiteContentAssetHandler)
 router.get('/:siteId/preview-session/:token', previewSiteSessionHandler)
 
 router.use(requireAuth)
@@ -131,6 +135,10 @@ router.get('/folders', getSiteFoldersHandler)
 router.post('/folders', createSiteFolderHandler)
 router.put('/folders/:folderId', updateSiteFolderHandler)
 router.get('/:siteId/import-mapping', getImportedSiteMappingHandler)
+router.get('/:siteId/content-assets', getSiteContentAssetsHandler)
+router.post('/:siteId/content-assets', saveSiteContentAssetHandler)
+router.put('/:siteId/content-assets/:bindingId', saveSiteContentAssetHandler)
+router.delete('/:siteId/content-assets/:bindingId', deleteSiteContentAssetHandler)
 router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', requirePaymentsForSitePaymentFeature, updateSiteHandler)
 router.delete('/:siteId', deleteSiteHandler)

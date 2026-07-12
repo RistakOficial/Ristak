@@ -2699,6 +2699,23 @@ zona con `data-rstk-native-element="form|calendar|payment|video"` y
 `data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
 a bloques reales del sitio:
 
+El HTML importado es una superficie cerrada, no un editor visual alterno. El
+usuario puede reemplazar el HTML/ZIP completo o pedirle al asistente que devuelva
+el HTML completo modificado; no edita copy, imagenes, botones, campos o secciones
+desde el preview. El codigo se muestra en modo solo lectura y el preview solo
+permite seleccionar slots funcionales de Ristak.
+
+El Panel de contenido permanece visible aunque no exista ningun slot. Desde ese
+panel se suben o eligen archivos de Media, se preparan instrucciones para agregar
+un elemento nativo o HTML con IA y se configuran los slots detectados. Los
+archivos conectados usan `public_site_content_assets`: `asset_key` es el alias
+estable que vive en el HTML y `media_asset_id` apunta al archivo fisico actual.
+Para imagen/medio se usa `data-rstk-asset-id="clave"`; para fondos,
+`data-rstk-background-asset-id="clave"`. Reemplazar el archivo actualiza el
+binding sin tocar la clave ni regenerar el HTML. El renderer resuelve la clave
+server-side y la ruta publica estable es
+`/api/sites/public/content-assets/:siteId/:assetKey`.
+
 Los slots nativos que Ristak renderiza (`form`, `calendar` con
 `data-rstk-native-render="ristak"`, `payment` y `video`) deben ser huecos
 limpios: contenedores vacios, sin texto placeholder, mocks, tarjetas, bordes
@@ -2712,11 +2729,14 @@ no quede UI falsa atras o encima del embed. La excepcion es `calendar` con
 calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
 
 - `form`: usa la misma configuracion del bloque `form_embed` del editor visual:
-  formulario existente o formulario interno, reglas "Al enviar", estilo del
+  exclusivamente un formulario ya existente, reglas "Al enviar", estilo del
   bloque y snapshot del formulario fuente. La zona debe ser un contenedor vacio;
   no debe incluir `<form>`, campos ni botones de envio dentro o pegados a esa
   zona, porque Ristak renderiza el formulario completo dentro de un frame aislado
-  con su propio boton y sus acciones "Al enviar".
+  con su propio boton y sus acciones "Al enviar". Ese frame no dispara tracking
+  propio, reporta su altura al documento padre y envia al padre cualquier
+  navegacion final, para evitar PageView duplicado, cortes en formularios
+  multipagina o redirects atrapados dentro del iframe.
 - `calendar` con `data-rstk-native-render="ristak"`: renderiza el calendario
   embebido normal y respeta disponibilidad, campos, pagos, reglas de completado
   y evento Meta "al agendar".
@@ -2732,44 +2752,34 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   Meta/CAPI que el editor normal. El formulario de video usa el mismo panel,
   campos, reglas de completado, diseno y submit publico del bloque nativo; el
   HTML externo solo reserva la zona donde se monta el reproductor.
+  Un video subido usa el archivo de Storage en editor/preview y, cuando ya tiene
+  metadata de Bunny Stream, usa el iframe de Stream en publicado. Las acciones
+  temporizadas se conectan a Player.js para conservar el mismo comportamiento en
+  el player publicado.
 
 Las acciones de video en HTML importado solo deben apuntar a elementos
 identificables y publicables: botones, links, formularios, secciones, imagenes o
-contenedores con `id`, `data-rstk-edit-id`, `data-rstk-form-id`,
-`data-rstk-section` o `data-rstk-native-id`. El editor filtra elementos
-decorativos marcados como `data-rstk-edit-type="background_image"` o
-`aria-hidden="true"` para no ofrecer fondos como targets. Cuando una accion
+contenedores con `id`, `data-rstk-form-id`, `data-rstk-section` o
+`data-rstk-native-id`. Cuando una accion
 arranca con estado "Mantener oculto", el render importado marca el target con
 `data-rstk-video-action-hidden="true"` desde el HTML inicial para evitar
 parpadeos entre preview y sitio publicado.
 
-En el editor HTML importado, estos elementos se configuran desde un inspector
-derecho independiente del panel de codigo. El panel de codigo se conserva para
-editar HTML/IA externa, mientras el inspector de elementos Ristak administra
-formularios, calendarios, pagos y videos con la misma configuracion del editor
-visual. En formularios, el inspector reutiliza el control normal de `form_embed`
-y el render monta una mini pagina Ristak aislada para no mezclar CSS/JS del HTML
-externo con el runtime del CRM. Ese inspector no debe abrirse automaticamente solo porque el HTML tenga
-un video, calendario, pago o formulario nativo detectado; aparece unicamente
-cuando el usuario selecciona esa zona desde la previsualizacion o desde el modo
-codigo, y se cierra cuando el usuario selecciona texto, botones, campos,
-secciones, fondo u otro elemento editable que no sea esa zona nativa. Ese
-inspector debe scrollear con rueda, trackpad y tactil como el panel
-derecho del editor visual; los controles internos no deben bloquear el scroll
-del panel principal. Al seleccionar una zona nativa en la previsualizacion, el
-editor abre la configuracion en ese inspector derecho y no muestra popovers de
-configuracion sobre la pagina. El texto editable puede modificarse directamente
-desde el preview con ajuste basico de tamano de letra; en el modo codigo ese
-cambio queda como borrador de HTML hasta guardar el sitio. El panel de codigo
-puede arrastrarse hasta ocultarse y queda una tira con flecha para recuperar el
-editor cuando se necesite revisar el HTML. Cuando no hay borradores de HTML sin
+En el editor HTML importado, el Panel de contenido ocupa el inspector derecho y
+administra multimedia, formularios, calendarios, pagos y videos con los mismos
+controles del editor visual. No aparecen popovers sobre textos, imagenes,
+botones, campos o secciones. El panel puede preparar una instruccion para que la
+IA agregue un elemento en modo nativo o HTML; pago siempre queda en modo nativo
+porque la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
 guardar, la previsualizacion usa el render del backend de la pagina activa para
 mostrar los elementos nativos ya montados tal como se veran en vivo; las
 respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
 de pagina mientras cargaba. Los slots nativos y las acciones de video se resuelven por
 `data-rstk-native-id` + tipo + pagina, de modo que dos paginas importadas no
 compartan accidentalmente un formulario, calendario, pago, video o target con el
-mismo identificador. El inspector derecho guarda automaticamente cambios validos
+mismo identificador. IDs duplicados dentro de una misma pagina nunca montan dos
+veces el mismo bloque: el preview muestra un diagnostico y publicado omite el
+duplicado. El inspector derecho guarda automaticamente cambios validos
 de video, calendario y pago con bajo ruido, y el boton de guardado manual sigue
 mostrando validaciones cuando falta una configuracion obligatoria. Para pagos,
 ese preview usa un snapshot temporal de la
@@ -2783,10 +2793,14 @@ usan la ruta interna `/api/sites/public/calendar-preview/:slug`, no
 dominio publico ya este configurado; el sitio publicado conserva la ruta publica
 normal y no debe llevar `editor_preview=1` ni `preview=1`. Los calendarios
 custom publicados conservan su UI importada, pero las funciones
-`window.ristakCalendarGetSlots` y `window.ristakCalendarBook` deben apuntar a los
-endpoints publicos vivos de disponibilidad y agendado.
+`window.ristakCalendarGetSlots` y `window.ristakCalendarBook` son internas del
+runtime seguro. El HTML generado por IA no escribe JavaScript: declara
+`data-rstk-calendar-date`, `data-rstk-calendar-time`,
+`data-rstk-calendar-load-slots`, `data-rstk-calendar-book-form` y los hooks de
+contacto/mensaje; Ristak los conecta a los endpoints publicos vivos de
+disponibilidad y agendado.
 
-Cuando el usuario edita directamente el codigo HTML y todavia no ha guardado,
+Cuando el asistente de codigo prepara un HTML completo y todavia no se ha guardado,
 la vista de pagina debe mandar ese archivo como borrador al endpoint de preview
 para que pase por el mismo renderer aislado de Ristak: sanitizacion, rutas
 internas, slots nativos, pago mock de editor, calendario preview y runtime de

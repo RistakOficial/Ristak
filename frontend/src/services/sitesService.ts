@@ -861,6 +861,19 @@ export interface ImportedSiteCreateResult {
   import: ImportedSiteImport
 }
 
+export interface SiteContentAsset {
+  id: string
+  siteId: string
+  assetKey: string
+  label: string
+  kind: string
+  mediaAssetId: string
+  publicPath: string
+  mediaAsset: MediaAsset | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
 export type ImportedEditableContentType =
   | 'heading'
   | 'text'
@@ -1173,6 +1186,20 @@ export const sitesService = {
 
   getImportMapping(siteId: string) {
     return apiClient.get<ImportedSiteImport>(`/sites/${siteId}/import-mapping`)
+  },
+
+  listContentAssets(siteId: string) {
+    return apiClient.get<SiteContentAsset[]>(`/sites/${siteId}/content-assets`)
+  },
+
+  saveContentAsset(siteId: string, payload: { id?: string; mediaAssetId: string; assetKey?: string; label?: string; kind?: string }) {
+    return payload.id
+      ? apiClient.put<SiteContentAsset>(`/sites/${siteId}/content-assets/${payload.id}`, payload)
+      : apiClient.post<SiteContentAsset>(`/sites/${siteId}/content-assets`, payload)
+  },
+
+  deleteContentAsset(siteId: string, bindingId: string) {
+    return apiClient.delete<{ id: string; deleted: boolean }>(`/sites/${siteId}/content-assets/${bindingId}`)
   },
 
   getSite(siteId: string) {

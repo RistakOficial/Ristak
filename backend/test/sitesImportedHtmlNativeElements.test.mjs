@@ -444,6 +444,8 @@ test('imported HTML draft code preview renders form, calendar, payment and video
     assert.match(html, /Draft all native slots/)
     assert.doesNotMatch(html, /Original all native slots/)
     assert.match(html, /rstk-imported-native-form-frame/)
+    assert.match(html, /ristak:form-embed-height/)
+    assert.match(html, /ristak:form-navigate/)
     assert.match(html, /data-site-form/)
     assert.match(html, /rstk-embedded-form/)
     assert.match(html, /Correo del lead/)
@@ -520,7 +522,15 @@ test('imported HTML custom calendar slots keep custom markup and expose mapped R
       <html>
         <body>
           <section class="agenda-custom" data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">
-            <button type="button" data-hook="load-slots">Ver horarios</button>
+            <input type="date" data-rstk-calendar-date>
+            <button type="button" data-rstk-calendar-load-slots>Ver horarios</button>
+            <form data-rstk-calendar-book-form>
+              <select data-rstk-calendar-time></select>
+              <input data-rstk-calendar-name>
+              <input data-rstk-calendar-email>
+              <button type="submit">Agendar</button>
+            </form>
+            <p data-rstk-calendar-message></p>
           </section>
         </body>
       </html>
@@ -549,9 +559,11 @@ test('imported HTML custom calendar slots keep custom markup and expose mapped R
 
     assert.match(html, /data-rstk-native-slot-id="agenda-custom"/)
     assert.match(html, /data-rstk-calendar-slug="agenda-custom-slug"/)
-    assert.match(html, /data-hook="load-slots"/)
+    assert.match(html, /data-rstk-calendar-load-slots/)
+    assert.match(html, /data-rstk-calendar-book-form/)
     assert.match(html, /window\.ristakCalendarGetSlots/)
     assert.match(html, /window\.ristakCalendarBook/)
+    assert.match(html, /rstkCalendarWired/)
     assert.match(html, /\/api\/calendars\/public\/agenda-custom-slug\/free-slots/)
     assert.match(html, /\/api\/calendars\/public\/agenda-custom-slug\/appointments/)
     assert.match(html, /https:\/\/example\.test\/gracias/)

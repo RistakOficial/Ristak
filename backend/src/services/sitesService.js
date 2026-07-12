@@ -34,6 +34,7 @@ import {
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
 import {
+  findMediaAssetsByIds,
   findMediaAssetsByBunnyStreamVideoIds,
   findMediaAssetsByPublicUrls
 } from './mediaStorageService.js'
@@ -1623,7 +1624,7 @@ function prepareImportedDraftHtmlForRender(html = '', {
   })
   let output = assignImportedFormIds(sanitized.html, pageForms)
   output = rewriteImportedHtmlReferences(output, assetPath, siteId, availablePaths, { pageIdByAssetPath })
-  return annotateImportedEditableHtml(output)
+  return output
 }
 
 function getImportedAssetExtension(assetPath = '') {
@@ -6664,7 +6665,8 @@ Reglas duras:
 - La página debe ser responsiva, profesional y lista para publicarse.
 - Copy corto: titulares de 4 a 10 palabras cuando sea posible, párrafos breves de 1 a 2 líneas, listas cortas para explicar detalles.
 - Si un texto largo es necesario, ajusta el CSS con font-size menor, max-width razonable, line-height claro y espacios suficientes. No dejes titulares enormes que rompan el layout.
-- Usa imágenes HTTPS directas y visibles. Prefiere el catalogo incluido. También puedes usar URLs directas públicas/licenciadas de bancos conocidos cuando el usuario las proporcione o esten permitidas; no uses previews con marca de agua.
+- Si Ristak entrega un catálogo de contenido, usa exclusivamente sus claves con data-rstk-asset-id o data-rstk-background-asset-id. No pegues la URL física de Storage o Bunny.
+- Solo usa imágenes HTTPS directas cuando el usuario las proporcione expresamente y no exista una clave del Panel de contenido.
 - No uses formularios que dependan de JavaScript. El submit lo intercepta Ristak.
 - No agregues action externo en formularios.
 - No escondas campos importantes ni uses inputs sin name.
@@ -6676,23 +6678,13 @@ Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
 - SITIO WEB: presentación completa del negocio en varias páginas de page.pages (Inicio, Servicios, Nosotros, Contacto u otras que apliquen). TODAS las páginas comparten un header con menú de navegación cuyos enlaces usan data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la página destino, y un footer con datos de contacto. Un solo h1 por página y title + meta description propios de cada página. El formulario principal vive en Contacto; el resto del sitio invita sin presionar.
 - Si el usuario no especifica estructura, usa EMBUDO para peticiones de venta/captura y SITIO WEB cuando pida presencia, varias páginas o "sitio web".
 
-Marcado para edición rapida:
-- Marca los elementos importantes que el usuario podria querer cambiar sin tocar código.
-- Usa data-rstk-editable="true", data-rstk-edit-type, data-rstk-label y data-rstk-edit-id.
-- Cuando puedas, agrega también aliases data-ristak-* o data-ristack-* para compatibilidad.
-- Tipos permitidos: heading, text, button, form_label, placeholder, image, background_image, video.
-- Marca titulares, subtitulares, párrafos breves, botones, labels de formularios, placeholders, imágenes, logos, elementos con fondo de imagen y espacios de video/iframe/embed.
-- Si incluyes un video, NUNCA dejes un <video>, <iframe>, <embed> u <object> suelto. Siempre envuélvelo en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id único, data-rstk-label y data-rstk-video-url.
-- Formato MP4/WebM/MOV correcto:
-  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://cdn.ejemplo.com/video.mp4" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
-    <video src="https://cdn.ejemplo.com/video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;display:block;object-fit:cover;background:#000;"></video>
-  </div>
-- Formato iframe/embed correcto:
-  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://www.youtube.com/embed/VIDEO_ID" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
-    <iframe src="https://www.youtube.com/embed/VIDEO_ID" title="Video principal" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="width:100%;height:100%;display:block;border:0;background:#000;"></iframe>
-  </div>
-- Mantén el mismo valor en data-rstk-video-url y en src para que Ristak pueda reemplazar el video desde el editor.
-- En botones editables, cuando sepas la acción, agrega data-rstk-button-actions como JSON de acciones. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
+Contrato de código cerrado y contenido:
+- El HTML es el resultado final. No uses data-rstk-editable, data-rstk-edit-type ni contratos de edición visual por elemento.
+- Para cambiar copy, estructura o diseño devuelve el documento HTML completo, conservando todo lo que el usuario no pidió cambiar.
+- Contenido estable: <img data-rstk-asset-id="CLAVE" alt="..."> para imagen/medio; <section data-rstk-background-asset-id="CLAVE"> para fondo; <a data-rstk-asset-id="CLAVE"> para descarga.
+- Nunca reemplaces una CLAVE por una URL física. Si una clave no existe en el catálogo, pide más información.
+- Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="video-principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
+- En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
 - En radio buttons, checkboxes y <option> de select, usa data-rstk-choice-actions cuando una respuesta cambie el resultado. Para descartar candidatos usa action="disqualify"; no uses specific_page o url solos porque navegan pero no marcan la submission como descalificada.
@@ -6700,8 +6692,7 @@ Marcado para edición rapida:
 - Ejemplo de descarte a página: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
 - Si cualquier opción puede descalificar, agrega data-rstk-conversion-condition="qualified_only" al <form> final. Ristak guarda todos los submits, pero solo manda Pixel/CAPI cuando el resultado sea calificado.
 - Nunca llames fbq, gtag, dataLayer ni eventos de conversión manuales desde el HTML por click o submit. Ristak emite la conversión después del veredicto del backend.
-- Marca secciones principales con data-rstk-section y un nombre claro.
-- No envuelvas textos editables en demasiadas etiquetas. Deja un elemento claro para cada texto importante.
+- Marca targets de acciones de video con id único y estable.
 
 Convenciones de formularios para Ristak:
 - Estas convenciones aplican a formularios HTML propios; si usas data-rstk-native-element="form", no crees un <form> propio para esa zona.
@@ -6721,7 +6712,7 @@ Conversiones Meta/CAPI para HTML importado:
 - Solo uses data-rstk-native-element para formularios, calendarios, pagos y videos. No lo inventes para otros widgets.
 - Formulario nativo Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacio; no metas <form>, campos ni botones de envio dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio boton y sus acciones "Al enviar"; si necesitas navegar despues del submit, configuralo en el editor.
 - Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
-- Calendario con frontend propio: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. El JS propio debe llamar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre va en ISO UTC del slot confirmado y timezone es la zona horaria usada para la cita.
+- Calendario con frontend propio: usa <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">. Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton data-rstk-calendar-load-slots, form data-rstk-calendar-book-form, campos data-rstk-calendar-name/email/phone y mensaje data-rstk-calendar-message. No agregues JavaScript: Ristak conecta esos hooks al calendario configurado, usa la zona horaria del negocio y manda el slot confirmado como ISO UTC.
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI configurados.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
@@ -6790,7 +6781,7 @@ Modo edición:
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
 - Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-native-*, data-rstk-element-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 - En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
@@ -9592,7 +9583,6 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
       })))
       let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
       pageHtml = rewriteImportedHtmlReferences(pageHtml, file.assetPath, siteId, availablePaths, { pageIdByAssetPath })
-      pageHtml = annotateImportedEditableHtml(pageHtml)
 
       for (const item of sanitized.report) {
         securityReport.push(`${file.assetPath}: ${item}`)
@@ -9689,7 +9679,6 @@ async function prepareGeneratedImportedPagesContent({ pages = [], siteId, import
 
     let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
     pageHtml = rewriteImportedHtmlReferences(pageHtml, page.filename, siteId, availablePaths, { pageIdByAssetPath })
-    pageHtml = annotateImportedEditableHtml(pageHtml)
 
     for (const item of sanitized.report) {
       securityReport.push(`${page.title}: ${item}`)
@@ -9864,25 +9853,6 @@ export async function getImportedSiteBySiteId(siteId) {
   let htmlSanitized = row.html_sanitized || ''
   const status = row.status || 'mapping_pending'
 
-  if (htmlSanitized) {
-    const annotatedHtml = annotateImportedEditableHtml(htmlSanitized)
-    if (annotatedHtml !== htmlSanitized) {
-      htmlSanitized = annotatedHtml
-      htmlOriginal = htmlOriginal ? annotateImportedEditableHtml(htmlOriginal) : htmlSanitized
-      await db.run(`
-        UPDATE public_site_imports SET
-          html_original = ?,
-          html_sanitized = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE site_id = ?
-      `, [
-        htmlOriginal,
-        htmlSanitized,
-        siteId
-      ])
-    }
-  }
-
   if (status === 'mapping_pending' && htmlSanitized) {
     const redetectedForms = detectImportedForms(htmlSanitized)
     const storedFieldCount = Math.max(
@@ -9924,6 +9894,197 @@ export async function getImportedSiteBySiteId(siteId) {
   }
   imported.codeFiles = await listImportedSiteCodeFiles(siteId, imported)
   return imported
+}
+
+function cleanSiteContentAssetKey(value = '') {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+}
+
+function normalizeSiteContentAssetKey(value = '') {
+  return cleanSiteContentAssetKey(value) || `contenido-${crypto.randomBytes(4).toString('hex')}`
+}
+
+function mapSiteContentAssetRow(row = {}, mediaAsset = null) {
+  const siteId = cleanString(row.site_id)
+  const assetKey = cleanString(row.asset_key)
+  return {
+    id: row.id,
+    siteId,
+    assetKey,
+    label: row.label || assetKey,
+    kind: row.kind || mediaAsset?.mediaType || 'other',
+    mediaAssetId: row.media_asset_id,
+    publicPath: `/api/sites/public/content-assets/${encodeURIComponent(siteId)}/${encodeURIComponent(assetKey)}`,
+    mediaAsset,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }
+}
+
+async function getReadyPublicMediaAsset(mediaAssetId) {
+  const [asset] = await findMediaAssetsByIds([mediaAssetId])
+  if (asset) return asset
+  const error = new Error('El archivo debe estar listo y ser público antes de conectarlo al sitio.')
+  error.status = 400
+  throw error
+}
+
+export async function listSiteContentAssets(siteId) {
+  const rows = await db.all(`
+    SELECT * FROM public_site_content_assets
+    WHERE site_id = ?
+    ORDER BY updated_at DESC, created_at DESC
+  `, [siteId])
+  const assets = await findMediaAssetsByIds(rows.map((row) => row.media_asset_id))
+  const byId = new Map(assets.map((asset) => [asset.id, asset]))
+  return rows.map((row) => mapSiteContentAssetRow(row, byId.get(row.media_asset_id) || null))
+}
+
+export async function saveSiteContentAsset(siteId, input = {}) {
+  const site = await getImportedSiteForAsset(siteId)
+  if (!site || !isImportedHtmlSite(site)) {
+    const error = new Error('La página HTML no existe.')
+    error.status = 404
+    throw error
+  }
+
+  const mediaAsset = await getReadyPublicMediaAsset(input.mediaAssetId || input.media_asset_id)
+  const bindingId = cleanString(input.id)
+  const existing = bindingId
+    ? await db.get('SELECT * FROM public_site_content_assets WHERE id = ? AND site_id = ? LIMIT 1', [bindingId, siteId])
+    : null
+  const requestedKey = normalizeSiteContentAssetKey(
+    existing?.asset_key || input.assetKey || input.asset_key || input.label || mediaAsset.originalFilename
+  )
+  let assetKey = requestedKey
+
+  if (!existing) {
+    let suffix = 2
+    while (await db.get('SELECT id FROM public_site_content_assets WHERE site_id = ? AND asset_key = ? LIMIT 1', [siteId, assetKey])) {
+      assetKey = `${requestedKey.slice(0, 72)}-${suffix}`
+      suffix += 1
+    }
+  }
+
+  if (existing) {
+    await db.run(`
+      UPDATE public_site_content_assets SET
+        label = ?, kind = ?, media_asset_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND site_id = ?
+    `, [
+      cleanString(input.label || existing.label || mediaAsset.originalFilename || assetKey),
+      cleanString(input.kind || mediaAsset.mediaType || existing.kind || 'other'),
+      mediaAsset.id,
+      existing.id,
+      siteId
+    ])
+  } else {
+    await db.run(`
+      INSERT INTO public_site_content_assets (
+        id, site_id, asset_key, label, kind, media_asset_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      createRistakId('site_asset'),
+      siteId,
+      assetKey,
+      cleanString(input.label || mediaAsset.originalFilename || assetKey),
+      cleanString(input.kind || mediaAsset.mediaType || 'other'),
+      mediaAsset.id
+    ])
+  }
+
+  const row = await db.get('SELECT * FROM public_site_content_assets WHERE site_id = ? AND asset_key = ? LIMIT 1', [siteId, assetKey])
+  return mapSiteContentAssetRow(row, mediaAsset)
+}
+
+export async function deleteSiteContentAsset(siteId, bindingId) {
+  const row = await db.get('SELECT * FROM public_site_content_assets WHERE id = ? AND site_id = ? LIMIT 1', [bindingId, siteId])
+  if (!row) {
+    const error = new Error('La referencia de contenido no existe.')
+    error.status = 404
+    throw error
+  }
+  await db.run('DELETE FROM public_site_content_assets WHERE id = ? AND site_id = ?', [bindingId, siteId])
+  return { id: bindingId, deleted: true }
+}
+
+export async function getPublicSiteContentAsset(siteId, assetKey) {
+  const row = await db.get(`
+    SELECT * FROM public_site_content_assets
+    WHERE site_id = ? AND asset_key = ?
+    LIMIT 1
+  `, [siteId, cleanSiteContentAssetKey(assetKey)])
+  if (!row) return null
+  const [mediaAsset] = await findMediaAssetsByIds([row.media_asset_id])
+  if (!mediaAsset?.publicUrl) return null
+  return mapSiteContentAssetRow(row, mediaAsset)
+}
+
+const IMPORTED_CONTENT_ASSET_ATTRS = [
+  'data-rstk-asset-id',
+  'data-ristak-asset-id',
+  'data-ristack-asset-id'
+]
+const IMPORTED_BACKGROUND_ASSET_ATTRS = [
+  'data-rstk-background-asset-id',
+  'data-ristak-background-asset-id',
+  'data-ristack-background-asset-id'
+]
+
+async function resolveImportedContentAssets(html = '', siteId = '') {
+  const source = String(html || '')
+  const keys = new Set()
+  source.replace(/\sdata-(?:rstk|ristak|ristack)-(?:background-)?asset-id\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi, (_match, doubleValue, singleValue, bareValue) => {
+    const key = cleanSiteContentAssetKey(doubleValue || singleValue || bareValue || '')
+    if (key) keys.add(key)
+    return _match
+  })
+  if (!keys.size) return source
+
+  const rows = await db.all(`
+    SELECT * FROM public_site_content_assets
+    WHERE site_id = ? AND asset_key IN (${[...keys].map(() => '?').join(', ')})
+  `, [siteId, ...keys])
+  const assets = await findMediaAssetsByIds(rows.map((row) => row.media_asset_id))
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
+  const urlsByKey = new Map(rows
+    .map((row) => [row.asset_key, assetsById.get(row.media_asset_id)?.publicUrl || ''])
+    .filter(([, url]) => Boolean(url)))
+
+  return source.replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (openingTag, rawTagName, attrsText = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    const backgroundKey = cleanSiteContentAssetKey(firstImportedNativeAttr(attrs, IMPORTED_BACKGROUND_ASSET_ATTRS))
+    const assetKey = cleanSiteContentAssetKey(firstImportedNativeAttr(attrs, IMPORTED_CONTENT_ASSET_ATTRS))
+    const tagName = cleanString(rawTagName).toLowerCase()
+    let nextTag = openingTag
+
+    if (backgroundKey && urlsByKey.has(backgroundKey)) {
+      const url = urlsByKey.get(backgroundKey)
+      const safeBackground = `url("${String(url).replace(/"/g, '%22')}")`
+      const currentStyle = cleanString(attrs.style)
+      const nextStyle = /background-image\s*:/i.test(currentStyle)
+        ? currentStyle.replace(/background-image\s*:\s*[^;]+;?/i, `background-image: ${safeBackground};`)
+        : `${currentStyle}${currentStyle && !currentStyle.endsWith(';') ? ';' : ''}background-image: ${safeBackground};`
+      nextTag = setHtmlAttribute(nextTag, attrsText, 'style', nextStyle)
+    }
+
+    if (!assetKey || !urlsByKey.has(assetKey)) return nextTag
+    const url = urlsByKey.get(assetKey)
+    const explicitTarget = cleanString(attrs['data-rstk-asset-target']).toLowerCase()
+    const inferredTarget = tagName === 'a'
+      ? 'href'
+      : ['img', 'video', 'audio', 'source', 'track', 'input'].includes(tagName)
+        ? 'src'
+        : ''
+    const target = ['src', 'href', 'poster'].includes(explicitTarget) ? explicitTarget : inferredTarget
+    return target ? setHtmlAttribute(nextTag, attrsText, target, url) : nextTag
+  })
 }
 
 async function getImportedSiteAssetByPath(siteId, assetPath) {
@@ -10021,7 +10182,7 @@ export async function createImportedSiteFromHtml(input = {}) {
       importType: 'html',
       rawHtml,
       sanitized: {
-        html: annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, detectedForms)),
+        html: assignImportedFormIds(sanitized.html, detectedForms),
         report: sanitized.report
       },
       detectedForms,
@@ -10224,7 +10385,7 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
 
   const sanitized = sanitizeImportedHtml(rawHtml)
   const detectedForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), '', new Set())
-  const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, detectedForms))
+  const htmlSanitized = assignImportedFormIds(sanitized.html, detectedForms)
   const nextMappings = mergeImportedFormMappings(
     currentImport.formMappings,
     buildDefaultImportedFormMappings(detectedForms)
@@ -10329,7 +10490,7 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
     usedFormIds
   )
   const nextDetectedForms = editsAssetPage ? [...existingOtherForms, ...detectedForms] : detectedForms
-  const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, detectedForms))
+  const htmlSanitized = assignImportedFormIds(sanitized.html, detectedForms)
   const nextMappings = mergeImportedFormMappings(
     currentImport.formMappings,
     buildDefaultImportedFormMappings(nextDetectedForms)
@@ -10519,7 +10680,6 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
     detectedForms.push(...pageForms)
     let htmlSanitized = assignImportedFormIds(sanitized.html, pageForms)
     htmlSanitized = rewriteImportedHtmlReferences(htmlSanitized, assetPath, siteId, availablePaths, { pageIdByAssetPath })
-    htmlSanitized = annotateImportedEditableHtml(htmlSanitized)
     sanitizedHtmlByPath.set(assetPath, htmlSanitized)
     securityReport.push(...sanitized.report.map(item => (
       assetPath ? `${pageByAssetPath.get(assetPath)?.title || assetPath}: ${item}` : item
@@ -15385,7 +15545,54 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, 
     provider: 'bunny_stream',
     playbackId
   })
-  return `<div class="${classes}" style="${frameStyle}"><iframe src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe>${gateMarkup}</div>`
+  const videoActionAttrs = renderVideoActionAttributes(block, settings, context)
+  const actionProxy = videoActionAttrs
+    ? `<video data-rstk-stream-action-proxy muted playsinline hidden ${videoActionAttrs}></video>`
+    : ''
+  const actionBridge = videoActionAttrs
+    ? `<script>
+      (() => {
+        const script = document.currentScript;
+        const host = script && script.previousElementSibling;
+        const frame = host && host.querySelector('iframe[data-rstk-stream-action-frame]');
+        const proxy = host && host.querySelector('video[data-rstk-stream-action-proxy]');
+        if (!frame || !proxy) return;
+        let currentTime = 0;
+        let paused = true;
+        try {
+          Object.defineProperty(proxy, 'currentTime', { configurable: true, get: () => currentTime, set: value => { currentTime = Number(value || 0) || 0; } });
+          Object.defineProperty(proxy, 'paused', { configurable: true, get: () => paused });
+        } catch (_) {}
+        const connect = () => {
+          if (!window.playerjs || !window.playerjs.Player) return;
+          const player = new window.playerjs.Player(frame);
+          proxy.pause = () => { try { player.pause(); } catch (_) {} };
+          proxy.play = () => { try { player.play(); } catch (_) {} return Promise.resolve(); };
+          player.on('play', () => { paused = false; proxy.dataset.rstkVideoRealPlayed = 'true'; proxy.dispatchEvent(new Event('play')); });
+          player.on('pause', () => { paused = true; proxy.dispatchEvent(new Event('pause')); });
+          player.on('ended', () => { paused = true; proxy.dispatchEvent(new Event('ended')); });
+          player.on('timeupdate', timing => {
+            currentTime = Number(timing && (timing.seconds || timing.currentTime || timing.time) || 0) || 0;
+            proxy.dispatchEvent(new Event('timeupdate'));
+          });
+        };
+        if (window.playerjs && window.playerjs.Player) connect();
+        else {
+          const existing = document.querySelector('script[data-rstk-playerjs]');
+          if (existing) existing.addEventListener('load', connect, { once: true });
+          else {
+            const loader = document.createElement('script');
+            loader.src = 'https://assets.mediadelivery.net/playerjs/player-0.1.0.min.js';
+            loader.async = true;
+            loader.dataset.rstkPlayerjs = 'true';
+            loader.addEventListener('load', connect, { once: true });
+            document.head.appendChild(loader);
+          }
+        }
+      })();
+    </script>`
+    : ''
+  return `<div class="${classes}" style="${frameStyle}"><iframe data-rstk-stream-action-frame src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe>${actionProxy}${gateMarkup}</div>${actionBridge}`
 }
 
 function collectVideoStorageUrlsFromBlocks(blocks = [], urls = new Set()) {
@@ -15484,16 +15691,25 @@ function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context =
 function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, context = {}, stream = null) {
   if (!asset?.publicUrl) return ''
   const resolvedStream = stream || getMediaAssetStreamMetadata(asset)
-  return renderVideoPlayer(asset.publicUrl, block, settings, {
-    noTrack: false,
-    tracking: {
-      enabled: !context.noTrack,
-      asset,
-      stream: resolvedStream,
-      provider: resolvedStream?.videoId ? 'bunny_stream' : 'html5_video'
-    },
-    context
-  })
+  if (context.noTrack || !resolvedStream?.videoId || !resolvedStream?.libraryId) {
+    return renderVideoPlayer(asset.publicUrl, block, settings, {
+      noTrack: false,
+      tracking: { enabled: false, asset, stream: resolvedStream, provider: 'html5_video' },
+      context
+    })
+  }
+
+  const params = new URLSearchParams()
+  if (settings.videoAutoplay) params.set('autoplay', 'true')
+  if (settings.videoMuted !== false) params.set('muted', 'true')
+  if (settings.videoLoop) params.set('loop', 'true')
+  if (settings.videoControlsMode === 'none' || settings.videoControls === false) params.set('controls', 'false')
+  const embedUrl = `https://iframe.mediadelivery.net/embed/${encodeURIComponent(resolvedStream.libraryId)}/${encodeURIComponent(resolvedStream.videoId)}${params.toString() ? `?${params.toString()}` : ''}`
+  return renderBunnyStreamIframe(embedUrl, block, {
+    enabled: true,
+    asset,
+    stream: resolvedStream
+  }, settings, context)
 }
 
 function collectBunnyStreamVideoIdsFromHtml(html = '') {
@@ -21956,6 +22172,16 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
       const preserveUrl = (value) => (
         value && window.ristakPreserveParams ? window.ristakPreserveParams(value) : value
       );
+      const navigateTo = (value) => {
+        const target = preserveUrl(value);
+        if (!target) return false;
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'ristak:form-navigate', url: target }, '*');
+          return true;
+        }
+        window.location.href = target;
+        return true;
+      };
       const getPageHref = (targetPageId) => {
         if (!targetPageId) return '#';
         if (LINK_STYLE === 'path' && PAGE_HREFS[targetPageId]) return preserveUrl(PAGE_HREFS[targetPageId]);
@@ -22946,10 +23172,26 @@ async function renderImportedNativeFormSlot(block = {}, context = {}) {
 
   const formHtml = await renderPublicSiteHtml(frameSite, {
     pageId,
-    trackingEnabled: !context.noTrack,
+    // El documento padre es el único dueño de PageView/Pixel/CAPI. El iframe
+    // nativo solo captura y envía el formulario.
+    trackingEnabled: false,
     preview: context.preview
   })
-  return `<iframe class="rstk-imported-native-form-frame" title="${escapeHtml(block.label || 'Formulario')}" srcdoc="${escapeHtml(formHtml)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
+  const bridgedFormHtml = injectImportedHtmlRuntime(formHtml, `<script>
+  (() => {
+    const sendHeight = () => {
+      const body = document.body;
+      const root = document.documentElement;
+      const height = Math.max(body?.scrollHeight || 0, body?.offsetHeight || 0, root?.scrollHeight || 0, root?.offsetHeight || 0);
+      parent.postMessage({ type: 'ristak:form-embed-height', height }, '*');
+    };
+    window.addEventListener('load', sendHeight);
+    if ('ResizeObserver' in window && document.body) new ResizeObserver(sendHeight).observe(document.body);
+    setTimeout(sendHeight, 50);
+    setTimeout(sendHeight, 300);
+  })();
+  </script>`)
+  return `<iframe class="rstk-imported-native-form-frame" title="${escapeHtml(block.label || 'Formulario')}" srcdoc="${escapeHtml(bridgedFormHtml)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
 }
 
 function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
@@ -22964,6 +23206,7 @@ function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
     calendarId: cleanString(settings.calendarId || settings.calendar_id),
     calendarSlug,
     calendarName: cleanString(settings.calendarName || settings.calendar_name || block.label || 'Calendario'),
+    timezone: cleanString(settings.calendarTimezone || settings.calendar_timezone || settings.timezone),
     slotsUrl: `/api/calendars/public/${encodeURIComponent(calendarSlug)}/free-slots`,
     bookUrl: `/api/calendars/public/${encodeURIComponent(calendarSlug)}/appointments`,
     redirectUrl: calendarCompletionRedirect,
@@ -22999,6 +23242,14 @@ function renderImportedCustomCalendarSlot(tagName = 'div', attrs = {}, innerHtml
 
 async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, blocks = [], context = {}, runtimeState = {}) {
   runtimeState.hasNativeElements = true
+  const slotKey = `${cleanString(slot.pageId || context.pageId)}:${cleanString(slot.type)}:${cleanString(slot.id)}`
+  runtimeState.seenSlotKeys ||= new Set()
+  if (runtimeState.seenSlotKeys.has(slotKey)) {
+    return context.preview
+      ? renderImportedNativeElementWrapper(attrs, slot, '<div class="rstk-imported-native-placeholder">ID nativo duplicado. Usa un ID único en esta página.</div>')
+      : (innerHtml || '')
+  }
+  runtimeState.seenSlotKeys.add(slotKey)
   const block = findImportedNativeElementBlock(blocks, slot)
   if (slot.type === 'calendar' && slot.renderMode === 'custom') {
     return renderImportedCustomCalendarSlot(tagName, attrs, innerHtml, slot, block || {}, context, runtimeState)
@@ -23094,7 +23345,8 @@ async function replaceImportedNativeElementSlots(html = '', blocks = [], context
     hasPayment: false,
     hasCalendar: false,
     hasVideo: false,
-    customCalendarConfigs: []
+    customCalendarConfigs: [],
+    seenSlotKeys: new Set()
   }
   let index = 0
   const pairedPattern = /<([a-z][\w:-]*)\b([^>]*?\bdata-(?:rstk|ristak|ristack)-(?:native-element|element|element-type|component|widget)\b[^>]*)>([\s\S]*?)<\/\1>/gi
@@ -23215,6 +23467,77 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       }
       return data;
     };
+    const slotStartValue = (slot) => String(slot && (slot.startTime || slot.start_time || slot.start || slot.iso || slot.value) || '');
+    const slotLabel = (slot) => String(slot && (slot.label || slot.display || slot.localTime || slot.local_time || slotStartValue(slot)) || 'Horario');
+    const wireDeclarativeCalendar = (root) => {
+      if (!root || root.dataset.rstkCalendarWired === 'true') return;
+      const slotId = root.getAttribute('data-rstk-native-slot-id') || '';
+      const config = configs[slotId];
+      if (!config) return;
+      const dateInput = root.querySelector('[data-rstk-calendar-date]');
+      const endDateInput = root.querySelector('[data-rstk-calendar-end-date]');
+      const slotsField = root.querySelector('[data-rstk-calendar-time]');
+      const loadButton = root.querySelector('[data-rstk-calendar-load-slots]');
+      const bookingForm = root.querySelector('[data-rstk-calendar-book-form]');
+      const message = root.querySelector('[data-rstk-calendar-message]');
+      if (!dateInput || !slotsField) return;
+      root.dataset.rstkCalendarWired = 'true';
+      const setMessage = (text, kind = '') => {
+        if (!message) return;
+        message.textContent = text || '';
+        message.setAttribute('data-status', kind);
+      };
+      const loadSlots = async () => {
+        const startDate = String(dateInput.value || '');
+        if (!startDate) { setMessage('Elige una fecha.', 'error'); return; }
+        loadButton && (loadButton.disabled = true);
+        setMessage('Buscando horarios...', 'loading');
+        try {
+          const slots = await window.ristakCalendarGetSlots(slotId, {
+            startDate,
+            endDate: String(endDateInput && endDateInput.value || startDate),
+            timezone: config.timezone || ''
+          });
+          const list = Array.isArray(slots) ? slots : [];
+          slotsField.innerHTML = '<option value="">Selecciona un horario</option>' + list
+            .filter(slot => slotStartValue(slot))
+            .map(slot => '<option value="' + slotStartValue(slot).replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">' + slotLabel(slot).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</option>')
+            .join('');
+          setMessage(list.length ? '' : 'No hay horarios disponibles para esa fecha.', list.length ? '' : 'empty');
+        } catch (error) {
+          setMessage(error && error.message || 'No se pudieron cargar los horarios.', 'error');
+        } finally {
+          loadButton && (loadButton.disabled = false);
+        }
+      };
+      loadButton && loadButton.addEventListener('click', event => { event.preventDefault(); void loadSlots(); });
+      dateInput.addEventListener('change', () => { void loadSlots(); });
+      bookingForm && bookingForm.addEventListener('submit', async event => {
+        event.preventDefault();
+        const startTime = String(slotsField.value || '');
+        if (!startTime) { setMessage('Selecciona un horario.', 'error'); return; }
+        const submit = bookingForm.querySelector('[type="submit"]');
+        submit && (submit.disabled = true);
+        setMessage('Agendando...', 'loading');
+        try {
+          await window.ristakCalendarBook(slotId, {
+            startTime,
+            timezone: config.timezone || '',
+            name: String(bookingForm.querySelector('[data-rstk-calendar-name]')?.value || ''),
+            email: String(bookingForm.querySelector('[data-rstk-calendar-email]')?.value || ''),
+            phone: String(bookingForm.querySelector('[data-rstk-calendar-phone]')?.value || '')
+          });
+          setMessage('Cita confirmada.', 'success');
+        } catch (error) {
+          setMessage(error && error.message || 'No se pudo confirmar la cita.', 'error');
+        } finally {
+          submit && (submit.disabled = false);
+        }
+      });
+    };
+    const wireAll = () => document.querySelectorAll('.rstk-imported-native-custom[data-rstk-native-type="calendar"]').forEach(wireDeclarativeCalendar);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireAll, { once: true });
+    else wireAll();
   })();
   </script>`
 }
@@ -23233,7 +23556,7 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]::after{content:none!important}
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]{display:block!important;border:0!important;aspect-ratio:auto!important;color:inherit!important;font-weight:inherit!important}
 .rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}
-.rstk-imported-native-form-frame{display:block;width:100%;min-height:720px;border:0;background:transparent}
+.rstk-imported-native-form-frame{display:block;width:100%;min-height:140px;border:0;background:transparent}
 .rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
 .rstk-imported-native-video .rstk-video{width:100%}
 .rstk-payment-block{position:relative;width:100%;text-align:var(--rstk-checkout-align,left);font-family:inherit;color:inherit}
@@ -23311,6 +23634,24 @@ function buildImportedNativeElementRuntimeInjection(runtimeState = {}, site = nu
     // El tema escopado va DESPUÉS del CSS base importado: ante conflictos de igual
     // especificidad gana el tema del usuario (adiós a los fallbacks CanvasText).
     site ? buildImportedNativeThemeStyle(site) : '',
+    runtimeState.hasNativeElements ? `<script>
+    (() => {
+      window.addEventListener('message', event => {
+        const data = event.data || {};
+        const frame = Array.from(document.querySelectorAll('iframe.rstk-imported-native-form-frame')).find(item => item.contentWindow === event.source);
+        if (!frame) return;
+        if (data.type === 'ristak:form-embed-height') {
+          const height = Math.max(140, Math.min(5000, Number(data.height || 0)));
+          if (Number.isFinite(height)) frame.style.height = Math.round(height) + 'px';
+          return;
+        }
+        if (data.type === 'ristak:form-navigate' && data.url) {
+          const target = window.ristakPreserveParams ? window.ristakPreserveParams(String(data.url)) : String(data.url);
+          window.location.assign(target);
+        }
+      });
+    })();
+    </script>` : '',
     runtimeState.hasPayment ? buildPaymentCheckoutRuntimeScript() : '',
     runtimeState.hasCalendar ? buildImportedCalendarBridgeScript() : '',
     buildImportedCustomCalendarRuntimeScript(runtimeState.customCalendarConfigs || [])
@@ -23368,6 +23709,7 @@ async function renderImportedPublicSiteHtml(site, {
     }
   }
   html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths, { linkStyle })
+  html = await resolveImportedContentAssets(html, site.id)
   const importedSourceBlocks = Array.isArray(site.blocks) ? site.blocks : await listSiteBlocks(site.id)
   site = {
     ...site,
@@ -23425,7 +23767,7 @@ async function renderImportedPublicSiteHtml(site, {
     linkStyle
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
-    annotateImportedEditableHtml(html),
+    html,
     `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${injection.head}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
@@ -23460,6 +23802,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       asset.assetPath,
       availablePaths
     )
+    html = await resolveImportedContentAssets(html, site.id)
     site = {
       ...site,
       blocks: await hydrateEmbeddedForms(await listSiteBlocks(site.id))
@@ -23508,7 +23851,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     })
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
-      annotateImportedEditableHtml(html),
+      html,
       `${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${injection.head}`
     )
 
@@ -24590,6 +24933,16 @@ export async function renderPublicSiteHtml(site, {
         url.searchParams.set('page', targetPageId);
         return preserveUrl(url.toString());
       };
+      const navigateTo = (value) => {
+        const target = preserveUrl(value);
+        if (!target) return false;
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'ristak:form-navigate', url: target }, '*');
+          return true;
+        }
+        window.location.href = target;
+        return true;
+      };
       const isMediaFrame = (frame) => {
         const src = frame.getAttribute('src') || frame.dataset.rstkPausedSrc || '';
         return Boolean(frame.closest('.rstk-video, .rstk-imported-video-slot')) ||
@@ -24732,7 +25085,7 @@ export async function renderPublicSiteHtml(site, {
           const targetUrl = getImmediateDisqualifyUrl(rule);
           if (targetUrl) {
             pauseMediaIn(document);
-            window.location.href = targetUrl;
+            navigateTo(targetUrl);
             return true;
           }
           if (showEmbeddedResult('disqualified')) return true;
@@ -24743,7 +25096,7 @@ export async function renderPublicSiteHtml(site, {
           const targetUrl = getRuleRedirectUrl(rule);
           if (targetUrl) {
             pauseMediaIn(document);
-            window.location.href = targetUrl;
+            navigateTo(targetUrl);
             return true;
           }
           showOnlyRuleMessage(targetMessage, statusText);
@@ -25130,7 +25483,7 @@ export async function renderPublicSiteHtml(site, {
         }
         if (targetUrl) {
           pauseMediaIn(document);
-          window.location.href = preserveUrl(targetUrl);
+          navigateTo(targetUrl);
         }
       });
 
@@ -25280,7 +25633,7 @@ export async function renderPublicSiteHtml(site, {
           if (!targetUrl) return false;
           isNavigatingAway = true;
           pauseMediaIn(document);
-          window.location.href = preserveUrl(targetUrl);
+          navigateTo(targetUrl);
           return true;
         };
 

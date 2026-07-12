@@ -2621,6 +2621,22 @@ async function initTablesUnlocked() {
       )
     `)
 
+    // Alias estables de contenido para páginas HTML. El HTML guarda asset_key;
+    // media_asset_id puede cambiar cuando el usuario reemplaza el archivo.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS public_site_content_assets (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        asset_key TEXT NOT NULL,
+        label TEXT,
+        kind TEXT DEFAULT 'other',
+        media_asset_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (site_id) REFERENCES public_sites(id) ON DELETE CASCADE
+      )
+    `)
+
     await db.run(`
       CREATE TABLE IF NOT EXISTS public_site_folders (
         id TEXT PRIMARY KEY,
@@ -2693,6 +2709,8 @@ async function initTablesUnlocked() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_imports_site ON public_site_imports(site_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_import_assets_import ON public_site_import_assets(import_id)')
       await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_public_site_import_assets_site_path ON public_site_import_assets(site_id, asset_path)')
+      await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_public_site_content_assets_site_key ON public_site_content_assets(site_id, asset_key)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_content_assets_media ON public_site_content_assets(media_asset_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_folders_section_order ON public_site_folders(section, archived, sort_order, name)')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_public_sites_domain_lower ON public_sites(LOWER(domain)) WHERE domain IS NOT NULL AND domain != ''")
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_public_site_domains_domain_lower ON public_site_domains(LOWER(domain)) WHERE domain IS NOT NULL AND domain != ''")

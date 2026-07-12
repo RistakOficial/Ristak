@@ -2076,6 +2076,116 @@
   padding-top: 12px;
 }
 
+.importedContentHubSection {
+  display: grid;
+  gap: 10px;
+  padding-block: 12px;
+  border-block: 1px solid var(--border);
+}
+
+.importedContentHubSection + .importedContentHubSection {
+  border-top: 0;
+}
+
+.importedContentHubSectionHeader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.importedContentHubSectionHeader > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.importedContentHubSectionHeader span {
+  color: var(--text-mute);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.importedContentHubSectionHeader strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedContentHubSectionHeader > button,
+.importedContentAssetRow > button {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.importedContentHubSectionHeader > button:hover:not(:disabled),
+.importedContentAssetRow > button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.importedContentHubActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.importedContentAssetList {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.importedContentAssetRow {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-block: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+.importedContentAssetRow:last-child {
+  border-bottom: 0;
+}
+
+.importedContentAssetIcon {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.importedContentElementBuilder {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.importedContentHubError {
+  margin: 0;
+  color: var(--neg);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .importedNativeElementControls .formEmbedToolbarControls,
 .importedNativeElementControls .formCompletionToolbarControls {
   min-width: 0;

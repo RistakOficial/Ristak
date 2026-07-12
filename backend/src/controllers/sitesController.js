@@ -10,10 +10,12 @@ import {
   createSitesPublicDomain,
   createSubmissionFromRequest,
   deleteBlock,
+  deleteSiteContentAsset,
   deleteSite,
   getRequestHost,
   getImportedSiteBySiteId,
   getImportedSiteAssetResponse,
+  getPublicSiteContentAsset,
   getPublicSitePaymentStatus,
   initSitePaymentCheckout,
   paySiteCheckout,
@@ -28,6 +30,7 @@ import {
   createSiteFolder,
   listSiteFolders,
   listSites,
+  listSiteContentAssets,
   refreshSitesAppDomain,
   refreshSitesPublicDomain,
   refreshSitesPublicDomainById,
@@ -45,9 +48,9 @@ import {
   setSitesPublicDomainDefaultRoute,
   setSitesPublicDefaultRoute,
   shouldBlockCrmOnPublicCalendarFallbackHost,
+  saveSiteContentAsset,
   updateBlock,
   updateSiteFolder,
-  updateImportedSiteEditableContent,
   updateImportedSiteCodeFiles,
   updateImportedSiteHtmlWithAI,
   updateImportedSiteFormMappings,
@@ -447,17 +450,10 @@ export async function updateImportedSiteHtmlWithAIHandler(req, res) {
 }
 
 export async function updateImportedSiteEditableContentHandler(req, res) {
-  try {
-    const result = await updateImportedSiteEditableContent(req.params.siteId, {
-      ...(req.body || {}),
-      userId: req.user?.userId || req.user?.id
-    })
-    res.json({ success: true, data: result })
-  } catch (error) {
-    logger.error(`Error editando contenido HTML importado: ${error.message}`)
-    error.status = error.status || 400
-    sendError(res, error, 'Error editando contenido HTML')
-  }
+  return res.status(410).json({
+    success: false,
+    error: 'La edición visual por elemento fue retirada. Reemplaza el HTML completo o usa el asistente de código.'
+  })
 }
 
 export async function updateImportedSiteCodeFilesHandler(req, res) {
@@ -495,6 +491,49 @@ export async function importedSiteAssetHandler(req, res) {
   } catch (error) {
     logger.error(`Error sirviendo asset importado de site: ${error.message}`)
     return res.status(error.status || 500).type('text/plain').send(error.message || 'No se pudo abrir el archivo')
+  }
+}
+
+export async function publicSiteContentAssetHandler(req, res) {
+  try {
+    const binding = await getPublicSiteContentAsset(req.params.siteId, req.params.assetKey)
+    if (!binding?.mediaAsset?.publicUrl) {
+      return res.status(404).type('text/plain').send('Contenido no encontrado')
+    }
+    res.set('Cache-Control', 'public, max-age=300')
+    return res.redirect(302, binding.mediaAsset.publicUrl)
+  } catch (error) {
+    logger.error(`Error sirviendo contenido estable de site: ${error.message}`)
+    return res.status(error.status || 500).type('text/plain').send(error.message || 'No se pudo abrir el contenido')
+  }
+}
+
+export async function getSiteContentAssetsHandler(req, res) {
+  try {
+    res.json({ success: true, data: await listSiteContentAssets(req.params.siteId) })
+  } catch (error) {
+    sendError(res, error, 'No se pudo cargar el contenido del sitio')
+  }
+}
+
+export async function saveSiteContentAssetHandler(req, res) {
+  try {
+    const result = await saveSiteContentAsset(req.params.siteId, {
+      ...(req.body || {}),
+      id: req.params.bindingId || req.body?.id
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    sendError(res, error, 'No se pudo guardar el contenido del sitio')
+  }
+}
+
+export async function deleteSiteContentAssetHandler(req, res) {
+  try {
+    const result = await deleteSiteContentAsset(req.params.siteId, req.params.bindingId)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    sendError(res, error, 'No se pudo quitar el contenido del sitio')
   }
 }
 
@@ -556,7 +595,8 @@ export async function previewSiteHandler(req, res) {
       pageId: req.query?.page,
       trackingEnabled: false,
       preview: true,
-      importedNativePreviewMock: req.method === 'POST' && req.body?.importedNativePreviewMock === true,
+      // Todo preview de HTML importado debe ser inerte: nunca monta un checkout real.
+      importedNativePreviewMock: true,
       draftImportedCodeFiles: req.method === 'POST' ? req.body?.draftImportedCodeFiles : undefined
     }))
   } catch (error) {

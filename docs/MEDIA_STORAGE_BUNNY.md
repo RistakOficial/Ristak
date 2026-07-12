@@ -113,6 +113,8 @@ another account.
 - Videos uploaded from Sites, imported site assets, site editor media and Forms (`module=sites`, `module=forms`, `module=landing`) are copied into Bunny Stream after the Storage upload. Other modules do not sync to Stream.
 - Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
 - Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
+- Imported HTML Sites do not persist Bunny/Storage URLs as their editable content contract. `public_site_content_assets` maps a stable per-site `asset_key` to the current `media_asset_id`; HTML uses `data-rstk-asset-id` or `data-rstk-background-asset-id`, and the public renderer resolves the current ready/public asset. Replacing an image or file changes the binding without changing the HTML key.
+- Configurable Site videos keep the Storage file for editor/preview and switch to Bunny Stream in the published page when Stream metadata is ready. Video actions are bridged through Player.js in the live iframe.
 
 ## App media explorer
 

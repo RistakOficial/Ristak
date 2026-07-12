@@ -2760,6 +2760,30 @@ export async function getMediaAsset(assetId) {
   return mapAssetRow(row)
 }
 
+export async function findMediaAssetsByIds(assetIds = []) {
+  const seen = new Set()
+  const ids = (Array.isArray(assetIds) ? assetIds : [])
+    .map(cleanString)
+    .filter((assetId) => {
+      if (!assetId || seen.has(assetId)) return false
+      seen.add(assetId)
+      return true
+    })
+
+  if (!ids.length) return []
+
+  const placeholders = ids.map(() => '?').join(', ')
+  const rows = await db.all(
+    `SELECT * FROM media_assets
+     WHERE id IN (${placeholders})
+       AND deleted_at IS NULL
+       AND status = 'ready'
+       AND is_public = 1`,
+    ids
+  )
+  return rows.map(mapAssetRow).filter(Boolean)
+}
+
 export async function findMediaAssetsByPublicUrls(publicUrls = []) {
   const seen = new Set()
   const urls = (Array.isArray(publicUrls) ? publicUrls : [])
