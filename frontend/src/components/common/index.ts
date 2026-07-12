@@ -78,6 +78,8 @@ export type {
   WhatsAppFormattedTextProps
 } from './WhatsAppFormattedText'
 export { CustomSelect } from './CustomSelect'
+export { CheckboxMultiSelect } from './CheckboxMultiSelect'
+export type { CheckboxMultiSelectOption, CheckboxMultiSelectProps } from './CheckboxMultiSelect'
 export { MetaBrandMark } from './MetaBrandMark'
 export type { MetaBrandMarkProps } from './MetaBrandMark'
 export { MetaParameterValueInput }
@@ -114,6 +116,7 @@ export {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
 } from './DropdownMenu'
 

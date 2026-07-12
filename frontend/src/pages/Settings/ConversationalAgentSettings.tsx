@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, FlaskConical, Image as ImageIcon, KeyRound, Link2, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldAlert, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
-import { Badge, Button, Card, ContactSearchInput, CustomSelect, ExpandableTextareaField, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldAlert, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
+import { Badge, Button, Card, CheckboxMultiSelect, ContactSearchInput, CustomSelect, ExpandableTextareaField, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
 import type { ContactSearchInputContact } from '@/components/common/ContactSearchInput/ContactSearchInput'
 import {
   PhoneChatPreview,
@@ -840,7 +840,7 @@ function getConversationalPaymentMsiMonths(
   accountCurrency = ''
 ) {
   const isDeposit = item.chargeType === 'deposit' || item.paymentMode === 'deposit' || item.deposit?.enabled
-  if (isDeposit || item.gateway === 'highlevel') return []
+  if (item.collectionMethod !== 'payment_link' || isDeposit || !item.gateway || item.gateway === 'highlevel') return []
   const amount = item.chargeType === 'direct'
     ? Number(item.direct?.amount) || 0
     : Number(item.amount) || 0
@@ -867,7 +867,11 @@ function getNativeCapabilityItemError(
   if (!item.enabled) return ''
   if (item.id === 'schedule_appointment' && !item.calendarId) return 'Selecciona el calendario de la capacidad para agendar.'
   if (item.id === 'collect_payment') {
-    if (!item.gateway) return 'Selecciona la pasarela que generará el enlace.'
+    const isBankTransfer = item.collectionMethod === 'bank_transfer'
+    if (!isBankTransfer && !item.gateway) return 'Selecciona la pasarela que generará el enlace.'
+    if (isBankTransfer && !String(item.bankTransfer?.details || item.deposit?.bankTransferDetails || '').trim()) {
+      return 'Escribe los datos para recibir la transferencia o depósito.'
+    }
     const isDeposit = item.chargeType === 'deposit' || item.paymentMode === 'deposit' || item.deposit?.enabled
     if (isDeposit) {
       const deposit = item.deposit || defaultNativeDeposit
@@ -882,8 +886,6 @@ function getNativeCapabilityItemError(
       if (expectedCurrency && configuredCurrency && configuredCurrency !== expectedCurrency) {
         return `El anticipo está en ${configuredCurrency}, pero la cuenta cobra en ${expectedCurrency}. Confirma de nuevo el monto para guardarlo en ${expectedCurrency}.`
       }
-      if (!deposit.methods?.paymentLink && !deposit.methods?.bankTransfer) return 'Activa un método para cobrar el anticipo.'
-      if (deposit.methods?.bankTransfer && !String(deposit.bankTransferDetails || '').trim()) return 'Escribe los datos de transferencia.'
     } else if (item.chargeType === 'direct') {
       if (!(Number(item.direct?.amount) > 0)) return 'Escribe un monto mayor a cero para el cobro directo.'
       if (!String(item.direct?.concept || '').trim()) return 'Escribe el concepto del cobro directo.'
@@ -893,6 +895,7 @@ function getNativeCapabilityItemError(
     } else if (!item.productId || !item.priceId) {
       return 'Selecciona el producto y precio reales de la capacidad para cobrar.'
     }
+    if (isBankTransfer) return ''
     if (isDeposit && item.installments?.enabled) return 'Los meses sin intereses no aplican a anticipos.'
     if (item.gateway === 'highlevel' && item.installments?.enabled) return 'HighLevel no permite fijar meses sin intereses en invoices.'
     if (item.gateway === 'highlevel' && Number(item.expirationMinutes) < 1440) return 'HighLevel requiere una fecha límite de al menos 24 horas.'
@@ -1145,7 +1148,8 @@ function buildNativeCapabilityFromAgent(
       allowOverlaps: false,
       bookingOwner: 'ai',
       handoffUserId: '',
-      handoffUserName: ''
+      handoffUserName: '',
+      testMode: { enabled: false, cleanupAfterMinutes: 5, notify: true }
     }
   }
   if (id === 'collect_payment') {
@@ -1156,6 +1160,7 @@ function buildNativeCapabilityFromAgent(
       priceId: '',
       paymentMode: 'full_payment',
       chargeType: 'product',
+      collectionMethod: 'payment_link',
       amount: null,
       currency: accountCurrency,
       gateway: 'stripe',
@@ -1168,12 +1173,14 @@ function buildNativeCapabilityFromAgent(
       installments: { enabled: false, maxInstallments: 0 },
       expirationMinutes: 60,
       afterPayment: 'continue',
-      receiptProof: { enabled: true, disposition: 'pending_review' },
+      receiptProof: { enabled: false, disposition: 'pending_review' },
+      bankTransfer: { details: '' },
       deposit: {
         ...defaultNativeDeposit,
         currency: accountCurrency,
         methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS }
-      }
+      },
+      testMode: { enabled: false, cleanupAfterMinutes: 5, notify: true }
     }
   }
   if (id === 'send_link') {
@@ -1232,6 +1239,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   const { showToast } = useNotification()
   const capabilities = agent.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
   const [paymentSettingsOpen, setPaymentSettingsOpen] = useState(false)
+  const [savingPaymentSettings, setSavingPaymentSettings] = useState(false)
   const promptConfig = agent.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG
   const strategyText = promptConfig.strategyText ?? promptConfig.editableText ?? ''
   const personalityText = promptConfig.personalityText ?? ''
@@ -1259,7 +1267,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       ? capabilities.items.map((item) => (item.id === next.id ? next : item))
       : [...capabilities.items, next]
     onChange({
-      capabilitiesConfig: { ...capabilities, schemaVersion: 2, items },
+      capabilitiesConfig: { ...capabilities, schemaVersion: 3, items },
       ...(pause && agent.enabled ? { enabled: false } : {})
     })
     if (pause && agent.enabled) {
@@ -1269,7 +1277,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
 
   const updateCapabilitiesConfig = (patch: Partial<ConversationalCapabilitiesConfig>, { pause = true } = {}) => {
     onChange({
-      capabilitiesConfig: { ...capabilities, ...patch, schemaVersion: 2 },
+      capabilitiesConfig: { ...capabilities, ...patch, schemaVersion: 3 },
       ...(pause && agent.enabled ? { enabled: false } : {})
     })
     if (pause && agent.enabled) {
@@ -1302,9 +1310,67 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   } as React.CSSProperties
   const selectedProduct = products.find((product) => getProductId(product) === paymentCapability?.productId) || null
   const productPrices = selectedProduct?.prices || []
+  const selectedPrice = productPrices.find((price) => getPriceId(price) === paymentCapability?.priceId) || null
+  const paymentConfigurationError = paymentCapability
+    ? getNativeCapabilityItemError(paymentCapability, capabilities.items, accountCurrency)
+    : ''
+  const paymentGatewayLabels: Record<NonNullable<Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>['gateway']>, string> = {
+    stripe: 'Stripe',
+    conekta: 'Conekta',
+    mercadopago: 'Mercado Pago',
+    clip: 'CLIP',
+    rebill: 'Rebill',
+    highlevel: 'Conexión anterior'
+  }
+  const paymentAmountSummary = paymentCapability?.chargeType === 'direct'
+    ? (paymentCapability.direct.amount
+        ? formatCurrency(paymentCapability.direct.amount, paymentCapability.direct.currency || accountCurrency)
+        : 'Falta monto')
+    : paymentCapability?.chargeType === 'deposit'
+      ? (paymentCapability.deposit.mode === 'range'
+          ? `${formatCurrency(Number(paymentCapability.deposit.minAmount) || 0, depositCurrency)} a ${formatCurrency(Number(paymentCapability.deposit.maxAmount) || 0, depositCurrency)}`
+          : (paymentCapability.deposit.amount
+              ? formatCurrency(paymentCapability.deposit.amount, depositCurrency)
+              : 'Falta monto'))
+      : (selectedPrice
+          ? formatCurrency(getPriceAmount(selectedPrice), normalizeCurrencyCode(selectedPrice.currency || selectedProduct?.currency || accountCurrency))
+          : 'Falta precio')
+  const paymentConceptSummary = paymentCapability?.chargeType === 'direct'
+    ? (paymentCapability.direct.concept || 'Cobro directo')
+    : paymentCapability?.chargeType === 'deposit'
+      ? 'Anticipo'
+      : (selectedProduct?.name || 'Falta producto')
+  const paymentSummaryItems = paymentCapability ? [
+    paymentCapability.collectionMethod === 'bank_transfer' ? 'Transferencia/Depósito' : 'Link de pago',
+    `${paymentConceptSummary} · ${paymentAmountSummary}`,
+    ...(paymentCapability.collectionMethod === 'payment_link'
+      ? [
+          paymentGatewayLabels[paymentCapability.gateway || 'stripe'],
+          paymentCapability.installments.enabled ? `Hasta ${paymentCapability.installments.maxInstallments} MSI` : 'Sin MSI',
+          `Vence en ${Number(paymentCapability.expirationMinutes) >= 10080 ? '7 días' : Number(paymentCapability.expirationMinutes) >= 1440 ? '24 horas' : Number(paymentCapability.expirationMinutes) >= 360 ? '6 horas' : Number(paymentCapability.expirationMinutes) >= 60 ? '1 hora' : '30 minutos'}`
+        ]
+      : [
+          'Comprobante por imagen',
+          String(paymentCapability.bankTransfer?.details || paymentCapability.deposit?.bankTransferDetails || '').trim()
+            ? 'Datos bancarios configurados'
+            : 'Faltan datos bancarios'
+        ]),
+    paymentCapability.afterPayment === 'handoff' ? 'Después: pasar al equipo' : 'Después: continuar'
+  ] : []
   const manifestById = new Map<ConversationalCapabilityId, ConversationalCapabilityManifestItem>(
     (agent.capabilityManifest || []).map((item) => [item.id, item])
   )
+
+  const savePaymentSettings = async () => {
+    if (paymentConfigurationError || savingPaymentSettings) return
+    setSavingPaymentSettings(true)
+    try {
+      await onFlushSave()
+      setPaymentSettingsOpen(false)
+    } finally {
+      setSavingPaymentSettings(false)
+    }
+  }
 
   const capabilityRows: Array<{
     id: ConversationalCapabilityId
@@ -1366,6 +1432,22 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
           ) : (
             <p className={styles.helper}>La IA vuelve a comprobar el horario elegido, crea la cita y sólo entonces la confirma.</p>
           )}
+          <div className={styles.nativeTestModeRow} data-enabled={scheduleCapability.testMode.enabled ? 'true' : undefined}>
+            <div>
+              <strong>Modo test para citas</strong>
+              <span>{scheduleCapability.bookingOwner === 'human'
+                ? 'Hace la entrega y notificación de prueba; después restaura al responsable anterior.'
+                : 'Crea una cita marcada como prueba y la elimina automáticamente después de 5 minutos.'}</span>
+            </div>
+            <Switch
+              checked={scheduleCapability.testMode.enabled}
+              onChange={(enabled) => updateCapability({
+                ...scheduleCapability,
+                testMode: { ...scheduleCapability.testMode, enabled, cleanupAfterMinutes: 5 }
+              }, { pause: false })}
+              aria-label="Activar modo test para citas"
+            />
+          </div>
         </div>
       ) : null
     },
@@ -1375,17 +1457,37 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       settings: paymentCapability?.enabled ? (
         <>
           <div className={styles.nativeCapabilitySettings}>
-            <p className={styles.helper}>
-              {paymentCapability.chargeType === 'direct'
-                ? `${paymentCapability.direct.concept || 'Cobro directo'} · ${paymentCapability.direct.amount ? formatCurrency(paymentCapability.direct.amount, paymentCapability.direct.currency || accountCurrency) : 'falta monto'}`
-                : (paymentCapability.chargeType === 'deposit'
-                    ? 'Anticipo configurado'
-                    : (selectedProduct?.name || 'Falta elegir producto'))}
-              {' · '}{paymentCapability.gateway === 'highlevel' ? 'HighLevel' : paymentCapability.gateway}
-            </p>
+            <div className={styles.nativePaymentSummary} data-invalid={paymentConfigurationError ? 'true' : undefined}>
+              <div className={styles.nativePaymentSummaryHeading}>
+                <strong>Configuración del cobro</strong>
+                <Badge variant={paymentConfigurationError ? 'warning' : 'success'}>
+                  {paymentConfigurationError ? 'Incompleta' : 'Lista'}
+                </Badge>
+              </div>
+              <div className={styles.nativePaymentSummaryItems}>
+                {paymentSummaryItems.map((item) => <span key={item}>{item}</span>)}
+              </div>
+              {paymentConfigurationError && <p className={styles.nativeCapabilityError}><AlertTriangle size={15} />{paymentConfigurationError}</p>}
+            </div>
             <Button variant="secondary" onClick={() => setPaymentSettingsOpen(true)} leftIcon={<CreditCard size={16} />}>
               Configurar cobro
             </Button>
+            <div className={styles.nativeTestModeRow} data-enabled={paymentCapability.testMode.enabled ? 'true' : undefined}>
+              <div>
+                <strong>Modo test para pagos</strong>
+                <span>{paymentCapability.collectionMethod === 'bank_transfer'
+                  ? 'Permite probar el análisis del comprobante sin usar una pasarela ni confirmar dinero.'
+                  : 'Crea un link sandbox, escucha la confirmación de prueba y elimina el registro después de 5 minutos.'}</span>
+              </div>
+              <Switch
+                checked={paymentCapability.testMode.enabled}
+                onChange={(enabled) => updateCapability({
+                  ...paymentCapability,
+                  testMode: { ...paymentCapability.testMode, enabled, cleanupAfterMinutes: 5 }
+                }, { pause: false })}
+                aria-label="Activar modo test para pagos"
+              />
+            </div>
           </div>
           <Modal
             isOpen={paymentSettingsOpen}
@@ -1394,10 +1496,39 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
               flushPromptSave()
             }}
             title="Cómo va a cobrar la IA"
-            subtitle="Sólo crea y comparte enlaces seguros. Nunca pide ni captura datos de tarjeta en el chat."
+            subtitle="Elige si la IA manda un link seguro o revisa la imagen de una transferencia. Nunca pide datos de tarjeta en el chat."
             size="lg"
           >
           <div className={styles.nativeCapabilitySettings}>
+          <label className={styles.label}>Cómo recibirá el pago</label>
+          <CustomSelect
+            value={paymentCapability.collectionMethod}
+            onChange={(event) => {
+              const collectionMethod = event.target.value === 'bank_transfer' ? 'bank_transfer' : 'payment_link'
+              updateCapability({
+                ...paymentCapability,
+                collectionMethod,
+                gateway: collectionMethod === 'payment_link' ? (paymentCapability.gateway || 'stripe') : null,
+                installments: collectionMethod === 'payment_link' ? paymentCapability.installments : { enabled: false, maxInstallments: 0 },
+                receiptProof: { enabled: collectionMethod === 'bank_transfer', disposition: 'pending_review' },
+                deposit: {
+                  ...paymentCapability.deposit,
+                  methods: {
+                    paymentLink: collectionMethod === 'payment_link',
+                    bankTransfer: collectionMethod === 'bank_transfer'
+                  },
+                  bankTransferDetails: paymentCapability.bankTransfer?.details || paymentCapability.deposit.bankTransferDetails || ''
+                }
+              })
+            }}
+            portal
+          >
+            <option value="payment_link">Link de pago</option>
+            <option value="bank_transfer">Transferencia/Depósito</option>
+          </CustomSelect>
+          <p className={styles.helper}>{paymentCapability.collectionMethod === 'bank_transfer'
+            ? 'La persona transfiere desde su propia app y manda una foto o captura. La IA la analiza y la deja pendiente de revisión; la imagen no confirma fondos.'
+            : 'La IA crea un link en la pasarela elegida. El pago sólo se confirma cuando Ristak recibe la señal real de la pasarela.'}</p>
           <label className={styles.label}>Tipo de cobro</label>
           <CustomSelect
             value={paymentCapability.chargeType}
@@ -1594,127 +1725,104 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                     </div>
                   </div>
                 )}
+              </div>
+            </>
+          )}
+          {paymentCapability.collectionMethod === 'bank_transfer' ? (
+            <>
+              <label className={styles.label}>Datos para transferir o depositar</label>
+              <textarea
+                className={styles.textarea}
+                value={paymentCapability.bankTransfer?.details || ''}
+                rows={4}
+                placeholder="Banco, titular, cuenta, CLABE y referencia que debe escribir la persona"
+                onChange={(event) => updateCapability({
+                  ...paymentCapability,
+                  bankTransfer: { details: event.target.value },
+                  receiptProof: { enabled: true, disposition: 'pending_review' },
+                  deposit: {
+                    ...paymentCapability.deposit,
+                    methods: { paymentLink: false, bankTransfer: true },
+                    bankTransferDetails: event.target.value
+                  }
+                })}
+              />
+              <p className={styles.helper}>La IA acepta una foto o captura del comprobante, valida que coincida con el cobro y lo registra pendiente de revisión. Nunca lo marca pagado sólo por la imagen.</p>
+            </>
+          ) : (
+            <>
+              <label className={styles.label}>Pasarela para crear el link</label>
+              <CustomSelect
+                value={paymentCapability.gateway === 'highlevel' ? 'legacy' : (paymentCapability.gateway || 'stripe')}
+                onChange={(event) => {
+                  const gateway = event.target.value === 'legacy'
+                    ? 'highlevel'
+                    : event.target.value as NonNullable<typeof paymentCapability.gateway>
+                  updateCapability({
+                    ...paymentCapability,
+                    gateway,
+                    installments: { enabled: false, maxInstallments: 0 }
+                  })
+                }}
+                portal
+              >
+                <option value="stripe">Stripe</option>
+                <option value="conekta">Conekta</option>
+                <option value="mercadopago">Mercado Pago</option>
+                <option value="clip">CLIP</option>
+                <option value="rebill">Rebill</option>
+                {paymentCapability.gateway === 'highlevel' && <option value="legacy">Conexión anterior (cambiar)</option>}
+              </CustomSelect>
+              {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && paymentMsiMonths.length > 0 && (
                 <div className={styles.nativePaymentMethods}>
                   <label>
                     <Switch
-                      checked={Boolean(paymentCapability.deposit.methods?.paymentLink)}
-                      onChange={(paymentLink) => updateCapability({
+                      checked={paymentCapability.installments.enabled}
+                      onChange={(enabled) => updateCapability({
                         ...paymentCapability,
-                        deposit: {
-                          ...paymentCapability.deposit,
-                          methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS, ...paymentCapability.deposit.methods, paymentLink }
-                        }
+                        installments: { enabled, maxInstallments: enabled ? (paymentCapability.installments.maxInstallments || 3) : 0 }
                       })}
-                      aria-label="Cobrar anticipo con link"
+                      aria-label="Ofrecer meses sin intereses"
                     />
-                    Link de pago
+                    Ofrecer meses sin intereses
                   </label>
-                  <label>
-                    <Switch
-                      checked={Boolean(paymentCapability.deposit.methods?.bankTransfer)}
-                      onChange={(bankTransfer) => updateCapability({
+                  {paymentCapability.installments.enabled && (
+                    <CustomSelect
+                      value={String(paymentCapability.installments.maxInstallments || 3)}
+                      onChange={(event) => updateCapability({
                         ...paymentCapability,
-                        deposit: {
-                          ...paymentCapability.deposit,
-                          methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS, ...paymentCapability.deposit.methods, bankTransfer }
-                        }
+                        installments: { enabled: true, maxInstallments: Number(event.target.value) }
                       })}
-                      aria-label="Aceptar comprobante para revisión"
-                    />
-                    Transferencia con revisión
-                  </label>
+                      portal
+                      aria-label="Máximo de meses sin intereses"
+                    >
+                      {paymentMsiMonths.map((months) => <option key={months} value={months}>Hasta {months} meses</option>)}
+                    </CustomSelect>
+                  )}
                 </div>
-              </div>
-              {paymentCapability.deposit.methods?.bankTransfer && (
-                <textarea
-                  className={styles.textarea}
-                  value={paymentCapability.deposit.bankTransferDetails || ''}
-                  rows={3}
-                  placeholder="Banco, titular y datos para transferir"
-                  onChange={(event) => updateCapability({
-                    ...paymentCapability,
-                    deposit: { ...paymentCapability.deposit, bankTransferDetails: event.target.value }
-                  })}
-                />
               )}
-              <p className={styles.helper}>Una foto de comprobante queda pendiente de revisión; jamás se toma como dinero confirmado por sí sola.</p>
+              {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && paymentMsiMonths.length === 0 && (
+                <p className={styles.helper}>Esta combinación de pasarela, monto y moneda no permite meses sin intereses.</p>
+              )}
             </>
           )}
-          <label className={styles.label}>Pasarela para crear el enlace</label>
-          <CustomSelect
-            value={paymentCapability.gateway}
-            onChange={(event) => {
-              const gateway = event.target.value as typeof paymentCapability.gateway
-              updateCapability({
-                ...paymentCapability,
-                gateway,
-                installments: { enabled: false, maxInstallments: 0 },
-                ...(gateway === 'highlevel'
-                  ? {
-                      expirationMinutes: Math.max(1440, Number(paymentCapability.expirationMinutes) || 1440)
-                    }
-                  : {})
-              })
-            }}
-            portal
-          >
-            <option value="stripe">Stripe</option>
-            <option value="conekta">Conekta</option>
-            <option value="mercadopago">Mercado Pago</option>
-            <option value="clip">CLIP</option>
-            <option value="rebill">Rebill</option>
-            <option value="highlevel">HighLevel (compatibilidad)</option>
-          </CustomSelect>
-          {paymentCapability.gateway === 'highlevel' && (
-            <p className={styles.helper}>HighLevel conserva el modo global y no puede hacer override sandbox. Para probar un pago desde el tester elige Stripe, Conekta, Mercado Pago, CLIP o Rebill con credenciales de prueba.</p>
-          )}
-          {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && paymentMsiMonths.length > 0 && (
-            <div className={styles.nativePaymentMethods}>
-              <label>
-                <Switch
-                  checked={paymentCapability.installments.enabled}
-                  onChange={(enabled) => updateCapability({
-                    ...paymentCapability,
-                    installments: { enabled, maxInstallments: enabled ? (paymentCapability.installments.maxInstallments || 3) : 0 }
-                  })}
-                  aria-label="Ofrecer meses sin intereses"
-                />
-                Ofrecer meses sin intereses
-              </label>
-              {paymentCapability.installments.enabled && (
-                <CustomSelect
-                  value={String(paymentCapability.installments.maxInstallments || 3)}
-                  onChange={(event) => updateCapability({
-                    ...paymentCapability,
-                    installments: { enabled: true, maxInstallments: Number(event.target.value) }
-                  })}
-                  portal
-                  aria-label="Máximo de meses sin intereses"
-                >
-                  {paymentMsiMonths.map((months) => <option key={months} value={months}>Hasta {months} meses</option>)}
-                </CustomSelect>
-              )}
-            </div>
-          )}
-          {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && paymentMsiMonths.length === 0 && (
-            <p className={styles.helper}>Esta combinación de pasarela, monto y moneda no permite meses sin intereses.</p>
-          )}
           <div className={styles.nativeInlineFields}>
-            <div className={styles.field}>
-              <label className={styles.label}>{paymentCapability.gateway === 'highlevel' ? 'Fecha límite de la invoice' : 'El enlace vence en'}</label>
-              <CustomSelect
-                value={String(paymentCapability.expirationMinutes)}
-                onChange={(event) => updateCapability({ ...paymentCapability, expirationMinutes: Number(event.target.value) })}
-                portal
-              >
-                {paymentCapability.gateway !== 'highlevel' && <option value="30">30 minutos</option>}
-                {paymentCapability.gateway !== 'highlevel' && <option value="60">1 hora</option>}
-                {paymentCapability.gateway !== 'highlevel' && <option value="360">6 horas</option>}
-                <option value="1440">24 horas</option>
-                <option value="10080">7 días</option>
-              </CustomSelect>
-              {paymentCapability.gateway === 'highlevel' && <p className={styles.helper}>HighLevel guarda una fecha límite, no una hora exacta.</p>}
-            </div>
+            {paymentCapability.collectionMethod === 'payment_link' && (
+              <div className={styles.field}>
+                <label className={styles.label}>El link vence en</label>
+                <CustomSelect
+                  value={String(paymentCapability.expirationMinutes)}
+                  onChange={(event) => updateCapability({ ...paymentCapability, expirationMinutes: Number(event.target.value) })}
+                  portal
+                >
+                  <option value="30">30 minutos</option>
+                  <option value="60">1 hora</option>
+                  <option value="360">6 horas</option>
+                  <option value="1440">24 horas</option>
+                  <option value="10080">7 días</option>
+                </CustomSelect>
+              </div>
+            )}
             <div className={styles.field}>
               <label className={styles.label}>Después del pago confirmado</label>
               <CustomSelect
@@ -1727,22 +1835,11 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
               </CustomSelect>
             </div>
           </div>
-          <div className={styles.nativePaymentMethods}>
-            <label>
-              <Switch
-                checked={paymentCapability.receiptProof.enabled}
-                onChange={(enabled) => updateCapability({
-                  ...paymentCapability,
-                  receiptProof: { enabled, disposition: 'pending_review' }
-                })}
-                aria-label="Aceptar comprobantes de pago"
-              />
-              Aceptar foto de comprobante
-            </label>
-          </div>
-          <p className={styles.helper}>Los comprobantes siempre quedan pendientes de revisión. La IA jamás captura tarjeta ni da por pagado algo sólo por ver una imagen.</p>
+          {paymentConfigurationError && <p className={styles.nativeCapabilityError}><AlertTriangle size={15} />{paymentConfigurationError}</p>}
             <div className={styles.agentTestOptionsActions}>
-              <Button variant="primary" onClick={() => setPaymentSettingsOpen(false)}>Guardar configuración</Button>
+              <Button variant="primary" loading={savingPaymentSettings} disabled={Boolean(paymentConfigurationError)} onClick={() => void savePaymentSettings()}>
+                Guardar configuración
+              </Button>
             </div>
           </div>
           </Modal>
@@ -1863,7 +1960,6 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
     })
 
   const safetyPolicy = capabilities.safetyPolicy || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.safetyPolicy
-  const testMode = capabilities.testMode || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.testMode
   const dataRequirements = capabilities.dataRequirements || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.dataRequirements
   const requiredDataOptions: Array<{ field: ConversationalRequiredDataField; label: string }> = [
     { field: 'first_name', label: 'Nombre' },
@@ -1885,6 +1981,12 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
     { fact: 'payment.is_deposit', scope: 'payment', label: 'Cuando el cobro sea un anticipo' },
     { fact: 'payment.is_full_payment', scope: 'payment', label: 'Cuando el cobro sea pago completo' }
   ]
+  const guestDataOptions = [
+    { value: 'name' as const, label: 'Nombre' },
+    { value: 'phone' as const, label: 'Teléfono' },
+    { value: 'email' as const, label: 'Correo' },
+    { value: 'relation' as const, label: 'Relación con quien escribe' }
+  ]
   const updateRequiredDataItem = (field: ConversationalRequiredDataField, patch: Partial<ConversationalRequiredDataItem> | null) => {
     const existing = dataRequirements.fields.find((item) => item.field === field)
     const fields = patch === null
@@ -1904,6 +2006,38 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
         ...dataRequirements,
         enabled: fields.length > 0 || dataRequirements.participants.enabled,
         fields
+      }
+    })
+  }
+  const updateRequiredDataSelection = (selectedFields: ConversationalRequiredDataField[]) => {
+    const selected = new Set(selectedFields)
+    const fields = requiredDataOptions
+      .filter((option) => selected.has(option.field))
+      .map((option) => dataRequirements.fields.find((item) => item.field === option.field) || {
+        field: option.field,
+        level: 'required' as const,
+        scope: 'any_action' as const,
+        ...(option.field === 'custom' ? { label: 'Dato personalizado' } : {})
+      })
+    updateCapabilitiesConfig({
+      dataRequirements: {
+        ...dataRequirements,
+        enabled: fields.length > 0 || dataRequirements.participants.guestFields.length > 0,
+        fields
+      }
+    })
+  }
+  const updateGuestDataSelection = (guestFields: Array<'name' | 'phone' | 'email' | 'relation'>) => {
+    const participants = {
+      ...dataRequirements.participants,
+      enabled: guestFields.length > 0,
+      guestFields
+    }
+    updateCapabilitiesConfig({
+      dataRequirements: {
+        ...dataRequirements,
+        enabled: dataRequirements.fields.length > 0 || participants.enabled,
+        participants
       }
     })
   }
@@ -1977,7 +2111,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                   />
                 </div>
                 {settings}
-                {localError && (
+                {localError && id !== 'collect_payment' && (
                   <p className={styles.nativeCapabilityError} role="alert">
                     <AlertTriangle size={15} />
                     Antes de publicar: {localError}
@@ -1991,7 +2125,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
 
       <div className={styles.agentSection}>
         <h3 className={styles.sectionTitle}>3. Control y datos</h3>
-        <p className={styles.agentSectionHint}>Define qué pasa con conversaciones riesgosas, cómo pruebas acciones reales y qué datos sí debe solicitar.</p>
+        <p className={styles.agentSectionHint}>Define qué pasa con conversaciones riesgosas y qué datos sí debe solicitar.</p>
         <div className={styles.nativeCapabilityList}>
           <div className={styles.nativeCapabilityRow} data-enabled={safetyPolicy.enabled ? 'true' : undefined}>
             <div className={styles.nativeCapabilityHeading}>
@@ -2071,39 +2205,6 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
             )}
           </div>
 
-          <div className={styles.nativeCapabilityRow} data-enabled={testMode.enabled ? 'true' : undefined}>
-            <div className={styles.nativeCapabilityHeading}>
-              <span className={styles.nativeCapabilityIcon}><FlaskConical size={18} /></span>
-              <div>
-                <strong>Modo test</strong>
-                <span>En el teléfono de prueba ejecuta sólo las acciones activadas, las marca como prueba y las limpia después de 5 minutos.</span>
-              </div>
-              <Switch
-                checked={testMode.enabled}
-                onChange={(enabled) => updateCapabilitiesConfig({ testMode: { ...testMode, enabled, cleanupAfterMinutes: 5 } }, { pause: false })}
-                aria-label="Activar modo test"
-              />
-            </div>
-            {testMode.enabled && (
-              <div className={styles.nativeCapabilitySettings}>
-                <p className={styles.helper}>Citas: se crean en el calendario elegido y luego se eliminan. Pagos: se fuerza sandbox aunque la pasarela esté en vivo. Asignaciones: notifican al usuario y después restauran el responsable anterior.</p>
-                <div className={styles.nativePaymentMethods}>
-                  <label>
-                    <Switch
-                      checked={testMode.notify}
-                      onChange={(notify) => updateCapabilitiesConfig({
-                        testMode: { ...testMode, notify, cleanupAfterMinutes: 5 }
-                      }, { pause: false })}
-                      aria-label="Enviar notificaciones de prueba"
-                    />
-                    Enviar notificaciones y webhooks de prueba
-                  </label>
-                </div>
-                <p className={styles.nativeCapabilityError}><AlertTriangle size={15} />Si una pasarela no tiene credenciales de prueba, el tester se detiene; jamás cae al modo en vivo.</p>
-              </div>
-            )}
-          </div>
-
           <div className={styles.nativeCapabilityRow} data-enabled={dataRequirements.enabled ? 'true' : undefined}>
             <div className={styles.nativeCapabilityHeading}>
               <span className={styles.nativeCapabilityIcon}><UserCheck size={18} /></span>
@@ -2111,217 +2212,178 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                 <strong>Datos requeridos</strong>
                 <span>Elige exactamente qué información puede pedir antes de agendar o cobrar.</span>
               </div>
-              <Switch
-                checked={dataRequirements.enabled}
-                onChange={(enabled) => updateCapabilitiesConfig({ dataRequirements: { ...dataRequirements, enabled } })}
-                aria-label="Activar datos requeridos"
-              />
+              <Badge variant={dataRequirements.enabled ? 'info' : 'neutral'}>
+                {dataRequirements.fields.length + dataRequirements.participants.guestFields.length || 'Ninguno'}
+              </Badge>
             </div>
-            {dataRequirements.enabled && (
-              <div className={styles.nativeCapabilitySettings}>
-                {requiredDataOptions.map((option) => {
-                  const requirement = dataRequirements.fields.find((item) => item.field === option.field)
-                  return (
-                    <div key={option.field} className={styles.nativeInlineFields}>
-                      <div className={styles.nativePaymentMethods}>
-                        <label>
-                          <Switch
-                            checked={Boolean(requirement)}
-                            onChange={(enabled) => updateRequiredDataItem(
-                              option.field,
-                              enabled ? (option.field === 'custom' ? { label: 'Dato personalizado' } : {}) : null
-                            )}
-                            aria-label={`Solicitar ${option.label}`}
-                          />
-                          {option.label}
-                        </label>
-                      </div>
-                      {requirement && (
-                        <>
-                          <CustomSelect
-                            value={requirement.level}
-                            onChange={(event) => {
-                              const level = event.target.value as ConversationalRequiredDataItem['level']
-                              if (level !== 'conditional') {
-                                updateRequiredDataItem(option.field, { level, condition: undefined })
-                                return
-                              }
-                              const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
-                              updateRequiredDataItem(option.field, {
-                                level,
-                                scope: selected.scope,
-                                condition: { fact: selected.fact, operator: 'is_true', value: true }
-                              })
-                            }}
-                            portal
-                            aria-label={`Obligación de ${option.label}`}
-                          >
-                            <option value="required">Obligatorio</option>
-                            <option value="optional">Opcional</option>
-                            <option value="conditional">Condicional</option>
-                          </CustomSelect>
-                          {requirement.level !== 'conditional' && (
-                            <CustomSelect
-                              value={requirement.scope}
-                              onChange={(event) => updateRequiredDataItem(option.field, { scope: event.target.value as ConversationalRequiredDataItem['scope'] })}
-                              portal
-                              aria-label={`Cuándo pedir ${option.label}`}
-                            >
-                              <option value="any_action">Antes de cualquier acción</option>
-                              <option value="appointment">Sólo para citas</option>
-                              <option value="payment">Sólo para cobros</option>
-                            </CustomSelect>
-                          )}
-                          {option.field === 'custom' && (
-                            <input
-                              className={styles.input}
-                              value={requirement.label || ''}
-                              placeholder="Ejemplo: Número de expediente"
-                              aria-label="Nombre del dato personalizado"
-                              onChange={(event) => updateRequiredDataItem('custom', { label: event.target.value })}
-                            />
-                          )}
-                          {requirement.level === 'conditional' && (
-                            <CustomSelect
-                              value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
-                              aria-label={`Condición para ${option.label}`}
-                              onChange={(event) => {
-                                const fact = event.target.value as ConversationalRequiredDataConditionFact
-                                const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
-                                updateRequiredDataItem(option.field, {
-                                  scope: selected.scope,
-                                  condition: { fact: selected.fact, operator: 'is_true', value: true }
-                                })
-                              }}
-                              portal
-                            >
-                              {requiredDataConditionOptions.map((item) => (
-                                <option key={item.fact} value={item.fact}>{item.label}</option>
-                              ))}
-                            </CustomSelect>
-                          )}
-                        </>
+            <div className={styles.nativeCapabilitySettings}>
+              <label className={styles.label}>Datos de la persona que escribe</label>
+              <CheckboxMultiSelect
+                options={requiredDataOptions.map((option) => ({ value: option.field, label: option.label }))}
+                value={dataRequirements.fields.map((item) => item.field)}
+                onChange={updateRequiredDataSelection}
+                placeholder="No pedir datos adicionales"
+                aria-label="Elegir datos requeridos del contacto"
+              />
+              {requiredDataOptions.flatMap((option) => {
+                const requirement = dataRequirements.fields.find((item) => item.field === option.field)
+                if (!requirement) return []
+                return [(
+                  <div key={option.field} className={styles.nativeDataRequirementRow}>
+                    <strong>{option.label}</strong>
+                    <div className={styles.nativeInlineFields}>
+                      <CustomSelect
+                        value={requirement.level}
+                        onChange={(event) => {
+                          const level = event.target.value as ConversationalRequiredDataItem['level']
+                          if (level !== 'conditional') {
+                            updateRequiredDataItem(option.field, { level, condition: undefined })
+                            return
+                          }
+                          const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
+                          updateRequiredDataItem(option.field, {
+                            level,
+                            scope: selected.scope,
+                            condition: { fact: selected.fact, operator: 'is_true', value: true }
+                          })
+                        }}
+                        portal
+                        aria-label={`Obligación de ${option.label}`}
+                      >
+                        <option value="required">Obligatorio</option>
+                        <option value="optional">Opcional</option>
+                        <option value="conditional">Condicional</option>
+                      </CustomSelect>
+                      {requirement.level !== 'conditional' ? (
+                        <CustomSelect
+                          value={requirement.scope}
+                          onChange={(event) => updateRequiredDataItem(option.field, { scope: event.target.value as ConversationalRequiredDataItem['scope'] })}
+                          portal
+                          aria-label={`Cuándo pedir ${option.label}`}
+                        >
+                          <option value="any_action">Antes de cualquier acción</option>
+                          <option value="appointment">Sólo para citas</option>
+                          <option value="payment">Sólo para cobros</option>
+                        </CustomSelect>
+                      ) : (
+                        <CustomSelect
+                          value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
+                          aria-label={`Condición para ${option.label}`}
+                          onChange={(event) => {
+                            const fact = event.target.value as ConversationalRequiredDataConditionFact
+                            const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
+                            updateRequiredDataItem(option.field, {
+                              scope: selected.scope,
+                              condition: { fact: selected.fact, operator: 'is_true', value: true }
+                            })
+                          }}
+                          portal
+                        >
+                          {requiredDataConditionOptions.map((item) => (
+                            <option key={item.fact} value={item.fact}>{item.label}</option>
+                          ))}
+                        </CustomSelect>
                       )}
                     </div>
-                  )
-                })}
-                <div className={styles.nativePaymentMethods}>
-                  <label>
-                    <Switch
-                      checked={dataRequirements.updateContact.enabled}
-                      onChange={(enabled) => updateCapabilitiesConfig({
-                        dataRequirements: { ...dataRequirements, updateContact: { ...dataRequirements.updateContact, enabled } }
-                      })}
-                      aria-label="Actualizar el contacto con datos confirmados"
-                    />
-                    Actualizar la ficha con datos confirmados
-                  </label>
-                </div>
-                {dataRequirements.updateContact.enabled && (
-                  <CustomSelect
-                    value={dataRequirements.updateContact.policy}
-                    onChange={(event) => updateCapabilitiesConfig({
-                      dataRequirements: {
-                        ...dataRequirements,
-                        updateContact: { ...dataRequirements.updateContact, policy: event.target.value as typeof dataRequirements.updateContact.policy }
+                    {option.field === 'custom' && (
+                      <input
+                        className={styles.input}
+                        value={requirement.label || ''}
+                        placeholder="Ejemplo: Número de expediente"
+                        aria-label="Nombre del dato personalizado"
+                        onChange={(event) => updateRequiredDataItem('custom', { label: event.target.value })}
+                      />
+                    )}
+                  </div>
+                )]
+              })}
+              <label className={styles.label}>Qué hacer con datos confirmados</label>
+              <CustomSelect
+                value={dataRequirements.updateContact.enabled ? dataRequirements.updateContact.policy : 'none'}
+                onChange={(event) => {
+                  const value = event.target.value
+                  updateCapabilitiesConfig({
+                    dataRequirements: {
+                      ...dataRequirements,
+                      updateContact: {
+                        enabled: value !== 'none',
+                        policy: value === 'fill_missing' || value === 'confirm_changes' ? value : 'replace_placeholders'
                       }
-                    })}
-                    portal
-                    aria-label="Política para actualizar el contacto"
-                  >
-                    <option value="replace_placeholders">Llenar vacíos y reemplazar nombres provisionales</option>
-                    <option value="fill_missing">Sólo llenar datos vacíos</option>
-                    <option value="confirm_changes">Conservar distintos como alternativos para revisión</option>
-                  </CustomSelect>
-                )}
-                <p className={styles.helper}>Si el dato ya existe y está confirmado en la ficha, la IA lo reutiliza y no vuelve a pedirlo.</p>
-                <div className={styles.nativePaymentMethods}>
-                  <label>
-                    <Switch
-                      checked={dataRequirements.participants.enabled}
-                      onChange={(enabled) => updateCapabilitiesConfig({
-                        dataRequirements: {
-                          ...dataRequirements,
-                          enabled: enabled || dataRequirements.fields.length > 0,
-                          participants: { ...dataRequirements.participants, enabled }
-                        }
-                      })}
-                      aria-label="Pedir datos de invitados"
-                    />
-                    Configurar datos del titular distinto e invitados
-                  </label>
-                </div>
-                {dataRequirements.participants.enabled && (
-                  <>
-                    <div className={styles.nativePaymentMethods}>
-                      <label>
-                        <Switch
-                          checked={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester}
-                          onChange={(enabled) => updateCapabilitiesConfig({
-                            dataRequirements: {
-                              ...dataRequirements,
-                              participants: {
-                                ...dataRequirements.participants,
-                                allowPrimaryAttendeeDifferentFromRequester: enabled
-                              }
+                    }
+                  })
+                }}
+                portal
+                aria-label="Política para actualizar el contacto"
+              >
+                <option value="none">No actualizar la ficha</option>
+                <option value="replace_placeholders">Llenar vacíos y reemplazar nombres provisionales</option>
+                <option value="fill_missing">Sólo llenar datos vacíos</option>
+                <option value="confirm_changes">Conservar distintos como alternativos para revisión</option>
+              </CustomSelect>
+              <p className={styles.helper}>Si el dato ya existe y está confirmado en la ficha, la IA lo reutiliza y no vuelve a pedirlo.</p>
+
+              <label className={styles.label}>Datos del titular distinto e invitados</label>
+              <CheckboxMultiSelect
+                options={guestDataOptions}
+                value={dataRequirements.participants.guestFields}
+                onChange={updateGuestDataSelection}
+                placeholder="No pedir datos de otras personas"
+                aria-label="Elegir datos del titular distinto e invitados"
+              />
+              {dataRequirements.participants.guestFields.length > 0 && (
+                <>
+                  <div className={styles.nativeInlineFields}>
+                    <div className={styles.field}>
+                      <label className={styles.label}>¿La cita puede ser para otra persona?</label>
+                      <CustomSelect
+                        value={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester ? 'yes' : 'no'}
+                        onChange={(event) => updateCapabilitiesConfig({
+                          dataRequirements: {
+                            ...dataRequirements,
+                            participants: {
+                              ...dataRequirements.participants,
+                              enabled: true,
+                              allowPrimaryAttendeeDifferentFromRequester: event.target.value !== 'no'
                             }
-                          })}
-                          aria-label="Permitir que la cita sea para otra persona"
-                        />
-                        Permitir que la cita sea para otra persona
-                      </label>
-                    </div>
-                    <label className={styles.label}>Máximo de invitados por cita</label>
-                    <CustomSelect
-                      value={String(dataRequirements.participants.maxGuests)}
-                      onChange={(event) => updateCapabilitiesConfig({
-                        dataRequirements: {
-                          ...dataRequirements,
-                          participants: {
-                            ...dataRequirements.participants,
-                            maxGuests: Number(event.target.value)
                           }
-                        }
-                      })}
-                      portal
-                      aria-label="Máximo de invitados por cita"
-                    >
-                      {[1, 2, 3, 5, 10, 20].map((value) => (
-                        <option key={value} value={value}>{value}</option>
-                      ))}
-                    </CustomSelect>
-                    <div className={styles.nativePaymentMethods}>
-                      {(['name', 'phone', 'email', 'relation'] as const).map((field) => (
-                        <label key={field}>
-                          <Switch
-                            checked={dataRequirements.participants.guestFields.includes(field)}
-                            onChange={(enabled) => updateCapabilitiesConfig({
-                              dataRequirements: {
-                                ...dataRequirements,
-                                participants: {
-                                  ...dataRequirements.participants,
-                                  guestFields: enabled
-                                    ? [...new Set([...dataRequirements.participants.guestFields, field])]
-                                    : dataRequirements.participants.guestFields.filter((item) => item !== field)
-                                }
-                              }
-                            })}
-                            aria-label={`Pedir ${field} del titular distinto e invitado`}
-                          />
-                          {{ name: 'Nombre', phone: 'Teléfono', email: 'Correo', relation: 'Relación' }[field]}
-                        </label>
-                      ))}
+                        })}
+                        portal
+                      >
+                        <option value="yes">Sí, permitir titular distinto</option>
+                        <option value="no">No, sólo quien escribe</option>
+                      </CustomSelect>
                     </div>
-                  </>
-                )}
-                <p className={styles.helper}>
-                  {dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester
-                    ? 'Los datos marcados aplican igual al titular distinto y a cada invitado.'
-                    : 'El contacto del hilo siempre será también el titular; la IA no puede agendar a nombre de otra persona.'}
-                  {' '}Si no marcas ningún dato, la IA usa sólo lo que ya compartieron y no insiste por teléfono, correo ni apellido.
-                </p>
-              </div>
-            )}
+                    <div className={styles.field}>
+                      <label className={styles.label}>Máximo de invitados por cita</label>
+                      <CustomSelect
+                        value={String(dataRequirements.participants.maxGuests)}
+                        onChange={(event) => updateCapabilitiesConfig({
+                          dataRequirements: {
+                            ...dataRequirements,
+                            participants: {
+                              ...dataRequirements.participants,
+                              enabled: true,
+                              maxGuests: Number(event.target.value)
+                            }
+                          }
+                        })}
+                        portal
+                        aria-label="Máximo de invitados por cita"
+                      >
+                        {[1, 2, 3, 5, 10, 20].map((value) => (
+                          <option key={value} value={value}>{value}</option>
+                        ))}
+                      </CustomSelect>
+                    </div>
+                  </div>
+                </>
+              )}
+              <p className={styles.helper}>
+                {dataRequirements.participants.guestFields.length === 0
+                  ? 'La IA no pedirá teléfonos, correos ni apellidos de invitados por su cuenta.'
+                  : 'La IA pide únicamente los datos marcados para cada titular distinto o invitado.'}
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -2509,8 +2571,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const followUpError = getFollowUpError(followUp)
   const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
   const hasTestConversation = testPracticeExpired || testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
-  const testPaymentCapabilityEnabled = Boolean(getNativeCapability(agent.capabilitiesConfig, 'collect_payment')?.enabled)
-  const testHandoffCapability = getNativeCapability(agent.capabilitiesConfig, 'handoff_human')
+  const testPaymentCapability = getNativeCapability(agent.capabilitiesConfig, 'collect_payment')
   const testScheduleCapability = getNativeCapability(agent.capabilitiesConfig, 'schedule_appointment')
   const testAiScheduleCapabilityEnabled = Boolean(
     testScheduleCapability?.enabled && testScheduleCapability.bookingOwner !== 'human'
@@ -2518,17 +2579,19 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const testHumanScheduleCapabilityEnabled = Boolean(
     testScheduleCapability?.enabled && testScheduleCapability.bookingOwner === 'human'
   )
-  const testAssignmentCapabilityEnabled = Boolean(
-    (testHandoffCapability?.enabled && testHandoffCapability.userId) ||
-    (testHumanScheduleCapabilityEnabled && testScheduleCapability?.handoffUserId)
-  )
-  const testEffectsEnabled = Boolean(agent.capabilitiesConfig?.testMode?.enabled)
+  const scheduleTestModeEnabled = Boolean(testScheduleCapability?.enabled && testScheduleCapability.testMode?.enabled)
+  const paymentTestModeEnabled = Boolean(testPaymentCapability?.enabled && testPaymentCapability.testMode?.enabled)
+  const testAssignmentCapabilityEnabled = Boolean(testHumanScheduleCapabilityEnabled && testScheduleCapability?.handoffUserId)
+  const testEffectsEnabled = scheduleTestModeEnabled || paymentTestModeEnabled
   const effectiveTestEffects: ConversationalAgentTestEffects = {
     enabled: testEffectsEnabled,
-    scheduleAppointment: testEffectsEnabled && testAiScheduleCapabilityEnabled,
-    collectPayment: testEffectsEnabled && testPaymentCapabilityEnabled,
-    assignUser: testEffectsEnabled && testAssignmentCapabilityEnabled,
-    notifyOwner: testEffectsEnabled && agent.capabilitiesConfig?.testMode?.notify !== false
+    scheduleAppointment: scheduleTestModeEnabled && testAiScheduleCapabilityEnabled,
+    collectPayment: paymentTestModeEnabled && testPaymentCapability?.collectionMethod === 'payment_link',
+    assignUser: scheduleTestModeEnabled && testAssignmentCapabilityEnabled,
+    notifyOwner: Boolean(
+      (scheduleTestModeEnabled && testScheduleCapability?.testMode?.notify !== false) ||
+      (paymentTestModeEnabled && testPaymentCapability?.testMode?.notify !== false)
+    )
   }
   const expectsTestRun = Boolean(
     effectiveTestEffects.scheduleAppointment ||
@@ -3832,7 +3895,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   />
 
                   <div className={styles.agentTestEffectList}>
-                    {testAiScheduleCapabilityEnabled && (
+                    {scheduleTestModeEnabled && testAiScheduleCapabilityEnabled && (
                       <div className={styles.agentTestOptionSwitch}>
                         <span>
                           <strong>Cita real de prueba</strong>
@@ -3842,7 +3905,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                       </div>
                     )}
 
-                    {testHumanScheduleCapabilityEnabled && (
+                    {scheduleTestModeEnabled && testHumanScheduleCapabilityEnabled && (
                       <div className={styles.agentTestOptionSwitch}>
                         <span>
                           <strong>Agenda confirmada por humano</strong>
@@ -3854,24 +3917,18 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                       </div>
                     )}
 
-                    {testPaymentCapabilityEnabled && (
+                    {paymentTestModeEnabled && (
                       <div className={styles.agentTestOptionSwitch}>
                         <span>
-                          <strong>Pago sandbox</strong>
-                          <small>Genera un enlace de prueba, escucha el webhook y nunca usa credenciales en vivo como respaldo.</small>
+                          <strong>{testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Comprobante de transferencia' : 'Pago sandbox'}</strong>
+                          <small>{testPaymentCapability?.collectionMethod === 'bank_transfer'
+                            ? 'Prueba el análisis de la imagen sin usar una pasarela ni confirmar dinero.'
+                            : 'Genera un link de prueba, escucha el webhook y nunca usa credenciales en vivo como respaldo.'}</small>
                         </span>
-                        <Badge variant="info">Activo</Badge>
+                        <Badge variant={testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'neutral' : 'info'}>
+                          {testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Simulación' : 'Activo'}
+                        </Badge>
                       </div>
-                    )}
-
-                    {testAssignmentCapabilityEnabled && !testHumanScheduleCapabilityEnabled && (
-                    <div className={styles.agentTestOptionSwitch}>
-                      <span>
-                        <strong>Asignación y aviso</strong>
-                        <small>Asigna temporalmente, notifica a la persona elegida y restaura al responsable anterior.</small>
-                      </span>
-                      <Badge variant="info">Activa</Badge>
-                    </div>
                     )}
                   </div>
                 </>
@@ -3904,13 +3961,15 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </div>
 
               {!testEffectsEnabled && (
-                <p className={styles.helper}>Activa “Modo test” dentro de Capacidades si quieres comprobar citas, pagos y asignaciones reales de prueba.</p>
+                <p className={styles.helper}>Activa el switch de prueba dentro de Agendar cita o Cobrar para probar únicamente esa capacidad.</p>
               )}
               {testEffectsEnabled && !expectsTestRun && (
                 <p className={styles.helper}>
-                  {testHumanScheduleCapabilityEnabled
+                  {paymentTestModeEnabled && testPaymentCapability?.collectionMethod === 'bank_transfer'
+                    ? 'La transferencia no usa pasarela: el tester permite ensayar el envío y análisis del comprobante, pero no registra dinero confirmado.'
+                    : testHumanScheduleCapabilityEnabled
                     ? 'La agenda la termina una persona. Sin responsable asignado, el tester muestra el handoff pero no crea citas ni hace una asignación real.'
-                    : 'Modo test está activo, pero este agente no tiene citas automáticas, cobros ni asignaciones habilitadas. Esta conversación sigue siendo una simulación.'}
+                    : 'El switch de prueba está activo, pero esta configuración no tiene una acción real que ejecutar. La conversación sigue siendo una simulación.'}
                 </p>
               )}
 

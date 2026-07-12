@@ -3107,40 +3107,53 @@ asignarse un usuario activo concreto o avisarse al equipo sin asignacion. La
 asignacion generica de `handoff_human` no se hereda silenciosamente cuando
 Agenda dice "sin asignar".
 
-En la capacidad Cobrar, `chargeType` distingue producto/precio, cobro directo y
-anticipo. El dueño elige pasarela, meses cuando apliquen, vencimiento, que ocurre
-despues de la confirmacion y si acepta comprobantes. La IA sólo puede crear y
-compartir un enlace hospedado; nunca captura tarjeta en el chat. Una foto de
-comprobante se registra como `pending_review` y no prueba fondos. `paymentMode`
-se conserva como contrato compatible: pago completo apaga residuos de anticipo
-y anticipo los activa. Los montos se editan con el simbolo derivado de
+En la capacidad Cobrar, `collectionMethod` separa dos caminos excluyentes desde
+el primer campo del formulario. `payment_link` usa una pasarela, crea un enlace
+hospedado y sólo confirma el pago por la señal real del proveedor; su pasarela
+predeterminada es Stripe y nunca solicita una foto. `bank_transfer` no usa ni
+valida pasarela, MSI o vencimiento de link: comparte los datos bancarios
+configurados y analiza la foto, PDF o captura enviada por la persona. Esa imagen
+siempre se registra como `pending_review` y no prueba fondos por sí sola. El
+frontend muestra un resumen completo encima de **Configurar cobro** y vuelve a
+validarlo antes de guardar. `chargeType` sigue distinguiendo producto/precio,
+cobro directo y anticipo; no se sobrecarga para representar el medio de cobro.
+`paymentMode` se conserva como contrato compatible: pago completo apaga residuos
+de anticipo y anticipo los activa. Los montos se editan con el simbolo derivado de
 `account_currency` y respetan los decimales de esa moneda. Publicar permanece
 accionable aun cuando falte configuracion: al intentarlo, la interfaz muestra el
 requisito exacto dentro de Cobrar y junto al boton, en vez de dejar un boton
 deshabilitado sin explicacion. Si el catalogo no puede cargarse, el selector
 tambien informa el error en lugar de aparentar que no existen productos.
-Publicar vuelve a comprobar que la pasarela elegida esté conectada y en modo
-`live`; el runtime repite ese guard justo antes de crear el link y nunca cae a
-otra pasarela. Los meses disponibles se filtran por proveedor, monto y moneda;
-HighLevel no ofrece MSI y maneja una fecha límite de invoice, por lo que su UI
-sólo permite 24 horas o 7 días y no promete una hora exacta. Si un monto perdería
+Para links, publicar vuelve a comprobar que la pasarela elegida esté conectada y
+en modo `live`; el runtime repite ese guard justo antes de crear el link y nunca
+cae a otra pasarela. Para transferencias, publicar exige datos bancarios y omite
+por completo esa consulta. Los meses disponibles se filtran por proveedor, monto
+y moneda. La compatibilidad interna puede leer una conexion heredada, pero no se
+ofrece como opcion nueva ni como valor predeterminado. Si un monto perdería
 precisión antes de hablar con el proveedor, el runtime falla cerrado. En
 PostgreSQL, la migración `041_payments_amount_numeric.postgres.sql` convierte el
 ledger a `NUMERIC(20,6)` con un `lock_timeout` local; SQLite conserva `REAL` para
 desarrollo. Los contratos HTTP/MCP serializan el decimal de PostgreSQL como
 número JSON para no cambiar la API pública.
 
-El bloque **Control y datos** agrega tres contratos guardados dentro de
-`capabilities_config` schema 2:
+El bloque **Control y datos** y las capacidades guardan estos contratos dentro de
+`capabilities_config` schema 3:
 
 - `safetyPolicy`: medidas preventivas reversibles ante phishing, enlaces
   maliciosos, fraude, spam persistente, acoso sexual, amenazas, abuso severo o
   manipulacion del prompt.
-- `testMode`: habilita efectos reales de prueba, siempre aislados y con limpieza
-  fija a los cinco minutos.
+- `schedule_appointment.testMode` y `collect_payment.testMode`: habilitan por
+  separado los efectos reales de prueba de citas y pagos, siempre aislados y con
+  limpieza fija a los cinco minutos. El valor raiz anterior sólo se lee para
+  migrar configuraciones viejas y ya no aparece como categoria en la interfaz.
 - `dataRequirements`: define exactamente que datos puede solicitar, si son
   obligatorios, opcionales o condicionales, para que accion aplican, como se
   actualiza el contacto y que campos se piden a titulares distintos o invitados.
+
+Los datos del contacto y de titulares distintos/invitados se eligen en dos
+dropdowns con casillas. No existen switches maestros ni uno por campo: una lista
+vacia significa que no debe pedirlos, y seleccionar cualquier campo deriva los
+flags `enabled` correspondientes tanto en frontend como en servidor.
 
 Sin `dataRequirements` activo, el agente usa la identidad del hilo y no insiste
 por nombre, telefono, correo, apellido ni otra ficha. `save_contact_data` sólo se
@@ -3338,11 +3351,14 @@ el turno mas reciente antes de enviar contenido viejo.
 
 El tester usa por defecto un contacto virtual estable. `get_contact_profile` lo
 reconoce como la identidad del hilo, sin inventar que falta una ficha, pedir otro
-telefono ni marcarlo como cliente anterior. Con **Modo test apagado**, todas las
+telefono ni marcarlo como cliente anterior. Con los switches de prueba apagados, todas las
 tools conservan `dryRun=true`: el telefono muestra decisiones y respuestas, pero
 no crea citas, pagos, asignaciones ni notificaciones.
 
-**Modo test** se guarda en las capacidades del agente. Al activarlo, el usuario
+Cada capacidad guarda su propio **Modo test**. Citas sólo autoriza cita o entrega
+humana; Pagos sólo autoriza el link sandbox del cobro configurado. Activar una no
+amplia la otra ni hace que una cita exija credenciales sandbox de pagos. Al
+activarlo, el usuario
 elige un contacto existente y el servidor vuelve a cargar la configuracion
 persistida; nunca confia en calendario, usuario, producto, precio, pasarela,
 monto o moneda enviados como override por el navegador. La decision del modelo
@@ -3357,7 +3373,7 @@ asignar, escritura de Citas para agendar y escritura de Pagos para cobrar. Otro
 usuario no puede leer ni limpiar la corrida. Cada efecto usa hash, llave
 idempotente, claim token y lease; reintentar el mismo mensaje no duplica la cita,
 el link, la asignacion ni la notificacion. La corrida guarda tambien el hash de
-la revision de capacidades. Si Modo test se apaga o cualquier capacidad cambia
+la revision de capacidades. Si el switch aplicable se apaga o cualquier capacidad cambia
 mientras el modelo responde, el servidor revoca la corrida y vuelve a comprobar
 esa revision antes de cada mutacion; una respuesta vieja no puede crear efectos.
 Un advisory lock de sesion de PostgreSQL, sostenido en una conexion dedicada,
@@ -3390,9 +3406,9 @@ ve la revision revocada antes de mutar.
   guardan inmediatamente en `conversational_appointment_test_provider_receipts`
   antes del upsert local, con fallback y compensacion remota; la limpieza puede
   recuperar esos recibos aunque se haya perdido la fila local. En HighLevel,
-  Modo test sólo reutiliza un contacto ya ligado o una coincidencia exacta y
+  la prueba sólo reutiliza un contacto ya ligado o una coincidencia exacta y
   única de solo lectura; nunca crea ni vincula una ficha remota para poder probar.
-- Cobro: vuelve a cruzar capacidad, catalogo o monto directo y
+- Cobro por link: vuelve a cruzar capacidad, catalogo o monto directo y
   `account_currency`, fuerza credenciales `test` de Stripe, Conekta, Mercado
   Pago, CLIP o Rebill y falla cerrado si no existen. Nunca cae a live. El link
   se muestra en el telefono, el webhook actualiza el efecto a `paid_test` y el
@@ -3405,6 +3421,9 @@ ve la revision revocada antes de mutar.
   expiracion: bloquea el checkout local, conserva los IDs y reintenta.
   El webhook sandbox queda ligado al contacto ya autorizado por la corrida y no
   crea, busca ni enriquece otra ficha de contacto.
+- Transferencia/Deposito: no intenta crear un checkout ni consultar credenciales
+  de pasarela. En el tester permite ensayar el envio y analisis del comprobante,
+  pero nunca lo convierte en dinero confirmado.
 - Asignacion: cambia de verdad al usuario configurado, manda notificacion/push
   `[PRUEBA]`, conserva al responsable anterior y lo restaura a los cinco minutos.
   La fila del contacto lleva una marca CAS; una reasignacion humana o handoff live
@@ -3510,7 +3529,10 @@ nunca un booleano escrito por el modelo.
   idempotente en lugar de llamar al controller de creacion. Un retry exacto no
   duplica el aviso y un slot ocupado no cambia estado, asignacion ni notificaciones.
 - Pago: producto, precio, monto, concepto y moneda deben coincidir con la
-  capacidad blindada o el catalogo real. Antes de hablar con el proveedor, v2
+  capacidad blindada o el catalogo real. `payment_link` expone exclusivamente
+  `create_payment_link`; `bank_transfer` expone exclusivamente
+  `register_deposit_payment_proof`. El modelo nunca recibe ambas tools para el
+  mismo cobro. Antes de hablar con el proveedor, v2
   reserva una llave durable
   por agente, contacto, producto/precio, monto, moneda, canal y mensaje entrante;
   concurrencia o replay del mismo mensaje reproducen el resultado, mientras un
@@ -3552,10 +3574,10 @@ nunca un booleano escrito por el modelo.
   contacto, monto y concepto se parezcan; su dedupe fuerte queda ligado a agente,
   capacidad, producto/precio y mensaje. Un supuesto comprobante del modelo no
   sirve como evidencia.
-- Anticipos y comprobantes: se cobran por los metodos configurados. Con
-  `paymentLink`, el agente
+- Transferencias y comprobantes: pueden corresponder a pago completo o anticipo.
+  Con `payment_link`, el agente
   puede mandar `create_payment_link` aunque su cierre sea una cita. Con
-  `bankTransfer`, comparte los datos configurados y, al recibir la foto o PDF del
+  `bank_transfer`, comparte los datos configurados y, al recibir la foto o PDF del
   comprobante, ejecuta `register_deposit_payment_proof`: la tool lee el
   comprobante con vision (monto, moneda, fecha, banco, referencia), lo compara
   contra el anticipo configurado (fijo exacto o rango, moneda de la cuenta). En

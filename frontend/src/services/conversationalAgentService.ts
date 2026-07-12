@@ -42,6 +42,7 @@ export interface ScheduleAppointmentCapability extends ConversationalCapabilityB
   bookingOwner: 'ai' | 'human'
   handoffUserId: string
   handoffUserName: string
+  testMode: ConversationalTestModeConfig
 }
 
 export interface CollectPaymentCapability extends ConversationalCapabilityBase {
@@ -50,9 +51,10 @@ export interface CollectPaymentCapability extends ConversationalCapabilityBase {
   priceId: string
   paymentMode: AgentSalesPaymentMode
   chargeType: 'product' | 'direct' | 'deposit'
+  collectionMethod: 'payment_link' | 'bank_transfer'
   amount: number | null
   currency: string
-  gateway: 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
+  gateway: 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill' | null
   direct: {
     amount: number | null
     currency: string
@@ -69,7 +71,11 @@ export interface CollectPaymentCapability extends ConversationalCapabilityBase {
     enabled: boolean
     disposition: 'pending_review'
   }
+  bankTransfer: {
+    details: string
+  }
   deposit: AgentGoalWorkflowConfig['deposit']
+  testMode: ConversationalTestModeConfig
 }
 
 export interface SendLinkCapability extends ConversationalCapabilityBase {
@@ -156,7 +162,7 @@ export interface ConversationalDataRequirements {
 }
 
 export interface ConversationalCapabilitiesConfig {
-  schemaVersion: 1 | 2
+  schemaVersion: 1 | 2 | 3
   safetyPolicy: ConversationalSafetyPolicy
   testMode: ConversationalTestModeConfig
   dataRequirements: ConversationalDataRequirements
@@ -744,7 +750,7 @@ export const DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS: ConversationalDataRequire
 }
 
 export const DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG: ConversationalCapabilitiesConfig = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   safetyPolicy: { ...DEFAULT_CONVERSATIONAL_SAFETY_POLICY },
   testMode: { ...DEFAULT_CONVERSATIONAL_TEST_MODE },
   dataRequirements: {
@@ -894,7 +900,16 @@ function normalizeCapabilityEnabled(value: unknown) {
   return value === true || value === 1
 }
 
-function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem | null {
+function normalizeCapabilityTestMode(value: unknown, legacy: ConversationalTestModeConfig): ConversationalTestModeConfig {
+  const raw = value && typeof value === 'object' ? value as Partial<ConversationalTestModeConfig> : null
+  return {
+    enabled: raw ? raw.enabled === true : legacy.enabled,
+    cleanupAfterMinutes: 5,
+    notify: raw ? raw.notify !== false : legacy.notify
+  }
+}
+
+function normalizeCapabilityItem(value: unknown, legacyTestMode = DEFAULT_CONVERSATIONAL_TEST_MODE): ConversationalCapabilityItem | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
   const id = String(raw.id || '').trim() as ConversationalCapabilityId
@@ -911,7 +926,8 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
       allowOverlaps: false,
       bookingOwner: raw.bookingOwner === 'human' ? 'human' : 'ai',
       handoffUserId: String(raw.handoffUserId || '').trim().slice(0, 160),
-      handoffUserName: String(raw.handoffUserName || '').trim().slice(0, 240)
+      handoffUserName: String(raw.handoffUserName || '').trim().slice(0, 240),
+      testMode: normalizeCapabilityTestMode(raw.testMode, legacyTestMode)
     }
   }
 
@@ -927,8 +943,19 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
     const paymentMode: AgentSalesPaymentMode = chargeType === 'deposit' ? 'deposit' : 'full_payment'
     const direct = raw.direct && typeof raw.direct === 'object' ? raw.direct as Record<string, unknown> : {}
     const installments = raw.installments && typeof raw.installments === 'object' ? raw.installments as Record<string, unknown> : {}
-    const gateway = String(raw.gateway || 'highlevel').trim().toLowerCase() as CollectPaymentCapability['gateway']
-    const validGateway = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'].includes(gateway) ? gateway : 'highlevel'
+    const requestedCollectionMethod = String(raw.collectionMethod || '').trim().toLowerCase()
+    const legacyBankTransferOnly = normalizeCapabilityEnabled((methods as Record<string, unknown>).bankTransfer) &&
+      !normalizeCapabilityEnabled((methods as Record<string, unknown>).paymentLink)
+    const collectionMethod: CollectPaymentCapability['collectionMethod'] = requestedCollectionMethod === 'bank_transfer' ||
+      (!requestedCollectionMethod && legacyBankTransferOnly)
+      ? 'bank_transfer'
+      : 'payment_link'
+    const gateway = String(raw.gateway || 'stripe').trim().toLowerCase() as NonNullable<CollectPaymentCapability['gateway']>
+    const validGateway: NonNullable<CollectPaymentCapability['gateway']> = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'].includes(gateway) ? gateway : 'stripe'
+    const rawBankTransfer = raw.bankTransfer && typeof raw.bankTransfer === 'object'
+      ? raw.bankTransfer as Record<string, unknown>
+      : {}
+    const bankTransferDetails = String(rawBankTransfer.details || deposit.bankTransferDetails || '').slice(0, 4000)
     return {
       id,
       enabled,
@@ -936,9 +963,10 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
       priceId: String(raw.priceId || '').trim().slice(0, 160),
       paymentMode,
       chargeType,
+      collectionMethod,
       amount: Number(raw.amount) > 0 ? Number(raw.amount) : null,
       currency: String(raw.currency || '').trim().toUpperCase().slice(0, 12),
-      gateway: validGateway,
+      gateway: collectionMethod === 'bank_transfer' ? null : validGateway,
       direct: {
         amount: Number(direct.amount) > 0 ? Number(direct.amount) : null,
         currency: String(direct.currency || raw.currency || '').trim().toUpperCase().slice(0, 12),
@@ -946,28 +974,31 @@ function normalizeCapabilityItem(value: unknown): ConversationalCapabilityItem |
         description: String(direct.description || '').slice(0, 600)
       },
       installments: {
-        enabled: normalizeCapabilityEnabled(installments.enabled),
-        maxInstallments: [3, 6, 9, 12, 18, 24].includes(Number(installments.maxInstallments))
+        enabled: collectionMethod === 'payment_link' && normalizeCapabilityEnabled(installments.enabled),
+        maxInstallments: collectionMethod === 'payment_link' && [3, 6, 9, 12, 18, 24].includes(Number(installments.maxInstallments))
           ? Number(installments.maxInstallments)
           : 0
       },
       expirationMinutes: Math.min(7 * 24 * 60, Math.max(5, Number(raw.expirationMinutes) || 60)),
       afterPayment: raw.afterPayment === 'handoff' ? 'handoff' : 'continue',
       receiptProof: {
-        enabled: (raw.receiptProof as Record<string, unknown> | undefined)?.enabled === undefined
-          ? true
-          : normalizeCapabilityEnabled((raw.receiptProof as Record<string, unknown>).enabled),
+        enabled: collectionMethod === 'bank_transfer',
         disposition: 'pending_review'
+      },
+      bankTransfer: {
+        details: bankTransferDetails
       },
       deposit: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit,
         ...deposit,
         enabled: paymentMode === 'deposit',
         methods: {
-          ...DEFAULT_AGENT_DEPOSIT_METHODS,
-          ...methods
-        }
-      }
+          paymentLink: collectionMethod === 'payment_link',
+          bankTransfer: collectionMethod === 'bank_transfer'
+        },
+        bankTransferDetails
+      },
+      testMode: normalizeCapabilityTestMode(raw.testMode, legacyTestMode)
     }
   }
 
@@ -1023,7 +1054,7 @@ function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilities
   const rawRequirements = raw?.dataRequirements && typeof raw.dataRequirements === 'object' ? raw.dataRequirements : DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS
   const rawFields = Array.isArray(rawRequirements.fields) ? rawRequirements.fields : []
   const normalizedBase = {
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     safetyPolicy: {
       enabled: rawSafety.enabled !== false,
       action: rawSafety.action === 'handoff_and_review' ? 'handoff_and_review' as const : 'stop_and_review' as const,
@@ -1038,7 +1069,7 @@ function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilities
       notify: rawTestMode.notify !== false
     },
     dataRequirements: {
-      enabled: rawRequirements.enabled === true,
+      enabled: rawRequirements.enabled === true || rawFields.length > 0 || Boolean(rawRequirements.participants?.enabled) || Boolean(rawRequirements.participants?.guestFields?.length),
       fields: rawFields.flatMap((field) => {
         if (!field || typeof field !== 'object') return []
         const rawField = field as ConversationalRequiredDataItem
@@ -1066,7 +1097,7 @@ function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilities
           : 'replace_placeholders'
       },
       participants: {
-        enabled: rawRequirements.participants?.enabled === true,
+        enabled: rawRequirements.participants?.enabled === true || Boolean(rawRequirements.participants?.guestFields?.length),
         allowPrimaryAttendeeDifferentFromRequester: rawRequirements.participants?.allowPrimaryAttendeeDifferentFromRequester !== false,
         guestFields: (Array.isArray(rawRequirements.participants?.guestFields) ? rawRequirements.participants!.guestFields : [])
           .filter((field): field is 'name' | 'phone' | 'email' | 'relation' => ['name', 'phone', 'email', 'relation'].includes(field)),
@@ -1077,12 +1108,21 @@ function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilities
   if (!raw || !Array.isArray(raw.items)) return { ...normalizedBase, items: [] }
   const byId = new Map<ConversationalCapabilityId, ConversationalCapabilityItem>()
   raw.items.forEach((item) => {
-    const normalized = normalizeCapabilityItem(item)
+    const normalized = normalizeCapabilityItem(item, normalizedBase.testMode)
     if (normalized) byId.set(normalized.id, normalized)
   })
+  const items = CONVERSATIONAL_CAPABILITY_IDS.map((id) => byId.get(id)).filter((item): item is ConversationalCapabilityItem => Boolean(item))
+  const capabilityTestModes = items.flatMap((item) => (
+    item.id === 'schedule_appointment' || item.id === 'collect_payment' ? [item.testMode] : []
+  ))
   return {
     ...normalizedBase,
-    items: CONVERSATIONAL_CAPABILITY_IDS.map((id) => byId.get(id)).filter((item): item is ConversationalCapabilityItem => Boolean(item))
+    testMode: {
+      enabled: capabilityTestModes.some((testMode) => testMode.enabled),
+      cleanupAfterMinutes: 5,
+      notify: capabilityTestModes.some((testMode) => testMode.enabled && testMode.notify)
+    },
+    items
   }
 }
 

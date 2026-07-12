@@ -335,6 +335,123 @@ test('apagar Modo test durante la respuesta del modelo revoca el run antes de cu
   }
 })
 
+test('cada efecto exige su propio switch y transferencia nunca abre un checkout sandbox', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_test_scoped_${suffix}`
+  const contactId = `contact_test_scoped_${suffix}`
+  const requestedByUserId = `user_test_scoped_${suffix}`
+  const basePayment = {
+    id: 'collect_payment',
+    enabled: true,
+    collectionMethod: 'payment_link',
+    chargeType: 'direct',
+    direct: { amount: 1200, currency: 'MXN', concept: 'Consulta' },
+    testMode: { enabled: false, notify: true }
+  }
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto switches independientes', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+       VALUES (?, 'Agente switches independientes', 1, 'tool_calling_v2', ?)`,
+      [agentId, JSON.stringify({
+        schemaVersion: 2,
+        testMode: { enabled: true },
+        items: [
+          {
+            id: 'schedule_appointment',
+            enabled: true,
+            calendarId: `calendar_${suffix}`,
+            bookingOwner: 'ai',
+            testMode: { enabled: true, notify: true }
+          },
+          basePayment
+        ]
+      })]
+    )
+
+    await assert.rejects(
+      prepareConversationalAgentTestRun({
+        testRunId: `session_scope_off_${suffix}`,
+        testMessageId: `message_scope_off_${suffix}`,
+        agentId,
+        requestedByUserId,
+        contactId,
+        effects: { enabled: true, collectPayment: true }
+      }),
+      (error) => error?.code === 'test_payment_mode_not_enabled'
+    )
+
+    await db.run(
+      'UPDATE conversational_agents SET capabilities_config = ? WHERE id = ?',
+      [JSON.stringify({
+        schemaVersion: 3,
+        items: [
+          {
+            id: 'schedule_appointment',
+            enabled: true,
+            calendarId: `calendar_${suffix}`,
+            bookingOwner: 'ai',
+            testMode: { enabled: true, notify: true }
+          },
+          {
+            id: 'handoff_human',
+            enabled: true,
+            userId: `user_handoff_${suffix}`
+          }
+        ]
+      }), agentId]
+    )
+    await assert.rejects(
+      prepareConversationalAgentTestRun({
+        testRunId: `session_assignment_scope_${suffix}`,
+        testMessageId: `message_assignment_scope_${suffix}`,
+        agentId,
+        requestedByUserId,
+        contactId,
+        effects: { enabled: true, assignUser: true }
+      }),
+      (error) => error?.code === 'test_assignment_user_required'
+    )
+
+    await db.run(
+      'UPDATE conversational_agents SET capabilities_config = ? WHERE id = ?',
+      [JSON.stringify({
+        schemaVersion: 2,
+        items: [{
+          ...basePayment,
+          collectionMethod: 'bank_transfer',
+          bankTransfer: { details: 'Banco de prueba · cuenta 1234' },
+          testMode: { enabled: true, notify: true }
+        }]
+      }), agentId]
+    )
+    await assert.rejects(
+      prepareConversationalAgentTestRun({
+        testRunId: `session_transfer_${suffix}`,
+        testMessageId: `message_transfer_${suffix}`,
+        agentId,
+        requestedByUserId,
+        contactId,
+        effects: { enabled: true, collectPayment: true }
+      }),
+      (error) => error?.code === 'test_payment_link_required'
+    )
+
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM conversational_agent_test_runs WHERE agent_id = ?',
+      [agentId]
+    )).total), 0)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_test_runs WHERE agent_id = ?', [agentId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('configuración y efecto externo comparten un candado durable por agente', async () => {
   const agentId = `agent_test_mutex_${randomUUID()}`
   const runId = `session_test_mutex_${randomUUID()}`
@@ -726,7 +843,7 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
       enabled: true,
       scheduleAppointment: true,
       collectPayment: true,
-      assignUser: true,
+      assignUser: false,
       notifyOwner: true
     }
     const appointmentRun = await prepareConversationalAgentTestRun({
@@ -944,19 +1061,45 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
       [contactId]
     )).total), 1)
 
+    const humanScheduleCapabilitiesConfig = {
+      ...capabilitiesConfig,
+      schemaVersion: 3,
+      items: capabilitiesConfig.items.map((item) => item.id === 'schedule_appointment'
+        ? {
+            ...item,
+            bookingOwner: 'human',
+            handoffUserId: userId,
+            handoffUserName: 'Usuario tester',
+            testMode: { enabled: true, notify: true }
+          }
+        : item)
+    }
+    await db.run(
+      'UPDATE conversational_agents SET capabilities_config = ? WHERE id = ?',
+      [JSON.stringify(humanScheduleCapabilitiesConfig), agentId]
+    )
+    const assignmentEffects = {
+      enabled: true,
+      scheduleAppointment: false,
+      collectPayment: false,
+      assignUser: true,
+      notifyOwner: true
+    }
     const assignmentRun = await prepareConversationalAgentTestRun({
       testRunId: runId,
       testMessageId: `message_assignment_${suffix}`,
       agentId,
       requestedByUserId: userId,
       contactId,
-      effects
+      effects: assignmentEffects
     })
     const assignment = await recordConversationalAgentPreviewEffects({
       runContext: assignmentRun,
       actions: [{
-        type: 'send_to_human',
+        type: 'request_human_booking',
         motivo: 'La persona pidió apoyo',
+        calendarId,
+        startTime: slot.toUTC().toISO(),
         outcome: { status: 'simulated' }
       }]
     })

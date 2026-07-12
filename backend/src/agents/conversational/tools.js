@@ -929,7 +929,7 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
         source: 'capability_deposit',
         productId: capability.productId || null,
         priceId: capability.priceId || null,
-        gateway: capability.gateway || 'highlevel',
+        gateway: capability.gateway || 'stripe',
         installments: capability.installments || { enabled: false, maxInstallments: 0 },
         expirationMinutes: capability.expirationMinutes || 60,
         afterPayment: capability.afterPayment || 'continue'
@@ -968,7 +968,7 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
         source: 'capability_direct',
         productId: null,
         priceId: null,
-        gateway: capability.gateway || 'highlevel',
+        gateway: capability.gateway || 'stripe',
         installments: capability.installments || { enabled: false, maxInstallments: 0 },
         expirationMinutes: capability.expirationMinutes || 60,
         afterPayment: capability.afterPayment || 'continue'
@@ -1041,7 +1041,7 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
       source: 'product_price',
       productId: row.product_id,
       priceId: row.price_id,
-      gateway: capability.gateway || 'highlevel',
+      gateway: capability.gateway || 'stripe',
       installments: capability.installments || { enabled: false, maxInstallments: 0 },
       expirationMinutes: capability.expirationMinutes || 60,
       afterPayment: capability.afterPayment || 'continue'
@@ -2588,6 +2588,12 @@ function getDepositRequirementForRuntime(ctx = {}, config = {}) {
 
 function getDepositPaymentMethodsForRuntime(ctx = {}, config = {}) {
   const capability = getNativeCapability(ctx, config, 'collect_payment')
+  if (capability?.collectionMethod === 'bank_transfer') {
+    return { paymentLink: false, bankTransfer: true }
+  }
+  if (capability?.collectionMethod === 'payment_link') {
+    return { paymentLink: true, bankTransfer: false }
+  }
   return {
     paymentLink: capability?.deposit?.methods?.paymentLink === true,
     bankTransfer: capability?.deposit?.methods?.bankTransfer === true
@@ -5128,6 +5134,13 @@ export function createConversationalTools(ctx) {
     execute: async ({ quantity, agreedAmount }) => {
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
       if (safetyFence) return safetyFence
+      if (paymentCapability?.collectionMethod !== 'payment_link') {
+        return {
+          ok: false,
+          actionCompleted: false,
+          error: 'Este cobro está configurado para transferencia o depósito. No se creó ningún enlace.'
+        }
+      }
 
       // El link es el mecanismo para cobrar el pago completo o el anticipo. No exigimos
       // un comprobante previo para crearlo; sí amarramos el cobro al workflow/catálogo.
@@ -5250,7 +5263,7 @@ export function createConversationalTools(ctx) {
       try {
         const result = await createConversationalAgentLivePaymentLink({
           contact,
-          gateway: paymentCapability?.gateway || 'highlevel',
+          gateway: paymentCapability?.gateway || 'stripe',
           amount: trustedPayment.amount,
           currency: trustedPayment.currency,
           concept: trustedPayment.concept,
@@ -5296,7 +5309,7 @@ export function createConversationalTools(ctx) {
         const ledgerAmount = Number(paymentLedger?.amount)
         const ledgerEnvironment = String(paymentLedger?.payment_mode || '').trim().toLowerCase()
         const ledgerProvider = String(paymentLedger?.payment_provider || '').trim().toLowerCase()
-        const expectedProvider = String(paymentCapability?.gateway || 'highlevel').trim().toLowerCase()
+        const expectedProvider = String(paymentCapability?.gateway || 'stripe').trim().toLowerCase()
         const externalIdentityMatches = expectedProvider === 'highlevel'
           ? String(paymentLedger?.ghl_invoice_id || '').trim() === String(result?.invoiceId || '').trim()
           : String(paymentLedger?.public_payment_id || '').trim() === String(result?.publicPaymentId || '').trim()
@@ -5808,6 +5821,13 @@ export function createConversationalTools(ctx) {
     execute: async ({ montoIndicado, referencia }) => {
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
       if (safetyFence) return safetyFence
+      if (paymentCapability?.collectionMethod !== 'bank_transfer') {
+        return {
+          ok: false,
+          actionCompleted: false,
+          error: 'Este cobro usa un enlace de pago y se confirma con la señal de la pasarela; no acepta comprobantes por imagen.'
+        }
+      }
       const requiredDataError = await enforceRequiredContactData({
         ctx,
         scope: 'payment',
@@ -6133,7 +6153,7 @@ export function createConversationalTools(ctx) {
         currency: payment.currency,
         paymentStatus: payment.status,
         paymentConfirmed: false,
-        manualReviewRequired: receiptNeedsHumanReview,
+        manualReviewRequired: true,
         transferredToHuman: receiptNeedsHumanReview,
         ...(receiptNeedsHumanReview ? { signal: 'ready_for_human' } : {}),
         alreadyRegistered: payment.alreadyRegistered === true
@@ -6147,7 +6167,7 @@ export function createConversationalTools(ctx) {
           status: payment.status
         },
         paymentConfirmed: false,
-        manualReviewRequired: receiptNeedsHumanReview,
+        manualReviewRequired: true,
         transferredToHuman: receiptNeedsHumanReview,
         ...(receiptNeedsHumanReview ? { signal: 'ready_for_human' } : {}),
         note: 'Comprobante recibido y pendiente de revisión humana. No digas que el pago está confirmado y no continúes con una acción que exija fondos verificados.'
@@ -6192,11 +6212,10 @@ export function createConversationalTools(ctx) {
     )
   }
   if (!ctx.followUpMode && enabledCapabilities.has('collect_payment')) {
-    const methods = paymentCapability?.deposit?.methods || {}
-    if (paymentCapability?.paymentMode !== 'deposit' || methods.paymentLink === true) {
+    if (paymentCapability?.collectionMethod === 'payment_link') {
       nativeTools.push(createPaymentLinkTool)
     }
-    if ((paymentCapability?.deposit?.enabled && methods.bankTransfer === true) || paymentCapability?.receiptProof?.enabled === true) {
+    if (paymentCapability?.collectionMethod === 'bank_transfer') {
       nativeTools.push(registerDepositProofTool)
     }
   }

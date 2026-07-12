@@ -68,7 +68,7 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       { id: 'handoff_human', enabled: true }
     ]
   })
-  assert.equal(capabilities.schemaVersion, 2)
+  assert.equal(capabilities.schemaVersion, 3)
   assert.equal(capabilities.safetyPolicy.enabled, true)
   assert.equal(capabilities.testMode.enabled, false)
   assert.deepEqual(capabilities.items, [
@@ -79,6 +79,11 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       bookingOwner: 'ai',
       handoffUserId: '',
       handoffUserName: '',
+      testMode: {
+        enabled: false,
+        cleanupAfterMinutes: 5,
+        notify: true
+      },
       allowOverlaps: true
     },
     {
@@ -157,6 +162,11 @@ test('agendar normaliza quién termina la cita y el manifest expone ese contrato
     bookingOwner: 'human',
     handoffUserId: '42',
     handoffUserName: 'Mariana',
+    testMode: {
+      enabled: false,
+      cleanupAfterMinutes: 5,
+      notify: true
+    },
     allowOverlaps: false
   })
   assert.equal(
@@ -271,6 +281,142 @@ test('paymentMode elimina residuos de anticipo que antes bloqueaban Publicar con
     .find((item) => item.id === 'collect_payment')?.ready, true)
 })
 
+test('cobro nuevo usa Stripe y separa link de pago de transferencia sin herramientas cruzadas', () => {
+  const link = normalizeConversationalCapabilitiesConfig({
+    items: [{
+      id: 'collect_payment',
+      enabled: true,
+      collectionMethod: 'payment_link',
+      chargeType: 'direct',
+      direct: { amount: 850, currency: 'MXN', concept: 'Consulta' },
+      receiptProof: { enabled: true },
+      installments: { enabled: true, maxInstallments: 6 }
+    }]
+  }).items[0]
+
+  assert.equal(link.collectionMethod, 'payment_link')
+  assert.equal(link.gateway, 'stripe')
+  assert.equal(link.receiptProof.enabled, false)
+  assert.deepEqual(link.deposit.methods, { paymentLink: true, bankTransfer: false })
+  assert.equal(link.installments.enabled, true)
+  assert.equal(link.expirationMinutes, 60)
+
+  const legacyHighLevel = normalizeConversationalCapabilitiesConfig({
+    items: [{
+      id: 'collect_payment',
+      enabled: true,
+      gateway: 'highlevel',
+      productId: 'product_legacy',
+      priceId: 'price_legacy'
+    }]
+  }).items[0]
+  assert.equal(legacyHighLevel.gateway, 'highlevel')
+
+  const transfer = normalizeConversationalCapabilitiesConfig({
+    items: [{
+      id: 'collect_payment',
+      enabled: true,
+      collectionMethod: 'bank_transfer',
+      gateway: 'stripe',
+      chargeType: 'direct',
+      direct: { amount: 850, currency: 'MXN', concept: 'Consulta' },
+      installments: { enabled: true, maxInstallments: 12 },
+      expirationMinutes: 1440,
+      bankTransfer: { details: 'Banco de prueba · cuenta 1234' }
+    }]
+  })
+  const transferPayment = transfer.items[0]
+  assert.equal(transferPayment.gateway, '')
+  assert.equal(transferPayment.receiptProof.enabled, true)
+  assert.deepEqual(transferPayment.installments, { enabled: false, maxInstallments: 0 })
+  assert.equal(transferPayment.expirationMinutes, null)
+  assert.deepEqual(transferPayment.deposit.methods, { paymentLink: false, bankTransfer: true })
+  assert.equal(transferPayment.deposit.bankTransferDetails, 'Banco de prueba · cuenta 1234')
+  assert.equal(buildConversationalCapabilityManifest({ capabilitiesConfig: transfer })
+    .find((item) => item.id === 'collect_payment')?.ready, true)
+})
+
+test('migración legacy infiere transferencia sólo cuando era el único método y conserva sus datos', () => {
+  const transfer = normalizeConversationalCapabilitiesConfig({
+    items: [{
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'deposit',
+      deposit: {
+        enabled: true,
+        amount: 300,
+        currency: 'MXN',
+        methods: { paymentLink: false, bankTransfer: true },
+        bankTransferDetails: 'CLABE legacy 1234'
+      }
+    }]
+  }).items[0]
+  assert.equal(transfer.collectionMethod, 'bank_transfer')
+  assert.equal(transfer.bankTransfer.details, 'CLABE legacy 1234')
+
+  const mixedLegacy = normalizeConversationalCapabilitiesConfig({
+    items: [{
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'deposit',
+      deposit: {
+        enabled: true,
+        amount: 300,
+        currency: 'MXN',
+        methods: { paymentLink: true, bankTransfer: true },
+        bankTransferDetails: 'CLABE legacy 1234'
+      }
+    }]
+  }).items[0]
+  assert.equal(mixedLegacy.collectionMethod, 'payment_link')
+  assert.equal(mixedLegacy.gateway, 'stripe')
+})
+
+test('Modo test migra la raíz legacy y después respeta switches independientes por capacidad', () => {
+  const migrated = normalizeConversationalCapabilitiesConfig({
+    testMode: { enabled: true, notify: false },
+    items: [
+      { id: 'schedule_appointment', enabled: true, calendarId: 'cal_1' },
+      { id: 'collect_payment', enabled: true, productId: 'p_1', priceId: 'pp_1' }
+    ]
+  })
+  assert.equal(migrated.items.find((item) => item.id === 'schedule_appointment').testMode.enabled, true)
+  assert.equal(migrated.items.find((item) => item.id === 'collect_payment').testMode.enabled, true)
+  assert.equal(migrated.testMode.enabled, true)
+  assert.equal(migrated.testMode.notify, false)
+
+  const independent = normalizeConversationalCapabilitiesConfig({
+    testMode: { enabled: true, notify: true },
+    items: [
+      { id: 'schedule_appointment', enabled: true, calendarId: 'cal_1', testMode: { enabled: true, notify: true } },
+      { id: 'collect_payment', enabled: true, productId: 'p_1', priceId: 'pp_1', testMode: { enabled: false, notify: true } }
+    ]
+  })
+  assert.equal(independent.items.find((item) => item.id === 'schedule_appointment').testMode.enabled, true)
+  assert.equal(independent.items.find((item) => item.id === 'collect_payment').testMode.enabled, false)
+  assert.equal(independent.testMode.enabled, true)
+
+  const allOff = normalizeConversationalCapabilitiesConfig({
+    testMode: { enabled: true },
+    items: [
+      { id: 'schedule_appointment', enabled: true, calendarId: 'cal_1', testMode: { enabled: false } },
+      { id: 'collect_payment', enabled: true, productId: 'p_1', priceId: 'pp_1', testMode: { enabled: false } }
+    ]
+  })
+  assert.equal(allOff.testMode.enabled, false)
+})
+
+test('participantes se habilitan por los campos seleccionados cuando ya no llega un switch', () => {
+  const config = normalizeConversationalCapabilitiesConfig({
+    dataRequirements: {
+      enabled: false,
+      participants: { enabled: false, guestFields: ['name', 'email'] }
+    }
+  })
+  assert.equal(config.dataRequirements.enabled, true)
+  assert.equal(config.dataRequirements.participants.enabled, true)
+})
+
 test('los anticipos respetan la precisión de la moneda configurada', () => {
   const capabilities = normalizeConversationalCapabilitiesConfig({
     schemaVersion: 1,
@@ -318,7 +464,7 @@ test('campos viejos nunca habilitan capacidades nativas', () => {
       attention: { pastClientsToHuman: true }
     }
   })
-  assert.equal(capabilities.schemaVersion, 2)
+  assert.equal(capabilities.schemaVersion, 3)
   assert.deepEqual(capabilities.items, [])
   assert.equal(capabilities.safetyPolicy.enabled, true)
   assert.equal(capabilities.testMode.enabled, false)
@@ -385,7 +531,7 @@ test('agente nuevo nace con plantilla materializada, capacidades nativas y sin s
     )
     assert.equal(row.runtime_mode, 'tool_calling_v2')
     assert.equal(JSON.parse(row.prompt_config).editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
-    assert.equal(JSON.parse(row.capabilities_config).schemaVersion, 2)
+    assert.equal(JSON.parse(row.capabilities_config).schemaVersion, 3)
   } finally {
     await removeAgent(agent?.id)
   }
@@ -475,7 +621,7 @@ test('entradas obsoletas de runtime y migración se ignoran y nunca alteran la c
     assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
     assert.equal(Object.hasOwn(agent, 'migrationCapabilitiesConfig'), false)
     assert.equal(agent.capabilitiesConfig.items.some((item) => item.id === 'forged'), false)
-    assert.equal(agent.capabilitiesConfig.schemaVersion, 2)
+    assert.equal(agent.capabilitiesConfig.schemaVersion, 3)
     assert.deepEqual(agent.capabilitiesConfig.items, [])
     assert.equal(agent.capabilitiesConfig.safetyPolicy.enabled, true)
     assert.equal(agent.capabilitiesConfig.testMode.enabled, false)
@@ -591,7 +737,7 @@ test('fila existente sin configuración materializada no revive capacidades ante
     assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
     assert.equal(Object.hasOwn(agent, 'migrationCapabilitiesConfig'), false)
     assert.equal(agent.promptConfig.editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
-    assert.equal(agent.capabilitiesConfig.schemaVersion, 2)
+    assert.equal(agent.capabilitiesConfig.schemaVersion, 3)
     assert.deepEqual(agent.capabilitiesConfig.items, [])
     assert.equal(agent.capabilitiesConfig.safetyPolicy.enabled, true)
     assert.equal(agent.capabilitiesConfig.testMode.enabled, false)
@@ -977,6 +1123,26 @@ test('validación real cruza producto-precio, trigger link y moneda del anticipo
       }
     }]))
     assert.deepEqual(errors, [])
+
+    errors = await getConversationalNativeRuntimeResourceValidationErrors(config([{
+      id: 'collect_payment',
+      enabled: true,
+      collectionMethod: 'bank_transfer',
+      chargeType: 'direct',
+      direct: { amount: 450, currency: accountCurrency, concept: 'Consulta' },
+      bankTransfer: { details: 'Banco de prueba, cuenta 1234' }
+    }]))
+    assert.deepEqual(errors, [])
+
+    errors = await getConversationalNativeRuntimeResourceValidationErrors(config([{
+      id: 'collect_payment',
+      enabled: true,
+      collectionMethod: 'bank_transfer',
+      chargeType: 'direct',
+      direct: { amount: 450, currency: accountCurrency, concept: 'Consulta' },
+      bankTransfer: { details: '' }
+    }]))
+    assert.equal(errors.some((item) => item.code === 'CONVERSATIONAL_CAPABILITY_PAYMENT_BANK_TRANSFER_DETAILS_REQUIRED'), true)
 
     await db.run(
       `INSERT INTO trigger_links (

@@ -116,6 +116,39 @@ test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silen
   }
 })
 
+test('cobro expone una sola tool según Link de pago o Transferencia/Depósito', () => {
+  const toolNamesFor = (collectionMethod) => {
+    const capabilitiesConfig = {
+      items: [{
+        id: 'collect_payment',
+        enabled: true,
+        collectionMethod,
+        chargeType: 'direct',
+        direct: { amount: 1200, currency: 'MXN', concept: 'Consulta' },
+        ...(collectionMethod === 'bank_transfer'
+          ? { bankTransfer: { details: 'Banco de prueba · cuenta 1234' } }
+          : {})
+      }]
+    }
+    return createConversationalTools({
+      config: { runtimeMode: 'tool_calling_v2', capabilitiesConfig },
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig,
+      followUpMode: false,
+      accountLocale: { currency: 'MXN' },
+      actions: []
+    }).map((candidate) => candidate.name)
+  }
+
+  const linkTools = toolNamesFor('payment_link')
+  assert.equal(linkTools.includes('create_payment_link'), true)
+  assert.equal(linkTools.includes('register_deposit_payment_proof'), false)
+
+  const transferTools = toolNamesFor('bank_transfer')
+  assert.equal(transferTools.includes('create_payment_link'), false)
+  assert.equal(transferTools.includes('register_deposit_payment_proof'), true)
+})
+
 test('bookingOwner human reemplaza agendar por la solicitud humana estructurada', () => {
   const capabilitiesConfig = {
     schemaVersion: 1,
@@ -587,8 +620,10 @@ test('prompt v2 incluye criterios útiles de capacidades sin exponer identificad
         {
           id: 'collect_payment',
           paymentMode: 'deposit',
+          collectionMethod: 'bank_transfer',
           productId: 'internal-product-id',
           priceId: 'internal-price-id',
+          bankTransfer: { details: 'Banco de prueba, cuenta terminación 1234' },
           deposit: {
             enabled: true,
             mode: 'fixed',
@@ -606,6 +641,8 @@ test('prompt v2 incluye criterios útiles de capacidades sin exponer identificad
 
   assert.match(instructions, /anticipo configurado de 500 MXN/i)
   assert.match(instructions, /Banco de prueba, cuenta terminación 1234/)
+  assert.match(instructions, /pendiente de revisión/i)
+  assert.doesNotMatch(instructions, /Pasarela autorizada|meses sin intereses|Usa create_payment_link/i)
   assert.match(instructions, /Transfiere cuando la persona pida un especialista/)
   assert.match(instructions, /pastClientEvidence\.isPastClient/)
   assert.doesNotMatch(instructions, /customerEvidence/)

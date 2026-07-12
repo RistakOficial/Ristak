@@ -54,6 +54,19 @@
   opacity: 0.5;
 }
 
+.checkboxItem {
+  padding-left: 36px;
+}
+
+.itemIndicator {
+  position: absolute;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
 .item.destructive {
   color: var(--neg);
 }

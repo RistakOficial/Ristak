@@ -3,8 +3,7 @@ import { db } from '../config/database.js'
 import { createInternalNotification } from './notificationsService.js'
 import { getLocalFreeSlots } from './localCalendarService.js'
 import {
-  getConversationalCapability,
-  getConversationalTestMode
+  getConversationalCapability
 } from '../agents/conversational/nativeRuntimeConfig.js'
 import { invokeController, toToolResult } from '../agents/invokeController.js'
 import { createAppointment } from '../controllers/calendarsController.js'
@@ -114,6 +113,10 @@ function effectAllowed(effects, effectType) {
   return false
 }
 
+function capabilityTestModeEnabled(capability) {
+  return capability?.enabled === true && capability?.testMode?.enabled === true
+}
+
 function publicEffect(row = {}) {
   const payload = parseJson(row.payload_json, {})
   return {
@@ -187,31 +190,35 @@ export async function prepareConversationalAgentTestRun({
 
   const persistedCapabilitiesConfig = parseJson(agent.capabilities_config, {})
   const persistedConfig = { capabilitiesConfig: persistedCapabilitiesConfig }
-  const persistedTestMode = getConversationalTestMode(persistedConfig)
-  if (!persistedTestMode.enabled) {
-    throw testError('Activa y guarda Modo test antes de ejecutar acciones reales desde el tester.', 409, 'test_mode_not_enabled')
-  }
-
   const scheduleCapability = getConversationalCapability(persistedConfig, 'schedule_appointment')
   const paymentCapability = getConversationalCapability(persistedConfig, 'collect_payment')
-  const handoffCapability = getConversationalCapability(persistedConfig, 'handoff_human')
-  if (normalizedEffects.scheduleAppointment && !scheduleCapability?.enabled) {
-    throw testError('La capacidad de agenda ya no está activa. Guarda la configuración y reinicia la prueba.', 409, 'test_schedule_not_enabled')
+  if (normalizedEffects.scheduleAppointment && !capabilityTestModeEnabled(scheduleCapability)) {
+    throw testError('Activa y guarda Modo test dentro de Agendar cita antes de crear citas reales desde el tester.', 409, 'test_schedule_mode_not_enabled')
   }
-  if (normalizedEffects.collectPayment && !paymentCapability?.enabled) {
-    throw testError('La capacidad de cobro ya no está activa. Guarda la configuración y reinicia la prueba.', 409, 'test_payment_not_enabled')
+  if (normalizedEffects.collectPayment && !capabilityTestModeEnabled(paymentCapability)) {
+    throw testError('Activa y guarda Modo test dentro de Cobrar antes de crear un cobro real desde el tester.', 409, 'test_payment_mode_not_enabled')
+  }
+  if (normalizedEffects.collectPayment && paymentCapability?.collectionMethod !== 'payment_link') {
+    throw testError('La prueba con pasarela sólo está disponible para Link de pago. Las transferencias se validan con una imagen y nunca crean un checkout sandbox.', 409, 'test_payment_link_required')
   }
   const assignmentUserId = cleanString(
-    (scheduleCapability?.bookingOwner === 'human' ? scheduleCapability.handoffUserId : '') ||
-    handoffCapability?.userId
+    scheduleCapability?.bookingOwner === 'human' ? scheduleCapability.handoffUserId : ''
   )
   if (normalizedEffects.assignUser && !assignmentUserId) {
     throw testError('Selecciona una persona responsable antes de probar la asignación.', 409, 'test_assignment_user_required')
   }
+  if (normalizedEffects.assignUser && !capabilityTestModeEnabled(scheduleCapability)) {
+    throw testError('Activa y guarda Modo test dentro de Agendar cita antes de probar la entrega a una persona.', 409, 'test_schedule_mode_not_enabled')
+  }
+
+  const requestedTestModes = [
+    ...(normalizedEffects.scheduleAppointment || normalizedEffects.assignUser ? [scheduleCapability?.testMode] : []),
+    ...(normalizedEffects.collectPayment ? [paymentCapability?.testMode] : [])
+  ].filter(Boolean)
 
   const authoritativeEffects = {
     ...normalizedEffects,
-    notifyOwner: persistedTestMode.notify !== false,
+    notifyOwner: requestedTestModes.some((testMode) => testMode.notify !== false),
     configRevision: sha256(agent.capabilities_config || '{}')
   }
 
@@ -295,9 +302,8 @@ async function assertCurrentTestRunAuthority(run, effectType = '') {
   const storedEffects = normalizeConversationalAgentTestEffects(parseJson(currentRun.effects_json, {}))
   const currentRevision = sha256(row.capabilities_config || '{}')
   const capabilitiesConfig = parseJson(row.capabilities_config, {})
-  const testMode = getConversationalTestMode({ capabilitiesConfig })
   const revisionMatches = Boolean(storedEffects.configRevision) && storedEffects.configRevision === currentRevision
-  if (!testMode.enabled || !revisionMatches) {
+  if (!revisionMatches) {
     await db.run(
       `UPDATE conversational_agent_test_runs
        SET status = 'revoked', updated_at = CURRENT_TIMESTAMP
@@ -313,19 +319,24 @@ async function assertCurrentTestRunAuthority(run, effectType = '') {
 
   const schedule = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
   const payment = getConversationalCapability({ capabilitiesConfig }, 'collect_payment')
-  const handoff = getConversationalCapability({ capabilitiesConfig }, 'handoff_human')
-  if (cleanEffectType === 'appointment' && !schedule?.enabled) {
-    throw testError('La capacidad de agenda ya no está activa.', 409, 'test_schedule_not_enabled')
+  if (cleanEffectType === 'appointment' && !capabilityTestModeEnabled(schedule)) {
+    throw testError('Modo test de Agendar cita ya no está activo.', 409, 'test_schedule_mode_not_enabled')
   }
-  if (cleanEffectType === 'payment' && !payment?.enabled) {
-    throw testError('La capacidad de cobro ya no está activa.', 409, 'test_payment_not_enabled')
+  if (cleanEffectType === 'payment' && !capabilityTestModeEnabled(payment)) {
+    throw testError('Modo test de Cobrar ya no está activo.', 409, 'test_payment_mode_not_enabled')
+  }
+  if (cleanEffectType === 'payment' && payment?.collectionMethod !== 'payment_link') {
+    throw testError('La configuración cambió a transferencia; no se creó ningún checkout sandbox.', 409, 'test_payment_link_required')
   }
   if (cleanEffectType === 'assignment') {
     const assignmentUserId = cleanString(
-      (schedule?.bookingOwner === 'human' ? schedule.handoffUserId : '') || handoff?.userId
+      schedule?.bookingOwner === 'human' ? schedule.handoffUserId : ''
     )
     if (!assignmentUserId) {
       throw testError('La asignación de prueba ya no tiene una persona responsable.', 409, 'test_assignment_user_required')
+    }
+    if (!capabilityTestModeEnabled(schedule)) {
+      throw testError('Modo test de Agendar cita ya no está activo.', 409, 'test_schedule_mode_not_enabled')
     }
   }
   return capabilitiesConfig
@@ -687,6 +698,7 @@ async function verifyTestPaymentAction(action, paymentCapability) {
   const quantity = Number(action?.quantity || 1)
   if (
     !paymentCapability?.enabled ||
+    paymentCapability?.collectionMethod !== 'payment_link' ||
     !/^[A-Z]{3}$/.test(accountCurrency) ||
     currency !== accountCurrency ||
     !amount ||
@@ -855,7 +867,7 @@ function actionForEffect(actions, effectType) {
     ? new Set(['book_appointment', 'request_human_booking'])
     : effectType === 'payment'
       ? new Set(['create_payment_link'])
-      : new Set(['request_human_booking', 'send_to_human', 'mark_ready_to_advance'])
+      : new Set(['request_human_booking'])
   return (Array.isArray(actions) ? actions : []).find((action) => (
     acceptedTypes.has(cleanString(action?.type)) && previewActionSucceeded(action)
   )) || null
@@ -877,13 +889,8 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
     : null
 
   const scheduleForAssignment = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
-  const handoffForAssignment = getConversationalCapability({ capabilitiesConfig }, 'handoff_human')
-  const assignmentTargetUserId = cleanString(action.type) === 'request_human_booking'
-    ? cleanString(scheduleForAssignment?.handoffUserId)
-    : cleanString(handoffForAssignment?.userId)
-  const assignmentTargetUserName = cleanString(action.type) === 'request_human_booking'
-    ? cleanString(scheduleForAssignment?.handoffUserName)
-    : cleanString(handoffForAssignment?.userName)
+  const assignmentTargetUserId = cleanString(scheduleForAssignment?.handoffUserId)
+  const assignmentTargetUserName = cleanString(scheduleForAssignment?.handoffUserName)
 
   const request = effectType === 'appointment'
     ? {

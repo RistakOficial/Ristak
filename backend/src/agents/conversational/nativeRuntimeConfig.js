@@ -1,5 +1,5 @@
 const PROMPT_SCHEMA_VERSION = 2
-const CAPABILITIES_SCHEMA_VERSION = 2
+const CAPABILITIES_SCHEMA_VERSION = 3
 
 export const DEFAULT_CONVERSATIONAL_PROMPT_TEMPLATE_VERSION = 'ristak-conversational-v2'
 
@@ -50,6 +50,7 @@ export const CONVERSATIONAL_CAPABILITY_IDS = Object.freeze([
 const CAPABILITY_ID_SET = new Set(CONVERSATIONAL_CAPABILITY_IDS)
 const PAYMENT_MODES = new Set(['full_payment', 'deposit'])
 const PAYMENT_CHARGE_TYPES = new Set(['product', 'direct', 'deposit'])
+const PAYMENT_COLLECTION_METHODS = new Set(['payment_link', 'bank_transfer'])
 const PAYMENT_GATEWAYS = new Set(['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
 const PAYMENT_AFTER_ACTIONS = new Set(['continue', 'handoff'])
 const PAYMENT_INSTALLMENT_CHOICES = new Set([3, 6, 9, 12, 18, 24])
@@ -250,6 +251,24 @@ function normalizeTestMode(input = {}) {
   }
 }
 
+function normalizeCapabilityTestMode(input, fallback = DEFAULT_CONVERSATIONAL_TEST_MODE) {
+  return normalizeTestMode(input && typeof input === 'object' ? input : fallback)
+}
+
+function normalizePaymentCollectionMethod(input = {}, rawDepositMethods = {}) {
+  const requested = cleanId(input.collectionMethod, 40)
+  if (PAYMENT_COLLECTION_METHODS.has(requested)) return requested
+  if (requested === 'paymentLink') return 'payment_link'
+  if (requested === 'bankTransfer') return 'bank_transfer'
+
+  // Migración de la configuración anterior: sólo elegimos transferencia cuando
+  // era el único método expresamente habilitado. Si había link (solo o junto a
+  // transferencia), conservamos el flujo verificable por webhook.
+  return toBoolean(rawDepositMethods.bankTransfer) && !toBoolean(rawDepositMethods.paymentLink)
+    ? 'bank_transfer'
+    : 'payment_link'
+}
+
 function normalizeRequirementField(input) {
   const raw = typeof input === 'string' ? { field: input } : input
   if (!raw || typeof raw !== 'object') return null
@@ -301,15 +320,19 @@ function normalizeDataRequirements(input = {}) {
       .filter((value) => PARTICIPANT_FIELDS.has(value))
   )]
   const maxGuests = Number(participants.maxGuests)
+  // Ya no existe un switch separado para esta sección: la selección es la
+  // fuente de verdad. Así también saneamos configuraciones legacy donde quedó
+  // `enabled: false` junto a campos todavía elegidos.
+  const participantsEnabled = guestFields.length > 0
   return {
-    enabled: raw.enabled === undefined ? fields.length > 0 || toBoolean(participants.enabled) : toBoolean(raw.enabled),
+    enabled: fields.length > 0 || participantsEnabled,
     fields,
     updateContact: {
       enabled: updateContact.enabled === undefined ? true : toBoolean(updateContact.enabled),
       policy: CONTACT_UPDATE_POLICIES.has(updateContact.policy) ? updateContact.policy : 'replace_placeholders'
     },
     participants: {
-      enabled: toBoolean(participants.enabled),
+      enabled: participantsEnabled,
       allowPrimaryAttendeeDifferentFromRequester: participants.allowPrimaryAttendeeDifferentFromRequester === undefined
         ? true
         : toBoolean(participants.allowPrimaryAttendeeDifferentFromRequester),
@@ -319,7 +342,7 @@ function normalizeDataRequirements(input = {}) {
   }
 }
 
-function normalizeCapabilityItem(input) {
+function normalizeCapabilityItem(input, legacyTestMode = DEFAULT_CONVERSATIONAL_TEST_MODE) {
   if (!input || typeof input !== 'object') return null
   const id = cleanId(input.id, 80)
   if (!CAPABILITY_ID_SET.has(id)) return null
@@ -334,6 +357,7 @@ function normalizeCapabilityItem(input) {
       bookingOwner,
       handoffUserId: bookingOwner === 'human' ? cleanId(input.handoffUserId, 160) : '',
       handoffUserName: bookingOwner === 'human' ? cleanText(input.handoffUserName, 180) : '',
+      testMode: normalizeCapabilityTestMode(input.testMode, legacyTestMode),
       // Sólo esta capacidad blindada puede autorizar empalmes; goalWorkflow y
       // el texto editable nunca amplían por sí mismos la política del calendario.
       allowOverlaps: toBoolean(input.allowOverlaps)
@@ -345,6 +369,7 @@ function normalizeCapabilityItem(input) {
     const rawDepositMethods = rawDeposit.methods && typeof rawDeposit.methods === 'object'
       ? rawDeposit.methods
       : {}
+    const collectionMethod = normalizePaymentCollectionMethod(input, rawDepositMethods)
     const deposit = normalizeDeposit(rawDeposit, input.currency)
     const requestedMode = cleanId(input.paymentMode, 40)
     const paymentMode = PAYMENT_MODES.has(requestedMode)
@@ -357,6 +382,15 @@ function normalizeCapabilityItem(input) {
     const gateway = cleanId(input.gateway, 40).toLowerCase()
     const direct = normalizeDirectPayment(input.direct, input.currency)
     const expirationMinutes = Number(input.expirationMinutes ?? input.expiration?.minutes)
+    const rawBankTransfer = input.bankTransfer && typeof input.bankTransfer === 'object'
+      ? input.bankTransfer
+      : null
+    const bankTransferDetails = cleanText(
+      rawBankTransfer && Object.prototype.hasOwnProperty.call(rawBankTransfer, 'details')
+        ? rawBankTransfer.details
+        : rawDeposit.bankTransferDetails,
+      1200
+    )
     return {
       id,
       enabled,
@@ -364,32 +398,45 @@ function normalizeCapabilityItem(input) {
       priceId: cleanId(input.priceId, 160),
       paymentMode: chargeType === 'deposit' ? 'deposit' : 'full_payment',
       chargeType,
+      collectionMethod,
       amount: normalizePositiveAmount(input.amount, input.currency),
       currency: normalizeCurrency(input.currency),
-      gateway: PAYMENT_GATEWAYS.has(gateway) ? gateway : 'highlevel',
+      // HighLevel explícito se conserva únicamente para agentes legacy. Toda
+      // configuración nueva o inválida cae a Stripe, la pasarela nativa default.
+      gateway: collectionMethod === 'payment_link'
+        ? (PAYMENT_GATEWAYS.has(gateway) ? gateway : 'stripe')
+        : '',
       direct,
-      installments: chargeType === 'deposit'
+      installments: chargeType === 'deposit' || collectionMethod === 'bank_transfer'
         ? { enabled: false, maxInstallments: 0 }
         : normalizeInstallments(input.installments),
-      expirationMinutes: Number.isFinite(expirationMinutes)
-        ? Math.min(7 * 24 * 60, Math.max(5, Math.round(expirationMinutes)))
-        : 60,
+      expirationMinutes: collectionMethod === 'payment_link'
+        ? (Number.isFinite(expirationMinutes)
+            ? Math.min(7 * 24 * 60, Math.max(5, Math.round(expirationMinutes)))
+            : 60)
+        : null,
       afterPayment: PAYMENT_AFTER_ACTIONS.has(input.afterPayment) ? input.afterPayment : 'continue',
       receiptProof: {
-        enabled: input.receiptProof?.enabled === undefined ? true : toBoolean(input.receiptProof.enabled),
+        enabled: collectionMethod === 'bank_transfer',
         disposition: 'pending_review'
       },
+      bankTransfer: {
+        details: bankTransferDetails
+      },
+      testMode: normalizeCapabilityTestMode(input.testMode, legacyTestMode),
       deposit: {
         ...deposit,
         // paymentMode es la fuente de verdad. Antes un residuo legacy con
         // full_payment + deposit.enabled=true escondía el campo de anticipo en
         // la UI, pero seguía bloqueando Publicar por un monto invisible.
         enabled: chargeType === 'deposit',
-        methods: chargeType === 'deposit' &&
-          rawDepositMethods.paymentLink === undefined &&
-          rawDepositMethods.bankTransfer === undefined
-          ? { ...deposit.methods, paymentLink: true }
-          : deposit.methods
+        methods: {
+          paymentLink: collectionMethod === 'payment_link',
+          bankTransfer: collectionMethod === 'bank_transfer'
+        },
+        // Alias de lectura para clientes anteriores. La fuente nueva vive en
+        // bankTransfer.details y ambos valores se materializan idénticos.
+        bankTransferDetails
       }
     }
   }
@@ -470,18 +517,35 @@ export function normalizeConversationalCapabilitiesConfig(input) {
     ? raw
     : (raw && typeof raw === 'object' && Array.isArray(raw.items) ? raw.items : [])
   const byId = new Map()
+  const legacyTestMode = normalizeTestMode(raw?.testMode)
   for (const sourceItem of sourceItems) {
-    const item = normalizeCapabilityItem(sourceItem)
+    const item = normalizeCapabilityItem(sourceItem, legacyTestMode)
     if (item) byId.set(item.id, item)
   }
+  const items = CONVERSATIONAL_CAPABILITY_IDS
+    .map((id) => byId.get(id))
+    .filter(Boolean)
+  const testModeCapabilityItems = items
+    .filter((item) => item.id === 'schedule_appointment' || item.id === 'collect_payment')
+  const capabilityTestModes = testModeCapabilityItems
+    .filter((item) => item.enabled)
+    .map((item) => item.testMode)
+    .filter(Boolean)
+  const enabledCapabilityTestModes = capabilityTestModes.filter((testMode) => testMode.enabled)
+  const aggregateTestMode = normalizeTestMode({
+    enabled: enabledCapabilityTestModes.length > 0 || (testModeCapabilityItems.length === 0 && legacyTestMode.enabled),
+    notify: enabledCapabilityTestModes.length
+      ? enabledCapabilityTestModes.some((testMode) => testMode.notify !== false)
+      : legacyTestMode.notify
+  })
   return {
     schemaVersion: CAPABILITIES_SCHEMA_VERSION,
     safetyPolicy: normalizeSafetyPolicy(raw?.safetyPolicy),
-    testMode: normalizeTestMode(raw?.testMode),
+    // Compatibilidad de lectura para clientes anteriores. La autoridad real
+    // vive ahora en el testMode de cada capacidad; esta raíz es sólo su agregado.
+    testMode: aggregateTestMode,
     dataRequirements: normalizeDataRequirements(raw?.dataRequirements),
-    items: CONVERSATIONAL_CAPABILITY_IDS
-      .map((id) => byId.get(id))
-      .filter(Boolean)
+    items
   }
 }
 
@@ -529,12 +593,6 @@ function getCapabilityMissingConfiguration(item) {
       const validFixed = deposit.mode !== 'range' && Number(deposit.amount) > 0
       const validRange = deposit.mode === 'range' && Number(deposit.minAmount) > 0 && Number(deposit.maxAmount) >= Number(deposit.minAmount)
       if (!validFixed && !validRange) missing.push('Configura un monto o rango válido para el anticipo.')
-      if (!deposit.methods?.paymentLink && !deposit.methods?.bankTransfer) {
-        missing.push('Activa un método verificable para cobrar el anticipo.')
-      }
-      if (deposit.methods?.bankTransfer && !deposit.bankTransferDetails) {
-        missing.push('Escribe los datos de transferencia del anticipo.')
-      }
     } else if (item.chargeType === 'direct') {
       if (!(Number(item.direct?.amount) > 0)) missing.push('Configura un monto válido para el cobro directo.')
       if (!item.direct?.currency) missing.push('Define la moneda del cobro directo.')
@@ -542,7 +600,11 @@ function getCapabilityMissingConfiguration(item) {
     } else if (!item.productId || !item.priceId) {
       missing.push('Selecciona un producto y un precio verificables.')
     }
-    if (!item.gateway) missing.push('Selecciona una pasarela de pago.')
+    if (item.collectionMethod === 'bank_transfer') {
+      if (!item.bankTransfer?.details) missing.push('Escribe los datos para transferencia o depósito.')
+    } else if (!item.gateway) {
+      missing.push('Selecciona una pasarela de pago.')
+    }
   }
 
   if (item.id === 'send_link') {

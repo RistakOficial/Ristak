@@ -67,6 +67,7 @@ import { FaFacebook, FaFacebookMessenger, FaInstagram, FaMicrophone, FaWhatsapp 
 import { MdArchive } from 'react-icons/md'
 import {
   AppointmentModal,
+  CheckboxMultiSelect,
   ContentFocusModal,
   ContactCustomFieldsPanel,
   Icon,
@@ -128,7 +129,6 @@ import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useUserConfig
 import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
-  DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_AGENT_GOAL_WORKFLOW,
   DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
@@ -980,7 +980,7 @@ function getPhoneConversationalPaymentMsiMonths(
   accountCurrency = ''
 ) {
   const isDeposit = item.chargeType === 'deposit' || item.paymentMode === 'deposit' || item.deposit?.enabled
-  if (isDeposit || item.gateway === 'highlevel') return []
+  if (item.collectionMethod !== 'payment_link' || isDeposit || !item.gateway || item.gateway === 'highlevel') return []
   const amount = item.chargeType === 'direct'
     ? Number(item.direct?.amount) || 0
     : Number(item.amount) || 0
@@ -20333,7 +20333,8 @@ export const PhoneChat: React.FC = () => {
           allowOverlaps: false,
           bookingOwner: 'ai',
           handoffUserId: '',
-          handoffUserName: ''
+          handoffUserName: '',
+          testMode: { ...DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.testMode }
         }
       }
       if (id === 'collect_payment') {
@@ -20344,6 +20345,7 @@ export const PhoneChat: React.FC = () => {
           priceId: '',
           paymentMode: 'full_payment',
           chargeType: 'product',
+          collectionMethod: 'payment_link',
           amount: null,
           currency: normalizedAccountCurrency,
           gateway: 'stripe',
@@ -20356,12 +20358,14 @@ export const PhoneChat: React.FC = () => {
           installments: { enabled: false, maxInstallments: 0 },
           expirationMinutes: 60,
           afterPayment: 'continue',
-          receiptProof: { enabled: true, disposition: 'pending_review' },
+          receiptProof: { enabled: false, disposition: 'pending_review' },
+          bankTransfer: { details: '' },
           deposit: {
             ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit,
             currency: normalizedAccountCurrency,
-            methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS }
-          }
+            methods: { paymentLink: true, bankTransfer: false }
+          },
+          testMode: { ...DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.testMode }
         }
       }
       if (id === 'send_link') {
@@ -20392,14 +20396,17 @@ export const PhoneChat: React.FC = () => {
       }
     }
 
-    const saveNativeCapability = (next: ConversationalCapabilityItem) => {
+    const saveNativeCapability = (
+      next: ConversationalCapabilityItem,
+      { pauseAgent = true }: { pauseAgent?: boolean } = {}
+    ) => {
       const exists = nativeCapabilities.items.some((item) => item.id === next.id)
       const items = exists
         ? nativeCapabilities.items.map((item) => (item.id === next.id ? next : item))
         : [...nativeCapabilities.items, next]
       saveSelectedAgentPatch({
-        capabilitiesConfig: { ...nativeCapabilities, schemaVersion: 2, items },
-        ...(selectedAgentDef?.enabled ? { enabled: false } : {})
+        capabilitiesConfig: { ...nativeCapabilities, schemaVersion: 3, items },
+        ...(pauseAgent && selectedAgentDef?.enabled ? { enabled: false } : {})
       })
     }
 
@@ -20410,7 +20417,7 @@ export const PhoneChat: React.FC = () => {
         ? nativeCapabilities.items.map((item) => (item.id === next.id ? next : item))
         : [...nativeCapabilities.items, next]
       updateAgentDraft(selectedAgentDef.id, {
-        capabilitiesConfig: { ...nativeCapabilities, schemaVersion: 2, items }
+        capabilitiesConfig: { ...nativeCapabilities, schemaVersion: 3, items }
       })
     }
 
@@ -20429,9 +20436,70 @@ export const PhoneChat: React.FC = () => {
     const customCapability = getSelectedNativeCapability('custom_goal')
     const nativePaymentProduct = agentProducts.find((item) => getProductId(item) === paymentCapability?.productId) || null
     const nativePaymentPrices = nativePaymentProduct?.prices || []
+    const nativePaymentPrice = nativePaymentPrices.find((item) => getPriceId(item) === paymentCapability?.priceId) || null
+    const nativePaymentGateway = paymentCapability?.gateway === 'highlevel'
+      ? 'legacy'
+      : (paymentCapability?.gateway || 'stripe')
     const nativePaymentMsiMonths = paymentCapability
       ? getPhoneConversationalPaymentMsiMonths(paymentCapability, normalizedAccountCurrency)
       : []
+    const nativePaymentSummary = (() => {
+      if (!paymentCapability) return null
+      const methodLabel = paymentCapability.collectionMethod === 'bank_transfer'
+        ? 'Transferencia/Depósito'
+        : 'Link de pago'
+      let chargeLabel = 'Falta elegir qué se cobrará'
+      let chargeIsComplete = false
+
+      if (paymentCapability.chargeType === 'product') {
+        const amount = getPriceAmount(nativePaymentPrice)
+        const currency = normalizePhoneCurrency(nativePaymentPrice?.currency || nativePaymentProduct?.currency || paymentCapability.currency || normalizedAccountCurrency)
+        chargeIsComplete = Boolean(nativePaymentProduct && nativePaymentPrice && amount > 0)
+        chargeLabel = chargeIsComplete
+          ? `${nativePaymentProduct?.name || 'Producto'} · ${formatCurrency(amount, currency)}`
+          : 'Falta producto y precio'
+      } else if (paymentCapability.chargeType === 'direct') {
+        const amount = Number(paymentCapability.direct.amount) || 0
+        const currency = normalizePhoneCurrency(paymentCapability.direct.currency || normalizedAccountCurrency)
+        chargeIsComplete = Boolean(paymentCapability.direct.concept.trim() && amount > 0)
+        chargeLabel = chargeIsComplete
+          ? `${paymentCapability.direct.concept.trim()} · ${formatCurrency(amount, currency)}`
+          : 'Falta concepto o monto'
+      } else if (paymentCapability.deposit.mode === 'range') {
+        const minAmount = Number(paymentCapability.deposit.minAmount) || 0
+        const maxAmount = Number(paymentCapability.deposit.maxAmount) || 0
+        const currency = normalizePhoneCurrency(paymentCapability.deposit.currency || normalizedAccountCurrency)
+        chargeIsComplete = minAmount > 0 && maxAmount >= minAmount
+        chargeLabel = chargeIsComplete
+          ? `Anticipo de ${formatCurrency(minAmount, currency)} a ${formatCurrency(maxAmount, currency)}`
+          : 'Falta completar el rango del anticipo'
+      } else {
+        const amount = Number(paymentCapability.deposit.amount) || 0
+        const currency = normalizePhoneCurrency(paymentCapability.deposit.currency || normalizedAccountCurrency)
+        chargeIsComplete = amount > 0
+        chargeLabel = chargeIsComplete ? `Anticipo de ${formatCurrency(amount, currency)}` : 'Falta el monto del anticipo'
+      }
+
+      const gatewayLabels: Record<string, string> = {
+        stripe: 'Stripe',
+        conekta: 'Conekta',
+        mercadopago: 'Mercado Pago',
+        clip: 'CLIP',
+        rebill: 'Rebill',
+        legacy: 'Conexión anterior (cambiar)'
+      }
+      const methodIsComplete = paymentCapability.collectionMethod === 'bank_transfer'
+        ? Boolean(paymentCapability.bankTransfer.details.trim())
+        : Boolean(nativePaymentGateway)
+      const methodDetail = paymentCapability.collectionMethod === 'bank_transfer'
+        ? (methodIsComplete ? 'Comprobante por imagen y revisión' : 'Faltan los datos bancarios')
+        : `${gatewayLabels[nativePaymentGateway] || 'Stripe'} · confirmación automática`
+
+      return {
+        complete: chargeIsComplete && methodIsComplete,
+        text: `${methodLabel} · ${chargeLabel} · ${methodDetail}`
+      }
+    })()
     const enabledNativeCapabilities = nativeCapabilities.items.filter((item) => item.enabled)
     const nativeCapabilityOptions: Array<{ id: ConversationalCapabilityId; label: string; description: string }> = [
       { id: 'schedule_appointment', label: 'Agendar cita', description: 'Consulta horarios reales y crea la cita en el calendario elegido.' },
@@ -20447,7 +20515,6 @@ export const PhoneChat: React.FC = () => {
     }
 
     const safetyPolicy = nativeCapabilities.safetyPolicy || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.safetyPolicy
-    const testMode = nativeCapabilities.testMode || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.testMode
     const dataRequirements = nativeCapabilities.dataRequirements || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.dataRequirements
     const requiredDataOptions: Array<{ field: ConversationalRequiredDataField; label: string }> = [
       { field: 'first_name', label: 'Nombre' },
@@ -20458,6 +20525,12 @@ export const PhoneChat: React.FC = () => {
       { field: 'company', label: 'Empresa' },
       { field: 'address', label: 'Dirección' },
       { field: 'custom', label: 'Dato personalizado' }
+    ]
+    const guestDataOptions: Array<{ value: 'name' | 'phone' | 'email' | 'relation'; label: string }> = [
+      { value: 'name', label: 'Nombre' },
+      { value: 'phone', label: 'Teléfono' },
+      { value: 'email', label: 'Correo' },
+      { value: 'relation', label: 'Relación' }
     ]
     const requiredDataConditionOptions: Array<{
       fact: ConversationalRequiredDataConditionFact
@@ -20478,7 +20551,7 @@ export const PhoneChat: React.FC = () => {
         capabilitiesConfig: {
           ...nativeCapabilities,
           ...patch,
-          schemaVersion: 2
+          schemaVersion: 3
         },
         ...(pauseAgent && selectedAgentDef?.enabled ? { enabled: false } : {})
       })
@@ -20510,6 +20583,43 @@ export const PhoneChat: React.FC = () => {
       })
     }
 
+    const setRequiredDataFields = (selectedFields: ConversationalRequiredDataField[]) => {
+      const selected = new Set(selectedFields)
+      const fields = requiredDataOptions
+        .filter((option) => selected.has(option.field))
+        .map((option) => {
+          const existing = dataRequirements.fields.find((item) => item.field === option.field)
+          if (existing) return existing
+          return {
+            field: option.field,
+            level: 'required',
+            scope: 'any_action',
+            ...(option.field === 'custom' ? { label: 'Dato personalizado' } : {})
+          } as ConversationalRequiredDataItem
+        })
+      saveNativeCapabilitiesPatch({
+        dataRequirements: {
+          ...dataRequirements,
+          enabled: fields.length > 0 || dataRequirements.participants.guestFields.length > 0,
+          fields
+        }
+      })
+    }
+
+    const setRequiredGuestFields = (guestFields: Array<'name' | 'phone' | 'email' | 'relation'>) => {
+      saveNativeCapabilitiesPatch({
+        dataRequirements: {
+          ...dataRequirements,
+          enabled: dataRequirements.fields.length > 0 || guestFields.length > 0,
+          participants: {
+            ...dataRequirements.participants,
+            enabled: guestFields.length > 0,
+            guestFields
+          }
+        }
+      })
+    }
+
     const updateRequiredDataItemDraft = (
       field: ConversationalRequiredDataField,
       patch: Partial<ConversationalRequiredDataItem>
@@ -20524,7 +20634,7 @@ export const PhoneChat: React.FC = () => {
       updateAgentDraft(selectedAgentDef.id, {
         capabilitiesConfig: {
           ...nativeCapabilities,
-          schemaVersion: 2,
+          schemaVersion: 3,
           dataRequirements: { ...dataRequirements, fields }
         }
       })
@@ -20670,6 +20780,28 @@ export const PhoneChat: React.FC = () => {
             ) : (
               <p className={styles.agentMenuHint}>La IA vuelve a comprobar el horario elegido, crea la cita y sólo entonces la confirma.</p>
             )}
+            <label className={`${styles.agentCompactToggle} ${scheduleCapability.testMode.enabled ? styles.agentCompactToggleActive : ''}`}>
+              <input
+                type="checkbox"
+                checked={scheduleCapability.testMode.enabled}
+                disabled={agentConfigSaving}
+                onChange={(event) => saveNativeCapability({
+                  ...scheduleCapability,
+                  testMode: {
+                    ...scheduleCapability.testMode,
+                    enabled: event.target.checked,
+                    cleanupAfterMinutes: 5,
+                    notify: true
+                  }
+                }, { pauseAgent: false })}
+              />
+              <span>
+                <strong>Modo test de citas</strong>
+                <small>{scheduleCapability.bookingOwner === 'human'
+                  ? 'Hace la entrega y notificación de prueba; después restaura al responsable anterior.'
+                  : 'Crea una cita real de prueba, manda la notificación y la elimina automáticamente después de 5 minutos.'}</small>
+              </span>
+            </label>
           </>
         )
       }
@@ -20677,6 +20809,53 @@ export const PhoneChat: React.FC = () => {
       if (id === 'collect_payment' && paymentCapability?.enabled) {
         return (
           <>
+            {nativePaymentSummary && (
+              <div className={styles.agentGoalSummary}>
+                <strong>{nativePaymentSummary.complete ? 'Cobro configurado' : 'Configuración pendiente'}</strong>
+                <span>{nativePaymentSummary.text}</span>
+              </div>
+            )}
+            <label className={styles.agentMenuField}>
+              <span>Cómo va a cobrar</span>
+              <PhoneSelect
+                value={paymentCapability.collectionMethod}
+                onChange={(collectionMethodValue) => {
+                  const collectionMethod = collectionMethodValue === 'bank_transfer' ? 'bank_transfer' : 'payment_link'
+                  saveNativeCapability({
+                    ...paymentCapability,
+                    collectionMethod,
+                    gateway: collectionMethod === 'payment_link'
+                      ? (nativePaymentGateway === 'legacy' ? 'highlevel' : nativePaymentGateway)
+                      : null,
+                    installments: collectionMethod === 'payment_link'
+                      ? paymentCapability.installments
+                      : { enabled: false, maxInstallments: 0 },
+                    receiptProof: { enabled: collectionMethod === 'bank_transfer', disposition: 'pending_review' },
+                    deposit: {
+                      ...paymentCapability.deposit,
+                      methods: {
+                        paymentLink: collectionMethod === 'payment_link',
+                        bankTransfer: collectionMethod === 'bank_transfer'
+                      },
+                      bankTransferDetails: paymentCapability.bankTransfer.details
+                    }
+                  })
+                }}
+                options={[
+                  { value: 'payment_link', label: 'Link de pago' },
+                  { value: 'bank_transfer', label: 'Transferencia/Depósito' }
+                ]}
+                title="Método de cobro"
+                ariaLabel="Método para cobrar"
+                disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+            </label>
+            <p className={styles.agentMenuHint}>
+              {paymentCapability.collectionMethod === 'bank_transfer'
+                ? 'No usa pasarela. La IA comparte los datos bancarios y espera una foto o captura del comprobante para analizarla y dejarla pendiente de revisión.'
+                : 'La IA manda un enlace y sólo reconoce el pago cuando la pasarela confirma la señal; no pide fotos.'}
+            </p>
             <label className={styles.agentMenuField}>
               <span>Tipo de cobro</span>
               <PhoneSelect
@@ -20875,156 +21054,138 @@ export const PhoneChat: React.FC = () => {
                     disabled={agentConfigSaving}
                   />
                 )}
-                <label className={`${styles.agentCompactToggle} ${paymentCapability.deposit.methods?.paymentLink ? styles.agentCompactToggleActive : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(paymentCapability.deposit.methods?.paymentLink)}
-                    disabled={agentConfigSaving}
-                    onChange={(event) => saveNativeCapability({
-                      ...paymentCapability,
-                      deposit: {
-                        ...paymentCapability.deposit,
-                        methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS, ...paymentCapability.deposit.methods, paymentLink: event.target.checked }
-                      }
-                    })}
-                  />
-                  <span><strong>Link de pago</strong><small>El pago cuenta sólo cuando el proveedor lo confirma.</small></span>
-                </label>
-                <label className={`${styles.agentCompactToggle} ${paymentCapability.deposit.methods?.bankTransfer ? styles.agentCompactToggleActive : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(paymentCapability.deposit.methods?.bankTransfer)}
-                    disabled={agentConfigSaving}
-                    onChange={(event) => saveNativeCapability({
-                      ...paymentCapability,
-                      deposit: {
-                        ...paymentCapability.deposit,
-                        methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS, ...paymentCapability.deposit.methods, bankTransfer: event.target.checked }
-                      }
-                    })}
-                  />
-                  <span><strong>Transferencia con revisión</strong><small>Un comprobante nunca se toma como dinero confirmado por sí solo.</small></span>
-                </label>
-                {paymentCapability.deposit.methods?.bankTransfer && (
-                  <PhoneTextArea
-                    label="Datos de transferencia"
-                    value={paymentCapability.deposit.bankTransferDetails || ''}
-                    onChange={(bankTransferDetails) => updateNativeCapabilityDraft({
-                      ...paymentCapability,
-                      deposit: { ...paymentCapability.deposit, bankTransferDetails }
-                    })}
-                    onBlur={() => saveNativeCapability(paymentCapability)}
-                    rows={3}
-                    disabled={agentConfigSaving}
-                  />
-                )}
               </>
             )}
-            <label className={styles.agentMenuField}>
-              <span>Pasarela para crear el enlace</span>
-              <PhoneSelect
-                value={paymentCapability.gateway}
-                onChange={(gatewayValue) => {
-                  const gateway = (['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'].includes(gatewayValue)
-                    ? gatewayValue
-                    : 'highlevel') as typeof paymentCapability.gateway
-                  saveNativeCapability({
-                    ...paymentCapability,
-                    gateway,
-                    installments: { enabled: false, maxInstallments: 0 },
-                    ...(gateway === 'highlevel'
-                      ? {
-                          expirationMinutes: Math.max(1440, Number(paymentCapability.expirationMinutes) || 1440)
-                        }
-                      : {})
-                  })
-                }}
-                options={[
-                  { value: 'stripe', label: 'Stripe' },
-                  { value: 'conekta', label: 'Conekta' },
-                  { value: 'mercadopago', label: 'Mercado Pago' },
-                  { value: 'clip', label: 'CLIP' },
-                  { value: 'rebill', label: 'Rebill' },
-                  { value: 'highlevel', label: 'HighLevel (compatibilidad)' }
-                ]}
-                title="Pasarela"
-                ariaLabel="Pasarela para crear el enlace de pago"
-                disabled={agentConfigSaving}
-                buttonClassName={styles.agentMenuSelectButton}
-              />
-              {paymentCapability.gateway === 'highlevel' && (
-                <small>HighLevel usa su modo global. Para probar un pago sandbox elige otra pasarela con credenciales de prueba.</small>
-              )}
-            </label>
-            {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && nativePaymentMsiMonths.length > 0 && (
+            {paymentCapability.collectionMethod === 'bank_transfer' ? (
               <>
-                <label className={`${styles.agentCompactToggle} ${paymentCapability.installments.enabled ? styles.agentCompactToggleActive : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={paymentCapability.installments.enabled}
-                    disabled={agentConfigSaving}
-                    onChange={(event) => saveNativeCapability({
-                      ...paymentCapability,
-                      installments: {
-                        enabled: event.target.checked,
-                        maxInstallments: event.target.checked ? (paymentCapability.installments.maxInstallments || 3) : 0
-                      }
-                    })}
-                  />
-                  <span><strong>Meses sin intereses</strong><small>Define el máximo que puede ofrecer el enlace.</small></span>
-                </label>
-                {paymentCapability.installments.enabled && (
-                  <label className={styles.agentMenuField}>
-                    <span>Máximo de meses</span>
-                    <PhoneSelect
-                      value={String(paymentCapability.installments.maxInstallments || 3)}
-                      onChange={(maxInstallments) => saveNativeCapability({
-                        ...paymentCapability,
-                        installments: { enabled: true, maxInstallments: Number(maxInstallments) }
-                      })}
-                      options={nativePaymentMsiMonths.map((months) => ({
-                        value: String(months),
-                        label: `Hasta ${months} meses`
-                      }))}
-                      title="Meses sin intereses"
-                      ariaLabel="Máximo de meses sin intereses"
-                      disabled={agentConfigSaving}
-                      buttonClassName={styles.agentMenuSelectButton}
-                    />
-                  </label>
-                )}
+                <PhoneTextArea
+                  label="Datos para la transferencia o depósito"
+                  value={paymentCapability.bankTransfer.details}
+                  onChange={(details) => updateNativeCapabilityDraft({
+                    ...paymentCapability,
+                    collectionMethod: 'bank_transfer',
+                    gateway: null,
+                    installments: { enabled: false, maxInstallments: 0 },
+                    receiptProof: { enabled: true, disposition: 'pending_review' },
+                    bankTransfer: { details },
+                    deposit: {
+                      ...paymentCapability.deposit,
+                      methods: { paymentLink: false, bankTransfer: true },
+                      bankTransferDetails: details
+                    }
+                  })}
+                  onBlur={() => saveNativeCapability(paymentCapability)}
+                  placeholder="Banco, beneficiario, CLABE o cuenta y referencia que debe usar el cliente."
+                  rows={4}
+                  disabled={agentConfigSaving}
+                />
+                <p className={styles.agentMenuHint}>El cliente manda una foto o captura de su propia app bancaria. La IA analiza el comprobante, pero el pago queda pendiente de revisión; una imagen nunca confirma fondos por sí sola.</p>
               </>
-            )}
-            {paymentCapability.chargeType !== 'deposit' && paymentCapability.gateway !== 'highlevel' && nativePaymentMsiMonths.length === 0 && (
-              <p className={styles.agentMenuHint}>Esta combinación de pasarela, monto y moneda no permite meses sin intereses.</p>
-            )}
-            <label className={styles.agentMenuField}>
-              <span>{paymentCapability.gateway === 'highlevel' ? 'Fecha límite de la invoice' : 'El enlace vence en'}</span>
-              <PhoneSelect
-                value={String(paymentCapability.expirationMinutes)}
-                onChange={(expirationMinutes) => saveNativeCapability({
-                  ...paymentCapability,
-                  expirationMinutes: Number(expirationMinutes)
-                })}
-                options={paymentCapability.gateway === 'highlevel'
-                  ? [
-                      { value: '1440', label: '24 horas' },
-                      { value: '10080', label: '7 días' }
-                    ]
-                  : [
+            ) : (
+              <>
+                <label className={styles.agentMenuField}>
+                  <span>Pasarela para crear el enlace</span>
+                  <PhoneSelect
+                    value={nativePaymentGateway}
+                    onChange={(gatewayValue) => {
+                      const gateway = (gatewayValue === 'legacy' && paymentCapability.gateway === 'highlevel'
+                        ? 'highlevel'
+                        : (['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'].includes(gatewayValue)
+                            ? gatewayValue
+                            : 'stripe')) as NonNullable<typeof paymentCapability.gateway>
+                      saveNativeCapability({
+                        ...paymentCapability,
+                        collectionMethod: 'payment_link',
+                        gateway,
+                        receiptProof: { enabled: false, disposition: 'pending_review' },
+                        installments: { enabled: false, maxInstallments: 0 },
+                        deposit: {
+                          ...paymentCapability.deposit,
+                          methods: { paymentLink: true, bankTransfer: false }
+                        }
+                      })
+                    }}
+                    options={[
+                      { value: 'stripe', label: 'Stripe' },
+                      { value: 'conekta', label: 'Conekta' },
+                      { value: 'mercadopago', label: 'Mercado Pago' },
+                      { value: 'clip', label: 'CLIP' },
+                      { value: 'rebill', label: 'Rebill' },
+                      ...(paymentCapability.gateway === 'highlevel'
+                        ? [{ value: 'legacy', label: 'Conexión anterior (cambiar)' }]
+                        : [])
+                    ]}
+                    title="Pasarela"
+                    ariaLabel="Pasarela para crear el enlace de pago"
+                    disabled={agentConfigSaving}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+                {paymentCapability.chargeType !== 'deposit' && nativePaymentMsiMonths.length > 0 && (
+                  <>
+                    <label className={`${styles.agentCompactToggle} ${paymentCapability.installments.enabled ? styles.agentCompactToggleActive : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={paymentCapability.installments.enabled}
+                        disabled={agentConfigSaving}
+                        onChange={(event) => saveNativeCapability({
+                          ...paymentCapability,
+                          installments: {
+                            enabled: event.target.checked,
+                            maxInstallments: event.target.checked ? (paymentCapability.installments.maxInstallments || 3) : 0
+                          }
+                        })}
+                      />
+                      <span><strong>Meses sin intereses</strong><small>Define el máximo que puede ofrecer el enlace.</small></span>
+                    </label>
+                    {paymentCapability.installments.enabled && (
+                      <label className={styles.agentMenuField}>
+                        <span>Máximo de meses</span>
+                        <PhoneSelect
+                          value={String(paymentCapability.installments.maxInstallments || 3)}
+                          onChange={(maxInstallments) => saveNativeCapability({
+                            ...paymentCapability,
+                            installments: { enabled: true, maxInstallments: Number(maxInstallments) }
+                          })}
+                          options={nativePaymentMsiMonths.map((months) => ({
+                            value: String(months),
+                            label: `Hasta ${months} meses`
+                          }))}
+                          title="Meses sin intereses"
+                          ariaLabel="Máximo de meses sin intereses"
+                          disabled={agentConfigSaving}
+                          buttonClassName={styles.agentMenuSelectButton}
+                        />
+                      </label>
+                    )}
+                  </>
+                )}
+                {paymentCapability.chargeType !== 'deposit' && nativePaymentMsiMonths.length === 0 && (
+                  <p className={styles.agentMenuHint}>Esta combinación de pasarela, monto y moneda no permite meses sin intereses.</p>
+                )}
+                <label className={styles.agentMenuField}>
+                  <span>El enlace vence en</span>
+                  <PhoneSelect
+                    value={String(paymentCapability.expirationMinutes)}
+                    onChange={(expirationMinutes) => saveNativeCapability({
+                      ...paymentCapability,
+                      expirationMinutes: Number(expirationMinutes)
+                    })}
+                    options={[
                       { value: '30', label: '30 minutos' },
                       { value: '60', label: '1 hora' },
                       { value: '360', label: '6 horas' },
                       { value: '1440', label: '24 horas' },
                       { value: '10080', label: '7 días' }
                     ]}
-                title="Vigencia del enlace"
-                ariaLabel="Vigencia del enlace de pago"
-                disabled={agentConfigSaving}
-                buttonClassName={styles.agentMenuSelectButton}
-              />
-              {paymentCapability.gateway === 'highlevel' && <small>HighLevel guarda una fecha límite, no una hora exacta.</small>}
-            </label>
+                    title="Vigencia del enlace"
+                    ariaLabel="Vigencia del enlace de pago"
+                    disabled={agentConfigSaving}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+              </>
+            )}
             <label className={styles.agentMenuField}>
               <span>Después del pago confirmado</span>
               <PhoneSelect
@@ -21043,17 +21204,27 @@ export const PhoneChat: React.FC = () => {
                 buttonClassName={styles.agentMenuSelectButton}
               />
             </label>
-            <label className={`${styles.agentCompactToggle} ${paymentCapability.receiptProof.enabled ? styles.agentCompactToggleActive : ''}`}>
+            <label className={`${styles.agentCompactToggle} ${paymentCapability.testMode.enabled ? styles.agentCompactToggleActive : ''}`}>
               <input
                 type="checkbox"
-                checked={paymentCapability.receiptProof.enabled}
+                checked={paymentCapability.testMode.enabled}
                 disabled={agentConfigSaving}
                 onChange={(event) => saveNativeCapability({
                   ...paymentCapability,
-                  receiptProof: { enabled: event.target.checked, disposition: 'pending_review' }
-                })}
+                  testMode: {
+                    ...paymentCapability.testMode,
+                    enabled: event.target.checked,
+                    cleanupAfterMinutes: 5,
+                    notify: true
+                  }
+                }, { pauseAgent: false })}
               />
-              <span><strong>Aceptar foto de comprobante</strong><small>Siempre queda pendiente de revisión; la IA no lo marca como pagado por sí sola.</small></span>
+              <span>
+                <strong>Modo test de pagos</strong>
+                <small>{paymentCapability.collectionMethod === 'bank_transfer'
+                  ? 'Prueba el análisis de la imagen sin usar pasarela ni dinero real.'
+                  : 'Fuerza un enlace sandbox, valida la señal de pago y limpia el registro después de 5 minutos.'}</small>
+              </span>
             </label>
           </>
         )
@@ -21233,9 +21404,9 @@ export const PhoneChat: React.FC = () => {
           <section className={styles.agentMenuSection} aria-label="Control y datos">
             <div className={styles.agentMenuSectionHeader}>
               <span>3. Control y datos</span>
-              <small>Seguridad y pruebas</small>
+              <small>Seguridad y requisitos</small>
             </div>
-            <p className={styles.agentMenuHint}>Configura qué hacer ante riesgo, cómo probar acciones reales y qué datos sí puede pedir.</p>
+            <p className={styles.agentMenuHint}>Configura qué hacer ante riesgo y qué datos sí puede pedir. Las pruebas viven dentro de Citas y Cobrar.</p>
 
             <div className={styles.agentGoalPanel}>
               <label className={`${styles.agentCompactToggle} ${safetyPolicy.enabled ? styles.agentCompactToggleActive : ''}`}>
@@ -21340,288 +21511,198 @@ export const PhoneChat: React.FC = () => {
             </div>
 
             <div className={styles.agentGoalPanel}>
-              <label className={`${styles.agentCompactToggle} ${testMode.enabled ? styles.agentCompactToggleActive : ''}`}>
-                <input
-                  type="checkbox"
-                  checked={testMode.enabled}
+              <div className={styles.agentGoalSummary}>
+                <strong>Datos requeridos</strong>
+                <span>Elige en una sola lista qué puede pedir. Si no seleccionas nada, no insiste.</span>
+              </div>
+              <label className={styles.agentMenuField}>
+                <span>Datos del contacto</span>
+                <CheckboxMultiSelect
+                  options={requiredDataOptions.map((option) => ({ value: option.field, label: option.label }))}
+                  value={dataRequirements.fields.map((item) => item.field)}
+                  onChange={setRequiredDataFields}
+                  placeholder="Ningún dato obligatorio"
+                  aria-label="Datos requeridos del contacto"
                   disabled={agentConfigSaving}
-                  onChange={(event) => saveNativeCapabilitiesPatch({
-                    testMode: { ...testMode, enabled: event.target.checked, cleanupAfterMinutes: 5 }
-                  }, { pauseAgent: false })}
+                  className={styles.agentMenuSelectButton}
                 />
-                <span>
-                  <strong>Modo test</strong>
-                  <small>Hace pruebas reales aisladas desde el teléfono de prueba y limpia sus efectos después de 5 minutos.</small>
-                </span>
               </label>
-              {testMode.enabled && (
-                <>
-                  <p className={styles.agentMenuHint}>Citas: crea y elimina la cita del calendario elegido. Pagos: fuerza sandbox aunque la pasarela esté en vivo. Asignaciones: notifica y luego restaura al responsable anterior.</p>
-                  <label className={`${styles.agentCompactToggle} ${testMode.notify ? styles.agentCompactToggleActive : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={testMode.notify}
-                      disabled={agentConfigSaving}
-                      onChange={(event) => saveNativeCapabilitiesPatch({
-                        testMode: { ...testMode, notify: event.target.checked, cleanupAfterMinutes: 5 }
-                      }, { pauseAgent: false })}
-                    />
-                    <span><strong>Enviar notificaciones de prueba</strong><small>Sirve para validar push, webhooks y asignaciones como ocurrirían en vivo.</small></span>
-                  </label>
-                  <p className={styles.agentMenuHint}>Si una pasarela no tiene credenciales sandbox, la prueba se detiene. Nunca usa dinero real como alternativa.</p>
-                </>
-              )}
-            </div>
-
-            <div className={styles.agentGoalPanel}>
-              <label className={`${styles.agentCompactToggle} ${dataRequirements.enabled ? styles.agentCompactToggleActive : ''}`}>
-                <input
-                  type="checkbox"
-                  checked={dataRequirements.enabled}
-                  disabled={agentConfigSaving}
-                  onChange={(event) => saveNativeCapabilitiesPatch({
-                    dataRequirements: { ...dataRequirements, enabled: event.target.checked }
-                  })}
-                />
-                <span>
-                  <strong>Datos requeridos</strong>
-                  <small>Elige exactamente qué puede pedir antes de agendar o cobrar. Si no marcas nada, no insiste.</small>
-                </span>
-              </label>
-              {dataRequirements.enabled && (
-                <>
-                  {requiredDataOptions.map((option) => {
-                    const requirement = dataRequirements.fields.find((item) => item.field === option.field)
-                    return (
-                      <div key={option.field} className={styles.agentExtraRow}>
-                        <label className={`${styles.agentCompactToggle} ${requirement ? styles.agentCompactToggleActive : ''}`}>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(requirement)}
-                            disabled={agentConfigSaving}
-                            onChange={(event) => updateRequiredDataItem(
-                              option.field,
-                              event.target.checked ? (option.field === 'custom' ? { label: 'Dato personalizado' } : {}) : null
-                            )}
-                          />
-                          <span><strong>{option.label}</strong><small>{requirement ? 'Configura cuándo y con qué nivel pedirlo.' : 'No se solicita.'}</small></span>
-                        </label>
-                        {requirement && (
-                          <>
-                            <label className={styles.agentMenuField}>
-                              <span>Nivel</span>
-                              <PhoneSelect
-                                value={requirement.level}
-                                onChange={(level) => {
-                                  if (level !== 'conditional') {
-                                    updateRequiredDataItem(option.field, {
-                                      level: level === 'optional' ? 'optional' : 'required',
-                                      condition: undefined
-                                    })
-                                    return
-                                  }
-                                  const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
-                                  updateRequiredDataItem(option.field, {
-                                    level: 'conditional',
-                                    scope: selected.scope,
-                                    condition: { fact: selected.fact, operator: 'is_true', value: true }
-                                  })
-                                }}
-                                options={[
-                                  { value: 'required', label: 'Obligatorio' },
-                                  { value: 'optional', label: 'Opcional' },
-                                  { value: 'conditional', label: 'Condicional' }
-                                ]}
-                                title="Nivel del dato"
-                                ariaLabel={`Nivel de ${option.label}`}
-                                disabled={agentConfigSaving}
-                                buttonClassName={styles.agentMenuSelectButton}
-                              />
-                            </label>
-                            {requirement.level !== 'conditional' ? (
-                              <label className={styles.agentMenuField}>
-                                <span>Cuándo pedirlo</span>
-                                <PhoneSelect
-                                  value={requirement.scope}
-                                  onChange={(scope) => updateRequiredDataItem(option.field, {
-                                    scope: scope === 'appointment' || scope === 'payment' ? scope : 'any_action'
-                                  })}
-                                  options={[
-                                    { value: 'any_action', label: 'Antes de cualquier acción' },
-                                    { value: 'appointment', label: 'Sólo para citas' },
-                                    { value: 'payment', label: 'Sólo para cobros' }
-                                  ]}
-                                  title="Momento"
-                                  ariaLabel={`Cuándo pedir ${option.label}`}
-                                  disabled={agentConfigSaving}
-                                  buttonClassName={styles.agentMenuSelectButton}
-                                />
-                              </label>
-                            ) : (
-                              <label className={styles.agentMenuField}>
-                                <span>Condición</span>
-                                <PhoneSelect
-                                  value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
-                                  onChange={(factValue) => {
-                                    const fact = factValue as ConversationalRequiredDataConditionFact
-                                    const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
-                                    updateRequiredDataItem(option.field, {
-                                      scope: selected.scope,
-                                      condition: { fact: selected.fact, operator: 'is_true', value: true }
-                                    })
-                                  }}
-                                  options={requiredDataConditionOptions.map((item) => ({ value: item.fact, label: item.label }))}
-                                  title="Condición"
-                                  ariaLabel={`Condición para ${option.label}`}
-                                  disabled={agentConfigSaving}
-                                  buttonClassName={styles.agentMenuSelectButton}
-                                />
-                              </label>
-                            )}
-                            {option.field === 'custom' && (
-                              <PhoneTextField
-                                label="Nombre del dato"
-                                value={requirement.label || ''}
-                                onChange={(label) => updateRequiredDataItemDraft('custom', { label })}
-                                onBlur={() => saveSelectedAgentPatch({
-                                  capabilitiesConfig: selectedAgentDef.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
-                                })}
-                                placeholder="Ejemplo: Número de expediente"
-                                disabled={agentConfigSaving}
-                              />
-                            )}
-                          </>
-                        )}
-                      </div>
-                    )
-                  })}
-
-                  <label className={`${styles.agentCompactToggle} ${dataRequirements.updateContact.enabled ? styles.agentCompactToggleActive : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={dataRequirements.updateContact.enabled}
-                      disabled={agentConfigSaving}
-                      onChange={(event) => saveNativeCapabilitiesPatch({
-                        dataRequirements: {
-                          ...dataRequirements,
-                          updateContact: { ...dataRequirements.updateContact, enabled: event.target.checked }
-                        }
-                      })}
-                    />
-                    <span><strong>Actualizar la ficha del contacto</strong><small>Reutiliza lo que ya está confirmado y guarda los datos nuevos.</small></span>
-                  </label>
-                  {dataRequirements.updateContact.enabled && (
+              {requiredDataOptions.map((option) => {
+                const requirement = dataRequirements.fields.find((item) => item.field === option.field)
+                if (!requirement) return null
+                return (
+                  <div key={option.field} className={styles.agentExtraRow}>
+                    <strong>{option.label}</strong>
                     <label className={styles.agentMenuField}>
-                      <span>Cómo actualizar</span>
+                      <span>Nivel</span>
                       <PhoneSelect
-                        value={dataRequirements.updateContact.policy}
-                        onChange={(policy) => saveNativeCapabilitiesPatch({
-                          dataRequirements: {
-                            ...dataRequirements,
-                            updateContact: {
-                              ...dataRequirements.updateContact,
-                              policy: policy === 'fill_missing' || policy === 'confirm_changes' ? policy : 'replace_placeholders'
-                            }
+                        value={requirement.level}
+                        onChange={(level) => {
+                          if (level !== 'conditional') {
+                            updateRequiredDataItem(option.field, {
+                              level: level === 'optional' ? 'optional' : 'required',
+                              condition: undefined
+                            })
+                            return
                           }
-                        })}
+                          const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
+                          updateRequiredDataItem(option.field, {
+                            level: 'conditional',
+                            scope: selected.scope,
+                            condition: { fact: selected.fact, operator: 'is_true', value: true }
+                          })
+                        }}
                         options={[
-                          { value: 'replace_placeholders', label: 'Llenar vacíos y reemplazar nombres provisionales' },
-                          { value: 'fill_missing', label: 'Sólo llenar datos vacíos' },
-                          { value: 'confirm_changes', label: 'Conservar distintos como alternativos para revisión' }
+                          { value: 'required', label: 'Obligatorio' },
+                          { value: 'optional', label: 'Opcional' },
+                          { value: 'conditional', label: 'Condicional' }
                         ]}
-                        title="Actualización del contacto"
-                        ariaLabel="Cómo actualizar la ficha del contacto"
+                        title="Nivel del dato"
+                        ariaLabel={`Nivel de ${option.label}`}
                         disabled={agentConfigSaving}
                         buttonClassName={styles.agentMenuSelectButton}
                       />
                     </label>
-                  )}
-                  <p className={styles.agentMenuHint}>Si un nombre, teléfono o correo ya existe y está confirmado, la IA lo reutiliza y no vuelve a pedirlo.</p>
+                    {requirement.level !== 'conditional' ? (
+                      <label className={styles.agentMenuField}>
+                        <span>Cuándo pedirlo</span>
+                        <PhoneSelect
+                          value={requirement.scope}
+                          onChange={(scope) => updateRequiredDataItem(option.field, {
+                            scope: scope === 'appointment' || scope === 'payment' ? scope : 'any_action'
+                          })}
+                          options={[
+                            { value: 'any_action', label: 'Antes de cualquier acción' },
+                            { value: 'appointment', label: 'Sólo para citas' },
+                            { value: 'payment', label: 'Sólo para cobros' }
+                          ]}
+                          title="Momento"
+                          ariaLabel={`Cuándo pedir ${option.label}`}
+                          disabled={agentConfigSaving}
+                          buttonClassName={styles.agentMenuSelectButton}
+                        />
+                      </label>
+                    ) : (
+                      <label className={styles.agentMenuField}>
+                        <span>Condición</span>
+                        <PhoneSelect
+                          value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
+                          onChange={(factValue) => {
+                            const fact = factValue as ConversationalRequiredDataConditionFact
+                            const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
+                            updateRequiredDataItem(option.field, {
+                              scope: selected.scope,
+                              condition: { fact: selected.fact, operator: 'is_true', value: true }
+                            })
+                          }}
+                          options={requiredDataConditionOptions.map((item) => ({ value: item.fact, label: item.label }))}
+                          title="Condición"
+                          ariaLabel={`Condición para ${option.label}`}
+                          disabled={agentConfigSaving}
+                          buttonClassName={styles.agentMenuSelectButton}
+                        />
+                      </label>
+                    )}
+                    {option.field === 'custom' && (
+                      <PhoneTextField
+                        label="Nombre del dato"
+                        value={requirement.label || ''}
+                        onChange={(label) => updateRequiredDataItemDraft('custom', { label })}
+                        onBlur={() => saveSelectedAgentPatch({
+                          capabilitiesConfig: selectedAgentDef.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
+                        })}
+                        placeholder="Ejemplo: Número de expediente"
+                        disabled={agentConfigSaving}
+                      />
+                    )}
+                  </div>
+                )
+              })}
 
-                  <label className={`${styles.agentCompactToggle} ${dataRequirements.participants.enabled ? styles.agentCompactToggleActive : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={dataRequirements.participants.enabled}
-                      disabled={agentConfigSaving}
-                      onChange={(event) => saveNativeCapabilitiesPatch({
+              <label className={styles.agentMenuField}>
+                <span>Actualizar la ficha del contacto</span>
+                <PhoneSelect
+                  value={dataRequirements.updateContact.enabled ? dataRequirements.updateContact.policy : 'disabled'}
+                  onChange={(policy) => saveNativeCapabilitiesPatch({
+                    dataRequirements: {
+                      ...dataRequirements,
+                      updateContact: {
+                        enabled: policy !== 'disabled',
+                        policy: policy === 'fill_missing' || policy === 'confirm_changes' ? policy : 'replace_placeholders'
+                      }
+                    }
+                  })}
+                  options={[
+                    { value: 'disabled', label: 'No actualizarla' },
+                    { value: 'replace_placeholders', label: 'Llenar vacíos y reemplazar nombres provisionales' },
+                    { value: 'fill_missing', label: 'Sólo llenar datos vacíos' },
+                    { value: 'confirm_changes', label: 'Conservar distintos como alternativos para revisión' }
+                  ]}
+                  title="Actualización del contacto"
+                  ariaLabel="Cómo actualizar la ficha del contacto"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <p className={styles.agentMenuHint}>Si un nombre, teléfono o correo ya existe y está confirmado, la IA lo reutiliza y no vuelve a pedirlo.</p>
+
+              <label className={styles.agentMenuField}>
+                <span>Datos del titular distinto y de cada invitado</span>
+                <CheckboxMultiSelect
+                  options={guestDataOptions}
+                  value={dataRequirements.participants.guestFields}
+                  onChange={setRequiredGuestFields}
+                  placeholder="No exigir datos de invitados"
+                  aria-label="Datos requeridos de titular e invitados"
+                  disabled={agentConfigSaving}
+                  className={styles.agentMenuSelectButton}
+                />
+              </label>
+              {dataRequirements.participants.guestFields.length > 0 && (
+                <div className={styles.agentExtraRow}>
+                  <label className={styles.agentMenuField}>
+                    <span>¿La cita puede ser para otra persona?</span>
+                    <PhoneSelect
+                      value={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester ? 'yes' : 'no'}
+                      onChange={(value) => saveNativeCapabilitiesPatch({
                         dataRequirements: {
                           ...dataRequirements,
-                          enabled: event.target.checked || dataRequirements.fields.length > 0,
-                          participants: { ...dataRequirements.participants, enabled: event.target.checked }
+                          participants: {
+                            ...dataRequirements.participants,
+                            allowPrimaryAttendeeDifferentFromRequester: value !== 'no'
+                          }
                         }
                       })}
+                      options={[
+                        { value: 'yes', label: 'Sí, guardar al titular por separado' },
+                        { value: 'no', label: 'No, sólo quien escribe e invitados' }
+                      ]}
+                      title="Titular de la cita"
+                      ariaLabel="Permitir un titular distinto"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
                     />
-                    <span><strong>Titular distinto e invitados</strong><small>Guarda por separado a quien escribe, a la persona de la cita y a sus invitados.</small></span>
                   </label>
-                  {dataRequirements.participants.enabled && (
-                    <>
-                      <label className={`${styles.agentCompactToggle} ${dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester ? styles.agentCompactToggleActive : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester}
-                          disabled={agentConfigSaving}
-                          onChange={(event) => saveNativeCapabilitiesPatch({
-                            dataRequirements: {
-                              ...dataRequirements,
-                              participants: {
-                                ...dataRequirements.participants,
-                                allowPrimaryAttendeeDifferentFromRequester: event.target.checked
-                              }
-                            }
-                          })}
-                        />
-                        <span><strong>Permitir que la cita sea para otra persona</strong><small>Quien escribe sigue siendo el contacto principal; el titular se guarda como asistente.</small></span>
-                      </label>
-                      <div className={styles.agentExtraRow}>
-                        <strong>Datos del titular distinto y de cada invitado</strong>
-                        {(['name', 'phone', 'email', 'relation'] as const).map((field) => {
-                          const labels = { name: 'Nombre', phone: 'Teléfono', email: 'Correo', relation: 'Relación' }
-                          const enabled = dataRequirements.participants.guestFields.includes(field)
-                          return (
-                            <label key={field} className={`${styles.agentCompactToggle} ${enabled ? styles.agentCompactToggleActive : ''}`}>
-                              <input
-                                type="checkbox"
-                                checked={enabled}
-                                disabled={agentConfigSaving}
-                                onChange={(event) => saveNativeCapabilitiesPatch({
-                                  dataRequirements: {
-                                    ...dataRequirements,
-                                    participants: {
-                                      ...dataRequirements.participants,
-                                      guestFields: event.target.checked
-                                        ? [...new Set([...dataRequirements.participants.guestFields, field])]
-                                        : dataRequirements.participants.guestFields.filter((item) => item !== field)
-                                    }
-                                  }
-                                })}
-                              />
-                              <span><strong>{labels[field]}</strong><small>{enabled ? 'Se solicita cuando falte.' : 'No se exige.'}</small></span>
-                            </label>
-                          )
-                        })}
-                        <label className={styles.agentMenuField}>
-                          <span>Máximo de invitados</span>
-                          <PhoneSelect
-                            value={String(dataRequirements.participants.maxGuests)}
-                            onChange={(maxGuests) => saveNativeCapabilitiesPatch({
-                              dataRequirements: {
-                                ...dataRequirements,
-                                participants: { ...dataRequirements.participants, maxGuests: Number(maxGuests) }
-                              }
-                            })}
-                            options={[1, 2, 3, 5, 10, 20].map((value) => ({ value: String(value), label: String(value) }))}
-                            title="Máximo de invitados"
-                            ariaLabel="Máximo de invitados por cita"
-                            disabled={agentConfigSaving}
-                            buttonClassName={styles.agentMenuSelectButton}
-                          />
-                        </label>
-                      </div>
-                    </>
-                  )}
-                  <p className={styles.agentMenuHint}>Si no marcas datos de invitados, usa sólo lo que compartan y no insiste por teléfono, correo ni apellido.</p>
-                </>
+                  <label className={styles.agentMenuField}>
+                    <span>Máximo de invitados</span>
+                    <PhoneSelect
+                      value={String(dataRequirements.participants.maxGuests)}
+                      onChange={(maxGuests) => saveNativeCapabilitiesPatch({
+                        dataRequirements: {
+                          ...dataRequirements,
+                          participants: { ...dataRequirements.participants, maxGuests: Number(maxGuests) }
+                        }
+                      })}
+                      options={[1, 2, 3, 5, 10, 20].map((value) => ({ value: String(value), label: String(value) }))}
+                      title="Máximo de invitados"
+                      ariaLabel="Máximo de invitados por cita"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                </div>
               )}
+              <p className={styles.agentMenuHint}>Si no eliges datos de invitados, usa sólo lo que compartan y no insiste por teléfono, correo ni apellido.</p>
             </div>
           </section>
 

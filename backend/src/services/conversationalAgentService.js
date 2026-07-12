@@ -23,7 +23,6 @@ import {
   buildLegacyConversationalEditableText,
   getConversationalCapabilitiesConfig,
   getEnabledConversationalCapabilities,
-  getConversationalTestMode,
   getConversationalNativeRuntimeValidationErrors,
   getConversationalPromptConfig,
   normalizeConversationalCapabilitiesConfig,
@@ -4060,8 +4059,19 @@ export async function getConversationalNativeRuntimeResourceValidationErrors(nex
       }
     }
 
-    const gateway = String(payment.gateway || 'highlevel').trim().toLowerCase()
-    const testMode = getConversationalTestMode(next)
+    const usesBankTransfer = payment.collectionMethod === 'bank_transfer'
+    const bankTransferDetails = String(payment.bankTransfer?.details || payment.deposit?.bankTransferDetails || '').trim()
+    if (usesBankTransfer && !bankTransferDetails) {
+      errors.push(nativeResourceValidationItem(
+        'CONVERSATIONAL_CAPABILITY_PAYMENT_BANK_TRANSFER_DETAILS_REQUIRED',
+        'collect_payment',
+        'capabilitiesConfig.items.collect_payment.bankTransfer.details',
+        'Escribe los datos bancarios que la IA compartirá para recibir la transferencia o depósito.'
+      ))
+    }
+    if (!usesBankTransfer) {
+    const gateway = String(payment.gateway || 'stripe').trim().toLowerCase()
+    const paymentTestModeEnabled = payment.testMode?.enabled === true
     const installmentsEnabled = payment.installments?.enabled === true && Number(payment.installments?.maxInstallments) > 1
     if (installmentsEnabled) {
       if (usesDeposit) {
@@ -4153,7 +4163,7 @@ export async function getConversationalNativeRuntimeResourceValidationErrors(nex
           'HighLevel maneja vencimiento por fecha, no por minutos. Elige 24 horas o 7 días.'
         ))
       }
-      if (testMode.enabled) {
+      if (paymentTestModeEnabled) {
         errors.push(nativeResourceValidationItem(
           'CONVERSATIONAL_CAPABILITY_PAYMENT_TEST_GATEWAY_UNSUPPORTED',
           'collect_payment',
@@ -4179,7 +4189,7 @@ export async function getConversationalNativeRuntimeResourceValidationErrors(nex
             `La pasarela ${gateway} está en modo prueba. Cámbiala a vivo antes de publicar el agente.`
           ))
         }
-        if (testMode.enabled) {
+        if (paymentTestModeEnabled) {
           const testConfig = await getPaymentGateCheckoutKeys(gateway, 'test')
           if (!testConfig?.configured || String(testConfig.paymentMode || '').toLowerCase() !== 'test') {
             errors.push(nativeResourceValidationItem(
@@ -4198,6 +4208,7 @@ export async function getConversationalNativeRuntimeResourceValidationErrors(nex
           `No se pudo validar la pasarela ${gateway}: ${String(error.message || 'configuración no disponible')}`
         ))
       }
+    }
     }
   }
 

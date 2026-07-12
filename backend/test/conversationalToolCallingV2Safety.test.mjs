@@ -1126,16 +1126,13 @@ test('replay del turno y retry concurrente/secuencial del link reutilizan provee
   }
 })
 
-test('un comprobante posterior a un link queda en revisión sin reemplazar la fuente del anticipo', async () => {
+test('un Link de pago no expone análisis de fotos ni acepta comprobantes alternos', async () => {
   const suffix = randomUUID()
   const timezone = await getAccountTimezone()
   const currency = await getAccountCurrency()
   const calendarId = `calendar_alternate_receipt_${suffix}`
   const contactId = `contact_alternate_receipt_${suffix}`
   const agentId = `agent_alternate_receipt_${suffix}`
-  const uncertainReceiptMessageId = `message_uncertain_receipt_${suffix}`
-  const receiptMessageId = `message_alternate_receipt_${suffix}`
-  const originalSourceEventId = `cae_existing_payment_link_${suffix}`
   const baseDay = DateTime.now().setZone(timezone).plus({ days: 38 }).startOf('day')
   const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
   const startTime = monday.set({ hour: 14, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO()
@@ -1163,126 +1160,15 @@ test('un comprobante posterior a un link queda en revisión sin reemplazar la fu
       timezone,
       executionId: `message_alternate_selection_${suffix}`
     })
-    const intentRow = await db.get(
-      `SELECT id, detail_json FROM conversational_agent_events
-       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_deposit_intent_pending'
-       ORDER BY created_at DESC LIMIT 1`,
-      [contactId, agentId]
-    )
-    await db.run(
-      `INSERT INTO whatsapp_api_messages (
-        id, contact_id, direction, message_type, media_url, media_mime_type,
-        message_timestamp, created_at, updated_at
-       ) VALUES (?, ?, 'inbound', 'image', 'https://example.com/unreadable-proof.jpg', 'image/jpeg', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [uncertainReceiptMessageId, contactId, new Date(Date.now() + 500).toISOString()]
-    )
-    setNativePaymentReceiptAnalysisHookForTest(async () => ({ ok: false, reason: 'analysis_failed' }))
-    const uncertain = await createConversationalTools(ctx)
-      .find((item) => item.name === 'register_deposit_payment_proof')
-      .invoke(null, JSON.stringify({ montoIndicado: 500, referencia: null }))
-    assert.equal(uncertain.ok, true, JSON.stringify(uncertain))
-    assert.equal(uncertain.manualReviewRequired, true)
-    assert.equal(uncertain.paymentConfirmed, false)
-    const releasedIntent = JSON.parse((await db.get(
-      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
-      [intentRow.id]
-    )).detail_json)
-    assert.equal(releasedIntent.status, 'pending')
-    assert.equal('claimToken' in releasedIntent, false)
+    const paymentCapability = ctx.config.capabilitiesConfig.items
+      .find((item) => item.id === 'collect_payment')
+    assert.equal(paymentCapability.collectionMethod || 'payment_link', 'payment_link')
+    const paymentTools = createConversationalTools(ctx)
+    assert.equal(paymentTools.some((item) => item.name === 'create_payment_link'), true)
+    assert.equal(paymentTools.some((item) => item.name === 'register_deposit_payment_proof'), false)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?', [contactId])).total), 0)
-
-    await db.run(
-      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
-      [JSON.stringify({
-        ...releasedIntent,
-        status: 'source_bound',
-        collectionMethod: 'paymentLink',
-        sourceEventId: originalSourceEventId,
-        boundAt: new Date().toISOString()
-      }), intentRow.id]
-    )
-    await db.run(
-      `INSERT INTO whatsapp_api_messages (
-        id, contact_id, direction, message_type, media_url, media_mime_type,
-        message_timestamp, created_at, updated_at
-       ) VALUES (?, ?, 'inbound', 'image', 'https://example.com/alternate-proof.jpg', 'image/jpeg', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [receiptMessageId, contactId, new Date(Date.now() + 1000).toISOString()]
-    )
-    setNativePaymentReceiptAnalysisHookForTest(async () => ({
-      ok: true,
-      isPaymentReceipt: true,
-      amount: 500,
-      currency,
-      date: new Date().toISOString(),
-      bank: 'Banco de prueba',
-      reference: `ALT-${suffix}`,
-      recipientHint: null,
-      confidence: 0.99
-    }))
-
-    const proofTool = createConversationalTools(ctx)
-      .find((item) => item.name === 'register_deposit_payment_proof')
-    await db.exec(`
-      CREATE TRIGGER fail_escalated_proof_ledger_${suffix.replaceAll('-', '_')}
-      BEFORE INSERT ON payments
-      WHEN NEW.contact_id = '${contactId}'
-      BEGIN
-        SELECT RAISE(FAIL, 'fallo ledger inyectado tras handoff');
-      END;
-    `)
-    const failedLedger = await proofTool
-      .invoke(null, JSON.stringify({ montoIndicado: 500, referencia: null }))
-    assert.equal(failedLedger.ok, true, JSON.stringify(failedLedger))
-    assert.equal(failedLedger.paymentRecorded, false)
-    assert.equal(failedLedger.transferredToHuman, true)
-    assert.equal(
-      ensureToolCallingV2VisibleReply('', [ctx.actions.at(-1)]),
-      'recibí el comprobante y quedó pendiente de revisión; todavía no confirma el pago'
-    )
-    await db.exec(`DROP TRIGGER IF EXISTS fail_escalated_proof_ledger_${suffix.replaceAll('-', '_')}`)
-
-    const result = await proofTool.invoke(null, JSON.stringify({ montoIndicado: 500, referencia: null }))
-    assert.equal(result.ok, true, JSON.stringify(result))
-    assert.equal(result.paymentConfirmed, false)
-    assert.equal(result.payment.status, 'pending_review')
-    const finalIntent = JSON.parse((await db.get(
-      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
-      [intentRow.id]
-    )).detail_json)
-    assert.equal(finalIntent.status, 'source_bound')
-    assert.equal(finalIntent.collectionMethod, 'paymentLink')
-    assert.equal(finalIntent.sourceEventId, originalSourceEventId)
-    const proofEvent = await db.get(
-      `SELECT detail_json FROM conversational_agent_events
-       WHERE contact_id = ? AND event_type = 'deposit_transfer_pending_review'
-       ORDER BY created_at DESC LIMIT 1`,
-      [contactId]
-    )
-    const proofDetail = JSON.parse(proofEvent.detail_json)
-    assert.equal(proofDetail.paymentPurpose, 'appointment_deposit')
-    assert.equal(proofDetail.manualReviewOnly, true)
-    assert.equal(proofDetail.autoResumeAllowed, false)
-    const state = await db.get(
-      `SELECT status, signal FROM conversational_agent_state
-       WHERE contact_id = ? AND agent_id = ?`,
-      [contactId, agentId]
-    )
-    assert.equal(state.status, 'human')
-    assert.equal(state.signal, 'ready_for_human')
-    assert.equal(Number((await db.get(
-      `SELECT COUNT(*) AS total FROM conversational_agent_events
-       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
-      [contactId]
-    )).total), 0)
-    assert.equal(Number((await db.get(
-      `SELECT COUNT(*) AS total FROM conversational_agent_events
-       WHERE contact_id = ? AND event_type IN ('priority_push_notification', 'priority_push_notification_failed')`,
-      [contactId]
-    )).total), 2)
   } finally {
     setNativePaymentReceiptAnalysisHookForTest(null)
-    await db.exec(`DROP TRIGGER IF EXISTS fail_escalated_proof_ledger_${suffix.replaceAll('-', '_')}`).catch(() => {})
-    await db.run('DELETE FROM whatsapp_api_messages WHERE id IN (?, ?)', [uncertainReceiptMessageId, receiptMessageId]).catch(() => {})
     await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
@@ -3400,9 +3286,11 @@ test('comprobantes inciertos crean un solo caso manual, alertan una vez y nunca 
     const ctx = v2Context([{
       id: 'collect_payment',
       enabled: true,
+      collectionMethod: 'bank_transfer',
       paymentMode: 'full_payment',
       chargeType: 'direct',
       direct: { amount: 1200, currency, concept: 'Consulta inicial' },
+      bankTransfer: { details: 'Banco de prueba · cuenta 1234' },
       receiptProof: { enabled: true }
     }], {
       contactId,
@@ -3501,9 +3389,11 @@ test('comprobantes válidos registran purchase y anticipo independiente como pen
       capability: {
         id: 'collect_payment',
         enabled: true,
+        collectionMethod: 'bank_transfer',
         paymentMode: 'full_payment',
         chargeType: 'direct',
         direct: { amount: 1200, currency, concept: 'Consulta inicial' },
+        bankTransfer: { details: 'Banco de prueba · cuenta 1234' },
         receiptProof: { enabled: true }
       },
       expectedPaymentMode: 'full_payment'
@@ -3514,7 +3404,9 @@ test('comprobantes válidos registran purchase y anticipo independiente como pen
       capability: {
         id: 'collect_payment',
         enabled: true,
+        collectionMethod: 'bank_transfer',
         paymentMode: 'deposit',
+        bankTransfer: { details: 'Banco de prueba · cuenta 1234' },
         deposit: {
           enabled: true,
           mode: 'fixed',
@@ -3584,6 +3476,7 @@ test('comprobantes válidos registran purchase y anticipo independiente como pen
         .invoke(null, JSON.stringify({ montoIndicado: variant.amount, referencia: null }))
       assert.equal(result.ok, true, JSON.stringify(result))
       assert.equal(result.paymentConfirmed, false)
+      assert.equal(result.manualReviewRequired, true)
       assert.equal(result.payment.status, 'pending_review')
       const payment = await db.get(
         `SELECT id, status, payment_mode, paid_at FROM payments

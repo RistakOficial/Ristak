@@ -29,6 +29,8 @@ const CAPABILITY_INSTRUCTIONS = {
   },
   collect_payment: ({ summary = '', missingConfiguration = [], config = {} } = {}) => {
     const deposit = config.deposit || {}
+    const bankTransfer = config.bankTransfer || {}
+    const usesBankTransfer = config.collectionMethod === 'bank_transfer'
     const depositAmount = deposit.mode === 'range'
       ? `${deposit.minAmount || '?'} a ${deposit.maxAmount || '?'} ${deposit.currency || config.currency || ''}`.trim()
       : `${deposit.amount || '?'} ${deposit.currency || config.currency || ''}`.trim()
@@ -40,25 +42,30 @@ const CAPABILITY_INSTRUCTIONS = {
         : (config.chargeType === 'direct'
             ? `Esta capacidad cobra directamente ${config.direct?.amount || '?'} ${config.direct?.currency || config.currency || ''} por ${cleanText(config.direct?.concept || 'el concepto configurado', 180)}.`
             : 'Esta capacidad cobra únicamente el producto y precio blindados que seleccionó el negocio.'),
-      config.gateway ? `Pasarela autorizada: ${cleanText(config.gateway, 40)}. No la cambies ni la menciones salvo que sea útil para la persona.` : '',
-      config.installments?.enabled
-        ? `El enlace puede ofrecer hasta ${config.installments.maxInstallments} meses cuando la pasarela y la tarjeta lo permitan; no prometas aprobación ni disponibilidad antes de que el checkout lo muestre.`
-        : 'No ofrezcas meses sin intereses como si estuvieran configurados.',
-      deposit.methods?.bankTransfer && deposit.bankTransferDetails
-        ? `Datos de transferencia autorizados por el negocio: ${cleanText(deposit.bankTransferDetails, 1200)}`
+      !usesBankTransfer && config.gateway
+        ? `Pasarela autorizada: ${cleanText(config.gateway, 40)}. No la cambies ni la menciones salvo que sea útil para la persona.`
+        : '',
+      !usesBankTransfer
+        ? (config.installments?.enabled
+            ? `El enlace puede ofrecer hasta ${config.installments.maxInstallments} meses cuando la pasarela y la tarjeta lo permitan; no prometas aprobación ni disponibilidad antes de que el checkout lo muestre.`
+            : 'No ofrezcas meses sin intereses como si estuvieran configurados.')
+        : '',
+      usesBankTransfer && bankTransfer.details
+        ? `Datos de transferencia o depósito autorizados por el negocio: ${cleanText(bankTransfer.details, 1200)}`
         : '',
       missingConfiguration.length
         ? `Configuración incompleta: ${missingConfiguration.join(', ')}. No intentes cobrar hasta que el negocio la complete.`
-        : (config.chargeType === 'direct' || config.chargeType === 'deposit'
-            ? 'Usa create_payment_link; el servidor tomará el concepto, monto, moneda y pasarela de esta configuración.'
-            : 'Consulta los productos o precios reales antes de crear el cobro y usa create_payment_link sólo con el monto y la moneda confirmados por el sistema.'),
-      config.receiptProof?.enabled
-        ? 'Si llega una foto de comprobante, usa la herramienta de comprobante. Siempre queda pendiente de revisión: una imagen por sí sola jamás confirma dinero recibido.'
-        : '',
-      'Enviar un enlace no significa que el pago esté hecho. Sólo Ristak o la integración de pago pueden confirmar que se pagó.',
+        : (usesBankTransfer
+            ? 'Comparte únicamente los datos de transferencia configurados. Espera una foto, captura de pantalla o PDF del comprobante y usa register_deposit_payment_proof. Nunca crees ni ofrezcas un enlace de pago para este cobro.'
+            : (config.chargeType === 'direct' || config.chargeType === 'deposit'
+                ? 'Usa create_payment_link; el servidor tomará el concepto, monto, moneda y pasarela de esta configuración.'
+                : 'Consulta los productos o precios reales antes de crear el cobro y usa create_payment_link sólo con el monto y la moneda confirmados por el sistema.')),
+      usesBankTransfer
+        ? 'El análisis de la imagen sólo registra un comprobante como pendiente de revisión. Nunca confirma fondos ni autoriza por sí solo el siguiente paso.'
+        : 'No pidas ni uses fotos de comprobantes para un link. Enviar el enlace no significa que el pago esté hecho: sólo la señal real de la pasarela puede confirmarlo.',
       config.afterPayment === 'handoff'
-        ? 'Cuando el sistema confirme el pago, entrega la conversación al equipo con send_to_human; no lo hagas antes.'
-        : 'Cuando el sistema confirme el pago, continúa con el siguiente paso u objetivo pendiente sin volver a cobrar.'
+        ? 'Cuando el sistema confirme realmente el pago, entrega la conversación al equipo con send_to_human; no lo hagas antes.'
+        : 'Cuando el sistema confirme realmente el pago, continúa con el siguiente paso u objetivo pendiente sin volver a cobrar.'
     ].filter(Boolean).join(' ')
   },
   send_link: ({ summary = '', missingConfiguration = [] } = {}) => [
