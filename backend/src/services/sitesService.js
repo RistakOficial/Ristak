@@ -6961,7 +6961,7 @@ async function callSitesAIJson({ apiKey, model, instructions, input, maxOutputTo
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: cleanString(model) || 'gpt-5.5',
+        model: cleanString(model) || 'gpt-5.6-sol',
         instructions,
         input: buildSitesAIResponsesInput(input),
         max_output_tokens: maxOutputTokens
@@ -7040,7 +7040,7 @@ async function callSitesAIJsonWithAgentSdk({ apiKey, model, instructions, input,
   try {
     const agent = new Agent({
       name: agentName,
-      model: cleanString(model) || 'gpt-5.5',
+      model: cleanString(model) || 'gpt-5.6-sol',
       instructions
     })
     const runner = new Runner({

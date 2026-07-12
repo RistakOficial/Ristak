@@ -1,14 +1,22 @@
-export const DEFAULT_AI_MODEL = 'gpt-5.4-mini'
+export const DEFAULT_AI_MODEL = 'gpt-5.6-luna'
 
 export const aiModelOptionGroups = [
   {
     label: 'Modelos actuales',
     options: [
-      { value: 'gpt-5.5', label: 'GPT-5.5', description: 'El más nuevo para análisis complejo, criterio y trabajo profesional.' },
+      { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'Frontier de OpenAI: máxima capacidad para análisis complejo, criterio y trabajo profesional.' },
+      { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', description: 'Balance entre inteligencia y costo para la mayoría de los casos.' },
+      { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', description: 'Default de OpenAI para agentes: el más rápido y económico para alto volumen.' }
+    ]
+  },
+  {
+    label: 'GPT-5.5 y GPT-5.4',
+    options: [
+      { value: 'gpt-5.5', label: 'GPT-5.5', description: 'Frontier anterior para análisis complejo, criterio y trabajo profesional.' },
       { value: 'gpt-5.5-pro', label: 'GPT-5.5 pro', description: 'Más cómputo para respuestas más precisas; puede tardar más.' },
       { value: 'gpt-5.4', label: 'GPT-5.4', description: 'Frontier fuerte con mejor balance de costo.' },
       { value: 'gpt-5.4-pro', label: 'GPT-5.4 pro', description: 'Versión pro de GPT-5.4 para más precisión.' },
-      { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', description: 'Default de OpenAI para agentes: rápido, fuerte y eficiente para alto volumen.' },
+      { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', description: 'Anterior default de agentes: rápido, fuerte y eficiente para alto volumen.' },
       { value: 'gpt-5.4-nano', label: 'GPT-5.4 nano', description: 'El más económico de la familia GPT-5.4.' }
     ]
   },

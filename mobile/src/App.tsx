@@ -15365,6 +15365,9 @@ const AGENT_PROVIDER_OPTIONS = [
 ];
 const AGENT_MODEL_OPTIONS: Record<string, Array<{ id: string; label: string }>> = {
   openai: [
+    { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
     { id: 'gpt-5.5', label: 'GPT-5.5' },
     { id: 'gpt-5.5-pro', label: 'GPT-5.5 pro' },
     { id: 'gpt-5.4', label: 'GPT-5.4' },
@@ -15397,7 +15400,7 @@ const AGENT_MODEL_OPTIONS: Record<string, Array<{ id: string; label: string }>> 
   ],
 };
 const AGENT_PROVIDER_DEFAULT_MODEL: Record<string, string> = {
-  openai: 'gpt-5.4-mini',
+  openai: 'gpt-5.6-luna',
   gemini: 'gemini-3.5-flash',
   claude: 'claude-haiku-4-5',
   deepseek: 'deepseek-v4-flash',
