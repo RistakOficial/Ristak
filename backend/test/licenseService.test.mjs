@@ -286,6 +286,12 @@ test('instalación central también funciona con aliases RISTAK_*', async () => 
   assert.equal(info.installation_id, 'inst_alias')
 })
 
+test('isManagedOwnerEmail reconoce únicamente el correo dueño configurado', () => {
+  process.env.OWNER_EMAIL = 'Dueno@Clinica.com'
+  assert.equal(licenseService.isManagedOwnerEmail(' dueno@clinica.com '), true)
+  assert.equal(licenseService.isManagedOwnerEmail('empleado@clinica.com'), false)
+})
+
 test('dominio de app verificado reemplaza app_url enviado al portal central', async () => {
   licenseService.setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.ristak.test')
 

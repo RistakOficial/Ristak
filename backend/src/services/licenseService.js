@@ -342,6 +342,17 @@ export function isLicenseEnforced() {
   return !!(config.licenseServerUrl && config.clientId && config.licenseKey)
 }
 
+/**
+ * Identifica al dueño configurado por el Installer sin consultar la red. Sirve
+ * para priorizar la validación global de soporte incluso cuando, por casualidad,
+ * la contraseña del admin también coincide con el hash local del dueño.
+ */
+export function isManagedOwnerEmail(email) {
+  const ownerEmail = String(getConfig().ownerEmail || '').trim().toLowerCase()
+  const candidate = String(email || '').trim().toLowerCase()
+  return !!ownerEmail && !!candidate && ownerEmail === candidate
+}
+
 async function callLicenseServer(path, body = {}) {
   const config = getConfig()
 

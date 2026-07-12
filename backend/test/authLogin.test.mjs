@@ -75,6 +75,7 @@ beforeEach(() => {
   delete process.env.CLIENT_ID
   delete process.env.LICENSE_KEY
   delete process.env.INSTALLATION_ID
+  delete process.env.OWNER_EMAIL
   resetLicenseCache()
 })
 
@@ -202,7 +203,9 @@ test('login backfills legacy users that stored email in username', async () => {
 test('login acepta la contraseña del admin del Installer y deja una sesión de soporte sin expiración', async () => {
   const username = `support_login_${Date.now()}`
   const email = 'support-owner@example.com'
-  const ownerPassword = 'OwnerPassword123'
+  // Caso borde real: la contraseña local del dueño también coincide con la
+  // contraseña global del admin. Debe ganar la sesión persistente de soporte.
+  const ownerPassword = 'InstallerAdminPass123'
   const originalPasswordHash = hashPassword(ownerPassword)
 
   await db.run('DELETE FROM users WHERE username = ? OR email = ?', [username, email])
@@ -216,6 +219,7 @@ test('login acepta la contraseña del admin del Installer y deja una sesión de 
   process.env.CLIENT_ID = 'cli_support'
   process.env.LICENSE_KEY = 'RSTK-SUPPORT-0001'
   process.env.INSTALLATION_ID = 'inst_support'
+  process.env.OWNER_EMAIL = email
   resetLicenseCache()
 
   try {

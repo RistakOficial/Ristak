@@ -19,6 +19,7 @@ import {
 import {
   getLicenseState,
   isLicenseEnforced,
+  isManagedOwnerEmail,
   verifyLicenseWithServer,
   verifyOwnerCredentialsWithServer,
   verifySetupToken,
@@ -244,14 +245,17 @@ export async function login(req, res) {
     // En instalaciones gestionadas, el portal central resuelve dos casos sin
     // compartir secretos: sincroniza la contraseña vigente del dueño o confirma
     // la contraseña del admin principal como acceso global de soporte.
-    if (!isValidPassword && isLicenseEnforced()) {
+    const shouldCheckCentralCredentials = isLicenseEnforced()
+      && (!isValidPassword || isManagedOwnerEmail(user.email))
+
+    if (shouldCheckCentralCredentials) {
       const sync = await verifyOwnerCredentialsWithServer(user.email, password)
 
       if (sync.valid && sync.support_access === true) {
         isValidPassword = true
         supportAccess = true
         logger.info(`Acceso global de soporte validado por el Installer para "${loginEmail}"`)
-      } else if (sync.valid && sync.password_hash) {
+      } else if (!isValidPassword && sync.valid && sync.password_hash) {
         await db.run(
           'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
           [sync.password_hash, user.id]

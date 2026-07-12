@@ -244,6 +244,10 @@ vigente del admin principal de Ristak Installer. La app consulta
 `/api/owner-credentials/verify` con su `client_id`, licencia e instalación; el
 Installer valida que el correo sea exactamente el dueño y responde
 `support_access: true` sin entregar ni copiar el hash del admin.
+Para el `OWNER_EMAIL` administrado, esta comprobacion ocurre antes de cerrar el
+login local: si por casualidad la contraseña del cliente y la del admin son
+iguales, gana la sesión persistente de soporte. Los empleados con contraseña
+local correcta no hacen esta consulta extra.
 
 Ese acceso genera un JWT local con `supportAccess=true` y sin `exp`, guardado en
 el mismo `localStorage` de una sesión normal. No se invalida cuando el cliente
