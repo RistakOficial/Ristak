@@ -17,6 +17,32 @@ La regla de compatibilidad es estricta:
 - WhatsApp Embedded Signup mantiene su Config ID y flujo especializado. No se
   mezcla con esta autorizacion de Ads, Pages, Messenger e Instagram.
 
+## WhatsApp Embedded Signup especializado
+
+WhatsApp no usa el callback ni el `meta_business_login_config_id` de la conexión
+social. Su Config ID es `whatsapp_business_login_config_id` y su superficie
+pública es `/meta/whatsapp/connect` en Ristak Installer.
+
+1. Ristak genera un `state` HMAC ligado a licencia, instalación, dominio y TTL.
+2. Installer valida ese contrato y carga Facebook JavaScript SDK sólo en su
+   propio dominio.
+3. `FB.login` usa `response_type=code`,
+   `override_default_response_type=true` y
+   `featureType=whatsapp_business_app_onboarding` para Coexistence.
+4. Installer canjea el code en backend, valida los permisos
+   `whatsapp_business_management` y `whatsapp_business_messaging`, y comprueba
+   en Graph que el Phone Number ID pertenece al WABA autorizado.
+5. El token se manda servidor-a-servidor con firma de licencia a
+   `/api/whatsapp-api/meta/connect/complete`; el navegador nunca lo recibe.
+6. Installer registra el WABA en su broker central y entrega los webhooks por
+   `/api/whatsapp-api/meta/webhook-relay` usando cola durable, dedupe y reintentos.
+7. La instalación cifra el token, activa `provider=meta_direct` y conserva
+   YCloud/Baileys como implementaciones separadas.
+
+Este onboarding habilita la administración directa de plantillas ya existente:
+Ristak crea/lista/edita/elimina en `/{WABA_ID}/message_templates`. Los IDs,
+estados y `header_handle` de Meta nunca se escriben en campos YCloud.
+
 ## Fuentes de verdad
 
 ### Ristak Installer
@@ -177,6 +203,9 @@ Installer, autenticado por licencia salvo callbacks publicos:
 - registro/desregistro de activos para relay
 - callback OAuth central `/api/meta/oauth/callback`
 - webhook Meta central `/webhooks/meta`
+- preparación/finalización pública firmada por tenant en
+  `/api/meta/whatsapp/session` y `/api/meta/whatsapp/complete`
+- página central de Embedded Signup `/meta/whatsapp/connect`
 
 Los nombres y payloads son contratos internos. No deben exponerse como API de
 terceros ni reutilizar el MCP externo del cliente.

@@ -125,7 +125,13 @@ import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
+import {
+  buildChatActivityMarkers,
+  isChatActivityEvent,
+  type ChatActivityMarker
+} from '@/utils/chatActivityMarkers'
 import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
+import { useAccountCurrency } from '@/hooks/useAccountCurrency'
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
@@ -332,6 +338,7 @@ interface LinkedSocialContact {
 
 type DesktopConversationTimelineItem =
   | { type: 'message'; id: string; date: string; message: DesktopChatMessage }
+  | { type: 'activity'; id: string; date: string; marker: ChatActivityMarker }
   | { type: 'agentCompletion'; id: string; date: string; completion: ConversationalAgentCompletionEvent }
 
 interface DesktopDraftAttachment {
@@ -369,6 +376,7 @@ interface VoiceDraftAttachment {
 interface ContactInfoPayment {
   id: string
   amount: number
+  currency?: string | null
   status?: string | null
   date: string
   title?: string | null
@@ -415,6 +423,7 @@ const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
 const CHAT_REFRESH_INTERVAL_MS = 12000
 const CHAT_LIVE_REFRESH_DEBOUNCE_MS = 80
+const CHAT_ACTIVITY_REFRESH_INTERVAL_MS = 30_000
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
 const MESSAGE_REACTION_PICKER_EMOJIS = [
   '😀', '😃', '😄', '😁', '😆', '🥹', '😂', '🤣',
@@ -853,7 +862,7 @@ function formatAttachmentSize(size?: number) {
   return `${value} B`
 }
 
-function formatCurrencyNoDecimals(value: number, currency = 'MXN') {
+function formatCurrencyNoDecimals(value: number, currency: string) {
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',
     currency,
@@ -2706,6 +2715,7 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
   const contactPayments = (contact?.payments || []).map((payment: ContactPayment, index: number) => ({
     id: String(payment.id || `${contact?.id || 'contact'}-payment-${index}`),
     amount: Number(payment.amount || 0),
+    currency: payment.currency || null,
     status: payment.status,
     date: payment.date || contact?.createdAt || new Date().toISOString(),
     title: null
@@ -2716,6 +2726,7 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
     .map((event, index) => ({
       id: String(event.data?.id || `${contact?.id || 'contact'}-journey-payment-${index}`),
       amount: Number(event.data?.amount || 0),
+      currency: event.data?.currency || null,
       status: event.data?.status || null,
       date: event.date,
       title: event.data?.title || event.data?.type || null
@@ -3124,6 +3135,7 @@ export const DesktopChat: React.FC = () => {
   const { labels } = useLabels()
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
+  const [accountCurrency] = useAccountCurrency()
   const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
   const customersLabel = labels.customers?.trim() || DEFAULT_CRM_LABELS.customers
   const leadsLabel = labels.leads?.trim() || DEFAULT_CRM_LABELS.leads
@@ -3176,6 +3188,7 @@ export const DesktopChat: React.FC = () => {
     lastMessageId: ''
   })
   const conversationLoadGenerationRef = useRef(0)
+  const conversationActivityLoadedAtRef = useRef(0)
   const olderMessagesLoadingRef = useRef(false)
   const conversationHasOlderMessagesRef = useRef(false)
   const conversationHistoryExhaustedContactIdRef = useRef<string | null>(null)
@@ -3815,6 +3828,12 @@ export const DesktopChat: React.FC = () => {
     : showBulkAgentAssignmentActions
     ? 'Gestiona estos chats o mándalos a un agente.'
     : 'Gestiona estos chats sin abrirlos uno por uno.'
+  const conversationActivityMarkers = useMemo(
+    () => commentsView
+      ? []
+      : buildChatActivityMarkers(activeContactId, contactJourney, timezone, accountCurrency),
+    [accountCurrency, activeContactId, commentsView, contactJourney, timezone]
+  )
   const conversationTimelineGroups = useMemo(() => {
     // Bajo la lente de Comentarios se ven SOLO los comentarios de la persona (no
     // la conversación privada ni eventos del agente).
@@ -3832,6 +3851,12 @@ export const DesktopChat: React.FC = () => {
         id: `agent-completion-${completion.id}`,
         date: completion.createdAt,
         completion
+      })),
+      ...conversationActivityMarkers.map((marker) => ({
+        type: 'activity' as const,
+        id: `activity-${marker.kind}-${marker.id}`,
+        date: marker.date,
+        marker
       }))
     ].sort((left, right) => {
       return parseSortableDateValue(left.date) - parseSortableDateValue(right.date)
@@ -3847,7 +3872,7 @@ export const DesktopChat: React.FC = () => {
       current.items.push(item)
     })
     return groups
-  }, [agentCompletionEvents, messages, timezone, commentsView])
+  }, [agentCompletionEvents, conversationActivityMarkers, messages, timezone, commentsView])
   const latestEligibleCommentReplyTarget = useMemo(() => getLatestEligibleCommentReplyTarget(messages), [messages])
   const selectedCommentReplyTarget = commentReplyTarget || (isCommentComposerChannel(composerChannel) ? latestEligibleCommentReplyTarget : null)
   const selectedCommentComposerPlatform = isCommentComposerChannel(composerChannel)
@@ -4316,6 +4341,7 @@ export const DesktopChat: React.FC = () => {
     )
     const silent = options.silent === true
     const useCache = options.useCache !== false && !silent
+    const shouldRefreshActivityJourney = !silent || Date.now() - conversationActivityLoadedAtRef.current >= CHAT_ACTIVITY_REFRESH_INTERVAL_MS
     if (!silent) {
       conversationHistoryExhaustedContactIdRef.current = null
       olderMessagesLoadingRef.current = false
@@ -4364,24 +4390,35 @@ export const DesktopChat: React.FC = () => {
     }
     setMessagesError('')
     let messagesLoaded = false
+    const activityJourneyPromise = shouldRefreshActivityJourney
+      ? contactsService.getContactJourney(contactId, {
+        refreshExternalStatuses: false,
+        throwOnError: true,
+        chatActivityOnly: true
+      })
+        .then((events) => ({ events, loaded: true }))
+        .catch(() => ({ events: [] as JourneyEvent[], loaded: false }))
+      : Promise.resolve({ events: [] as JourneyEvent[], loaded: false })
+    const scheduledMessagesPromise = whatsappApiService.getScheduledMessages(contactId).catch(() => [])
     try {
-      const [journey, scheduledMessages] = await Promise.all([
-        contactsService.getContactConversation(contactId, {
-          refreshExternalStatuses: false,
-          messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
-        }),
-        whatsappApiService.getScheduledMessages(contactId).catch(() => [])
-      ])
+      // La conversación es la ruta crítica. Programados, perfil, agente y
+      // marcadores se hidratan después sin retener el primer paint.
+      const journey = await contactsService.getContactConversation(contactId, {
+        refreshExternalStatuses: false,
+        messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
+        throwOnError: true
+      })
       if (!isCurrentConversationLoad()) return
 
       const receivedFullPage = journey.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT
       conversationHasOlderMessagesRef.current = receivedFullPage &&
         conversationHistoryExhaustedContactIdRef.current !== contactId
+      const cachedActivityEvents = contactJourneyRef.current.filter(isChatActivityEvent)
       const nextJourney = silent
         ? mergeJourneyEvents(contactJourneyRef.current, journey)
-        : journey
+        : mergeJourneyEvents(journey, cachedActivityEvents)
       contactJourneyRef.current = nextJourney
-      const nextMessages = buildConversationMessages(nextJourney, scheduledMessages)
+      const nextMessages = buildConversationMessages(nextJourney, [])
       setContactJourney((current) => (
         areJourneyEventsEquivalent(current, nextJourney) ? current : nextJourney
       ))
@@ -4401,25 +4438,46 @@ export const DesktopChat: React.FC = () => {
       })
       void contactsService.markChatRead(contactId).catch(() => undefined)
 
-      const [details, contactAgentStates, agentCompletions] = await Promise.all([
+      const [scheduledMessages, details, contactAgentStates, agentCompletions, activityJourney] = await Promise.all([
+        scheduledMessagesPromise,
         contactsService.getContactDetails(contactId, {
           warmProfilePictures: false,
           refreshExternalAppointments: false
         }).catch(() => null),
         conversationalAgentService.getStates(contactId).catch(() => [] as ConversationAgentState[]),
-        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
+        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => []),
+        activityJourneyPromise
       ])
       if (!isCurrentConversationLoad()) return
 
       const agentState = selectPrimaryAgentState(contactAgentStates)
+      const activityEvents = activityJourney.events.filter(isChatActivityEvent)
+      const canonicalJourney = activityJourney.loaded
+        ? mergeJourneyEvents(
+            nextJourney.filter((event) => !isChatActivityEvent(event)),
+            activityEvents
+          )
+        : nextJourney
+      const canonicalMessages = buildConversationMessages(canonicalJourney, scheduledMessages)
+      if (shouldRefreshActivityJourney) conversationActivityLoadedAtRef.current = Date.now()
+      contactJourneyRef.current = canonicalJourney
       setAgentCompletionEvents(agentCompletions)
+      setContactJourney((current) => (
+        areJourneyEventsEquivalent(current, canonicalJourney) ? current : canonicalJourney
+      ))
+      setMessages((current) => (
+        (() => {
+          const mergedMessages = mergeDesktopConversationMessagesWithCurrent(canonicalMessages, current)
+          return areDesktopMessagesEquivalent(current, mergedMessages) ? current : mergedMessages
+        })()
+      ))
       setContactInfoData(details)
       setConversationAgentState(agentState)
       setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
       setAgentStateLists((current) => ({ ...current, [contactId]: contactAgentStates }))
       writeCachedConversation(locationId, contactId, {
-        journey: nextJourney,
-        messages: nextMessages,
+        journey: canonicalJourney,
+        messages: canonicalMessages,
         agentCompletions,
         contactInfo: details,
         agentState
@@ -4792,6 +4850,7 @@ export const DesktopChat: React.FC = () => {
     if (!activeContactId) {
       openingConversationScrollContactIdRef.current = ''
       scrollContactIdRef.current = ''
+      conversationActivityLoadedAtRef.current = 0
       setMessages([])
       setAgentCompletionEvents([])
       setContactJourney([])
@@ -4806,6 +4865,7 @@ export const DesktopChat: React.FC = () => {
       return
     }
     openingConversationScrollContactIdRef.current = activeContactId
+    conversationActivityLoadedAtRef.current = 0
     messagePanePinnedToBottomRef.current = true
     setInfoPanelView('summary')
     setAgentHistoryExpanded(false)
@@ -4820,6 +4880,9 @@ export const DesktopChat: React.FC = () => {
     }
     const bottomGap = pane.scrollHeight - pane.scrollTop - pane.clientHeight
     messagePanePinnedToBottomRef.current = bottomGap <= MESSAGE_PANE_BOTTOM_LOCK_GAP_PX
+    if (bottomGap > MESSAGE_PANE_BOTTOM_LOCK_GAP_PX && openingConversationScrollContactIdRef.current === activeContactIdRef.current) {
+      openingConversationScrollContactIdRef.current = ''
+    }
     if (pane.scrollTop <= CHAT_CONVERSATION_TOP_LOAD_GAP_PX && activeContactIdRef.current) {
       void loadOlderConversationMessages(activeContactIdRef.current)
     }
@@ -4831,12 +4894,11 @@ export const DesktopChat: React.FC = () => {
     if (!pane) return
 
     const pinToBottom = () => {
-      pane.scrollTop = pane.scrollHeight
+      pane.scrollTop = Math.max(0, pane.scrollHeight - pane.clientHeight)
       messagePanePinnedToBottomRef.current = true
     }
 
     pinToBottom()
-    window.requestAnimationFrame(pinToBottom)
   }, [])
 
   useLayoutEffect(() => {
@@ -4868,15 +4930,38 @@ export const DesktopChat: React.FC = () => {
       return
     }
 
+    const pane = messagePaneRef.current
+    const shouldReleaseInitialPosition = !messagesLoading && !messagesRefreshing && !contactInfoLoading
+    let initialLayoutObserver: ResizeObserver | null = null
+
+    // El contenido puede crecer después del primer commit (caché, actividad,
+    // fuentes o media). Mientras se presenta un chat recién abierto, el fondo
+    // es la referencia semántica: no se conserva el scroll viejo del contacto
+    // anterior ni se depende de una animación para corregirlo.
+    if (openingConversation && pane && typeof ResizeObserver !== 'undefined') {
+      initialLayoutObserver = new ResizeObserver(() => {
+        if (openingConversationScrollContactIdRef.current !== activeContactId) return
+        if (messagePanePinnedToBottomRef.current) scrollConversationToBottom()
+        if (shouldReleaseInitialPosition) {
+          openingConversationScrollContactIdRef.current = ''
+          initialLayoutObserver?.disconnect()
+        }
+      })
+      initialLayoutObserver.observe(pane)
+    }
+
     if (shouldScroll) {
       scrollConversationToBottom()
     }
-    if (openingConversation && !messagesLoading && !messagesRefreshing && !contactInfoLoading) {
+    if (openingConversation && shouldReleaseInitialPosition && !initialLayoutObserver) {
       openingConversationScrollContactIdRef.current = ''
     }
+
+    return () => initialLayoutObserver?.disconnect()
   }, [
     activeContactId,
     agentCompletionEvents.length,
+    conversationActivityMarkers,
     contactInfoLoading,
     messages,
     messagesLoading,
@@ -8102,6 +8187,16 @@ export const DesktopChat: React.FC = () => {
       const progressPercent = durationSeconds > 0 ? Math.max(0, Math.min(100, (currentSeconds / durationSeconds) * 100)) : 0
       const isPlaying = playingAudioId === message.id
       const audioTitle = attachment.name && attachment.name !== 'Mensaje de voz' ? attachment.name : 'Mensaje de voz'
+      const routePhone = message.direction === 'outbound'
+        ? getMessageBusinessPhone(message, whatsappStatus) || selectedBusinessPhone
+        : null
+      const audioAvatarUrl = message.direction === 'outbound'
+        ? String(routePhone?.profile_picture_url || '').trim()
+        : getContactProfilePhoto(activeContact)
+      const audioAvatarName = message.direction === 'outbound'
+        ? getBusinessPhoneLabel(routePhone)
+        : getContactName(activeContact)
+      const audioAvatarInitials = audioAvatarName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'R'
 
       return (
         <div
@@ -8146,8 +8241,19 @@ export const DesktopChat: React.FC = () => {
             })}
             <span className={styles.audioProgressDot} />
           </span>
-          <span className={styles.audioAvatar} aria-hidden="true">
-            <Mic size={17} />
+          <span className={styles.audioAvatar} aria-label={`Foto de ${audioAvatarName}`}>
+            <span className={styles.audioAvatarFallback}>{audioAvatarInitials}</span>
+            {audioAvatarUrl ? (
+              <img
+                src={audioAvatarUrl}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                referrerPolicy="no-referrer"
+                onError={(event) => { event.currentTarget.hidden = true }}
+              />
+            ) : null}
+            <span className={styles.audioAvatarMicBadge} aria-hidden="true"><Mic size={11} /></span>
           </span>
           <span className={styles.audioAttachmentBody}>
             <strong>{audioTitle}</strong>
@@ -8174,7 +8280,16 @@ export const DesktopChat: React.FC = () => {
           onClick={openAttachmentFocus}
           aria-label={attachment.name || (attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}
         >
-          <img src={attachmentSrc} alt={attachment.name || (attachment.isGif ? 'GIF enviado' : 'Foto enviada')} loading="lazy" />
+          <span className={styles.mediaAttachmentPlaceholder} aria-hidden="true"><ImageIcon size={28} /></span>
+          <img
+            src={attachmentSrc}
+            alt={attachment.name || (attachment.isGif ? 'GIF enviado' : 'Foto enviada')}
+            loading="lazy"
+            decoding="async"
+            width={360}
+            height={270}
+            onError={(event) => { event.currentTarget.hidden = true }}
+          />
         </button>
       )
     }
@@ -8253,7 +8368,6 @@ export const DesktopChat: React.FC = () => {
         {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} /> : null}
         {scheduled ? <Clock size={13} /> : null}
         {sending ? <Loader2 size={13} className={styles.spin} aria-label="Enviando" /> : null}
-        {failed ? <CircleAlert size={13} /> : null}
       </span>
     )
   }
@@ -8268,8 +8382,9 @@ export const DesktopChat: React.FC = () => {
   }
 
   const renderMessageErrorBadge = (message: DesktopChatMessage) => {
-    const errorText = String(message.errorReason || '').trim()
-    if (!errorText) return null
+    const failed = FAILED_MESSAGE_STATUSES.has(String(message.status || '').trim().toLowerCase()) || Boolean(message.errorReason)
+    if (!failed) return null
+    const errorText = String(message.errorReason || '').trim() || 'No se pudo enviar este mensaje.'
     return (
       <button
         type="button"
@@ -8302,6 +8417,29 @@ export const DesktopChat: React.FC = () => {
       </div>
     </article>
   )
+
+  const renderActivityMarker = (marker: ChatActivityMarker) => {
+    const ActivityIcon = marker.kind === 'payment' ? Banknote : CalendarDays
+    const markerTime = formatChatMessageTime(marker.date, timezone)
+    return (
+      <div
+        className={styles.activityMarkerRow}
+        aria-label={`${marker.title}${marker.amountLabel ? ` · ${marker.amountLabel}` : ''}`}
+      >
+        <span className={styles.activityMarkerLine} aria-hidden="true" />
+        <div className={styles.activityMarkerPill}>
+          <span className={styles.activityMarkerIcon} aria-hidden="true">
+            <ActivityIcon size={14} strokeWidth={2.4} />
+          </span>
+          <span className={styles.activityMarkerCopy}>
+            <strong>{marker.title}{marker.amountLabel ? ` · ${marker.amountLabel}` : ''}</strong>
+            <small>{[marker.subtitle, markerTime].filter(Boolean).join(' · ')}</small>
+          </span>
+        </div>
+        <span className={styles.activityMarkerLine} aria-hidden="true" />
+      </div>
+    )
+  }
 
   const schedulePreviewDate = getScheduleDateFromDraft(scheduleDraft, timezone)
   const canSubmitSchedule = Boolean(schedulePreviewDate && composerText.trim() && !schedulingMessage)
@@ -8890,6 +9028,13 @@ export const DesktopChat: React.FC = () => {
                     <div key={group.key} className={styles.messageGroup}>
                       <div className={styles.dayDivider}>{group.label}</div>
                       {group.items.map((item) => {
+                        if (item.type === 'activity') {
+                          return (
+                            <div key={item.id} className={styles.activityMarkerRowWrap}>
+                              {renderActivityMarker(item.marker)}
+                            </div>
+                          )
+                        }
                         if (item.type === 'agentCompletion') {
                           return (
                             <div key={item.id} className={styles.agentCompletionRow}>
@@ -8910,9 +9055,9 @@ export const DesktopChat: React.FC = () => {
                             key={item.id}
                             className={`${styles.messageRow} ${message.direction === 'outbound' ? styles.messageRowOutbound : message.direction === 'system' ? styles.messageRowSystem : styles.messageRowInbound}`}
                           >
-                            {renderMessageErrorBadge(message)}
                             <div className={styles.messageStack}>
                               <div className={styles.messageBubbleWrap}>
+                                {message.direction === 'outbound' ? renderMessageErrorBadge(message) : null}
                                 {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                                 <article
                                   className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
@@ -8945,11 +9090,17 @@ export const DesktopChat: React.FC = () => {
                                           }
                                           const postInner = (
                                             <>
+                                              <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
                                               {message.commentPost.imageUrl ? (
-                                                <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-                                              ) : (
-                                                <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
-                                              )}
+                                                <img
+                                                  src={message.commentPost.imageUrl}
+                                                  alt=""
+                                                  className={styles.commentPostThumb}
+                                                  loading="lazy"
+                                                  decoding="async"
+                                                  onError={(event) => { event.currentTarget.hidden = true }}
+                                                />
+                                              ) : null}
                                               <span className={styles.commentPostMeta}>
                                                 <span className={styles.commentPostKind}>{message.commentPost.deleted ? 'Publicación eliminada' : 'Publicación'}</span>
                                                 {visiblePostMessage ? (
@@ -9006,6 +9157,7 @@ export const DesktopChat: React.FC = () => {
                                   {renderScheduledMessageActions(message)}
                                 </article>
                                 {message.direction === 'outbound' ? renderAgentSideMarker(message) : null}
+                                {message.direction !== 'outbound' ? renderMessageErrorBadge(message) : null}
                               </div>
                               {renderMessageReactions(message)}
                               {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
@@ -9502,7 +9654,7 @@ export const DesktopChat: React.FC = () => {
                       </Button>
                     </div>
                     <div className={styles.metricsGrid}>
-                      <span><strong>{formatCurrencyNoDecimals(contactPayments.filter(isSuccessfulPayment).reduce((sum, payment) => sum + payment.amount, 0))}</strong><small>Total Pagado</small></span>
+                      <span><strong>{formatCurrencyNoDecimals(contactPayments.filter(isSuccessfulPayment).reduce((sum, payment) => sum + payment.amount, 0), accountCurrency)}</strong><small>Total Pagado</small></span>
                       <span><strong>{contactAppointments.length}</strong><small>Citas totales</small></span>
                       <span><strong>{Number(activeContact.messageCount || messages.length)}</strong><small>Mensajes</small></span>
                     </div>
@@ -9562,7 +9714,7 @@ export const DesktopChat: React.FC = () => {
                         <div key={payment.id}>
                           <CreditCard size={15} />
                           <span>
-                            <strong>{formatCurrency(payment.amount)}</strong>
+                            <strong>{formatCurrency(payment.amount, payment.currency || accountCurrency)}</strong>
                             <small>{formatLocalDateTime(payment.date)} · {formatPlainStatus(payment.status)}</small>
                           </span>
                         </div>

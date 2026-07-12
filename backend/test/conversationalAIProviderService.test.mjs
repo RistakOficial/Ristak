@@ -58,7 +58,7 @@ test('conectar OpenAI desde proveedores conversacionales guarda la credencial ge
         response_style,
         recommendation_mode,
         web_search_enabled
-      ) VALUES (1, 'gpt-5.4-nano', 'Clinica dental', 'direct', 'on_request', 1)
+      ) VALUES (1, 'gpt-5.4-mini', 'Clinica dental', 'direct', 'on_request', 1)
     `)
     await initializeMasterKey()
 
@@ -77,10 +77,10 @@ test('conectar OpenAI desde proveedores conversacionales guarda la credencial ge
     const row = await db.get('SELECT model, business_context, response_style, recommendation_mode, web_search_enabled FROM ai_agent_config WHERE id = 1')
 
     assert.equal(openAIProvider?.connected, true)
-    assert.equal(openAIProvider?.defaultModel, 'gpt-5.4-mini')
+    assert.equal(openAIProvider?.defaultModel, 'gpt-5.6-luna')
     assert.equal(status.configured, true)
-    assert.equal(status.model, 'gpt-5.4-mini')
-    assert.equal(row.model, 'gpt-5.4-mini')
+    assert.equal(status.model, 'gpt-5.6-luna')
+    assert.equal(row.model, 'gpt-5.6-luna')
     assert.equal(row.business_context, 'Clinica dental')
     assert.equal(row.response_style, 'direct')
     assert.equal(row.recommendation_mode, 'on_request')

@@ -42,7 +42,7 @@ Nunca etiquetar una captura de Baileys como `source_adapter=ycloud` o
 | Implementación | API oficial | Intermediario | Coexistence | Entrada principal | Autenticación |
 | --- | --- | --- | --- | --- | --- |
 | YCloud | Sí | YCloud | Sí, cuando la cuenta lo habilita | `POST /webhook/whatsapp-api/ycloud` | `YCloud-Signature` con secreto del endpoint |
-| Meta directo | Sí | Ninguno para Graph; Installer solo retransmite webhooks por instalación | Sí | `POST /api/whatsapp/meta/webhook-relay` | Firma HMAC interna de Installer |
+| Meta directo | Sí | Ninguno para Graph; Installer coordina el onboarding y retransmite webhooks por instalación | Sí | `POST /api/whatsapp-api/meta/webhook-relay` | Firma HMAC interna de Installer |
 | WhatsApp QR | No; usa WhatsApp Web | Baileys | No es Coexistence oficial | Eventos del socket Baileys | Estado de vinculación QR cifrado |
 
 Meta directo puede dejar de usar el relay de Installer cuando cada instalación
@@ -193,6 +193,38 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
 7. Baileys puede ser fallback explícito. El resultado final debe registrar
    `transport=qr` y `source_adapter=baileys`.
 
+## Embedded Signup centralizado
+
+La pantalla `Configuración > WhatsApp` abre el onboarding oficial en el dominio
+de Ristak Installer. La instalación crea un `state` firmado con su licencia y
+TTL de 15 minutos; no manda tokens ni App Secret al navegador.
+
+Installer es dueño de `meta_app_id`, `meta_app_secret`,
+`whatsapp_business_login_config_id` y del webhook central. El JavaScript SDK usa
+`featureType=whatsapp_business_app_onboarding`, recibe el `code` y los IDs de la
+sesión, y el backend central:
+
+1. valida firma, licencia, instalación, dominio y expiración;
+2. canjea el `code` y valida `app_id`, permisos, WABA y Phone Number contra Graph;
+3. entrega el token en tránsito al endpoint firmado
+   `/api/whatsapp-api/meta/connect/complete` de esa instalación;
+4. activa una ruta exclusiva `waba_id -> installation_id`;
+5. retransmite `object=whatsapp_business_account` por la cola durable existente
+   hacia `/api/whatsapp-api/meta/webhook-relay`.
+
+El token termina cifrado sólo en la base del tenant. Installer conserva metadata
+de sesión y ruteo; un payload de entrega pendiente queda cifrado temporalmente y
+se destruye al recibir el ACK. YCloud y Baileys no participan en este flujo.
+
+Al finalizar, `meta_direct` pasa a ser el proveedor API activo. La configuración
+YCloud permanece guardada para un cambio explícito posterior; nunca se hacen dos
+envíos simultáneos.
+
+Al desconectar una conexión que usa `installer_relay`, Ristak exige primero el
+ACK de `/api/license/whatsapp/meta/disconnect`; sólo entonces elimina el token
+local. Así no queda un WABA central activo enviando eventos a un tenant que ya
+se considera desconectado.
+
 ## Credenciales y configuración
 
 Las credenciales viven cifradas en configuración interna/base de datos. No se
@@ -227,11 +259,12 @@ user de Meta ni la API key de YCloud.
   `backend/migrations/versioned/031_whatsapp_provider_foundation.sql` más
   `032_whatsapp_template_provider_foundation.sql`.
 
-## Checklist para terminar Meta directo
+## Checklist operativo de Meta directo
 
 Antes de declarar lista la conexión directa:
 
-1. Completar onboarding/Embedded Signup con el permiso de Coexistence correcto.
+1. Confirmar que Installer tiene App ID, App Secret, WhatsApp Config ID y verify
+   token, sin exponer sus valores.
 2. Validar WABA, Phone Number ID, Business ID, App ID y scopes sin copiar
    secretos al repositorio.
 3. Suscribir la app al WABA y verificar recepción real de `messages`, estados,

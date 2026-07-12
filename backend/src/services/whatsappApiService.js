@@ -68,6 +68,7 @@ import {
   resolveWhatsAppSourceAdapter
 } from './whatsapp/providers/providerRegistry.js'
 import { normalizeMetaDirectWebhookPayload } from './whatsapp/providers/metaDirectWebhookAdapter.js'
+import { disconnectCentralWhatsAppMeta } from './licenseService.js'
 import {
   buildMetaDirectTemplateCreatePayload,
   buildMetaDirectTemplateEditPayload,
@@ -9012,6 +9013,7 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
   await setAppConfig(CONFIG_KEYS.metaDisconnectedAt, '')
   await setAppConfig(CONFIG_KEYS.metaLastError, '')
   await setEncryptedConfig(CONFIG_KEYS.metaSystemUserToken, systemUserToken)
+  await setAppConfig(CONFIG_KEYS.provider, META_DIRECT_PROVIDER_NAME)
 
   await db.run(`
     INSERT INTO whatsapp_api_phone_numbers (
@@ -9048,6 +9050,10 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
 }
 
 export async function disconnectMetaDirectConnection() {
+  const current = await loadMetaDirectConfig()
+  if (current.webhookMode === 'installer_relay') {
+    await disconnectCentralWhatsAppMeta()
+  }
   await clearWhatsAppMetaDirectIntegrationCredentials()
   await setAppConfig(CONFIG_KEYS.metaStatus, 'disconnected')
   await setAppConfig(CONFIG_KEYS.metaDisconnectedAt, nowIso())

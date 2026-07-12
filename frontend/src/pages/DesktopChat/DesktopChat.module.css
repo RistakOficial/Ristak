@@ -1013,6 +1013,7 @@
 .messagePane {
   --chat-message-surface-gap: 14px;
   --chat-message-surface-padding: 18px 18px 12px;
+  overflow-anchor: none;
 }
 
 .messagePaneDropActive {
@@ -1169,6 +1170,78 @@
   border-radius: 999px;
   background: var(--color-background-primary);
   color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.activityMarkerRowWrap {
+  width: 100%;
+}
+
+.activityMarkerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 0;
+}
+
+.activityMarkerLine {
+  flex: 1 1 auto;
+  min-width: 18px;
+  height: 1px;
+  background: var(--border);
+  opacity: 0.72;
+}
+
+.activityMarkerPill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: min(88%, 640px);
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: var(--shadow-xs);
+}
+
+.activityMarkerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.activityMarkerCopy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.activityMarkerCopy strong,
+.activityMarkerCopy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activityMarkerCopy strong {
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+}
+
+.activityMarkerCopy small {
+  color: var(--text-mute);
   font-size: 11px;
   font-weight: 500;
 }
@@ -1756,6 +1829,9 @@
 }
 
 .commentPostThumb {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
   width: 100%;
   height: 200px;
@@ -2160,14 +2236,19 @@
 }
 
 .mediaAttachmentImage {
-  display: block;
-  width: fit-content;
-  max-width: min(360px, 100%);
-  height: auto;
-  aspect-ratio: auto;
-  background: transparent;
+  width: min(360px, 54vw);
+  aspect-ratio: 4 / 3;
   line-height: 0;
   vertical-align: top;
+}
+
+.mediaAttachmentPlaceholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-mute);
+  background: color-mix(in srgb, var(--surface-2) 88%, var(--accent-soft) 12%);
 }
 
 .mediaAttachmentVideo {
@@ -2176,6 +2257,8 @@
 
 .mediaAttachment img,
 .mediaAttachment video {
+  position: relative;
+  z-index: 1;
   display: block;
   width: 100%;
   height: 100%;
@@ -2184,12 +2267,9 @@
 }
 
 .mediaAttachmentImage img {
-  width: auto;
-  height: auto;
-  max-width: min(360px, 100%);
-  max-height: min(460px, 58vh);
+  width: 100%;
+  height: 100%;
   object-fit: contain;
-  background: transparent;
   border-radius: inherit;
 }
 
@@ -2287,6 +2367,7 @@
 }
 
 .audioAvatar {
+  position: relative;
   grid-area: avatar;
   display: inline-flex;
   align-items: center;
@@ -2297,6 +2378,45 @@
   border-radius: 999px;
   background: var(--audio-avatar-bg);
   color: var(--color-text-secondary);
+  overflow: visible;
+}
+
+.audioAvatarFallback,
+.audioAvatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.audioAvatarFallback {
+  display: grid;
+  place-items: center;
+  background: var(--audio-avatar-bg);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.audioAvatar img {
+  z-index: 1;
+  object-fit: cover;
+}
+
+.audioAvatarMicBadge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-background-primary);
+  border-radius: var(--radius-pill);
+  background: var(--surface-solid);
+  color: var(--accent);
 }
 
 .audioAttachmentBody {

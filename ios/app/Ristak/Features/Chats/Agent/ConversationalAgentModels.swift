@@ -1599,8 +1599,11 @@ enum AgentAIProviderCatalog {
         AgentAIProviderOption(
             id: "openai",
             label: "OpenAI",
-            defaultModel: "gpt-5.4-mini",
+            defaultModel: "gpt-5.6-luna",
             models: [
+                .init(id: "gpt-5.6-sol", label: "GPT-5.6 Sol"),
+                .init(id: "gpt-5.6-terra", label: "GPT-5.6 Terra"),
+                .init(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
                 .init(id: "gpt-5.5", label: "GPT-5.5"),
                 .init(id: "gpt-5.5-pro", label: "GPT-5.5 pro"),
                 .init(id: "gpt-5.4", label: "GPT-5.4"),

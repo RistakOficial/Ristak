@@ -89,6 +89,11 @@ import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
+import {
+  buildChatActivityMarkers,
+  isChatActivityEvent,
+  type ChatActivityMarker
+} from '@/utils/chatActivityMarkers'
 import { automationsService, type AutomationSummary } from '@/services/automationsService'
 import {
   getChatSendResponseIds,
@@ -223,6 +228,7 @@ const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // Precargamos un bloque razonable en segundo plano. El resto sigue por scroll, sin ráfagas enormes.
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 250
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
+const CHAT_ACTIVITY_REFRESH_INTERVAL_MS = 30_000
 const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000
 const CHAT_OPEN_THREAD_REFRESH_INTERVAL_MS = 4000
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
@@ -1327,6 +1333,7 @@ interface ChatMessage {
 
 type PhoneConversationTimelineItem =
   | { type: 'message'; id: string; date: string; message: ChatMessage }
+  | { type: 'activity'; id: string; date: string; marker: ChatActivityMarker }
   | { type: 'agentCompletion'; id: string; date: string; completion: ConversationalAgentCompletionEvent }
 
 interface VoiceDraftAttachment {
@@ -5183,36 +5190,9 @@ function buildClabeMessage(account: BankClabeAccount) {
   ].filter(Boolean).join('\n')
 }
 
-type MessageImageSize = { width: number; height: number }
-
-// Cache de dimensiones medidas por URL: sin él cada montaje de burbuja re-mide la
-// imagen, el alto del item cambia DESPUÉS de pintar y el hilo "brinca" al cargar
-// (mismo patrón que la app nativa con nativeImageSizeCache). Con el espacio ya
-// reservado vía aspect-ratio, ni la carga inicial ni el prepend de historial
-// mueven el scroll.
-const messageImageSizeCache = new Map<string, MessageImageSize>()
-const MESSAGE_IMAGE_PLACEHOLDER_SIZE: MessageImageSize = { width: 200, height: 150 }
-
-function boundMessageImageSize(naturalWidth: number, naturalHeight: number): MessageImageSize {
-  if (!(naturalWidth > 0) || !(naturalHeight > 0)) return MESSAGE_IMAGE_PLACEHOLDER_SIZE
-  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 400
-  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 720
-  const maxWidth = Math.min(252, Math.round(viewportWidth * 0.62))
-  const maxHeight = Math.min(318, Math.round(viewportHeight * 0.58))
-  let width = Math.min(naturalWidth, maxWidth)
-  let height = Math.round((width / naturalWidth) * naturalHeight)
-  if (height > maxHeight) {
-    height = maxHeight
-    width = Math.round((height / naturalHeight) * naturalWidth)
-  }
-  return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) }
-}
-
-// Imagen de mensaje que reserva su espacio ANTES de cargar. El `<img>` desnudo
-// medía 0px hasta que la foto bajaba y luego saltaba a su alto real, rompiendo
-// todas las compensaciones de scroll. Aquí arrancamos con el tamaño cacheado (o
-// un placeholder) y ajustamos al medir en onLoad; el aspect-ratio mantiene el
-// hueco estable y responsive.
+// El cuadro 4:3 existe desde el primer paint y nunca cambia de alto. La imagen
+// completa sigue disponible en el visor al tocarla; aquí privilegiamos cero CLS
+// y un scroll estable sobre redimensionar la burbuja después de descargar.
 const MessageImage = React.memo(function MessageImage({
   src,
   alt,
@@ -5222,32 +5202,16 @@ const MessageImage = React.memo(function MessageImage({
   alt?: string
   className?: string
 }) {
-  const [size, setSize] = useState<MessageImageSize>(
-    () => (src && messageImageSizeCache.get(src)) || MESSAGE_IMAGE_PLACEHOLDER_SIZE
-  )
-
-  useEffect(() => {
-    const cached = src ? messageImageSizeCache.get(src) : undefined
-    if (cached) setSize(cached)
-  }, [src])
-
-  const handleLoad = useCallback((event: React.SyntheticEvent<HTMLImageElement>) => {
-    const image = event.currentTarget
-    const next = boundMessageImageSize(image.naturalWidth, image.naturalHeight)
-    if (src && !src.startsWith('data:')) messageImageSizeCache.set(src, next)
-    setSize((previous) => (previous.width === next.width && previous.height === next.height ? previous : next))
-  }, [src])
-
   return (
     <img
       className={className}
       src={src}
       alt={alt}
       decoding="async"
-      width={size.width}
-      height={size.height}
-      style={{ width: `${size.width}px`, aspectRatio: `${size.width} / ${size.height}` }}
-      onLoad={handleLoad}
+      loading="lazy"
+      width={252}
+      height={189}
+      onError={(event) => { event.currentTarget.hidden = true }}
     />
   )
 })
@@ -5597,6 +5561,7 @@ export const PhoneChat: React.FC = () => {
   const activeContactIdRef = useRef<string | null>(null)
   const conversationOpenRef = useRef(false)
   const conversationLoadGenerationRef = useRef(0)
+  const conversationActivityLoadedAtRef = useRef(0)
   const olderMessagesLoadingRef = useRef(false)
   const conversationHistoryPrependRef = useRef(false)
   const conversationHasOlderMessagesRef = useRef(false)
@@ -5604,7 +5569,7 @@ export const PhoneChat: React.FC = () => {
   const agentLoadGenerationRef = useRef(0)
   const conversationInitialBottomLockRef = useRef({
     contactId: null as string | null,
-    expiresAt: 0
+    active: false
   })
   const bottomScrollFrameRef = useRef<number | null>(null)
   const bottomScrollTimeoutRefs = useRef<number[]>([])
@@ -5864,14 +5829,14 @@ export const PhoneChat: React.FC = () => {
   const startConversationBottomLock = useCallback((contactId: string | null) => {
     conversationInitialBottomLockRef.current = {
       contactId,
-      expiresAt: contactId ? Date.now() + 1600 : 0
+      active: Boolean(contactId)
     }
     messagesPaneNearBottomRef.current = true
   }, [])
 
   const isConversationBottomLockActive = useCallback((contactId: string | null) => {
     const lock = conversationInitialBottomLockRef.current
-    return Boolean(contactId && lock.contactId === contactId && Date.now() < lock.expiresAt)
+    return Boolean(contactId && lock.contactId === contactId && lock.active)
   }, [])
 
   const loadOlderConversationMessages = useCallback(async (contactId: string) => {
@@ -5965,7 +5930,7 @@ export const PhoneChat: React.FC = () => {
     // deliberadamente lo soltamos: su gesto manda sobre el anclaje automático,
     // así deja de "rebotar" al fondo mientras intenta leer historial.
     if (!atBottom && !conversationHistoryPrependRef.current) {
-      conversationInitialBottomLockRef.current = { contactId: null, expiresAt: 0 }
+      conversationInitialBottomLockRef.current = { contactId: null, active: false }
     }
     messagesPaneNearBottomRef.current = atBottom || isConversationBottomLockActive(activeContactIdRef.current)
     if (target.scrollLeft !== 0) {
@@ -6025,6 +5990,17 @@ export const PhoneChat: React.FC = () => {
     scrollMessagesPaneToBottom()
     queueMessagesPaneBottomScroll(0)
   }, [clearQueuedBottomScrolls, queueMessagesPaneBottomScroll, scrollMessagesPaneToBottom])
+  const finishConversationBottomLock = useCallback((contactId: string) => {
+    window.requestAnimationFrame(() => {
+      if (!isConversationBottomLockActive(contactId)) return
+      scrollMessagesPaneToBottom()
+      window.requestAnimationFrame(() => {
+        if (!isConversationBottomLockActive(contactId)) return
+        scrollMessagesPaneToBottom()
+        conversationInitialBottomLockRef.current = { contactId: null, active: false }
+      })
+    })
+  }, [isConversationBottomLockActive, scrollMessagesPaneToBottom])
   const activeContact = useMemo(
     () => aiAgentConversationOpen ? null : chats.find((contact) => contact.id === activeContactId) || null,
     [activeContactId, aiAgentConversationOpen, chats]
@@ -6047,6 +6023,12 @@ export const PhoneChat: React.FC = () => {
     () => replyingToMessageId ? messages.find((message) => message.id === replyingToMessageId) || null : null,
     [replyingToMessageId, messages]
   )
+  const conversationActivityMarkers = useMemo(
+    () => commentsView || !activeContactId
+      ? []
+      : buildChatActivityMarkers(activeContactId, contactJourney, timezone, accountCurrency),
+    [accountCurrency, activeContactId, commentsView, contactJourney, timezone]
+  )
   const conversationMessageGroups = useMemo(() => {
     const groups: Array<{
       key: string
@@ -6064,6 +6046,12 @@ export const PhoneChat: React.FC = () => {
         id: `message-${message.id}`,
         date: message.date,
         message
+      })),
+      ...conversationActivityMarkers.map((marker) => ({
+        type: 'activity' as const,
+        id: `activity-${marker.kind}-${marker.id}`,
+        date: marker.date,
+        marker
       })),
       ...timelineCompletions.map((completion) => ({
         type: 'agentCompletion' as const,
@@ -6092,7 +6080,7 @@ export const PhoneChat: React.FC = () => {
     })
 
     return groups
-  }, [agentCompletionEvents, messages, timezone, commentsView])
+  }, [agentCompletionEvents, conversationActivityMarkers, messages, timezone, commentsView])
   const normalizedConversationSearch = useMemo(
     () => normalizeSearchText(conversationSearchQuery),
     [conversationSearchQuery]
@@ -6114,6 +6102,18 @@ export const PhoneChat: React.FC = () => {
           ].filter(Boolean).join(' '))
           if (searchable.includes(normalizedConversationSearch)) {
             results.push({ targetId: `message-${message.id}` })
+          }
+          return
+        }
+
+        if (item.type === 'activity') {
+          const searchable = normalizeSearchText([
+            item.marker.title,
+            item.marker.subtitle,
+            item.marker.amountLabel
+          ].filter(Boolean).join(' '))
+          if (searchable.includes(normalizedConversationSearch)) {
+            results.push({ targetId: `activity-${item.marker.kind}-${item.marker.id}` })
           }
           return
         }
@@ -8186,6 +8186,7 @@ export const PhoneChat: React.FC = () => {
     const silentRefresh = options.silent === true
     const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
+    const shouldRefreshActivityJourney = !silentRefresh || Date.now() - conversationActivityLoadedAtRef.current >= CHAT_ACTIVITY_REFRESH_INTERVAL_MS
     if (!silentRefresh) {
       conversationHistoryExhaustedContactIdRef.current = null
       olderMessagesLoadingRef.current = false
@@ -8227,28 +8228,38 @@ export const PhoneChat: React.FC = () => {
       setMessagesRefreshing(false)
     }
 
+    const scheduledMessagesPromise = whatsappApiService.getScheduledMessages(contactId).catch(() => [])
+    const agentCompletionsPromise = conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
+    const activityJourneyPromise = shouldRefreshActivityJourney
+      ? contactsService.getContactJourney(contactId, {
+        refreshExternalStatuses: false,
+        throwOnError: true,
+        chatActivityOnly: true
+      }).then((events) => ({ events, loaded: true }))
+        .catch(() => ({ events: [] as JourneyEvent[], loaded: false }))
+      : Promise.resolve({ events: [] as JourneyEvent[], loaded: false })
+
     try {
-      const [journey, scheduledMessages, agentCompletions] = await Promise.all([
-        contactsService.getContactConversation(contactId, {
-          refreshExternalStatuses: false,
-          messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
-        }),
-        whatsappApiService.getScheduledMessages(contactId).catch(() => []),
-        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
-      ])
+      // Primero pinta mensajes. Los programados, resúmenes del agente y
+      // marcadores de negocio se agregan después sin bloquear la apertura.
+      const journey = await contactsService.getContactConversation(contactId, {
+        refreshExternalStatuses: false,
+        messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
+        throwOnError: true
+      })
       if (!isCurrentConversationLoad()) return
       const receivedFullPage = journey.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT
       conversationHasOlderMessagesRef.current = receivedFullPage &&
         conversationHistoryExhaustedContactIdRef.current !== contactId
+      const cachedActivityEvents = contactJourneyRef.current.filter(isChatActivityEvent)
       const nextJourney = silentRefresh
         ? mergeJourneyEvents(contactJourneyRef.current, journey)
-        : journey
+        : mergeJourneyEvents(journey, cachedActivityEvents)
       contactJourneyRef.current = nextJourney
       setContactJourney((currentJourney) => (
         areJourneyEventsEquivalent(currentJourney, nextJourney) ? currentJourney : nextJourney
       ))
-      setAgentCompletionEvents(agentCompletions)
-      const nextMessages = buildConversationMessages(nextJourney, scheduledMessages)
+      const nextMessages = buildConversationMessages(nextJourney)
 
       setMessages((currentMessages) => (
         (() => {
@@ -8256,11 +8267,44 @@ export const PhoneChat: React.FC = () => {
           return areMessagesEquivalent(currentMessages, mergedMessages) ? currentMessages : mergedMessages
         })()
       ))
-      writePhoneDailyCache(cacheKey, { journey: nextJourney, messages: nextMessages, agentCompletions }, { maxEntryChars: 360_000 }, timezone) // (MOB-007)
+      setMessagesLoading(false)
+      setMessagesRefreshing(false)
       persistChatsRead([contactId], { silent: true })
       setChats((currentChats) => currentChats.map((contact) => (
         contact.id === contactId ? { ...contact, unreadCount: 0 } : contact
       )))
+
+      const [scheduledMessages, agentCompletions, activityJourney] = await Promise.all([
+        scheduledMessagesPromise,
+        agentCompletionsPromise,
+        activityJourneyPromise
+      ])
+      if (!isCurrentConversationLoad()) return
+
+      const activityEvents = activityJourney.events.filter(isChatActivityEvent)
+      const canonicalJourney = activityJourney.loaded
+        ? mergeJourneyEvents(
+          nextJourney.filter((event) => !isChatActivityEvent(event)),
+          activityEvents
+        )
+        : nextJourney
+      const canonicalMessages = buildConversationMessages(canonicalJourney, scheduledMessages)
+      if (activityJourney.loaded) conversationActivityLoadedAtRef.current = Date.now()
+      contactJourneyRef.current = canonicalJourney
+      setContactJourney((currentJourney) => (
+        areJourneyEventsEquivalent(currentJourney, canonicalJourney) ? currentJourney : canonicalJourney
+      ))
+      setAgentCompletionEvents(agentCompletions)
+      setMessages((currentMessages) => {
+        const mergedMessages = mergeConversationMessagesWithCurrent(canonicalMessages, currentMessages)
+        return areMessagesEquivalent(currentMessages, mergedMessages) ? currentMessages : mergedMessages
+      })
+      writePhoneDailyCache(
+        cacheKey,
+        { journey: canonicalJourney, messages: canonicalMessages, agentCompletions },
+        { maxEntryChars: 360_000 },
+        timezone
+      ) // (MOB-007)
     } catch {
       if (isCurrentConversationLoad() && !showedCachedConversation && !silentRefresh) {
         setMessages([])
@@ -8272,9 +8316,10 @@ export const PhoneChat: React.FC = () => {
       if (isCurrentConversationLoad()) {
         setMessagesLoading(false)
         setMessagesRefreshing(false)
+        finishConversationBottomLock(contactId)
       }
     }
-  }, [locationId, persistChatsRead, timezone]) // (MOB-007)
+  }, [finishConversationBottomLock, locationId, persistChatsRead, timezone]) // (MOB-007)
 
   const applyRealtimePreviewToChatList = useCallback((contactId: string, message: ChatMessage) => {
     if (!contactId) return
@@ -9416,6 +9461,8 @@ export const PhoneChat: React.FC = () => {
 
   useLayoutEffect(() => {
     if (!activeContact?.id || accessState !== 'allowed') {
+      conversationActivityLoadedAtRef.current = 0
+      conversationInitialBottomLockRef.current = { contactId: null, active: false }
       setMessages([])
       setAgentCompletionEvents([])
       setContactJourney([])
@@ -9426,6 +9473,7 @@ export const PhoneChat: React.FC = () => {
       setOlderMessagesLoading(false)
       return
     }
+    conversationActivityLoadedAtRef.current = 0
     loadConversation(activeContact.id)
   }, [accessState, activeContact?.id, loadConversation])
 
@@ -16378,6 +16426,34 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderConversationActivityMarker = (marker: ChatActivityMarker) => {
+    const ActivityIcon = marker.kind === 'payment' ? Banknote : CalendarDays
+    const searchTargetId = `activity-${marker.kind}-${marker.id}`
+    const isSearchMatch = conversationSearchMatchIdSet.has(searchTargetId)
+    const isActiveSearchMatch = activeConversationSearchTargetId === searchTargetId
+
+    return (
+      <div
+        key={searchTargetId}
+        className={`${styles.conversationActivityMarkerRow} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''}`}
+        data-chat-search-id={searchTargetId}
+        aria-label={`${marker.title}${marker.amountLabel ? ` · ${marker.amountLabel}` : ''}`}
+      >
+        <span className={styles.conversationActivityMarkerLine} aria-hidden="true" />
+        <span className={styles.conversationActivityMarkerPill}>
+          <span className={styles.conversationActivityMarkerIcon} aria-hidden="true">
+            <ActivityIcon size={15} />
+          </span>
+          <span className={styles.conversationActivityMarkerCopy}>
+            <strong>{marker.title}{marker.amountLabel ? ` · ${marker.amountLabel}` : ''}</strong>
+            <small>{marker.subtitle}</small>
+          </span>
+        </span>
+        <span className={styles.conversationActivityMarkerLine} aria-hidden="true" />
+      </div>
+    )
+  }
+
   const renderConversationSearchBar = () => {
     if (!conversationSearchOpen || !activeContact) return null
 
@@ -16568,6 +16644,9 @@ export const PhoneChat: React.FC = () => {
               </div>
             )}
             {group.items.map((item) => {
+              if (item.type === 'activity') {
+                return renderConversationActivityMarker(item.marker)
+              }
               if (item.type === 'agentCompletion') {
                 return renderAgentCompletionMessage(item.completion)
               }
@@ -16657,11 +16736,17 @@ export const PhoneChat: React.FC = () => {
                             }
                             const postInner = (
                               <>
+                                <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={28} aria-hidden="true" /></span>
                                 {post.imageUrl ? (
-                                  <img src={post.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-                                ) : (
-                                  <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={28} aria-hidden="true" /></span>
-                                )}
+                                  <img
+                                    src={post.imageUrl}
+                                    alt=""
+                                    className={styles.commentPostThumb}
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={(event) => { event.currentTarget.hidden = true }}
+                                  />
+                                ) : null}
                                 <span className={styles.commentPostMeta}>
                                   <span className={styles.commentPostKind}>{post.deleted ? 'Publicación eliminada' : 'Publicación'}</span>
                                   {visiblePostMessage ? (
@@ -16695,6 +16780,9 @@ export const PhoneChat: React.FC = () => {
                         onClick={() => openMessageAttachmentFocus(message)}
                         aria-label={message.attachment.name || (message.attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}
                       >
+                        <span className={styles.messageMediaPlaceholder} aria-hidden="true">
+                          <ImageIcon size={28} />
+                        </span>
                         <MessageImage className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || (message.attachment.isGif ? 'GIF enviado' : 'Foto enviada')} />
                       </button>
                     )}

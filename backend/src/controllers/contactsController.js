@@ -5440,6 +5440,9 @@ export const getContactJourney = async (req, res) => {
     const chatMessagesOnly = isTruthyQueryValue(
       req.query?.chatMessagesOnly ?? req.query?.chatOnly ?? req.query?.messagesOnly
     )
+    const chatActivityOnly = isTruthyQueryValue(
+      req.query?.chatActivityOnly ?? req.query?.activityOnly
+    )
     const journeyMessageLimit = parseJourneyMessageLimit(
       req.query?.messageLimit ?? req.query?.messagesLimit ?? req.query?.conversationMessageLimit
     )
@@ -5479,6 +5482,102 @@ export const getContactJourney = async (req, res) => {
         error: 'Contacto no encontrado'
       })
     }
+
+    // El timeline del chat solo necesita pagos y citas. Antes desktop/iOS tenían
+    // que pedir el journey completo (sesiones, video, atribución y mensajes) para
+    // pintar tres tipos de marcador. Esta salida corta mantiene ese request fuera
+    // de la ruta crítica y hace las tres lecturas independientes en paralelo.
+    if (chatActivityOnly) {
+      const confirmationTimestampExpression = 'COALESCE(w.processed_at, w.updated_at, w.created_at)'
+      const successfulPaymentsCondition = `
+        contact_id = ?
+        AND amount > 0
+        AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+        AND ${nonTestPaymentCondition()}
+      `
+      const [appointments, payments, confirmations] = await Promise.all([
+        db.all(
+          `SELECT id, title, appointment_status, status, start_time, end_time, address, notes, date_added
+           FROM appointments
+           WHERE contact_id = ?
+           ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
+          [id]
+        ),
+        db.all(
+          `SELECT id, amount, currency, status, title, description, payment_method AS type, payment_provider, date, created_at
+           FROM payments
+           WHERE ${successfulPaymentsCondition}
+           ORDER BY ${timestampSortExpression('date')} ASC, ${timestampSortExpression('created_at')} ASC, id ASC`,
+          [id]
+        ),
+        db.all(
+          `SELECT
+             w.id,
+             w.appointment_id,
+             w.result_detail,
+             w.processed_at,
+             w.updated_at,
+             w.created_at,
+             a.title,
+             a.start_time,
+             a.end_time
+           FROM appointment_confirmation_windows w
+           LEFT JOIN appointments a ON a.id = w.appointment_id
+           WHERE w.contact_id = ?
+             AND w.status = 'done'
+             AND w.result = 'confirmed'
+             AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
+           ORDER BY ${timestampSortExpression(confirmationTimestampExpression)} ASC, w.id ASC`,
+          [id]
+        ).catch(() => [])
+      ])
+
+      const activityJourney = [
+        ...appointments.map(appointment => ({
+          type: 'appointment',
+          date: appointment.date_added,
+          data: {
+            id: appointment.id,
+            title: appointment.title,
+            status: appointment.appointment_status || appointment.status,
+            start_time: appointment.start_time,
+            end_time: appointment.end_time,
+            address: appointment.address,
+            notes: appointment.notes
+          }
+        })),
+        ...payments.map(payment => ({
+          type: 'payment',
+          date: payment.date || payment.created_at,
+          data: {
+            id: payment.id,
+            amount: payment.amount,
+            currency: payment.currency,
+            status: payment.status,
+            title: payment.title,
+            description: payment.description,
+            type: payment.type,
+            payment_provider: payment.payment_provider
+          }
+        })),
+        ...confirmations.map(card => ({
+          type: 'appointment_confirmation',
+          date: card.processed_at || card.updated_at || card.created_at,
+          data: {
+            id: card.id,
+            appointment_id: card.appointment_id,
+            title: card.title,
+            status: 'confirmed',
+            start_time: card.start_time,
+            end_time: card.end_time,
+            result_detail: card.result_detail
+          }
+        }))
+      ].sort((left, right) => parseSortableTimestamp(left.date) - parseSortableTimestamp(right.date))
+
+      return res.json({ success: true, data: activityJourney })
+    }
+
     const contactPhoneValues = await getContactPhoneValues(id, contact.phone)
     const contactPhoneCandidates = contactPhoneValues.length
       ? contactPhoneValues
@@ -5532,7 +5631,7 @@ export const getContactJourney = async (req, res) => {
       AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
       AND ${nonTestPaymentCondition()}
     `
-    const firstPayment = await db.get(
+    const firstPayment = chatMessagesOnly ? null : await db.get(
       `SELECT date FROM payments
        WHERE ${successfulPaymentsCondition}
        ORDER BY ${timestampSortExpression('date')} ASC, ${timestampSortExpression('created_at')} ASC, id ASC
@@ -6248,9 +6347,12 @@ export const getContactJourney = async (req, res) => {
         type: 'payment',
         date: payment.date,
         data: {
+          id: payment.id,
           amount: payment.amount,
+          currency: payment.currency,
           status: payment.status,
           title: payment.title,
+          description: payment.description,
           type: payment.type,
           payment_provider: payment.payment_provider
         }

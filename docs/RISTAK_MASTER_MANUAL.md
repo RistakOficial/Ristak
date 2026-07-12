@@ -515,6 +515,19 @@ Todo registro WhatsApp debe distinguir `provider` (`ycloud`, `meta_direct` o
 endpoints, nombres de webhook ni columnas de ID específicas. Baileys nunca debe
 presentarse como proveedor de API oficial.
 
+En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece dos conexiones
+separadas: **Conectar con Meta** abre el Embedded Signup central de Installer con
+Coexistence y **YCloud** conserva su formulario de API key. Meta valida el WABA y
+el número, guarda el token cifrado sólo en la base de esa instalación y activa
+`meta_direct`; el broker central enruta webhooks por WABA sin mezclarlos con
+YCloud ni con las sesiones QR/Baileys. Si la entrega final al tenant falla, el
+usuario puede reintentar sin volver a exponer el token en el navegador.
+
+Las plantillas usan el proveedor API activo. Con Meta directo se administran en
+Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
+propios. El modelo neutral y la UI se comparten, pero IDs remotos, estados,
+payloads y handles multimedia permanecen etiquetados por proveedor.
+
 Cuando el agente conversacional envia una respuesta, los servicios de salida
 deben persistir la marca `sentByAgent`/`agentId` en el payload local y el journey
 debe exponerla como `sent_by_agent`/`agent_id`. `/chat`, `/movil`, `mobile/` e
@@ -542,6 +555,23 @@ como adjuntos del composer antes de enviar, para que el usuario pueda escribir
 texto o agregar mas archivos.
 El correo queda fuera de este flujo hasta que su manejo de adjuntos se cierre en
 la superficie de email.
+
+La apertura de una conversacion prioriza siempre `GET /contacts/:id/conversation`:
+en cuanto llegan los ultimos 50 mensajes se pinta el hilo y se fija el ultimo
+mensaje sin animacion. Mensajes programados, perfil, estados/resumenes del agente
+y marcadores de negocio se hidratan despues y no pueden retener ese primer paint.
+Pagos/citas usan `GET /contacts/:id/journey?chatActivityOnly=true`, una lectura
+ligera que consulta en paralelo solo pagos, citas y confirmaciones; no recorre
+sesiones, video, atribucion ni el historial de mensajes. El resultado se conserva
+en la cache diaria de la conversacion y se reconcilia en refresh silenciosos.
+
+El layout de media del timeline es estable antes de descargar: imagenes usan un
+cuadro 4:3 reservado, videos 16:9 y audios/archivos alturas fijas. La miniatura se
+ajusta dentro de ese espacio y el original se abre en el visor interno. `/chat` y
+`/movil` desactivan el scroll anchoring automatico del navegador y mantienen el
+anclaje inferior mientras se hidrata el chat; un gesto real del usuario hacia
+arriba libera el anclaje inmediatamente. Cargar fuentes, fotos, audio o previews
+no debe cambiar la posicion visible ni disparar correcciones temporizadas.
 
 Los mensajes de correo dentro del historial del chat desktop, el modal de
 contacto y el chat movil `/movil` deben renderizarse como globo desplegable de
@@ -849,15 +879,24 @@ ultimos 50 mensajes combinados del hilo (`messageLimit`) y conserva el historial
 ya visible durante refresh silenciosos. Si el usuario sube al inicio de la
 conversacion, la UI pide otro bloque anterior usando `beforeMessageDate`; no
 debe precargar el historial completo de todas las conversaciones de la bandeja.
-Al insertar mensajes antiguos arriba del hilo, la UI debe conservar la posicion
-visible del usuario y nunca forzar scroll al ultimo mensaje.
+Al entrar a un chat nuevo, desktop, `/movil`, `mobile/` e iOS presentan el
+timeline en el ultimo mensaje disponible. Ese anclaje inicial se mantiene
+mientras termina la hidratacion de caché, mensajes, media y actividad; no usa
+animación para corregir una posición intermedia. Al insertar mensajes antiguos
+arriba del hilo, la UI debe conservar la posición visible del usuario y nunca
+forzar scroll al último mensaje.
 
 El mismo contrato aplica al chat dentro del modal de contacto: debe usar
 `/contacts/:id/conversation` para no mezclar eventos de viaje, visitas, compras
 o contacto creado dentro del historial de WhatsApp/Meta/email. Las tarjetas
 `appointment_confirmation` con accion `chat_card` si pertenecen al hilo y se
-incluyen en ese endpoint. `/contacts/:id/journey` queda reservado para el viaje
-del cliente y compatibilidad legacy.
+incluyen en ese endpoint. Para los marcadores inline de `Pago completado`,
+`Cita agendada` y `Cita confirmada`, las superficies de chat pueden consultar
+además `/contacts/:id/journey` de forma secundaria: solo se extraen pagos/citas,
+se ordenan dentro del timeline y nunca se convierten visitas u otros eventos de
+CRM en burbujas. Si esa lectura secundaria falla, se conserva la actividad
+conocida y se reintenta en la siguiente reconciliación; una respuesta vacía
+autoritativa sí puede retirar marcadores que ya no existan.
 
 La recepcion rapida de mensajes de chat usa `/api/chat-events/stream` como
 camino principal en desktop (`/chat`), movil web (`/movil`), cliente nativo
@@ -1510,12 +1549,12 @@ la respuesta se perdio y el usuario reintenta sin cambiar los datos. Android
 aplica el mismo contrato con su identificador estable de transaccion.
 
 Cuando se registra un pago manual, se cobra una tarjeta guardada o se agenda una
-cita desde la app nativa, el contacto vuelve a su conversacion y el chat muestra
-un marcador inline en la linea de mensajes. Ese marcador no es un globo del
-cliente ni del negocio: es una anotacion de conversacion que indica que en ese
-punto se completo un cobro o se agendo una cita. La accion tambien muestra una
-confirmacion breve con check animado dentro del area del chat, sin cubrir el
-header ni la informacion del contacto.
+cita desde desktop o una app nativa, el contacto vuelve a su conversacion y el
+chat muestra un marcador inline en la linea de mensajes. Ese marcador no es un
+globo del cliente ni del negocio: es una anotacion de conversacion que indica
+que en ese punto se completo un cobro o se agendo una cita. Las apps nativas
+pueden ademas mostrar una confirmacion breve con check animado dentro del area
+del chat, sin cubrir el header ni la informacion del contacto.
 
 Un pago exitoso en modo `test` puede clasificar al contacto como `Cliente` dentro
 del CRM y del filtro de Contactos para validar flujos sandbox. Ese mismo pago no
@@ -2330,6 +2369,12 @@ Ristak usa Meta en varias areas:
   `Comentario eliminado`. El contexto de la publicacion comentada se cachea en
   `meta_social_posts`; si Graph ya no expone el post/media, el chip del globo
   queda como `Publicacion eliminada` sin borrar el hilo.
+  La foto del comentario y la imagen de contexto de la publicacion se rehospedan
+  en el storage de chat cuando Meta entrega una URL temporal. Si una fila legacy
+  todavia apunta a `fbcdn`, `scontent` o `cdninstagram`, el siguiente evento que
+  vuelva a enriquecer esa publicacion intenta reemplazarla por la URL persistente.
+  Mientras una imagen no esta disponible o falla, `/chat` y `/movil` conservan el
+  tamaño del preview y muestran placeholder; nunca el icono roto del navegador.
 - El enriquecimiento de contactos Meta usa el mismo contrato de Page token:
   Messenger lee perfil/conversaciones por Facebook Graph con Page token;
   Instagram lee perfiles de DMs y autores de comentarios con las mismas
@@ -2950,6 +2995,21 @@ La misma pantalla de configuracion general tambien esta disponible como proxy en
 `Configuración > Inteligencia Artificial` (`/settings/artificial-intelligence`),
 para que el usuario pueda ajustar token, modelo y contexto desde Configuracion o
 desde Chatbot sin duplicar estado ni rutas de backend.
+
+### Catalogo y default de OpenAI
+
+Cuando el proveedor es OpenAI, el catalogo actual ofrece GPT-5.6 Sol para
+trabajo complejo, GPT-5.6 Terra para balance de capacidad y costo, y GPT-5.6
+Luna para alto volumen sensible a costo. El default nuevo de Ristak AI y de los
+agentes conversacionales es `gpt-5.6-luna`; los flujos automaticos de menor
+costo aprobados por backend usan ese mismo modelo. La seleccion explicita de un
+usuario nunca se reemplaza. Al conectar o reconectar OpenAI, una configuracion
+que aun conserve exactamente el default anterior `gpt-5.4-mini` se promueve a
+Luna; los modelos anteriores siguen disponibles para quien los haya elegido.
+
+En Sites, crear una pagina con IA usa GPT-5.6 Sol por defecto y los cambios
+pequenos usan GPT-5.6 Luna. Web, Android e iOS exponen el mismo catalogo de
+OpenAI para que el usuario no pierda opciones al cambiar de superficie.
 
 La API conserva endpoints separados:
 

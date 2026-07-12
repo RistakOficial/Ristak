@@ -820,6 +820,11 @@ export async function connectCentralMetaOAuth({ code = '', configId = '', return
   }
 }
 
+export async function disconnectCentralWhatsAppMeta() {
+  const data = await callLicenseServer('/api/license/whatsapp/meta/disconnect')
+  return data.whatsapp || data || {}
+}
+
 export async function updateCentralMetaWebhookSubscription({
   action = 'register',
   connectionId = '',

@@ -14700,16 +14700,19 @@ const funnelPrimaryActions: Array<{ id: FunnelPrimaryActionId; label: string; pr
 ]
 
 const chatgptSiteModelOptions = [
+  { value: 'gpt-5.6-luna', label: 'ChatGPT 5.6 Luna · $$', description: 'El más rápido y económico de la nueva generación para cambios pequeños. $1.00 entrada / $6.00 salida por 1M tokens.' },
+  { value: 'gpt-5.6-terra', label: 'ChatGPT 5.6 Terra · $$$', description: 'Balance de inteligencia y costo para páginas completas. $2.50 entrada / $15.00 salida por 1M tokens.' },
+  { value: 'gpt-5.6-sol', label: 'ChatGPT 5.6 Sol · $$$$ · recomendado', description: 'Recomendado para crear páginas completas con el mejor criterio visual. $5.00 entrada / $30.00 salida por 1M tokens.' },
   { value: 'gpt-5.4-nano', label: 'ChatGPT 5.4 nano · $', description: 'El más barato para cambios pequeños. $0.20 entrada / $1.25 salida por 1M tokens.' },
   { value: 'gpt-5.4-mini', label: 'ChatGPT 5.4 mini · $$', description: 'Rápido y económico para ajustes simples. $0.75 entrada / $4.50 salida por 1M tokens.' },
   { value: 'gpt-5.4', label: 'ChatGPT 5.4 · $$$', description: 'Buen balance para páginas completas. $2.50 entrada / $15.00 salida por 1M tokens.' },
-  { value: 'gpt-5.5', label: 'ChatGPT 5.5 · $$$$ · recomendado', description: 'Recomendado para crear páginas completas con mejor criterio visual. $5.00 entrada / $30.00 salida por 1M tokens.' },
+  { value: 'gpt-5.5', label: 'ChatGPT 5.5 · $$$$', description: 'Frontier anterior para páginas completas con buen criterio visual. $5.00 entrada / $30.00 salida por 1M tokens.' },
   { value: 'gpt-5.4-pro', label: 'ChatGPT 5.4 Pro · $$$$$', description: 'Más cómputo para rediseños grandes. $30.00 entrada / $180.00 salida por 1M tokens.' },
   { value: 'gpt-5.5-pro', label: 'ChatGPT 5.5 Pro · $$$$$', description: 'El más caro para máxima calidad. $30.00 entrada / $180.00 salida por 1M tokens.' }
 ]
 
-const DEFAULT_SITE_CHATGPT_MODEL = 'gpt-5.5'
-const DEFAULT_SITE_CHATGPT_EDIT_MODEL = 'gpt-5.4-nano'
+const DEFAULT_SITE_CHATGPT_MODEL = 'gpt-5.6-sol'
+const DEFAULT_SITE_CHATGPT_EDIT_MODEL = 'gpt-5.6-luna'
 const getFunnelStyleOption = (id?: FunnelStyleId) => funnelStyleOptions.find(option => option.id === id) || null
 const getFunnelPrimaryAction = (id?: FunnelPrimaryActionId) => funnelPrimaryActions.find(option => option.id === id) || null
 const getDefaultSiteChatGPTModel = (editMode: boolean) => editMode ? DEFAULT_SITE_CHATGPT_EDIT_MODEL : DEFAULT_SITE_CHATGPT_MODEL

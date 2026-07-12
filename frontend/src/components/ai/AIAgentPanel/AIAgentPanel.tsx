@@ -15,7 +15,7 @@ const VOICE_WAVE_MIN_HEIGHT = 4
 const VOICE_WAVE_MAX_HEIGHT = 30
 const VOICE_WAVE_SILENCE_THRESHOLD = 4
 const VOICE_WAVE_SIGNAL_RANGE = 30
-const DEFAULT_AI_MODEL = 'gpt-5.4-mini'
+const DEFAULT_AI_MODEL = 'gpt-5.6-luna'
 const PERSONAL_ASSISTANT_AI_LABEL = 'Asistente Personal AI'
 
 const FALLBACK_AGENT_CATEGORIES: AIAgentCategory[] = [
