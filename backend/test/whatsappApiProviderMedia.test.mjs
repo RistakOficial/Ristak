@@ -1080,11 +1080,16 @@ test('Meta Direct envía la nota de voz por Graph API con audio.link y voice', a
       assert.equal(response.wamid, 'wamid.meta_audio_1')
 
       const row = await db.get(`
-        SELECT provider, message_type, status, raw_payload_json
+        SELECT provider, source_adapter, provider_message_id,
+               ycloud_message_id, meta_message_id, message_type, status, raw_payload_json
         FROM whatsapp_api_messages
         WHERE wamid = ?
       `, ['wamid.meta_audio_1'])
       assert.equal(row.provider, 'meta_direct')
+      assert.equal(row.source_adapter, 'meta_direct')
+      assert.equal(row.provider_message_id, 'wamid.meta_audio_1')
+      assert.equal(row.ycloud_message_id, null)
+      assert.equal(row.meta_message_id, 'wamid.meta_audio_1')
       assert.equal(row.message_type, 'audio')
       assert.equal(row.status, 'sent')
       const raw = JSON.parse(row.raw_payload_json)

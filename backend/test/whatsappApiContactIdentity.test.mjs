@@ -1298,12 +1298,13 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
       await new Promise(resolve => setTimeout(resolve, 150))
 
       const message = await db.get(`
-        SELECT transport, routing_reason, status, error_code, error_message, raw_payload_json, message_text
+        SELECT transport, source_adapter, routing_reason, status, error_code, error_message, raw_payload_json, message_text
         FROM whatsapp_api_messages
         WHERE ycloud_message_id = ?
       `, [ycloudMessageId])
 
       assert.equal(message.transport, 'qr')
+      assert.equal(message.source_adapter, 'baileys')
       assert.equal(message.status, 'delivered')
       assert.equal(message.error_code, null)
       assert.equal(message.error_message, null)
@@ -2358,7 +2359,8 @@ test('historial smb de YCloud infiere entrantes y salientes por teléfonos conoc
     })
 
     const rows = await db.all(`
-      SELECT ycloud_message_id, direction, contact_id, phone
+      SELECT provider, source_adapter, provider_message_id, ycloud_message_id,
+             direction, contact_id, phone
       FROM whatsapp_api_messages
       WHERE ycloud_message_id IN (?, ?)
       ORDER BY message_timestamp ASC
@@ -2366,6 +2368,9 @@ test('historial smb de YCloud infiere entrantes y salientes por teléfonos conoc
 
     assert.equal(rows.length, 2)
     assert.equal(rows[0].ycloud_message_id, inboundMessageId)
+    assert.equal(rows[0].provider, 'ycloud')
+    assert.equal(rows[0].source_adapter, 'ycloud')
+    assert.equal(rows[0].provider_message_id, inboundMessageId)
     assert.equal(rows[0].direction, 'inbound')
     assert.ok(rows[0].contact_id)
     assert.equal(rows[0].phone, phone)

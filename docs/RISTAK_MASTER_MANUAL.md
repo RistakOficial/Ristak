@@ -497,14 +497,23 @@ Ristak maneja varias superficies de comunicacion:
 
 - Bandeja desktop.
 - Chat movil.
-- WhatsApp API/YCloud.
-- WhatsApp QR/legacy cuando aplica.
+- WhatsApp API oficial por YCloud.
+- WhatsApp Cloud API oficial por Meta directo, incluido Coexistence.
+- WhatsApp QR/Baileys como transporte separado y fallback cuando aplica.
 - Meta social messaging.
 - Email.
 - Eventos live para sincronizar UI.
 
 La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
+
+El contrato canónico de proveedores, webhooks, IDs, Coexistence y soporte vive
+en [integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md](./integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md).
+Todo registro WhatsApp debe distinguir `provider` (`ycloud`, `meta_direct` o
+`qr`), `transport` (`api` o `qr`) y `source_adapter` (`ycloud`, `meta_direct` o
+`baileys`). YCloud y Meta directo comparten el modelo interno, no credenciales,
+endpoints, nombres de webhook ni columnas de ID específicas. Baileys nunca debe
+presentarse como proveedor de API oficial.
 
 Cuando el agente conversacional envia una respuesta, los servicios de salida
 deben persistir la marca `sentByAgent`/`agentId` en el payload local y el journey
@@ -1021,8 +1030,11 @@ pagina marca la version como terminada. Si YCloud o el webhook fallan, conserva
 el punto y reintenta en el siguiente tick mientras la integracion siga activa. WhatsApp
 Cloud API directo no ofrece un
 endpoint Graph para descargar retroactivamente toda la cuenta: en ese proveedor
-la fuente historica disponible son webhooks/relay y ecos de coexistencia desde
-el momento en que quedan activos. La API `syncMetaDirectHistory` debe reportar
+la fuente historica disponible son los webhooks `history` del onboarding,
+webhooks/relay nuevos y ecos `smb_message_echoes` de Coexistence. Los lotes
+`history` se guardan como importacion: no incrementan no leidos ni disparan push,
+confirmaciones, automatizaciones o agente conversacional. La API
+`syncMetaDirectHistory` debe reportar
 esa limitacion como `not_available`, no fingir una sincronizacion completa.
 
 En Configuracion > WhatsApp > Plantillas y en las burbujas del chat desktop,

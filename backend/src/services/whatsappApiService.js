@@ -59,6 +59,14 @@ import {
   extractConversationalAgentMessageMetadata,
   formatConversationalAgentMessageMetadata
 } from '../utils/conversationalAgentMessageMetadata.js'
+import {
+  WHATSAPP_PROVIDER_META_DIRECT,
+  WHATSAPP_PROVIDER_YCLOUD,
+  getWhatsAppProviderDefinitions,
+  resolveWhatsAppMessageIdentifiers,
+  resolveWhatsAppSourceAdapter
+} from './whatsapp/providers/providerRegistry.js'
+import { normalizeMetaDirectWebhookPayload } from './whatsapp/providers/metaDirectWebhookAdapter.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -67,8 +75,8 @@ const YCLOUD_REQUEST_TIMEOUT_MS = 20_000
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v22.0'
 const META_GRAPH_BASE_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`
 const SOURCE_NAME = 'WhatsApp_API'
-const PROVIDER_NAME = 'ycloud'
-const META_DIRECT_PROVIDER_NAME = 'meta_direct'
+const PROVIDER_NAME = WHATSAPP_PROVIDER_YCLOUD
+const META_DIRECT_PROVIDER_NAME = WHATSAPP_PROVIDER_META_DIRECT
 const DEFAULT_INSTALLER_PUBLIC_URL = 'https://www.ristak.com'
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
@@ -4776,6 +4784,7 @@ export async function getWhatsAppApiStatus() {
   return {
     provider: PROVIDER_NAME,
     activeProvider: config.provider || PROVIDER_NAME,
+    providerDefinitions: getWhatsAppProviderDefinitions(),
     source: SOURCE_NAME,
     connected,
     configured: Boolean(config.hasApiKey),
@@ -5335,10 +5344,12 @@ async function resolveWhatsAppMessageReference({ messageId, providerMessageId, c
   if (!cleanMessageId && !cleanProviderMessageId) return null
 
   const row = await db.get(`
-    SELECT id, ycloud_message_id, meta_message_id, wamid, direction, message_type, message_text, context_json, raw_payload_json
+    SELECT id, provider_message_id, ycloud_message_id, meta_message_id, wamid,
+           direction, message_type, message_text, context_json, raw_payload_json
     FROM whatsapp_api_messages
     WHERE (
         (? != '' AND id = ?)
+        OR (? != '' AND provider_message_id = ?)
         OR (? != '' AND ycloud_message_id = ?)
         OR (? != '' AND meta_message_id = ?)
         OR (? != '' AND wamid = ?)
@@ -5351,10 +5362,13 @@ async function resolveWhatsAppMessageReference({ messageId, providerMessageId, c
     cleanProviderMessageId, cleanProviderMessageId,
     cleanProviderMessageId, cleanProviderMessageId,
     cleanProviderMessageId, cleanProviderMessageId,
+    cleanProviderMessageId, cleanProviderMessageId,
     cleanContactId, cleanContactId
   ]).catch(() => null)
 
-  const providerId = cleanString(row?.wamid || row?.ycloud_message_id || row?.meta_message_id || cleanProviderMessageId)
+  const providerId = cleanString(
+    row?.wamid || row?.provider_message_id || row?.ycloud_message_id || row?.meta_message_id || cleanProviderMessageId
+  )
   if (!providerId) return null
   return {
     localMessageId: cleanString(row?.id),
@@ -6379,15 +6393,24 @@ async function upsertWhatsAppApiContact({
   const safeMessageCountDelta = Math.max(Number(messageCountDelta) || 0, 0)
   const firstSeenAt = toDateTime(seenAt) || nowIso()
   const cleanLastSeenAt = toDateTime(lastSeenAt) || firstSeenAt
+  const whatsappUserId = cleanString(rawProfile?.whatsappUserId || rawProfile?.whatsapp_user_id || rawProfile?.wa_id)
+  const parentWhatsAppUserId = cleanString(
+    rawProfile?.parentWhatsAppUserId || rawProfile?.parent_whatsapp_user_id || rawProfile?.parent_wa_id
+  )
+  const username = cleanString(rawProfile?.username)
 
   await db.run(`
     INSERT INTO whatsapp_api_contacts (
-      id, contact_id, phone, profile_name, profile_picture_url,
+      id, contact_id, phone, whatsapp_user_id, parent_whatsapp_user_id, username,
+      profile_name, profile_picture_url,
       profile_picture_source, profile_picture_updated_at, profile_picture_error,
       raw_profile_json, first_seen_at, last_seen_at, message_count, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(phone) DO UPDATE SET
       contact_id = COALESCE(excluded.contact_id, whatsapp_api_contacts.contact_id),
+      whatsapp_user_id = COALESCE(NULLIF(excluded.whatsapp_user_id, ''), whatsapp_api_contacts.whatsapp_user_id),
+      parent_whatsapp_user_id = COALESCE(NULLIF(excluded.parent_whatsapp_user_id, ''), whatsapp_api_contacts.parent_whatsapp_user_id),
+      username = COALESCE(NULLIF(excluded.username, ''), whatsapp_api_contacts.username),
       profile_name = COALESCE(NULLIF(excluded.profile_name, ''), whatsapp_api_contacts.profile_name),
       profile_picture_url = COALESCE(NULLIF(excluded.profile_picture_url, ''), whatsapp_api_contacts.profile_picture_url),
       profile_picture_source = CASE
@@ -6421,6 +6444,9 @@ async function upsertWhatsAppApiContact({
     apiContactId,
     contactId || null,
     canonicalPhone,
+    whatsappUserId || null,
+    parentWhatsAppUserId || null,
+    username || null,
     profileNameForStorage || null,
     storedPictureUrl || null,
     cleanProfilePictureSource,
@@ -7091,7 +7117,20 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const messageText = extractMessageText(normalizedMessage)
   const messageTimestamp = toDateTime(normalizedMessage.sendTime || normalizedMessage.createTime || normalizedMessage.updateTime || payload.createTime) || nowIso()
   const profileName = extractWhatsAppProfileName(normalizedMessage, identity.phone)
-  const rawProfile = normalizedMessage.customerProfile || normalizedMessage.profile || null
+  const profileIdentity = identity.direction === 'inbound'
+    ? {
+        whatsappUserId: cleanString(normalizedMessage.fromUserId || normalizedMessage.from_user_id),
+        parentWhatsAppUserId: cleanString(normalizedMessage.fromParentUserId || normalizedMessage.from_parent_user_id)
+      }
+    : {
+        whatsappUserId: cleanString(normalizedMessage.toUserId || normalizedMessage.to_user_id),
+        parentWhatsAppUserId: cleanString(normalizedMessage.toParentUserId || normalizedMessage.to_parent_user_id)
+      }
+  const rawProfile = {
+    ...(isPlainObject(normalizedMessage.profile) ? normalizedMessage.profile : {}),
+    ...(isPlainObject(normalizedMessage.customerProfile) ? normalizedMessage.customerProfile : {}),
+    ...profileIdentity
+  }
   const profilePictureUrl = findProfilePictureUrlInValue(rawProfile)
   const attribution = await resolveWhatsAppAttributionSourceId(
     extractAttribution(payload, normalizedMessage, messageText),
@@ -7113,25 +7152,39 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     seenAt: messageTimestamp
   })
 
-  const provider = cleanString(normalizedMessage.provider || payload.provider) || PROVIDER_NAME
+  const identifiers = resolveWhatsAppMessageIdentifiers({
+    provider: cleanString(normalizedMessage.provider || payload.provider) || PROVIDER_NAME,
+    transport: cleanTransport,
+    messageId: cleanString(normalizedMessage.id),
+    wamid: cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
+  })
+  const provider = identifiers.provider
+  const sourceAdapter = identifiers.sourceAdapter
   const origin = cleanString(normalizedMessage.origin || payload.origin || payload.field || payload.type)
-  const rawMessageId = cleanString(normalizedMessage.id)
-  const metaMessageId = ''
-  const ycloudMessageId = rawMessageId
-  const wamid = cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
-  const computedMessageId = hashId('waapi_msg', ycloudMessageId || metaMessageId || wamid || `${payload.id}|${identity.direction}|${identity.phone}`)
+  const providerMessageId = identifiers.providerMessageId
+  const metaMessageId = identifiers.metaMessageId
+  const ycloudMessageId = identifiers.ycloudMessageId
+  const wamid = identifiers.wamid
+  const computedMessageId = hashId('waapi_msg', providerMessageId || wamid || `${provider}|${payload.id}|${identity.direction}|${identity.phone}`)
   const existingMessage = await db.get(`
     SELECT id, status, transport, routing_reason, raw_payload_json,
            media_url, media_mime_type, media_filename, media_duration_ms,
            error_code, error_message
     FROM whatsapp_api_messages
     WHERE id = ?
+      OR (? != '' AND provider = ? AND provider_message_id = ?)
       OR (? != '' AND ycloud_message_id = ?)
       OR (? != '' AND meta_message_id = ?)
       OR (? != '' AND wamid = ?)
     ORDER BY updated_at DESC
     LIMIT 1
-  `, [computedMessageId, ycloudMessageId, ycloudMessageId, metaMessageId, metaMessageId, wamid, wamid]).catch(() => null)
+  `, [
+    computedMessageId,
+    providerMessageId, provider, providerMessageId,
+    ycloudMessageId, ycloudMessageId,
+    metaMessageId, metaMessageId,
+    wamid, wamid
+  ]).catch(() => null)
   const messageId = existingMessage?.id || computedMessageId
   const incomingAgentMarker = extractConversationalAgentMessageMetadata(normalizedMessage)
   const existingAgentMarker = extractConversationalAgentMessageMetadata(existingMessage?.raw_payload_json)
@@ -7163,7 +7216,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
 
   await db.run(`
     INSERT INTO whatsapp_api_messages (
-      id, provider, origin, ycloud_message_id, meta_message_id, wamid, waba_id, business_phone_number_id,
+      id, provider, source_adapter, origin, provider_message_id, ycloud_message_id, meta_message_id, wamid, waba_id, business_phone_number_id,
       whatsapp_api_contact_id, contact_id,
       phone, from_phone, to_phone, business_phone, transport, routing_reason, direction, message_type,
       message_text, media_url, media_mime_type, media_filename, media_duration_ms,
@@ -7172,10 +7225,13 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       detected_ctwa_clid, detected_source_id, detected_source_url, detected_source_type,
       detected_source_app, detected_entry_point, detected_headline, detected_body,
       detected_conversion_data, detected_ctwa_payload, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       provider = COALESCE(NULLIF(excluded.provider, ''), whatsapp_api_messages.provider),
+      source_adapter = COALESCE(NULLIF(excluded.source_adapter, ''), whatsapp_api_messages.source_adapter),
       origin = COALESCE(NULLIF(excluded.origin, ''), whatsapp_api_messages.origin),
+      provider_message_id = COALESCE(NULLIF(excluded.provider_message_id, ''), whatsapp_api_messages.provider_message_id),
+      ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
       meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), whatsapp_api_messages.meta_message_id),
       business_phone_number_id = COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id),
       whatsapp_api_contact_id = COALESCE(excluded.whatsapp_api_contact_id, whatsapp_api_messages.whatsapp_api_contact_id),
@@ -7222,9 +7278,11 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   `, [
     messageId,
     provider,
+    sourceAdapter,
     origin || null,
+    providerMessageId || null,
     ycloudMessageId || null,
-    null,
+    metaMessageId || null,
     wamid || null,
     cleanString(message.wabaId) || null,
     businessPhoneNumberId,
@@ -7323,12 +7381,21 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   }
 
   const finalTransport = qrFallbackResponse || existingQrFallbackApplied ? 'qr' : cleanTransport
+  const finalSourceAdapter = resolveWhatsAppSourceAdapter({ provider, transport: finalTransport })
   const finalRoutingReason = cleanString(
     qrFallbackResponse?.routingReason ||
     qrFallbackResponse?.fallbackReason ||
     (existingQrFallbackApplied ? existingMessage?.routing_reason : routingReason)
   )
   const finalStatus = qrFallbackResponse?.status || status
+
+  if (finalSourceAdapter !== sourceAdapter) {
+    await db.run(`
+      UPDATE whatsapp_api_messages
+      SET source_adapter = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [finalSourceAdapter, messageId])
+  }
 
   // La API confirmo un envio saliente: cualquier alerta de bloqueo de este
   // número o de la cuenta quedo obsoleta y se resuelve sola.
@@ -7414,6 +7481,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       channel: 'whatsapp',
       provider,
       transport: finalTransport,
+      sourceAdapter: finalSourceAdapter,
       direction: identity.direction,
       messageType,
       messageTimestamp,
@@ -7438,6 +7506,9 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     attribution,
     direction: identity.direction,
     provider,
+    sourceAdapter: finalSourceAdapter,
+    providerMessageId,
+    historyImport: historyImport === true,
     origin,
     businessEcho,
     phone: identity.phone,
@@ -8050,6 +8121,7 @@ async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneH
     payloadBusinessPhone
   ].filter(Boolean)
   const candidates = extractWhatsAppMessageCandidates(payload)
+  const historyImport = isHistoryPayload(payload)
   const results = []
 
   for (const candidate of candidates) {
@@ -8057,7 +8129,8 @@ async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneH
       payload,
       message: candidate.message,
       direction: candidate.direction,
-      businessPhoneHints: effectiveBusinessPhoneHints
+      businessPhoneHints: effectiveBusinessPhoneHints,
+      historyImport
     }))
   }
 
@@ -8552,23 +8625,33 @@ function verifyYCloudSignature({ rawBody, signatureHeader, secret }) {
   return timingSafeEqualHex(expected, signature)
 }
 
-async function saveWebhookEvent({ payload, rawBody, endpointId, signatureValid, processedStatus = 'received', processedError = '' }) {
+async function saveWebhookEvent({
+  payload,
+  rawBody,
+  endpointId,
+  signatureValid,
+  provider = PROVIDER_NAME,
+  processedStatus = 'received',
+  processedError = ''
+}) {
   const eventId = cleanString(payload?.id)
   const id = eventId || hashId('waapi_evt', rawBody || safeJson(payload))
 
   await db.run(`
     INSERT INTO whatsapp_api_webhook_events (
-      id, event_id, event_type, api_version, webhook_endpoint_id,
+      id, provider, event_id, event_type, api_version, webhook_endpoint_id,
       signature_valid, processed_status, processed_error, raw_payload_json,
       ycloud_create_time, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
+      provider = COALESCE(NULLIF(excluded.provider, ''), whatsapp_api_webhook_events.provider),
       processed_status = excluded.processed_status,
       processed_error = excluded.processed_error,
       raw_payload_json = excluded.raw_payload_json,
       updated_at = CURRENT_TIMESTAMP
   `, [
     id,
+    provider,
     eventId || null,
     cleanString(payload?.type) || 'unknown',
     cleanString(payload?.apiVersion) || null,
@@ -8630,7 +8713,11 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       ? await processWhatsAppMessageEventPayload({ payload, businessPhoneHints })
       : []
 
-    const inboundResults = messageResults.filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+    const inboundResults = messageResults.filter(result =>
+      result?.direction === 'inbound' &&
+      result?.isNew !== false &&
+      result?.historyImport !== true
+    )
     inboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'ycloud_webhook'))
 
     // Ventanas de confirmación con IA: registrar mensajes y obtener estado de bypass.
@@ -9007,113 +9094,6 @@ export async function syncMetaDirectHistory() {
   }
 }
 
-function normalizeMetaMessageBody(message = {}) {
-  if (message.text?.body) return message.text.body
-  if (message.button?.text) return message.button.text
-  if (message.interactive?.button_reply?.title) return message.interactive.button_reply.title
-  if (message.interactive?.list_reply?.title) return message.interactive.list_reply.title
-  if (message.image?.caption) return message.image.caption
-  if (message.document?.caption) return message.document.caption
-  if (message.video?.caption) return message.video.caption
-  return ''
-}
-
-function normalizeMetaWebhookMessages(payload = {}, config = {}) {
-  const results = []
-  const entries = Array.isArray(payload.entry) ? payload.entry : []
-
-  for (const entry of entries) {
-    const changes = Array.isArray(entry.changes) ? entry.changes : []
-    for (const change of changes) {
-      const field = cleanString(change.field)
-      const value = change.value || {}
-      const metadata = value.metadata || {}
-      const businessPhone = normalizePhoneForStorage(metadata.display_phone_number || config.displayPhoneNumber) ||
-        cleanString(metadata.display_phone_number || config.displayPhoneNumber)
-      const phoneNumberId = cleanString(metadata.phone_number_id || config.phoneNumberId)
-      const wabaId = cleanString(entry.id || value.whatsapp_business_account_id || config.wabaId)
-
-      for (const message of Array.isArray(value.messages) ? value.messages : []) {
-        const direction = field === 'smb_message_echoes' || message.from_me || message.business_echo
-          ? 'business_echo'
-          : 'inbound'
-        const messageType = cleanString(message.type) || 'unknown'
-        results.push({
-          direction,
-          message: {
-            ...message,
-            id: message.id,
-            wamid: message.id,
-            metaMessageId: message.id,
-            provider: META_DIRECT_PROVIDER_NAME,
-            origin: field || 'messages',
-            wabaId,
-            from: direction === 'inbound' ? message.from : businessPhone,
-            to: direction === 'inbound' ? businessPhone : (message.to || message.recipient_id),
-            type: messageType,
-            status: direction === 'business_echo' ? 'sent' : cleanString(message.status),
-            sendTime: message.timestamp,
-            text: normalizeMetaMessageBody(message) ? { body: normalizeMetaMessageBody(message) } : message.text,
-            businessEcho: direction === 'business_echo',
-            phoneNumberId
-          }
-        })
-      }
-
-      const echoes = Array.isArray(value.smb_message_echoes)
-        ? value.smb_message_echoes
-        : Array.isArray(value.message_echoes)
-          ? value.message_echoes
-          : []
-      for (const echo of echoes) {
-        results.push({
-          direction: 'business_echo',
-          message: {
-            ...echo,
-            id: echo.id || echo.message_id,
-            wamid: echo.id || echo.message_id,
-            metaMessageId: echo.id || echo.message_id,
-            provider: META_DIRECT_PROVIDER_NAME,
-            origin: field || 'smb_message_echoes',
-            wabaId,
-            from: businessPhone,
-            to: echo.to || echo.recipient_id || echo.from,
-            type: cleanString(echo.type) || 'text',
-            status: cleanString(echo.status) || 'sent',
-            sendTime: echo.timestamp,
-            text: normalizeMetaMessageBody(echo) ? { body: normalizeMetaMessageBody(echo) } : echo.text,
-            businessEcho: true,
-            phoneNumberId
-          }
-        })
-      }
-
-      for (const status of Array.isArray(value.statuses) ? value.statuses : []) {
-        results.push({
-          direction: 'outbound',
-          message: {
-            id: status.id,
-            wamid: status.id,
-            metaMessageId: status.id,
-            provider: META_DIRECT_PROVIDER_NAME,
-            origin: field || 'statuses',
-            wabaId,
-            from: businessPhone,
-            to: status.recipient_id,
-            type: 'status',
-            status: status.status,
-            sendTime: status.timestamp,
-            errors: status.errors,
-            phoneNumberId
-          }
-        })
-      }
-    }
-  }
-
-  return results
-}
-
 async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' } = {}) {
   const config = await loadMetaDirectConfig()
   const businessPhoneHints = await getKnownBusinessPhoneHints({
@@ -9121,7 +9101,7 @@ async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' }
     phoneNumberId: config.phoneNumberId,
     wabaId: config.wabaId
   })
-  const normalized = normalizeMetaWebhookMessages(payload, config)
+  const normalized = normalizeMetaDirectWebhookPayload(payload, config)
   const results = []
 
   for (const item of normalized) {
@@ -9137,7 +9117,8 @@ async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' }
       message: item.message,
       direction: item.direction,
       businessPhoneHints,
-      transport: 'api'
+      transport: 'api',
+      historyImport: item.historyImport === true
     })
     results.push(result)
   }
@@ -9186,13 +9167,18 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
     },
     rawBody,
     endpointId: headers.installationId || 'installer_relay',
+    provider: META_DIRECT_PROVIDER_NAME,
     signatureValid: true,
     processedStatus: 'received'
   })
 
   try {
     const messageResults = await processMetaDirectWebhookPayload({ payload, eventRowId })
-    const inboundResults = messageResults.filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+    const inboundResults = messageResults.filter(result =>
+      result?.direction === 'inbound' &&
+      result?.isNew !== false &&
+      result?.historyImport !== true
+    )
     inboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'meta_direct_webhook'))
     const confirmWindows = new Map()
 
@@ -9951,27 +9937,40 @@ function templateSendSnapshot(template = {}, renderedText = '') {
 
 async function saveTemplateSend({ template, requestBody, response, variables, renderedText = '' }) {
   const id = hashId('waapi_tpl_send', response?.id || requestBody.externalId || `${requestBody.from}|${requestBody.to}|${template.name}|${Date.now()}`)
+  const identifiers = resolveWhatsAppMessageIdentifiers({
+    provider: requestBody.provider || response?.provider || PROVIDER_NAME,
+    transport: requestBody.fallbackTransport || response?.transport || 'api',
+    messageId: response?.id,
+    wamid: response?.wamid
+  })
 
   await db.run(`
     INSERT INTO whatsapp_api_template_sends (
-      id, template_id, template_name, language, to_phone, from_phone,
+      id, provider, source_adapter, provider_message_id,
+      template_id, template_name, language, to_phone, from_phone,
       ycloud_message_id, wamid, status, variables_json, raw_payload_json,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
+      provider = excluded.provider,
+      source_adapter = excluded.source_adapter,
+      provider_message_id = excluded.provider_message_id,
       ycloud_message_id = excluded.ycloud_message_id,
       wamid = excluded.wamid,
       raw_payload_json = excluded.raw_payload_json,
       updated_at = CURRENT_TIMESTAMP
   `, [
     id,
+    identifiers.provider,
+    identifiers.sourceAdapter,
+    identifiers.providerMessageId || null,
     template.id || null,
     template.name,
     template.language,
     requestBody.to,
     requestBody.from,
-    cleanString(response?.id) || null,
+    identifiers.ycloudMessageId || null,
     cleanString(response?.wamid) || null,
     cleanString(response?.status) || 'accepted',
     safeJson(variables || []),
