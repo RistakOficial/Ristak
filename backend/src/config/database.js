@@ -3585,13 +3585,73 @@ async function initTables() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ad_account_id TEXT UNIQUE,
         access_token TEXT NOT NULL,
+        connection_mode TEXT DEFAULT 'manual_system_user',
         app_id TEXT,
         app_secret TEXT,
         messenger_user_token TEXT,
         meta_business_id TEXT,
         instagram_account_id TEXT,
         token_expires_at DATETIME,
+        oauth_connection_id TEXT,
+        oauth_user_id TEXT,
+        oauth_user_name TEXT,
+        oauth_app_id TEXT,
+        oauth_business_id TEXT,
+        oauth_config_id TEXT,
+        oauth_appsecret_proof TEXT,
+        oauth_page_access_token TEXT,
+        oauth_page_appsecret_proof TEXT,
+        oauth_granted_scopes_json TEXT,
+        oauth_missing_scopes_json TEXT,
+        oauth_granular_scopes_json TEXT,
+        oauth_data_access_expires_at DATETIME,
+        oauth_connected INTEGER DEFAULT 0,
+        oauth_validated INTEGER DEFAULT 0,
+        oauth_connected_at DATETIME,
+        oauth_validated_at DATETIME,
+        oauth_relay_status TEXT,
+        oauth_relay_registered_at DATETIME,
+        oauth_relay_error TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    // El token OAuth/BISU no toca meta_config hasta que el usuario confirma los
+    // activos. La sesión cifrada es temporal y de un solo uso para que cerrar el
+    // popup o abandonar el wizard nunca destruya la conexión manual vigente.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_oauth_pending_sessions (
+        id TEXT PRIMARY KEY,
+        payload_encrypted TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        expires_at DATETIME NOT NULL,
+        consumed_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_oauth_pending_expiry ON meta_oauth_pending_sessions(status, expires_at)')
+    // No purgar ni resetear aquí: una sesión puede estar compensando un
+    // subscribed_apps remoto. metaOAuthService descifra el stage y sólo elimina
+    // el secreto después del DELETE idempotente o al vencer su TTL máximo.
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_oauth_connection_backups (
+        id TEXT PRIMARY KEY,
+        payload_encrypted TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_installer_relay_deliveries (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'processing',
+        error_message TEXT,
+        received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
@@ -5006,7 +5066,28 @@ async function initTables() {
 
       await ensureTableColumns('meta_config', [
         ['messenger_user_token', 'TEXT'],
-        ['meta_business_id', 'TEXT']
+        ['meta_business_id', 'TEXT'],
+        ['connection_mode', "TEXT DEFAULT 'manual_system_user'"],
+        ['oauth_connection_id', 'TEXT'],
+        ['oauth_user_id', 'TEXT'],
+        ['oauth_user_name', 'TEXT'],
+        ['oauth_app_id', 'TEXT'],
+        ['oauth_business_id', 'TEXT'],
+        ['oauth_config_id', 'TEXT'],
+        ['oauth_appsecret_proof', 'TEXT'],
+        ['oauth_page_access_token', 'TEXT'],
+        ['oauth_page_appsecret_proof', 'TEXT'],
+        ['oauth_granted_scopes_json', 'TEXT'],
+        ['oauth_missing_scopes_json', 'TEXT'],
+        ['oauth_granular_scopes_json', 'TEXT'],
+        ['oauth_data_access_expires_at', 'DATETIME'],
+        ['oauth_connected', 'INTEGER DEFAULT 0'],
+        ['oauth_validated', 'INTEGER DEFAULT 0'],
+        ['oauth_connected_at', 'DATETIME'],
+        ['oauth_validated_at', 'DATETIME'],
+        ['oauth_relay_status', 'TEXT'],
+        ['oauth_relay_registered_at', 'DATETIME'],
+        ['oauth_relay_error', 'TEXT']
       ])
 
       try {
@@ -5020,7 +5101,28 @@ async function initTables() {
       // reconstrucciones SQLite legacy de meta_config para que ninguna las tire.
       await ensureTableColumns('meta_config', [
         ['messenger_user_token', 'TEXT'],
-        ['meta_business_id', 'TEXT']
+        ['meta_business_id', 'TEXT'],
+        ['connection_mode', "TEXT DEFAULT 'manual_system_user'"],
+        ['oauth_connection_id', 'TEXT'],
+        ['oauth_user_id', 'TEXT'],
+        ['oauth_user_name', 'TEXT'],
+        ['oauth_app_id', 'TEXT'],
+        ['oauth_business_id', 'TEXT'],
+        ['oauth_config_id', 'TEXT'],
+        ['oauth_appsecret_proof', 'TEXT'],
+        ['oauth_page_access_token', 'TEXT'],
+        ['oauth_page_appsecret_proof', 'TEXT'],
+        ['oauth_granted_scopes_json', 'TEXT'],
+        ['oauth_missing_scopes_json', 'TEXT'],
+        ['oauth_granular_scopes_json', 'TEXT'],
+        ['oauth_data_access_expires_at', 'DATETIME'],
+        ['oauth_connected', 'INTEGER DEFAULT 0'],
+        ['oauth_validated', 'INTEGER DEFAULT 0'],
+        ['oauth_connected_at', 'DATETIME'],
+        ['oauth_validated_at', 'DATETIME'],
+        ['oauth_relay_status', 'TEXT'],
+        ['oauth_relay_registered_at', 'DATETIME'],
+        ['oauth_relay_error', 'TEXT']
       ])
 
       // Agregar columnas de creative a meta_ads para previsualizar anuncios

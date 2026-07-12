@@ -930,7 +930,9 @@ async function clearAllData() {
     await db.run('DELETE FROM meta_ads');
     const paymentsCleanup = await clearHighLevelMirrorDataForLocationChange();
     logger.info(`Pagos HighLevel limpiados: ${paymentsCleanup.deletedPaymentMirrors} espejos borrados, ${paymentsCleanup.detachedLocalPayments} pagos locales desligados`);
-    await db.run('DELETE FROM meta_config');
+    // Meta es una integración local independiente. Desconectar/cambiar HighLevel
+    // jamás borra System User tokens ni OAuth/BISU, ni deja un relay central
+    // huérfano apuntando a una instalación que ya perdió su metadata.
 
     try {
       await db.run("DELETE FROM appointments WHERE COALESCE(source, 'ghl') = 'ghl' AND COALESCE(ghl_appointment_id, '') != ''");

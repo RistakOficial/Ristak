@@ -8,6 +8,7 @@ import { canRunBackgroundJob } from './licenseService.js'
 import { sendAppNotificationPayload } from './pushNotificationsService.js'
 import { logger } from '../utils/logger.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 
 const STORAGE_LIMIT_GB = Number(process.env.DATABASE_STORAGE_LIMIT_GB || 1)
 const STORAGE_WARNING_PERCENT = Number(process.env.DATABASE_STORAGE_WARNING_PERCENT || 80)
@@ -225,7 +226,7 @@ function sortNotifications(left, right) {
   return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
 }
 
-function buildMetaGraphUrl(path, params = {}, accessToken = '') {
+function buildMetaGraphUrl(path, params = {}, accessToken = '', appSecretProof = '') {
   const cleanPath = cleanString(path).replace(/^\//, '')
   const url = cleanPath.startsWith('http')
     ? new URL(cleanPath)
@@ -239,13 +240,21 @@ function buildMetaGraphUrl(path, params = {}, accessToken = '') {
   if (accessToken) {
     url.searchParams.set('access_token', accessToken)
   }
+  if (appSecretProof) {
+    url.searchParams.set('appsecret_proof', appSecretProof)
+  }
 
   return url
 }
 
-async function metaGraphGet(path, params = {}, accessToken = '') {
-  const url = buildMetaGraphUrl(path, params, accessToken)
-  const response = await fetch(url)
+async function metaGraphGet(path, params = {}, accessToken = '', appSecretProof = '') {
+  const url = buildMetaGraphUrl(path, params, accessToken, appSecretProof)
+  let response
+  try {
+    response = await fetch(url)
+  } catch (error) {
+    throw new Error(safeMetaGraphTransportError(error))
+  }
   const data = await response.json().catch(() => null)
 
   if (!response.ok || data?.error) {
@@ -260,12 +269,12 @@ async function metaGraphGet(path, params = {}, accessToken = '') {
   return data
 }
 
-async function metaGraphGetWithFieldFallback(path, fieldSets = [], params = {}, accessToken = '') {
+async function metaGraphGetWithFieldFallback(path, fieldSets = [], params = {}, accessToken = '', appSecretProof = '') {
   let lastError = null
 
   for (const fields of fieldSets) {
     try {
-      return await metaGraphGet(path, { ...params, fields }, accessToken)
+      return await metaGraphGet(path, { ...params, fields }, accessToken, appSecretProof)
     } catch (error) {
       lastError = error
       logger.warn(`Meta notification field fallback ${path}: ${error.message}`)
@@ -513,7 +522,7 @@ async function fetchMetaAccountOverview(metaConfig) {
     'id,name,account_id,account_status,disable_reason,currency,balance,amount_spent,spend_cap,is_prepay_account,failed_delivery_checks,funding_source,funding_source_details,user_access_expire_time,is_notifications_enabled,business',
     'id,name,account_id,account_status,disable_reason,currency,balance,amount_spent,spend_cap,is_prepay_account,failed_delivery_checks,business',
     'id,name,account_id,account_status,disable_reason,currency,business'
-  ], {}, metaConfig.access_token)
+  ], {}, metaConfig.access_token, metaConfig.oauth_appsecret_proof || '')
 }
 
 function createMetaAccountHealthNotifications(account, accountId) {
@@ -652,8 +661,8 @@ async function getMetaAccountNotifications(metaConfig) {
   }
 }
 
-async function fetchMetaBusinessEdge(businessId, edge, fields, accessToken, limit = 25) {
-  const data = await metaGraphGet(`${encodeURIComponent(businessId)}/${edge}`, { fields, limit }, accessToken)
+async function fetchMetaBusinessEdge(businessId, edge, fields, accessToken, appSecretProof = '', limit = 25) {
+  const data = await metaGraphGet(`${encodeURIComponent(businessId)}/${edge}`, { fields, limit }, accessToken, appSecretProof)
   return data?.data || []
 }
 
@@ -674,7 +683,7 @@ async function getMetaBusinessPortfolioNotifications(account, metaConfig) {
   try {
     const business = await metaGraphGet(`${encodeURIComponent(businessId)}`, {
       fields: 'id,name,verification_status'
-    }, metaConfig.access_token)
+    }, metaConfig.access_token, metaConfig.oauth_appsecret_proof || '')
 
     const businessName = business.name || extractMetaBusinessName(account) || 'Portafolio comercial'
     const verificationSeverity = getBusinessStatusSeverity(business.verification_status)
@@ -704,6 +713,7 @@ async function getMetaBusinessPortfolioNotifications(account, metaConfig) {
         edge,
         'id,name,account_id,account_status,disable_reason',
         metaConfig.access_token,
+        metaConfig.oauth_appsecret_proof || '',
         50
       )
 
@@ -739,6 +749,7 @@ async function getMetaBusinessPortfolioNotifications(account, metaConfig) {
       'owned_whatsapp_business_accounts',
       'id,name,account_review_status,business_verification_status',
       metaConfig.access_token,
+      metaConfig.oauth_appsecret_proof || '',
       25
     )
 
@@ -773,12 +784,12 @@ async function getMetaBusinessPortfolioNotifications(account, metaConfig) {
   return notifications
 }
 
-async function fetchMetaEntities(path, fields, params, accessToken) {
+async function fetchMetaEntities(path, fields, params, accessToken, appSecretProof = '') {
   const data = await metaGraphGet(path, {
     ...params,
     fields,
     limit: META_ENTITY_LIMIT
-  }, accessToken)
+  }, accessToken, appSecretProof)
   return data?.data || []
 }
 
@@ -857,11 +868,11 @@ async function getMetaDeliveryNotifications(metaConfig) {
   for (const config of entityConfigs) {
     try {
       const filtering = JSON.stringify([{ field: 'effective_status', operator: 'IN', value: config.statuses }])
-      let rows = await fetchMetaEntities(config.path, config.fields, { filtering }, metaConfig.access_token)
+      let rows = await fetchMetaEntities(config.path, config.fields, { filtering }, metaConfig.access_token, metaConfig.oauth_appsecret_proof || '')
       rows = rows.filter(shouldNotifyMetaEntity)
 
       if (!rows.length) {
-        const unfiltered = await fetchMetaEntities(config.path, config.fields, {}, metaConfig.access_token)
+        const unfiltered = await fetchMetaEntities(config.path, config.fields, {}, metaConfig.access_token, metaConfig.oauth_appsecret_proof || '')
         rows = unfiltered.filter(shouldNotifyMetaEntity)
       }
 
@@ -894,7 +905,7 @@ async function getMetaActivityNotifications(metaConfig) {
     ], {
       since,
       limit: META_ACTIVITY_LIMIT
-    }, metaConfig.access_token)
+    }, metaConfig.access_token, metaConfig.oauth_appsecret_proof || '')
 
     const problemActivities = (data?.data || [])
       .filter((activity) => META_PROBLEM_ACTIVITY_PATTERN.test(JSON.stringify(activity)))

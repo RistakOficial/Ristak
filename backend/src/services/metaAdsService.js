@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js'
 import { encrypt, decrypt, isEncrypted } from '../utils/encryption.js'
 import { API_URLS, META_INSIGHTS_FIELDS, PAGINATION } from '../config/constants.js'
 import { splitDateRangeIntoMonths, formatDate, daysAgo } from '../utils/dateUtils.js'
+import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 
 // Variable global para trackear el estado de sincronización
 let syncProgress = {
@@ -318,7 +319,7 @@ function normalizeMetaAdAccountId(accountId) {
   return normalizeId(accountId)?.replace(/^act_/i, '') || null
 }
 
-async function fetchMetaAdImagesByHash(accountId, imageHashes, accessToken) {
+async function fetchMetaAdImagesByHash(accountId, imageHashes, accessToken, appSecretProof = '') {
   const cleanAccountId = normalizeMetaAdAccountId(accountId)
   const uniqueHashes = [...new Set(imageHashes.map(normalizeId).filter(Boolean))]
   const adImagesByHash = new Map()
@@ -334,6 +335,7 @@ async function fetchMetaAdImagesByHash(accountId, imageHashes, accessToken) {
         hashes: JSON.stringify(chunk),
         access_token: accessToken
       })
+      if (appSecretProof) params.set('appsecret_proof', appSecretProof)
       const response = await fetch(`${API_URLS.META_GRAPH}/act_${cleanAccountId}/adimages?${params.toString()}`)
       const data = await response.json()
 
@@ -355,7 +357,7 @@ async function fetchMetaAdImagesByHash(accountId, imageHashes, accessToken) {
         })
       })
     } catch (error) {
-      logger.warn(`Error resolviendo imágenes de Meta por hash: ${error.message}`)
+      logger.warn(`Error resolviendo imágenes de Meta por hash: ${safeMetaGraphTransportError(error)}`)
     }
   }
 
@@ -410,7 +412,7 @@ function extractCreativeMedia(creative = {}, videoMediaById = new Map(), adImage
   }
 }
 
-async function fetchMetaVideoMedia(videoIds, accessToken) {
+async function fetchMetaVideoMedia(videoIds, accessToken, appSecretProof = '') {
   const uniqueVideoIds = [...new Set(videoIds.map(normalizeId).filter(Boolean))]
   const videoMediaById = new Map()
 
@@ -425,6 +427,7 @@ async function fetchMetaVideoMedia(videoIds, accessToken) {
         fields: META_VIDEO_FIELDS,
         access_token: accessToken
       })
+      if (appSecretProof) params.set('appsecret_proof', appSecretProof)
       const response = await fetch(`${API_URLS.META_GRAPH}?${params.toString()}`)
       const data = await response.json()
 
@@ -444,14 +447,14 @@ async function fetchMetaVideoMedia(videoIds, accessToken) {
         })
       })
     } catch (error) {
-      logger.warn(`Error obteniendo video media de Meta: ${error.message}`)
+      logger.warn(`Error obteniendo video media de Meta: ${safeMetaGraphTransportError(error)}`)
     }
   }
 
   return videoMediaById
 }
 
-async function fetchMetaCreativesForAds(adIds, accessToken, accountId = null) {
+async function fetchMetaCreativesForAds(adIds, accessToken, accountId = null, appSecretProof = '') {
   const uniqueAdIds = [...new Set(adIds.map(normalizeId).filter(Boolean))]
   const rawCreativesByAdId = new Map()
 
@@ -466,6 +469,7 @@ async function fetchMetaCreativesForAds(adIds, accessToken, accountId = null) {
         fields: `id,creative{${META_AD_CREATIVE_FIELDS}}`,
         access_token: accessToken
       })
+      if (appSecretProof) params.set('appsecret_proof', appSecretProof)
       const response = await fetch(`${API_URLS.META_GRAPH}?${params.toString()}`)
       const data = await response.json()
 
@@ -480,14 +484,14 @@ async function fetchMetaCreativesForAds(adIds, accessToken, accountId = null) {
         }
       })
     } catch (error) {
-      logger.warn(`Error obteniendo creatives de Meta: ${error.message}`)
+      logger.warn(`Error obteniendo creatives de Meta: ${safeMetaGraphTransportError(error)}`)
     }
   }
 
   const videoIds = [...rawCreativesByAdId.values()].map(getCreativeVideoId).filter(Boolean)
   const imageHashes = [...rawCreativesByAdId.values()].flatMap(getCreativeImageHashes)
-  const videoMediaById = await fetchMetaVideoMedia(videoIds, accessToken)
-  const adImagesByHash = await fetchMetaAdImagesByHash(accountId, imageHashes, accessToken)
+  const videoMediaById = await fetchMetaVideoMedia(videoIds, accessToken, appSecretProof)
+  const adImagesByHash = await fetchMetaAdImagesByHash(accountId, imageHashes, accessToken, appSecretProof)
   const creativeMediaByAdId = new Map()
 
   rawCreativesByAdId.forEach((creative, adId) => {
@@ -498,12 +502,12 @@ async function fetchMetaCreativesForAds(adIds, accessToken, accountId = null) {
   return creativeMediaByAdId
 }
 
-export async function fetchMetaCreativeMediaForAds(adIds, accessToken, accountId = null) {
-  return fetchMetaCreativesForAds(adIds, accessToken, accountId)
+export async function fetchMetaCreativeMediaForAds(adIds, accessToken, accountId = null, appSecretProof = '') {
+  return fetchMetaCreativesForAds(adIds, accessToken, accountId, appSecretProof)
 }
 
-export async function fetchMetaCreativeMediaForAd(adId, accessToken, accountId = null) {
-  const mediaByAdId = await fetchMetaCreativesForAds([adId], accessToken, accountId)
+export async function fetchMetaCreativeMediaForAd(adId, accessToken, accountId = null, appSecretProof = '') {
+  const mediaByAdId = await fetchMetaCreativesForAds([adId], accessToken, accountId, appSecretProof)
   return mediaByAdId.get(String(adId)) || null
 }
 
@@ -546,6 +550,9 @@ export async function getMetaConfig() {
 
     await decryptMetaConfigSecret(config, 'access_token', 'token principal')
     await decryptMetaConfigSecret(config, 'messenger_user_token', 'User Token de Messenger')
+    await decryptMetaConfigSecret(config, 'oauth_appsecret_proof', 'appsecret_proof OAuth')
+    await decryptMetaConfigSecret(config, 'oauth_page_access_token', 'Page token OAuth')
+    await decryptMetaConfigSecret(config, 'oauth_page_appsecret_proof', 'Page appsecret_proof OAuth')
 
     // También desencriptar app_secret si existe
     if (config.app_secret && isEncrypted(config.app_secret)) {
@@ -619,19 +626,20 @@ export async function getMetaDeveloperSetup() {
     }
   }
 
-  let appId = normalizeId(config.app_id) || ''
-  let businessId = normalizeId(config.meta_business_id) || ''
+  const connectionMode = normalizeMetaConnectionMode(config.connection_mode)
+  let appId = normalizeId(config.oauth_app_id || config.app_id) || ''
+  let businessId = normalizeId(config.oauth_business_id || config.meta_business_id) || ''
 
   if (!appId) {
-    const tokenStatus = await verifyMetaToken(config.access_token)
+    const tokenStatus = await verifyMetaToken(config.access_token, config.oauth_appsecret_proof || '')
     if (tokenStatus.valid) appId = normalizeId(tokenStatus.appId) || ''
   }
 
   if (appId && !businessId) {
     try {
-      const response = await fetch(
-        `${API_URLS.META_GRAPH}/${encodeURIComponent(appId)}?fields=business&access_token=${encodeURIComponent(config.access_token)}`
-      )
+      const params = new URLSearchParams({ fields: 'business', access_token: config.access_token })
+      if (config.oauth_appsecret_proof) params.set('appsecret_proof', config.oauth_appsecret_proof)
+      const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(appId)}?${params.toString()}`)
       const data = await response.json().catch(() => ({}))
       if (!response.ok || data?.error) {
         logger.warn(`Meta no devolvió el portafolio para abrir Developers: ${data?.error?.message || response.status}`)
@@ -639,7 +647,7 @@ export async function getMetaDeveloperSetup() {
         businessId = normalizeId(data?.business?.id) || ''
       }
     } catch (error) {
-      logger.warn(`No se pudo obtener el portafolio de Meta Developers: ${error.message}`)
+      logger.warn(`No se pudo obtener el portafolio de Meta Developers: ${safeMetaGraphTransportError(error)}`)
     }
   }
 
@@ -670,7 +678,9 @@ export async function getMetaDeveloperSetup() {
       selectedTab: 'API-Setup',
       productRoute: 'instagram-business'
     }),
-    messengerUserTokenConfigured: Boolean(normalizeId(config.messenger_user_token))
+    // El BISU token OAuth ya es el token humano/de integración autorizado para
+    // derivar el Page token; no se duplica en messenger_user_token.
+    messengerUserTokenConfigured: connectionMode === 'oauth_bisu' || Boolean(normalizeId(config.messenger_user_token))
   }
 }
 
@@ -695,7 +705,11 @@ export async function saveMetaAccessToken(accessToken) {
   }
 
   const encryptedToken = isEncrypted(normalizedToken) ? normalizedToken : encrypt(normalizedToken)
-  const existing = await db.get('SELECT id FROM meta_config ORDER BY id LIMIT 1')
+  const existing = await db.get('SELECT id, connection_mode FROM meta_config ORDER BY id LIMIT 1')
+
+  if (existing?.id && normalizeMetaConnectionMode(existing.connection_mode) === 'oauth_bisu') {
+    throw new Error('El token OAuth de Meta sólo se reemplaza mediante el flujo seguro del Installer.')
+  }
 
   if (existing?.id) {
     await db.run(
@@ -715,10 +729,15 @@ export async function saveMetaAccessToken(accessToken) {
 /**
  * Obtiene información de timezone de la cuenta de Meta Ads
  */
-async function getAdAccountTimezone(adAccountId, accessToken) {
+async function getAdAccountTimezone(adAccountId, accessToken, appSecretProof = '') {
   try {
     const accountIdClean = adAccountId.replace('act_', '')
-    const url = `${API_URLS.META_GRAPH}/act_${accountIdClean}?fields=timezone_id,timezone_name,timezone_offset_hours_utc&access_token=${accessToken}`
+    const params = new URLSearchParams({
+      fields: 'timezone_id,timezone_name,timezone_offset_hours_utc',
+      access_token: accessToken
+    })
+    if (appSecretProof) params.set('appsecret_proof', appSecretProof)
+    const url = `${API_URLS.META_GRAPH}/act_${accountIdClean}?${params.toString()}`
 
     const response = await fetch(url)
     const data = await response.json()
@@ -734,7 +753,7 @@ async function getAdAccountTimezone(adAccountId, accessToken) {
       timezone_offset_hours_utc: data.timezone_offset_hours_utc || null
     }
   } catch (error) {
-    logger.warn('Error obteniendo timezone de cuenta Meta:', error.message)
+    logger.warn('Error obteniendo timezone de cuenta Meta:', safeMetaGraphTransportError(error))
     return null
   }
 }
@@ -866,33 +885,76 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pageId = 
  * CAPI usa siempre System User Token.
  * CREA/ACTUALIZA custom values en HighLevel automáticamente
  */
-export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pageId = null, instagramAccountId = null) {
+export function normalizeMetaConnectionMode(value = '') {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === 'oauth_user' || normalized === 'oauth_bisu'
+    ? 'oauth_bisu'
+    : 'manual_system_user'
+}
+
+function jsonArray(value) {
+  return JSON.stringify(Array.isArray(value) ? value : [])
+}
+
+function encryptOptionalMetaSecret(value) {
+  const normalized = normalizeId(value)
+  if (!normalized) return null
+  return isEncrypted(normalized) ? normalized : encrypt(normalized)
+}
+
+export async function saveMetaConfig(
+  adAccountId,
+  accessToken,
+  pixelId = null,
+  pageId = null,
+  instagramAccountId = null,
+  options = {}
+) {
   try {
+    const connectionMode = normalizeMetaConnectionMode(options.connectionMode)
+    const isOAuth = connectionMode === 'oauth_bisu'
+    const allowOAuthToManual = options.allowOAuthToManual === true
+    const normalizedAccessToken = normalizeId(accessToken)
+    if (!normalizedAccessToken) throw new Error('Falta el token de acceso de Meta')
+
+    const initialMetaConfig = await db.get('SELECT connection_mode FROM meta_config ORDER BY id LIMIT 1')
+    if (
+      !isOAuth && !allowOAuthToManual &&
+      ['oauth_bisu', 'oauth_user'].includes(String(initialMetaConfig?.connection_mode || '').trim().toLowerCase())
+    ) {
+      const error = new Error('Desconecta Meta OAuth antes de guardar un System User Token manual.')
+      error.code = 'META_OAUTH_MANUAL_REPLACEMENT_REQUIRES_DISCONNECT'
+      error.statusCode = 409
+      throw error
+    }
+
     // Encriptar el access_token
-    const encryptedToken = encrypt(accessToken)
+    const encryptedToken = isEncrypted(normalizedAccessToken)
+      ? normalizedAccessToken
+      : encrypt(normalizedAccessToken)
     logger.info('Token de Meta encriptado correctamente')
 
     // Obtener timezone de la cuenta de Meta
-    logger.info('Obteniendo timezone de la cuenta de Meta...')
-    const timezoneData = await getAdAccountTimezone(adAccountId, accessToken)
+    let timezoneData = options.timezoneData && typeof options.timezoneData === 'object'
+      ? options.timezoneData
+      : null
+    if (normalizeId(adAccountId) && !timezoneData) {
+      logger.info('Obteniendo timezone de la cuenta de Meta...')
+      timezoneData = await getAdAccountTimezone(
+        adAccountId,
+        normalizedAccessToken,
+        normalizeId(options.appSecretProof || options.oauthAppSecretProof) || ''
+      )
+    }
 
     if (timezoneData) {
       logger.info(`Timezone detectado: ${timezoneData.timezone_name} (ID: ${timezoneData.timezone_id}, Offset: ${timezoneData.timezone_offset_hours_utc}h)`)
     }
 
-    // IMPORTANTE: Solo permitir 1 configuración de Meta en la base de datos
-    // Eliminar cualquier configuración existente antes de insertar la nueva
-    const existingCount = await db.get('SELECT COUNT(*) as count FROM meta_config')
-    const existingMetaConfig = await db.get(
-      `SELECT page_id, instagram_account_id, app_id, meta_business_id, messenger_user_token
-       FROM meta_config
-       LIMIT 1`
-    )
-
-    if (existingCount && existingCount.count > 0) {
-      logger.info('Eliminando configuración de Meta existente (solo se permite 1)')
-      await db.run('DELETE FROM meta_config')
-    }
+    // Sólo existe una conexión activa, pero se actualiza in-place. El DELETE +
+    // INSERT anterior tiraba metadata OAuth, expiraciones y estado del relay al
+    // renovar un token o cambiar un activo.
+    const existingMetaConfig = await db.get('SELECT * FROM meta_config ORDER BY id LIMIT 1')
 
     // Renovar el System User Token no debe borrar el User Token de Messenger ni
     // los IDs que usan los enlaces de Meta Developers. La excepción es cuando
@@ -900,30 +962,123 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     // debe volver a confirmarse antes de habilitar Messenger en la nueva.
     const previousPageId = normalizeId(existingMetaConfig?.page_id)
     const nextPageId = normalizeId(pageId)
-    const messengerTokenForNextConfig = previousPageId && nextPageId && previousPageId !== nextPageId
+    const messengerTokenForNextConfig = isOAuth
       ? null
-      : existingMetaConfig?.messenger_user_token || null
-    await db.run(`
-      INSERT INTO meta_config (
-        ad_account_id, access_token, app_id, meta_business_id, messenger_user_token,
-        pixel_id, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      adAccountId,
-      encryptedToken,
-      existingMetaConfig?.app_id || null,
-      existingMetaConfig?.meta_business_id || null,
-      messengerTokenForNextConfig,
-      pixelId,
-      pageId,
-      instagramAccountId,
-      timezoneData?.timezone_id,
-      timezoneData?.timezone_name,
-      timezoneData?.timezone_offset_hours_utc
-    ])
+      : previousPageId && nextPageId && previousPageId !== nextPageId
+        ? null
+        : existingMetaConfig?.messenger_user_token || null
+    const nowIso = new Date().toISOString()
+    const metadata = {
+      appId: isOAuth
+        ? normalizeId(options.oauthAppId || options.appId)
+        : existingMetaConfig?.app_id || null,
+      appSecret: isOAuth ? null : existingMetaConfig?.app_secret || null,
+      businessId: isOAuth
+        ? normalizeId(options.oauthBusinessId || options.businessId)
+        : existingMetaConfig?.meta_business_id || null,
+      tokenExpiresAt: options.tokenExpiresAt ?? existingMetaConfig?.token_expires_at ?? null,
+      oauthConnectionId: isOAuth ? normalizeId(options.oauthConnectionId || options.connectionId) : null,
+      oauthUserId: isOAuth ? normalizeId(options.oauthUserId || options.userId) : null,
+      oauthUserName: isOAuth ? normalizeId(options.oauthUserName || options.userName) : null,
+      oauthAppId: isOAuth ? normalizeId(options.oauthAppId || options.appId) : null,
+      oauthBusinessId: isOAuth ? normalizeId(options.oauthBusinessId || options.businessId) : null,
+      oauthConfigId: isOAuth ? normalizeId(options.oauthConfigId || options.configId) : null,
+      oauthAppSecretProof: isOAuth
+        ? encryptOptionalMetaSecret(options.appSecretProof || options.oauthAppSecretProof)
+        : null,
+      oauthPageAccessToken: isOAuth
+        ? encryptOptionalMetaSecret(options.pageAccessToken || options.oauthPageAccessToken)
+        : null,
+      oauthPageAppSecretProof: isOAuth
+        ? encryptOptionalMetaSecret(options.pageAppSecretProof || options.oauthPageAppSecretProof)
+        : null,
+      grantedScopes: isOAuth ? options.grantedScopes : [],
+      missingScopes: isOAuth ? options.missingScopes : [],
+      granularScopes: isOAuth ? options.granularScopes : [],
+      dataAccessExpiresAt: isOAuth ? options.dataAccessExpiresAt || null : null,
+      connected: isOAuth ? 1 : 0,
+      validated: isOAuth ? (options.validated === false ? 0 : 1) : 0,
+      connectedAt: isOAuth ? options.connectedAt || nowIso : null,
+      validatedAt: isOAuth && options.validated !== false ? options.validatedAt || nowIso : null,
+      relayStatus: isOAuth ? normalizeId(options.relayStatus) || 'pending' : null,
+      relayRegisteredAt: isOAuth ? options.relayRegisteredAt || null : null,
+      relayError: isOAuth ? normalizeId(options.relayError) : null
+    }
 
-    logger.success('Configuración de Meta guardada en BD local (System User Token + Pixel)')
+    const values = [
+      normalizeId(adAccountId), encryptedToken, connectionMode,
+      metadata.appId, metadata.appSecret, messengerTokenForNextConfig, metadata.businessId,
+      normalizeId(pixelId), normalizeId(pageId), normalizeId(instagramAccountId), metadata.tokenExpiresAt,
+      timezoneData?.timezone_id ?? existingMetaConfig?.timezone_id ?? null,
+      timezoneData?.timezone_name ?? existingMetaConfig?.timezone_name ?? null,
+      timezoneData?.timezone_offset_hours_utc ?? existingMetaConfig?.timezone_offset_hours_utc ?? null,
+      metadata.oauthConnectionId, metadata.oauthUserId, metadata.oauthUserName,
+      metadata.oauthAppId, metadata.oauthBusinessId, metadata.oauthConfigId,
+      metadata.oauthAppSecretProof, metadata.oauthPageAccessToken, metadata.oauthPageAppSecretProof,
+      jsonArray(metadata.grantedScopes), jsonArray(metadata.missingScopes), jsonArray(metadata.granularScopes),
+      metadata.dataAccessExpiresAt, metadata.connected, metadata.validated,
+      metadata.connectedAt, metadata.validatedAt, metadata.relayStatus,
+      metadata.relayRegisteredAt, metadata.relayError
+    ]
+
+    if (existingMetaConfig?.id) {
+      const updateResult = await db.run(`
+        UPDATE meta_config SET
+          ad_account_id = ?, access_token = ?, connection_mode = ?,
+          app_id = ?, app_secret = ?, messenger_user_token = ?, meta_business_id = ?,
+          pixel_id = ?, page_id = ?, instagram_account_id = ?, token_expires_at = ?,
+          timezone_id = ?, timezone_name = ?, timezone_offset_hours_utc = ?,
+          oauth_connection_id = ?, oauth_user_id = ?, oauth_user_name = ?,
+          oauth_app_id = ?, oauth_business_id = ?, oauth_config_id = ?,
+          oauth_appsecret_proof = ?, oauth_page_access_token = ?, oauth_page_appsecret_proof = ?,
+          oauth_granted_scopes_json = ?, oauth_missing_scopes_json = ?, oauth_granular_scopes_json = ?,
+          oauth_data_access_expires_at = ?, oauth_connected = ?, oauth_validated = ?,
+          oauth_connected_at = ?, oauth_validated_at = ?, oauth_relay_status = ?,
+          oauth_relay_registered_at = ?, oauth_relay_error = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?${!isOAuth && !allowOAuthToManual
+          ? " AND COALESCE(connection_mode, 'manual_system_user') NOT IN ('oauth_bisu', 'oauth_user')"
+          : ''}
+      `, [...values, existingMetaConfig.id])
+      if (!Number(updateResult?.rowCount ?? updateResult?.changes ?? 0)) {
+        const current = await db.get('SELECT connection_mode FROM meta_config ORDER BY id LIMIT 1')
+        if (['oauth_bisu', 'oauth_user'].includes(String(current?.connection_mode || '').trim().toLowerCase())) {
+          const error = new Error('La conexión cambió a OAuth mientras se guardaba Meta; no se sobrescribió.')
+          error.code = 'META_OAUTH_MANUAL_REPLACEMENT_REQUIRES_DISCONNECT'
+          error.statusCode = 409
+          throw error
+        }
+        throw new Error('La configuración de Meta cambió mientras se guardaba. Intenta de nuevo.')
+      }
+    } else {
+      const insertResult = await db.run(`
+        INSERT INTO meta_config (
+          ad_account_id, access_token, connection_mode,
+          app_id, app_secret, messenger_user_token, meta_business_id,
+          pixel_id, page_id, instagram_account_id, token_expires_at,
+          timezone_id, timezone_name, timezone_offset_hours_utc,
+          oauth_connection_id, oauth_user_id, oauth_user_name,
+          oauth_app_id, oauth_business_id, oauth_config_id,
+          oauth_appsecret_proof, oauth_page_access_token, oauth_page_appsecret_proof,
+          oauth_granted_scopes_json, oauth_missing_scopes_json, oauth_granular_scopes_json,
+          oauth_data_access_expires_at, oauth_connected, oauth_validated,
+          oauth_connected_at, oauth_validated_at, oauth_relay_status,
+          oauth_relay_registered_at, oauth_relay_error
+        ) SELECT ${values.map(() => '?').join(', ')}
+        WHERE NOT EXISTS (SELECT 1 FROM meta_config)
+      `, values)
+      if (!Number(insertResult?.rowCount ?? insertResult?.changes ?? 0)) {
+        const current = await db.get('SELECT connection_mode FROM meta_config ORDER BY id LIMIT 1')
+        if (['oauth_bisu', 'oauth_user'].includes(String(current?.connection_mode || '').trim().toLowerCase())) {
+          const error = new Error('La conexión cambió a OAuth mientras se guardaba Meta; no se sobrescribió.')
+          error.code = 'META_OAUTH_MANUAL_REPLACEMENT_REQUIRES_DISCONNECT'
+          error.statusCode = 409
+          throw error
+        }
+        throw new Error('La configuración de Meta cambió mientras se guardaba. Intenta de nuevo.')
+      }
+    }
+
+    logger.success(`Configuración de Meta guardada en BD local (${connectionMode} + Pixel)`)
 
     await syncMetaSocialChannelDefaults({
       previousPageId: existingMetaConfig?.page_id,
@@ -933,7 +1088,7 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     })
 
     const conversionEventsResult = await ensureMetaConversionEventsEnabledForConnectedPixel({
-      accessToken,
+      accessToken: normalizedAccessToken,
       pixelId
     })
     if (conversionEventsResult.enabled) {
@@ -941,11 +1096,13 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     }
 
     // Sincronizar custom values en HighLevel (no bloquear si falla)
-    syncMetaCustomValues(adAccountId, accessToken, pixelId, pageId, instagramAccountId).catch(err => {
-      logger.warn('No se pudieron sincronizar custom values de Meta en HighLevel:', err.message)
-    })
+    if (!isOAuth) {
+      syncMetaCustomValues(adAccountId, normalizedAccessToken, pixelId, pageId, instagramAccountId).catch(err => {
+        logger.warn('No se pudieron sincronizar custom values de Meta en HighLevel:', err.message)
+      })
+    }
 
-    return { success: true, capiCredential: 'system_user_token' }
+    return { success: true, capiCredential: isOAuth ? 'oauth_bisu' : 'system_user_token', connectionMode }
   } catch (error) {
     logger.error('Error guardando configuración de Meta:', error.message)
     throw error
@@ -955,12 +1112,21 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
 /**
  * Obtiene insights de ads de Meta para un rango de fechas
  */
-async function fetchMetaAdsInsights(accountId, accessToken, sinceDate, untilDate) {
+async function fetchMetaAdsInsights(accountId, accessToken, sinceDate, untilDate, appSecretProof = '') {
   try {
     let allAds = []
     let nextUrl = null
 
-    const initialUrl = `${API_URLS.META_AD_INSIGHTS(accountId.replace('act_', ''))}?level=ad&time_increment=1&fields=${META_INSIGHTS_FIELDS}&time_range=${JSON.stringify({ since: sinceDate, until: untilDate })}&limit=${PAGINATION.META_ADS_LIMIT}&access_token=${accessToken}`
+    const params = new URLSearchParams({
+      level: 'ad',
+      time_increment: '1',
+      fields: META_INSIGHTS_FIELDS,
+      time_range: JSON.stringify({ since: sinceDate, until: untilDate }),
+      limit: String(PAGINATION.META_ADS_LIMIT),
+      access_token: accessToken
+    })
+    if (appSecretProof) params.set('appsecret_proof', appSecretProof)
+    const initialUrl = `${API_URLS.META_AD_INSIGHTS(accountId.replace('act_', ''))}?${params.toString()}`
 
     nextUrl = initialUrl
 
@@ -986,8 +1152,9 @@ async function fetchMetaAdsInsights(accountId, accessToken, sinceDate, untilDate
 
     return allAds
   } catch (error) {
-    logger.error('Error obteniendo insights de Meta:', error.message)
-    throw error
+    const safeError = safeMetaGraphTransportError(error)
+    logger.error('Error obteniendo insights de Meta:', safeError)
+    throw new Error(safeError)
   }
 }
 
@@ -1116,7 +1283,7 @@ export async function syncMetaAds(startDate, onProgress = null) {
 
     // ✅ VALIDAR TOKEN ANTES DE INICIAR SYNC
     logger.info('Validando token de Meta antes de sincronizar...')
-    const tokenValidation = await verifyMetaToken(access_token)
+    const tokenValidation = await verifyMetaToken(access_token, config.oauth_appsecret_proof || '')
 
     if (!tokenValidation.valid) {
       const errorMsg = tokenValidation.error || 'Token inválido o expirado'
@@ -1183,7 +1350,13 @@ export async function syncMetaAds(startDate, onProgress = null) {
         })
       }
 
-      const ads = await fetchMetaAdsInsights(ad_account_id, access_token, chunk.since, chunk.until)
+      const ads = await fetchMetaAdsInsights(
+        ad_account_id,
+        access_token,
+        chunk.since,
+        chunk.until,
+        config.oauth_appsecret_proof || ''
+      )
 
       logger.info(`Mes ${i + 1}/${dateChunks.length}: ${ads.length} ads obtenidos`)
 
@@ -1191,7 +1364,12 @@ export async function syncMetaAds(startDate, onProgress = null) {
       const missingCreativeAdIds = adIds.filter(adId => !creativeMediaCache.has(adId))
 
       if (missingCreativeAdIds.length > 0) {
-        const fetchedCreativeMedia = await fetchMetaCreativesForAds(missingCreativeAdIds, access_token, ad_account_id)
+        const fetchedCreativeMedia = await fetchMetaCreativesForAds(
+          missingCreativeAdIds,
+          access_token,
+          ad_account_id,
+          config.oauth_appsecret_proof || ''
+        )
         missingCreativeAdIds.forEach(adId => {
           creativeMediaCache.set(adId, fetchedCreativeMedia.get(adId) || null)
         })
@@ -1322,7 +1500,7 @@ export async function updateRecentAds() {
     const { ad_account_id, access_token } = config
 
     // ✅ VALIDAR TOKEN (silenciosamente en el cron)
-    const tokenValidation = await verifyMetaToken(access_token)
+    const tokenValidation = await verifyMetaToken(access_token, config.oauth_appsecret_proof || '')
 
     if (!tokenValidation.valid) {
       logger.error(`❌ Token de Meta inválido en cron job: ${tokenValidation.error}`)
@@ -1350,7 +1528,8 @@ export async function updateRecentAds() {
       ad_account_id,
       access_token,
       recentSince,
-      recentUntil
+      recentUntil,
+      config.oauth_appsecret_proof || ''
     )
 
     logger.info(`${ads.length} ads obtenidos para actualización`)
@@ -1364,7 +1543,8 @@ export async function updateRecentAds() {
       ? await fetchMetaCreativesForAds(
           ads.map(ad => ad.ad_id),
           access_token,
-          ad_account_id
+          ad_account_id,
+          config.oauth_appsecret_proof || ''
         )
       : new Map()
     await saveAdsToDatabase(ads, ad_account_id, creativeMediaByAdId, {
@@ -1389,24 +1569,39 @@ export async function updateRecentAds() {
       step: 'Error actualizando Meta Ads recientes',
       total: 0,
       current: 0,
-      message: error.message,
+      message: safeMetaGraphTransportError(error),
       monthsTotal: 0,
       monthsCurrent: 0
     }
 
-    logger.error('Error actualizando ads recientes:', error.message)
-    return { success: false, error: error.message }
+    const safeError = safeMetaGraphTransportError(error)
+    logger.error('Error actualizando ads recientes:', safeError)
+    return { success: false, error: safeError }
   }
 }
 
 /**
  * Verifica si el token de Meta es válido
  */
-export async function verifyMetaToken(accessToken) {
+export async function verifyMetaToken(accessToken, appSecretProof = '') {
   try {
-    const response = await fetch(
-      `${API_URLS.META_TOKEN_DEBUG}?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`
-    )
+    if (appSecretProof) {
+      const params = new URLSearchParams({
+        fields: 'id',
+        access_token: accessToken,
+        appsecret_proof: appSecretProof
+      })
+      const response = await fetch(`${API_URLS.META_GRAPH}/me?${params.toString()}`)
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || data?.error || !data?.id) {
+        return { valid: false, error: data?.error?.message || `Meta respondió ${response.status}` }
+      }
+      return { valid: true, userId: data.id, appId: null, expiresAt: null }
+    }
+
+    const params = new URLSearchParams({ input_token: accessToken, access_token: accessToken })
+    if (appSecretProof) params.set('appsecret_proof', appSecretProof)
+    const response = await fetch(`${API_URLS.META_TOKEN_DEBUG}?${params.toString()}`)
     const data = await response.json()
 
     if (data.error) {
@@ -1423,7 +1618,8 @@ export async function verifyMetaToken(accessToken) {
       appId: normalizeId(data.data?.app_id) || ''
     }
   } catch (error) {
-    logger.error('Error verificando token de Meta:', error.message)
-    return { valid: false, error: error.message }
+    const safeError = safeMetaGraphTransportError(error)
+    logger.error('Error verificando token de Meta:', safeError)
+    return { valid: false, error: safeError }
   }
 }

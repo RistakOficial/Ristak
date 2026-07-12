@@ -9,6 +9,7 @@ import { sendPaymentNotification } from './pushNotificationsService.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { NO_TRACK_REASON, shouldSkipTracking } from '../utils/noTracking.js'
+import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { getActiveMetaTestEventCode, isMetaTestModeActive } from '../utils/metaTestCode.js'
 import {
   mergeContactCustomFields,
@@ -768,6 +769,14 @@ const IMPORTED_CONTACT_CUSTOM_FIELD_KEYS = new Set([
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function buildMetaCapiRequestUrl(datasetId, accessToken, metaConfig = {}) {
+  const params = new URLSearchParams({ access_token: accessToken })
+  if (metaConfig?.oauth_appsecret_proof) {
+    params.set('appsecret_proof', metaConfig.oauth_appsecret_proof)
+  }
+  return `${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?${params.toString()}`
 }
 
 const LEGACY_UUID_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -26817,7 +26826,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   }
 
   try {
-    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+    const response = await fetch(buildMetaCapiRequestUrl(datasetId, accessToken, metaConfig), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -26840,6 +26849,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
 
     return { sent: true, eventId, eventName, customData, responsePayload }
   } catch (error) {
+    const safeError = safeMetaGraphTransportError(error)
     await logMetaEvent({
       contactId,
       eventType,
@@ -26847,9 +26857,9 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
       eventId,
       status: 'error',
       requestPayload: payload,
-      errorMessage: error.message
+      errorMessage: safeError
     })
-    return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName, customData }
+    return { sent: false, reason: 'meta_error', error: safeError, eventId, eventName, customData }
   }
 }
 
@@ -26934,7 +26944,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
   }
 
   try {
-    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+    const response = await fetch(buildMetaCapiRequestUrl(datasetId, accessToken, metaConfig), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -26957,6 +26967,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
 
     return { sent: true, eventId, eventName, responsePayload }
   } catch (error) {
+    const safeError = safeMetaGraphTransportError(error)
     await logMetaEvent({
       contactId,
       eventType: 'site_page_view',
@@ -26964,9 +26975,9 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
       eventId,
       status: 'error',
       requestPayload: payload,
-      errorMessage: error.message
+      errorMessage: safeError
     })
-    return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName }
+    return { sent: false, reason: 'meta_error', error: safeError, eventId, eventName }
   }
 }
 
@@ -27099,7 +27110,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
   }
 
   try {
-    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+    const response = await fetch(buildMetaCapiRequestUrl(datasetId, accessToken, metaConfig), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -27148,6 +27159,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
       responsePayload
     }
   } catch (error) {
+    const safeError = safeMetaGraphTransportError(error)
     await logMetaEvent({
       contactId,
       eventType: 'calendar_appointment_booked',
@@ -27155,9 +27167,9 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
       eventId,
       status: 'error',
       requestPayload: payload,
-      errorMessage: error.message
+      errorMessage: safeError
     })
-    return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName: config.eventName }
+    return { sent: false, reason: 'meta_error', error: safeError, eventId, eventName: config.eventName }
   }
 }
 
@@ -27249,7 +27261,7 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
   }
 
   try {
-    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+    const response = await fetch(buildMetaCapiRequestUrl(datasetId, accessToken, metaConfig), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -27272,6 +27284,7 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
 
     return { sent: true, eventId, eventName, responsePayload }
   } catch (error) {
+    const safeError = safeMetaGraphTransportError(error)
     await logMetaEvent({
       contactId,
       eventType: 'site_video_action',
@@ -27279,9 +27292,9 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
       eventId,
       status: 'error',
       requestPayload: payload,
-      errorMessage: error.message
+      errorMessage: safeError
     })
-    return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName }
+    return { sent: false, reason: 'meta_error', error: safeError, eventId, eventName }
   }
 }
 

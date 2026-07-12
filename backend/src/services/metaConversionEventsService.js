@@ -12,6 +12,7 @@ import { parseContactCustomFields } from '../utils/contactCustomFields.js'
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { applyWhatsAppQrPaidLabelForContact } from './whatsappQrService.js'
+import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import {
   resolveConversionAttribution,
   persistPaymentConversionAttribution,
@@ -1133,6 +1134,7 @@ async function getMetaCapiConfig() {
   return {
     datasetId,
     accessToken,
+    appSecretProof: cleanString(metaConfig?.oauth_appsecret_proof),
     testEventCode,
     pageId,
     whatsappBusinessAccountId
@@ -1360,13 +1362,20 @@ async function markContactEventSent(contactId, eventType, eventId) {
   )
 }
 
-async function postEventToMeta({ datasetId, accessToken, payload }) {
-  const url = `${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
+async function postEventToMeta({ datasetId, accessToken, appSecretProof = '', payload }) {
+  const params = new URLSearchParams({ access_token: accessToken })
+  if (appSecretProof) params.set('appsecret_proof', appSecretProof)
+  const url = `${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?${params.toString()}`
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+  } catch (error) {
+    throw new Error(safeMetaGraphTransportError(error))
+  }
 
   let responsePayload = null
   const responseText = await response.text()
@@ -1514,6 +1523,7 @@ async function sendMetaWhatsappEvent({
     const responsePayload = await postEventToMeta({
       datasetId: metaConfig.datasetId,
       accessToken: metaConfig.accessToken,
+      appSecretProof: metaConfig.appSecretProof,
       payload
     })
 
@@ -1668,6 +1678,7 @@ async function sendMetaSiteEvent({
     const responsePayload = await postEventToMeta({
       datasetId: metaConfig.datasetId,
       accessToken: metaConfig.accessToken,
+      appSecretProof: metaConfig.appSecretProof,
       payload
     })
 

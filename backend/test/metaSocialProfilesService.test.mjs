@@ -30,22 +30,31 @@ async function snapshotMetaConfig(callback) {
 async function insertMetaConfig({
   token = 'meta-token-db',
   pageId = 'page_1',
-  instagramAccountId = 'ig_1'
+  instagramAccountId = 'ig_1',
+  connectionMode = 'manual_system_user',
+  pageToken = '',
+  pageProof = ''
 } = {}) {
   await db.run(`
     INSERT INTO meta_config (
       ad_account_id,
       access_token,
+      connection_mode,
       page_id,
       instagram_account_id,
+      oauth_page_access_token,
+      oauth_page_appsecret_proof,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     'act_meta_social_profiles',
     encrypt(token),
+    connectionMode,
     pageId,
-    instagramAccountId
+    instagramAccountId,
+    pageToken ? encrypt(pageToken) : null,
+    pageProof ? encrypt(pageProof) : null
   ])
 }
 
@@ -59,20 +68,25 @@ async function withFakeMetaGraph(callback) {
       const url = new URL(req.url, 'http://127.0.0.1')
       calls.push({
         pathname: url.pathname,
-        accessToken: url.searchParams.get('access_token')
+        accessToken: url.searchParams.get('access_token'),
+        appSecretProof: url.searchParams.get('appsecret_proof')
       })
 
-      if (url.pathname === '/me/accounts') {
-        if (url.searchParams.get('access_token') !== 'meta-token-db') {
+      if (url.pathname === '/me/accounts' || url.pathname === '/page_1') {
+        const oauthPageRequest = url.pathname === '/page_1'
+        const expectedToken = oauthPageRequest ? 'oauth-page-token' : 'meta-token-db'
+        const expectedProof = oauthPageRequest ? 'oauth-page-proof' : null
+        if (
+          url.searchParams.get('access_token') !== expectedToken ||
+          (oauthPageRequest && url.searchParams.get('appsecret_proof') !== expectedProof)
+        ) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: { message: 'invalid meta token' } }))
           return
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({
-          data: [
-            {
+        const page = {
               id: 'page_1',
               name: 'Raul Gomez',
               category: 'Marketing',
@@ -86,8 +100,7 @@ async function withFakeMetaGraph(callback) {
                 followers_count: 24000
               }
             }
-          ]
-        }))
+        res.end(JSON.stringify(oauthPageRequest ? page : { data: [page] }))
         return
       }
 
@@ -225,5 +238,29 @@ test('published social profile refresh adopts configured Meta profile when legac
     } finally {
       await cleanupSite(siteId)
     }
+  })
+})
+
+test('OAuth social profiles uses the stored Page token and matching Page proof', async () => {
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await insertMetaConfig({
+      connectionMode: 'oauth_bisu',
+      pageToken: 'oauth-page-token',
+      pageProof: 'oauth-page-proof'
+    })
+
+    await withFakeMetaGraph(async (calls) => {
+      const res = createJsonResponse()
+      await getSocialProfiles({ headers: {}, query: {} }, res)
+
+      assert.equal(res.statusCode, 200)
+      assert.equal(res.body.success, true)
+      assert.equal(calls[0]?.pathname, '/page_1')
+      assert.equal(calls[0]?.accessToken, 'oauth-page-token')
+      assert.equal(calls[0]?.appSecretProof, 'oauth-page-proof')
+      assert.equal(res.body.data.profiles.some(profile => profile.id === 'instagram:ig_1'), true)
+    })
   })
 })

@@ -1,6 +1,7 @@
 import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
+import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, businessTodayDateOnly, getAccountTimezone } from '../utils/dateUtils.js'
 import { getMetaConfig } from './metaAdsService.js'
@@ -213,19 +214,21 @@ async function fetchThreadsProfile(accessToken, updatedAt) {
   }
 }
 
-async function fetchMetaPages(accessToken, params) {
+async function fetchMetaPages(accessToken, params, appSecretProof = '') {
   let pages = []
   try {
     pages = await fetchMetaConnection(`${API_URLS.META_GRAPH}/me/accounts?${params.toString()}`)
   } catch (error) {
-    logger.warn(`Meta no devolvio todos los campos de perfil social: ${error.message}`)
+    logger.warn(`Meta no devolvio todos los campos de perfil social: ${safeMetaGraphTransportError(error)}`)
     throw error
   }
 
   if (pages.length > 0) return pages
 
   try {
-    const debugUrl = `${API_URLS.META_TOKEN_DEBUG}?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`
+    const debugParams = new URLSearchParams({ input_token: accessToken, access_token: accessToken })
+    if (appSecretProof) debugParams.set('appsecret_proof', appSecretProof)
+    const debugUrl = `${API_URLS.META_TOKEN_DEBUG}?${debugParams.toString()}`
     const debugResponse = await fetch(debugUrl)
     const debugData = await debugResponse.json()
     const userId = debugData?.data?.user_id
@@ -236,14 +239,28 @@ async function fetchMetaPages(accessToken, params) {
         const fallbackPages = await fetchMetaConnection(`${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/${edge}?${params.toString()}`)
         pages.push(...fallbackPages)
       } catch (fallbackError) {
-        logger.warn(`No se pudieron leer páginas Meta desde ${edge}: ${fallbackError.message}`)
+        logger.warn(`No se pudieron leer páginas Meta desde ${edge}: ${safeMetaGraphTransportError(fallbackError)}`)
       }
     }
   } catch (error) {
-    logger.warn(`No se pudo revisar rutas alternas de páginas Meta: ${error.message}`)
+    logger.warn(`No se pudo revisar rutas alternas de páginas Meta: ${safeMetaGraphTransportError(error)}`)
   }
 
   return pages
+}
+
+async function fetchOAuthConfiguredPage(pageId, accessToken, appSecretProof, fields) {
+  const params = new URLSearchParams({ fields, access_token: accessToken })
+  if (appSecretProof) params.set('appsecret_proof', appSecretProof)
+  let response
+  try {
+    response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(pageId)}?${params.toString()}`)
+  } catch (error) {
+    throw new Error(safeMetaGraphTransportError(error))
+  }
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data?.error) throw new Error(data?.error?.message || `Meta respondió ${response.status}`)
+  return data?.id ? [data] : []
 }
 
 export async function getConnectedMetaSocialProfiles(options = {}) {
@@ -260,6 +277,14 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
     })
 
   const accessToken = cleanString(config?.access_token)
+  const appSecretProof = cleanString(config?.oauth_appsecret_proof)
+  const isOAuth = ['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode))
+  const pageAccessToken = isOAuth
+    ? cleanString(config?.oauth_page_access_token)
+    : accessToken
+  const pageAppSecretProof = isOAuth
+    ? cleanString(config?.oauth_page_appsecret_proof)
+    : appSecretProof
   const configuredPageId = cleanString(config?.page_id)
   const configuredInstagramAccountId = cleanString(config?.instagram_account_id)
   const updatedAt = new Date().toISOString()
@@ -267,6 +292,10 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
 
   if (!accessToken) {
     return { connected: false, updatedAt, profiles: [], message: 'Meta no tiene token guardado' }
+  }
+
+  if (isOAuth && (!configuredPageId || !pageAccessToken || !pageAppSecretProof)) {
+    return { connected: false, updatedAt, profiles: [], message: 'La Página OAuth no tiene acceso operativo completo' }
   }
 
   if (restrictToConfiguredProfiles && !configuredPageId && !configuredInstagramAccountId) {
@@ -301,19 +330,24 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
   const params = new URLSearchParams({
     fields: richFields,
     limit: '100',
-    access_token: accessToken
+    access_token: pageAccessToken || accessToken
   })
+  if (pageAppSecretProof) params.set('appsecret_proof', pageAppSecretProof)
 
   let pages = []
   try {
-    pages = await fetchMetaPages(accessToken, params)
+    pages = isOAuth && configuredPageId && pageAccessToken
+      ? await fetchOAuthConfiguredPage(configuredPageId, pageAccessToken, pageAppSecretProof, richFields)
+      : await fetchMetaPages(accessToken, params, appSecretProof)
   } catch (error) {
-    logger.warn(`Meta no devolvio todos los campos de perfil social: ${error.message}`)
+    logger.warn(`Meta no devolvio todos los campos de perfil social: ${safeMetaGraphTransportError(error)}`)
     params.set('fields', fallbackFields)
     try {
-      pages = await fetchMetaPages(accessToken, params)
+      pages = isOAuth && configuredPageId && pageAccessToken
+        ? await fetchOAuthConfiguredPage(configuredPageId, pageAccessToken, pageAppSecretProof, fallbackFields)
+        : await fetchMetaPages(accessToken, params, appSecretProof)
     } catch (fallbackError) {
-      logger.warn(`No se pudieron leer páginas Meta conectadas: ${fallbackError.message}`)
+      logger.warn(`No se pudieron leer páginas Meta conectadas: ${safeMetaGraphTransportError(fallbackError)}`)
       pages = []
     }
   }

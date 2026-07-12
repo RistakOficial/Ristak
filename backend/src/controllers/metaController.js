@@ -52,6 +52,11 @@ import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCr
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js';
 import { normalizeBaseUrl, resolvePublicServiceBaseUrl } from '../utils/publicUrl.js';
 import { getAccountCurrency } from '../utils/accountLocale.js';
+import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js';
+import {
+  disconnectMetaOAuthConnection,
+  replaceMetaOAuthWithManualConnection
+} from '../services/metaOAuthService.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -166,6 +171,16 @@ async function getAttributionSetsCached(locationId, apiToken, attributionCalenda
 function cleanString(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim();
+}
+
+function parseJson(value, fallback) {
+  if (!value) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 
 function isMaskedSecret(value) {
@@ -535,7 +550,9 @@ async function resolveMetaAdAccountCurrency({ metaConfig = {}, accessToken = '' 
   if (!adAccountId || !accessToken) return '';
 
   try {
-    const url = `${API_URLS.META_GRAPH}/act_${encodeURIComponent(adAccountId)}?fields=currency&access_token=${encodeURIComponent(accessToken)}`;
+    const params = new URLSearchParams({ fields: 'currency', access_token: accessToken });
+    if (metaConfig?.oauth_appsecret_proof) params.set('appsecret_proof', metaConfig.oauth_appsecret_proof);
+    const url = `${API_URLS.META_GRAPH}/act_${encodeURIComponent(adAccountId)}?${params.toString()}`;
     const response = await fetch(url);
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data?.error) {
@@ -775,7 +792,8 @@ async function hydrateMissingCreativeMedia(rows = []) {
     const creativeMediaByAdId = await fetchMetaCreativeMediaForAds(
       missingAdIds,
       metaConfig.access_token,
-      metaConfig.ad_account_id
+      metaConfig.ad_account_id,
+      metaConfig.oauth_appsecret_proof || ''
     );
 
     for (const row of rowsMissingMedia) {
@@ -814,13 +832,26 @@ export const saveConfig = async (req, res) => {
 
     logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}${page_id ? ` con page: ${page_id}` : ''}`);
 
-    await saveMetaConfig(
-      ad_account_id,
-      access_token,
-      pixel_id || null,
-      page_id || null,
-      instagram_account_id || null
+    const existingConfig = await getMetaConfig().catch(() => null);
+    if (['oauth_bisu', 'oauth_user'].includes(cleanString(existingConfig?.connection_mode))) {
+      const validation = await verifyMetaToken(access_token);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: `No se desconectó OAuth porque el System User Token manual no es válido: ${validation.error || 'token inválido'}`
+        });
+      }
+    }
+
+    const persistManualConfig = () => saveMetaConfig(
+      ad_account_id, access_token, pixel_id || null, page_id || null, instagram_account_id || null,
+      { connectionMode: 'manual_system_user', allowOAuthToManual: true }
     );
+    if (['oauth_bisu', 'oauth_user'].includes(cleanString(existingConfig?.connection_mode))) {
+      await replaceMetaOAuthWithManualConnection(persistManualConfig);
+    } else {
+      await persistManualConfig();
+    }
     await setAppConfig('meta_config_disconnected', '0');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
     const socialHistoryBackfill = startMetaSocialHistoryBackfillAfterConnection('meta-config-saved');
@@ -867,6 +898,9 @@ export const getConfig = async (req, res) => {
       success: true,
       configured: true,
       config: {
+        connectionMode: ['oauth_bisu', 'oauth_user'].includes(cleanString(config.connection_mode))
+          ? 'oauth_bisu'
+          : 'manual_system_user',
         adAccountId: config.ad_account_id,
         accessToken: maskSecret(config.access_token),
         pixelId: config.pixel_id || null,
@@ -877,7 +911,18 @@ export const getConfig = async (req, res) => {
         // Timezone info
         timezoneId: config.timezone_id,
         timezoneName: config.timezone_name,
-        timezoneOffsetHoursUtc: config.timezone_offset_hours_utc
+        timezoneOffsetHoursUtc: config.timezone_offset_hours_utc,
+        oauthConnected: Number(config.oauth_connected) === 1,
+        oauthValidated: Number(config.oauth_validated) === 1,
+        oauthUserId: config.oauth_user_id || null,
+        oauthUserName: config.oauth_user_name || null,
+        oauthAppId: config.oauth_app_id || null,
+        oauthBusinessId: config.oauth_business_id || null,
+        oauthGrantedScopes: parseJson(config.oauth_granted_scopes_json, []),
+        oauthMissingScopes: parseJson(config.oauth_missing_scopes_json, []),
+        tokenExpiresAt: config.token_expires_at || null,
+        dataAccessExpiresAt: config.oauth_data_access_expires_at || null,
+        relayStatus: config.oauth_relay_status || null
       }
     });
 
@@ -1039,7 +1084,9 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
   };
 
   try {
-    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+    const capiParams = new URLSearchParams({ access_token: accessToken });
+    if (metaConfig?.oauth_appsecret_proof) capiParams.set('appsecret_proof', metaConfig.oauth_appsecret_proof);
+    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?${capiParams.toString()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1394,6 +1441,13 @@ export const revealMetaToken = async (req, res) => {
       });
     }
 
+    if (['oauth_bisu', 'oauth_user'].includes(cleanString(metaConfig.connection_mode))) {
+      return res.status(409).json({
+        success: false,
+        error: 'El token OAuth de Meta está protegido y no se puede revelar. Usa los endpoints server-side de activos.'
+      });
+    }
+
     res.json({
       success: true,
       accessToken: metaConfig.access_token // Ya viene desencriptado de getMetaConfig()
@@ -1554,6 +1608,16 @@ export const saveMetaMessengerUserToken = async (req, res) => {
  */
 export const deleteMetaConfig = async (req, res) => {
   try {
+    const existingConfig = await getMetaConfig().catch(() => null);
+    if (existingConfig && ['oauth_bisu', 'oauth_user'].includes(cleanString(existingConfig.connection_mode))) {
+      const result = await disconnectMetaOAuthConnection();
+      return res.json({
+        success: true,
+        message: 'Conexión OAuth de Meta eliminada exitosamente',
+        data: result
+      });
+    }
+
     await clearMetaIntegrationCredentials();
     await setAppConfig('meta_config_disconnected', '1');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-disconnected' });
@@ -1677,6 +1741,7 @@ export const getCreativePreview = async (req, res) => {
           ad_format: adFormat,
           access_token: metaConfig.access_token
         });
+        if (metaConfig.oauth_appsecret_proof) params.set('appsecret_proof', metaConfig.oauth_appsecret_proof);
         const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(creativeId)}/previews?${params.toString()}`);
         const data = await response.json();
 
@@ -1739,7 +1804,8 @@ export const getAdCreativeMedia = async (req, res) => {
     const media = await fetchMetaCreativeMediaForAd(
       adId,
       metaConfig.access_token,
-      metaConfig.ad_account_id
+      metaConfig.ad_account_id,
+      metaConfig.oauth_appsecret_proof || ''
     );
 
     if (!media?.creative_id) {
@@ -2677,7 +2743,7 @@ export const verifyToken = async (req, res) => {
 
     logger.info('Verificando validez del token de Meta...');
 
-    const validation = await verifyMetaToken(config.access_token);
+    const validation = await verifyMetaToken(config.access_token, config.oauth_appsecret_proof || '');
 
     let message = '';
     let daysUntilExpiry = null;
@@ -3352,6 +3418,16 @@ export const saveAndSyncMeta = async (req, res) => {
       logger.warn(`No se pudo leer configuración previa de Meta: ${error.message}`);
       return null;
     });
+    const replacingOAuthWithManual = ['oauth_bisu', 'oauth_user'].includes(
+      cleanString(existingMetaConfig?.connection_mode)
+    );
+
+    if (replacingOAuthWithManual && isMaskedSecret(accessToken)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Para volver al modo manual pega un System User Token nuevo; el token OAuth no se puede reutilizar ni exportar.'
+      });
+    }
 
     const effectiveAccessToken = isMaskedSecret(accessToken)
       ? existingMetaConfig?.access_token
@@ -3404,18 +3480,24 @@ export const saveAndSyncMeta = async (req, res) => {
           logger.info(`La cuenta ${accountForPixels} no reporta pixeles; se guarda sin pixel`);
         }
       } catch (pixelError) {
-        logger.warn(`No se pudo auto-asociar el pixel de la cuenta: ${pixelError.message}`);
+        logger.warn(`No se pudo auto-asociar el pixel de la cuenta: ${safeMetaGraphTransportError(pixelError)}`);
       }
     }
 
     // 3. Guardar en meta_config local (encriptado)
-    await saveMetaConfig(
+    const persistManualConfig = () => saveMetaConfig(
       normalizedAdAccountId,
       effectiveAccessToken,
       effectivePixelId || null,
       normalizedPageId || null,
-      normalizedInstagramAccountId || null
+      normalizedInstagramAccountId || null,
+      { connectionMode: 'manual_system_user', allowOAuthToManual: true }
     );
+    if (replacingOAuthWithManual) {
+      await replaceMetaOAuthWithManualConnection(persistManualConfig);
+    } else {
+      await persistManualConfig();
+    }
     await setAppConfig('meta_config_disconnected', '0');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
 
@@ -3554,6 +3636,17 @@ export const syncFromHighLevel = async (req, res) => {
       });
     }
 
+    const currentMetaConfig = await getMetaConfig().catch(() => null);
+    if (['oauth_bisu', 'oauth_user'].includes(cleanString(currentMetaConfig?.connection_mode))) {
+      return res.json({
+        success: true,
+        skipped: true,
+        source: 'oauth_isolated',
+        message: 'Meta OAuth está aislado de HighLevel y no se reemplazó.',
+        data: { connectionMode: 'oauth_bisu', adAccountId: currentMetaConfig.ad_account_id }
+      });
+    }
+
     // 2. Buscar custom values de Meta en HighLevel
     logger.info('Buscando custom values de Meta en HighLevel...');
     const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
@@ -3592,7 +3685,7 @@ export const syncFromHighLevel = async (req, res) => {
 
     // 4. Validar que las credenciales funcionen
     logger.info('Validando credenciales de Meta...');
-    const validation = await verifyMetaToken(metaConfig.access_token);
+    const validation = await verifyMetaToken(metaConfig.access_token, metaConfig.oauth_appsecret_proof || '');
 
     if (!validation.valid) {
       return res.status(400).json({
@@ -3660,6 +3753,22 @@ function extractExplicitMetaAccessToken(req) {
   return cleanString(req.query?.accessToken);
 }
 
+async function resolveMetaRequestCredentials(req) {
+  const explicitAccessToken = extractMetaAccessToken(req);
+  if (explicitAccessToken) return { accessToken: explicitAccessToken, appSecretProof: '', oauthUserId: '', isOAuth: false, source: 'explicit' };
+
+  const config = await getMetaConfig().catch(() => null);
+  return {
+    accessToken: cleanString(config?.access_token),
+    appSecretProof: ['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode))
+      ? cleanString(config?.oauth_appsecret_proof)
+      : '',
+    oauthUserId: cleanString(config?.oauth_user_id),
+    isOAuth: ['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode)),
+    source: config?.access_token ? 'stored' : 'none'
+  };
+}
+
 /**
  * Obtiene las cuentas de anuncios del usuario de Meta
  * GET /api/meta/ad-accounts (token en header X-Meta-Access-Token / Authorization)
@@ -3668,7 +3777,7 @@ export const getAdAccounts = async (req, res) => {
   try {
     // (META-005) El access token llega por header (Authorization: Bearer o X-Meta-Access-Token),
     // ya no por query string, para no exponerlo en logs/historial frontend->backend.
-    const accessToken = extractMetaAccessToken(req);
+    const { accessToken, appSecretProof, oauthUserId, isOAuth } = await resolveMetaRequestCredentials(req);
 
     if (!accessToken) {
       logger.error('❌ No se proporcionó accessToken');
@@ -3681,20 +3790,25 @@ export const getAdAccounts = async (req, res) => {
     logger.info('Obteniendo cuentas de Meta Ads');
 
     // PASO 1: Verificar token y obtener user_id
-    const debugUrl = `${API_URLS.META_TOKEN_DEBUG}?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`;
-
-    const debugResponse = await fetch(debugUrl);
-    const debugData = await debugResponse.json();
-
-    if (debugData.error) {
-      logger.error('Error verificando token:', debugData.error);
-      return res.status(400).json({
-        success: false,
-        error: debugData.error.message || 'Token inválido'
-      });
+    let userId = oauthUserId;
+    if (isOAuth && !userId) {
+      const meParams = new URLSearchParams({ fields: 'id', access_token: accessToken, appsecret_proof: appSecretProof });
+      const meResponse = await fetch(`${API_URLS.META_GRAPH}/me?${meParams.toString()}`);
+      const meData = await meResponse.json();
+      userId = meData?.id;
+      if (!meResponse.ok || meData?.error) {
+        return res.status(400).json({ success: false, error: meData?.error?.message || 'Token OAuth inválido' });
+      }
+    } else if (!isOAuth) {
+      const debugParams = new URLSearchParams({ input_token: accessToken, access_token: accessToken });
+      const debugUrl = `${API_URLS.META_TOKEN_DEBUG}?${debugParams.toString()}`;
+      const debugResponse = await fetch(debugUrl);
+      const debugData = await debugResponse.json();
+      if (debugData.error) {
+        return res.status(400).json({ success: false, error: debugData.error.message || 'Token inválido' });
+      }
+      userId = debugData.data?.user_id;
     }
-
-    const userId = debugData.data?.user_id;
 
     if (!userId) {
       logger.error('No se pudo extraer user_id del token');
@@ -3705,20 +3819,14 @@ export const getAdAccounts = async (req, res) => {
     }
 
     // PASO 2: Obtener ad accounts DIRECTAMENTE del System User (sin businesses)
-    const adAccountsUrl = `${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/adaccounts?fields=id,account_id,name,currency,timezone_name,account_status&access_token=${encodeURIComponent(accessToken)}`;
-
-    const adAccountsResponse = await fetch(adAccountsUrl);
-    const adAccountsData = await adAccountsResponse.json();
-
-    if (adAccountsData.error) {
-      logger.error('Error obteniendo ad accounts:', adAccountsData.error);
-      return res.status(400).json({
-        success: false,
-        error: adAccountsData.error.message || 'Error obteniendo cuentas de anuncios'
-      });
-    }
-
-    const uniqueAccounts = adAccountsData.data || [];
+    const adAccountParams = new URLSearchParams({
+      fields: 'id,account_id,name,currency,timezone_name,account_status',
+      limit: '100',
+      access_token: accessToken
+    });
+    if (appSecretProof) adAccountParams.set('appsecret_proof', appSecretProof);
+    const adAccountsUrl = `${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/adaccounts?${adAccountParams.toString()}`;
+    const uniqueAccounts = await fetchMetaConnection(adAccountsUrl);
     logger.info(`Encontradas ${uniqueAccounts.length} cuenta(s) de anuncios`);
 
     res.json({
@@ -3729,7 +3837,7 @@ export const getAdAccounts = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Error en getAdAccounts: ${error.message}`);
+    logger.error(`Error en getAdAccounts: ${safeMetaGraphTransportError(error)}`);
     res.status(500).json({
       success: false,
       error: 'Error al obtener cuentas de anuncios'
@@ -3745,7 +3853,7 @@ export const getPixels = async (req, res) => {
   try {
     const { adAccountId } = req.query;
     // (META-005) Token desde header en vez de query string.
-    const accessToken = extractMetaAccessToken(req);
+    const { accessToken, appSecretProof } = await resolveMetaRequestCredentials(req);
 
     if (!adAccountId || !accessToken) {
       return res.status(400).json({
@@ -3757,20 +3865,14 @@ export const getPixels = async (req, res) => {
     logger.info(`Obteniendo pixeles para cuenta: ${adAccountId}`);
 
     // Llamar a Meta Graph API para obtener pixels
-    const url = `${API_URLS.META_GRAPH}/${adAccountId}/adspixels?fields=id,name,code,creation_time,last_fired_time&access_token=${accessToken}`;
-
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (data.error) {
-      logger.error('Error de Meta API:', data.error.message);
-      return res.status(400).json({
-        success: false,
-        error: data.error.message || 'Error obteniendo pixeles'
-      });
-    }
-
-    const pixels = data.data || [];
+    const pixelParams = new URLSearchParams({
+      fields: 'id,name,code,creation_time,last_fired_time',
+      limit: '100',
+      access_token: accessToken
+    });
+    if (appSecretProof) pixelParams.set('appsecret_proof', appSecretProof);
+    const url = `${API_URLS.META_GRAPH}/${encodeURIComponent(adAccountId)}/adspixels?${pixelParams.toString()}`;
+    const pixels = await fetchMetaConnection(url);
     logger.info(`✅ Encontrados ${pixels.length} pixeles`);
 
     res.json({
@@ -3781,7 +3883,7 @@ export const getPixels = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Error en getPixels: ${error.message}`);
+    logger.error(`Error en getPixels: ${safeMetaGraphTransportError(error)}`);
     res.status(500).json({
       success: false,
       error: 'Error al obtener pixeles'
@@ -3815,7 +3917,21 @@ async function fetchMetaConnection(initialUrl) {
       records.push(...data.data);
     }
 
-    nextUrl = data.paging?.next || null;
+    const candidate = data.paging?.next || null;
+    if (candidate) {
+      const parsed = new URL(candidate);
+      const configuredOrigin = new URL(API_URLS.META_GRAPH).origin;
+      const isMetaHost = /(^|\.)facebook\.com$/i.test(parsed.hostname);
+      if (parsed.protocol !== 'https:' && parsed.origin !== configuredOrigin) {
+        throw new Error('Meta devolvió una URL de paginación insegura');
+      }
+      if (!isMetaHost && parsed.origin !== configuredOrigin) {
+        throw new Error('Meta devolvió una URL de paginación fuera de Graph');
+      }
+      nextUrl = parsed.toString();
+    } else {
+      nextUrl = null;
+    }
     pageCount += 1;
   }
 
@@ -3829,7 +3945,7 @@ async function fetchMetaConnection(initialUrl) {
 export const getPages = async (req, res) => {
   try {
     // (META-005) Token desde header en vez de query string.
-    const accessToken = extractMetaAccessToken(req);
+    const { accessToken, appSecretProof, oauthUserId, isOAuth } = await resolveMetaRequestCredentials(req);
 
     if (!accessToken) {
       return res.status(400).json({
@@ -3846,14 +3962,23 @@ export const getPages = async (req, res) => {
       limit: '100',
       access_token: accessToken
     });
+    if (appSecretProof) params.set('appsecret_proof', appSecretProof);
 
     let rawPages = await fetchMetaConnection(`${API_URLS.META_GRAPH}/me/accounts?${params.toString()}`);
 
     if (rawPages.length === 0) {
-      const debugUrl = `${API_URLS.META_TOKEN_DEBUG}?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`;
-      const debugResponse = await fetch(debugUrl);
-      const debugData = await debugResponse.json();
-      const userId = debugData?.data?.user_id;
+      let userId = oauthUserId;
+      if (isOAuth && !userId) {
+        const meParams = new URLSearchParams({ fields: 'id', access_token: accessToken, appsecret_proof: appSecretProof });
+        const meResponse = await fetch(`${API_URLS.META_GRAPH}/me?${meParams.toString()}`);
+        const meData = await meResponse.json();
+        userId = meData?.id;
+      } else if (!isOAuth) {
+        const debugParams = new URLSearchParams({ input_token: accessToken, access_token: accessToken });
+        const debugResponse = await fetch(`${API_URLS.META_TOKEN_DEBUG}?${debugParams.toString()}`);
+        const debugData = await debugResponse.json();
+        userId = debugData?.data?.user_id;
+      }
 
       if (userId) {
         const fallbackEdges = ['accounts', 'assigned_pages'];
@@ -3863,7 +3988,7 @@ export const getPages = async (req, res) => {
             const fallbackPages = await fetchMetaConnection(`${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/${edge}?${params.toString()}`);
             rawPages.push(...fallbackPages);
           } catch (fallbackError) {
-            logger.warn(`No se pudieron leer páginas desde ${edge}: ${fallbackError.message}`);
+            logger.warn(`No se pudieron leer páginas desde ${edge}: ${safeMetaGraphTransportError(fallbackError)}`);
           }
         }
       }
@@ -3885,10 +4010,10 @@ export const getPages = async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error(`Error en getPages: ${error.message}`);
+    logger.error(`Error en getPages: ${safeMetaGraphTransportError(error)}`);
     res.status(400).json({
       success: false,
-      error: error.message || 'Error al obtener páginas'
+      error: 'Error al obtener páginas'
     });
   }
 };

@@ -3,7 +3,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { getMetaApiVersion, setMetaApiVersion } from '../config/constants.js'
 
-const DEFAULT_META_API_VERSION = 'v23.0'
+const DEFAULT_META_API_VERSION = 'v25.0'
 const MIN_META_API_MAJOR = 15
 const MAX_META_API_MAJOR = 30
 // (META-004) Techo de auto-detección: nunca subir por encima de la versión con la

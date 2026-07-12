@@ -56,6 +56,7 @@ import { logger } from '../utils/logger.js'
 import { markHumanTakeoverByPhone, markHumanTakeoverIfActive } from '../services/conversationalAgentService.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js'
+import { getInstallerSignatureHeaders } from '../services/installerSignatureService.js'
 
 const QR_CONNECTED_AVATAR_BACKFILL_DEBOUNCE_MS = 30 * 60 * 1000
 const qrConnectedAvatarBackfills = new Map()
@@ -140,15 +141,6 @@ async function ensureDefaultTemplatesForWhatsAppApi(req) {
   } catch (error) {
     logger.warn(`WhatsApp API conectado, pero no se pudieron preparar plantillas default: ${error.message}`)
     return null
-  }
-}
-
-function getInstallerSignatureHeaders(req) {
-  return {
-    signature: req.get('X-Ristak-Signature') || '',
-    signatureTimestamp: req.get('X-Ristak-Timestamp') || '',
-    signatureNonce: req.get('X-Ristak-Nonce') || '',
-    installationId: req.get('X-Ristak-Installation-Id') || ''
   }
 }
 

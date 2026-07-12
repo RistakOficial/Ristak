@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import fetch from 'node-fetch'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
+import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { logger } from '../utils/logger.js'
 import { formatContactName } from '../utils/contactNameFormatter.js'
 import { getMetaConfig } from './metaAdsService.js'
@@ -915,7 +916,39 @@ function normalizeMetaSocialCommentReplyError(error, platform, replyType) {
   return normalizeMetaSocialSendError(error, cleanPlatform)
 }
 
-async function metaSocialGraphRequest(path, { method = 'GET', token, query, body, baseUrl = API_URLS.META_GRAPH } = {}) {
+let oauthProofCache = { baseToken: '', baseProof: '', pageToken: '', pageProof: '', at: 0 }
+
+async function resolveMetaAppSecretProof(token, explicitProof = '') {
+  const cleanToken = cleanString(token)
+  const provided = cleanString(explicitProof)
+  if (provided) return provided
+  const now = Date.now()
+  if (now - oauthProofCache.at < 5 * 60 * 1000) {
+    if (cleanToken && cleanToken === oauthProofCache.pageToken) return oauthProofCache.pageProof
+    if (cleanToken && cleanToken === oauthProofCache.baseToken) return oauthProofCache.baseProof
+  }
+  const config = await getMetaConfig().catch(() => null)
+  if (!['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode))) return ''
+  oauthProofCache = {
+    baseToken: cleanString(config?.access_token),
+    baseProof: cleanString(config?.oauth_appsecret_proof),
+    pageToken: cleanString(config?.oauth_page_access_token),
+    pageProof: cleanString(config?.oauth_page_appsecret_proof),
+    at: now
+  }
+  if (cleanToken === oauthProofCache.pageToken) return oauthProofCache.pageProof
+  if (cleanToken === oauthProofCache.baseToken) return oauthProofCache.baseProof
+  return ''
+}
+
+async function metaSocialGraphRequest(path, {
+  method = 'GET',
+  token,
+  appSecretProof = '',
+  query,
+  body,
+  baseUrl = API_URLS.META_GRAPH
+} = {}) {
   const cleanToken = cleanString(token)
   if (!cleanToken) throw createMetaSocialMessageError('Meta no está conectado', 409)
 
@@ -925,15 +958,22 @@ async function metaSocialGraphRequest(path, { method = 'GET', token, query, body
       url.searchParams.set(key, String(value))
     }
   })
+  const proof = await resolveMetaAppSecretProof(cleanToken, appSecretProof)
+  if (proof) url.searchParams.set('appsecret_proof', proof)
 
-  const response = await fetch(url.toString(), {
-    method,
-    headers: {
-      Authorization: `Bearer ${cleanToken}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {})
-    },
-    ...(body ? { body: JSON.stringify(body) } : {})
-  })
+  let response
+  try {
+    response = await fetch(url.toString(), {
+      method,
+      headers: {
+        Authorization: `Bearer ${cleanToken}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {})
+      },
+      ...(body ? { body: JSON.stringify(body) } : {})
+    })
+  } catch (error) {
+    throw createMetaSocialMessageError(safeMetaGraphTransportError(error), 502)
+  }
   const data = await response.json().catch(() => ({}))
 
   if (!response.ok) {
@@ -974,6 +1014,15 @@ let pageTokenCache = { pageId: '', sourceTokenHash: '', token: '', at: 0 }
 export async function resolveMetaPageAccessToken({ config, forceRefresh = false, platform = 'messenger' } = {}) {
   const cfg = config || await getMetaConfig().catch(() => null)
   const pageId = cleanString(cfg?.page_id)
+  const isOAuth = ['oauth_bisu', 'oauth_user'].includes(cleanString(cfg?.connection_mode))
+  if (isOAuth) {
+    const oauthPageToken = cleanString(cfg?.oauth_page_access_token)
+    if (!pageId) throw createMetaSocialMessageError('Falta seleccionar la Página de Facebook en Meta Ads.', 409)
+    if (!oauthPageToken) {
+      throw createMetaSocialMessageError('La conexión OAuth no tiene acceso cifrado para la Página seleccionada.', 409)
+    }
+    return oauthPageToken
+  }
   const useMessengerToken = !isInstagramPlatform(platform)
   const userToken = cleanString(
     useMessengerToken
@@ -1739,8 +1788,8 @@ export async function listMetaSocialPosts({ platform = 'facebook', search = '', 
  * Activar el toggle en Ristak NO basta: sin esta suscripción Meta nunca llama al
  * webhook. Es idempotente: se puede llamar cuantas veces se quiera.
  */
-export async function ensureMetaPageMessagingSubscription() {
-  const config = await getMetaConfig().catch(() => null)
+export async function ensureMetaPageMessagingSubscription({ config: explicitConfig = null } = {}) {
+  const config = explicitConfig || await getMetaConfig().catch(() => null)
   const pageId = cleanString(config?.page_id)
   if (!pageId) throw createMetaSocialMessageError('Falta seleccionar la Página de Facebook en Meta Ads.', 409)
 
@@ -1748,11 +1797,27 @@ export async function ensureMetaPageMessagingSubscription() {
   await metaSocialGraphRequest(`/${encodeURIComponent(pageId)}/subscribed_apps`, {
     method: 'POST',
     token: pageToken,
+    appSecretProof: config?.oauth_page_appsecret_proof,
     query: { subscribed_fields: META_PAGE_SUBSCRIBED_FIELDS.join(',') }
   })
 
   logger.info(`[Meta social] Página ${pageId} suscrita al webhook de mensajería (${META_PAGE_SUBSCRIBED_FIELDS.join(',')})`)
   return { pageId, subscribedFields: [...META_PAGE_SUBSCRIBED_FIELDS] }
+}
+
+/** Revierte únicamente la suscripción de la app representada por el token. */
+export async function removeMetaPageMessagingSubscription({ config: explicitConfig = null } = {}) {
+  const config = explicitConfig || await getMetaConfig().catch(() => null)
+  const pageId = cleanString(config?.page_id)
+  if (!pageId) return { pageId: '', unsubscribed: false, skipped: true }
+
+  const pageToken = await resolveMetaPageAccessToken({ config, platform: 'messenger', forceRefresh: true })
+  await metaSocialGraphRequest(`/${encodeURIComponent(pageId)}/subscribed_apps`, {
+    method: 'DELETE',
+    token: pageToken,
+    appSecretProof: config?.oauth_page_appsecret_proof
+  })
+  return { pageId, unsubscribed: true }
 }
 
 /**
@@ -3071,7 +3136,10 @@ async function downloadMetaAttachmentBuffer(url, token) {
   try {
     let response = await fetch(url, { redirect: 'follow', signal: controller.signal })
     if ((response.status === 401 || response.status === 403) && cleanString(token)) {
-      response = await fetch(url, {
+      const authenticatedUrl = new URL(url)
+      const proof = await resolveMetaAppSecretProof(token)
+      if (proof) authenticatedUrl.searchParams.set('appsecret_proof', proof)
+      response = await fetch(authenticatedUrl.toString(), {
         redirect: 'follow',
         signal: controller.signal,
         headers: { Authorization: `Bearer ${cleanString(token)}` }
@@ -3345,26 +3413,46 @@ async function saveWebhookEvent({ payload, rawBody, signatureValid, processedSta
   return id
 }
 
-export async function processMetaSocialWebhook({ payload = {}, rawBody = '', signatureHeader = '' } = {}) {
+export async function processMetaSocialWebhook({
+  payload = {},
+  rawBody = '',
+  signatureHeader = '',
+  signaturePreverified = false
+} = {}) {
   const config = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer configuración Meta para webhook social: ${error.message}`)
     return null
   })
-  const signatureValid = verifyMetaWebhookSignature({
-    rawBody,
-    signatureHeader,
-    appSecret: config?.app_secret
-  })
+  // El relay central ya verificó X-Hub-Signature-256 con el App Secret que
+  // nunca sale del Installer. La segunda capa Installer -> tenant usa su HMAC
+  // propio; sólo ese controller puede marcar signaturePreverified=true.
+  const nativeSignatureResult = signaturePreverified
+    ? true
+    : verifyMetaWebhookSignature({
+        rawBody,
+        signatureHeader,
+        appSecret: config?.app_secret
+      })
 
-  if (signatureValid === false) {
+  const oauthConnection = ['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode))
+  const signatureAccepted = signaturePreverified || (oauthConnection
+    ? nativeSignatureResult === true
+    : nativeSignatureResult !== false)
+  const signatureValid = nativeSignatureResult === null ? null : nativeSignatureResult === true
+
+  // OAuth jamás acepta el endpoint directo sin firma nativa: su App Secret vive
+  // central y el camino normal es el relay HMAC preverified. Manual conserva por
+  // transición el comportamiento legacy cuando aún no tiene App Secret; si sí
+  // lo tiene, una firma incorrecta se rechaza.
+  if (!signatureAccepted) {
     await saveWebhookEvent({
       payload,
       rawBody,
       signatureValid,
       processedStatus: 'rejected',
-      processedError: 'Firma de Meta inválida'
+      processedError: 'Firma nativa de Meta ausente o inválida'
     })
-    const error = new Error('Firma de Meta inválida')
+    const error = new Error('Firma nativa de Meta ausente o inválida')
     error.statusCode = 401
     throw error
   }

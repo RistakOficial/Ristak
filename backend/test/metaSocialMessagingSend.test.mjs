@@ -882,6 +882,7 @@ test('processMetaSocialWebhook enriquece DMs de Instagram con Page token derivad
           ])
 
           await processMetaSocialWebhook({
+            signaturePreverified: true,
             payload: {
               object: 'instagram',
               entry: [
@@ -970,6 +971,7 @@ test('processMetaSocialWebhook enriquece comentarios de Instagram con perfil del
           ])
 
           await processMetaSocialWebhook({
+            signaturePreverified: true,
             payload: {
               object: 'instagram',
               entry: [
@@ -1066,6 +1068,7 @@ test('processMetaSocialWebhook refleja respuestas propias a comentarios en el ch
         ])
 
         const result = await processMetaSocialWebhook({
+          signaturePreverified: true,
           payload: {
             object: 'page',
             entry: [
@@ -1145,6 +1148,7 @@ test('processMetaSocialWebhook conserva el texto de comentario Facebook si un du
         await setAppConfig('meta_facebook_comments_enabled', '1')
 
         await processMetaSocialWebhook({
+          signaturePreverified: true,
           payload: {
             object: 'page',
             entry: [
@@ -1171,6 +1175,7 @@ test('processMetaSocialWebhook conserva el texto de comentario Facebook si un du
         })
 
         await processMetaSocialWebhook({
+          signaturePreverified: true,
           payload: {
             object: 'page',
             entry: [
@@ -1271,6 +1276,7 @@ test('processMetaSocialWebhook marca comentarios como eliminados cuando se borra
       ])
 
       const result = await processMetaSocialWebhook({
+        signaturePreverified: true,
         payload: {
           object: 'page',
           entry: [
@@ -1364,6 +1370,7 @@ test('processMetaSocialWebhook usa conversaciones de Instagram como fallback de 
           ])
 
           await processMetaSocialWebhook({
+            signaturePreverified: true,
             payload: {
               object: 'instagram',
               entry: [

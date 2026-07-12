@@ -308,6 +308,9 @@ function buildLocalMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = 
   if (!metaConfig) return null
 
   return {
+    connectionMode: cleanString(metaConfig.connection_mode) === 'oauth_user'
+      ? 'oauth_bisu'
+      : cleanString(metaConfig.connection_mode || 'manual_system_user'),
     adAccountId: normalizeAdAccountId(metaConfig.ad_account_id),
     accessToken: cleanString(metaConfig.access_token),
     pixelId: cleanString(metaConfig.pixel_id),
@@ -1665,6 +1668,13 @@ async function setupHighLevelWebhooks(locationId, apiToken, baseUrl) {
  */
 export async function saveMetaCustomValues(locationId, apiToken, metaCredentials) {
   try {
+    if (cleanString(metaCredentials?.connectionMode) === 'oauth_bisu') {
+      return {
+        success: true,
+        skipped: true,
+        message: 'El token OAuth/BISU se mantiene sólo en Ristak y no se exporta a HighLevel'
+      }
+    }
     logger.info('Guardando credenciales de Meta en HighLevel custom values...')
 
     // Primero obtener los custom values existentes
@@ -1805,13 +1815,22 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
       return result
     }
 
-    const [customValues, localCredentials] = await Promise.all([
-      fetchHighLevelCustomValues(locationId, apiToken).catch(error => {
-        logger.warn(`No se pudieron leer custom values para reconciliar Meta: ${error.message}`)
-        return []
-      }),
-      getLocalMetaCredentials()
-    ])
+    const localCredentials = await getLocalMetaCredentials()
+
+    // Cortar ANTES de consultar/escribir HighLevel. Además de no exportar el
+    // BISU token, esto impide que un fallo o desconexión de HighLevel participe
+    // siquiera en la reconciliación de una conexión OAuth.
+    if (cleanString(localCredentials?.connectionMode) === 'oauth_bisu') {
+      result.localConfigured = hasRequiredMetaCredentials(localCredentials)
+      result.action = 'oauth_isolated'
+      result.message = 'Meta OAuth se mantiene aislado de HighLevel'
+      return result
+    }
+
+    const customValues = await fetchHighLevelCustomValues(locationId, apiToken).catch(error => {
+      logger.warn(`No se pudieron leer custom values para reconciliar Meta: ${error.message}`)
+      return []
+    })
 
     const highLevelCredentials = extractMetaCredentialsFromCustomValues(customValues, { maskSecrets: false })
     const localComplete = hasRequiredMetaCredentials(localCredentials)

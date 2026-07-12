@@ -39,9 +39,28 @@ import {
 } from '../services/conversationalAgentService.js';
 import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js';
 import { sendAppointmentStatusNotification, sendPaymentNotification } from '../services/pushNotificationsService.js';
+import {
+  getInstallerSignatureHeaders,
+  verifyInstallerSignedRequest
+} from '../services/installerSignatureService.js';
+import { markMetaOAuthRelayReceived } from '../services/metaOAuthService.js';
+import { getMetaConfig } from '../services/metaAdsService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
+}
+
+function cleanString(value) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function parseSqlUtcInstant(value) {
+  const clean = cleanString(value);
+  if (!clean) return NaN;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(clean)
+    ? `${clean.replace(' ', 'T')}Z`
+    : clean;
+  return Date.parse(normalized);
 }
 
 function parseJson(value, fallback = {}) {
@@ -165,6 +184,117 @@ export const handleMetaSocialWebhook = async (req, res) => {
     res.status(error.statusCode || 200).json({
       success: error.statusCode ? false : true,
       error: error.statusCode ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Relay público Installer -> tenant. El Installer ya validó la firma nativa de
+ * Meta con el App Secret central; aquí exigimos la firma HMAC por instalación,
+ * timestamp y nonce antes de permitir el bypass explícito de X-Hub-Signature.
+ */
+export const handleMetaInstallerRelayWebhook = async (req, res) => {
+  const rawBody = req.rawBody || JSON.stringify(req.body || {});
+  let claimedDeliveryId = '';
+  try {
+    await verifyInstallerSignedRequest({
+      rawBody,
+      headers: getInstallerSignatureHeaders(req),
+      purpose: 'meta_social_webhook_relay'
+    });
+    const payload = req.body?.payload && typeof req.body.payload === 'object'
+      ? req.body.payload
+      : req.body || {};
+    const objectType = cleanString(payload?.object).toLowerCase();
+    if (!['page', 'instagram'].includes(objectType)) {
+      const unsupported = new Error('El relay de Meta sólo acepta eventos page o instagram');
+      unsupported.statusCode = 400;
+      unsupported.code = 'META_INSTALLER_RELAY_OBJECT_UNSUPPORTED';
+      throw unsupported;
+    }
+    const config = await getMetaConfig().catch(() => null);
+    const expectedId = objectType === 'instagram'
+      ? cleanString(config?.instagram_account_id)
+      : cleanString(config?.page_id);
+    const entries = Array.isArray(payload?.entry) ? payload.entry : [];
+    const entryIds = entries.map(entry => cleanString(entry?.id));
+    const oauthRelayActive = ['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode)) &&
+      Number(config?.oauth_validated) === 1 && cleanString(config?.oauth_relay_status) === 'registered';
+    if (!oauthRelayActive || !expectedId || !entries.length || entryIds.some(entryId => !entryId || entryId !== expectedId)) {
+      const mismatch = new Error('El relay de Meta no pertenece al activo OAuth conectado en esta instalación');
+      mismatch.statusCode = 403;
+      mismatch.code = 'META_INSTALLER_RELAY_ASSET_MISMATCH';
+      throw mismatch;
+    }
+    const deliveryId = cleanString(req.get('X-Ristak-Delivery-Id')) ||
+      crypto.createHash('sha256').update(rawBody).digest('hex');
+    await db.run(
+      `DELETE FROM meta_installer_relay_deliveries
+       WHERE status IN ('completed', 'failed') AND updated_at < ?`,
+      [new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').replace('Z', '')]
+    ).catch(() => undefined);
+    const inserted = await db.run(
+      `INSERT INTO meta_installer_relay_deliveries (id, status)
+       VALUES (?, 'processing') ON CONFLICT(id) DO NOTHING`,
+      [deliveryId]
+    );
+    const insertedRows = Number(inserted?.rowCount ?? inserted?.changes ?? 0);
+    if (!insertedRows) {
+      const prior = await db.get('SELECT status, updated_at FROM meta_installer_relay_deliveries WHERE id = ?', [deliveryId]);
+      if (prior?.status === 'completed') {
+        return res.status(200).json({ success: true, duplicate: true });
+      }
+      if (prior?.status === 'processing') {
+        const updatedAtMs = parseSqlUtcInstant(prior.updated_at);
+        const stale = Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs > 2 * 60 * 1000;
+        if (!stale) {
+          return res.status(409).json({ success: false, code: 'META_RELAY_DELIVERY_IN_PROGRESS', retryable: true });
+        }
+        const reclaimed = await db.run(
+          `UPDATE meta_installer_relay_deliveries SET updated_at = CURRENT_TIMESTAMP, error_message = NULL
+           WHERE id = ? AND status = 'processing' AND updated_at = ?`,
+          [deliveryId, prior.updated_at]
+        );
+        if (!Number(reclaimed?.rowCount ?? reclaimed?.changes ?? 0)) {
+          return res.status(409).json({ success: false, code: 'META_RELAY_DELIVERY_IN_PROGRESS', retryable: true });
+        }
+        claimedDeliveryId = deliveryId;
+      }
+      const reclaimed = prior?.status === 'failed' ? await db.run(
+        `UPDATE meta_installer_relay_deliveries SET status = 'processing', error_message = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'failed'`,
+        [deliveryId]
+      ) : null;
+      if (prior?.status === 'failed' && !Number(reclaimed?.rowCount ?? reclaimed?.changes ?? 0)) {
+        return res.status(409).json({ success: false, code: 'META_RELAY_DELIVERY_IN_PROGRESS', retryable: true });
+      }
+    }
+    claimedDeliveryId = deliveryId;
+    await processMetaSocialWebhook({
+      payload,
+      rawBody: payload === req.body ? rawBody : JSON.stringify(payload),
+      signaturePreverified: true
+    });
+    await markMetaOAuthRelayReceived();
+    await db.run(
+      `UPDATE meta_installer_relay_deliveries SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
+       error_message = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [deliveryId]
+    );
+    res.status(200).json({ success: true });
+  } catch (error) {
+    if (claimedDeliveryId) {
+      await db.run(
+        `UPDATE meta_installer_relay_deliveries SET status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'processing'`,
+        [error.message, claimedDeliveryId]
+      ).catch(() => undefined);
+    }
+    logger.warn(`Relay Meta del Installer rechazado: ${error.message}`);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      code: error.code || 'META_INSTALLER_RELAY_ERROR',
+      error: error.message || 'No se pudo procesar el relay de Meta'
     });
   }
 };

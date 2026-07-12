@@ -45,11 +45,25 @@ import {
 } from '../controllers/metaCampaignBuilderController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import {
+  completeMetaOAuth,
+  createMetaOAuthConnectUrl,
+  disconnectMetaOAuth,
+  finalizeMetaOAuth,
+  getMetaOAuthStatus
+} from '../controllers/metaOAuthController.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
 router.use(requireModuleAccess('campaigns'))
+
+// Facebook Login for Business (BISU) administrado por Ristak Installer.
+router.get('/oauth/status', getMetaOAuthStatus)
+router.post('/oauth/connect-url', createMetaOAuthConnectUrl)
+router.post('/oauth/complete', completeMetaOAuth)
+router.post('/oauth/finalize', finalizeMetaOAuth)
+router.post('/oauth/disconnect', disconnectMetaOAuth)
 
 // Configuración
 router.post('/config', saveConfig)

@@ -14,10 +14,12 @@ export const INTEGRATION_APP_CONFIG_KEYS = {
     'meta_whatsapp_business_account_id',
     'meta_whatsapp_purchase_enabled',
     'meta_whatsapp_schedule_enabled',
+    'meta_payment_purchase_event_config',
     'meta_messenger_messaging_enabled',
     'meta_instagram_messaging_enabled',
     'meta_facebook_comments_enabled',
-    'meta_instagram_comments_enabled'
+    'meta_instagram_comments_enabled',
+    'meta_oauth_relay_last_received_at'
   ],
   whatsappApi: [
     'whatsapp_api_ycloud_api_key_encrypted',

@@ -40,6 +40,7 @@ import {
 } from '../utils/whatsappContactProfile.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
+import { verifyInstallerSignedRequest } from './installerSignatureService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { claimInboundChatMessage } from './chatReadStateService.js'
@@ -2186,48 +2187,11 @@ function decodeSignedState(state = '', secret = '') {
   return payload
 }
 
-async function getMetaDirectHmacSecret() {
-  const runtime = await getLicenseRuntimeConfig()
-  if (!runtime.licenseKey) throw new Error('Falta la licencia local para firmar la conexión con Ristak')
-  return runtime.licenseKey
-}
-
 function timingSafeEqualText(left = '', right = '') {
   const leftBuffer = Buffer.from(cleanString(left))
   const rightBuffer = Buffer.from(cleanString(right))
   if (leftBuffer.length !== rightBuffer.length) return false
   return crypto.timingSafeEqual(leftBuffer, rightBuffer)
-}
-
-async function rememberSignedRequestNonce(nonce, purpose = 'meta_direct') {
-  const cleanNonce = cleanString(nonce)
-  if (!cleanNonce) throw new Error('Falta nonce de seguridad')
-  const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString()
-  await db.run(`
-    DELETE FROM whatsapp_meta_direct_nonces
-    WHERE created_at < ?
-  `, [cutoff]).catch(() => null)
-
-  const existing = await db.get('SELECT nonce FROM whatsapp_meta_direct_nonces WHERE nonce = ?', [cleanNonce]).catch(() => null)
-  if (existing) throw new Error('Nonce de seguridad repetido')
-  await db.run('INSERT INTO whatsapp_meta_direct_nonces (nonce, purpose) VALUES (?, ?)', [cleanNonce, purpose])
-}
-
-async function verifyInstallerSignedRequest({ rawBody = '', headers = {}, purpose = 'meta_direct' } = {}) {
-  const timestamp = cleanString(headers.signatureTimestamp || headers.timestamp)
-  const nonce = cleanString(headers.signatureNonce || headers.nonce)
-  const signature = cleanString(headers.signature)
-  if (!timestamp || !nonce || !signature) throw new Error('Faltan encabezados de firma de Ristak')
-
-  const timestampMs = Number(timestamp)
-  if (!Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > 5 * 60 * 1000) {
-    throw new Error('Firma expirada')
-  }
-
-  const secret = await getMetaDirectHmacSecret()
-  const expected = signHmacHex(secret, `${timestamp}.${nonce}.${rawBody || ''}`)
-  if (!timingSafeEqualText(expected, signature)) throw new Error('Firma inválida de Ristak')
-  await rememberSignedRequestNonce(nonce, purpose)
 }
 
 async function loadMetaDirectConfig({ includeSecrets = false } = {}) {

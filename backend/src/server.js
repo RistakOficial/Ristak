@@ -28,6 +28,7 @@ import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageServi
 import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxonomyMigration.js'
 import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
+import { startMetaOAuthPendingSessionCleanupScheduler } from './services/metaOAuthService.js'
 
 // Garantiza un ffmpeg con libopus en CUALQUIER runtime (Render nativo O Docker):
 // apunta FFMPEG_PATH al binario estático empaquetado. Toda la transcodificación
@@ -46,6 +47,7 @@ import metaRoutes from './routes/meta.routes.js'
 import { renderMetaPixelTestPage, runMetaPixelTestServerEvent } from './controllers/metaController.js'
 import dashboardRoutes from './routes/dashboard.routes.js'
 import webhooksRoutes from './routes/webhooks.routes.js'
+import { handleMetaInstallerRelayWebhook } from './controllers/webhooksController.js'
 import reportsRoutes from './routes/reports.routes.js'
 import webhookConfigRoutes from './routes/webhookConfig.routes.js'
 import contactsRoutes from './routes/contacts.routes.js'
@@ -246,6 +248,27 @@ const conversationalGoalCallbackFormParser = express.urlencoded({
   }
 })
 
+const metaInstallerRelayJsonParser = express.json({
+  limit: '1mb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf.toString('utf8')
+  }
+})
+
+function runMetaInstallerRelayParser(req, res, next) {
+  return metaInstallerRelayJsonParser(req, res, (error) => {
+    if (!error) return next()
+    if (error.type === 'entity.too.large' || error.status === 413 || error.statusCode === 413) {
+      return res.status(413).json({
+        success: false,
+        code: 'META_INSTALLER_RELAY_BODY_TOO_LARGE',
+        error: 'El evento de Meta supera el límite permitido.'
+      })
+    }
+    return next(error)
+  })
+}
+
 function runConversationalGoalCallbackParser(parser, req, res, next) {
   return parser(req, res, (error) => {
     if (!error) return next()
@@ -287,6 +310,15 @@ app.use((req, res, next) => {
     error: 'El callback debe usar JSON o application/x-www-form-urlencoded.'
   })
 })
+
+// Este endpoint público verifica HMAC sobre el body crudo y no debe atravesar
+// primero el parser global de 35 MB. Se monta aquí con límite propio y ruta
+// canónica; el resto de webhooks conserva su parser existente.
+app.post(
+  '/webhooks/meta/installer-relay',
+  runMetaInstallerRelayParser,
+  handleMetaInstallerRelayWebhook
+)
 
 app.use(express.json({
   limit: '35mb',
@@ -467,6 +499,10 @@ async function startRuntimeServices() {
 
   // Inicializar versión de Meta API desde BD
   await initializeVersion()
+
+  // Cleanup de sistema: compensa subscribed_apps/relay de OAuth abandonados y
+  // garantiza TTL de secretos aunque nadie vuelva a abrir Configuración.
+  startMetaOAuthPendingSessionCleanupScheduler()
 
   runStartupDrainTask(
     'startup:media-runtime-config',

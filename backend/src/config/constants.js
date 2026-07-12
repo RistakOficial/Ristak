@@ -5,7 +5,7 @@ export const PUBLIC_URL = process.env.PUBLIC_URL || 'http://localhost:3002'
 
 // Version de Meta API (se actualiza dinamicamente desde BD)
 // El startup del backend, GitHub Actions y el cron mensual revisan si hay version nueva.
-let META_API_VERSION = process.env.META_API_VERSION?.trim() || 'v23.0' // Fallback inicial
+let META_API_VERSION = process.env.META_API_VERSION?.trim() || 'v25.0' // Fallback probado para OAuth/Graph actual
 
 /**
  * Actualiza la versión de Meta API en memoria
@@ -17,7 +17,7 @@ export function setMetaApiVersion(version) {
 
 /**
  * Obtiene la versión actual de Meta API
- * @returns {string} Versión actual (ej: "v23.0")
+ * @returns {string} Versión actual (ej: "v25.0")
  */
 export function getMetaApiVersion() {
   return META_API_VERSION

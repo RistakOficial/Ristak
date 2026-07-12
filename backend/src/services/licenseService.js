@@ -786,6 +786,65 @@ export async function claimCentralOAuthHandoff({ provider, handoffToken } = {}) 
   return data.handoff || {}
 }
 
+/**
+ * La app/secret/configuration id de Facebook Login for Business viven en el
+ * Installer. La instalación sólo recibe configuración pública y, al terminar,
+ * reclama un handoff de un uso con el BISU token.
+ */
+export async function getCentralMetaOAuthStatus() {
+  const data = await callLicenseServer('/api/license/meta/status', {})
+  return data.meta || data.connection || data || {}
+}
+
+export async function createCentralMetaOAuthConnectUrl({ returnPath = '/settings/meta-ads/token' } = {}) {
+  const data = await callLicenseServer('/api/license/meta/connect-url', {
+    return_path: returnPath
+  })
+  const meta = data.meta || data || {}
+  return {
+    ...meta,
+    connectUrl: meta.connect_url || meta.connectUrl || data.connect_url || data.connectUrl || ''
+  }
+}
+
+export async function connectCentralMetaOAuth({ code = '', configId = '', returnPath = '/settings/meta-ads/token' } = {}) {
+  const data = await callLicenseServer('/api/license/meta/connect', {
+    code,
+    config_id: configId,
+    return_path: returnPath
+  })
+  return {
+    meta: data.meta || {},
+    handoffToken: data.handoff_token || data.handoffToken || data.handoff?.token || '',
+    handoffExpiresAt: data.handoff?.expires_at || data.handoff?.expiresAt || null
+  }
+}
+
+export async function updateCentralMetaWebhookSubscription({
+  action = 'register',
+  connectionId = '',
+  pageId = '',
+  instagramAccountId = '',
+  webhookUrl = ''
+} = {}) {
+  const data = await callLicenseServer('/api/license/meta/webhook-subscription', {
+    action: action === 'unregister' ? 'unregister' : 'register',
+    connection_id: connectionId || null,
+    page_id: pageId || null,
+    instagram_account_id: instagramAccountId || null,
+    webhook_url: webhookUrl || null
+  })
+  return data.meta || data.subscription || data || {}
+}
+
+export async function disconnectCentralMetaOAuth() {
+  const data = await callLicenseServer('/api/license/meta/disconnect', {})
+  return {
+    disconnected: data.disconnected === true,
+    meta: data.meta || null
+  }
+}
+
 export async function refreshCentralGoogleCalendarToken({ refreshToken } = {}) {
   const data = await callLicenseServer('/api/license/google-calendar/refresh-token', {
     refresh_token: refreshToken
