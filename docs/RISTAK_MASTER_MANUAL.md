@@ -238,6 +238,25 @@ Hay tres capas distintas:
 3. Permisos de usuario: `requireModuleAccess(moduleKey)` valida lectura/escritura
    por modulo.
 
+En instalaciones administradas existe un acceso global de soporte desde el
+login normal. El operador escribe el correo dueño del cliente y la contraseña
+vigente del admin principal de Ristak Installer. La app consulta
+`/api/owner-credentials/verify` con su `client_id`, licencia e instalación; el
+Installer valida que el correo sea exactamente el dueño y responde
+`support_access: true` sin entregar ni copiar el hash del admin.
+
+Ese acceso genera un JWT local con `supportAccess=true` y sin `exp`, guardado en
+el mismo `localStorage` de una sesión normal. No se invalida cuando el cliente
+cambia su contraseña o incrementa `token_version`; sí deja de servir si el
+usuario se desactiva, la licencia se bloquea, se cierra sesión, se borra el
+almacenamiento local o cambia la llave de firma del backend. Los logins normales
+mantienen su expiración de 30 días y su revocación por `token_version`.
+
+La contraseña del admin nunca vive en la base del cliente, variables de entorno
+ni documentación. Solo su hash permanece en `admin_users.password_hash` del
+Installer y cada autorización se audita centralmente como
+`support_login_authorized`.
+
 `requireModuleAccess(moduleKey)` tambien valida la feature comercial del modulo
 con `hasModuleFeature(...)`. Un admin local con permiso `write` no puede abrir
 Pagos, Sites, Developers, Integraciones, Usuarios u otros modulos comerciales si

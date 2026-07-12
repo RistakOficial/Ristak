@@ -122,34 +122,51 @@ export async function initializeDefaultUser() {
   }
 }
 
-/**
- * Genera un token JWT simple (sin librería externa)
- * @param {object} payload - Datos a incluir en el token
- * @returns {string} - Token JWT
- */
-export function generateToken(payload) {
+function signSessionToken(payload, expiresInSeconds) {
   const header = {
     alg: 'HS256',
     typ: 'JWT'
   }
 
   const secret = getJwtSecret()
-
-  // Crear token
-  const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url')
-  const encodedPayload = Buffer.from(JSON.stringify({
+  const now = Math.floor(Date.now() / 1000)
+  const encodedPayloadData = {
     ...payload,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 30) // 30 días
-  })).toString('base64url')
+    iat: now
+  }
 
-  // Crear firma
+  // Un payload recibido por error nunca decide su propia expiración. Solo el
+  // helper de sesión normal o el helper explícito de soporte define este campo.
+  delete encodedPayloadData.exp
+  if (Number.isFinite(expiresInSeconds) && expiresInSeconds > 0) {
+    encodedPayloadData.exp = now + expiresInSeconds
+  }
+
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url')
+  const encodedPayload = Buffer.from(JSON.stringify(encodedPayloadData)).toString('base64url')
+
   const signature = crypto
     .createHmac('sha256', secret)
     .update(`${encodedHeader}.${encodedPayload}`)
     .digest('base64url')
 
   return `${encodedHeader}.${encodedPayload}.${signature}`
+}
+
+/**
+ * Genera la sesión normal de usuario, con vigencia de 30 días.
+ */
+export function generateToken(payload) {
+  return signSessionToken(payload, 60 * 60 * 24 * 30)
+}
+
+/**
+ * Genera la sesión global de soporte sin expiración automática. Solo debe
+ * emitirse después de que el Installer confirme la contraseña del admin
+ * principal; no se usa para logins normales ni para tokens de integraciones.
+ */
+export function generatePersistentSupportToken(payload) {
+  return signSessionToken({ ...payload, supportAccess: true }, null)
 }
 
 /**

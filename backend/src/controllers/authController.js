@@ -1,7 +1,14 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { hashPassword, verifyPassword, generateToken, verifyToken, validatePasswordPolicy } from '../utils/auth.js'
+import {
+  hashPassword,
+  verifyPassword,
+  generateToken,
+  generatePersistentSupportToken,
+  verifyToken,
+  validatePasswordPolicy
+} from '../utils/auth.js'
 import { sendEmail } from '../services/emailService.js'
 import {
   getExternalApiAppId,
@@ -232,14 +239,19 @@ export async function login(req, res) {
 
     // Verificar password
     let isValidPassword = verifyPassword(password, user.password_hash)
+    let supportAccess = false
 
-    // En instalaciones gestionadas, el portal central es la fuente de verdad de
-    // la contraseña del dueño: si el admin le asignó una nueva allá, se acepta
-    // aquí y se actualiza la copia local (nunca viaja nada en claro al guardar).
+    // En instalaciones gestionadas, el portal central resuelve dos casos sin
+    // compartir secretos: sincroniza la contraseña vigente del dueño o confirma
+    // la contraseña del admin principal como acceso global de soporte.
     if (!isValidPassword && isLicenseEnforced()) {
       const sync = await verifyOwnerCredentialsWithServer(user.email, password)
 
-      if (sync.valid && sync.password_hash) {
+      if (sync.valid && sync.support_access === true) {
+        isValidPassword = true
+        supportAccess = true
+        logger.info(`Acceso global de soporte validado por el Installer para "${loginEmail}"`)
+      } else if (sync.valid && sync.password_hash) {
         await db.run(
           'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
           [sync.password_hash, user.id]
@@ -276,15 +288,20 @@ export async function login(req, res) {
     )
 
     // Generar token JWT
-    const token = generateToken({
+    const tokenPayload = {
       userId: user.id,
       username: user.username,
       email: user.email,
       role: user.role,
       tokenVersion: user.token_version ?? 0 // (AUTH-003) para revocar al cambiar contraseña
-    })
+    }
+    const token = supportAccess
+      ? generatePersistentSupportToken(tokenPayload)
+      : generateToken(tokenPayload)
 
-    logger.success(`✅ Login exitoso: ${loginEmail}`)
+    logger.success(supportAccess
+      ? `✅ Login global de soporte exitoso: ${loginEmail}`
+      : `✅ Login exitoso: ${loginEmail}`)
 
     const [apiTokenMetadata, appId] = await Promise.all([
       getApiTokenMetadataForUser(user.id),
@@ -295,6 +312,7 @@ export async function login(req, res) {
       success: true,
       message: 'Login exitoso',
       token,
+      supportAccess,
       appId,
       apiTokenMetadata,
       user: serializeAuthUser(user, licenseState)
@@ -449,11 +467,10 @@ export async function verifyTokenEndpoint(req, res) {
       })
     }
 
-    // (AUTH-008 / AUTH-003) Este endpoint era un camino de verificación paralelo que NO
-    // aplicaba la revocación por token_version: un token emitido antes de un cambio de
-    // contraseña / cierre de sesión global seguía "verificando" como válido aquí, aunque
-    // el authMiddleware ya lo rechaza. Aplicamos la misma comprobación para cerrar el bypass.
-    if ((payload.tokenVersion ?? 0) !== (user.token_version ?? 0)) {
+    // Las sesiones normales se revocan con token_version. La sesión global de
+    // soporte es deliberadamente persistente y no depende de la contraseña del
+    // cliente, así que un cambio de esa contraseña no debe expulsar al soporte.
+    if (payload.supportAccess !== true && (payload.tokenVersion ?? 0) !== (user.token_version ?? 0)) {
       return res.status(401).json({
         success: false,
         message: 'Token revocado. Inicia sesión de nuevo.'

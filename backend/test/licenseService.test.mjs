@@ -103,7 +103,9 @@ function startMockServer() {
 
         if (req.url === '/api/owner-credentials/verify') {
           const { password } = lastRequestBody || {}
-          if (password === 'clave-portal-1') {
+          if (password === 'clave-admin-installer') {
+            res.end(JSON.stringify({ valid: true, support_access: true }))
+          } else if (password === 'clave-portal-1') {
             res.end(JSON.stringify({ valid: true, password_hash: 'salt:hash-portal-nuevo' }))
           } else {
             res.statusCode = 403
@@ -528,4 +530,15 @@ test('verifyOwnerCredentialsWithServer sincroniza la contraseña vigente del por
   configureStandalone()
   const standalone = await licenseService.verifyOwnerCredentialsWithServer('dueno@clinica.com', 'clave-portal-1')
   assert.equal(standalone.valid, false)
+})
+
+test('verifyOwnerCredentialsWithServer conserva la bandera de acceso global de soporte', async () => {
+  const support = await licenseService.verifyOwnerCredentialsWithServer(
+    'dueno@clinica.com',
+    'clave-admin-installer'
+  )
+
+  assert.equal(support.valid, true)
+  assert.equal(support.support_access, true)
+  assert.equal(support.password_hash, undefined)
 })

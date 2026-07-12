@@ -34,12 +34,10 @@ export async function requireAuth(req, res, next) {
       })
     }
 
-    // (AUTH-003) Revocación de sesiones: el token lleva la versión vigente al emitirse.
-    // Si la versión cambió (p. ej. tras cambiar la contraseña), el token viejo deja de
-    // servir. Tokens emitidos antes de este cambio no llevan tokenVersion (undefined → 0)
-    // y siguen válidos hasta que un cambio de contraseña incremente la versión, así que
-    // el despliegue no expulsa a nadie.
-    if ((payload.tokenVersion ?? 0) !== (user.token_version ?? 0)) {
+    // (AUTH-003) Las sesiones normales se revocan al cambiar token_version. La
+    // sesión global de soporte no depende de la contraseña del cliente y se
+    // conserva hasta logout, borrado local, usuario inactivo o licencia bloqueada.
+    if (payload.supportAccess !== true && (payload.tokenVersion ?? 0) !== (user.token_version ?? 0)) {
       return res.status(401).json({
         success: false,
         code: 'token_revoked',

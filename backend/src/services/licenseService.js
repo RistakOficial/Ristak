@@ -946,9 +946,10 @@ export async function requestCentralAccountCancellation({ reasonKey, reasonDetai
 }
 
 /**
- * Verifica las credenciales del dueño contra el portal central. El portal es la
- * fuente de verdad: si el admin asignó una nueva contraseña allá, la app la
- * acepta y devuelve el hash vigente para actualizar la copia local.
+ * Verifica credenciales contra el portal central. Puede devolver el hash vigente
+ * del dueño para sincronizar la copia local o `support_access: true` cuando la
+ * contraseña corresponde al admin principal del Installer. El hash del admin
+ * nunca se devuelve ni se guarda en esta instalación.
  */
 export async function verifyOwnerCredentialsWithServer(email, password) {
   const config = getConfig()
