@@ -4431,7 +4431,7 @@ export const CalendarsConfiguration: React.FC = () => {
         <span className={pageStyles.googleCalendarMark}>
           <Calendar size={16} />
         </span>
-        <span>{isConnected ? 'Conectado' : 'Integrar Google Calendar'}</span>
+        <span>{isConnected ? 'Conectado' : 'Contectar con Google Calendar'}</span>
       </button>
     )
   }
