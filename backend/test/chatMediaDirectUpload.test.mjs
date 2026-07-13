@@ -11,7 +11,10 @@ import {
   trustedUploadContextFromRequest,
   uploadInputFromRequest
 } from '../src/controllers/mediaController.js'
-import mediaRouter, { resolveMediaUploadModule } from '../src/routes/media.routes.js'
+import mediaRouter, {
+  resolveMediaUploadAccessModule,
+  resolveMediaUploadModule
+} from '../src/routes/media.routes.js'
 import { db } from '../src/config/database.js'
 import {
   resetCentralStorageConfigCache,
@@ -100,6 +103,10 @@ test('el query de upload manda sobre el body y autoriza media de chat como chat'
     body: { module: 'settings_media' }
   }), 'chat')
   assert.equal(resolveMediaUploadModule({ query: {}, body: { module: 'sites' } }), 'sites')
+  assert.equal(resolveMediaUploadAccessModule({ mediaUploadModule: 'sites' }), 'sites')
+  assert.equal(resolveMediaUploadAccessModule({ mediaUploadModule: 'forms' }), 'sites')
+  assert.equal(resolveMediaUploadAccessModule({ mediaUploadModule: 'media' }), 'settings_media')
+  assert.equal(resolveMediaUploadAccessModule({ directChatUpload: { enabled: true } }), 'chat')
   assert.equal(directChatCompatibilityFromRequest({
     query: {
       module: 'chat',
@@ -120,6 +127,45 @@ test('el query de upload manda sobre el body y autoriza media de chat como chat'
       chatMediaKind: 'video'
     }
   }).enabled, false, 'el multipart no puede activar después el parser directo de 25 MB')
+})
+
+test('Sites conserva el módulo autorizado del query y rechaza un body contradictorio', () => {
+  const previousBusinessId = process.env.RISTAK_BUSINESS_ID
+  process.env.RISTAK_BUSINESS_ID = 'tenant_sites_real'
+  try {
+    const context = trustedUploadContextFromRequest({
+      mediaUploadModule: 'sites',
+      query: { module: 'sites', businessId: 'tenant_atacante' },
+      body: {
+        module: 'sites',
+        moduleEntityId: 'site_1',
+        businessId: 'tenant_atacante',
+        clientAccountId: 'cuenta_atacante',
+        userId: 'usuario_atacante'
+      },
+      user: { userId: 'user_sites', role: 'member' },
+      get: () => null
+    })
+    assert.equal(context.module, 'sites')
+    assert.equal(context.moduleEntityId, 'site_1')
+    assert.equal(context.businessId, 'tenant_sites_real')
+    assert.equal(context.clientAccountId, null)
+    assert.equal(context.userId, 'user_sites')
+  } finally {
+    if (previousBusinessId === undefined) delete process.env.RISTAK_BUSINESS_ID
+    else process.env.RISTAK_BUSINESS_ID = previousBusinessId
+  }
+
+  assert.throws(
+    () => trustedUploadContextFromRequest({
+      mediaUploadModule: 'sites',
+      query: { module: 'sites' },
+      body: { module: 'settings_media' },
+      user: { userId: 'user_sites' },
+      get: () => null
+    }),
+    error => error?.status === 400 && error?.code === 'media_upload_module_mismatch'
+  )
 })
 
 test('la identidad y la cuota del upload directo de Chat provienen del servidor y la sesión', () => {
@@ -207,7 +253,7 @@ test('Media/Sites conserva el ruteo administrativo multi-cuenta existente', () =
       userId: 'legacy_admin_user',
       module: 'sites'
     },
-    user: { userId: 'usuario_autenticado' },
+    user: { userId: 'usuario_autenticado', role: 'admin' },
     get: () => null
   })
   assert.equal(context.businessId, 'business_admin')
@@ -225,6 +271,7 @@ test('la huella idempotente distingue cuentas administrativas aunque compartan b
       module: 'sites',
       clientUploadId: 'legacy-shared-upload-key'
     },
+    user: { userId: 'usuario_autenticado', role: 'admin' },
     file: {
       originalname: 'hero.jpg',
       mimetype: 'image/jpeg',

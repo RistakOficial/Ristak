@@ -1,5 +1,6 @@
 import apiClient from './apiClient'
 import { getApiBaseUrl } from './apiBaseUrl'
+import * as tus from 'tus-js-client'
 
 export interface MediaAsset {
   id: string
@@ -93,6 +94,20 @@ export interface UploadMediaFileInput {
   clientUploadId?: string
   onProgress?: (progress: MediaUploadProgress) => void
   signal?: AbortSignal
+}
+
+interface ResumableVideoUploadPreparation {
+  completed: boolean
+  asset: MediaAsset
+  upload: null | {
+    endpoint: string
+    videoId: string
+    libraryId: string
+    expirationTime: number
+    signature: string
+    headers: Record<string, string>
+    metadata: Record<string, string>
+  }
 }
 
 export interface MediaMoveEntry {
@@ -341,6 +356,231 @@ function createMediaUploadClientId() {
   return `media_upload_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
 }
 
+const RESUMABLE_VIDEO_MODULES = new Set(['sites', 'forms', 'landing'])
+const RESUMABLE_VIDEO_EXTENSION_PATTERN = /\.(?:mp4|mov|webm|3gp)$/i
+const RESUMABLE_VIDEO_CHUNK_BYTES = 10 * 1024 * 1024
+
+function mediaUploadEndpoint(path: string, module = '') {
+  const normalizedModule = String(module || '').trim().toLowerCase()
+  if (!normalizedModule) return path
+  const separator = path.includes('?') ? '&' : '?'
+  return `${path}${separator}module=${encodeURIComponent(normalizedModule)}`
+}
+
+function shouldUseResumableVideoUpload(input: UploadMediaFileInput) {
+  const module = String(input.module || '').trim().toLowerCase()
+  return RESUMABLE_VIDEO_MODULES.has(module) && (
+    input.file.type.toLowerCase().startsWith('video/') ||
+    RESUMABLE_VIDEO_EXTENSION_PATTERN.test(input.file.name)
+  )
+}
+
+async function createResumableVideoUploadClientId(input: UploadMediaFileInput) {
+  const fingerprint = [
+    input.file.name,
+    input.file.size,
+    input.file.type,
+    input.file.lastModified,
+    String(input.module || '').toLowerCase()
+  ].join('\0')
+
+  if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprint))
+    const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+    return `tus_${hex}`
+  }
+
+  let hash = 2166136261
+  for (let index = 0; index < fingerprint.length; index += 1) {
+    hash ^= fingerprint.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `tus_fallback_${(hash >>> 0).toString(16)}_${input.file.size}`
+}
+
+function uploadErrorStatus(error: unknown) {
+  return typeof error === 'object' && error ? Number((error as { status?: unknown }).status) : NaN
+}
+
+function uploadErrorCode(error: unknown) {
+  if (!error || typeof error !== 'object') return ''
+  const body = (error as { body?: unknown }).body
+  if (!body || typeof body !== 'object') return ''
+  return String((body as { code?: unknown }).code || '')
+}
+
+function shouldFallbackToMultipartUpload(error: unknown) {
+  const status = uploadErrorStatus(error)
+  const code = uploadErrorCode(error)
+  return status === 404 || code === 'bunny_stream_resumable_unavailable'
+}
+
+async function finalizeResumableVideoUpload(
+  assetId: string,
+  module: string,
+  uploadUrl: string,
+  signal?: AbortSignal
+) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await apiClient.post<MediaAsset>(
+        mediaUploadEndpoint(`/media/video-upload/${encodeURIComponent(assetId)}/finalize`, module),
+        { module, uploadUrl },
+        { signal }
+      )
+    } catch (error) {
+      lastError = error
+      const status = uploadErrorStatus(error)
+      const code = uploadErrorCode(error)
+      const retryable = !Number.isFinite(status) || status >= 500 || code === 'bunny_stream_upload_not_complete'
+      if (!retryable || attempt === 3) throw error
+      await sleep(1000 * (attempt + 1), signal)
+    }
+  }
+  throw lastError
+}
+
+async function cancelResumableVideoUpload(assetId: string, module: string) {
+  await apiClient.delete(
+    mediaUploadEndpoint(`/media/video-upload/${encodeURIComponent(assetId)}`, module),
+    { module }
+  )
+}
+
+async function uploadVideoWithTus(
+  input: UploadMediaFileInput,
+  preparation: ResumableVideoUploadPreparation
+): Promise<MediaAsset> {
+  if (preparation.completed) return preparation.asset
+  if (!preparation.upload) throw new Error('Bunny no regresó una sesión de subida resumible.')
+
+  const credentials = preparation.upload
+  const module = input.module || 'sites'
+  const cancelPreparedUpload = () => cancelResumableVideoUpload(preparation.asset.id, module)
+    .catch(() => undefined)
+  const completedUpload = await new Promise<{ upload: tus.Upload; uploadUrl: string }>((resolve, reject) => {
+    let settled = false
+    let upload: tus.Upload | null = null
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      input.signal?.removeEventListener('abort', abort)
+      callback()
+    }
+    const abort = () => {
+      const abortUpload = upload?.abort()
+      if (abortUpload) void abortUpload.finally(cancelPreparedUpload)
+      else void cancelPreparedUpload()
+      finish(() => reject(createMediaUploadCancelledError()))
+    }
+
+    if (input.signal?.aborted) {
+      void cancelPreparedUpload()
+      reject(createMediaUploadCancelledError())
+      return
+    }
+
+    upload = new tus.Upload(input.file, {
+      endpoint: credentials.endpoint,
+      chunkSize: RESUMABLE_VIDEO_CHUNK_BYTES,
+      retryDelays: [0, 1500, 4500, 10_000, 20_000, 60_000],
+      // Conserva la sesión hasta que nuestro backend la verifique. Si la página
+      // o Render caen justo después del último chunk, el siguiente intento hace
+      // HEAD sobre la misma sesión en lugar de volver a mandar todo el video.
+      removeFingerprintOnSuccess: false,
+      headers: credentials.headers,
+      metadata: {
+        filetype: input.file.type || credentials.metadata.filetype || 'video/mp4',
+        title: credentials.metadata.title || input.file.name,
+        ...(credentials.metadata.collection ? { collection: credentials.metadata.collection } : {})
+      },
+      onShouldRetry: (error) => {
+        const status = 'originalResponse' in error
+          ? error.originalResponse?.getStatus() ?? null
+          : null
+        return status === null || status === 0 || status === 409 || status === 423 ||
+          status === 429 || status >= 500
+      },
+      onProgress: (loaded, total) => {
+        input.onProgress?.({
+          loaded,
+          total,
+          percent: total > 0 ? Math.max(0, Math.min(100, Math.round((loaded / total) * 100))) : 0
+        })
+      },
+      onError: (error) => {
+        const status = 'originalResponse' in error
+          ? error.originalResponse?.getStatus()
+          : null
+        finish(() => reject(new Error(
+          status
+            ? `Bunny rechazó la subida resumible (HTTP ${status}). Intenta de nuevo.`
+            : 'La conexión se interrumpió mientras se subía el video. Ristak conservará el avance para reanudarlo.'
+        )))
+      },
+      onSuccess: () => finish(() => {
+        if (upload?.url) {
+          resolve({ upload, uploadUrl: upload.url })
+          return
+        }
+        reject(new Error('Bunny terminó la subida, pero no regresó la URL TUS para verificarla.'))
+      })
+    })
+
+    input.signal?.addEventListener('abort', abort, { once: true })
+    void upload.findPreviousUploads()
+      .then(previousUploads => {
+        const previous = previousUploads[previousUploads.length - 1]
+        if (previous) upload?.resumeFromPreviousUpload(previous)
+        upload?.start()
+      })
+      .catch(error => finish(() => reject(error)))
+  })
+
+  let asset: MediaAsset
+  try {
+    asset = await finalizeResumableVideoUpload(
+      preparation.asset.id,
+      module,
+      completedUpload.uploadUrl,
+      input.signal
+    )
+  } catch (error) {
+    if (input.signal?.aborted) {
+      await cancelPreparedUpload()
+      throw createMediaUploadCancelledError()
+    }
+    throw error
+  }
+
+  const storedUploads = await completedUpload.upload.findPreviousUploads().catch(() => [])
+  const completedEntry = storedUploads.find(entry => entry.uploadUrl === completedUpload.uploadUrl)
+  if (completedEntry) {
+    const storage = completedUpload.upload.options.urlStorage || tus.defaultOptions.urlStorage
+    await storage.removeUpload(completedEntry.urlStorageKey).catch(() => undefined)
+  }
+  return asset
+}
+
+async function prepareResumableVideoUpload(input: UploadMediaFileInput, clientUploadId: string) {
+  const module = input.module || 'sites'
+  return apiClient.post<ResumableVideoUploadPreparation>(
+    mediaUploadEndpoint('/media/video-upload/prepare', module),
+    {
+      filename: input.file.name,
+      mimeType: input.file.type,
+      size: input.file.size,
+      lastModified: input.file.lastModified,
+      module,
+      moduleEntityId: input.moduleEntityId,
+      isPublic: input.isPublic ?? true,
+      clientUploadId
+    },
+    { signal: input.signal }
+  )
+}
+
 function sleep(ms: number, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
@@ -474,13 +714,28 @@ function createMediaUploadCancelledError() {
 
 export const mediaService = {
   async uploadFile(input: UploadMediaFileInput): Promise<MediaAsset> {
-    const clientUploadId = input.clientUploadId || createMediaUploadClientId()
+    const useResumableVideo = shouldUseResumableVideoUpload(input)
+    const clientUploadId = input.clientUploadId || (
+      useResumableVideo
+        ? await createResumableVideoUploadClientId(input)
+        : createMediaUploadClientId()
+    )
+    if (useResumableVideo) {
+      let preparation: ResumableVideoUploadPreparation | null = null
+      try {
+        preparation = await prepareResumableVideoUpload(input, clientUploadId)
+      } catch (error) {
+        if (!shouldFallbackToMultipartUpload(error)) throw error
+      }
+      if (preparation) return uploadVideoWithTus(input, preparation)
+    }
+
     let lastError: unknown
 
     for (let attempt = 0; attempt <= MEDIA_UPLOAD_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
         const formData = buildUploadFormData(input, clientUploadId)
-        return await postFormWithProgress<MediaAsset>('/media/upload', formData, input.onProgress, input.signal)
+        return await postFormWithProgress<MediaAsset>(mediaUploadEndpoint('/media/upload', input.module), formData, input.onProgress, input.signal)
       } catch (error) {
         lastError = error
         const retryDelay = MEDIA_UPLOAD_RETRY_DELAYS_MS[attempt]
@@ -507,7 +762,7 @@ export const mediaService = {
     moduleEntityId?: string
     isPublic?: boolean
   }): Promise<MediaAsset> {
-    return apiClient.post<MediaAsset>('/media/upload', {
+    return apiClient.post<MediaAsset>(mediaUploadEndpoint('/media/upload', input.module), {
       fileBase64: input.fileBase64,
       filename: input.filename,
       module: input.module || 'other',

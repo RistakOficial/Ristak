@@ -22,6 +22,8 @@ Optional:
 - `BUNNY_STREAM_COLLECTION_ID`
 - `BUNNY_STREAM_COLLECTION_NAME` (default: `Ristak Sites & Forms`)
 - `BUNNY_STREAM_ENABLED=true`
+- `BUNNY_STREAM_TUS_ENDPOINT` (override solo para desarrollo/pruebas; producción
+  usa `https://video.bunnycdn.com/tusupload`)
 - `MEDIA_STORAGE_REQUIRE_BUNNY=true`
 - `INTERNAL_INSTALLER_TOKEN`
 - `MEDIA_UPLOAD_LEASE_MS` (tuning operativo; default mínimo 40 minutos)
@@ -40,6 +42,9 @@ Do not store Bunny API keys in the database or committed files.
 Authenticated app endpoints:
 
 - `POST /api/media/upload`
+- `POST /api/media/video-upload/prepare?module=sites`
+- `POST /api/media/video-upload/:id/finalize?module=sites`
+- `DELETE /api/media/video-upload/:id?module=sites`
 - `GET /api/media/assets`
 - `GET /api/media/storage/usage`
 - `GET /api/media/assets/:id/url`
@@ -60,6 +65,43 @@ Installer/admin panel endpoints:
 - `GET /internal/storage/diagnostics`
 
 The installer must send `Authorization: Bearer <INTERNAL_INSTALLER_TOKEN>` or `x-internal-installer-token`.
+
+## Resumable Sites video uploads
+
+Sites, Forms and landing-page videos use a direct Bunny Stream TUS flow instead
+of sending the full file through the Render web process:
+
+1. The authenticated frontend calls `video-upload/prepare`. The backend checks
+   the Sites plan/access, MIME, configured video limit and available quota,
+   creates the Bunny Stream video in the account collection and reserves a
+   `media_assets` row with `status='uploading'`.
+2. The backend returns a short-lived SHA-256 authorization for that video. It
+   never returns `BUNNY_STREAM_API_KEY`.
+3. `tus-js-client` uploads 10 MB chunks directly from the browser to Bunny,
+   retries transient failures and can resume the same selected file from the
+   last confirmed byte.
+4. The frontend calls `video-upload/:id/finalize` with the TUS session URL.
+   Backend validates that URL against the configured Bunny endpoint, checks by
+   `HEAD` that `Upload-Length` matches the reserved file size and that
+   `Upload-Offset` reached the final byte, then marks the asset `ready`, refreshes
+   Stream metadata and returns the embed URL used by the Sites editor/player.
+
+The `clientUploadId` is stable for the selected file, so repeating prepare does
+not create another Bunny video. A distributed lock also serializes simultaneous
+prepare requests for the same business, so quota validation and reservation
+cannot race between two different videos. A deploy or restart after prepare no
+longer interrupts the file transfer because Render is not carrying the video
+body. Explicit cancellation deletes the pending Stream video and releases its
+quota; abandoned sessions are cleaned on a later prepare after seven days. The
+legacy multipart route remains as a compatibility fallback when Stream is not
+configured.
+
+Authorization is decided before multipart parsing. `module=sites`, `forms` or
+`landing` maps to the `sites` write permission; other administrative uploads
+continue to require `settings_media`. If query and body modules disagree, the
+request is rejected instead of trusting the later multipart field. Employees
+with Sites access always use the installation's tenant, authenticated user and
+default account scope; only a local admin keeps the legacy multi-account routing.
 
 ## Direct chat uploads
 
@@ -107,14 +149,23 @@ another account.
 ## Processing
 
 - Images are compressed through the shared media compression service and get a WebP thumbnail when possible.
-- Videos are compressed/transcoded through FFmpeg to web-friendly MP4 when FFmpeg is available.
+- Buffer-based video compatibility paths may transcode through FFmpeg. Legacy
+  multipart videos stream the original file from disk without FFmpeg, and Sites/
+  Forms TUS videos go directly to Bunny Stream for transcoding.
 - Audio is compressed through FFmpeg to a web/WhatsApp-friendly format when possible.
 - Failed compression keeps the original so uploads do not die only because FFmpeg is missing.
-- Videos uploaded from Sites, imported site assets, site editor media and Forms (`module=sites`, `module=forms`, `module=landing`) are copied into Bunny Stream after the Storage upload. Other modules do not sync to Stream.
+- New videos selected from Sites, imported site assets and Forms
+  (`module=sites`, `module=forms`, `module=landing`) are uploaded directly and
+  resumably to Bunny Stream. Legacy assets can still be copied from Bunny
+  Storage to Stream through the compatibility/sync path. Other modules do not
+  sync to Stream automatically.
 - Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
 - Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
 - Imported HTML Sites do not persist Bunny/Storage URLs as their editable content contract. `public_site_content_assets` maps a stable per-site `asset_key` to the current `media_asset_id`; HTML uses `data-rstk-asset-id` or `data-rstk-background-asset-id`, and the public renderer resolves the current ready/public asset. Replacing an image or file changes the binding without changing the HTML key.
-- Configurable Site videos keep the Storage file for editor/preview and switch to Bunny Stream in the published page when Stream metadata is ready. Video actions are bridged through Player.js in the live iframe.
+- New configurable Site videos use the Bunny Stream embed in editor, preview and
+  published pages after finalization. Legacy Storage-backed videos keep their
+  existing Storage preview and switch to Stream when metadata is ready. Video
+  actions are bridged through Player.js in the live iframe.
 
 ## App media explorer
 
@@ -124,6 +175,15 @@ another account.
 ## Quotas
 
 Every business starts with 5 GB. Usage is recalculated from active `media_assets` rows and cached in `storage_quotas.used_bytes`.
+
+A prepared TUS video reserves its original size immediately, including while it
+is `uploading`, so later attempts see the reservation. Finalization is
+idempotent and keeps the same reservation; canceling or expiring the pending
+upload releases it.
+
+If Bunny reports terminal processing status `5` or `6`, the backend deletes the
+pending asset/video, releases the quota and returns a non-retryable `422` instead
+of leaving a false success or a stuck reservation.
 
 Quota fields:
 
@@ -165,14 +225,20 @@ curl -H "Authorization: Bearer $TOKEN" \
   https://APP.onrender.com/api/media/upload
 ```
 
-Upload video:
+Prepare a real Sites video upload (the response contains temporary TUS headers,
+not the Stream API key):
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  -F "file=@./video.mp4" \
-  -F "module=courses" \
-  https://APP.onrender.com/api/media/upload
+  -H "Content-Type: application/json" \
+  -d '{"filename":"video.mp4","mimeType":"video/mp4","size":10485760,"module":"sites","moduleEntityId":"site_smoke","clientUploadId":"tus_smoke_video_1"}' \
+  'https://APP.onrender.com/api/media/video-upload/prepare?module=sites'
 ```
+
+Complete the returned TUS session with a TUS client and then call
+`POST /api/media/video-upload/:id/finalize?module=sites`. A valid result is a
+`media_assets` row with `status=ready`, `storage_provider=bunny_stream` and
+`metadata_json.stream.syncStatus=uploaded`.
 
 Check usage:
 

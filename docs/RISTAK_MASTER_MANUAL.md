@@ -2757,10 +2757,18 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   Meta/CAPI que el editor normal. El formulario de video usa el mismo panel,
   campos, reglas de completado, diseno y submit publico del bloque nativo; el
   HTML externo solo reserva la zona donde se monta el reproductor.
-  Un video subido usa el archivo de Storage en editor/preview y, cuando ya tiene
-  metadata de Bunny Stream, usa el iframe de Stream en publicado. Las acciones
-  temporizadas se conectan a Player.js para conservar el mismo comportamiento en
-  el player publicado.
+  Un video nuevo se prepara en backend y se sube directo a Bunny Stream con TUS
+  resumible y firma temporal; la API key nunca llega al navegador. Editor,
+  preview y publicado usan el iframe de Stream después de finalizar. Al cerrar
+  la sesión, backend valida la URL TUS, el tamaño reservado y que Bunny haya
+  recibido todos los bytes antes de marcar el asset listo; estados de error de
+  Stream nunca se convierten en éxito y liberan inmediatamente asset/video/cuota.
+  Cancelar elimina la reserva y el video
+  pendiente, y las sesiones abandonadas de más de siete días se limpian al
+  siguiente intento de subida. Los videos
+  legacy respaldados por Storage conservan su preview compatible y cambian a
+  Stream cuando la metadata queda lista. Las acciones temporizadas se conectan
+  a Player.js para conservar el mismo comportamiento en el player publicado.
 
 Las acciones de video en HTML importado solo deben apuntar a elementos
 identificables y publicables: botones, links, formularios, secciones, imagenes o
@@ -3187,6 +3195,17 @@ Capacidades:
 - Compresion.
 - Bunny Storage para archivos.
 - Bunny Stream para video.
+- Subida TUS directa y resumible para videos de Sites/Forms, en chunks, sin que
+  el archivo atraviese el proceso Render ni exponga la API key.
+- Preparacion/finalizacion idempotente en `media_assets`: reserva cuota mientras
+  sube y queda `ready` solo después de verificar por TUS el tamaño y avance que
+  Bunny recibió, además de confirmar el original en Stream.
+- Candado distribuido por negocio para que dos preparaciones simultáneas no
+  creen videos duplicados ni compitan por la misma cuota; cancelar, un fallo
+  terminal de Stream y el TTL de siete días limpian reservas abandonadas.
+- El upload iniciado desde Sites se autoriza con permiso de escritura `sites`;
+  empleados quedan forzados al tenant/usuario de su sesión y la biblioteca
+  administrativa conserva `settings_media` y su ruteo multi-cuenta para admins.
 - Sync/retry/diagnosticos.
 
 Documento operativo: `docs/MEDIA_STORAGE_BUNNY.md`.

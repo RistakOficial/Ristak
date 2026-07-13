@@ -6,6 +6,7 @@ import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
+  cancelResumableVideoUploadHandler,
   deleteMediaAssetHandler,
   downloadMediaAssetHandler,
   downloadMediaAssetsArchiveHandler,
@@ -14,6 +15,8 @@ import {
   getStorageUsageHandler,
   listMediaAssetsHandler,
   moveMediaAssetsHandler,
+  finalizeResumableVideoUploadHandler,
+  prepareResumableVideoUploadHandler,
   replaceMediaAssetHandler,
   retryMediaAssetHandler,
   serveMediaAssetFileHandler,
@@ -27,6 +30,9 @@ const router = express.Router()
 const requireMediaAccess = requireModuleAccess('settings_media')
 const requireMediaLicense = requireFeature('settings_media')
 const requireChatAccess = requireModuleAccess('chat')
+const requireSitesAccess = requireModuleAccess('sites')
+const requireSitesLicense = requireFeature('sites')
+const SITES_MEDIA_UPLOAD_MODULES = new Set(['sites', 'forms', 'landing'])
 const maxUploadBytes = Number(process.env.MEDIA_MAX_UPLOAD_BYTES || 600 * 1024 * 1024)
 const maxChatUploadBytes = 25 * 1024 * 1024
 const upload = multer({
@@ -88,9 +94,23 @@ export function resolveMediaUploadModule(req = {}) {
   return String(req.query?.module || req.body?.module || 'other').trim().toLowerCase()
 }
 
+export function resolveMediaUploadAccessModule(req = {}) {
+  if (req.directChatUpload?.enabled) return 'chat'
+  return SITES_MEDIA_UPLOAD_MODULES.has(req.mediaUploadModule || resolveMediaUploadModule(req))
+    ? 'sites'
+    : 'settings_media'
+}
+
 export function requireMediaUploadAccess(req, res, next) {
-  if (req.directChatUpload?.enabled) {
+  const accessModule = resolveMediaUploadAccessModule(req)
+  if (accessModule === 'chat') {
     return requireChatAccess(req, res, next)
+  }
+  if (accessModule === 'sites') {
+    return requireSitesLicense(req, res, (licenseError) => {
+      if (licenseError) return next(licenseError)
+      return requireSitesAccess(req, res, next)
+    })
   }
   return requireMediaLicense(req, res, (licenseError) => {
     if (licenseError) return next(licenseError)
@@ -100,6 +120,7 @@ export function requireMediaUploadAccess(req, res, next) {
 
 export function classifyMediaUpload(req, _res, next) {
   req.directChatUpload = directChatCompatibilityFromRequest(req)
+  req.mediaUploadModule = resolveMediaUploadModule(req)
   next()
 }
 
@@ -118,6 +139,9 @@ router.get('/assets/:assetId/thumbnail', (req, res, next) => {
 
 router.use(requireAuth)
 
+router.post('/video-upload/prepare', classifyMediaUpload, requireMediaUploadAccess, prepareResumableVideoUploadHandler)
+router.post('/video-upload/:assetId/finalize', classifyMediaUpload, requireMediaUploadAccess, finalizeResumableVideoUploadHandler)
+router.delete('/video-upload/:assetId', classifyMediaUpload, requireMediaUploadAccess, cancelResumableVideoUploadHandler)
 router.post('/upload', classifyMediaUpload, requireMediaUploadAccess, uploadSingleFile, uploadMediaHandler)
 router.get('/assets', requireMediaLicense, requireMediaAccess, listMediaAssetsHandler)
 router.get('/storage/usage', requireMediaLicense, requireMediaAccess, getStorageUsageHandler)

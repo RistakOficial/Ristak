@@ -19,6 +19,10 @@ const GB = 1024 * 1024 * 1024
 const LOCAL_MEDIA_ROOT = join(__dirname, '../../uploads/media-storage')
 const BUNNY_CORE_API_BASE_URL = 'https://api.bunny.net'
 const BUNNY_STREAM_API_BASE_URL = 'https://video.bunnycdn.com'
+const BUNNY_STREAM_TUS_UPLOAD_URL = 'https://video.bunnycdn.com/tusupload'
+const BUNNY_STREAM_TUS_AUTH_TTL_SECONDS = 24 * 60 * 60
+const BUNNY_STREAM_TUS_STALE_UPLOAD_MS = 7 * 24 * 60 * 60 * 1000
+const BUNNY_STREAM_FAILED_STATUSES = new Set([5, 6])
 const DEFAULT_BUNNY_STREAM_LIBRARY_NAME = 'Ristak Sites & Forms'
 const DEFAULT_BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
 const DEFAULT_CLIENT_ACCOUNT_ID = 'default'
@@ -64,6 +68,12 @@ let bunnyStreamLibraryProvisionCache = {
 const bunnyStreamCollectionCache = new Map()
 
 const BUNNY_STREAM_MEDIA_MODULES = new Set(['sites', 'forms', 'landing'])
+const RESUMABLE_VIDEO_MIME_BY_EXTENSION = new Map([
+  ['mp4', 'video/mp4'],
+  ['mov', 'video/quicktime'],
+  ['webm', 'video/webm'],
+  ['3gp', 'video/3gpp']
+])
 
 const BUNNY_STREAM_STATUS_LABELS = new Map([
   [0, 'created'],
@@ -1928,6 +1938,426 @@ async function findMediaAssetByClientUploadId({
   return legacy.length === 1 && assets.length === 1 ? legacy[0] : null
 }
 
+function resumableVideoMimeType(mimeType = '', filename = '') {
+  const declared = mimeBase(mimeType)
+  if (declared && ALLOWED_MIME_TYPES.has(declared) && mediaTypeFromMime(declared) === 'video') {
+    return declared
+  }
+
+  const extension = extname(filename).replace(/^\./, '').toLowerCase()
+  const inferred = RESUMABLE_VIDEO_MIME_BY_EXTENSION.get(extension)
+  if (inferred) return inferred
+
+  throw errorWithStatus(
+    'Formato de video no compatible. Sube un archivo MP4, MOV, WebM o 3GP.',
+    415,
+    'unsupported_media_type'
+  )
+}
+
+function bunnyStreamEmbedUrl(libraryId, videoId) {
+  return `https://iframe.mediadelivery.net/embed/${encodeURIComponent(libraryId)}/${encodeURIComponent(videoId)}`
+}
+
+function bunnyStreamTusAuthorization(config, videoId) {
+  const libraryId = cleanString(config.bunnyStreamLibraryId)
+  const expirationTime = Math.floor(Date.now() / 1000) + BUNNY_STREAM_TUS_AUTH_TTL_SECONDS
+  const signature = crypto
+    .createHash('sha256')
+    .update(`${libraryId}${config.bunnyStreamApiKey}${expirationTime}${videoId}`)
+    .digest('hex')
+
+  return {
+    endpoint: normalizeBaseUrl(process.env.BUNNY_STREAM_TUS_ENDPOINT || BUNNY_STREAM_TUS_UPLOAD_URL),
+    videoId,
+    libraryId,
+    expirationTime,
+    signature,
+    headers: {
+      AuthorizationSignature: signature,
+      AuthorizationExpire: String(expirationTime),
+      VideoId: videoId,
+      LibraryId: libraryId
+    }
+  }
+}
+
+function validateBunnyStreamTusUploadUrl(value = '') {
+  let uploadUrl
+  let endpoint
+  try {
+    uploadUrl = new URL(cleanString(value))
+    endpoint = new URL(normalizeBaseUrl(process.env.BUNNY_STREAM_TUS_ENDPOINT || BUNNY_STREAM_TUS_UPLOAD_URL))
+  } catch {
+    throw errorWithStatus('Bunny no regresó una URL TUS válida para finalizar.', 400, 'bunny_stream_tus_url_invalid')
+  }
+
+  const endpointPath = endpoint.pathname.replace(/\/+$/, '')
+  if (uploadUrl.origin !== endpoint.origin || !uploadUrl.pathname.startsWith(`${endpointPath}/`)) {
+    throw errorWithStatus('La URL TUS no pertenece al endpoint autorizado de Bunny.', 400, 'bunny_stream_tus_url_invalid')
+  }
+  return uploadUrl.toString()
+}
+
+async function getBunnyStreamTusUploadStatus(config, videoId, value) {
+  const uploadUrl = validateBunnyStreamTusUploadUrl(value)
+  const authorization = bunnyStreamTusAuthorization(config, videoId)
+  const response = await fetch(uploadUrl, {
+    method: 'HEAD',
+    headers: {
+      ...authorization.headers,
+      'Tus-Resumable': '1.0.0'
+    },
+    signal: AbortSignal.timeout(BUNNY_STREAM_TIMEOUT_MS)
+  })
+  if (!response.ok) {
+    throw errorWithStatus(`Bunny no pudo verificar la subida TUS (HTTP ${response.status}).`, 502, 'bunny_stream_tus_verify_failed')
+  }
+
+  const lengthHeader = response.headers.get('upload-length')
+  const offsetHeader = response.headers.get('upload-offset')
+  const length = lengthHeader === null || lengthHeader.trim() === '' ? NaN : Number(lengthHeader)
+  const offset = offsetHeader === null || offsetHeader.trim() === '' ? NaN : Number(offsetHeader)
+  if (!Number.isSafeInteger(length) || length < 0 || !Number.isSafeInteger(offset) || offset < 0) {
+    throw errorWithStatus('Bunny no regresó el tamaño/avance de la subida TUS.', 502, 'bunny_stream_tus_verify_failed')
+  }
+  return { length, offset }
+}
+
+function assertResumableAssetMatches(asset, { sizeBytes, mimeType, module, clientUploadId }) {
+  const assetUploadId = cleanString(asset.metadata?.clientUploadId || asset.metadata?.directUpload?.clientUploadId)
+  if (
+    assetUploadId !== clientUploadId ||
+    numberValue(asset.sizeOriginal) !== sizeBytes ||
+    mimeBase(asset.mimeType) !== mimeBase(mimeType) ||
+    normalizeModule(asset.module) !== module
+  ) {
+    throw errorWithStatus(
+      'Esta subida resumible ya pertenece a otro archivo o destino.',
+      409,
+      'media_upload_id_conflict'
+    )
+  }
+}
+
+function resumableUploadResponse(asset, config) {
+  const stream = asset.metadata?.stream || {}
+  const videoId = cleanString(stream.videoId)
+  if (!videoId) {
+    throw errorWithStatus('La sesión resumible no tiene un video de Bunny asociado.', 409, 'bunny_stream_video_missing')
+  }
+  const completed = asset.status === 'ready'
+  return {
+    completed,
+    asset,
+    upload: completed ? null : {
+      ...bunnyStreamTusAuthorization(config, videoId),
+      metadata: {
+        filetype: asset.mimeType,
+        title: stream.title || asset.originalFilename,
+        ...(stream.collectionId ? { collection: stream.collectionId } : {})
+      }
+    }
+  }
+}
+
+async function cleanupExpiredBunnyStreamResumableUploads(businessId) {
+  const cutoff = new Date(Date.now() - BUNNY_STREAM_TUS_STALE_UPLOAD_MS).toISOString()
+  const rows = await db.all(
+    `SELECT id
+     FROM media_assets
+     WHERE business_id = ?
+       AND status = 'uploading'
+       AND deleted_at IS NULL
+       AND created_at < ?
+       AND metadata_json LIKE ?
+     ORDER BY created_at ASC
+     LIMIT 100`,
+    [normalizeBusinessId(businessId), cutoff, '%"protocol":"tus"%']
+  )
+
+  let cleaned = 0
+  for (const row of rows) {
+    try {
+      await softDeleteMediaAsset(row.id)
+      cleaned += 1
+    } catch (error) {
+      if (error?.code !== 'media_not_found') {
+        logger.warn(`[MediaStorage] No se pudo limpiar subida TUS vencida ${row.id}: ${error.message}`)
+      }
+    }
+  }
+  if (cleaned > 0) logger.info(`[MediaStorage] Subidas TUS vencidas limpiadas: ${cleaned}`)
+}
+
+async function prepareBunnyStreamResumableUploadUnlocked(input = {}) {
+  const module = normalizeModule(input.module)
+  if (!BUNNY_STREAM_MEDIA_MODULES.has(module)) {
+    throw errorWithStatus('La subida resumible de video solo está disponible en Sitios y Formularios.', 400, 'bunny_stream_resumable_not_applicable')
+  }
+
+  const config = await getStorageRuntimeConfig()
+  if (!config.storageEnabled) {
+    throw errorWithStatus('El almacenamiento multimedia está deshabilitado.', 503, 'storage_disabled')
+  }
+  if (!config.bunnyStreamEnabled || !config.bunnyStreamConfigured) {
+    throw errorWithStatus(
+      'Bunny Stream no está listo para subida resumible; usa la ruta compatible.',
+      503,
+      'bunny_stream_resumable_unavailable'
+    )
+  }
+
+  const originalFilename = sanitizeFilename(input.filename || input.originalFilename || 'video')
+  const mimeType = resumableVideoMimeType(input.mimeType || input.contentType, originalFilename)
+  const sizeBytes = Math.round(numberValue(input.size))
+  if (sizeBytes <= 0) throw errorWithStatus('El video está vacío.', 400, 'empty_media')
+  validateMediaType({ mimeType, mediaType: 'video', sizeBytes, settings: config })
+
+  const businessId = normalizeBusinessId(input.businessId)
+  const clientAccount = await resolveClientAccountContext({ ...input, businessId })
+  const clientUploadId = normalizeClientUploadId(input.clientUploadId)
+  if (!clientUploadId) {
+    throw errorWithStatus('Falta la identidad estable de la subida resumible.', 400, 'invalid_media_upload_id')
+  }
+
+  await cleanupExpiredBunnyStreamResumableUploads(businessId)
+
+  const existing = await findMediaAssetByClientUploadId({ businessId, clientUploadId, clientAccount })
+  if (existing) {
+    assertResumableAssetMatches(existing, { sizeBytes, mimeType, module, clientUploadId })
+    return resumableUploadResponse(existing, config)
+  }
+
+  await assertQuotaAvailable({ businessId, quotaSize: sizeBytes, config })
+  const id = createRistakId('media')
+  const extension = extensionForMime(mimeType, originalFilename)
+  const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
+  const title = buildBunnyStreamTitle({
+    originalFilename,
+    module,
+    moduleEntityId: input.moduleEntityId,
+    id
+  })
+  const collection = await ensureBunnyStreamCollection(config, clientAccount)
+  if (!collection?.id) {
+    throw errorWithStatus('Bunny Stream no regresó una colección usable para esta cuenta.', 502, 'bunny_stream_collection_required')
+  }
+
+  const created = await createBunnyStreamVideo(config, { title, collectionId: collection.id })
+  const videoId = cleanString(created?.guid || created?.videoId || created?.id)
+  if (!videoId) {
+    throw errorWithStatus('Bunny Stream creó el video pero no regresó un ID usable.', 502, 'bunny_stream_video_missing')
+  }
+
+  const publicUrl = bunnyStreamEmbedUrl(config.bunnyStreamLibraryId, videoId)
+  const stream = {
+    provider: 'bunny_stream',
+    enabled: true,
+    providerReady: true,
+    syncStatus: 'uploading',
+    libraryId: config.bunnyStreamLibraryId,
+    collectionId: collection.id,
+    collectionName: collection.name || buildBunnyStreamCollectionName(config, clientAccount),
+    videoId,
+    title,
+    clientAccount,
+    source: {
+      mediaAssetId: id,
+      businessId,
+      clientAccountId: clientAccount.id,
+      accountRootPath: clientAccount.rootPath,
+      module,
+      moduleEntityId: cleanString(input.moduleEntityId) || null,
+      storagePath: '',
+      storagePublicUrl: publicUrl,
+      mimeType
+    },
+    video: normalizeBunnyStreamVideo(created),
+    queuedAt: nowIso()
+  }
+  const metadata = {
+    clientUploadId,
+    upload: { clientUploadId },
+    clientAccount,
+    storageStatus: config.storageStatus,
+    stream,
+    directUpload: {
+      protocol: 'tus',
+      provider: 'bunny_stream',
+      state: 'prepared',
+      clientUploadId,
+      sizeBytes,
+      lastModified: optionalNumberValue(input.lastModified),
+      preparedAt: nowIso()
+    },
+    variants: {}
+  }
+
+  try {
+    await insertMediaAsset({
+      id,
+      businessId,
+      userId: input.userId ? String(input.userId) : null,
+      originalFilename,
+      storedFilename,
+      bunnyPath: null,
+      publicUrl,
+      privateUrl: input.isPublic === false ? publicUrl : null,
+      mimeType,
+      mediaType: 'video',
+      extension,
+      sizeOriginal: sizeBytes,
+      sizeProcessed: sizeBytes,
+      quotaSize: sizeBytes,
+      width: null,
+      height: null,
+      duration: null,
+      status: 'uploading',
+      storageProvider: 'bunny_stream',
+      module,
+      moduleEntityId: input.moduleEntityId,
+      isPublic: input.isPublic !== false,
+      metadata
+    })
+  } catch (error) {
+    const raced = await getMediaAsset(id).catch(() => null)
+    await deleteBunnyStreamVideo(config, videoId).catch(() => undefined)
+    if (raced) {
+      assertResumableAssetMatches(raced, { sizeBytes, mimeType, module, clientUploadId })
+      return resumableUploadResponse(raced, config)
+    }
+    throw error
+  }
+
+  await refreshQuotaUsage(businessId)
+  return resumableUploadResponse(await getMediaAsset(id), config)
+}
+
+export async function prepareBunnyStreamResumableUpload(input = {}) {
+  const businessId = normalizeBusinessId(input.businessId)
+  const clientUploadId = normalizeClientUploadId(input.clientUploadId)
+  if (!clientUploadId) {
+    throw errorWithStatus('Falta la identidad estable de la subida resumible.', 400, 'invalid_media_upload_id')
+  }
+
+  // El candado es por negocio, no sólo por archivo: así la lectura de cuota y
+  // su reserva quedan serializadas también entre videos distintos.
+  const lockName = `media:tus:${businessId}`
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      return await db.withAdvisoryLock(
+        lockName,
+        () => prepareBunnyStreamResumableUploadUnlocked({ ...input, businessId, clientUploadId })
+      )
+    } catch (error) {
+      if (error?.code !== 'DATABASE_ADVISORY_LOCK_BUSY') throw error
+      if (attempt === 19) {
+        throw errorWithStatus(
+          'Este mismo video ya se está preparando. Espera un momento e intenta otra vez.',
+          409,
+          'media_upload_in_progress'
+        )
+      }
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+  }
+  throw errorWithStatus('No se pudo reservar la subida resumible.', 409, 'media_upload_in_progress')
+}
+
+export async function finalizeBunnyStreamResumableUpload(assetId, context = {}) {
+  const asset = await getMediaAsset(assetId)
+  const module = normalizeModule(context.module || asset.module)
+  if (normalizeBusinessId(context.businessId) !== normalizeBusinessId(asset.businessId) || module !== normalizeModule(asset.module)) {
+    throw errorWithStatus('La subida no pertenece a esta cuenta o superficie.', 403, 'media_upload_scope_mismatch')
+  }
+  if (asset.status === 'ready') return asset
+  if (asset.status !== 'uploading' || asset.metadata?.directUpload?.protocol !== 'tus') {
+    throw errorWithStatus('Este archivo no tiene una subida resumible pendiente.', 409, 'media_upload_not_pending')
+  }
+
+  const config = await getStorageRuntimeConfig()
+  if (!config.bunnyStreamEnabled || !config.bunnyStreamConfigured) {
+    throw errorWithStatus('Bunny Stream no está disponible para finalizar el video.', 503, 'bunny_stream_resumable_unavailable')
+  }
+
+  const stream = asset.metadata?.stream || {}
+  const videoId = cleanString(stream.videoId)
+  if (!videoId || cleanString(stream.libraryId) !== cleanString(config.bunnyStreamLibraryId)) {
+    throw errorWithStatus('La sesión de video no coincide con la librería configurada.', 409, 'bunny_stream_video_mismatch')
+  }
+
+  const uploadStatus = await getBunnyStreamTusUploadStatus(config, videoId, context.uploadUrl)
+  if (uploadStatus.length !== numberValue(asset.sizeOriginal)) {
+    throw errorWithStatus('El tamaño recibido por Bunny no coincide con el video preparado.', 409, 'bunny_stream_upload_size_mismatch')
+  }
+  if (uploadStatus.offset !== uploadStatus.length) {
+    throw errorWithStatus('Bunny todavía no ha recibido todos los bytes del video.', 409, 'bunny_stream_upload_not_complete')
+  }
+
+  let video = null
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    video = await getBunnyStreamVideo(config, videoId)
+    if (BUNNY_STREAM_FAILED_STATUSES.has(numberValue(video?.status))) break
+    if (numberValue(video?.status) > 0 || video?.hasOriginal === true) break
+    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 750))
+  }
+  if (BUNNY_STREAM_FAILED_STATUSES.has(numberValue(video?.status))) {
+    await softDeleteMediaAsset(asset.id)
+    throw errorWithStatus(
+      'Bunny recibió el archivo, pero reportó que el procesamiento del video falló.',
+      422,
+      'bunny_stream_processing_failed'
+    )
+  }
+  if (numberValue(video?.status) <= 0 && video?.hasOriginal !== true) {
+    throw errorWithStatus('Bunny todavía no confirma que recibió el video completo.', 409, 'bunny_stream_upload_not_complete')
+  }
+
+  const normalizedVideo = normalizeBunnyStreamVideo(video)
+  const nextStream = {
+    ...stream,
+    syncStatus: 'uploaded',
+    syncedAt: nowIso(),
+    video: normalizedVideo || stream.video || null
+  }
+  const nextMetadata = {
+    ...(asset.metadata || {}),
+    stream: nextStream,
+    directUpload: {
+      ...(asset.metadata?.directUpload || {}),
+      state: 'completed',
+      completedAt: nowIso()
+    }
+  }
+  const dimensions = dimensionsFromStreamMetadata(nextStream)
+
+  await db.run(
+    `UPDATE media_assets
+     SET width = ?, height = ?, duration = ?, status = 'ready', metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND status = 'uploading' AND deleted_at IS NULL`,
+    [dimensions.width, dimensions.height, dimensions.duration, JSON.stringify(nextMetadata), asset.id]
+  )
+  await refreshQuotaUsage(asset.businessId)
+  logger.info(`[MediaStorage] Video TUS finalizado: ${asset.id} -> ${videoId}`)
+  return await getMediaAsset(asset.id)
+}
+
+export async function cancelBunnyStreamResumableUpload(assetId, context = {}) {
+  const asset = await getMediaAsset(assetId)
+  const module = normalizeModule(context.module || asset.module)
+  if (normalizeBusinessId(context.businessId) !== normalizeBusinessId(asset.businessId) || module !== normalizeModule(asset.module)) {
+    throw errorWithStatus('La subida no pertenece a esta cuenta o superficie.', 403, 'media_upload_scope_mismatch')
+  }
+  if (asset.status !== 'uploading' || asset.metadata?.directUpload?.protocol !== 'tus') {
+    throw errorWithStatus('Esta subida ya no se puede cancelar.', 409, 'media_upload_not_pending')
+  }
+
+  await softDeleteMediaAsset(asset.id)
+  logger.info(`[MediaStorage] Video TUS cancelado: ${asset.id}`)
+  return { id: asset.id, cancelled: true }
+}
+
 async function saveLocalFile({ objectPath, buffer }) {
   const localPath = join(LOCAL_MEDIA_ROOT, objectPath)
   await fs.mkdir(dirname(localPath), { recursive: true })
@@ -3273,7 +3703,7 @@ export async function getMediaAssetFile(assetId, variant = '') {
     }
   }
 
-  if (asset.storageProvider === 'bunny' && asset.publicUrl) {
+  if ((asset.storageProvider === 'bunny' || asset.storageProvider === 'bunny_stream') && asset.publicUrl) {
     return { redirectUrl: asset.publicUrl }
   }
 
@@ -3292,6 +3722,13 @@ export async function getMediaAssetFile(assetId, variant = '') {
 export async function getMediaAssetBuffer(assetId) {
   const asset = await getMediaAsset(assetId)
   const metadata = asset.metadata || {}
+  if (asset.storageProvider === 'bunny_stream') {
+    throw errorWithStatus(
+      'Este video vive directamente en Bunny Stream y no tiene una descarga binaria en Media.',
+      409,
+      'bunny_stream_binary_unavailable'
+    )
+  }
   if (metadata.localPath) {
     const buffer = await fs.readFile(metadata.localPath)
     return { buffer, mimeType: asset.mimeType, filename: asset.originalFilename }

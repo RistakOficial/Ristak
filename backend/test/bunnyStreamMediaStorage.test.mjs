@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { createHash } from 'node:crypto'
 
 const ENV_KEYS = [
   'DATABASE_URL',
@@ -25,6 +26,7 @@ const ENV_KEYS = [
   'BUNNY_STREAM_COLLECTION_ID',
   'BUNNY_STREAM_COLLECTION_NAME',
   'BUNNY_STREAM_ENDPOINT',
+  'BUNNY_STREAM_TUS_ENDPOINT',
   'BUNNY_STREAM_TIMEOUT_MS',
   'RISTAK_CLIENT_ACCOUNT_ID',
   'CLIENT_ACCOUNT_ID',
@@ -77,11 +79,31 @@ async function createBunnyMockServer() {
   let baseUrl = ''
   let streamVideoTitle = 'Hero video (sites) site_1'
   let streamVideoCollectionId = ''
+  let streamVideoStatus = 4
+  let tusUploadLength = 24 * 1024 * 1024
+  let tusUploadOffset = tusUploadLength
 
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', baseUrl || 'http://127.0.0.1')
       const path = decodeURIComponent(url.pathname)
+
+      if (path === '/tusupload/session-1' && req.method === 'HEAD') {
+        requests.push({
+          kind: 'tus-head',
+          authorizationSignature: req.headers.authorizationsignature,
+          authorizationExpire: req.headers.authorizationexpire,
+          videoId: req.headers.videoid,
+          libraryId: req.headers.libraryid,
+          tusResumable: req.headers['tus-resumable']
+        })
+        res.statusCode = 200
+        res.setHeader('Tus-Resumable', '1.0.0')
+        res.setHeader('Upload-Length', String(tusUploadLength))
+        res.setHeader('Upload-Offset', String(tusUploadOffset))
+        res.end()
+        return
+      }
 
       if (path.startsWith('/storage/central-zone/')) {
         if (req.method === 'PUT') {
@@ -234,7 +256,7 @@ async function createBunnyMockServer() {
           views: 7,
           isPublic: true,
           length: 17,
-          status: 4,
+          status: streamVideoStatus,
           framerate: 29.97,
           width: 1280,
           height: 720,
@@ -323,6 +345,13 @@ async function createBunnyMockServer() {
   return {
     baseUrl,
     requests,
+    setTusUploadStatus: ({ length = tusUploadLength, offset = length } = {}) => {
+      tusUploadLength = length
+      tusUploadOffset = offset
+    },
+    setStreamVideoStatus: (status) => {
+      streamVideoStatus = status
+    },
     close: () => {
       server.closeAllConnections?.()
       server.close()
@@ -358,6 +387,7 @@ function configureBunnyEnv(baseUrl) {
   process.env.BUNNY_STREAM_API_KEY = 'stream-secret'
   process.env.BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
   process.env.BUNNY_STREAM_ENDPOINT = `${baseUrl}/stream`
+  process.env.BUNNY_STREAM_TUS_ENDPOINT = `${baseUrl}/tusupload`
   process.env.BUNNY_STREAM_TIMEOUT_MS = '5000'
 }
 
@@ -474,6 +504,151 @@ test('Bunny Stream se prepara automaticamente al arrancar con API key de cuenta'
     restoreEnv(previousEnv)
     const mediaStorageService = await import('../src/services/mediaStorageService.js')
     mediaStorageService.resetCentralStorageConfigCache()
+  }
+})
+
+test('videos de Sites preparan TUS directo, reusan la sesión y finalizan sin pasar por Render', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+  let db = null
+  let mediaAssetId = ''
+  const extraMediaAssetIds = []
+
+  try {
+    configureBunnyEnv(bunny.baseUrl)
+
+    const [mediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    const input = {
+      filename: 'video-grande.mp4',
+      mimeType: 'video/mp4',
+      size: 24 * 1024 * 1024,
+      lastModified: 1_784_000_000_000,
+      module: 'sites',
+      moduleEntityId: 'site_tus',
+      businessId: 'default',
+      clientAccountId: 'loc_tus',
+      clientUploadId: `tus_test_${Date.now()}`,
+      isPublic: true
+    }
+
+    const [prepared, concurrentReplay] = await Promise.all([
+      mediaStorageService.prepareBunnyStreamResumableUpload(input),
+      mediaStorageService.prepareBunnyStreamResumableUpload(input)
+    ])
+    mediaAssetId = prepared.asset.id
+    assert.equal(concurrentReplay.asset.id, prepared.asset.id)
+
+    assert.equal(prepared.completed, false)
+    assert.equal(prepared.asset.status, 'uploading')
+    assert.equal(prepared.asset.storageProvider, 'bunny_stream')
+    assert.equal(prepared.asset.metadata.stream.syncStatus, 'uploading')
+    assert.equal(prepared.asset.metadata.stream.videoId, 'stream-video-1')
+    assert.equal(prepared.upload.endpoint, `${bunny.baseUrl}/tusupload`)
+    assert.equal(prepared.upload.headers.VideoId, 'stream-video-1')
+    assert.equal(prepared.upload.headers.LibraryId, '123')
+    assert.match(prepared.upload.headers.AuthorizationSignature, /^[a-f0-9]{64}$/)
+    assert.equal(
+      prepared.upload.headers.AuthorizationSignature,
+      createHash('sha256')
+        .update(`123stream-secret${prepared.upload.expirationTime}stream-video-1`)
+        .digest('hex')
+    )
+    assert.equal(JSON.stringify(prepared).includes('stream-secret'), false)
+    assert.equal(bunny.requests.some(request => request.kind === 'storage-upload'), false)
+
+    const replayed = await mediaStorageService.prepareBunnyStreamResumableUpload(input)
+    assert.equal(replayed.asset.id, prepared.asset.id)
+    assert.equal(replayed.upload.videoId, prepared.upload.videoId)
+    assert.equal(bunny.requests.filter(request => request.kind === 'stream-create-video').length, 1)
+
+    bunny.setTusUploadStatus({ length: input.size, offset: input.size - 1 })
+    await assert.rejects(
+      mediaStorageService.finalizeBunnyStreamResumableUpload(prepared.asset.id, {
+        businessId: 'default',
+        module: 'sites',
+        uploadUrl: `${bunny.baseUrl}/tusupload/session-1`
+      }),
+      error => error?.code === 'bunny_stream_upload_not_complete'
+    )
+    bunny.setTusUploadStatus({ length: input.size, offset: input.size })
+
+    const finalized = await mediaStorageService.finalizeBunnyStreamResumableUpload(prepared.asset.id, {
+      businessId: 'default',
+      module: 'sites',
+      uploadUrl: `${bunny.baseUrl}/tusupload/session-1`
+    })
+    assert.equal(finalized.status, 'ready')
+    assert.equal(finalized.storageProvider, 'bunny_stream')
+    assert.equal(finalized.metadata.directUpload.state, 'completed')
+    assert.equal(finalized.metadata.stream.syncStatus, 'uploaded')
+    assert.equal(bunny.requests.filter(request => request.kind === 'tus-head').length, 2)
+    assert.match(finalized.publicUrl, /^https:\/\/iframe\.mediadelivery\.net\/embed\/123\/stream-video-1$/)
+
+    const completedReplay = await mediaStorageService.prepareBunnyStreamResumableUpload(input)
+    assert.equal(completedReplay.completed, true)
+    assert.equal(completedReplay.upload, null)
+
+    const failed = await mediaStorageService.prepareBunnyStreamResumableUpload({
+      ...input,
+      filename: 'video-invalido.mp4',
+      clientUploadId: `${input.clientUploadId}_failed`
+    })
+    extraMediaAssetIds.push(failed.asset.id)
+    bunny.setStreamVideoStatus(5)
+    await assert.rejects(
+      mediaStorageService.finalizeBunnyStreamResumableUpload(failed.asset.id, {
+        businessId: 'default',
+        module: 'sites',
+        uploadUrl: `${bunny.baseUrl}/tusupload/session-1`
+      }),
+      error => error?.status === 422 && error?.code === 'bunny_stream_processing_failed'
+    )
+    bunny.setStreamVideoStatus(4)
+    const failedRow = await db.get('SELECT status FROM media_assets WHERE id = ?', [failed.asset.id])
+    assert.equal(failedRow.status, 'deleted')
+
+    const stale = await mediaStorageService.prepareBunnyStreamResumableUpload({
+      ...input,
+      filename: 'video-abandonado.mp4',
+      clientUploadId: `${input.clientUploadId}_stale`
+    })
+    extraMediaAssetIds.push(stale.asset.id)
+    await db.run("UPDATE media_assets SET created_at = '2020-01-01 00:00:00' WHERE id = ?", [stale.asset.id])
+
+    const cancellable = await mediaStorageService.prepareBunnyStreamResumableUpload({
+      ...input,
+      filename: 'video-cancelado.mp4',
+      clientUploadId: `${input.clientUploadId}_cancel`
+    })
+    extraMediaAssetIds.push(cancellable.asset.id)
+    const staleRow = await db.get('SELECT status FROM media_assets WHERE id = ?', [stale.asset.id])
+    assert.equal(staleRow.status, 'deleted')
+
+    const cancelled = await mediaStorageService.cancelBunnyStreamResumableUpload(cancellable.asset.id, {
+      businessId: 'default',
+      module: 'sites'
+    })
+    assert.deepEqual(cancelled, { id: cancellable.asset.id, cancelled: true })
+    const cancelledRow = await db.get('SELECT status FROM media_assets WHERE id = ?', [cancellable.asset.id])
+    assert.equal(cancelledRow.status, 'deleted')
+  } finally {
+    if (mediaAssetId) {
+      const mediaStorageService = await import('../src/services/mediaStorageService.js')
+      await mediaStorageService.softDeleteMediaAsset(mediaAssetId).catch(() => undefined)
+      await db?.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+      mediaStorageService.resetCentralStorageConfigCache()
+    }
+    for (const assetId of extraMediaAssetIds) {
+      await db?.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+    }
+    bunny.close()
+    restoreEnv(previousEnv)
   }
 })
 

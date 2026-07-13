@@ -1,7 +1,9 @@
 import { promises as fs } from 'fs'
 import JSZip from 'jszip'
 import {
+  cancelBunnyStreamResumableUpload,
   extractMediaAssetIdFromUrl,
+  finalizeBunnyStreamResumableUpload,
   getMediaAsset,
   getMediaAssetBunnyStreamAnalytics,
   getMediaAssetBuffer,
@@ -9,6 +11,7 @@ import {
   getStorageUsage,
   listMediaAssets,
   moveMediaAssets,
+  prepareBunnyStreamResumableUpload,
   replaceMediaAsset,
   retryMediaAsset,
   runStorageDiagnostics,
@@ -148,6 +151,15 @@ function cleanString(value = '') {
   return String(value || '').trim()
 }
 
+function mediaUploadRequestError(message, code = 'media_upload_module_mismatch') {
+  const error = new Error(message)
+  error.status = 400
+  error.code = code
+  return error
+}
+
+const TENANT_SCOPED_MEDIA_MODULES = new Set(['sites', 'forms', 'landing'])
+
 export function directChatCompatibilityFromRequest(req = {}) {
   // Este contrato se resuelve ANTES de multer. El body multipart todavía no
   // existe en ese momento y jamás puede elevar después una subida normal a
@@ -170,17 +182,31 @@ export function trustedUploadContextFromRequest(req = {}) {
   const body = req.body || {}
   const directChat = req.directChatUpload || directChatCompatibilityFromRequest(req)
   if (!directChat.enabled) {
-    // Contrato administrativo legacy: Media/Sites sí puede seleccionar una
-    // cuenta/ruta explícita y ya está protegido por settings_media.
+    const trustedModule = cleanString(req.mediaUploadModule || req.query?.module).toLowerCase()
+    const bodyModule = cleanString(body.module).toLowerCase()
+    if (trustedModule && trustedModule !== 'other' && bodyModule && bodyModule !== trustedModule) {
+      throw mediaUploadRequestError('El módulo de la subida no coincide con la superficie autorizada.')
+    }
+    const tenantScoped = TENANT_SCOPED_MEDIA_MODULES.has(trustedModule || bodyModule) && req.user?.role !== 'admin'
+    // Un empleado de Sites no puede fabricar otra cuota, cuenta o identidad.
+    // Los admins conservan el contrato multi-cuenta de la biblioteca legacy.
+    // Si el módulo llegó en query, ése es autoritativo: el gate corre antes de
+    // que Multer pueda leer el body multipart.
     return {
-      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
-      clientAccountId: body.clientAccountId || body.client_account_id ||
-        body.accountId || body.account_id || body.locationId || body.location_id ||
-        req.query?.clientAccountId || req.query?.client_account_id ||
-        req.query?.accountId || req.query?.account_id ||
-        req.query?.locationId || req.query?.location_id || null,
-      userId: body.userId || body.user_id || req.user?.userId || req.user?.id || null,
-      module: body.module || 'other',
+      businessId: tenantScoped
+        ? cleanString(process.env.RISTAK_BUSINESS_ID) || 'default'
+        : body.businessId || body.business_id || req.query?.businessId || 'default',
+      clientAccountId: tenantScoped
+        ? null
+        : body.clientAccountId || body.client_account_id ||
+          body.accountId || body.account_id || body.locationId || body.location_id ||
+          req.query?.clientAccountId || req.query?.client_account_id ||
+          req.query?.accountId || req.query?.account_id ||
+          req.query?.locationId || req.query?.location_id || null,
+      userId: tenantScoped
+        ? req.user?.userId || req.user?.id || null
+        : body.userId || body.user_id || req.user?.userId || req.user?.id || null,
+      module: trustedModule && trustedModule !== 'other' ? trustedModule : body.module || 'other',
       moduleEntityId: body.moduleEntityId || body.module_entity_id || null,
       isPublic: parseBoolean(body.isPublic ?? body.is_public, true),
       deferStreamSync: parseBoolean(
@@ -211,6 +237,49 @@ export function trustedUploadContextFromRequest(req = {}) {
     clientUploadId: body.clientUploadId || body.client_upload_id ||
       body.uploadSessionId || body.upload_session_id ||
       req.get?.('x-ristak-upload-id') || null
+  }
+}
+
+export async function prepareResumableVideoUploadHandler(req, res) {
+  try {
+    const context = trustedUploadContextFromRequest(req)
+    const prepared = await prepareBunnyStreamResumableUpload({
+      ...context,
+      filename: req.body?.filename || req.body?.fileName || req.body?.originalFilename,
+      mimeType: req.body?.mimeType || req.body?.contentType,
+      size: req.body?.size,
+      lastModified: req.body?.lastModified,
+      clientUploadId: req.body?.clientUploadId || req.body?.client_upload_id
+    })
+    res.status(prepared.completed ? 200 : 201).json({ success: true, data: prepared })
+  } catch (error) {
+    logger.error(`[MediaStorage] Error preparando video resumible: ${error.message}`)
+    sendError(res, error, 'No se pudo preparar la subida resumible')
+  }
+}
+
+export async function finalizeResumableVideoUploadHandler(req, res) {
+  try {
+    const context = trustedUploadContextFromRequest(req)
+    const asset = await finalizeBunnyStreamResumableUpload(req.params.assetId, {
+      ...context,
+      uploadUrl: req.body?.uploadUrl || req.body?.upload_url
+    })
+    res.json({ success: true, data: asset })
+  } catch (error) {
+    logger.error(`[MediaStorage] Error finalizando video resumible: ${error.message}`)
+    sendError(res, error, 'No se pudo finalizar la subida resumible')
+  }
+}
+
+export async function cancelResumableVideoUploadHandler(req, res) {
+  try {
+    const context = trustedUploadContextFromRequest(req)
+    const result = await cancelBunnyStreamResumableUpload(req.params.assetId, context)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`[MediaStorage] Error cancelando video resumible: ${error.message}`)
+    sendError(res, error, 'No se pudo cancelar la subida resumible')
   }
 }
 
