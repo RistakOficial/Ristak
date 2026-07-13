@@ -2541,6 +2541,15 @@ Ristak usa Meta en varias areas:
   duplicarlo a ciegas. Si el webhook echo llega antes o despues de guardar, se
   fusiona por `meta_message_id` con esa reserva y la copia local autoritativa
   conserva URL publica, `externalId`, voz, nombre y contexto.
+  Las mutaciones notificadas por Meta se reconcilian sobre ese mismo
+  `meta_message_id`: `message_edit` reemplaza el texto sin crear otro globo ni
+  incrementar no leidos, y `message.is_deleted=true` conserva una marca
+  `Mensaje anulado` mientras elimina texto, adjunto y payload original. Aplica a
+  mensajes entrantes y a ecos salientes de Instagram o Messenger cuando Meta
+  entregue ese webhook. Una mutacion no dispara automatizaciones, agente,
+  confirmaciones ni notificaciones nuevas. La API publica de Meta no expone una
+  operacion para editar desde Ristak un mensaje que ya fue enviado; por eso la
+  interfaz no debe fingir una edicion local que el destinatario no veria.
   Para perfil/DM/comentarios la credencial activa debe tener los permisos
   Meta correspondientes (`instagram_manage_messages`,
   `instagram_manage_comments`, `pages_messaging`, `pages_manage_engagement`,

@@ -448,6 +448,7 @@ const META_COMMENT_EMPTY_TEXT = 'Comentario sin texto'
 const META_COMMENT_PUBLIC_REPLY_TEXT = 'Respuesta pública al comentario'
 const META_COMMENT_PRIVATE_REPLY_TEXT = 'Respuesta por privado al comentario'
 const META_POST_DELETED_TEXT = 'Publicación eliminada'
+const META_MESSAGE_REMOVED_TEXT = 'Mensaje anulado'
 const META_COMMENT_MESSAGE_TYPES = new Set(['comment', 'comment_reply_public', 'comment_reply_private'])
 const META_REMOVED_COMMENT_STATUSES = new Set(['removed', 'deleted', 'delete', 'remove', 'hide', 'hidden'])
 
@@ -466,6 +467,9 @@ const getMetaCommentFallbackText = (row = {}) => {
 }
 
 const getMetaMessageTextForChat = (row = {}) => {
+  if (!isMetaCommentMessageType(row.message_type) && META_REMOVED_COMMENT_STATUSES.has(cleanString(row.status).toLowerCase())) {
+    return META_MESSAGE_REMOVED_TEXT
+  }
   return cleanString(row.message_text) || getMetaCommentFallbackText(row)
 }
 
@@ -2859,6 +2863,9 @@ export const getChatContacts = async (req, res) => {
           meta_social_messages.contact_id,
           'meta:' || meta_social_messages.id AS message_row_id,
           CASE
+            WHEN LOWER(COALESCE(meta_social_messages.message_type, '')) NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
+              AND LOWER(COALESCE(meta_social_messages.status, '')) IN ('removed', 'deleted', 'delete', 'remove', 'hide', 'hidden')
+              THEN 'Mensaje anulado'
             WHEN LOWER(COALESCE(meta_social_messages.message_type, '')) IN ('comment', 'comment_reply_public', 'comment_reply_private')
               AND (
                 LOWER(COALESCE(meta_social_messages.status, '')) IN ('removed', 'deleted', 'delete', 'remove', 'hide', 'hidden')

@@ -745,6 +745,142 @@ test('ensureMetaPageMessagingSubscription conserva todos los eventos necesarios 
   }
 })
 
+for (const platform of ['instagram', 'messenger']) {
+  test(`reconcilia ediciones y anulaciones entrantes y salientes de ${platform} sin duplicar mensajes`, async () => {
+    await withMetaMediaSendHarness({
+      platform,
+      testId: `message-mutations-${platform}`
+    }, async ({ contactId, metaContactId }) => {
+      const businessId = platform === 'instagram' ? 'ig-business-send-test' : 'page-send-test'
+      const senderId = platform === 'instagram' ? 'igsid-send-test' : 'psid-send-test'
+      const originalTimestamp = '2026-07-13T18:10:00.000Z'
+
+      for (const direction of ['inbound', 'outbound']) {
+        const metaMessageId = `${platform}-${direction}-mutation-mid`
+        const localMessageId = direction === 'outbound'
+          ? `meta_mutation_${platform}_${direction}`
+          : hashTestId('meta_social_msg', metaMessageId)
+        const originalText = `Texto original ${platform} ${direction}`
+        const editedText = `Texto corregido ${platform} ${direction}`
+
+        await db.run(`
+          INSERT INTO meta_social_messages (
+            id, platform, meta_message_id, meta_social_contact_id, contact_id,
+            sender_id, recipient_id, page_id, instagram_account_id,
+            direction, status, message_type, message_text, media_url, media_mime_type,
+            message_timestamp, raw_payload_json, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'text', ?, ?, 'image/jpeg', ?, ?, CURRENT_TIMESTAMP)
+        `, [
+          localMessageId,
+          platform,
+          metaMessageId,
+          metaContactId,
+          contactId,
+          senderId,
+          businessId,
+          'page-send-test',
+          platform === 'instagram' ? businessId : null,
+          direction,
+          direction === 'outbound' ? 'sent' : 'received',
+          originalText,
+          'https://cdn.example.test/original.jpg',
+          originalTimestamp,
+          JSON.stringify({ text: originalText })
+        ])
+
+        const sender = direction === 'outbound' ? businessId : senderId
+        const recipient = direction === 'outbound' ? senderId : businessId
+        await processMetaSocialWebhook({
+          signaturePreverified: true,
+          payload: {
+            object: platform === 'instagram' ? 'instagram' : 'page',
+            entry: [{
+              id: businessId,
+              time: Date.parse('2026-07-13T18:11:00.000Z'),
+              messaging: [{
+                sender: { id: sender },
+                recipient: { id: recipient },
+                timestamp: Date.parse('2026-07-13T18:11:00.000Z'),
+                message_edit: { mid: metaMessageId, text: editedText, num_edit: 1 }
+              }]
+            }]
+          }
+        })
+
+        let stored = await db.get(
+          `SELECT id, direction, status, message_text, message_timestamp, media_url
+           FROM meta_social_messages
+           WHERE platform = ? AND meta_message_id = ?`,
+          [platform, metaMessageId]
+        )
+        assert.equal(stored.id, localMessageId)
+        assert.equal(stored.direction, direction)
+        assert.equal(stored.status, direction === 'outbound' ? 'sent' : 'received')
+        assert.equal(stored.message_text, editedText)
+        assert.equal(new Date(stored.message_timestamp).toISOString(), originalTimestamp)
+
+        await processMetaSocialWebhook({
+          signaturePreverified: true,
+          payload: {
+            object: platform === 'instagram' ? 'instagram' : 'page',
+            entry: [{
+              id: businessId,
+              time: Date.parse('2026-07-13T18:12:00.000Z'),
+              messaging: [{
+                sender: { id: sender },
+                recipient: { id: recipient },
+                timestamp: Date.parse('2026-07-13T18:12:00.000Z'),
+                message: {
+                  mid: metaMessageId,
+                  ...(direction === 'outbound' ? { is_echo: true } : {}),
+                  is_deleted: true
+                }
+              }]
+            }]
+          }
+        })
+
+        stored = await db.get(
+          `SELECT id, direction, status, message_text, message_timestamp, media_url, media_mime_type, raw_payload_json
+           FROM meta_social_messages
+           WHERE platform = ? AND meta_message_id = ?`,
+          [platform, metaMessageId]
+        )
+        assert.equal(stored.id, localMessageId)
+        assert.equal(stored.direction, direction)
+        assert.equal(stored.status, 'removed')
+        assert.equal(stored.message_text, 'Mensaje anulado')
+        assert.equal(new Date(stored.message_timestamp).toISOString(), originalTimestamp)
+        assert.equal(stored.media_url, null)
+        assert.equal(stored.media_mime_type, null)
+        assert.equal(stored.raw_payload_json.includes(originalText), false)
+        assert.equal(stored.raw_payload_json.includes(editedText), false)
+      }
+
+      const rows = await db.all(
+        'SELECT meta_message_id FROM meta_social_messages WHERE meta_message_id LIKE ? ORDER BY meta_message_id',
+        [`${platform}-%-mutation-mid`]
+      )
+      assert.equal(rows.length, 2)
+      const inboundClaims = await db.get(
+        `SELECT COUNT(*) AS count
+         FROM chat_inbound_message_claims
+         WHERE message_id IN (?, ?)`,
+        [
+          hashTestId('meta_social_msg', `${platform}-inbound-mutation-mid`),
+          `meta_mutation_${platform}_outbound`
+        ]
+      )
+      assert.equal(Number(inboundClaims.count), 0)
+      const profile = await db.get(
+        'SELECT message_count FROM meta_social_contacts WHERE platform = ? AND sender_id = ?',
+        [platform, senderId]
+      )
+      assert.equal(Number(profile.message_count), 1)
+    })
+  })
+}
+
 test('reconcileMetaPageMessagingSubscription actualiza instalaciones existentes sólo si Messenger está activo', async () => {
   let ensureCalls = 0
   const skipped = await reconcileMetaPageMessagingSubscription({

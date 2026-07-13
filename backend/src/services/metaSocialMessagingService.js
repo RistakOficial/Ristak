@@ -597,9 +597,34 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
 
   if (!senderId) return null
 
+  const messageEdit = messaging.message_edit || messaging.messageEdit || messaging.message?.message_edit
+  if (messageEdit?.mid) {
+    return {
+      platform,
+      direction,
+      senderId,
+      recipientId,
+      pageId: platform === 'messenger' ? recipientId || cleanString(entry.id) : cleanString(config.page_id),
+      instagramAccountId: platform === 'instagram' ? recipientId || cleanString(entry.id) : cleanString(config.instagram_account_id),
+      metaMessageId: cleanString(messageEdit.mid),
+      messageType: 'text',
+      messageText: cleanString(messageEdit.text),
+      mediaUrl: '',
+      mediaMimeType: '',
+      postbackPayload: '',
+      referral: null,
+      messageTimestamp,
+      status: direction === 'outbound' ? 'sent' : 'received',
+      isMutation: true,
+      mutationType: 'edit',
+      raw: messaging
+    }
+  }
+
   if (messaging.message) {
     const attachment = extractAttachment(messaging.message)
-    const text = cleanString(messaging.message.text)
+    const isDeleted = messaging.message.is_deleted === true || messaging.is_deleted === true
+    const text = isDeleted ? 'Mensaje anulado' : cleanString(messaging.message.text)
     return {
       platform,
       direction,
@@ -615,6 +640,9 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
       postbackPayload: '',
       referral: messaging.message.referral || messaging.referral || null,
       messageTimestamp,
+      status: isDeleted ? 'removed' : (direction === 'outbound' ? 'sent' : 'received'),
+      isMutation: isDeleted,
+      mutationType: isDeleted ? 'delete' : '',
       raw: messaging
     }
   }
@@ -4274,7 +4302,10 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     `, [socialMessage.platform, remoteMessageId]).catch(() => null)
     if (acceptedLocalSend?.id) messageId = acceptedLocalSend.id
   }
-  const existing = await db.get('SELECT id, media_url FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
+  const existing = await db.get(
+    'SELECT id, media_url, status FROM meta_social_messages WHERE id = ?',
+    [messageId]
+  ).catch(() => null)
 
   // Rehospeda la media temporal de Meta en nuestro storage para que el historial no
   // caduque. Falla suave: si no se puede, conservamos la URL de Meta (comportamiento previo).
@@ -4299,10 +4330,10 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     INSERT INTO meta_social_messages (
       id, platform, meta_message_id, meta_social_contact_id, contact_id,
       sender_id, recipient_id, page_id, instagram_account_id,
-      direction, message_type, message_text, media_url, media_mime_type,
+      direction, status, message_type, message_text, media_url, media_mime_type,
       postback_payload, message_timestamp, raw_payload_json, referral_json,
       comment_id, post_id, parent_comment_id, media_id, permalink, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
       meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
@@ -4312,21 +4343,39 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
       page_id = COALESCE(NULLIF(excluded.page_id, ''), meta_social_messages.page_id),
       instagram_account_id = COALESCE(NULLIF(excluded.instagram_account_id, ''), meta_social_messages.instagram_account_id),
       direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
+      status = CASE
+        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.status
+        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.status
+        ELSE COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status)
+      END,
       message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
-      message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
+      message_text = CASE
+        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.message_text
+        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.message_text
+        ELSE COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text)
+      END,
       media_url = CASE
+        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.media_url
+        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN NULL
         WHEN meta_social_messages.direction = 'outbound' AND COALESCE(meta_social_messages.media_url, '') != ''
           THEN meta_social_messages.media_url
         ELSE COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url)
       END,
       media_mime_type = CASE
+        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.media_mime_type
+        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN NULL
         WHEN meta_social_messages.direction = 'outbound' AND COALESCE(meta_social_messages.media_mime_type, '') != ''
           THEN meta_social_messages.media_mime_type
         ELSE COALESCE(NULLIF(excluded.media_mime_type, ''), meta_social_messages.media_mime_type)
       END,
       postback_payload = COALESCE(NULLIF(excluded.postback_payload, ''), meta_social_messages.postback_payload),
-      message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
+      message_timestamp = CASE
+        WHEN ? = 1 THEN meta_social_messages.message_timestamp
+        ELSE COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp)
+      END,
       raw_payload_json = CASE
+        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.raw_payload_json
+        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.raw_payload_json
         WHEN meta_social_messages.direction = 'outbound' AND excluded.direction = 'outbound'
           THEN meta_social_messages.raw_payload_json
         ELSE excluded.raw_payload_json
@@ -4349,6 +4398,7 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     socialMessage.pageId || null,
     socialMessage.instagramAccountId || null,
     socialMessage.direction,
+    socialMessage.status || null,
     socialMessage.messageType || 'message',
     socialMessage.messageText || null,
     resolvedMediaUrl,
@@ -4361,10 +4411,11 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     socialMessage.postId || null,
     socialMessage.parentCommentId || null,
     socialMessage.mediaId || null,
-    socialMessage.permalink || null
+    socialMessage.permalink || null,
+    socialMessage.isMutation ? 1 : 0
   ])
 
-  const inboundClaim = socialMessage.direction === 'inbound'
+  const inboundClaim = socialMessage.direction === 'inbound' && !socialMessage.isMutation
     ? await claimInboundChatMessage({
       channel: socialMessage.platform,
       messageId,
@@ -4378,7 +4429,11 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     messageId,
     mediaUrl: resolvedMediaUrl || '',
     mediaMimeType: resolvedMediaMime || '',
-    isNew: socialMessage.direction === 'inbound' ? Boolean(inboundClaim?.claimed) : !existing
+    isNew: socialMessage.isMutation
+      ? false
+      : socialMessage.direction === 'inbound'
+        ? Boolean(inboundClaim?.claimed)
+        : !existing
   }
 }
 
@@ -4430,7 +4485,9 @@ async function saveWebhookEvent({ payload, rawBody, signatureValid, processedSta
   const firstChange = Array.isArray(firstEntry?.changes) ? firstEntry.changes[0] : null
   const platform = objectType === 'instagram' ? 'instagram' : 'messenger'
   const eventType = firstMessaging?.message
-    ? 'message'
+    ? (firstMessaging.message.is_deleted === true ? 'message_deleted' : 'message')
+    : firstMessaging?.message_edit || firstMessaging?.messageEdit
+      ? 'message_edit'
     : firstMessaging?.postback
       ? 'postback'
       : firstMessaging?.referral
@@ -4555,18 +4612,21 @@ export async function processMetaSocialWebhook({
           page_id: socialMessage.pageId,
           instagram_account_id: socialMessage.instagramAccountId
         })
-        const profile = await fetchMetaSenderProfile({
-          platform: socialMessage.platform,
-          senderId: socialMessage.senderId,
-          businessId: profileBusinessId,
-          accessToken: profileCredentials.token,
-          baseUrl: profileCredentials.baseUrl
-        })
+        const profile = socialMessage.isMutation
+          ? {}
+          : await fetchMetaSenderProfile({
+              platform: socialMessage.platform,
+              senderId: socialMessage.senderId,
+              businessId: profileBusinessId,
+              accessToken: profileCredentials.token,
+              baseUrl: profileCredentials.baseUrl
+            })
         const localContact = await upsertLocalSocialContact({ socialMessage, profile })
         const socialContactId = await upsertMetaSocialContact({
           contactId: localContact.id,
           socialMessage,
-          profile
+          profile,
+          incrementMessageCount: !socialMessage.isMutation
         })
         const savedMessage = await upsertMetaSocialMessage({
           socialContactId,
@@ -4590,7 +4650,7 @@ export async function processMetaSocialWebhook({
           timestamp: socialMessage.messageTimestamp
         }
         results.push(result)
-        if (result.direction !== 'inbound' || result.isNew) {
+        if (socialMessage.isMutation || result.direction !== 'inbound' || result.isNew) {
           publishChatMessageEvent({
             contactId: result.contactId,
             messageId: result.messageId,
