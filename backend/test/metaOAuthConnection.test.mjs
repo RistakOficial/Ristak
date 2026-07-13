@@ -248,7 +248,11 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     handoffMeta.granular_scopes = [{ scope: 'pages_messaging', target_ids: ['otra-page'] }]
     const granularMismatch = await prepareMetaOAuthConnection({ handoffToken: 'handoff-granular-mismatch' })
     await assert.rejects(
-      () => finalizeMetaOAuthConnection({ sessionId: granularMismatch.sessionId, publicBaseUrl: 'https://tenant.test' }),
+      () => finalizeMetaOAuthConnection({
+        sessionId: granularMismatch.sessionId,
+        pageId: 'page-1',
+        publicBaseUrl: 'https://tenant.test'
+      }),
       error => error.code === 'META_OAUTH_GRANULAR_TARGET_MISMATCH'
     )
     assert.equal((await getMetaConfig()).access_token, 'manual-token')
@@ -318,7 +322,13 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
 
     failRegister = true
     await assert.rejects(
-      () => finalizeMetaOAuthConnection({ sessionId: completed.sessionId, publicBaseUrl: 'https://tenant.test' }),
+      () => finalizeMetaOAuthConnection({
+        sessionId: completed.sessionId,
+        adAccountId: '123',
+        pageId: 'page-1',
+        instagramAccountId: 'ig-1',
+        publicBaseUrl: 'https://tenant.test'
+      }),
       /relay unavailable/
     )
     assert.equal((await getMetaConfig()).access_token, 'manual-token', 'preflight fallido conserva manual')
@@ -327,7 +337,10 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     failRegister = false
     const finalized = await finalizeMetaOAuthConnection({
       sessionId: completed.sessionId,
+      adAccountId: '123',
       pixelId: 'pixel-1',
+      pageId: 'page-1',
+      instagramAccountId: 'ig-1',
       publicBaseUrl: 'https://tenant.test'
     })
     assert.equal(finalized.connected, true)
@@ -455,15 +468,105 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     handoffMeta.connection_id = 'connection-auto'
     const automatic = await completeMetaOAuthConnection({
       handoffToken: 'handoff-auto',
-      publicBaseUrl: 'https://tenant.test'
+      publicBaseUrl: 'https://tenant.test',
+      includeNextSession: true
     })
     assert.equal(automatic.connected, true)
-    assert.equal(automatic.selected.pageId, 'page-1')
-    assert.equal(automatic.selected.adAccountId, '123')
+    assert.equal(automatic.selected.pageId, '')
+    assert.equal(automatic.selected.adAccountId, '')
     assert.equal(automatic.selected.pixelId, '')
+    assert.ok(automatic.session?.sessionId)
+    assert.equal(automatic.session.defaults.pageId, '')
+    assert.equal(automatic.session.defaults.adAccountId, '')
     const automaticStatus = await getMetaOAuthConnectionStatus()
-    assert.deepEqual(automaticStatus.selectedAssets.page, { id: 'page-1', name: 'Página Uno' })
-    assert.deepEqual(automaticStatus.selectedAssets.adAccount, { id: '123', name: 'Ads' })
+    assert.equal(automaticStatus.selectedAssets.page, null)
+    assert.equal(automaticStatus.selectedAssets.adAccount, null)
+
+    const graphCallsBeforeLocalSelection = graphCalls.length
+    const explicitlySelected = await finalizeMetaOAuthConnection({
+      sessionId: automatic.session.sessionId,
+      adAccountId: '123',
+      pageId: 'page-1',
+      instagramAccountId: 'ig-1',
+      publicBaseUrl: 'https://tenant.test',
+      includeNextSession: true
+    })
+    assert.equal(explicitlySelected.selected.pageId, 'page-1')
+    assert.equal(explicitlySelected.selected.adAccountId, '123')
+    assert.equal(
+      graphCalls.length,
+      graphCallsBeforeLocalSelection,
+      'elegir activos ya autorizados no debe volver a consultar Graph'
+    )
+    assert.ok(explicitlySelected.session?.sessionId)
+
+    const subscriptionsBeforeAdsOnlyChanges = subscriptionCalls.length
+    const pagePreflightsBeforeAdsOnlyChanges = runtimeInputs.length
+    const withoutAds = await finalizeMetaOAuthConnection({
+      sessionId: explicitlySelected.session.sessionId,
+      adAccountId: '',
+      pageId: 'page-1',
+      instagramAccountId: 'ig-1',
+      publicBaseUrl: 'https://tenant.test',
+      includeNextSession: true
+    })
+    const adsRestored = await finalizeMetaOAuthConnection({
+      sessionId: withoutAds.session.sessionId,
+      adAccountId: '123',
+      pageId: 'page-1',
+      instagramAccountId: 'ig-1',
+      publicBaseUrl: 'https://tenant.test',
+      includeNextSession: true
+    })
+    assert.equal(adsRestored.selected.adAccountId, '123')
+    assert.equal(subscriptionCalls.length, subscriptionsBeforeAdsOnlyChanges)
+    assert.equal(runtimeInputs.length, pagePreflightsBeforeAdsOnlyChanges)
+    assert.equal(
+      graphCalls.length,
+      graphCallsBeforeLocalSelection,
+      'cambiar sólo publicidad no debe tocar Graph, subscribed_apps ni el relay'
+    )
+
+    const subscriptionsBeforeSocialChanges = subscriptionCalls.length
+    const pagePreflightsBeforeSocialChanges = runtimeInputs.length
+    const removalsBeforeSocialChanges = removedRuntimeSubscriptions
+    const withoutSocial = await finalizeMetaOAuthConnection({
+      sessionId: adsRestored.session.sessionId,
+      adAccountId: '123',
+      pageId: '',
+      instagramAccountId: '',
+      publicBaseUrl: 'https://tenant.test',
+      includeNextSession: true
+    })
+    assert.equal(withoutSocial.selected.pageId, '')
+    assert.equal(withoutSocial.selected.instagramAccountId, '')
+    assert.equal(subscriptionCalls.length, subscriptionsBeforeSocialChanges + 1)
+    assert.equal(subscriptionCalls.at(-1).action, 'unregister')
+    assert.equal(runtimeInputs.length, pagePreflightsBeforeSocialChanges)
+    assert.equal(removedRuntimeSubscriptions, removalsBeforeSocialChanges + 1)
+
+    const socialRestored = await finalizeMetaOAuthConnection({
+      sessionId: withoutSocial.session.sessionId,
+      adAccountId: '123',
+      pageId: 'page-1',
+      instagramAccountId: 'ig-1',
+      publicBaseUrl: 'https://tenant.test',
+      includeNextSession: true
+    })
+    assert.equal(socialRestored.selected.pageId, 'page-1')
+    assert.equal(socialRestored.selected.instagramAccountId, 'ig-1')
+    assert.equal(subscriptionCalls.length, subscriptionsBeforeSocialChanges + 2)
+    assert.equal(subscriptionCalls.at(-1).action, 'register')
+    assert.equal(runtimeInputs.length, pagePreflightsBeforeSocialChanges + 1)
+    assert.equal(
+      graphCalls.length,
+      graphCallsBeforeLocalSelection,
+      'quitar o volver a elegir Page e Instagram autorizados no debe consultar Graph'
+    )
+
+    const selectedStatus = await getMetaOAuthConnectionStatus()
+    assert.deepEqual(selectedStatus.selectedAssets.page, { id: 'page-1', name: 'Página Uno' })
+    assert.deepEqual(selectedStatus.selectedAssets.adAccount, { id: '123', name: 'Ads' })
     await db.run('DELETE FROM meta_oauth_authorized_assets')
     const legacyNameFallback = await getMetaOAuthConnectionStatus()
     assert.deepEqual(legacyNameFallback.selectedAssets.page, { id: 'page-1', name: 'Página Uno' })
@@ -605,6 +708,7 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
     assert.equal(graphCalls.some(path => path.includes('/assigned_pages')), false)
     assert.equal(graphCalls.some(path => path.includes('/assigned_ad_accounts')), false)
 
+    const graphCallsBeforeSelection = graphCalls.length
     const finalized = await finalizeMetaOAuthConnection({
       sessionId: completed.sessionId,
       pageId: 'page-user',
@@ -622,6 +726,11 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
     assert.equal(config.pixel_id, 'pixel-user')
     assert.equal(config.oauth_business_id, 'business-dataset')
     assert.equal(graphCalls.some(path => path.includes('/assigned_users')), false)
+    assert.equal(
+      graphCalls.length,
+      graphCallsBeforeSelection,
+      'un USER token no debe consultar Graph al elegir activos ya autorizados'
+    )
 
     const status = await getMetaOAuthConnectionStatus()
     assert.equal(status.connectionMode, 'oauth_user')

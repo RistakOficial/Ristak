@@ -1379,18 +1379,22 @@ function chooseAutomaticMetaSelection(discovered, pageSecrets = {}, previousConf
     return META_REQUIRED_PAGE_TASKS.every(task => tasks.has(task))
   }
   const usablePages = discovered.pages.filter(pageCanOperate)
-  const previousPageId = cleanString(previousConfig?.page_id)
-  const page = usablePages.find(item => cleanString(item.id) === previousPageId) || usablePages[0] || null
+  // Una autorización nueva no debe escoger activos por el usuario. Sólo
+  // conservamos la selección anterior cuando ya era esta misma integración
+  // OAuth; una conexión manual o una primera conexión empiezan vacías.
+  const preservePreviousSelection = isMetaOAuthConnectionMode(previousConfig?.connection_mode)
+  const previousPageId = preservePreviousSelection ? cleanString(previousConfig?.page_id) : ''
+  const page = usablePages.find(item => cleanString(item.id) === previousPageId) || null
   const previousInstagramId = cleanString(previousConfig?.instagram_account_id)
   const instagram = page?.instagramAccounts?.find(item => cleanString(item.id) === previousInstagramId)
-    || page?.instagramAccounts?.[0]
     || null
 
-  const previousAdAccountId = normalizeAdAccountId(previousConfig?.ad_account_id)
+  const previousAdAccountId = preservePreviousSelection
+    ? normalizeAdAccountId(previousConfig?.ad_account_id)
+    : ''
   const adAccount = discovered.adAccounts.find(item => normalizeAdAccountId(item.id) === previousAdAccountId)
-    || discovered.adAccounts[0]
     || null
-  const previousPixelId = cleanString(previousConfig?.pixel_id)
+  const previousPixelId = preservePreviousSelection ? cleanString(previousConfig?.pixel_id) : ''
   const dataset = discovered.datasets.find(item => cleanString(item.id) === previousPixelId) || null
   const businessId = cleanString(
     dataset?.businessId || adAccount?.businessId || page?.businessId || discovered.defaults?.businessId
@@ -1485,7 +1489,8 @@ export async function completeMetaOAuthConnection(options = {}) {
   const session = await prepareMetaOAuthConnection(options)
   return finalizeMetaOAuthConnection({
     sessionId: session.sessionId,
-    publicBaseUrl: options.publicBaseUrl
+    publicBaseUrl: options.publicBaseUrl,
+    includeNextSession: options.includeNextSession === true
   })
 }
 
@@ -1651,6 +1656,13 @@ async function validateDatasetUploadAccess(payload, selected) {
     )
   }
 
+  // El User Access Token representa al administrador que concedió la
+  // allowlist. Volver a leer el Dataset en cada selección no agrega seguridad
+  // y sí consume cuota. El gate de assigned_users sólo aplica al BISU.
+  if (resolveMetaOAuthConnectionMode(payload) === 'oauth_user') {
+    return { validated: true, datasetId, businessId, authorizedUserId, mode: 'oauth_user' }
+  }
+
   await graphJson(encodeURIComponent(datasetId), {
     token: payload.accessToken,
     appSecretProof: payload.appSecretProof,
@@ -1662,16 +1674,6 @@ async function validateDatasetUploadAccess(payload, selected) {
       'META_OAUTH_DATASET_ACCESS_REQUIRED'
     )
   })
-
-  // Un User Access Token representa al administrador que autorizó el negocio;
-  // no aparece necesariamente en /assigned_users, porque ese edge enumera
-  // usuarios del negocio y System Users con tareas sobre el Dataset. Haber
-  // leído el Dataset con el token/proof y la allowlist firmada es el preflight
-  // correcto para este modo. El POST real de CAPI seguirá reportando cualquier
-  // revocación posterior sin convertirla en un falso error de configuración.
-  if (resolveMetaOAuthConnectionMode(payload) === 'oauth_user') {
-    return { validated: true, datasetId, businessId, authorizedUserId, mode: 'oauth_user' }
-  }
 
   const assignedUsers = await graphCollection(`${encodeURIComponent(datasetId)}/assigned_users`, {
     token: payload.accessToken,
@@ -1792,7 +1794,11 @@ async function runMetaOAuthConnectedRuntimeEffects({
   selected,
   previousConfig = null,
   reason = 'meta-oauth-connected',
-  awaitAds = false
+  awaitAds = false,
+  syncCrons = true,
+  syncSocial = true,
+  syncHistory = true,
+  syncAds = true
 } = {}) {
   const runtimeWarnings = []
   if (
@@ -1807,24 +1813,28 @@ async function runMetaOAuthConnectedRuntimeEffects({
     })
   }
 
-  for (const provider of ['meta', 'meta-ads', 'meta-social']) {
-    try {
-      await runtimeClient.syncCrons(provider, { reason })
-    } catch (error) {
-      runtimeWarnings.push(`crons-${provider}: ${error.message}`)
-      logger.warn(`Meta OAuth conectado; no se pudieron sincronizar crons ${provider}: ${error.message}`)
+  if (syncCrons) {
+    for (const provider of ['meta', 'meta-ads', 'meta-social']) {
+      try {
+        await runtimeClient.syncCrons(provider, { reason })
+      } catch (error) {
+        runtimeWarnings.push(`crons-${provider}: ${error.message}`)
+        logger.warn(`Meta OAuth conectado; no se pudieron sincronizar crons ${provider}: ${error.message}`)
+      }
     }
   }
-  const config = await getMetaConfig().catch(error => {
-    runtimeWarnings.push(`config: ${error.message}`)
-    return null
-  })
   let socialChannels = {}
-  try {
-    socialChannels = await runtimeClient.enableSocialChannels(config || {})
-  } catch (error) {
-    runtimeWarnings.push(`social-channels: ${error.message}`)
-    logger.warn(`Meta OAuth conectado; no se pudieron activar canales sociales: ${error.message}`)
+  if (syncSocial) {
+    const config = await getMetaConfig().catch(error => {
+      runtimeWarnings.push(`config: ${error.message}`)
+      return null
+    })
+    try {
+      socialChannels = await runtimeClient.enableSocialChannels(config || {})
+    } catch (error) {
+      runtimeWarnings.push(`social-channels: ${error.message}`)
+      logger.warn(`Meta OAuth conectado; no se pudieron activar canales sociales: ${error.message}`)
+    }
   }
 
   const platforms = [
@@ -1832,7 +1842,7 @@ async function runMetaOAuthConnectedRuntimeEffects({
     ...(selected?.instagramAccountId ? ['instagram'] : [])
   ]
   let socialHistoryBackfill = { syncStarted: false, started: [], skipped: [] }
-  if (platforms.length) {
+  if (syncHistory && platforms.length) {
     try {
       socialHistoryBackfill = await Promise.resolve(
         runtimeClient.startSocialHistory({ platforms, reason })
@@ -1843,8 +1853,8 @@ async function runMetaOAuthConnectedRuntimeEffects({
     }
   }
 
-  const adsSync = { syncStarted: Boolean(selected?.adAccountId) }
-  if (selected?.adAccountId) {
+  const adsSync = { syncStarted: Boolean(syncAds && selected?.adAccountId) }
+  if (syncAds && selected?.adAccountId) {
     const adsTask = Promise.resolve().then(() => runtimeClient.updateRecentAds())
     if (awaitAds) {
       await adsTask.catch(error => {
@@ -1920,6 +1930,297 @@ async function loadManualConnectionBackup() {
   }
 }
 
+function selectedMetaOAuthPageConfig(payload = {}, selected = {}) {
+  const pageSecrets = payload.pageSecrets?.[cleanString(selected.pageId)] || {}
+  return {
+    access_token: payload.accessToken,
+    connection_mode: resolveMetaOAuthConnectionMode(payload),
+    page_id: cleanString(selected.pageId),
+    instagram_account_id: cleanString(selected.instagramAccountId),
+    oauth_appsecret_proof: payload.appSecretProof,
+    oauth_page_access_token: pageSecrets.pageAccessToken,
+    oauth_page_appsecret_proof: pageSecrets.pageAppSecretProof
+  }
+}
+
+function selectedMetaOAuthSaveOptions(payload = {}, selected = {}, previousConfig = null, {
+  relayStatus = 'inactive',
+  relayRegisteredAt = null
+} = {}) {
+  const selectedPageSecrets = payload.pageSecrets?.[cleanString(selected.pageId)] || {}
+  const selectedAdAccount = (payload.adAccounts || []).find(account => (
+    normalizeAdAccountId(account?.id) === normalizeAdAccountId(selected.adAccountId)
+  ))
+  return {
+    connectionMode: resolveMetaOAuthConnectionMode(payload),
+    oauthConnectionId: payload.connectionId,
+    oauthUserId: payload.user?.id,
+    oauthUserName: payload.user?.name,
+    oauthAppId: payload.appId,
+    oauthBusinessId: selected.businessId,
+    oauthConfigId: payload.configId,
+    appSecretProof: payload.appSecretProof,
+    pageAccessToken: selectedPageSecrets.pageAccessToken,
+    pageAppSecretProof: selectedPageSecrets.pageAppSecretProof,
+    grantedScopes: payload.permissions?.granted,
+    missingScopes: payload.permissions?.missing,
+    granularScopes: payload.permissions?.granular,
+    tokenExpiresAt: payload.tokenExpiresAt,
+    dataAccessExpiresAt: payload.dataAccessExpiresAt,
+    validated: true,
+    connectedAt: previousConfig?.oauth_connected_at || undefined,
+    relayStatus,
+    relayRegisteredAt,
+    timezoneData: selected.adAccountId
+      ? {
+          timezone_name: cleanString(selectedAdAccount?.timezoneName) || null,
+          timezone_id: null,
+          timezone_offset_hours_utc: null
+        }
+      : null
+  }
+}
+
+async function saveSelectedMetaOAuthConfig(payload, selected, previousConfig, relay = {}) {
+  await saveMetaConfig(
+    selected.adAccountId || null,
+    payload.accessToken,
+    selected.pixelId || null,
+    selected.pageId || null,
+    selected.instagramAccountId || null,
+    selectedMetaOAuthSaveOptions(payload, selected, previousConfig, relay)
+  )
+  await setAppConfig('meta_config_disconnected', '0')
+  await saveAuthorizedAssets(payload)
+}
+
+async function finishMetaOAuthSelectionSession(sessionId) {
+  await db.run(
+    `UPDATE meta_oauth_pending_sessions
+     SET status = 'consumed', consumed_at = CURRENT_TIMESTAMP, payload_encrypted = '', updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [sessionId]
+  ).catch(error => logger.warn(`Meta OAuth quedó guardado, pero no se pudo cerrar la sesión local: ${error.message}`))
+}
+
+async function reopenMetaOAuthSelectionSession(sessionId) {
+  await db.run(
+    `UPDATE meta_oauth_pending_sessions
+     SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND status = 'consuming'`,
+    [sessionId]
+  ).catch(() => undefined)
+}
+
+async function restoreCentralMetaOAuthRoute(previousConfig, candidate, webhookUrl) {
+  const previousPageId = cleanString(previousConfig?.page_id)
+  const previousConnectionId = cleanString(previousConfig?.oauth_connection_id)
+  if (previousPageId && previousConnectionId) {
+    await centralClient.updateWebhookSubscription({
+      action: 'register',
+      connectionId: previousConnectionId,
+      pageId: previousPageId,
+      instagramAccountId: cleanString(previousConfig?.instagram_account_id),
+      webhookUrl
+    })
+    return
+  }
+  if (cleanString(candidate?.pageId)) {
+    await centralClient.updateWebhookSubscription({
+      action: 'unregister',
+      connectionId: cleanString(candidate?.connectionId),
+      pageId: cleanString(candidate?.pageId),
+      instagramAccountId: cleanString(candidate?.instagramAccountId),
+      webhookUrl: ''
+    })
+  }
+}
+
+function metaOAuthSelectionResult(payload, selected, runtimeEffects = {}, relayStatus = 'inactive') {
+  return {
+    connectionMode: resolveMetaOAuthConnectionMode(payload),
+    connected: true,
+    validated: true,
+    selected,
+    permissions: payload.permissions,
+    relay: {
+      status: relayStatus,
+      subscribed: relayStatus === 'registered',
+      error: ''
+    },
+    subscription: {
+      subscribed: relayStatus === 'registered',
+      pageId: selected.pageId || ''
+    },
+    socialChannels: runtimeEffects.socialChannels || {},
+    socialHistoryBackfill: runtimeEffects.socialHistoryBackfill || {
+      syncStarted: false,
+      started: [],
+      skipped: []
+    },
+    adsSync: runtimeEffects.adsSync || { syncStarted: false },
+    runtimeWarnings: runtimeEffects.runtimeWarnings || []
+  }
+}
+
+async function saveMetaOAuthSelectionWithoutPage({
+  sessionId,
+  payload,
+  selected,
+  publicBaseUrl = ''
+}) {
+  const previousState = await captureLocalMetaState()
+  const previousConfig = await getMetaConfig().catch(() => null)
+  const previousPageId = cleanString(previousConfig?.page_id)
+  const previousConnectionId = cleanString(previousConfig?.oauth_connection_id)
+  const webhookUrl = buildRelayWebhookUrl(publicBaseUrl)
+  let centralRouteRemoved = false
+  if (previousPageId && previousConnectionId && !webhookUrl) {
+    throw metaOAuthError(
+      'No hay URL pública verificada para desconectar la Página seleccionada.',
+      409,
+      'META_OAUTH_PUBLIC_URL_MISSING'
+    )
+  }
+  await consumePendingSession(sessionId)
+  try {
+    await ensureManualConnectionBackup(previousState)
+    if (previousPageId && previousConnectionId) {
+      await centralClient.updateWebhookSubscription({
+        action: 'unregister',
+        connectionId: previousConnectionId,
+        pageId: previousPageId,
+        instagramAccountId: cleanString(previousConfig?.instagram_account_id),
+        webhookUrl: ''
+      })
+      centralRouteRemoved = true
+    }
+    await saveSelectedMetaOAuthConfig(payload, selected, previousConfig, {
+      relayStatus: 'inactive',
+      relayRegisteredAt: null
+    })
+    await finishMetaOAuthSelectionSession(sessionId)
+  } catch (error) {
+    await restoreLocalMetaState(previousState).catch(restoreError => {
+      logger.error(`Meta OAuth: no se pudo restaurar el estado local: ${restoreError.message}`)
+    })
+    if (centralRouteRemoved && webhookUrl) {
+      await restoreCentralMetaOAuthRoute(previousConfig, {}, webhookUrl).catch(restoreError => {
+        logger.error(`Meta OAuth: no se pudo restaurar la ruta anterior: ${restoreError.message}`)
+      })
+    }
+    await reopenMetaOAuthSelectionSession(sessionId)
+    throw error
+  }
+
+  const previousWasSameConnection = isMetaOAuthConnectionMode(previousConfig?.connection_mode) &&
+    cleanString(previousConfig?.oauth_connection_id) === cleanString(payload.connectionId)
+  const adChanged = normalizeAdAccountId(previousConfig?.ad_account_id) !== selected.adAccountId
+  const runtimeEffects = await runMetaOAuthConnectedRuntimeEffects({
+    payload,
+    selected,
+    previousConfig,
+    reason: 'meta-oauth-assets-changed',
+    syncCrons: !previousWasSameConnection || Boolean(previousPageId) || adChanged,
+    syncSocial: !previousWasSameConnection || Boolean(previousPageId),
+    syncHistory: false,
+    syncAds: adChanged
+  })
+  return metaOAuthSelectionResult(payload, selected, runtimeEffects, 'inactive')
+}
+
+async function updateExistingMetaOAuthSelection({
+  sessionId,
+  payload,
+  selected,
+  previousConfig,
+  publicBaseUrl = ''
+}) {
+  const previousState = await captureLocalMetaState()
+  const previousPageId = cleanString(previousConfig?.page_id)
+  const previousInstagramId = cleanString(previousConfig?.instagram_account_id)
+  const pageChanged = previousPageId !== selected.pageId
+  const instagramChanged = previousInstagramId !== selected.instagramAccountId
+  const socialChanged = pageChanged || instagramChanged
+  const adChanged = normalizeAdAccountId(previousConfig?.ad_account_id) !== selected.adAccountId
+  const webhookUrl = socialChanged ? buildRelayWebhookUrl(publicBaseUrl) : ''
+  const candidate = {
+    connectionId: payload.connectionId,
+    pageId: selected.pageId,
+    instagramAccountId: selected.instagramAccountId
+  }
+  const nextRelayStatus = socialChanged || cleanString(previousConfig?.oauth_relay_status) === 'registered'
+    ? 'registered'
+    : cleanString(previousConfig?.oauth_relay_status) || 'pending'
+  const nextPageConfig = selectedMetaOAuthPageConfig(payload, selected)
+  let candidatePageSubscribed = false
+  let centralRouteAttempted = false
+
+  if (socialChanged && !webhookUrl) {
+    throw metaOAuthError(
+      'No hay URL pública verificada para actualizar mensajes y comentarios de Meta.',
+      409,
+      'META_OAUTH_PUBLIC_URL_MISSING'
+    )
+  }
+
+  await consumePendingSession(sessionId)
+  try {
+    if (pageChanged) {
+      await runtimeClient.ensurePageSubscription({ config: nextPageConfig })
+      candidatePageSubscribed = true
+    }
+    if (socialChanged) {
+      centralRouteAttempted = true
+      await centralClient.updateWebhookSubscription({
+        action: 'register',
+        connectionId: payload.connectionId,
+        pageId: selected.pageId,
+        instagramAccountId: selected.instagramAccountId,
+        webhookUrl
+      })
+    }
+
+    await saveSelectedMetaOAuthConfig(payload, selected, previousConfig, {
+      relayStatus: nextRelayStatus,
+      relayRegisteredAt: socialChanged
+        ? new Date().toISOString()
+        : previousConfig?.oauth_relay_registered_at || null
+    })
+    await finishMetaOAuthSelectionSession(sessionId)
+  } catch (error) {
+    await restoreLocalMetaState(previousState).catch(restoreError => {
+      logger.error(`Meta OAuth: no se pudo restaurar la selección local: ${restoreError.message}`)
+    })
+    if (centralRouteAttempted) {
+      await restoreCentralMetaOAuthRoute(previousConfig, candidate, webhookUrl).catch(restoreError => {
+        logger.error(`Meta OAuth: no se pudo restaurar la ruta anterior: ${restoreError.message}`)
+      })
+    }
+    if (candidatePageSubscribed && pageChanged) {
+      await removeMetaPageSubscriptionIfUnused({
+        config: nextPageConfig,
+        fallbackConfig: previousConfig,
+        warningLabel: 'candidate-page-cleanup'
+      })
+    }
+    await reopenMetaOAuthSelectionSession(sessionId)
+    throw error
+  }
+
+  const runtimeEffects = await runMetaOAuthConnectedRuntimeEffects({
+    payload,
+    selected,
+    previousConfig,
+    reason: 'meta-oauth-assets-changed',
+    syncCrons: socialChanged,
+    syncSocial: socialChanged,
+    syncHistory: socialChanged,
+    syncAds: adChanged
+  })
+  return metaOAuthSelectionResult(payload, selected, runtimeEffects, nextRelayStatus)
+}
+
 async function finalizeMetaOAuthConnectionUnlocked({
   sessionId,
   businessId = '',
@@ -1930,8 +2231,6 @@ async function finalizeMetaOAuthConnectionUnlocked({
   publicBaseUrl = ''
 } = {}) {
   const { payload } = await readPendingSession(sessionId)
-  const splitSocialFallback = await getSplitSocialFallback()
-  const migrationWarnings = []
   const selected = validateSelection(payload, {
     businessId: businessId || payload.defaults?.businessId,
     adAccountId: adAccountId === undefined ? payload.defaults?.adAccountId : adAccountId,
@@ -1948,13 +2247,6 @@ async function finalizeMetaOAuthConnectionUnlocked({
       'META_OAUTH_REQUIRED_SCOPES_MISSING'
     )
   }
-  if (!selected.pageId) {
-    throw metaOAuthError(
-      'Selecciona una Página antes de terminar. La cuenta publicitaria y el Dataset son opcionales.',
-      409,
-      'META_OAUTH_REQUIRED_ASSET_SELECTION_MISSING'
-    )
-  }
   if (!cleanString(payload.appSecretProof)) {
     throw metaOAuthError(
       'El Installer no entregó appsecret_proof para proteger las llamadas a Meta.',
@@ -1962,15 +2254,47 @@ async function finalizeMetaOAuthConnectionUnlocked({
       'META_OAUTH_APPSECRET_PROOF_MISSING'
     )
   }
-  const selectedPageSecrets = payload.pageSecrets?.[selected.pageId] || {}
-  if (!cleanString(selectedPageSecrets.pageAccessToken) || !cleanString(selectedPageSecrets.pageAppSecretProof)) {
+  const selectedPageSecrets = selected.pageId ? payload.pageSecrets?.[selected.pageId] || {} : {}
+  if (selected.pageId && (!cleanString(selectedPageSecrets.pageAccessToken) || !cleanString(selectedPageSecrets.pageAppSecretProof))) {
     throw metaOAuthError(
       'Meta no entregó el acceso protegido de la Página seleccionada.',
       409,
       'META_OAUTH_PAGE_CREDENTIALS_MISSING'
     )
   }
-  await validateDatasetUploadAccess(payload, selected)
+
+  const currentConfig = await getMetaConfig().catch(() => null)
+  const sameOAuthConnection = isMetaOAuthConnectionMode(currentConfig?.connection_mode) &&
+    cleanString(currentConfig?.oauth_connection_id) === cleanString(payload.connectionId)
+  const datasetChanged = cleanString(currentConfig?.pixel_id) !== selected.pixelId || !sameOAuthConnection
+
+  if (selected.pixelId && datasetChanged) {
+    await validateDatasetUploadAccess(payload, selected)
+  }
+
+  // Ad Account y Dataset son una selección local sobre la allowlist cifrada
+  // que entregó el Installer. No hay razón para consultar Graph otra vez en
+  // cada cambio. Sólo Page/Instagram tocan la suscripción o el relay.
+  if (!selected.pageId) {
+    return saveMetaOAuthSelectionWithoutPage({
+      sessionId,
+      payload,
+      selected,
+      publicBaseUrl
+    })
+  }
+  if (sameOAuthConnection) {
+    return updateExistingMetaOAuthSelection({
+      sessionId,
+      payload,
+      selected,
+      previousConfig: currentConfig,
+      publicBaseUrl
+    })
+  }
+
+  const splitSocialFallback = await getSplitSocialFallback()
+  const migrationWarnings = []
   await consumePendingSession(sessionId)
   const connectionMode = resolveMetaOAuthConnectionMode(payload)
 
@@ -2050,7 +2374,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
         validated: true,
         relayStatus: 'pending',
         relayRegisteredAt: null,
-        timezoneData: selectedAdAccount?.timezoneName
+        timezoneData: selected.adAccountId
           ? { timezone_name: selectedAdAccount.timezoneName, timezone_id: null, timezone_offset_hours_utc: null }
           : null
       }
@@ -2309,7 +2633,17 @@ async function withMetaConnectionLock(operation) {
 }
 
 export function finalizeMetaOAuthConnection(options = {}) {
-  return withMetaConnectionLock(() => finalizeMetaOAuthConnectionUnlocked(options))
+  return withMetaConnectionLock(async () => {
+    const result = await finalizeMetaOAuthConnectionUnlocked(options)
+    if (options.includeNextSession === true && result?.connected && !result?.repairPending) {
+      try {
+        result.session = await prepareMetaOAuthReconfiguration()
+      } catch (error) {
+        logger.warn(`Meta OAuth quedó guardado, pero no se pudo preparar el siguiente selector: ${error.message}`)
+      }
+    }
+    return result
+  })
 }
 
 export function disconnectMetaOAuthConnection(options = {}) {

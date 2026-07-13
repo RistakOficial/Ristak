@@ -29,6 +29,7 @@ export interface MetaOAuthStatus {
   oauth: {
     connected: boolean
     validated: boolean
+    connectionId?: string
     userId: string
     userName: string
     appId: string
@@ -131,6 +132,7 @@ export interface MetaOAuthFinalizeResult {
   socialHistoryBackfill?: unknown
   adsSync?: { syncStarted?: boolean }
   conversionEvents?: { enabled?: boolean; reason?: string }
+  session?: MetaOAuthSession
 }
 
 export type MetaOAuthPreviousIntegrationKind = 'social' | 'ads'

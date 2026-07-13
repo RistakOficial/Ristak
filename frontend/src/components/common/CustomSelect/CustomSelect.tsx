@@ -52,6 +52,7 @@ interface CustomSelectProps {
   searchable?: boolean
   searchPlaceholder?: string
   emptyMessage?: string
+  selectedContent?: React.ReactNode
   children?: React.ReactNode
   'aria-label'?: string
   'aria-labelledby'?: string
@@ -133,6 +134,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   searchable = false,
   searchPlaceholder = 'Buscar…',
   emptyMessage = 'No hay resultados',
+  selectedContent,
   children,
   'aria-label': ariaLabel,
   'aria-labelledby': ariaLabelledBy
@@ -407,7 +409,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
               <span className={styles.triggerIcon} aria-hidden="true">{selectedIcon}</span>
               <span className={styles.srOnly}>{selectedOption?.label || placeholder}</span>
             </>
-          ) : selectedOption?.label || placeholder}
+          ) : selectedOption && selectedContent ? selectedContent : selectedOption?.label || placeholder}
         </span>
         <ChevronDown
           size={16}

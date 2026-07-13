@@ -205,6 +205,51 @@
   white-space: nowrap;
 }
 
+.connectedAssetSelect {
+  flex: 0 1 460px;
+  width: min(100%, 460px);
+  min-width: 260px;
+}
+
+.connectedAssetSelect :global([data-ristak-dropdown-trigger]) {
+  min-height: 50px;
+}
+
+.assetSelectValue {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.assetSelectValue > span {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assetSelectValue small {
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: 11px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assetSaveStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin-top: 5px;
+  color: var(--text-mute);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .connectedAssetIdentity {
   display: flex;
   flex-direction: column;
@@ -1952,6 +1997,24 @@
   .socialSettingControl {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .connectedListRow {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .connectedAssetSelect {
+    flex-basis: auto;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .connectedListValue,
+  .connectedAssetIdentity {
+    align-items: flex-start;
+    text-align: left;
   }
 
   .inputActionRow button,

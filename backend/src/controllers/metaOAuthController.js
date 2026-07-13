@@ -112,7 +112,8 @@ export async function completeMetaOAuth(req, res) {
         req.body?.returnPath || req.body?.return_path || fallbackReturnPath,
         fallbackReturnPath
       ),
-      publicBaseUrl: publicBaseUrl(req)
+      publicBaseUrl: publicBaseUrl(req),
+      includeNextSession: true
     }
     const data = kind
       ? await completeMetaOAuthIntegration(options)
@@ -130,13 +131,14 @@ export async function finalizeMetaOAuth(req, res) {
     const options = {
       integrationKind: kind,
       sessionId: req.body?.sessionId || req.body?.session_id,
-      businessId: req.body?.businessId || req.body?.business_id,
-      adAccountId: req.body?.adAccountId || req.body?.ad_account_id,
+      businessId: req.body?.businessId ?? req.body?.business_id,
+      adAccountId: req.body?.adAccountId ?? req.body?.ad_account_id,
       pixelId: req.body?.pixelId ?? req.body?.pixel_id,
       datasetId: req.body?.datasetId ?? req.body?.dataset_id,
-      pageId: req.body?.pageId || req.body?.page_id,
+      pageId: req.body?.pageId ?? req.body?.page_id,
       instagramAccountId: req.body?.instagramAccountId ?? req.body?.instagram_account_id,
-      publicBaseUrl: publicBaseUrl(req)
+      publicBaseUrl: publicBaseUrl(req),
+      includeNextSession: true
     }
     const data = kind
       ? await finalizeMetaOAuthIntegration(options)

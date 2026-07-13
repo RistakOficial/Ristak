@@ -2355,8 +2355,11 @@ Ristak usa Meta en varias areas:
 - **Conectar con Meta** abre directamente el dialogo oficial. Meta controla la
   elección y la persona autoriza libremente sus activos; Ristak no muestra una
   guía intermedia ni intenta preseleccionar opciones. Al volver, la conexión se
-  completa en la misma petición y la pantalla se actualiza sin recargarse. Los
-  activos futuros requieren **Autorizar nuevos activos**.
+  completa en la misma petición y la pantalla se actualiza sin recargarse. Una
+  conexion nueva no elige activos operativos: la misma tabla conectada muestra
+  dropdowns buscables para Ad Account, Dataset, Facebook Page e Instagram y
+  guarda cada cambio de inmediato. Los activos futuros requieren **Autorizar
+  nuevos activos**.
 - La interfaz se divide en **Cuenta Meta**, **Redes sociales**, **Rastreo web**
   y **Dataset Test**. Cuenta Meta muestra una sola tabla de la conexion activa;
   no muestra una tabla separada de capacidades OAuth. Redes sociales concentra
@@ -2380,7 +2383,7 @@ Ristak usa Meta en varias areas:
   temporal vive en
   `meta_oauth_pending_sessions`. La allowlist completa y todos los Page
   tokens/proofs viven cifrados en `meta_oauth_authorized_assets`, lo que permite
-  **Cambiar activos en Ristak** sin repetir OAuth. Las filas separadas anteriores en
+  usar los dropdowns de la tabla sin repetir OAuth. Las filas separadas anteriores en
   `meta_oauth_integrations` y el System User Token manual se conservan como
   fallbacks, no se borran al iniciar OAuth.
 - Las rutas canonicas son
@@ -2399,16 +2402,16 @@ Ristak usa Meta en varias areas:
   usuario al dominio generico `app.ristak.com` cuando conecto desde un tenant
   Render. Con Strict Mode de Meta, la lista de redirects debe incluir el callback
   central completo, no solo la raiz de `www.ristak.com`.
-- Al volver, Ristak conserva activos anteriores todavía autorizados o toma la
-  primera Page operable, la primera Ad Account disponible y el Instagram
-  enlazado. Dataset queda vacío en una primera conexión y se activa sólo por una
-  elección posterior. Si Meta devuelve tareas de Page, Ristak exige `ANALYZE`,
-  `MESSAGING` y `MODERATE`.
+- Al volver, Ristak conserva activos anteriores sólo si pertenecen a la misma
+  conexion OAuth y siguen autorizados. Una conexion nueva empieza sin Page, Ad
+  Account, Dataset ni Instagram. Cada seleccion de la tabla se guarda al instante;
+  Instagram exige una Page enlazada. Si Meta devuelve tareas de Page, Ristak
+  exige `ANALYZE`, `MESSAGING` y `MODERATE`.
 - El Dataset se descubre por `/act_<AD_ACCOUNT_ID>/adspixels` y tambien por
   `/{BUSINESS_ID}/owned_pixels|client_pixels`. En BISU, Installer y Ristak
-  exigen `UPLOAD` en `assigned_users`; en USER, Ristak valida lectura directa y
-  no busca a la persona como si fuera System User. No manda un evento automatico
-  durante el login.
+  exigen `UPLOAD` en `assigned_users`; en USER, Ristak confia en la allowlist
+  firmada que Installer ya valido y no agrega otra llamada a Graph al cambiar el
+  dropdown. No manda un evento automatico durante el login.
 - Ristak prepara `subscribed_apps`, Page token/proof, configuracion Ads/Dataset
   y ruta del broker antes de promocionar. Una confirmacion central con fallo
   local queda en reparacion automatica en lugar de hacer rollback a ciegas.
@@ -2450,10 +2453,10 @@ Ristak usa Meta en varias areas:
   exige `ads_read` y un Dataset validado. Despues cae a OAuth Ads separado,
   System User Token manual y `META_ACCESS_TOKEN` solo como compatibilidad. Una
   conexion sin Dataset sigue valida para reportes/social y deja CAPI apagado.
-- Finalizar el login arranca Ads sync y backfill social, deja encendidos por
-  default Messenger y comentarios de Facebook y, si se eligio Instagram,
-  habilita DMs y comentarios de Instagram. Ristak no pide un token separado de
-  Instagram.
+- Elegir una Ad Account arranca Ads sync; elegir una Page o Instagram prepara
+  sólo su runtime social y backfill. Messenger/comentarios se habilitan al elegir
+  Page y DMs/comentarios de Instagram al elegir la cuenta enlazada. Ristak no
+  pide un token separado de Instagram.
 - En OAuth la suscripcion de Page/webhooks es programatica y la UI no pide
   copiar valores manuales. En modo manual, **Redes sociales** conserva las
   credenciales y la guia de Meta Developers. La suscripcion canonica del inbox pide
