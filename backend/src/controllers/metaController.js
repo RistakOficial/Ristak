@@ -2788,38 +2788,57 @@ export const verifyToken = async (req, res) => {
       });
     }
 
-    logger.info('Verificando validez del token de Meta...');
-
-    const validation = await verifyMetaToken(config.access_token, config.oauth_appsecret_proof || '');
-
-    let message = '';
-    let daysUntilExpiry = null;
-
-    if (!validation.valid) {
-      message = validation.error || 'Token inválido o expirado';
-    } else if (validation.expiresAt) {
-      daysUntilExpiry = Math.ceil((validation.expiresAt - new Date()) / (1000 * 60 * 60 * 24));
-
-      if (daysUntilExpiry <= 0) {
-        message = 'Token expirado';
-      } else if (daysUntilExpiry <= 7) {
-        message = `Token válido pero expira en ${daysUntilExpiry} días. Considera renovarlo.`;
-      } else {
-        message = `Token válido (expira en ${daysUntilExpiry} días)`;
-      }
+    // Configuración abre este endpoint en segundo plano. El Installer ya validó
+    // el OAuth y cada sincronización confirma el acceso con la llamada funcional
+    // que realmente necesita. Aquí sólo leemos el estado y expiración guardados.
+    const connectionMode = cleanString(config.connection_mode).toLowerCase();
+    const isOAuth = connectionMode === 'oauth_user' || connectionMode === 'oauth_bisu';
+    const parseInstant = (value) => {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    };
+    const expirations = [
+      parseInstant(config.token_expires_at),
+      parseInstant(config.oauth_data_access_expires_at)
+    ].filter(Boolean).sort((a, b) => a.getTime() - b.getTime());
+    const expiresAt = expirations[0] || null;
+    const daysUntilExpiry = expiresAt
+      ? Math.ceil((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+      : null;
+    const locallyValidated = !isOAuth || Number(config.oauth_validated ?? 1) === 1;
+    const valid = locallyValidated && (daysUntilExpiry === null || daysUntilExpiry > 0);
+    let message;
+    if (!valid) {
+      message = daysUntilExpiry !== null && daysUntilExpiry <= 0
+        ? 'El acceso de Meta venció. Vuelve a conectar la cuenta.'
+        : 'La conexión de Meta necesita volver a validarse.';
+    } else if (daysUntilExpiry !== null && daysUntilExpiry <= 7) {
+      message = `Meta está conectado, pero el acceso vence en ${daysUntilExpiry} días.`;
+    } else if (daysUntilExpiry !== null) {
+      message = `Meta conectado (el acceso vence en ${daysUntilExpiry} días)`;
     } else {
-      message = 'Token válido (sin fecha de expiración)';
+      message = 'Meta conectado. Ristak comprueba el acceso al sincronizar.';
+    }
+    let scopes = [];
+    try {
+      const parsed = Array.isArray(config.oauth_granted_scopes_json)
+        ? config.oauth_granted_scopes_json
+        : JSON.parse(config.oauth_granted_scopes_json || '[]');
+      scopes = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      scopes = [];
     }
 
     res.json({
       success: true,
       configured: true,
       tokenStatus: {
-        valid: validation.valid,
+        valid,
         message,
-        expiresAt: validation.expiresAt,
+        expiresAt: expiresAt?.toISOString() || null,
         daysUntilExpiry,
-        scopes: validation.scopes || []
+        scopes
       }
     });
 
@@ -3791,22 +3810,15 @@ export const syncFromHighLevel = async (req, res) => {
 /**
  * (META-005) Extrae el access token de Meta desde los headers de la petición
  * en lugar del query string, para no filtrarlo en logs/historial del navegador.
- * Acepta `Authorization: Bearer <token>` o el header custom `X-Meta-Access-Token`.
+ * `Authorization` pertenece a la sesión de Ristak y nunca debe interpretarse
+ * como token de Meta. Un token escrito manualmente sólo puede llegar por el
+ * header dedicado `X-Meta-Access-Token`; sin él usamos la conexión cifrada.
  */
-function extractMetaAccessToken(req) {
+export function extractMetaAccessToken(req) {
   const customHeader = req.headers['x-meta-access-token'];
   if (typeof customHeader === 'string' && customHeader.trim()) {
     return customHeader.trim();
   }
-
-  const authHeader = req.headers['authorization'];
-  if (typeof authHeader === 'string') {
-    const match = authHeader.match(/^Bearer\s+(.+)$/i);
-    if (match && match[1].trim()) {
-      return match[1].trim();
-    }
-  }
-
   return null;
 }
 

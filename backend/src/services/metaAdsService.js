@@ -1377,27 +1377,8 @@ export async function syncMetaAds(startDate, onProgress = null) {
 
     const { ad_account_id, access_token } = config
 
-    // ✅ VALIDAR TOKEN ANTES DE INICIAR SYNC
-    logger.info('Validando token de Meta antes de sincronizar...')
-    const tokenValidation = await verifyMetaToken(access_token, config.oauth_appsecret_proof || '')
-
-    if (!tokenValidation.valid) {
-      const errorMsg = tokenValidation.error || 'Token inválido o expirado'
-      logger.error(`❌ Token de Meta inválido: ${errorMsg}`)
-      throw new Error(`Token de Meta inválido: ${errorMsg}. Configura un nuevo token en Settings.`)
-    }
-
-    // Verificar si el token está cerca de expirar (menos de 7 días)
-    if (tokenValidation.expiresAt) {
-      const daysUntilExpiry = Math.ceil((tokenValidation.expiresAt - new Date()) / (1000 * 60 * 60 * 24))
-      if (daysUntilExpiry <= 7) {
-        logger.warn(`⚠️ Token de Meta expira en ${daysUntilExpiry} días. Considera renovarlo.`)
-      } else {
-        logger.info(`✅ Token válido (expira en ${daysUntilExpiry} días)`)
-      }
-    } else {
-      logger.info('✅ Token válido (sin fecha de expiración)')
-    }
+    // La petición de Insights que sigue ya valida el acceso de forma útil.
+    // Anteponer /me o /debug_token duplicaba cuota en cada sincronización.
 
     updateProgress({
       status: 'syncing',
@@ -1596,22 +1577,8 @@ export async function updateRecentAds() {
 
     const { ad_account_id, access_token } = config
 
-    // ✅ VALIDAR TOKEN (silenciosamente en el cron)
-    const tokenValidation = await verifyMetaToken(access_token, config.oauth_appsecret_proof || '')
-
-    if (!tokenValidation.valid) {
-      logger.error(`❌ Token de Meta inválido en cron job: ${tokenValidation.error}`)
-      syncProgress = {
-        status: 'error',
-        step: 'Token de Meta inválido',
-        total: 0,
-        current: 0,
-        message: tokenValidation.error || 'Token inválido o expirado',
-        monthsTotal: 0,
-        monthsCurrent: 0
-      }
-      return { success: false, message: 'Token inválido', error: tokenValidation.error }
-    }
+    // La llamada real de Insights valida el token. Verificarlo antes sólo suma
+    // otra llamada a Meta cada hora y no evita que la petición siguiente falle.
 
     // Últimos 7 días hasta hoy
     const startDate = daysAgo(7)

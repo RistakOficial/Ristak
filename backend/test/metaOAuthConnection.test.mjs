@@ -20,7 +20,11 @@ import {
   setMetaOAuthRuntimeClientForTest
 } from '../src/services/metaOAuthService.js'
 import { safeMetaGraphTransportError } from '../src/utils/metaGraphSecurity.js'
-import { getMetaCustomValues } from '../src/controllers/metaController.js'
+import {
+  extractMetaAccessToken,
+  getMetaCustomValues,
+  verifyToken as verifyMetaTokenController
+} from '../src/controllers/metaController.js'
 
 const TABLES = [
   'meta_config',
@@ -1028,5 +1032,58 @@ test('commit central confirmado nunca restaura A si falla la marca local; schedu
     assert.equal((await getMetaConfig()).oauth_connection_id, 'connection-b')
     assert.equal((await getMetaConfig()).oauth_relay_status, 'registered')
     assert.equal(await db.get('SELECT id FROM meta_oauth_pending_sessions WHERE id = ?', [sessionId]), null)
+  })
+})
+
+test('el Authorization de Ristak nunca se confunde con un token de Meta', () => {
+  assert.equal(extractMetaAccessToken({
+    headers: { authorization: 'Bearer ristak-session-jwt' }
+  }), null)
+  assert.equal(extractMetaAccessToken({
+    headers: {
+      authorization: 'Bearer ristak-session-jwt',
+      'x-meta-access-token': 'meta-token-explicito'
+    }
+  }), 'meta-token-explicito')
+})
+
+test('el estado pasivo del OAuth usa expiración local sin consultar Graph', async () => {
+  await initializeMasterKey()
+  await withIsolatedMeta(async () => {
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString()
+    await db.run(
+      `INSERT INTO meta_config (
+         ad_account_id, access_token, connection_mode, page_id,
+         token_expires_at, oauth_connected, oauth_validated,
+         oauth_granted_scopes_json, oauth_relay_status
+       ) VALUES (?, ?, 'oauth_user', ?, ?, 1, 1, ?, 'registered')`,
+      [
+        'ad-local',
+        encrypt('oauth-token-local'),
+        'page-local',
+        expiresAt,
+        JSON.stringify(['ads_read', 'pages_messaging'])
+      ]
+    )
+
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) {
+        this.statusCode = code
+        return this
+      },
+      json(body) {
+        this.body = body
+        return this
+      }
+    }
+    await verifyMetaTokenController({}, response)
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.body?.configured, true)
+    assert.equal(response.body?.tokenStatus?.valid, true)
+    assert.deepEqual(response.body?.tokenStatus?.scopes, ['ads_read', 'pages_messaging'])
+    assert.match(response.body?.tokenStatus?.message || '', /Meta conectado/)
   })
 })

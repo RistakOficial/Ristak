@@ -976,9 +976,12 @@ export const MetaAdsIntegration: React.FC = () => {
         setSavedPageId(data.data.pageId || '')
         setSavedInstagramAccountId(data.data.instagramAccountId || '')
 
-        if (data.data.accessToken) {
+        const isOAuthConnection = connectionMode === 'oauth_user' || connectionMode === 'oauth_bisu'
+        if (data.data.accessToken && !isOAuthConnection) {
           // Una conexión guardada se consulta server-side. El secreto no vuelve
-          // al navegador sólo para poblar selectores de activos.
+          // al navegador sólo para poblar selectores de activos. OAuth conserva
+          // su inventario autorizado localmente y sólo lo abre cuando el usuario
+          // pulsa “Cambiar activos en Ristak”.
           const tokenToUse = isMaskedSecretValue(data.data.accessToken) ? '' : data.data.accessToken
           setRealAccessToken(tokenToUse)
           await fetchAdAccounts(tokenToUse, data.data.adAccountId, { silent: true })
