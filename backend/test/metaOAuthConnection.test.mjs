@@ -482,18 +482,21 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
       scopes: [...META_OAUTH_REQUIRED_SCOPES],
       granular_scopes: [{ scope: 'pages_messaging', target_ids: ['page-user'] }],
       assets: {
-        business_id: 'business-user',
+        // El client_business_id identifica el negocio dueño de la configuración
+        // FLFB; no necesariamente es el dueño de cada activo que el usuario
+        // autorizó en el mismo modal.
+        business_id: 'business-app-owner',
         pages: [{
           id: 'page-user',
           name: 'Página User Token',
-          business_id: 'business-user',
+          business_id: 'business-social',
           tasks: ['ANALYZE', 'MESSAGING', 'MODERATE'],
           page_access_token: 'page-user-token',
           page_appsecret_proof: 'page-user-proof',
           instagram_business_account: { id: 'ig-user', username: 'user_demo' }
         }],
-        ad_accounts: [{ id: '777', name: 'Ads User', business_id: 'business-user' }],
-        pixels: [{ id: 'pixel-user', name: 'Dataset User', ad_account_id: '777', business_id: 'business-user' }],
+        ad_accounts: [{ id: '777', name: 'Ads User', business_id: 'business-ads' }],
+        pixels: [{ id: 'pixel-user', name: 'Dataset User', business_id: 'business-dataset' }],
         instagram_accounts: [{ id: 'ig-user', page_id: 'page-user', username: 'user_demo' }]
       }
     }
@@ -557,6 +560,17 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
 
     const completed = await completeMetaOAuthConnection({ handoffToken: 'user-handoff' })
     assert.equal(completed.connectionMode, 'oauth_user')
+    assert.deepEqual(completed.businesses.map(item => item.id).sort(), [
+      'business-ads',
+      'business-app-owner',
+      'business-dataset',
+      'business-social'
+    ])
+    assert.deepEqual(completed.datasets, [{
+      id: 'pixel-user',
+      name: 'Dataset User',
+      businessId: 'business-dataset'
+    }])
     assert.equal(graphCalls.includes('/me'), false)
     assert.equal(graphCalls.includes('/me/accounts'), false)
     assert.equal(graphCalls.includes('/me/adaccounts'), false)
@@ -578,6 +592,7 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
     assert.equal(config.access_token, 'long-lived-user-token')
     assert.equal(config.oauth_page_access_token, 'page-user-token')
     assert.equal(config.pixel_id, 'pixel-user')
+    assert.equal(config.oauth_business_id, 'business-dataset')
     assert.equal(graphCalls.some(path => path.includes('/assigned_users')), false)
 
     const status = await getMetaOAuthConnectionStatus()

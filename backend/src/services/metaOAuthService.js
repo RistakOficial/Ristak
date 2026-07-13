@@ -305,43 +305,57 @@ function enrichAuthorizedAssets(authorized = [], live = [], normalizeId = value 
 
 function normalizeHintAssets(value = {}) {
   const source = value && typeof value === 'object' ? value : {}
-  const businesses = Array.isArray(source.businesses) ? source.businesses : []
-  const singularBusinessId = cleanString(source.business_id || source.businessId)
-  if (singularBusinessId && !businesses.some(item => cleanString(item?.id) === singularBusinessId)) {
-    businesses.push({ id: singularBusinessId, name: '' })
-  }
-
+  const rawAdAccounts = Array.isArray(source.ad_accounts) ? source.ad_accounts : []
   const flatPixels = Array.isArray(source.pixels) ? source.pixels : []
   const flatInstagram = Array.isArray(source.instagram_accounts) ? source.instagram_accounts : []
-  const adAccounts = (Array.isArray(source.ad_accounts) ? source.ad_accounts : []).map(account => ({
+  const adAccountBases = rawAdAccounts.map(account => ({
     id: graphAdAccountId(account?.id || account?.account_id),
     name: cleanString(account?.name),
     businessId: cleanString(account?.business_id || account?.businessId || account?.business?.id),
     currency: cleanString(account?.currency),
     timezoneName: cleanString(account?.timezone_name || account?.timezoneName),
-    status: account?.account_status ?? account?.status ?? null,
-    pixels: mergeById(
-      flatPixels
-        .filter(pixel => {
-          const directAccount = normalizeAdAccountId(pixel?.ad_account_id || pixel?.adAccountId)
-          const pixelBusiness = cleanString(pixel?.business_id || pixel?.businessId)
-          const accountBusiness = cleanString(account?.business_id || account?.businessId || account?.business?.id)
-          return directAccount === normalizeAdAccountId(account?.id || account?.account_id) || (
-            pixelBusiness && accountBusiness && pixelBusiness === accountBusiness
-          )
-        })
-        .map(pixel => {
-          const businessId = cleanString(pixel?.business_id || pixel?.businessId)
-          return {
-            id: cleanString(pixel?.id),
-            name: cleanString(pixel?.name),
-            ...(businessId ? { businessId } : {})
-          }
-        }),
-      (Array.isArray(account?.pixels) ? account.pixels : [])
-        .map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) }))
-    )
+    status: account?.account_status ?? account?.status ?? null
   })).filter(account => account.id)
+
+  const normalizeDataset = (pixel = {}, fallback = {}) => {
+    const id = cleanString(pixel?.id)
+    const businessId = cleanString(
+      pixel?.business_id || pixel?.businessId || fallback.businessId
+    )
+    const adAccountId = normalizeAdAccountId(
+      pixel?.ad_account_id || pixel?.adAccountId || fallback.adAccountId
+    )
+    return {
+      id,
+      name: cleanString(pixel?.name) || id,
+      ...(businessId ? { businessId } : {}),
+      ...(adAccountId ? { adAccountId } : {})
+    }
+  }
+  const nestedDatasets = rawAdAccounts.flatMap(account => {
+    const accountId = normalizeAdAccountId(account?.id || account?.account_id)
+    const businessId = cleanString(account?.business_id || account?.businessId || account?.business?.id)
+    return (Array.isArray(account?.pixels) ? account.pixels : [])
+      .map(pixel => normalizeDataset(pixel, { adAccountId: accountId, businessId }))
+  })
+  const datasets = mergeById(
+    flatPixels.map(pixel => normalizeDataset(pixel)),
+    nestedDatasets
+  ).filter(pixel => pixel.id)
+
+  const adAccounts = adAccountBases.map(account => {
+    const accountId = normalizeAdAccountId(account.id)
+    const accountPixels = datasets.filter(pixel => {
+      if (pixel.adAccountId) return normalizeAdAccountId(pixel.adAccountId) === accountId
+      return Boolean(pixel.businessId && account.businessId && pixel.businessId === account.businessId)
+    }).map(pixel => ({
+      id: pixel.id,
+      name: pixel.name,
+      ...(pixel.businessId ? { businessId: pixel.businessId } : {})
+    }))
+    return { ...account, pixels: accountPixels }
+  })
+
   const pages = (Array.isArray(source.pages) ? source.pages : []).map(page => {
     const pageId = cleanString(page?.id)
     const nested = [page?.instagram_business_account, page?.connected_instagram_account]
@@ -373,9 +387,35 @@ function normalizeHintAssets(value = {}) {
     }
   }).filter(page => page.id)
 
+  const businessById = new Map()
+  const addBusiness = (idValue, nameValue = '') => {
+    const id = cleanString(idValue)
+    if (!id) return
+    const previous = businessById.get(id) || { id, name: '' }
+    businessById.set(id, { id, name: cleanString(nameValue) || previous.name })
+  }
+  for (const business of Array.isArray(source.businesses) ? source.businesses : []) {
+    addBusiness(business?.id, business?.name)
+  }
+  addBusiness(source.business_id || source.businessId)
+  for (const account of rawAdAccounts) {
+    addBusiness(
+      account?.business_id || account?.businessId || account?.business?.id,
+      account?.business_name || account?.businessName || account?.business?.name
+    )
+  }
+  for (const page of Array.isArray(source.pages) ? source.pages : []) {
+    addBusiness(
+      page?.business_id || page?.businessId || page?.business?.id,
+      page?.business_name || page?.businessName || page?.business?.name
+    )
+  }
+  for (const pixel of datasets) addBusiness(pixel.businessId)
+
   return {
-    businesses: businesses.map(item => ({ id: cleanString(item?.id), name: cleanString(item?.name) })).filter(item => item.id),
+    businesses: [...businessById.values()],
     adAccounts,
+    datasets,
     pages
   }
 }
@@ -412,6 +452,7 @@ function discoverMetaOAuthAssetsFromVerifiedHandoff(handoffMeta = {}) {
     },
     businesses: hintAssets.businesses,
     adAccounts: hintAssets.adAccounts,
+    datasets: hintAssets.datasets,
     pages: hintAssets.pages,
     defaults: {
       businessId: hintAssets.businesses.some(item => item.id === hintedBusinessId)
@@ -674,6 +715,14 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
       )
     }
   }))
+  const datasets = mergeById(
+    adAccounts.flatMap(account => (account.pixels || []).map(pixel => ({
+      ...pixel,
+      adAccountId: normalizeAdAccountId(account.id),
+      businessId: cleanString(pixel.businessId || account.businessId)
+    }))),
+    businessPixels
+  )
 
   const livePages = pagesRaw.map(page => {
     const pageId = cleanString(page?.id)
@@ -738,6 +787,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
     },
     businesses,
     adAccounts,
+    datasets,
     pages,
     defaults
   }
@@ -1123,6 +1173,7 @@ function sanitizeSessionData(session, expiresAt) {
     permissions: session.permissions,
     businesses: session.businesses,
     adAccounts: session.adAccounts,
+    datasets: Array.isArray(session.datasets) ? session.datasets : [],
     pages: session.pages,
     defaults: session.defaults
   }
@@ -1142,6 +1193,7 @@ function authorizedAssetsPayload(payload = {}) {
     permissions: payload.permissions || { granted: [], missing: [], granular: [] },
     businesses: Array.isArray(payload.businesses) ? payload.businesses : [],
     adAccounts: Array.isArray(payload.adAccounts) ? payload.adAccounts : [],
+    datasets: Array.isArray(payload.datasets) ? payload.datasets : [],
     pages: Array.isArray(payload.pages) ? payload.pages : [],
     pageSecrets: payload.pageSecrets && typeof payload.pageSecrets === 'object' ? payload.pageSecrets : {}
   }
@@ -1329,6 +1381,7 @@ export async function completeMetaOAuthConnection({
     permissions: discovered.permissions,
     businesses: discovered.businesses,
     adAccounts: discovered.adAccounts,
+    datasets: discovered.datasets,
     pages: discovered.pages,
     defaults: discovered.defaults
   }
@@ -1374,6 +1427,7 @@ export async function prepareMetaOAuthReconfiguration() {
     permissions: authorized.permissions,
     businesses: authorized.businesses,
     adAccounts: authorized.adAccounts,
+    datasets: authorized.datasets,
     pages: authorized.pages,
     defaults: {
       businessId: cleanString(config.oauth_business_id || config.meta_business_id),
@@ -1388,36 +1442,36 @@ export async function prepareMetaOAuthReconfiguration() {
 }
 
 function validateSelection(payload, selection = {}) {
-  const businessId = cleanString(selection.businessId)
+  const requestedBusinessId = cleanString(selection.businessId)
   const requestedAdId = normalizeAdAccountId(selection.adAccountId)
   const pixelId = cleanString(selection.pixelId)
   const pageId = cleanString(selection.pageId)
   const instagramAccountId = cleanString(selection.instagramAccountId)
 
-  const business = businessId
-    ? payload.businesses.find(item => cleanString(item?.id) === businessId)
-    : null
-  if (businessId && !business) throw metaOAuthError('El portafolio seleccionado no pertenece a esta autorización.', 400, 'META_OAUTH_BUSINESS_INVALID')
-
   const adAccount = requestedAdId
     ? payload.adAccounts.find(item => normalizeAdAccountId(item?.id) === requestedAdId)
     : null
   if (requestedAdId && !adAccount) throw metaOAuthError('La cuenta publicitaria no pertenece a esta autorización.', 400, 'META_OAUTH_AD_ACCOUNT_INVALID')
-  if (businessId && adAccount?.businessId && cleanString(adAccount.businessId) !== businessId) {
-    throw metaOAuthError('La cuenta publicitaria no pertenece al portafolio seleccionado.', 400, 'META_OAUTH_AD_ACCOUNT_BUSINESS_MISMATCH')
-  }
 
-  const pixel = pixelId && adAccount
-    ? adAccount.pixels.find(item => cleanString(item?.id) === pixelId)
+  const authorizedDatasets = mergeById(
+    Array.isArray(payload.datasets) ? payload.datasets : [],
+    (Array.isArray(payload.adAccounts) ? payload.adAccounts : []).flatMap(account => (
+      (Array.isArray(account?.pixels) ? account.pixels : []).map(pixel => ({
+        ...pixel,
+        adAccountId: normalizeAdAccountId(account?.id),
+        businessId: cleanString(pixel?.businessId || account?.businessId)
+      }))
+    ))
+  )
+  const pixel = pixelId
+    ? authorizedDatasets.find(item => cleanString(item?.id) === pixelId)
     : null
-  if (pixelId && !adAccount) throw metaOAuthError('Selecciona la cuenta publicitaria antes del pixel.', 400, 'META_OAUTH_PIXEL_REQUIRES_AD_ACCOUNT')
-  if (pixelId && !pixel) throw metaOAuthError('El pixel no pertenece a la cuenta publicitaria seleccionada.', 400, 'META_OAUTH_PIXEL_INVALID')
+  if (pixelId && !pixel) {
+    throw metaOAuthError('El Dataset no pertenece a esta autorización.', 400, 'META_OAUTH_PIXEL_INVALID')
+  }
 
   const page = pageId ? payload.pages.find(item => cleanString(item?.id) === pageId) : null
   if (pageId && !page) throw metaOAuthError('La página no pertenece a esta autorización.', 400, 'META_OAUTH_PAGE_INVALID')
-  if (businessId && page?.businessId && cleanString(page.businessId) !== businessId) {
-    throw metaOAuthError('La página no pertenece al portafolio seleccionado.', 400, 'META_OAUTH_PAGE_BUSINESS_MISMATCH')
-  }
   if (page?.tasksAvailable) {
     const pageTasks = new Set(toStringArray(page.tasks).map(task => task.toUpperCase()))
     const missingTasks = META_REQUIRED_PAGE_TASKS.filter(task => !pageTasks.has(task))
@@ -1461,8 +1515,21 @@ function validateSelection(payload, selection = {}) {
     }
   }
 
+  // El usuario autoriza varios portafolios en un solo consentimiento. La Page,
+  // la cuenta publicitaria y el Dataset pueden pertenecer a negocios distintos;
+  // la seguridad está en la allowlist firmada de cada activo, no en obligarlos a
+  // compartir un business_id oculto que el usuario nunca eligió en Ristak.
+  const requestedBusiness = (Array.isArray(payload.businesses) ? payload.businesses : [])
+    .find(item => cleanString(item?.id) === requestedBusinessId)
+  const defaultBusiness = (Array.isArray(payload.businesses) ? payload.businesses : [])
+    .find(item => cleanString(item?.id) === cleanString(payload.defaults?.businessId))
+  const businessId = cleanString(
+    pixel?.businessId || adAccount?.businessId || page?.businessId ||
+    requestedBusiness?.id || defaultBusiness?.id || payload.businesses?.[0]?.id
+  )
+
   return {
-    businessId: businessId || cleanString(business?.id),
+    businessId,
     adAccountId: requestedAdId,
     pixelId,
     pageId,

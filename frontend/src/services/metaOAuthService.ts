@@ -42,6 +42,8 @@ export interface MetaOAuthStatus {
 export interface MetaOAuthPixel {
   id: string
   name: string
+  businessId?: string
+  adAccountId?: string
 }
 
 export interface MetaOAuthInstagramAccount {
@@ -82,6 +84,7 @@ export interface MetaOAuthSession {
   }
   businesses: Array<{ id: string; name: string }>
   adAccounts: MetaOAuthAdAccount[]
+  datasets: MetaOAuthPixel[]
   pages: MetaOAuthPage[]
   defaults: {
     businessId: string

@@ -765,15 +765,11 @@ export const MetaAdsIntegration: React.FC = () => {
       account.id.replace(/^act_/, '') === String(session.defaults.adAccountId || '').replace(/^act_/, '')
     ))
     const selectedAdAccount = defaultAdAccount || onlyAdAccount
-    const selectedPixels = selectedAdAccount?.pixels || []
-    const selectedPixel = selectedPixels.find(pixel => pixel.id === session.defaults.pixelId) || null
+    const selectedPixel = session.datasets.find(pixel => pixel.id === session.defaults.pixelId) || null
 
-    const businessId = selectedAdAccount?.businessId || session.defaults.businessId || ''
-    const compatiblePages = businessId
-      ? session.pages.filter(page => !page.businessId || page.businessId === businessId)
-      : session.pages
-    const selectedPage = compatiblePages.find(page => page.id === session.defaults.pageId)
-      || (compatiblePages.length === 1 ? compatiblePages[0] : null)
+    const businessId = selectedPixel?.businessId || selectedAdAccount?.businessId || session.defaults.businessId || ''
+    const selectedPage = session.pages.find(page => page.id === session.defaults.pageId)
+      || (session.pages.length === 1 ? session.pages[0] : null)
     const selectedInstagramAccounts = selectedPage?.instagramAccounts || []
     const selectedInstagram = selectedInstagramAccounts.find(account => account.id === session.defaults.instagramAccountId) || null
 
@@ -2416,8 +2412,10 @@ export const MetaAdsIntegration: React.FC = () => {
       relayNeedsRepair ? 'Meta conectado con una tarea pendiente' : 'Meta conectado',
       relayNeedsRepair
         ? 'La conexión quedó guardada, pero mensajes y comentarios necesitan reintentar el relay.'
-        : metaOAuthSelection.pixelId
+        : metaOAuthSelection.pixelId && metaOAuthSelection.adAccountId
           ? 'Anuncios, Dataset, Facebook e Instagram quedaron listos desde un solo login.'
+          : metaOAuthSelection.pixelId
+            ? 'Dataset, Facebook e Instagram quedaron listos. Puedes conectar publicidad después si la necesitas.'
           : metaOAuthSelection.adAccountId
             ? 'Anuncios, Facebook e Instagram quedaron listos. Puedes agregar un Dataset cuando lo necesites.'
             : 'Facebook e Instagram quedaron listos. Puedes conectar publicidad después si la necesitas.'
@@ -2431,10 +2429,10 @@ export const MetaAdsIntegration: React.FC = () => {
     const selectedAdAccount = session?.adAccounts.find(account => (
       account.id.replace(/^act_/, '') === String(selection.adAccountId || '').replace(/^act_/, '')
     ))
-    const businessId = selectedAdAccount?.businessId || selection.businessId || ''
-    const availablePages = session?.pages.filter(page => !businessId || !page.businessId || page.businessId === businessId) || []
+    const selectedDataset = session?.datasets.find(dataset => dataset.id === selection.pixelId)
+    const availablePages = session?.pages || []
     const selectedPage = availablePages.find(page => page.id === selection.pageId)
-    const availablePixels = selectedAdAccount?.pixels || []
+    const availableDatasets = session?.datasets || []
     const availableInstagramAccounts = selectedPage?.instagramAccounts || []
 
     return (
@@ -2485,26 +2483,22 @@ export const MetaAdsIntegration: React.FC = () => {
           <div className={styles.stepPanel}>
             <p className={styles.oauthInventorySummary}>
               Meta autorizó {session.adAccounts.length} cuenta(s) publicitaria(s), {session.pages.length} Página(s),{' '}
-              {session.adAccounts.reduce((total, account) => total + account.pixels.length, 0)} Dataset(s) y{' '}
+              {session.datasets.length} Dataset(s) y{' '}
               {session.pages.reduce((total, page) => total + page.instagramAccounts.length, 0)} cuenta(s) de Instagram.
             </p>
             <label className={styles.formGroup}>
-              <span className={styles.formLabel}>Cuenta publicitaria · Opcional</span>
+              <span className={styles.formLabel}>Cuenta publicitaria (Opcional)</span>
               <CustomSelect
                 value={selection.adAccountId || ''}
+                searchable
+                searchPlaceholder="Buscar cuenta publicitaria…"
                 onChange={(event) => {
                   const account = session.adAccounts.find(item => (
                     item.id.replace(/^act_/, '') === event.target.value.replace(/^act_/, '')
                   ))
-                  const nextBusinessId = account?.businessId || session.defaults.businessId || ''
-                  const currentPage = session.pages.find(page => page.id === selection.pageId)
-                  const keepPage = currentPage && (!nextBusinessId || !currentPage.businessId || currentPage.businessId === nextBusinessId)
                   updateMetaOAuthSelection({
-                    businessId: nextBusinessId || undefined,
-                    adAccountId: account?.id.replace(/^act_/, '') || '',
-                    pixelId: '',
-                    pageId: keepPage ? currentPage.id : undefined,
-                    instagramAccountId: keepPage ? selection.instagramAccountId || '' : ''
+                    businessId: selectedDataset?.businessId || account?.businessId || undefined,
+                    adAccountId: account?.id.replace(/^act_/, '') || ''
                   })
                 }}
               >
@@ -2518,28 +2512,35 @@ export const MetaAdsIntegration: React.FC = () => {
             </label>
 
             <label className={styles.formGroup}>
-              <span className={styles.formLabel}>Dataset para Conversions API</span>
+              <span className={styles.formLabel}>Dataset para Conversiones API (Opcional)</span>
               <CustomSelect
                 value={selection.pixelId || ''}
-                onChange={(event) => updateMetaOAuthSelection({ pixelId: event.target.value })}
-                disabled={!selection.adAccountId}
+                searchable
+                searchPlaceholder="Buscar Dataset…"
+                onChange={(event) => {
+                  const dataset = session.datasets.find(item => item.id === event.target.value)
+                  updateMetaOAuthSelection({
+                    businessId: dataset?.businessId || selectedAdAccount?.businessId || undefined,
+                    pixelId: event.target.value
+                  })
+                }}
               >
                 <option value="">Sin Dataset por ahora</option>
-                {availablePixels.map(pixel => (
+                {availableDatasets.map(pixel => (
                   <option key={pixel.id} value={pixel.id}>{pixel.name} ({pixel.id})</option>
                 ))}
               </CustomSelect>
-              <span className={styles.stepHint}>Opcional. Si lo eliges, Ristak habilita los eventos server-side y podrás validarlos en Dataset Test.</span>
             </label>
 
             <label className={styles.formGroup}>
               <span className={styles.formLabel}>Facebook Page</span>
               <CustomSelect
                 value={selection.pageId || ''}
+                searchable
+                searchPlaceholder="Buscar Facebook Page…"
                 onChange={(event) => {
                   const page = availablePages.find(item => item.id === event.target.value)
                   updateMetaOAuthSelection({
-                    businessId: businessId || page?.businessId || session.defaults.businessId || undefined,
                     pageId: page?.id || undefined,
                     instagramAccountId: ''
                   })
@@ -2550,13 +2551,14 @@ export const MetaAdsIntegration: React.FC = () => {
                   <option key={page.id} value={page.id}>{page.name} ({page.id})</option>
                 ))}
               </CustomSelect>
-              <span className={styles.stepHint}>Requerida para Messenger, comentarios y para enlazar Instagram.</span>
             </label>
 
             <label className={styles.formGroup}>
-              <span className={styles.formLabel}>Instagram profesional</span>
+              <span className={styles.formLabel}>Instagram profesional (Opcional)</span>
               <CustomSelect
                 value={selection.instagramAccountId || ''}
+                searchable
+                searchPlaceholder="Buscar cuenta de Instagram…"
                 onChange={(event) => updateMetaOAuthSelection({ instagramAccountId: event.target.value })}
                 disabled={!selection.pageId}
               >

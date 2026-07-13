@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, Check } from 'lucide-react'
+import { ChevronDown, Check, Search } from 'lucide-react'
 import { getFloatingLayerZIndex } from '@/utils/layering'
 import styles from './CustomSelect.module.css'
 
@@ -49,6 +49,9 @@ interface CustomSelectProps {
   name?: string
   id?: string
   required?: boolean
+  searchable?: boolean
+  searchPlaceholder?: string
+  emptyMessage?: string
   children?: React.ReactNode
   'aria-label'?: string
   'aria-labelledby'?: string
@@ -127,6 +130,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   name,
   id,
   required,
+  searchable = false,
+  searchPlaceholder = 'Buscar…',
+  emptyMessage = 'No hay resultados',
   children,
   'aria-label': ariaLabel,
   'aria-labelledby': ariaLabelledBy
@@ -134,8 +140,10 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   const [isOpen, setIsOpen] = useState(false)
   const [portalStyle, setPortalStyle] = useState<React.CSSProperties>({})
   const [portalPlacement, setPortalPlacement] = useState<'top' | 'bottom'>('bottom')
+  const [searchQuery, setSearchQuery] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const shouldPortal = portal && typeof document !== 'undefined'
 
   const optionEntries = useMemo<OptionEntry[]>(() => {
@@ -143,6 +151,30 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     return parseOptionChildren(children)
   }, [children, options])
   const flatOptions = useMemo(() => flattenOptions(optionEntries), [optionEntries])
+  const filteredOptionEntries = useMemo<OptionEntry[]>(() => {
+    const query = searchQuery
+      .toLocaleLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+    if (!searchable || !query) return optionEntries
+    const matches = (option: Option) => option.label
+      .toLocaleLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .includes(query)
+    const filteredEntries: OptionEntry[] = []
+    for (const entry of optionEntries) {
+      if (!isOptionGroup(entry)) {
+        if (matches(entry)) filteredEntries.push(entry)
+        continue
+      }
+      const filtered = entry.options.filter(matches)
+      if (filtered.length) filteredEntries.push({ ...entry, options: filtered })
+    }
+    return filteredEntries
+  }, [optionEntries, searchQuery, searchable])
+  const filteredFlatOptions = useMemo(() => flattenOptions(filteredOptionEntries), [filteredOptionEntries])
   const firstEnabledOption = flatOptions.find(option => !option.disabled)
   const isControlled = value !== undefined
   const [internalValue, setInternalValue] = useState(() => String(defaultValue ?? value ?? firstEnabledOption?.value ?? ''))
@@ -162,11 +194,12 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     const dropdownGap = 6
     const rowHeight = size === 'large' ? 42 : 40
     const groupLabelHeight = size === 'large' ? 34 : 28
+    const searchHeight = searchable ? 45 : 0
     const maxDropdownHeight = size === 'large' ? 420 : 280
     const viewportMinHeight = size === 'large' ? 220 : 120
     const dropdownWidth = dropdownMinWidth ? Math.max(rect.width, dropdownMinWidth) : rect.width
     const optionGroupCount = optionEntries.filter(isOptionGroup).length
-    const estimatedContentHeight = flatOptions.length * rowHeight + optionGroupCount * groupLabelHeight + 8
+    const estimatedContentHeight = flatOptions.length * rowHeight + optionGroupCount * groupLabelHeight + searchHeight + 8
     const estimatedHeight = Math.min(
       Math.max(estimatedContentHeight, dropdownMinHeight || 0),
       maxDropdownHeight
@@ -187,10 +220,10 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - dropdownWidth - viewportPadding),
       width: dropdownWidth,
       zIndex: getFloatingLayerZIndex(containerRef.current, 'popover'),
-      '--custom-select-options-max-height': `${dropdownHeight}px`,
-      ...(dropdownMinHeight ? { '--custom-select-options-min-height': `${dropdownHeight}px` } : {})
+      '--custom-select-options-max-height': `${Math.max(80, dropdownHeight - searchHeight)}px`,
+      ...(dropdownMinHeight ? { '--custom-select-options-min-height': `${Math.max(80, dropdownHeight - searchHeight)}px` } : {})
     } as React.CSSProperties)
-  }, [dropdownMinHeight, dropdownMinWidth, dropdownPlacement, flatOptions.length, optionEntries, shouldPortal, size])
+  }, [dropdownMinHeight, dropdownMinWidth, dropdownPlacement, flatOptions.length, optionEntries, searchable, shouldPortal, size])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -200,6 +233,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
 
       if (!clickedContainer && !clickedDropdown) {
         setIsOpen(false)
+        setSearchQuery('')
       }
     }
 
@@ -211,6 +245,12 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen || !searchable) return
+    const frame = window.requestAnimationFrame(() => searchInputRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [isOpen, searchable])
 
   useEffect(() => {
     if (!isOpen || !shouldPortal) return
@@ -244,6 +284,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       setInternalValue(changeEvent.currentTarget.value)
     }
     setIsOpen(false)
+    setSearchQuery('')
   }
 
   const dropdown = isOpen && !disabled ? (
@@ -254,8 +295,37 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       data-placement={shouldPortal ? portalPlacement : undefined}
       data-ristak-dropdown-panel
     >
+      {searchable ? (
+        <div className={styles.searchWrap}>
+          <Search size={15} aria-hidden="true" />
+          <input
+            ref={searchInputRef}
+            type="search"
+            data-ristak-unstyled
+            className={styles.searchInput}
+            value={searchQuery}
+            placeholder={searchPlaceholder}
+            aria-label={searchPlaceholder}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                const firstMatch = filteredFlatOptions.find(option => !option.disabled)
+                if (firstMatch) {
+                  event.preventDefault()
+                  handleSelect(firstMatch)
+                }
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setIsOpen(false)
+                setSearchQuery('')
+              }
+            }}
+          />
+        </div>
+      ) : null}
       <div className={styles.options}>
-        {optionEntries.map((entry) => {
+        {filteredOptionEntries.map((entry) => {
           if (isOptionGroup(entry)) {
             return (
               <div key={`group-${entry.label}`} className={styles.optionGroup}>
@@ -297,6 +367,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
             </button>
           )
         })}
+        {filteredFlatOptions.length === 0 ? (
+          <div className={styles.empty} role="status">{emptyMessage}</div>
+        ) : null}
       </div>
     </div>
   ) : null
@@ -312,7 +385,13 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         id={id}
         type="button"
         className={`${styles.trigger} ${iconOnly ? styles.iconOnlyTrigger : ''} ${isOpen ? styles.open : ''}`}
-        onClick={() => !disabled && setIsOpen(!isOpen)}
+        onClick={() => {
+          if (disabled) return
+          setIsOpen(open => {
+            if (open) setSearchQuery('')
+            return !open
+          })
+        }}
         onBlur={onBlur}
         disabled={disabled}
         aria-expanded={isOpen}
