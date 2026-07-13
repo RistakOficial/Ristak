@@ -99,6 +99,12 @@ enum RistakAppConfigKey {
     ]
 }
 
+/// Defaults de producto para preferencias opcionales. Mantenerlos explícitos
+/// evita que una clave ausente termine habilitando funciones por accidente.
+enum RistakAppConfigDefaults {
+    static let aiReplySuggestionsEnabled = false
+}
+
 /// Claves whitelisteadas de `user_app_config` (por usuario).
 enum RistakUserConfigKey {
     static let chatPushEnabled = "chat_push_notifications_enabled"

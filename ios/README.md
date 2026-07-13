@@ -118,9 +118,12 @@ solo en capa flotante; copy en español.
   historial hacia atrás, polling 7s + presencia (suprime push y marca leído).
   El teclado conserva materializadas las burbujas al primer enfoque: el ancla al
   fondo es solo inicial y los cambios de frame se estabilizan con la duración de UIKit.
-  Composer: adjuntos (cámara/galería/documentos/ubicación), notas de voz,
+  Composer: cámara directa junto al micrófono para foto/video (se oculta al
+  empezar a escribir), envío con flecha inmediata sin transición, adjuntos
+  (galería/documentos/ubicación), notas de voz,
   plantillas cuando la ventana de 24h está cerrada, selector de número/canal,
-  sugerencia IA, controles del agente (pausar/tomar/omitir/continuar + confirm
+  sugerencia IA opt-in y apagada por default desde Ajustes, controles del agente
+  (pausar/tomar/omitir/continuar + confirm
   de envío manual). Info del contacto: edición, tags, campos personalizados
   definidos por el usuario (sin metadatos internos), automatización debajo de
   etiquetas y revalidación silenciosa sin loader sobre el avatar,

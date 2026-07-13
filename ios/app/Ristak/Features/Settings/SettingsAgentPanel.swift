@@ -78,7 +78,7 @@ struct SettingsAgentPanel: View {
 
                     SettingsToggleRow(
                         title: "Sugerir respuestas",
-                        subtitle: "El agente puede preparar un texto para responder en chats reales.",
+                        subtitle: "Está apagado por default. Actívalo si quieres que el agente prepare respuestas en tus chats.",
                         isOn: aiReady && appConfig.aiReplySuggestionsEnabled,
                         isSaving: appConfig.savingKeys.contains(RistakAppConfigKey.aiReplySuggestionsEnabled),
                         // Dependiente: requiere agente listo Y «primer chat» ON (doc 10 §4.6).

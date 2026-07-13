@@ -256,7 +256,10 @@ final class AppConfigStore {
 
     /// Toggle "Sugerir respuestas".
     var aiReplySuggestionsEnabled: Bool {
-        boolValue(appConfig[RistakAppConfigKey.aiReplySuggestionsEnabled], default: false)
+        boolValue(
+            appConfig[RistakAppConfigKey.aiReplySuggestionsEnabled],
+            default: RistakAppConfigDefaults.aiReplySuggestionsEnabled
+        )
     }
 
     /// Toggle "Mostrar archivados".

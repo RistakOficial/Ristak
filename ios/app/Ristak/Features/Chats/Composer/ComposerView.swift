@@ -3,8 +3,8 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Barra del composer (doc research/05 §7): botón `+`, botón de canal, campo
-/// multilinea, reloj para programar, morph mic/enviar, tray de adjuntos,
+/// Barra del composer (doc research/05 §7): botón `+`, campo multilinea,
+/// reloj para programar, cámara directa, mic/enviar, tray de adjuntos,
 /// barra de respuesta, banner del agente y sugerencia IA.
 ///
 /// Va montada con `safeAreaInset(edge: .bottom)` — un solo dueño del teclado
@@ -87,8 +87,13 @@ struct ComposerView: View {
             Task { await loadPickedItems(items) }
         }
         .fullScreenCover(isPresented: $isCameraPresented) {
-            CameraCaptureView { image in
-                viewModel.addCameraImage(image)
+            InboxCameraPicker { capture in
+                switch capture {
+                case .image(let image):
+                    viewModel.addCameraImage(image)
+                case .video(let url):
+                    viewModel.addCameraVideo(at: url)
+                }
             }
             .ignoresSafeArea()
         }
@@ -435,8 +440,23 @@ struct ComposerView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 18)
                             .strokeBorder(RistakTheme.border, lineWidth: 0.5)
-                    )
+                )
             )
+
+            if !viewModel.canSendDraft {
+                Button {
+                    isCameraPresented = true
+                } label: {
+                    Image(systemName: "camera")
+                        .font(.title3)
+                        .foregroundStyle(RistakTheme.textDim)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Abrir cámara")
+                .disabled(viewModel.isSending || viewModel.isPreparingAttachments)
+            }
 
             micOrSendButton
         }
@@ -445,8 +465,8 @@ struct ComposerView: View {
         .padding(.bottom, 8)
     }
 
-    /// Morph mic ↔ enviar: sin contenido = mic; con contenido o nota lista =
-    /// flecha de enviar (doc 05 §7.1).
+    /// Sin contenido = mic; con contenido = flecha de enviar (doc 05 §7.1).
+    /// El reemplazo es inmediato: el usuario pidió explícitamente cero morph.
     @ViewBuilder
     private var micOrSendButton: some View {
         let hasContent = viewModel.canSendDraft
@@ -458,24 +478,19 @@ struct ComposerView: View {
                 viewModel.toggleVoiceRecording()
             }
         } label: {
-            Image(systemName: buttonIcon)
-                .font(.body.weight(.semibold))
-                // Mic vacío = glifo libre como el "+" (textDim); enviar/grabar =
-                // glifo blanco sobre el círculo de acento (User #5).
-                .foregroundStyle(isEmptyMic ? RistakTheme.textDim : RistakTheme.onAccent)
-                // El avión apunta a la derecha (User #6). La rotación solo aplica
-                // al glifo de enviar; el mic/stop quedan sin rotar.
-                .rotationEffect(.degrees(isSendGlyph ? 45 : 0))
-                .frame(width: 36, height: 36)
-                .background {
-                    // Sin círculo en el mic vacío: queda suelto como el "+"
-                    // (User #5). El acento solo aparece al enviar o grabar.
-                    if !isEmptyMic {
-                        Circle().fill(buttonColor)
-                    }
+            ZStack {
+                if !isEmptyMic {
+                    Circle()
+                        .fill(buttonColor)
+                        .frame(width: 36, height: 36)
                 }
-                .contentShape(Rectangle())
-                .contentTransition(.symbolEffect(.replace))
+
+                Image(systemName: buttonIcon)
+                    .font(.system(size: isEmptyMic ? 20 : 18, weight: .semibold))
+                    .foregroundStyle(isEmptyMic ? RistakTheme.textDim : RistakTheme.onAccent)
+            }
+            .frame(width: 36, height: 36, alignment: .center)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(viewModel.isSending || viewModel.isPreparingAttachments)
@@ -486,12 +501,7 @@ struct ComposerView: View {
     private var buttonIcon: String {
         if viewModel.voiceRecorder.isRecording { return "stop.fill" }
         // Mic de contorno (sin `.fill`) para el estado vacío (User #5).
-        return viewModel.canSendDraft ? "paperplane.fill" : "mic"
-    }
-
-    /// Verdadero cuando se muestra el avión de enviar (para rotarlo a horizontal).
-    private var isSendGlyph: Bool {
-        !viewModel.voiceRecorder.isRecording && viewModel.canSendDraft
+        return viewModel.canSendDraft ? "arrow.right" : "mic"
     }
 
     /// Estado vacío del morph: mic de contorno, libre y sin círculo (User #5).
@@ -523,7 +533,7 @@ struct ComposerView: View {
         SheetScaffold(title: "Acciones", subtitle: viewModel.displayName) {
             List {
                 Section("Adjuntos") {
-                    attachmentAction("Tomar foto", systemImage: "camera") {
+                    attachmentAction("Cámara", systemImage: "camera") {
                         isCameraPresented = true
                     }
                     attachmentAction("Elegir foto o video", systemImage: "photo.on.rectangle") {
@@ -570,49 +580,6 @@ struct ComposerView: View {
         } label: {
             Label(title, systemImage: systemImage)
                 .foregroundStyle(RistakTheme.textPrimary)
-        }
-    }
-}
-
-// MARK: - Cámara (UIImagePickerController)
-
-/// Captura de foto con la cámara del sistema (doc 05 §7.2 «Tomar foto»).
-struct CameraCaptureView: UIViewControllerRepresentable {
-    let onCapture: (UIImage) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let controller = UIImagePickerController()
-        controller.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
-        controller.delegate = context.coordinator
-        return controller
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: CameraCaptureView
-
-        init(parent: CameraCaptureView) {
-            self.parent = parent
-        }
-
-        func imagePickerController(
-            _ picker: UIImagePickerController,
-            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
-        ) {
-            if let image = (info[.editedImage] ?? info[.originalImage]) as? UIImage {
-                parent.onCapture(image)
-            }
-            parent.dismiss()
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.dismiss()
         }
     }
 }

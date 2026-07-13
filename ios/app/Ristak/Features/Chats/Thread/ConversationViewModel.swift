@@ -2036,6 +2036,35 @@ final class ConversationViewModel {
         attachmentPreparationTasks[preparationID] = task
     }
 
+    func addCameraVideo(at url: URL) {
+        guard canAddAttachment() else { return }
+        attachmentPreparationCount += 1
+        let preparationID = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.attachmentPreparationCount = max(0, self.attachmentPreparationCount - 1)
+                self.attachmentPreparationTasks.removeValue(forKey: preparationID)
+            }
+            do {
+                async let encodedTask = Task.detached(priority: .userInitiated) {
+                    try MediaEncoder.encodeVideoFile(at: url)
+                }.value
+                async let previewTask = InboxCameraThumbnail.generate(from: url)
+                let (encoded, preview) = try await (encodedTask, previewTask)
+                try Task.checkCancellation()
+                self.appendPreparedAttachment(
+                    ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: preview)
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                self.alert = ConversationAlert(title: "Video", message: error.localizedDescription)
+            }
+        }
+        attachmentPreparationTasks[preparationID] = task
+    }
+
     /// Media elegida de la fototeca (imagen o video ya en Data).
     func addPickedMedia(data: Data, mimeType: String?, filename: String?) {
         guard canAddAttachment() else { return }
@@ -2445,7 +2474,8 @@ final class ConversationViewModel {
     // MARK: - Sugerencia IA (doc 05 §7.1)
 
     var aiSuggestionsEnabled: Bool {
-        appConfig?.aiReplySuggestionsEnabled ?? false
+        guard let appConfig else { return false }
+        return appConfig.aiAgentChatEnabled && appConfig.aiReplySuggestionsEnabled
     }
 
     func suggestReply() {
