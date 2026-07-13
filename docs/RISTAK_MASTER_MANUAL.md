@@ -2822,7 +2822,10 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   deben renderizarla como `<iframe>` y jamás pasarla a `<video src>`. El player
   HTML5 solo se usa cuando la URL apunta realmente a un archivo/playlist directo
   o a la ruta de archivo de Media. El mismo contrato aplica al HTML importado:
-  solo cambia su iframe por un `<video>` si hay un espejo directo de Storage.
+  solo cambia su iframe por un `<video>` si hay un espejo directo de Storage. En
+  el canvas, el primer click selecciona el bloque de video y, una vez
+  seleccionado, el iframe recibe interacción para reproducir, pausar y operar
+  sus controles sin volver interactivos los demás embeds del editor.
   Al cerrar
   la sesión, backend valida la URL TUS, el tamaño reservado y que Bunny haya
   recibido todos los bytes antes de marcar el asset listo; estados de error de

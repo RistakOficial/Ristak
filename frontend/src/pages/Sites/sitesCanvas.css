@@ -808,6 +808,9 @@ html body .rstkCanvas .rstk-mp-pay:disabled { opacity: 1; }
    into directly on the canvas. Inline-edit text nodes opt back in below. */
 .rstkCanvas input, .rstkCanvas textarea, .rstkCanvas select { pointer-events: none; }
 .rstkCanvas iframe { pointer-events: none; }
+/* El primer click selecciona el bloque; ya seleccionado, el reproductor de
+   video debe recibir clicks para poder reproducir, pausar y usar sus controles. */
+.rstkCanvas .rstkSelActive .rstk-video-embed-frame iframe { pointer-events: auto; }
 
 /* Selectable block wrapper. */
 .rstkCanvas .rstkSel {
