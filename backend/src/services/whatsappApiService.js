@@ -392,6 +392,7 @@ const CONFIG_KEYS = {
   metaDisconnectedAt: 'whatsapp_meta_direct_disconnected_at',
   metaLastWebhookReceivedAt: 'whatsapp_meta_direct_last_webhook_received_at',
   metaLastRelayReceivedAt: 'whatsapp_meta_direct_last_relay_received_at',
+  metaLastSubscriptionRefreshAt: 'whatsapp_meta_direct_last_subscription_refresh_at',
   metaLastError: 'whatsapp_meta_direct_last_error',
   metaDatasetId: 'whatsapp_meta_direct_dataset_id',
   metaAdAccountId: 'whatsapp_meta_direct_ad_account_id',
@@ -410,6 +411,9 @@ const YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY = 'whatsapp_api_ycloud_history_ba
 const YCLOUD_MESSAGES_MAX_PAGE = 100
 export const YCLOUD_HISTORY_BACKFILL_VERSION = '2026-07-11-ycloud-smb-echoes-backfill'
 const HISTORY_DIRECTION_REPAIR_VERSION = YCLOUD_HISTORY_BACKFILL_VERSION
+const META_DIRECT_WEBHOOK_STALE_AFTER_MS = 30 * 60 * 1000
+const META_DIRECT_SUBSCRIPTION_REFRESH_COOLDOWN_MS = 6 * 60 * 60 * 1000
+let metaDirectSubscriptionRefreshPromise = null
 
 function nowIso() {
   return new Date().toISOString()
@@ -2290,6 +2294,7 @@ async function loadMetaDirectConfig({ includeSecrets = false } = {}) {
     disconnectedAt,
     lastWebhookReceivedAt,
     lastRelayReceivedAt,
+    lastSubscriptionRefreshAt,
     lastError,
     datasetId,
     adAccountId,
@@ -2309,6 +2314,7 @@ async function loadMetaDirectConfig({ includeSecrets = false } = {}) {
     getAppConfig(CONFIG_KEYS.metaDisconnectedAt),
     getAppConfig(CONFIG_KEYS.metaLastWebhookReceivedAt),
     getAppConfig(CONFIG_KEYS.metaLastRelayReceivedAt),
+    getAppConfig(CONFIG_KEYS.metaLastSubscriptionRefreshAt),
     getAppConfig(CONFIG_KEYS.metaLastError),
     getAppConfig(CONFIG_KEYS.metaDatasetId),
     getAppConfig(CONFIG_KEYS.metaAdAccountId),
@@ -2337,6 +2343,7 @@ async function loadMetaDirectConfig({ includeSecrets = false } = {}) {
     disconnectedAt: disconnectedAt || null,
     lastWebhookReceivedAt: lastWebhookReceivedAt || null,
     lastRelayReceivedAt: lastRelayReceivedAt || null,
+    lastSubscriptionRefreshAt: lastSubscriptionRefreshAt || null,
     lastError: lastError || '',
     datasetId: datasetId || '',
     adAccountId: adAccountId || '',
@@ -5433,14 +5440,9 @@ export async function markLatestInboundWhatsAppApiMessageReadForContact({ contac
     return { attempted: false, reason: 'missing_contact' }
   }
 
-  const config = await loadConfig({ includeSecrets: true })
-  const provider = cleanString(config.provider || PROVIDER_NAME).toLowerCase()
-  if (!config.enabled || !config.apiKey || provider !== PROVIDER_NAME) {
-    return { attempted: false, reason: 'ycloud_not_connected' }
-  }
-
   const row = await db.get(`
-    SELECT id, ycloud_message_id, wamid, status
+    SELECT id, provider, source_adapter, provider_message_id, ycloud_message_id,
+           meta_message_id, wamid, business_phone_number_id, status
     FROM whatsapp_api_messages
     WHERE contact_id = ?
       AND LOWER(COALESCE(direction, '')) = 'inbound'
@@ -5450,15 +5452,48 @@ export async function markLatestInboundWhatsAppApiMessageReadForContact({ contac
     LIMIT 1
   `, [cleanContactId]).catch(() => null)
 
-  const providerMessageId = cleanString(row?.wamid || row?.ycloud_message_id || row?.id)
+  const provider = cleanString(row?.provider || row?.source_adapter || PROVIDER_NAME).toLowerCase()
+  const providerMessageId = cleanString(
+    row?.wamid ||
+    (provider === META_DIRECT_PROVIDER_NAME ? row?.meta_message_id : row?.ycloud_message_id) ||
+    row?.provider_message_id ||
+    row?.id
+  )
   if (!providerMessageId) {
     return { attempted: false, reason: 'no_unread_inbound_message' }
   }
 
-  await ycloudRequest(`/whatsapp/inboundMessages/${encodeURIComponent(providerMessageId)}/markAsRead`, {
-    apiKey: config.apiKey,
-    method: 'POST'
-  })
+  if (provider === META_DIRECT_PROVIDER_NAME) {
+    const config = await loadMetaDirectConfig({ includeSecrets: true })
+    const phoneNumberId = cleanString(row.business_phone_number_id || config.phoneNumberId)
+    if (!config.connected || !config.systemUserToken || !phoneNumberId) {
+      return { attempted: false, reason: 'meta_direct_not_connected' }
+    }
+
+    await metaDirectGraphRequest(`/${encodeURIComponent(phoneNumberId)}/messages`, {
+      method: 'PUT',
+      token: config.systemUserToken,
+      operational: true,
+      phoneNumberId,
+      body: {
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: providerMessageId
+      }
+    })
+  } else if (provider === PROVIDER_NAME) {
+    const config = await loadConfig({ includeSecrets: true })
+    if (!config.enabled || !config.apiKey) {
+      return { attempted: false, reason: 'ycloud_not_connected' }
+    }
+
+    await ycloudRequest(`/whatsapp/inboundMessages/${encodeURIComponent(providerMessageId)}/markAsRead`, {
+      apiKey: config.apiKey,
+      method: 'POST'
+    })
+  } else {
+    return { attempted: false, reason: 'unsupported_provider', provider }
+  }
 
   await db.run(`
     UPDATE whatsapp_api_messages
@@ -5469,7 +5504,7 @@ export async function markLatestInboundWhatsAppApiMessageReadForContact({ contac
 
   return {
     attempted: true,
-    provider: PROVIDER_NAME,
+    provider,
     messageId: row.id,
     providerMessageId
   }
@@ -9424,6 +9459,7 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
     token: systemUserToken
   })
   await subscribeMetaDirectWaba({ wabaId, token: systemUserToken })
+  await setAppConfig(CONFIG_KEYS.metaLastSubscriptionRefreshAt, nowIso())
 
   await setAppConfig(CONFIG_KEYS.metaStatus, 'connected')
   await setAppConfig(CONFIG_KEYS.metaAppId, appId)
@@ -9625,6 +9661,43 @@ async function subscribeMetaDirectWaba({ wabaId, token } = {}) {
     body: {}
   })
   logger.info(`[Meta directo] App suscrita a webhooks de WABA ${cleanWabaId}`)
+}
+
+async function refreshMetaDirectWebhookSubscriptionIfStale(config = {}) {
+  if (!config.connected || !config.systemUserToken || !config.wabaId) return false
+  if (cleanString(config.webhookMode) !== 'installer_relay') return false
+
+  const now = Date.now()
+  const lastRelayAt = Date.parse(config.lastRelayReceivedAt || config.lastWebhookReceivedAt || '')
+  if (Number.isFinite(lastRelayAt) && now - lastRelayAt < META_DIRECT_WEBHOOK_STALE_AFTER_MS) {
+    return false
+  }
+
+  const lastRefreshAt = Date.parse(config.lastSubscriptionRefreshAt || '')
+  if (Number.isFinite(lastRefreshAt) && now - lastRefreshAt < META_DIRECT_SUBSCRIPTION_REFRESH_COOLDOWN_MS) {
+    return false
+  }
+
+  if (metaDirectSubscriptionRefreshPromise) return metaDirectSubscriptionRefreshPromise
+
+  metaDirectSubscriptionRefreshPromise = Promise.resolve()
+    .then(async () => {
+      // Guardamos el intento antes de llamar a Meta para que varios envíos simultáneos
+      // no disparen una tormenta de subscribed_apps. El POST es idempotente.
+      await setAppConfig(CONFIG_KEYS.metaLastSubscriptionRefreshAt, nowIso())
+      await subscribeMetaDirectWaba({ wabaId: config.wabaId, token: config.systemUserToken })
+      logger.info('[Meta directo] Suscripción de webhooks renovada porque el relay llevaba tiempo sin eventos.')
+      return true
+    })
+    .catch(error => {
+      logger.warn(`[Meta directo] No se pudo renovar la suscripción de webhooks: ${error.message}`)
+      return false
+    })
+    .finally(() => {
+      metaDirectSubscriptionRefreshPromise = null
+    })
+
+  return metaDirectSubscriptionRefreshPromise
 }
 
 export async function testMetaDirectConnection() {
@@ -10083,6 +10156,7 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
 async function sendTextViaMetaDirect({ to, text, from, externalId, replyContext = null } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
+  await refreshMetaDirectWebhookSubscriptionIfStale(config)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const body = cleanString(text)
   if (!toPhone) throw new Error('Falta el número destino')
@@ -10123,6 +10197,7 @@ async function sendTextViaMetaDirect({ to, text, from, externalId, replyContext 
 async function sendAudioViaMetaDirect({ to, audio, from, externalId } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
+  await refreshMetaDirectWebhookSubscriptionIfStale(config)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const link = cleanString(audio?.link)
   if (!toPhone) throw new Error('Falta el número destino')
@@ -10168,6 +10243,7 @@ async function sendAudioViaMetaDirect({ to, audio, from, externalId } = {}) {
 async function sendMediaViaMetaDirect({ to, type, media, from, externalId } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
+  await refreshMetaDirectWebhookSubscriptionIfStale(config)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const mediaType = cleanString(type).toLowerCase()
   const link = cleanString(media?.link)
@@ -10218,6 +10294,7 @@ async function sendMediaViaMetaDirect({ to, type, media, from, externalId } = {}
 async function sendReactionViaMetaDirect({ to, emoji, from, externalId, targetProviderMessageId } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
+  await refreshMetaDirectWebhookSubscriptionIfStale(config)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const reactionEmoji = cleanString(emoji)
   const targetId = cleanString(targetProviderMessageId)
@@ -10268,6 +10345,7 @@ async function sendReactionViaMetaDirect({ to, emoji, from, externalId, targetPr
 async function sendLocationViaMetaDirect({ to, location, from, externalId } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
+  await refreshMetaDirectWebhookSubscriptionIfStale(config)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   if (!toPhone) throw new Error('Falta el número destino')
   if (!location) throw new Error('Faltan coordenadas válidas para la ubicación')
@@ -10316,6 +10394,7 @@ export async function sendMetaDirectTestMessage({ to, text } = {}) {
 async function sendTemplateViaMetaDirect({ to, template, components, externalId } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
+  await refreshMetaDirectWebhookSubscriptionIfStale(config)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   if (!toPhone) throw new Error('Falta el número destino')
   if (!template?.name || !template?.language) throw new Error('Falta la plantilla de Meta')
@@ -10459,6 +10538,7 @@ function buildInteractiveMessagePayload({ body, buttons, urlButton } = {}) {
 async function sendInteractiveViaMetaDirect({ to, interactive, from, externalId } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
+  await refreshMetaDirectWebhookSubscriptionIfStale(config)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   if (!toPhone) throw new Error('Falta el número destino')
   if (!interactive) throw new Error('Falta el mensaje interactivo')

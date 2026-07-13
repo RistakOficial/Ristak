@@ -49,6 +49,7 @@ export const INTEGRATION_APP_CONFIG_KEYS = {
     'whatsapp_meta_direct_connected_at',
     'whatsapp_meta_direct_last_webhook_received_at',
     'whatsapp_meta_direct_last_relay_received_at',
+    'whatsapp_meta_direct_last_subscription_refresh_at',
     'whatsapp_meta_direct_last_error',
     'whatsapp_meta_direct_dataset_id',
     'whatsapp_meta_direct_ad_account_id'

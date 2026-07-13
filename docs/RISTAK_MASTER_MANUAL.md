@@ -606,6 +606,12 @@ Installer conserva temporalmente el resultado cifrado y una sesión nueva de la
 misma instalación lo retoma sin volver a autorizar ni exponer el token al
 navegador.
 
+La app se suscribe al WABA durante la conexión. Si Meta directo lleva al menos
+30 minutos sin recibir webhook/relay, el siguiente envío renueva de forma
+idempotente `/{WABA_ID}/subscribed_apps`, con una espera mínima de seis horas
+entre intentos. Esa reparación sólo recupera la escucha de Meta: no reenvía el
+mensaje, no activa Baileys y no mezcla credenciales de YCloud.
+
 El ACK de conexión exige acceso operativo real: el token debe ser de usuario de
 sistema, conservar los dos permisos de WhatsApp y listar el Phone Number ID
 dentro del WABA. Los tokens de Meta Ads/Facebook/Instagram permanecen separados
@@ -777,11 +783,15 @@ Cuando el usuario abre o marca como leida una conversacion movil, el estado loca
 se actualiza en `chat_read_states` y el backend debe encolar en background el
 acuse externo del canal cuando exista soporte nativo: WhatsApp API/YCloud usa
 `/whatsapp/inboundMessages/{id}/markAsRead` con `wamid` o id de YCloud,
+WhatsApp API/Meta directo usa Graph `PUT /{PHONE_NUMBER_ID}/messages` con
+`status='read'` y el `wamid` entrante,
 WhatsApp QR/Baileys usa `sock.readMessages([{ remoteJid, id, fromMe }])`, y
 Messenger/Instagram usan `sender_action='mark_seen'`. Correo no participa en
 este contrato porque no es chat conversacional. El acuse externo puede tardar,
 fallar o agotar timeout sin bloquear la respuesta local del chat, pero debe
 quedar registrado en logs porque no equivale a visto real del proveedor.
+Si la fila del número conserva API oficial activa, su QR asociado es respaldo y
+no puede mandar un segundo acuse de lectura por Baileys.
 Configuracion > Privacidad guarda
 `app_config.chat_send_read_receipts_enabled`: si esta apagado, Ristak conserva
 el marcado local como leido, pero no manda acuses externos de visto a WhatsApp

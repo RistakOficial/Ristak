@@ -5,9 +5,12 @@ import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import { getContactConversation } from '../src/controllers/contactsController.js'
+import { markLatestInboundWhatsAppQrMessageReadForContact } from '../src/services/whatsappQrService.js'
 import {
   getWhatsAppApiConfigKeys,
+  markLatestInboundWhatsAppApiMessageReadForContact,
   processMetaDirectWebhookPayload,
+  sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTextMessage,
   setMetaDirectFetchForTest
 } from '../src/services/whatsappApiService.js'
@@ -22,13 +25,22 @@ function graphResponse(body, status = 200) {
   }
 }
 
-function webhookEnvelope({ wabaId, phoneNumberId, businessPhone, contacts = [], messages = [], statuses = [] }) {
+function webhookEnvelope({
+  wabaId,
+  phoneNumberId,
+  businessPhone,
+  field = 'messages',
+  contacts = [],
+  messages = [],
+  statuses = [],
+  smbMessageEchoes = []
+}) {
   return {
     object: 'whatsapp_business_account',
     entry: [{
       id: wabaId,
       changes: [{
-        field: 'messages',
+        field,
         value: {
           messaging_product: 'whatsapp',
           metadata: {
@@ -37,7 +49,8 @@ function webhookEnvelope({ wabaId, phoneNumberId, businessPhone, contacts = [], 
           },
           contacts,
           messages,
-          statuses
+          statuses,
+          ...(smbMessageEchoes.length ? { smb_message_echoes: smbMessageEchoes } : {})
         }
       }]
     }]
@@ -77,7 +90,9 @@ async function withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, ca
     keys.metaPhoneNumberId,
     keys.metaDisplayPhoneNumber,
     keys.metaSystemUserToken,
-    keys.metaLastWebhookReceivedAt
+    keys.metaLastWebhookReceivedAt,
+    keys.metaLastRelayReceivedAt,
+    keys.metaLastSubscriptionRefreshAt
   ]
   const placeholders = touchedKeys.map(() => '?').join(', ')
   const previous = await db.all(
@@ -124,6 +139,10 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
   const customerPhone = `+5255${Date.now().toString().slice(-8)}`
   const inboundWamid = `wamid.meta.in.${suffix}`
   const outboundWamid = `wamid.meta.out.${suffix}`
+  const outboundReplyWamid = `wamid.meta.out.reply.${suffix}`
+  const outboundReactionWamid = `wamid.meta.out.reaction.${suffix}`
+  const inboundReplyWamid = `wamid.meta.in.reply.${suffix}`
+  const inboundReactionWamid = `wamid.meta.in.reaction.${suffix}`
   const failedWamid = `wamid.meta.failed.${suffix}`
   const adId = `120${Date.now().toString().slice(-12)}`
   const externalId = `desktop-chat-${suffix}`
@@ -177,6 +196,54 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
       assert.equal(attributionTouch.detected_source_id, adId)
       assert.equal(attributionTouch.detected_headline, 'Agenda tu cita')
 
+      const readRequests = []
+      setMetaDirectFetchForTest(async (url, options = {}) => {
+        readRequests.push({ url, options, body: JSON.parse(options.body) })
+        return graphResponse({ success: true })
+      })
+      const readReceipt = await markLatestInboundWhatsAppApiMessageReadForContact({ contactId })
+      assert.equal(readReceipt.attempted, true)
+      assert.equal(readReceipt.provider, 'meta_direct')
+      assert.equal(readReceipt.providerMessageId, inboundWamid)
+      assert.equal(readRequests.length, 1)
+      assert.match(readRequests[0].url, new RegExp(`/${phoneNumberId}/messages$`))
+      assert.equal(readRequests[0].options.method, 'PUT')
+      assert.deepEqual(readRequests[0].body, {
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: inboundWamid
+      })
+      assert.equal(
+        (await db.get('SELECT status FROM whatsapp_api_messages WHERE wamid = ?', [inboundWamid])).status,
+        'read'
+      )
+
+      const qrReadProbeId = `qr-read-probe-${suffix}`
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, source_adapter, provider_message_id, wamid,
+          contact_id, phone, from_phone, to_phone, business_phone,
+          business_phone_number_id, transport, direction, message_type, message_text,
+          status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'qr', 'baileys', ?, ?, ?, ?, ?, ?, ?, ?, 'qr', 'inbound', 'text', 'No debe marcarse por QR', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        qrReadProbeId,
+        qrReadProbeId,
+        qrReadProbeId,
+        contactId,
+        customerPhone,
+        customerPhone,
+        businessPhone,
+        businessPhone,
+        phoneNumberId
+      ])
+      const qrReadReceipt = await markLatestInboundWhatsAppQrMessageReadForContact({ contactId })
+      assert.deepEqual(qrReadReceipt, {
+        attempted: false,
+        reason: 'official_api_active',
+        provider: 'meta_direct'
+      })
+
       const statusPayload = webhookEnvelope({
         wabaId,
         phoneNumberId,
@@ -201,14 +268,20 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
       assert.equal(receiptBeforeSend.status, 'delivered')
       assert.equal(receiptBeforeSend.contact_id, null)
 
+      await setAppConfig(getWhatsAppApiConfigKeys().metaLastWebhookReceivedAt, '2020-01-01T00:00:00.000Z')
       let graphWamid = outboundWamid
       const sentBodies = []
-      setMetaDirectFetchForTest(async (_url, options = {}) => {
+      const subscriptionRequests = []
+      setMetaDirectFetchForTest(async (url, options = {}) => {
+        if (url.endsWith(`/${wabaId}/subscribed_apps`)) {
+          subscriptionRequests.push({ url, options, body: JSON.parse(options.body) })
+          return graphResponse({ success: true })
+        }
         const body = JSON.parse(options.body)
         sentBodies.push(body)
         assert.equal(body.messaging_product, 'whatsapp')
         assert.equal(body.to.replace(/\D/g, ''), customerPhone.replace(/\D/g, ''))
-        assert.equal(body.biz_opaque_callback_data, externalId)
+        assert.ok(body.biz_opaque_callback_data)
         return graphResponse({
           messaging_product: 'whatsapp',
           contacts: [{ input: customerPhone, wa_id: customerPhone }],
@@ -228,6 +301,10 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
       assert.equal(sent.wamid, outboundWamid)
       assert.ok(sent.localMessageId)
       assert.equal(sentBodies[0].text.body, 'Hola desde Meta directo')
+      assert.equal(sentBodies[0].biz_opaque_callback_data, externalId)
+      assert.equal(subscriptionRequests.length, 1)
+      assert.equal(subscriptionRequests[0].options.method, 'POST')
+      assert.deepEqual(subscriptionRequests[0].body, {})
 
       const rows = await db.all(`
         SELECT id, provider, source_adapter, meta_message_id, ycloud_message_id,
@@ -245,6 +322,95 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
       assert.equal(rows[0].message_text, 'Hola desde Meta directo')
       assert.equal(rows[0].status, 'delivered')
       assert.equal(JSON.parse(rows[0].raw_payload_json).deliveryReceipt.status, 'delivered')
+
+      const echoPayload = webhookEnvelope({
+        wabaId,
+        phoneNumberId,
+        businessPhone,
+        field: 'smb_message_echoes',
+        smbMessageEchoes: [{
+          id: outboundWamid,
+          to: customerPhone,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+          type: 'text',
+          text: { body: 'Hola desde Meta directo' }
+        }]
+      })
+      const [echo] = await processMetaDirectWebhookPayload({ payload: echoPayload, eventRowId: `evt-echo-${suffix}` })
+      assert.equal(echo.direction, 'business_echo')
+      assert.equal(echo.isNew, false)
+      const echoedRows = await db.all(
+        'SELECT origin, direction, business_echo, message_type, message_text FROM whatsapp_api_messages WHERE wamid = ?',
+        [outboundWamid]
+      )
+      assert.equal(echoedRows.length, 1)
+      assert.deepEqual(echoedRows[0], {
+        origin: 'smb_message_echoes',
+        direction: 'business_echo',
+        business_echo: 1,
+        message_type: 'text',
+        message_text: 'Hola desde Meta directo'
+      })
+
+      graphWamid = outboundReplyWamid
+      const reply = await sendWhatsAppApiTextMessage({
+        to: customerPhone,
+        from: businessPhone,
+        text: 'Respuesta al globo',
+        externalId: `reply-${suffix}`,
+        contactId,
+        phoneNumberId,
+        replyToMessageId: inbound.messageId,
+        allowQrFallback: false
+      })
+      assert.equal(reply.wamid, outboundReplyWamid)
+      assert.equal(sentBodies[1].context.message_id, inboundWamid)
+
+      graphWamid = outboundReactionWamid
+      const reaction = await sendWhatsAppApiReactionMessage({
+        to: customerPhone,
+        from: businessPhone,
+        emoji: '👍',
+        targetMessageId: inbound.messageId,
+        externalId: `reaction-${suffix}`,
+        contactId,
+        phoneNumberId,
+        allowQrFallback: false
+      })
+      assert.equal(reaction.wamid, outboundReactionWamid)
+      assert.equal(sentBodies[2].type, 'reaction')
+      assert.deepEqual(sentBodies[2].reaction, { message_id: inboundWamid, emoji: '👍' })
+
+      const inboundReplyPayload = webhookEnvelope({
+        wabaId,
+        phoneNumberId,
+        businessPhone,
+        contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente CTWA Meta' } }],
+        messages: [{
+          id: inboundReplyWamid,
+          from: customerPhone,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+          type: 'text',
+          text: { body: 'Te respondí este mensaje' },
+          context: { from: businessPhone, id: outboundWamid }
+        }]
+      })
+      await processMetaDirectWebhookPayload({ payload: inboundReplyPayload, eventRowId: `evt-in-reply-${suffix}` })
+
+      const inboundReactionPayload = webhookEnvelope({
+        wabaId,
+        phoneNumberId,
+        businessPhone,
+        contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente CTWA Meta' } }],
+        messages: [{
+          id: inboundReactionWamid,
+          from: customerPhone,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+          type: 'reaction',
+          reaction: { message_id: outboundWamid, emoji: '❤️' }
+        }]
+      })
+      await processMetaDirectWebhookPayload({ payload: inboundReactionPayload, eventRowId: `evt-in-reaction-${suffix}` })
 
       const readPayload = webhookEnvelope({
         wabaId,
@@ -280,7 +446,7 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
         allowQrFallback: false
       })
       assert.equal(failedSend.wamid, failedWamid)
-      assert.equal(sentBodies[1].text.body, 'Mensaje que fallará después')
+      assert.equal(sentBodies[3].text.body, 'Mensaje que fallará después')
 
       const failedPayload = webhookEnvelope({
         wabaId,
@@ -337,6 +503,18 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
       assert.equal(ctwaMessage.data.referral_source_id, adId)
       assert.equal(ctwaMessage.data.referral_headline, 'Agenda tu cita')
       assert.equal(ctwaMessage.data.referral_image_url, 'https://example.test/meta-ad-preview.jpg')
+      const outboundBubbles = whatsappMessages.filter(event => event.data?.whatsapp_message_id === outboundWamid)
+      assert.equal(outboundBubbles.length, 1)
+      const inboundReply = whatsappMessages.find(event => event.data?.whatsapp_message_id === inboundReplyWamid)
+      assert.equal(inboundReply.data.reply_to_provider_message_id, outboundWamid)
+      const inboundReaction = whatsappMessages.find(event => event.data?.whatsapp_message_id === inboundReactionWamid)
+      assert.equal(inboundReaction.data.reaction_emoji, '❤️')
+      assert.equal(inboundReaction.data.reaction_target_provider_message_id, outboundWamid)
+      const outboundReplyEvent = whatsappMessages.find(event => event.data?.whatsapp_message_id === outboundReplyWamid)
+      assert.equal(outboundReplyEvent.data.reply_to_provider_message_id, inboundWamid)
+      const outboundReactionEvent = whatsappMessages.find(event => event.data?.whatsapp_message_id === outboundReactionWamid)
+      assert.equal(outboundReactionEvent.data.reaction_emoji, '👍')
+      assert.equal(outboundReactionEvent.data.reaction_target_provider_message_id, inboundWamid)
     })
   } finally {
     setMetaDirectFetchForTest(null)

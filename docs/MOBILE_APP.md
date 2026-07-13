@@ -1548,13 +1548,17 @@ a `/whatsapp-api/meta/social/messages/reaction`, no al endpoint de WhatsApp.
 Al abrir o marcar como leido un chat, el cliente nativo debe usar
 `/contacts/chats/:id/read`; el backend actualiza el unread local y, segun el
 ultimo inbound pendiente, encola en background el visto real del proveedor:
-YCloud `markAsRead`, QR/Baileys `readMessages` y Meta Messenger/Instagram
-`sender_action='mark_seen'`. Correo queda fuera porque no es chat. Si el
+YCloud `markAsRead`, WhatsApp API/Meta directo Graph
+`PUT /{PHONE_NUMBER_ID}/messages` con `status=read`, QR/Baileys `readMessages`
+y Meta Messenger/Instagram `sender_action='mark_seen'`. Correo queda fuera
+porque no es chat. Si el
 proveedor se tarda o falla, la UI local no debe esperarlo ni trabarse; el backend
 debe registrar el fallo. El switch Ajustes moviles > Privacidad, Ajustes
 nativos > Privacidad y Configuracion > Cuenta > Privacidad >
 `chat_send_read_receipts_enabled` permite apagar solo el acuse externo: el chat
 se limpia como leido dentro de Ristak, pero no se manda visto al proveedor.
+Cuando el mismo número tiene API oficial activa y QR de respaldo, el backend
+manda el visto únicamente por la API; Baileys no participa.
 
 El feedback haptico de interaccion movil vive en `mobileAppService`. Al dejar
 pulsado un chat, `/movil` debe disparar haptic cuando entra a seleccion; al

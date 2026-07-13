@@ -2996,6 +2996,12 @@ export async function markLatestInboundWhatsAppQrMessageReadForContact({ contact
     phoneNumberId: row.business_phone_number_id,
     from: row.business_phone || row.to_phone
   })
+  const phoneProvider = cleanString(phone.provider).toLowerCase()
+  if (phoneProvider !== 'qr' && Number(phone.api_send_enabled ?? 1) === 1) {
+    // Un QR asociado a una API sana es respaldo, no una segunda ruta activa.
+    // También para vistos la API oficial conserva la propiedad del número.
+    return { attempted: false, reason: 'official_api_active', provider: phoneProvider }
+  }
   if (await markMissingAuthStateIfNeeded(phone)) {
     throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
   }

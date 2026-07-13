@@ -228,6 +228,22 @@ foto, documento, video y audio seleccionados para Meta Direct salen por Graph y
 nunca usan el endpoint de mensajes ni el upload de YCloud. El fallback QR aplica
 con las mismas reglas estrictas de indisponibilidad que YCloud.
 
+Meta directo también conserva el contrato conversacional nativo. Una respuesta
+saliente usa `context.message_id`; una reacción usa `type=reaction` con
+`reaction.message_id` y `reaction.emoji`; al abrir el chat, el visto se manda por
+Graph con `PUT /{PHONE_NUMBER_ID}/messages`, `status=read` y el `wamid` entrante.
+Ese acuse se resuelve por la fila real `provider=meta_direct`: nunca debe caer al
+endpoint `markAsRead` de YCloud por una preferencia global vieja. Si el número
+tiene QR como respaldo, Baileys tampoco manda un segundo visto mientras
+`api_send_enabled=1`.
+
+La suscripción `/{WABA_ID}/subscribed_apps` se crea al conectar. Si el relay no
+ha recibido eventos durante al menos 30 minutos, el siguiente envío Meta Direct
+renueva esa suscripción de forma idempotente antes de mandar el mensaje. Los
+intentos se limitan a uno cada seis horas mediante
+`whatsapp_meta_direct_last_subscription_refresh_at`; un fallo al renovar se
+registra, pero no cambia de proveedor ni derrama el envío hacia QR.
+
 Los mensajes Click to WhatsApp llegan en `value.messages[].referral`. Meta
 entrega el contrato plano `source_id`, `source_url`, `source_type`, `headline`,
 `body`, `media_type`, `image_url`, `video_url` y `thumbnail_url`. El adaptador
@@ -443,6 +459,8 @@ Antes de declarar lista la conexión directa:
    hasta que llegue el INSERT del envío; nunca debe aparecer como `Mensaje`.
 6. Probar texto, plantilla, botones, reacción, imagen, video, documento, audio y
    nota de voz con estados `sent`, `delivered`, `read` y `failed`.
+   Probar además respuesta a un `wamid`, reacción entrante/saliente y visto
+   saliente por `PUT /{PHONE_NUMBER_ID}/messages`.
 7. Probar un lote `history` real y demostrar que no dispara efectos vivos.
 8. Probar mensaje manual desde WhatsApp Business y demostrar un solo
    `business_echo` en Ristak.
