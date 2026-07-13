@@ -2816,7 +2816,14 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   preview y publicado usan el iframe de Stream después de finalizar; el editor
   lo pinta de inmediato y solo cambia a un espejo de Storage si existe para
   conservar los controles nativos configurables. Si el espejo tarda o no existe,
-  el iframe de Stream se mantiene como respaldo visible. Al cerrar
+  el iframe de Stream se mantiene como respaldo visible. En una subida TUS
+  directa, `media_assets.public_url` contiene la página embebible de Stream, no
+  un archivo de video: editor, preview-session, preview sin tracking y publicado
+  deben renderizarla como `<iframe>` y jamás pasarla a `<video src>`. El player
+  HTML5 solo se usa cuando la URL apunta realmente a un archivo/playlist directo
+  o a la ruta de archivo de Media. El mismo contrato aplica al HTML importado:
+  solo cambia su iframe por un `<video>` si hay un espejo directo de Storage.
+  Al cerrar
   la sesión, backend valida la URL TUS, el tamaño reservado y que Bunny haya
   recibido todos los bytes antes de marcar el asset listo; estados de error de
   Stream nunca se convierten en éxito y liberan inmediatamente asset/video/cuota.
@@ -3264,6 +3271,9 @@ Capacidades:
 - Preparacion/finalizacion idempotente en `media_assets`: reserva cuota mientras
   sube y queda `ready` solo después de verificar por TUS el tamaño y avance que
   Bunny recibió, además de confirmar el original en Stream.
+- En assets TUS directos, `public_url` es el iframe de Bunny Stream. No es una
+  fuente compatible con `<video>`; las superficies de Sites la montan como
+  iframe y reservan el reproductor HTML5 para archivos o playlists directos.
 - Candado distribuido por negocio para que dos preparaciones simultáneas no
   creen videos duplicados ni compitan por la misma cuota; cancelar, un fallo
   terminal de Stream y el TTL de siete días limpian reservas abandonadas.

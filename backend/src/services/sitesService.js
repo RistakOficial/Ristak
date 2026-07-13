@@ -10053,11 +10053,38 @@ async function resolveImportedContentAssets(html = '', siteId = '') {
   `, [siteId, ...keys])
   const assets = await findMediaAssetsByIds(rows.map((row) => row.media_asset_id))
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
+  const assetsByKey = new Map(rows
+    .map((row) => [row.asset_key, assetsById.get(row.media_asset_id) || null])
+    .filter(([, asset]) => Boolean(asset)))
   const urlsByKey = new Map(rows
     .map((row) => [row.asset_key, assetsById.get(row.media_asset_id)?.publicUrl || ''])
     .filter(([, url]) => Boolean(url)))
 
-  return source.replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (openingTag, rawTagName, attrsText = '') => {
+  // Content bindings created before direct Stream uploads used <video>. When
+  // that binding now points to Bunny's HTML player, upgrade the element itself
+  // to an iframe before resolving src; otherwise the browser gets HTML bytes as
+  // video media and paints a black player.
+  const normalizedSource = source.replace(/<video\b([^>]*)>[\s\S]*?<\/video>/gi, (videoHtml, attrsText = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    const assetKey = cleanSiteContentAssetKey(firstImportedNativeAttr(attrs, IMPORTED_CONTENT_ASSET_ATTRS))
+    const asset = assetKey ? assetsByKey.get(assetKey) : null
+    const embedUrl = safePublicMediaUrl(asset?.publicUrl || '', 'video')
+    if (!getBunnyStreamVideoIdFromUrl(embedUrl)) return videoHtml
+
+    let iframeTag = `<iframe${attrsText}>`
+    for (const attrName of ['controls', 'playsinline', 'preload', 'poster', 'autoplay', 'muted', 'loop']) {
+      iframeTag = removeHtmlAttribute(iframeTag, attrName)
+    }
+    iframeTag = setHtmlAttribute(iframeTag, attrsText, 'src', embedUrl)
+    iframeTag = setHtmlAttribute(iframeTag, attrsText, 'title', cleanString(attrs.title) || asset?.originalFilename || 'Video')
+    iframeTag = setHtmlAttribute(iframeTag, attrsText, 'loading', 'lazy')
+    iframeTag = setHtmlAttribute(iframeTag, attrsText, 'allow', DEFAULT_EMBED_ALLOW)
+    iframeTag = setHtmlAttribute(iframeTag, attrsText, 'allowfullscreen', 'true')
+    iframeTag = setHtmlAttribute(iframeTag, attrsText, 'sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation')
+    return `${iframeTag}</iframe>`
+  })
+
+  return normalizedSource.replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (openingTag, rawTagName, attrsText = '') => {
     const attrs = parseHtmlAttributes(attrsText)
     const backgroundKey = cleanSiteContentAssetKey(firstImportedNativeAttr(attrs, IMPORTED_BACKGROUND_ASSET_ATTRS))
     const assetKey = cleanSiteContentAssetKey(firstImportedNativeAttr(attrs, IMPORTED_CONTENT_ASSET_ATTRS))
@@ -10079,7 +10106,7 @@ async function resolveImportedContentAssets(html = '', siteId = '') {
     const explicitTarget = cleanString(attrs['data-rstk-asset-target']).toLowerCase()
     const inferredTarget = tagName === 'a'
       ? 'href'
-      : ['img', 'video', 'audio', 'source', 'track', 'input'].includes(tagName)
+      : ['img', 'video', 'audio', 'source', 'track', 'input', 'iframe'].includes(tagName)
         ? 'src'
         : ''
     const target = ['src', 'href', 'poster'].includes(explicitTarget) ? explicitTarget : inferredTarget
@@ -13385,6 +13412,11 @@ function isDirectVideoUrl(value) {
   return looksLikeDirectVideoUrl(url)
 }
 
+function getDirectMediaAssetVideoUrl(asset) {
+  const publicUrl = safePublicMediaUrl(asset?.publicUrl || '', 'video')
+  return publicUrl && looksLikeDirectVideoUrl(publicUrl) ? publicUrl : ''
+}
+
 // Watch/share URLs (YouTube, Vimeo, Loom, Wistia) refuse to load inside an
 // iframe; convert them to their embeddable player URL.
 function normalizeVideoEmbedUrl(value) {
@@ -15683,7 +15715,13 @@ function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context =
   if (!context.noTrack || !videoId) return ''
   const asset = getStorageAssetForStreamVideoUrl(videoUrl, context)
   if (asset?.publicUrl) {
-    return renderVideoPlayer(asset.publicUrl, block, settings, { noTrack: false, context })
+    return renderStorageBackedBunnyStreamVideo(
+      asset,
+      block,
+      settings,
+      context,
+      getMediaAssetStreamMetadata(asset)
+    )
   }
   // A Stream embed can be previewed without a mapped Storage mirror. Keep
   // tracking disabled in preview, but render the real iframe instead of a
@@ -15697,26 +15735,54 @@ function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context =
 
 function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, context = {}, stream = null) {
   if (!asset?.publicUrl) return ''
-  const resolvedStream = stream || getMediaAssetStreamMetadata(asset)
-  if (context.noTrack || !resolvedStream?.videoId || !resolvedStream?.libraryId) {
-    return renderVideoPlayer(asset.publicUrl, block, settings, {
+  const directVideoUrl = getDirectMediaAssetVideoUrl(asset)
+  const resolvedStream = stream
+    || getMediaAssetStreamMetadata(asset)
+    || getBunnyStreamMetadataFromUrl(asset.publicUrl)
+
+  // Legacy assets may have a real Storage file that keeps Ristak's native
+  // preview controls. A direct Stream upload has no such file: publicUrl is an
+  // HTML embed page and must never be assigned to <video src>.
+  if (context.noTrack && directVideoUrl) {
+    return renderVideoPlayer(directVideoUrl, block, settings, {
       noTrack: false,
       tracking: { enabled: false, asset, stream: resolvedStream, provider: 'html5_video' },
       context
     })
   }
 
-  const params = new URLSearchParams()
-  if (settings.videoAutoplay) params.set('autoplay', 'true')
-  if (settings.videoMuted !== false) params.set('muted', 'true')
-  if (settings.videoLoop) params.set('loop', 'true')
-  if (settings.videoControlsMode === 'none' || settings.videoControls === false) params.set('controls', 'false')
-  const embedUrl = `https://iframe.mediadelivery.net/embed/${encodeURIComponent(resolvedStream.libraryId)}/${encodeURIComponent(resolvedStream.videoId)}${params.toString() ? `?${params.toString()}` : ''}`
-  return renderBunnyStreamIframe(embedUrl, block, {
-    enabled: true,
-    asset,
-    stream: resolvedStream
-  }, settings, context)
+  if (resolvedStream?.videoId && resolvedStream?.libraryId) {
+    const params = new URLSearchParams()
+    if (settings.videoAutoplay) params.set('autoplay', 'true')
+    if (settings.videoMuted !== false) params.set('muted', 'true')
+    if (settings.videoLoop) params.set('loop', 'true')
+    if (settings.videoControlsMode === 'none' || settings.videoControls === false) params.set('controls', 'false')
+    const embedUrl = `https://iframe.mediadelivery.net/embed/${encodeURIComponent(resolvedStream.libraryId)}/${encodeURIComponent(resolvedStream.videoId)}${params.toString() ? `?${params.toString()}` : ''}`
+    return renderBunnyStreamIframe(embedUrl, block, {
+      enabled: !context.noTrack,
+      asset,
+      stream: resolvedStream
+    }, settings, context)
+  }
+
+  if (directVideoUrl) {
+    return renderVideoPlayer(directVideoUrl, block, settings, {
+      noTrack: false,
+      tracking: { enabled: !context.noTrack, asset, stream: resolvedStream, provider: 'html5_video' },
+      context
+    })
+  }
+
+  const embedUrl = normalizeVideoEmbedUrl(asset.publicUrl)
+  if (getBunnyStreamVideoIdFromUrl(embedUrl)) {
+    return renderBunnyStreamIframe(embedUrl, block, {
+      enabled: false,
+      asset,
+      stream: getBunnyStreamMetadataFromUrl(embedUrl)
+    }, settings, context)
+  }
+
+  return ''
 }
 
 function collectBunnyStreamVideoIdsFromHtml(html = '') {
@@ -15730,13 +15796,9 @@ function collectBunnyStreamVideoIdsFromHtml(html = '') {
 }
 
 function renderImportedNoTrackVideoFromAsset(asset) {
-  const src = cleanString(asset?.publicUrl || '')
+  const src = getDirectMediaAssetVideoUrl(asset)
   if (!src) return ''
   return `<video src="${escapeHtml(src)}" controls playsinline preload="metadata" data-rstk-preview-storage-video="true" style="width:100%;height:100%;min-height:220px;aspect-ratio:16/9;display:block;background:#000;border:0;border-radius:inherit;object-fit:cover;"></video>`
-}
-
-function renderImportedDisabledStreamPreview() {
-  return '<div data-rstk-preview-stream-disabled="true" style="width:100%;min-height:220px;aspect-ratio:16/9;display:grid;place-items:center;background:#000;border:0;border-radius:inherit;color:#fff;font:600 14px &quot;Inter&quot;,Arial,sans-serif;">Video disponible en el sitio publicado</div>'
 }
 
 async function rewriteImportedBunnyStreamPlayersForNoTrack(html = '') {
@@ -15756,7 +15818,7 @@ async function rewriteImportedBunnyStreamPlayersForNoTrack(html = '') {
     if (!videoId) return match
 
     const storageMarkup = renderImportedNoTrackVideoFromAsset(assetsByVideoId.get(videoId))
-    return storageMarkup || renderImportedDisabledStreamPreview()
+    return storageMarkup || match
   })
 }
 
@@ -19807,12 +19869,35 @@ function renderBlockStyleClassName(block) {
   return buildBlockStyleClassName(block)
 }
 
+function renderBackgroundVideoElement(src, className) {
+  const safeSrc = safePublicMediaUrl(src, 'video')
+  if (!safeSrc) return ''
+
+  if (getBunnyStreamVideoIdFromUrl(safeSrc)) {
+    let embedUrl = safeSrc
+    try {
+      const parsed = new URL(safeSrc)
+      parsed.searchParams.set('autoplay', 'true')
+      parsed.searchParams.set('muted', 'true')
+      parsed.searchParams.set('loop', 'true')
+      parsed.searchParams.set('controls', 'false')
+      embedUrl = parsed.toString()
+    } catch {
+      embedUrl = safeSrc
+    }
+
+    return `<iframe class="${escapeHtml(className)}" src="${escapeHtml(embedUrl)}" title="Video de fondo" loading="eager" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" tabindex="-1" aria-hidden="true"></iframe>`
+  }
+
+  return looksLikeDirectVideoUrl(safeSrc)
+    ? `<video class="${escapeHtml(className)}" src="${escapeHtml(safeSrc)}" autoplay muted loop playsinline aria-hidden="true"></video>`
+    : ''
+}
+
 function renderBlockBackgroundVideo(block) {
   const settings = block?.settings || {}
   if (cleanString(settings.blockBackgroundMediaType) !== 'video') return ''
-  const src = safePublicMediaUrl(settings.blockBackgroundImage, 'video')
-  if (!src) return ''
-  return `<video class="rstk-block-bg-video" src="${escapeHtml(src)}" autoplay muted loop playsinline aria-hidden="true"></video>`
+  return renderBackgroundVideoElement(settings.blockBackgroundImage, 'rstk-block-bg-video')
 }
 
 function wrapRenderedBlock(block, html, context = {}) {
@@ -21013,7 +21098,7 @@ function renderContentBlock(block, context = {}) {
     const embeddedSourceChrome = embeddedHasSocialProfile ? '' : renderEmbeddedFormSourceChrome(embeddedSiteForCopy)
     const embeddedFrame = `
       <div class="${embeddedThemeClass}" style="${escapeHtml(embeddedStyle)}">
-        ${embeddedSourceTheme.pageVideo ? `<video class="rstk-bg-video" src="${escapeHtml(embeddedSourceTheme.pageVideo)}" autoplay muted loop playsinline aria-hidden="true"></video>` : ''}
+        ${embeddedSourceTheme.pageVideo ? renderBackgroundVideoElement(embeddedSourceTheme.pageVideo, 'rstk-bg-video') : ''}
         <div class="rstk-page">
           <div class="rstk-shell">
             ${embeddedSourceChrome}
@@ -24165,7 +24250,7 @@ export async function renderPublicSiteHtml(site, {
 </head>
 <body class="${bodyClass}">
   <div class="rstk-frame">
-    ${pageVideo ? `<video class="rstk-bg-video" src="${escapeHtml(pageVideo)}" autoplay muted loop playsinline aria-hidden="true"></video>` : ''}
+    ${pageVideo ? renderBackgroundVideoElement(pageVideo, 'rstk-bg-video') : ''}
     ${siteNavHtml}
     <main class="rstk-page">
       <div class="rstk-shell">

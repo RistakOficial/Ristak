@@ -1413,3 +1413,92 @@ test('editor preview keeps an unmapped Bunny Stream video playable in its iframe
   assert.doesNotMatch(previewHtml, /Video disponible en el sitio publicado/)
   assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
 })
+
+test('direct Bunny Stream assets stay in an iframe across preview and live renders', async () => {
+  const assetId = `site_direct_stream_${Date.now()}`
+  const streamVideoId = `stream-${assetId}`
+  const embedUrl = `https://iframe.mediadelivery.net/embed/123456/${streamVideoId}`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'recording.mov', 'recording.mov', ?, ?, 'video/quicktime', 'video', 'mov', 128, 128, 128, 'ready', 'bunny_stream', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `stream/${streamVideoId}`,
+        embedUrl,
+        'site_video_player',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId
+          }
+        })
+      ]
+    )
+
+    const site = baseSite({ mediaUrl: embedUrl })
+    const previewHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    const liveHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    for (const html of [previewHtml, liveHtml]) {
+      assert.match(html, /class="[^"]*\brstk-video-stream-frame\b[^"]*"/)
+      assert.match(html, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}`))
+      assert.doesNotMatch(html, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}`))
+      assert.doesNotMatch(html, /class="[^"]*\brstk-video-player\b/)
+    }
+
+    assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
+    assert.match(liveHtml, /data-rstk-video-track="true"/)
+    assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
+    assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${escapeRegExp(assetId)}"`))
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
+test('Bunny Stream page and block backgrounds use autoplaying iframes instead of video tags', async () => {
+  const streamVideoId = `stream-background-${Date.now()}`
+  const embedUrl = `https://iframe.mediadelivery.net/embed/123456/${streamVideoId}`
+  const site = baseSite({
+    blockBackgroundMediaType: 'video',
+    blockBackgroundImage: embedUrl
+  })
+  site.theme = {
+    ...site.theme,
+    backgroundMediaType: 'video',
+    backgroundImage: embedUrl
+  }
+
+  for (const options of [
+    { trackingEnabled: false, preview: true },
+    { trackingEnabled: true, preview: false }
+  ]) {
+    const html = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      ...options
+    })
+
+    assert.match(html, new RegExp(`<iframe class="rstk-bg-video" src="${escapeRegExp(embedUrl)}\?[^\"]+"`))
+    assert.match(html, new RegExp(`<iframe class="rstk-block-bg-video" src="${escapeRegExp(embedUrl)}\?[^\"]+"`))
+    assert.match(html, /autoplay=true/)
+    assert.match(html, /muted=true/)
+    assert.match(html, /loop=true/)
+    assert.match(html, /controls=false/)
+    assert.doesNotMatch(html, new RegExp(`<video class="rstk-(?:block-)?bg-video" src="${escapeRegExp(embedUrl)}`))
+  }
+})

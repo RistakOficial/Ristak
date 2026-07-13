@@ -6252,6 +6252,11 @@ const looksLikeDirectVideoUrl = (value: string) => {
   return DIRECT_VIDEO_RE.test(withoutQuery) || RISTAK_MEDIA_FILE_RE.test(withoutHash)
 }
 
+const getDirectMediaAssetVideoUrl = (asset?: MediaAsset | null) => {
+  const publicUrl = safePublicMediaUrl(asset?.publicUrl || '', 'video')
+  return publicUrl && looksLikeDirectVideoUrl(publicUrl) ? publicUrl : ''
+}
+
 const isHlsVideoUrl = (value: string) => {
   const raw = decodeHtmlEntities(String(value || '')).trim()
   if (!raw) return false
@@ -6311,7 +6316,7 @@ const appendAnalyticsNoTrackParam = (value: string) => {
 }
 
 const getSitesAnalyticsStoragePreviewUrl = (asset?: MediaAsset | null) => {
-  const storageUrl = safePublicMediaUrl(asset?.publicUrl || '', 'video')
+  const storageUrl = getDirectMediaAssetVideoUrl(asset)
   return appendAnalyticsNoTrackParam(storageUrl)
 }
 
@@ -23170,6 +23175,10 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
   const copyContentAssetReference = async (asset: SiteContentAsset, target: 'media' | 'background' = 'media') => {
+    const safeLabel = asset.label.replace(/"/g, '&quot;')
+    const usesBunnyStreamIframe = asset.kind === 'video' && Boolean(
+      getBunnyStreamVideoIdFromUrl(asset.mediaAsset?.publicUrl || '')
+    )
     const snippet = target === 'background'
       ? `<section data-rstk-background-asset-id="${asset.assetKey}">...</section>`
       : asset.kind === 'document' || asset.kind === 'other'
@@ -23177,8 +23186,10 @@ const ImportedHtmlEditorPanel: React.FC<{
         : asset.kind === 'audio'
           ? `<audio data-rstk-asset-id="${asset.assetKey}" controls></audio>`
           : asset.kind === 'video'
-            ? `<video data-rstk-asset-id="${asset.assetKey}" controls playsinline></video>`
-            : `<img data-rstk-asset-id="${asset.assetKey}" alt="${asset.label.replace(/"/g, '&quot;')}">`
+            ? usesBunnyStreamIframe
+              ? `<iframe data-rstk-asset-id="${asset.assetKey}" title="${safeLabel}" loading="lazy" allow="${DEFAULT_EMBED_ALLOW}" allowfullscreen></iframe>`
+              : `<video data-rstk-asset-id="${asset.assetKey}" controls playsinline></video>`
+            : `<img data-rstk-asset-id="${asset.assetKey}" alt="${safeLabel}">`
     try {
       await copyTextToClipboard(snippet)
       showToast('success', 'Referencia copiada', 'La clave seguirá funcionando aunque reemplaces el archivo.')
@@ -27776,6 +27787,8 @@ const SitesMediaPickerModal: React.FC<{
               {filteredAssets.map(asset => {
                 const assetUrl = getMediaPickerAssetUrl(asset)
                 const previewUrl = getMediaPickerAssetUrl(asset, 'thumbnail')
+                const directVideoUrl = getDirectMediaAssetVideoUrl(asset)
+                const videoThumbnailUrl = previewUrl && previewUrl !== assetUrl ? previewUrl : ''
                 const name = getMediaPickerAssetName(asset)
                 const deleting = deletingAssetId === asset.id
                 const syncing = syncingAssetId === asset.id
@@ -27799,8 +27812,10 @@ const SitesMediaPickerModal: React.FC<{
                         {kind === 'image' ? (
                           <img src={previewUrl} alt="" loading="lazy" />
                         ) : (
-                          assetUrl
-                            ? <video src={assetUrl} muted playsInline preload="metadata" />
+                          videoThumbnailUrl
+                            ? <img src={videoThumbnailUrl} alt="" loading="lazy" />
+                            : directVideoUrl
+                              ? <video src={directVideoUrl} muted playsInline preload="metadata" />
                             : <Video size={24} />
                         )}
                       </span>
@@ -28777,9 +28792,39 @@ const VideoPlayerSettingsControls: React.FC<{
   )
 }
 
+const appendBunnyStreamBackgroundParams = (value: string) => {
+  try {
+    const url = new URL(value)
+    url.searchParams.set('autoplay', 'true')
+    url.searchParams.set('muted', 'true')
+    url.searchParams.set('loop', 'true')
+    url.searchParams.set('controls', 'false')
+    return url.toString()
+  } catch {
+    return value
+  }
+}
+
 const CanvasBackgroundVideo: React.FC<{ theme?: SiteTheme }> = ({ theme }) => {
   const src = getThemeBackgroundVideo(theme)
   if (!src) return null
+
+  const streamEmbedUrl = getBunnyStreamVideoIdFromUrl(src) ? appendBunnyStreamBackgroundParams(src) : ''
+  if (streamEmbedUrl) {
+    return (
+      <iframe
+        className="rstk-bg-video"
+        src={streamEmbedUrl}
+        title="Video de fondo"
+        loading="eager"
+        allow={DEFAULT_EMBED_ALLOW}
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+    )
+  }
+  if (!looksLikeDirectVideoUrl(src)) return null
 
   return (
     <video className="rstk-bg-video" src={src} autoPlay muted loop playsInline aria-hidden="true" />
@@ -28791,6 +28836,22 @@ const BlockBackgroundVideo: React.FC<{ block: SiteBlock }> = ({ block }) => {
   if (getSettingString(settings, 'blockBackgroundMediaType') !== 'video') return null
   const src = safePublicMediaUrl(getSettingString(settings, 'blockBackgroundImage'), 'video')
   if (!src) return null
+  const streamEmbedUrl = getBunnyStreamVideoIdFromUrl(src) ? appendBunnyStreamBackgroundParams(src) : ''
+  if (streamEmbedUrl) {
+    return (
+      <iframe
+        className="rstk-block-bg-video"
+        src={streamEmbedUrl}
+        title="Video de fondo"
+        loading="eager"
+        allow={DEFAULT_EMBED_ALLOW}
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+    )
+  }
+  if (!looksLikeDirectVideoUrl(src)) return null
   return <video className="rstk-block-bg-video" src={src} autoPlay muted loop playsInline aria-hidden="true" />
 }
 
@@ -35153,7 +35214,9 @@ const BunnyStreamStoragePreview: React.FC<{
 
     const findStorageUrl = (assets: MediaAsset[]) => {
       const storageAsset = assets.find(asset => getMediaStreamVideoId(asset) === streamVideoId)
-      return storageAsset?.publicUrl ? safePublicMediaUrl(storageAsset.publicUrl, 'video') : ''
+      // A direct Bunny Stream upload stores its embed page as publicUrl. That
+      // URL belongs in an iframe; only real files/playlists can feed <video>.
+      return getDirectMediaAssetVideoUrl(storageAsset)
     }
 
     if (!streamVideoId) {

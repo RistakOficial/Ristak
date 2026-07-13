@@ -171,6 +171,14 @@ another account.
   Storage-backed videos keep their existing Storage preview and switch to Stream
   when metadata is ready. Video actions are bridged through Player.js in the
   live iframe.
+- A direct TUS Stream asset has `storage_provider='bunny_stream'` and its
+  `public_url` is an embeddable player page, not a video byte URL. Editor,
+  preview-session, no-track and published renderers must keep that URL in an
+  `<iframe>`; assigning it to `<video src>` produces a black, unplayable player.
+  Ristak may render `<video>` only for a real direct file/playlist URL (for
+  example `.mp4`, `.mov`, `.webm`, `.m3u8` or the Ristak media file route).
+  Imported HTML follows the same rule: its Stream iframe is replaced by a native
+  video only when a genuine Storage mirror exists; otherwise the iframe stays.
 
 ## App media explorer
 

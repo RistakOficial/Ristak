@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 test('imported HTML code files are listed and saved through the code editor endpoint', async () => {
   const {
     createImportedSiteFromHtml,
@@ -299,6 +301,146 @@ test('imported HTML preview rewrites Bunny Stream embeds to storage video', asyn
     })
 
     assert.match(liveHtml, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${streamVideoId}"`))
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
+test('imported HTML preview keeps direct Bunny Stream assets in their iframe', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml
+  } = await import('../src/services/sitesService.js')
+  const { db } = await import('../src/config/database.js')
+
+  const assetId = `imported_direct_stream_${Date.now()}`
+  const streamVideoId = `stream-${assetId}`
+  const embedUrl = `https://iframe.mediadelivery.net/embed/123456/${streamVideoId}`
+  let siteId = ''
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'recording.mov', 'recording.mov', ?, ?, 'video/quicktime', 'video', 'mov', 128, 128, 128, 'ready', 'bunny_stream', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `stream/${streamVideoId}`,
+        embedUrl,
+        'imported-direct-video-site',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId
+          }
+        })
+      ]
+    )
+
+    const html = `<!doctype html><html><head><title>Imported Bunny</title></head><body><main><iframe src="${embedUrl}" title="Stream"></iframe></main></body></html>`
+    const created = await createImportedSiteFromHtml({
+      filename: 'imported-direct-bunny.html',
+      fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `Imported direct Bunny ${Date.now()}`
+    })
+    siteId = created.site.id
+
+    const previewSite = await getSitePreview(siteId)
+    const previewHtml = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(previewHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}"`))
+    assert.doesNotMatch(previewHtml, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}"`))
+    assert.doesNotMatch(previewHtml, /Video disponible en el sitio publicado/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
+test('imported Media video bindings render direct Bunny Stream assets as iframes', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml
+  } = await import('../src/services/sitesService.js')
+  const { db } = await import('../src/config/database.js')
+
+  const assetId = `bound_direct_stream_${Date.now()}`
+  const streamVideoId = `stream-${assetId}`
+  const embedUrl = `https://iframe.mediadelivery.net/embed/123456/${streamVideoId}`
+  const assetKey = 'video-principal'
+  let siteId = ''
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'recording.mov', 'recording.mov', ?, ?, 'video/quicktime', 'video', 'mov', 128, 128, 128, 'ready', 'bunny_stream', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `stream/${streamVideoId}`,
+        embedUrl,
+        'imported-bound-video-site',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId
+          }
+        })
+      ]
+    )
+
+    const html = `<!doctype html><html><head><title>Bound Bunny</title></head><body><main><video data-rstk-asset-id="${assetKey}" controls playsinline></video></main></body></html>`
+    const created = await createImportedSiteFromHtml({
+      filename: 'bound-direct-bunny.html',
+      fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `Bound direct Bunny ${Date.now()}`
+    })
+    siteId = created.site.id
+
+    await db.run(
+      `INSERT INTO public_site_content_assets (
+        id, site_id, asset_key, label, kind, media_asset_id, created_at, updated_at
+      ) VALUES (?, ?, ?, 'Video principal', 'video', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [`site_asset_${Date.now()}`, siteId, assetKey, assetId]
+    )
+
+    const previewSite = await getSitePreview(siteId)
+    const previewHtml = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    const liveHtml = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    for (const rendered of [previewHtml, liveHtml]) {
+      assert.match(rendered, new RegExp(`<iframe[^>]+data-rstk-asset-id="${assetKey}"[^>]+src="${escapeRegExp(embedUrl)}"`))
+      assert.doesNotMatch(rendered, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}"`))
+    }
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
