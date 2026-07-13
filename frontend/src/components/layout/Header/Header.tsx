@@ -152,8 +152,11 @@ export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => 
   }
 
   useEffect(() => {
-    fetchNotifications(true)
-    const interval = window.setInterval(() => fetchNotifications(true), 120000)
+    // La actualización automática sólo lee avisos locales. El botón
+    // "Actualizar" conserva la revisión en vivo de Meta cuando el usuario la
+    // pide, evitando listar todo el portafolio cada dos minutos.
+    fetchNotifications(false)
+    const interval = window.setInterval(() => fetchNotifications(false), 120000)
     return () => window.clearInterval(interval)
   }, [])
 

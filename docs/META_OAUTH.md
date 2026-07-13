@@ -275,6 +275,29 @@ Meta o vencimiento pueden exigir que la persona autorice otra vez. El Page token
 se guarda separado para que el inbox no dependa del endpoint `/me` en cada
 mensaje.
 
+### Disciplina de llamadas a Graph
+
+Las pantallas y el polling pasivo nunca deben volver a validar el token ni
+relistar el portafolio. El contrato es:
+
+- `/debug_token` se usa una sola vez al conectar o reconectar. Si un token USER
+  corto se amplía con el mismo App ID, la respuesta de ampliación actualiza su
+  expiración sin repetir `debug_token`.
+- `/{BUSINESS_ID}`, `owned_*` y `client_*` se consultan durante el callback OAuth
+  o cuando la persona pulsa **Autorizar nuevos activos**. Abrir Configuración,
+  Chat o Notificaciones no enumera negocios ni activos.
+- El estado social se sirve con permisos ya validados y la suscripción guardada
+  localmente. Al elegir una Page se hace el POST de suscripción y una sola
+  lectura de confirmación; después el polling no toca esos endpoints.
+- El encabezado actualiza automáticamente sólo avisos locales. La revisión en
+  vivo de Meta queda detrás del botón **Actualizar** de Notificaciones.
+- Los mensajes nuevos entran por webhook y el chat consulta la base local. El
+  respaldo de historial usa únicamente los endpoints de conversaciones y está
+  limitado por intervalo; nunca vuelve a listar el Business.
+
+Esta separación evita que una pantalla abierta consuma la cuota compartida de
+la app y bloquee callbacks OAuth legítimos con el código `4` de Meta.
+
 ## Compatibilidad, reemplazo y desconexion
 
 El cambio conserva tres capas sin mezclarlas:
