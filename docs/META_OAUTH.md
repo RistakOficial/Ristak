@@ -179,13 +179,12 @@ https://www.facebook.com/v25.0/dialog/oauth
    `granular_scopes`.
 5. Installer enumera Pages, Instagram, Ad Accounts y Datasets autorizados, crea
    el candidato y devuelve solamente un handoff opaco en el fragmento URL.
-6. Ristak reclama el handoff desde backend. Para `USER` consulta `/me`,
-   `/me/accounts`, `/me/adaccounts`, `/me/businesses` y `/me/permissions`.
-   Para `SYSTEM_USER` heredado usa el ID explícito con `assigned_pages` y
-   `assigned_ad_accounts`; nunca ejecuta `/me` con ese token. Después enriquece
-   la allowlist firmada.
-   Si un edge opcional falla, conserva el snapshot autorizado y deja los
-   preflights finales como autoridad; una asignacion ajena nunca se agrega.
+6. Ristak reclama el handoff desde backend y guarda directamente la identidad,
+   permisos y allowlist que el Installer ya validó durante el callback. No
+   repite `/me`, `/me/accounts`, `/me/adaccounts` ni `/me/permissions` antes de
+   crear la sesión local: así un límite temporal de Graph no destruye un
+   handoff válido de un solo uso. Una asignación ajena al snapshot autorizado
+   nunca se agrega.
 7. El usuario elige dentro de Ristak la Page; Ad Account, Dataset e Instagram son
    opcionales. Así una empresa puede usar sólo el inbox social sin tener Ads.
 8. Ristak hace los preflights, guarda el candidato local, suscribe la Page y

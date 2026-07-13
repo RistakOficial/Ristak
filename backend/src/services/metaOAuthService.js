@@ -380,6 +380,51 @@ function normalizeHintAssets(value = {}) {
   }
 }
 
+function discoverMetaOAuthAssetsFromVerifiedHandoff(handoffMeta = {}) {
+  const hintAssets = normalizeHintAssets(handoffMeta.assets)
+  const connectionMode = resolveMetaOAuthConnectionMode(handoffMeta)
+  const userId = cleanString(handoffMeta.user_id || handoffMeta.userId)
+  if (!userId) {
+    throw metaOAuthError(
+      'El Installer no entregó la identidad Meta verificada.',
+      502,
+      'META_OAUTH_IDENTITY_MISSING'
+    )
+  }
+
+  const grantedScopes = toStringArray(handoffMeta.scopes)
+  const missingScopes = META_OAUTH_REQUIRED_SCOPES.filter(scope => !grantedScopes.includes(scope))
+  const hintedBusinessId = cleanString(
+    handoffMeta.client_business_id || handoffMeta.clientBusinessId ||
+    handoffMeta.business_id || handoffMeta.businessId
+  )
+
+  return {
+    connectionMode,
+    user: {
+      id: userId,
+      name: cleanString(handoffMeta.user_name || handoffMeta.userName)
+    },
+    permissions: {
+      granted: grantedScopes,
+      missing: missingScopes,
+      granular: normalizeGranularScopes(handoffMeta.granular_scopes || handoffMeta.granularScopes)
+    },
+    businesses: hintAssets.businesses,
+    adAccounts: hintAssets.adAccounts,
+    pages: hintAssets.pages,
+    defaults: {
+      businessId: hintAssets.businesses.some(item => item.id === hintedBusinessId)
+        ? hintedBusinessId
+        : hintAssets.businesses[0]?.id || '',
+      adAccountId: hintAssets.adAccounts[0]?.id || '',
+      pixelId: '',
+      pageId: hintAssets.pages[0]?.id || '',
+      instagramAccountId: hintAssets.pages[0]?.instagramAccounts?.[0]?.id || ''
+    }
+  }
+}
+
 export function extractPageSecrets(value = {}) {
   const pages = Array.isArray(value?.pages) ? value.pages : []
   return Object.fromEntries(pages.map(page => {
@@ -1248,7 +1293,11 @@ export async function completeMetaOAuthConnection({
   const accessToken = cleanString(handoffMeta.access_token || handoffMeta.accessToken)
   if (!accessToken) throw metaOAuthError('El handoff de Meta no incluyó acceso.', 502, 'META_OAUTH_ACCESS_MISSING')
 
-  const discovered = await discoverMetaOAuthAssets({ token: accessToken, handoffMeta })
+  // El Installer ya intercambió y validó el token, comprobó permisos y enumeró
+  // la allowlist autorizada durante el callback. Repetir /me y todos los edges
+  // aquí desperdicia cuota y, peor, puede consumir el handoff único antes de
+  // guardar la sesión si Meta responde temporalmente con error #4.
+  const discovered = discoverMetaOAuthAssetsFromVerifiedHandoff(handoffMeta)
   if (discovered.permissions.missing.length) {
     throw metaOAuthError(
       `Meta no concedió todos los permisos requeridos: ${discovered.permissions.missing.join(', ')}`,

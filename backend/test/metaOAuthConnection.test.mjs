@@ -249,7 +249,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [granularMismatch.sessionId])
 
     handoffMeta.granular_scopes = [{ scope: 'pages_messaging', target_ids: ['page-1'] }]
-    graphPageTasks = ['ANALYZE', 'MODERATE']
+    handoffMeta.assets.pages[0].tasks = ['ANALYZE', 'MODERATE']
     const missingTasks = await completeMetaOAuthConnection({ handoffToken: 'handoff-missing-page-tasks' })
     await assert.rejects(
       () => finalizeMetaOAuthConnection({ sessionId: missingTasks.sessionId, publicBaseUrl: 'https://tenant.test' }),
@@ -257,7 +257,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     )
     assert.equal((await getMetaConfig()).access_token, 'manual-token')
     await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [missingTasks.sessionId])
-    graphPageTasks = ['ANALYZE', 'MESSAGING', 'MODERATE']
+    handoffMeta.assets.pages[0].tasks = ['ANALYZE', 'MESSAGING', 'MODERATE']
 
     const completed = await completeMetaOAuthConnection({ handoffToken: 'handoff-ok' })
     const serialized = JSON.stringify(completed)
@@ -557,9 +557,9 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
 
     const completed = await completeMetaOAuthConnection({ handoffToken: 'user-handoff' })
     assert.equal(completed.connectionMode, 'oauth_user')
-    assert.ok(graphCalls.includes('/me'))
-    assert.ok(graphCalls.includes('/me/accounts'))
-    assert.ok(graphCalls.includes('/me/adaccounts'))
+    assert.equal(graphCalls.includes('/me'), false)
+    assert.equal(graphCalls.includes('/me/accounts'), false)
+    assert.equal(graphCalls.includes('/me/adaccounts'), false)
     assert.equal(graphCalls.some(path => path.includes('/assigned_pages')), false)
     assert.equal(graphCalls.some(path => path.includes('/assigned_ad_accounts')), false)
 
@@ -592,6 +592,66 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
 
     const disconnected = await disconnectMetaOAuthConnection({ publicBaseUrl: 'https://tenant-user.onrender.com' })
     assert.equal(disconnected.disconnected, true)
+  })
+})
+
+test('Meta OAuth USER guarda el handoff verificado aunque Graph esté limitado', async () => {
+  await initializeMasterKey()
+  await withIsolatedMeta(async () => {
+    const handoffMeta = {
+      connection_id: 'rate-limited-connection',
+      access_token: 'rate-limited-user-token',
+      appsecret_proof: 'rate-limited-proof',
+      source: 'oauth_user',
+      debug_token_type: 'USER',
+      app_id: 'oauth-app',
+      config_id: 'flfb-user-config',
+      user_id: 'meta-user-rate-limited',
+      scopes: [...META_OAUTH_REQUIRED_SCOPES],
+      granular_scopes: [{ scope: 'pages_messaging', target_ids: ['page-rate-limited'] }],
+      assets: {
+        business_id: 'business-rate-limited',
+        pages: [{
+          id: 'page-rate-limited',
+          name: 'Página verificada por Installer',
+          business_id: 'business-rate-limited',
+          tasks: ['ANALYZE', 'MESSAGING', 'MODERATE'],
+          page_access_token: 'page-rate-limited-token',
+          page_appsecret_proof: 'page-rate-limited-proof',
+          instagram_business_account: { id: 'ig-rate-limited', username: 'ig_verificada' }
+        }],
+        ad_accounts: [{ id: 'act_404', name: 'Ads verificada', business_id: 'business-rate-limited' }],
+        pixels: [{
+          id: 'pixel-rate-limited',
+          name: 'Dataset verificado',
+          ad_account_id: '404',
+          business_id: 'business-rate-limited'
+        }]
+      }
+    }
+    setMetaOAuthCentralClientForTest({
+      claimHandoff: async () => ({ payload: { meta: handoffMeta } })
+    })
+    let graphCalls = 0
+    setMetaOAuthFetchForTest(async () => {
+      graphCalls += 1
+      return graphResponse({
+        error: { message: '(#4) Application request limit reached', code: 4, is_transient: true }
+      }, 403)
+    })
+
+    const completed = await completeMetaOAuthConnection({ handoffToken: 'rate-limited-handoff' })
+
+    assert.equal(graphCalls, 0, 'el cliente no debe volver a validar el handoff contra Graph')
+    assert.equal(completed.connectionMode, 'oauth_user')
+    assert.equal(completed.pages[0].id, 'page-rate-limited')
+    assert.equal(completed.pages[0].instagramAccounts[0].id, 'ig-rate-limited')
+    assert.equal(completed.adAccounts[0].id, 'act_404')
+    assert.equal(completed.adAccounts[0].pixels[0].id, 'pixel-rate-limited')
+    assert.ok(await db.get(
+      "SELECT id FROM meta_oauth_pending_sessions WHERE id = ? AND status = 'pending'",
+      [completed.sessionId]
+    ))
   })
 })
 
