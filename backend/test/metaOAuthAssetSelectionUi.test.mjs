@@ -8,36 +8,57 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..')
 const readSource = relativePath => readFile(join(repoRoot, relativePath), 'utf8')
 
-test('Cuenta Meta usa dropdowns buscables con guardado inmediato y copy para usuario final', async () => {
-  const [screen, select] = await Promise.all([
+test('Meta oculta pestañas sin conexión y guarda Ads y redes sociales sólo al confirmar cada sección', async () => {
+  const [screen, styles, select] = await Promise.all([
     readSource('frontend/src/pages/Settings/MetaAdsIntegration.tsx'),
+    readSource('frontend/src/pages/Settings/MetaAdsIntegration.module.css'),
     readSource('frontend/src/components/common/CustomSelect/CustomSelect.tsx')
   ])
 
   assert.match(screen, /Buscar cuenta publicitaria…/)
   assert.match(screen, /Buscar Dataset…/)
-  assert.match(screen, /Buscar Facebook Page…/)
+  assert.match(screen, /Buscar página…/)
   assert.match(screen, /Buscar cuenta de Instagram…/)
-  assert.match(screen, /onChange=\{\(event\) => void saveMetaOAuthAssetSelection/)
-  assert.match(screen, /Cada cambio se guarda automáticamente/)
+  assert.match(screen, /label: 'Meta Ads'/)
+  assert.match(screen, /Facebook y Messenger/)
+  assert.match(screen, /<span className=\{styles\.formLabel\}>Página \(Opcional\)<\/span>/)
+  assert.match(screen, /isMetaConfigured && <SegmentTabs/)
+  assert.match(screen, /!isLoading && !isMetaConfigured/)
+  assert.match(screen, /metaConnectEmptyState/)
+  assert.match(screen, /onChange=\{\(event\) => updateMetaOAuthAssetDraft/)
+  assert.match(screen, /saveMetaOAuthAssetSection\('ads'\)/)
+  assert.match(screen, /saveMetaOAuthAssetSection\('social'\)/)
+  assert.match(screen, /const sectionPatch = section === 'ads'/)
+  assert.match(screen, /const \[savedMetaOAuthSelection, setSavedMetaOAuthSelection\]/)
   assert.match(screen, /selectedContent=\{renderOAuthSelectValue/)
   assert.match(select, /selectedContent\?: React\.ReactNode/)
-  const autosaveStart = screen.indexOf('const saveMetaOAuthAssetSelection')
-  const callbackStart = screen.indexOf('const completeMetaOAuthHandoff', autosaveStart)
-  assert.ok(autosaveStart >= 0 && callbackStart > autosaveStart)
+  const draftStart = screen.indexOf('const updateMetaOAuthAssetDraft')
+  const saveStart = screen.indexOf('const saveMetaOAuthAssetSection')
+  const callbackStart = screen.indexOf('const completeMetaOAuthHandoff', saveStart)
+  assert.ok(draftStart >= 0 && saveStart > draftStart && callbackStart > saveStart)
   assert.doesNotMatch(
-    screen.slice(autosaveStart, callbackStart),
+    screen.slice(draftStart, saveStart),
+    /fetch\(|metaOAuthService\.|campaignsService\./,
+    'mover un dropdown sólo debe cambiar el borrador local; nunca debe llamar a Meta ni al backend'
+  )
+  assert.doesNotMatch(
+    screen.slice(saveStart, callbackStart),
     /invalidateIntegrationsStatus\(\)/,
     'finalize ya refresca el snapshot global; no debe duplicar esa petición'
   )
+  assert.doesNotMatch(screen, /saveMetaOAuthAssetSelection/)
+  assert.doesNotMatch(screen, /Cada cambio se guarda automáticamente|Guardado automático/)
+  assert.doesNotMatch(screen, /<span>No configurado<\/span>/)
   assert.doesNotMatch(screen, /Cambiar activos en Ristak/)
   assert.doesNotMatch(screen, /Método de conexión/)
   assert.doesNotMatch(screen, /Credencial de Messenger/)
   assert.doesNotMatch(screen, /Incluida en OAuth/)
   assert.doesNotMatch(screen, /Desconectar Meta OAuth|Desconectar OAuth/)
+  assert.match(styles, /\.metaHeader\[data-ristak-page-header\][\s\S]*?border-bottom: 0/)
   assert.match(screen, /const usingOAuthSocial = metaOAuthStatus\?\.oauth\.connected === true/)
   assert.match(screen, /activeMetaTab !== 'social' \|\| isLoading \|\| usingOAuthSocial/)
   assert.doesNotMatch(screen, /void loadMetaDeveloperSetup\(\)\s*\n\s*\}, \[\]\)/)
+  assert.doesNotMatch(screen, /campaignsService\.verifyToken\(\)/)
 })
 
 test('finalize conserva los vacíos explícitos y separa selección local de cambios sociales', async () => {

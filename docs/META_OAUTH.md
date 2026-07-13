@@ -14,15 +14,17 @@ para cubrir:
 
 La experiencia recomendada usa el boton **Conectar con Meta**, que abre
 directamente el dialogo oficial. La persona decide libremente qué activos
-autoriza; Ristak no preselecciona ni obliga opciones dentro de Meta. Al regresar,
-la cuenta queda conectada y **Cuenta Meta** muestra el inventario autorizado en
-la misma tabla de la conexion. Una conexion nueva empieza sin activos operativos:
-la persona elige ahi la cuenta publicitaria, el Dataset, la Facebook Page y el
-Instagram profesional que realmente usara. Cada cambio se guarda de inmediato,
-sin un wizard, un modal adicional ni un boton **Guardar**. Si la misma conexion
-OAuth se vuelve a autorizar, Ristak conserva las selecciones que sigan permitidas.
-OAuth sustituye la conexion visible y conserva el metodo anterior como fallback
-cifrado.
+autoriza; Ristak no preselecciona ni obliga opciones dentro de Meta. Antes de
+conectar, Configuracion muestra solamente el titulo, una explicacion corta y el
+boton centrado; las pestañas no aparecen todavía. Al regresar, la cuenta queda
+conectada y entonces aparecen las secciones funcionales. **Meta Ads** contiene la
+cuenta publicitaria y el Dataset; **Redes sociales** contiene la Página y el
+Instagram profesional. Una conexion nueva empieza sin activos operativos. Cada
+seccion conserva sus cambios como borrador y los aplica únicamente al pulsar su
+boton **Guardar**; guardar Ads no arrastra un borrador social ni viceversa. Si la
+misma conexion OAuth se vuelve a autorizar, Ristak conserva las selecciones que
+sigan permitidas. OAuth sustituye la conexion visible y conserva el metodo
+anterior como fallback cifrado.
 
 Los dropdowns de la tabla reutilizan el inventario autorizado sin volver a abrir
 OAuth ni relistar el portafolio. **Autorizar nuevos activos** se usa sólo cuando
@@ -44,13 +46,16 @@ La migracion es gradual y no elimina lo que ya funciona:
 
 `Configuracion > Meta` se divide por funcion, no por credencial:
 
-1. **Cuenta Meta**: login OAuth unificado como entrada principal y tabla unica
-   de la conexion activa. El wizard de System User queda sólo como ruta heredada
-   para instalaciones que ya dependan de él.
-2. **Redes sociales**: switches de Messenger, comentarios de Facebook, Instagram
-   DM y comentarios de Instagram. La credencial de Messenger y la guia de
-   Developers aparecen sólo en modo manual; OAuth ya incluye el acceso de Page y
-   no presenta esos detalles al usuario final.
+1. **Meta Ads**: cuenta publicitaria y Dataset de conversiones opcionales, con
+   dropdowns buscables y un solo boton **Guardar** para esa seccion. El wizard de
+   System User queda sólo como ruta heredada para instalaciones que ya dependan
+   de él.
+2. **Redes sociales**: **Facebook y Messenger** permite elegir la **Página** y
+   controlar Messenger/comentarios; Instagram permite elegir su cuenta y
+   controlar DMs/comentarios. Página e Instagram son opcionales y comparten un
+   boton **Guardar**. La credencial de Messenger y la guia de Developers aparecen
+   sólo en modo manual; OAuth ya incluye el acceso de Page y no presenta esos
+   detalles al usuario final.
 3. **Rastreo web**: parametros UTM e inclusion del Dataset en el snippet de
    tracking.
 4. **Dataset Test**: codigo temporal de Test Events y envio controlado de
@@ -58,9 +63,9 @@ La migracion es gradual y no elimina lo que ya funciona:
 
 `/ads` es alias de `/settings/meta-ads/cuenta`; `/social` y `/mensajes` son
 aliases de `/settings/meta-ads/redes-sociales`. Ninguna ruta debe volver a
-presentar dos botones OAuth. Una cuenta sin configurar ve directamente
-**Conectar con Meta**; el wizard manual no se abre por defecto ni compite con el
-flujo oficial.
+presentar dos botones OAuth. Una cuenta sin configurar no ve pestañas, estados
+vacíos ni formularios: ve directamente **Conectar con Meta**; el wizard manual
+no se abre por defecto ni compite con el flujo oficial.
 
 ## WhatsApp Embedded Signup especializado
 
@@ -170,8 +175,8 @@ https://www.facebook.com/v25.0/dialog/oauth
 
 ## Flujo completo
 
-1. **Cuenta Meta** muestra primero el login OAuth y consulta en segundo plano el
-   estado con `GET /api/meta/oauth/status` sin crear `state`.
+1. Configuracion muestra el login OAuth sin pestañas y consulta en segundo plano
+   el estado con `GET /api/meta/oauth/status` sin crear `state`.
 2. Al pulsar **Conectar con Meta** o **Autorizar nuevos activos**, Ristak solicita
    `POST /api/meta/oauth/connect-url` y abre Meta directamente, mandando como retorno absoluto
    `/settings/meta-ads/cuenta` en el host publico de la instalacion.
@@ -191,12 +196,14 @@ https://www.facebook.com/v25.0/dialog/oauth
    pertenece a la misma conexion OAuth y sigue autorizada. Una conexion nueva se
    guarda sin Page, Ad Account, Dataset ni Instagram seleccionados.
 8. La respuesta ya representa una cuenta autorizada y devuelve una sesion nueva
-   del inventario cifrado. La tabla conectada aparece sin recargar la pagina y no
-   existe un segundo boton **Guardar conexion**.
-9. Cada dropdown finaliza únicamente esa nueva seleccion. Elegir Page prepara la
-   suscripcion y la ruta del broker; elegir Ad Account inicia Ads sync; elegir
-   Instagram inicia su backfill; elegir Dataset habilita CAPI. Cambios que no
-   afectan Page no vuelven a suscribir webhooks ni relistan activos.
+   del inventario cifrado. Las pestañas conectadas aparecen sin recargar la pagina
+   y no existe un segundo boton **Guardar conexion**.
+9. Cambiar un dropdown sólo modifica el borrador de su seccion. **Guardar** en
+   Meta Ads finaliza Ad Account/Dataset conservando la selección social guardada;
+   **Guardar** en Redes sociales finaliza Page/Instagram conservando Ads. Elegir
+   Page prepara la suscripcion y la ruta del broker; elegir Ad Account inicia Ads
+   sync; elegir Instagram inicia su backfill; elegir Dataset habilita CAPI.
+   Cambios que no afectan Page no vuelven a suscribir webhooks ni relistan activos.
 
 El callback conserva `meta_oauth_kind` y
 `meta_oauth_integration_kind=legacy` como aliases internos. Ristak acepta ese
@@ -218,11 +225,12 @@ Reglas no negociables:
 - `granular_scopes.target_ids` debe incluir cada activo elegido; si Meta no
   devuelve `target_ids`, Ristak no inventa una allowlist vacia.
 - El Page Token y su proof deben corresponder a la Page seleccionada.
-- La tabla obtiene una sesion del inventario con
-  `POST /api/meta/oauth/reconfigure`; cada cambio se guarda con
-  `POST /api/meta/oauth/finalize`, cuya respuesta incluye la siguiente sesion.
-  No abre Meta, no hay boton Guardar y el inventario y las credenciales
-  Page-scoped permanecen cifrados en backend.
+- Los selectores obtienen una sesion del inventario con
+  `POST /api/meta/oauth/reconfigure`; pulsar **Guardar** en cualquiera de las dos
+  secciones ejecuta un solo `POST /api/meta/oauth/finalize`, cuya respuesta
+  incluye la siguiente sesion. Cambiar el dropdown no llama a la API. No abre
+  Meta y el inventario y las credenciales Page-scoped permanecen cifrados en
+  backend.
 - Los activos creados después del consentimiento no se agregan solos: requieren
   **Autorizar nuevos activos**.
 
@@ -405,16 +413,18 @@ Installer, autenticado por licencia salvo callbacks publicos:
 
 ## Pruebas de aceptacion
 
-1. La UI abre directamente un solo dialogo Meta y vuelve a **Cuenta Meta**, sin una guía intermedia ni selección forzada.
+1. Sin conexion, la UI no muestra pestañas ni formularios: abre directamente un
+   solo dialogo Meta y vuelve a **Meta Ads**, sin una guía intermedia ni selección forzada.
 2. El handoff contiene Ad Accounts, Datasets, Pages e Instagram autorizados y se
    consume una sola vez dentro de la petición que deja la cuenta conectada.
 3. Una conexion nueva no preselecciona Page, Ad Account, Dataset ni Instagram;
    la autorizacion queda conectada y la tabla permite dejar cualquiera vacio.
-4. Los cuatro activos aparecen como dropdowns buscables y cada seleccion se
-   guarda inmediatamente, sin boton Guardar ni pantalla adicional.
-5. La tabla muestra el nombre de cada activo y su ID debajo sin llamar a Graph
-   para pintarla. Cambiar Ad Account/Dataset no toca el relay social; cambiar
-   Page limpia Instagram incompatible y actualiza sólo su suscripcion/ruta.
+4. Meta Ads muestra Ad Account/Dataset y Redes sociales muestra Página/Instagram;
+   todos son dropdowns buscables. Ningún `onChange` persiste datos: cada seccion
+   tiene un solo boton **Guardar**.
+5. Los selectores muestran el nombre de cada activo y su ID debajo sin llamar a
+   Graph para pintarlos. Guardar Ad Account/Dataset no toca el relay social;
+   guardar Page limpia Instagram incompatible y actualiza sólo su suscripcion/ruta.
 6. Un Dataset de `owned_pixels` o `client_pixels` aparece aunque
    `/act_<ID>/adspixels` venga vacio. BISU exige `UPLOAD`; USER usa la allowlist
    firmada y nunca se confunde con un System User en `assigned_users`.
@@ -432,8 +442,9 @@ Installer, autenticado por licencia salvo callbacks publicos:
     misma Page como para una Page distinta.
 13. **Rastreo web** y **Dataset Test** permanecen en pestañas propias; no se
     mezclan con el login ni los controles sociales.
-14. La tabla es el unico selector interno. **Autorizar nuevos activos** abre Meta
-    y actualiza la allowlist; cambiar entre los ya autorizados no abre OAuth.
+14. Las dos secciones son los unicos selectores internos. **Autorizar nuevos
+    activos** abre Meta y actualiza la allowlist; cambiar entre los ya autorizados
+    no abre OAuth.
 
 ## Fuentes oficiales
 

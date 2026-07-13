@@ -2355,16 +2355,17 @@ Ristak usa Meta en varias areas:
 - **Conectar con Meta** abre directamente el dialogo oficial. Meta controla la
   elección y la persona autoriza libremente sus activos; Ristak no muestra una
   guía intermedia ni intenta preseleccionar opciones. Al volver, la conexión se
-  completa en la misma petición y la pantalla se actualiza sin recargarse. Una
-  conexion nueva no elige activos operativos: la misma tabla conectada muestra
-  dropdowns buscables para Ad Account, Dataset, Facebook Page e Instagram y
-  guarda cada cambio de inmediato. Los activos futuros requieren **Autorizar
-  nuevos activos**.
-- La interfaz se divide en **Cuenta Meta**, **Redes sociales**, **Rastreo web**
-  y **Dataset Test**. Cuenta Meta muestra una sola tabla de la conexion activa;
-  no muestra una tabla separada de capacidades OAuth. Redes sociales concentra
-  credenciales manuales, activos y switches de Messenger, comentarios de
-  Facebook, Instagram DM y comentarios de Instagram.
+  completa en la misma petición y la pantalla se actualiza sin recargarse. Antes
+  de conectar no aparecen pestañas: sólo titulo, subtitulo y el boton centrado.
+  Una conexion nueva no elige activos operativos. Después aparecen dropdowns
+  buscables y cada seccion aplica sus cambios únicamente al pulsar **Guardar**.
+  Los activos futuros requieren **Autorizar nuevos activos**.
+- La interfaz conectada se divide en **Meta Ads**, **Redes sociales**, **Rastreo
+  web** y **Dataset Test**. Meta Ads contiene solamente Ad Account y Dataset.
+  Redes sociales contiene **Facebook y Messenger** con el dropdown **Página**,
+  Instagram y los switches de mensajes/comentarios. Ads y social tienen botones
+  Guardar independientes; un borrador de una seccion no se aplica al guardar la
+  otra. Las credenciales manuales sólo aparecen en instalaciones heredadas.
 - El Config ID unificado pide `ads_read`, `business_management`,
   `pages_show_list`, `pages_manage_metadata`, `pages_messaging`,
   `pages_read_engagement`, `pages_read_user_content`,
@@ -2404,7 +2405,8 @@ Ristak usa Meta en varias areas:
   central completo, no solo la raiz de `www.ristak.com`.
 - Al volver, Ristak conserva activos anteriores sólo si pertenecen a la misma
   conexion OAuth y siguen autorizados. Una conexion nueva empieza sin Page, Ad
-  Account, Dataset ni Instagram. Cada seleccion de la tabla se guarda al instante;
+  Account, Dataset ni Instagram. Cambiar un dropdown sólo actualiza el borrador;
+  pulsar Guardar manda un único `finalize` para la seccion correspondiente.
   Instagram exige una Page enlazada. Si Meta devuelve tareas de Page, Ristak
   exige `ANALYZE`, `MESSAGING` y `MODERATE`.
 - El Dataset se descubre por `/act_<AD_ACCOUNT_ID>/adspixels` y tambien por
