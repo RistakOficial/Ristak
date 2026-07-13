@@ -205,6 +205,26 @@
   white-space: nowrap;
 }
 
+.connectedAssetIdentity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.connectedAssetName {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connectedAssetId {
+  color: var(--text-mute);
+  font-size: 11px;
+  font-weight: 400;
+}
+
 .tokenExpiry {
   color: var(--text-mute);
   font-size: 12px;

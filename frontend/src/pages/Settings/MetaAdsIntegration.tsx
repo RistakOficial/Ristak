@@ -529,6 +529,8 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isSavingMessengerUserToken, setIsSavingMessengerUserToken] = useState(false)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
   const handledMetaOAuthHandoffs = useRef(new Set<string>())
+  const credentialsLoadVersion = useRef(0)
+  const metaStatusLoadVersion = useRef(0)
 
   const { showToast } = useNotification()
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
@@ -747,14 +749,16 @@ export const MetaAdsIntegration: React.FC = () => {
   })
 
   const loadMetaOAuthStatus = async () => {
+    const loadVersion = ++metaStatusLoadVersion.current
     try {
       const status = await metaOAuthService.getStatus()
+      if (loadVersion !== metaStatusLoadVersion.current) return null
       setMetaOAuthStatus(status)
       if (status.connectionMode) setMetaConnectionMode(status.connectionMode)
       return status
     } catch (error) {
       const status = buildUnavailableMetaOAuthStatus(error)
-      setMetaOAuthStatus(status)
+      if (loadVersion === metaStatusLoadVersion.current) setMetaOAuthStatus(status)
       return null
     }
   }
@@ -837,19 +841,52 @@ export const MetaAdsIntegration: React.FC = () => {
   const completeMetaOAuthHandoff = async (handoffToken: string) => {
     setIsConnectingMetaOAuth(true)
     try {
-      const session = await metaOAuthService.complete({ handoffToken })
-      applyMetaOAuthSession(session)
+      const previousPageId = savedPageId
+      const previousInstagramAccountId = savedInstagramAccountId
+      const result = await metaOAuthService.complete({ handoffToken })
+      const nextPageId = result.selected.pageId || ''
+      const nextInstagramAccountId = result.selected.instagramAccountId || ''
+
+      await syncConnectedMetaChannelDefaults({
+        previousPageId,
+        nextPageId,
+        previousInstagramAccountId,
+        nextInstagramAccountId
+      }).catch(() => undefined)
+
+      setMetaOAuthSession(null)
+      setMetaOAuthSelection({ sessionId: '' })
+      setSavedPageId(nextPageId)
+      setSavedInstagramAccountId(nextInstagramAccountId)
+      invalidateIntegrationsStatus()
+      await Promise.all([
+        loadCredentials(),
+        loadMetaDeveloperSetup(),
+        loadMetaOAuthStatus()
+      ])
       setActiveMetaTab('cuenta')
       navigate(buildMetaAdsConnectedTabPath('cuenta'), { replace: true })
       showToast(
-        session.permissions.missing.length ? 'warning' : 'success',
-        'Meta autorizó tu negocio',
-        session.permissions.missing.length
-          ? 'Faltan permisos de Meta; reconecta y acepta el acceso completo.'
-          : 'Elige la Facebook Page que usará Ristak. Publicidad, Dataset e Instagram son opcionales.'
+        result.relay.status === 'registered' ? 'success' : 'warning',
+        'Meta conectado',
+        result.relay.status === 'registered'
+          ? 'La cuenta, Facebook, Instagram y publicidad autorizada ya están listas.'
+          : 'La autorización quedó guardada y Ristak está terminando de confirmar los mensajes.'
       )
     } catch (error) {
-      showToast('error', 'No se pudo conectar Meta', error instanceof Error ? error.message : 'La autorización no se pudo completar.')
+      // Si la respuesta se perdió después del commit, el estado local es la
+      // fuente de verdad. Consultarlo evita pedir al usuario que recargue o que
+      // repita un handoff de un solo uso que ya terminó correctamente.
+      const status = await loadMetaOAuthStatus().catch(() => null)
+      await Promise.allSettled([loadCredentials(), loadMetaDeveloperSetup()])
+      if (status?.oauth.connected) {
+        setMetaOAuthSession(null)
+        setMetaOAuthSelection({ sessionId: '' })
+        invalidateIntegrationsStatus()
+        showToast('success', 'Meta conectado', 'La conexión terminó correctamente.')
+      } else {
+        showToast('error', 'No se pudo conectar Meta', error instanceof Error ? error.message : 'La autorización no se pudo completar.')
+      }
     } finally {
       setIsConnectingMetaOAuth(false)
     }
@@ -932,11 +969,6 @@ export const MetaAdsIntegration: React.FC = () => {
       hash: fragmentParams.toString() ? `#${fragmentParams.toString()}` : ''
     }, { replace: true })
 
-    const isSplitCallback = integrationKindValue === 'social' || integrationKindValue === 'ads'
-    if (isSplitCallback) {
-      showToast('warning', 'La conexión anterior venció', 'Vuelve a usar “Conectar con Meta” para autorizar todo en un solo inicio de sesión.')
-      return
-    }
     if (oauthResult === 'error' || !handoffToken || (integrationKindValue && integrationKindValue !== 'legacy')) {
       showToast(
         'error',
@@ -954,10 +986,12 @@ export const MetaAdsIntegration: React.FC = () => {
   }, [location.hash, location.pathname, location.search, navigate])
 
   const loadCredentials = async () => {
+    const loadVersion = ++credentialsLoadVersion.current
     setIsLoading(true)
     try {
       const response = await fetch('/api/meta/custom-values')
       const data = await response.json()
+      if (loadVersion !== credentialsLoadVersion.current) return
 
       if (data.success && data.data) {
         const connectionMode = data.data.connectionMode || data.data.connection_mode || data.connectionMode || null
@@ -999,7 +1033,7 @@ export const MetaAdsIntegration: React.FC = () => {
       }
     } catch {
     } finally {
-      setIsLoading(false)
+      if (loadVersion === credentialsLoadVersion.current) setIsLoading(false)
     }
   }
 
@@ -2360,39 +2394,70 @@ export const MetaAdsIntegration: React.FC = () => {
     void refreshMetaWizardStep(activeStep, { silent: true })
   }, [activeStep, isEditingMetaConfig, showManualConnection, wizardRefreshNonce, shouldShowWizard, isLoading])
 
-  const getSelectedAdAccountLabel = () => {
-    if (!connectedAdAccountId) return 'Pendiente'
+  const getSelectedAdAccountAsset = () => {
+    if (!connectedAdAccountId) return null
     const normalizedId = connectedAdAccountId.replace(/^act_/, '')
     const matchingAccount = adAccounts.find(acc =>
       acc.id.replace(/^act_/, '') === normalizedId
     )
-
-    return matchingAccount
-      ? `${matchingAccount.name} (${normalizedId})`
-      : normalizedId
+    const savedAsset = metaOAuthStatus?.selectedAssets?.adAccount
+    return {
+      id: normalizedId,
+      name: matchingAccount?.name || (savedAsset?.id.replace(/^act_/, '') === normalizedId ? savedAsset.name : '') || normalizedId
+    }
   }
 
-  const getSelectedPixelLabel = () => {
-    if (!connectedPixelId) return 'Opcional'
+  const getSelectedPixelAsset = () => {
+    if (!connectedPixelId) return null
     const matchingPixel = pixels.find(p => p.id === connectedPixelId)
-    return matchingPixel ? `${matchingPixel.name} (${connectedPixelId})` : connectedPixelId
+    const savedAsset = metaOAuthStatus?.selectedAssets?.dataset
+    return {
+      id: connectedPixelId,
+      name: matchingPixel?.name || (savedAsset?.id === connectedPixelId ? savedAsset.name : '') || connectedPixelId
+    }
   }
 
-  const getSelectedPageLabel = () => {
-    if (!connectedPageId) return 'Opcional'
+  const getSelectedPageAsset = () => {
+    if (!connectedPageId) return null
     const pageId = connectedPageId
     const matchingPage = pages.find(page => page.id === pageId)
-    return matchingPage ? `${matchingPage.name} (${pageId})` : pageId
+    const savedAsset = metaOAuthStatus?.selectedAssets?.page
+    return {
+      id: pageId,
+      name: matchingPage?.name || (savedAsset?.id === pageId ? savedAsset.name : '') || pageId
+    }
   }
 
-  const getSelectedInstagramLabel = () => {
-    if (!connectedInstagramAccountId) return 'Opcional'
+  const getSelectedInstagramAsset = () => {
+    if (!connectedInstagramAccountId) return null
     const instagramAccountId = connectedInstagramAccountId
     const matchingAccount = instagramAccounts.find(account => account.sourceId === instagramAccountId)
-    if (!matchingAccount) return instagramAccountId
-    const username = matchingAccount.username ? `@${matchingAccount.username}` : matchingAccount.name
-    return `${username} (${instagramAccountId})`
+    const savedAsset = metaOAuthStatus?.selectedAssets?.instagram
+    const name = matchingAccount
+      ? (matchingAccount.username ? `@${matchingAccount.username}` : matchingAccount.name)
+      : (savedAsset?.id === instagramAccountId ? savedAsset.name : '')
+    return { id: instagramAccountId, name: name || instagramAccountId }
   }
+
+  const formatSelectedAsset = (asset: { id: string; name: string } | null, fallback: string) => (
+    asset ? `${asset.name} (${asset.id})` : fallback
+  )
+
+  const getSelectedAdAccountLabel = () => formatSelectedAsset(getSelectedAdAccountAsset(), 'Pendiente')
+  const getSelectedPixelLabel = () => formatSelectedAsset(getSelectedPixelAsset(), 'Opcional')
+  const getSelectedPageLabel = () => formatSelectedAsset(getSelectedPageAsset(), 'Opcional')
+  const getSelectedInstagramLabel = () => formatSelectedAsset(getSelectedInstagramAsset(), 'Opcional')
+
+  const renderConnectedAsset = (asset: { id: string; name: string } | null, fallback: string) => (
+    <span className={styles.connectedListValue}>
+      {asset ? (
+        <span className={styles.connectedAssetIdentity}>
+          <span className={styles.connectedAssetName}>{asset.name}</span>
+          <small className={styles.connectedAssetId}>(ID: {asset.id})</small>
+        </span>
+      ) : fallback}
+    </span>
+  )
 
   const updateMetaOAuthSelection = (patch: Partial<MetaOAuthFinalizeSelection>) => {
     setMetaOAuthSelection(current => ({ ...current, ...patch }))
@@ -2446,17 +2511,14 @@ export const MetaAdsIntegration: React.FC = () => {
           </span>
           <div className={styles.oauthConnectCopy}>
             <div className={styles.oauthConnectTitleRow}>
-              <h4>{session ? 'Terminar conexión OAuth' : connected ? 'OAuth de Meta conectado' : 'Conectar con Meta (OAuth)'}</h4>
-              {session && <Badge variant={metaOAuthStatus?.available ? 'info' : 'warning'}>
-                {metaOAuthStatus?.available ? 'Vista previa' : 'No disponible'}
-              </Badge>}
+              <h4>{session ? 'Cambiar activos autorizados' : connected ? 'OAuth de Meta conectado' : 'Conectar con Meta (OAuth)'}</h4>
             </div>
             <p>
               {session
-                ? 'Aquí sólo aparecen activos autorizados y utilizables. Elige cuáles usará Ristak; los demás siguen autorizados para cambiarlos después.'
+                ? 'Elige otros activos que ya autorizaste. Esto no repite el inicio de sesión con Meta.'
                 : connected
                   ? 'Cambia entre activos ya autorizados sin repetir OAuth. Abre Meta únicamente cuando quieras agregar activos nuevos.'
-                  : 'Autoriza en Meta las cuentas actuales o futuras que quieras compartir y elige dentro de Ristak cuáles quedarán trabajando.'}
+                  : 'Autoriza en Meta y Ristak dejará la cuenta funcionando automáticamente.'}
             </p>
           </div>
         </div>
@@ -2582,7 +2644,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 disabled={isSavingWizardConfig || Boolean(session.permissions.missing.length) || !selection.pageId}
               >
                 {isSavingWizardConfig ? <RefreshCw size={16} className={styles.spinning} /> : <CheckCircle size={16} />}
-                {isSavingWizardConfig ? 'Guardando' : 'Guardar conexión'}
+                {isSavingWizardConfig ? 'Guardando' : 'Guardar cambios'}
               </Button>
               <Button
                 type="button"
@@ -3153,19 +3215,19 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
                   <div className={styles.connectedListRow}>
                     <span className={styles.connectedListLabel}>Cuenta publicitaria</span>
-                    <span className={styles.connectedListValue}>{getSelectedAdAccountLabel()}</span>
+                    {renderConnectedAsset(getSelectedAdAccountAsset(), 'Sin cuenta publicitaria')}
                   </div>
                   <div className={styles.connectedListRow}>
                     <span className={styles.connectedListLabel}>Dataset</span>
-                    <span className={styles.connectedListValue}>{hasPixel ? getSelectedPixelLabel() : 'Sin Dataset'}</span>
+                    {renderConnectedAsset(getSelectedPixelAsset(), 'Sin Dataset')}
                   </div>
                   <div className={styles.connectedListRow}>
                     <span className={styles.connectedListLabel}>Facebook Page</span>
-                    <span className={styles.connectedListValue}>{hasPageId ? getSelectedPageLabel() : 'Sin Page'}</span>
+                    {renderConnectedAsset(getSelectedPageAsset(), 'Sin Page')}
                   </div>
                   <div className={styles.connectedListRow}>
                     <span className={styles.connectedListLabel}>Instagram</span>
-                    <span className={styles.connectedListValue}>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Sin Instagram'}</span>
+                    {renderConnectedAsset(getSelectedInstagramAsset(), 'Sin Instagram')}
                   </div>
                   <div className={styles.connectedListRow}>
                     <span className={styles.connectedListLabel}>Acceso de Meta</span>

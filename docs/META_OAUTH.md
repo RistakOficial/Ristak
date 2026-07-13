@@ -15,11 +15,12 @@ para cubrir:
 La experiencia recomendada usa el boton **Conectar con Meta**, que abre
 directamente el dialogo oficial. La persona decide libremente qué activos
 autoriza; Ristak no preselecciona ni obliga opciones dentro de Meta. Al regresar,
-Ristak muestra solamente los
-activos autorizados y utilizables, y el usuario elige una
-cuenta publicitaria, una Page, un Dataset opcional y una cuenta de Instagram
-opcional. Al finalizar, OAuth sustituye la conexion visible y conserva el
-metodo anterior como fallback cifrado.
+Ristak termina la conexion sin presentar otro formulario: conserva una seleccion
+anterior que siga autorizada o usa la primera Page operable, la primera cuenta
+publicitaria disponible y el Instagram profesional enlazado. El Dataset queda
+apagado en una primera conexion porque habilitar Conversions API es una decision
+explicita. OAuth sustituye la conexion visible y conserva el metodo anterior
+como fallback cifrado.
 
 Una vez conectado, **Cambiar activos en Ristak** reutiliza el inventario
 autorizado sin volver a abrir OAuth. **Autorizar nuevos activos** se usa sólo
@@ -111,8 +112,9 @@ navegador.
 
 La conexion unificada activa vive cifrada en `meta_config` con
 `connection_mode=oauth_user`. `oauth_bisu` se conserva para conexiones System
-User anteriores. Las sesiones temporales de seleccion viven
-cifradas en `meta_oauth_pending_sessions` y tienen TTL/consumo unico.
+User anteriores. La sesion temporal de commit vive cifrada en
+`meta_oauth_pending_sessions`, tiene TTL/consumo unico y nunca se presenta como
+un paso adicional al usuario.
 `meta_oauth_authorized_assets` conserva cifrados la allowlist completa y los
 Page tokens/proofs de cada Page autorizada. Nunca se devuelve al frontend y
 permite cambiar la seleccion operativa sin repetir OAuth.
@@ -179,17 +181,18 @@ https://www.facebook.com/v25.0/dialog/oauth
    `granular_scopes`.
 5. Installer enumera Pages, Instagram, Ad Accounts y Datasets autorizados, crea
    el candidato y devuelve solamente un handoff opaco en el fragmento URL.
-6. Ristak reclama el handoff desde backend y guarda directamente la identidad,
-   permisos y allowlist que el Installer ya validó durante el callback. No
-   repite `/me`, `/me/accounts`, `/me/adaccounts` ni `/me/permissions` antes de
-   crear la sesión local: así un límite temporal de Graph no destruye un
-   handoff válido de un solo uso. Una asignación ajena al snapshot autorizado
-   nunca se agrega.
-7. El usuario elige dentro de Ristak la Page; Ad Account, Dataset e Instagram son
-   opcionales. Así una empresa puede usar sólo el inbox social sin tener Ads.
+6. Ristak reclama el handoff desde backend y usa directamente la identidad,
+   permisos y allowlist que Installer ya validó durante el callback. No repite
+   `/me`, `/me/accounts`, `/me/adaccounts` ni `/me/permissions`. Una asignación
+   ajena al snapshot autorizado nunca se agrega.
+7. En esa misma petición Ristak conserva activos anteriores todavía válidos o
+   elige un inicio seguro: primera Page operable, primera Ad Account disponible,
+   Instagram enlazado y ningún Dataset nuevo por defecto.
 8. Ristak hace los preflights, guarda el candidato local, suscribe la Page y
-   promueve de forma atomica la conexion/ruta central.
-9. Solo despues arranca Ads sync, backfill social y los crons conectados.
+   promueve de forma atomica la conexion/ruta central. La respuesta ya representa
+   una conexion terminada; no existe un segundo botón **Guardar conexión**.
+9. Solo despues arranca Ads sync, backfill social y los crons conectados. La UI
+   relee el estado confirmado y lo pinta sin recargar la pagina.
 
 El callback conserva `meta_oauth_kind` y
 `meta_oauth_integration_kind=legacy` como aliases internos. Ristak acepta ese
@@ -200,9 +203,9 @@ limpian y piden reconectar con el boton unico.
 
 Reglas no negociables:
 
-- Facebook Page es obligatoria para el contrato unificado social. Ad Account,
-  Dataset/Pixel e Instagram profesional son opcionales y nunca se eligen por
-  sorpresa.
+- Facebook Page es obligatoria para el contrato unificado social. Al conectar se
+  conserva la Page anterior autorizada o se usa la primera operable. Ad Account
+  e Instagram siguen la misma regla; Dataset/Pixel nunca se activa por defecto.
 - La Page debe pertenecer al mismo portafolio que la cuenta publicitaria cuando
   Meta entrega esa relacion.
 - Instagram debe estar enlazado a la Page elegida.
@@ -211,9 +214,10 @@ Reglas no negociables:
 - `granular_scopes.target_ids` debe incluir cada activo elegido; si Meta no
   devuelve `target_ids`, Ristak no inventa una allowlist vacia.
 - El Page Token y su proof deben corresponder a la Page seleccionada.
-- Cambiar entre activos de la allowlist usa `POST /api/meta/oauth/reconfigure` y
-  no abre Meta. El inventario y las credenciales Page-scoped permanecen
-  cifrados en backend.
+- Cambiar después entre activos de la allowlist usa
+  `POST /api/meta/oauth/reconfigure` y no abre Meta. Éste sí es un ajuste
+  explícito dentro de Ristak, separado del login inicial. El inventario y las
+  credenciales Page-scoped permanecen cifrados en backend.
 - Los activos creados después del consentimiento no se agregan solos: requieren
   **Autorizar nuevos activos**.
 
@@ -282,7 +286,9 @@ relistar el portafolio. El contrato es:
 
 - `/debug_token` se usa una sola vez al conectar o reconectar. Si un token USER
   corto se amplía con el mismo App ID, la respuesta de ampliación actualiza su
-  expiración sin repetir `debug_token`.
+  expiración sin repetir `debug_token`. Si Meta limita esa validación, el
+  callback termina con un error reintentable; no cae a `/me`, no reintenta a
+  escondidas y no guarda una conexión parcialmente validada.
 - `/{BUSINESS_ID}`, `owned_*` y `client_*` se consultan durante el callback OAuth
   o cuando la persona pulsa **Autorizar nuevos activos**. Abrir Configuración,
   Chat o Notificaciones no enumera negocios ni activos.
@@ -386,36 +392,41 @@ Installer, autenticado por licencia salvo callbacks publicos:
   de poner Facebook Login for Business en vivo.
 - Advanced Access de `ads_read` y Marketing API Full Access para cuentas de
   clientes; confirmar los requisitos vigentes en App Dashboard antes de enviar.
-- Video de revision: un login, seleccion de Ad Account/Page/Dataset/Instagram,
-  lectura de reporte, Test Event, mensaje y comentarios.
+- Video de revision: un login que termina conectado sin pasos intermedios;
+  después, si el caso lo requiere, cambio de activos dentro de Ristak, lectura
+  de reporte, Test Event, mensaje y comentarios.
 - Instagram profesional enlazado a la Page y **Connected Tools -> Allow Access
   to Messages** habilitado; OAuth no puede cambiar ese ajuste por API.
 
 ## Pruebas de aceptacion
 
 1. La UI abre directamente un solo dialogo Meta y vuelve a **Cuenta Meta**, sin una guía intermedia ni selección forzada.
-2. El handoff contiene Ad Accounts, Datasets, Pages e Instagram autorizados.
-3. Page es obligatoria; Ad Account, Dataset e Instagram son opcionales.
-4. Cambiar Ad Account filtra Page/Dataset por Business y limpia selecciones
+2. El handoff contiene Ad Accounts, Datasets, Pages e Instagram autorizados y se
+   consume una sola vez dentro de la petición que deja la cuenta conectada.
+3. Page es obligatoria; el primer login selecciona automáticamente una Page
+   operable, Ad Account e Instagram cuando existen, pero deja Dataset vacío.
+4. La tabla conectada muestra el nombre de cada activo y su ID debajo sin llamar
+   a Graph para pintar la pantalla.
+5. Cambiar Ad Account filtra Page/Dataset por Business y limpia selecciones
    incompatibles.
-5. Un Dataset de `owned_pixels` o `client_pixels` aparece aunque
+6. Un Dataset de `owned_pixels` o `client_pixels` aparece aunque
    `/act_<ID>/adspixels` venga vacio. BISU exige `UPLOAD`; USER valida acceso
    directo y nunca se confunde con un System User en `assigned_users`.
-6. Sin tarea `UPLOAD` en modo BISU, finalizar falla y conserva la conexion
+7. Sin tarea `UPLOAD` en modo BISU, finalizar falla y conserva la conexion
    anterior.
-7. Con Dataset validado, CAPI queda activa y Dataset Test puede enviar un evento
+8. Con Dataset validado, CAPI queda activa y Dataset Test puede enviar un evento
    controlado; sin Dataset, Ads y social siguen activos pero CAPI no.
-8. Messenger, Instagram Direct y comentarios reciben relay firmado y hacen
+9. Messenger, Instagram Direct y comentarios reciben relay firmado y hacen
    backfill sin usar el token Ads como Page Token.
-9. Handoff ajeno, activo granular incorrecto, firma invalida y replay se
+10. Handoff ajeno, activo granular incorrecto, firma invalida y replay se
    rechazan.
-10. Reconectar o fallar no borra el System User Token manual ni los fallbacks
+11. Reconectar o fallar no borra el System User Token manual ni los fallbacks
     separados.
-11. Desconectar restaura la ruta Social/manual correspondiente, tanto para la
+12. Desconectar restaura la ruta Social/manual correspondiente, tanto para la
     misma Page como para una Page distinta.
-12. **Rastreo web** y **Dataset Test** permanecen en pestañas propias; no se
+13. **Rastreo web** y **Dataset Test** permanecen en pestañas propias; no se
     mezclan con el login ni los controles sociales.
-13. **Cambiar activos en Ristak** abre el selector interno sin OAuth; **Autorizar
+14. **Cambiar activos en Ristak** abre el selector interno sin OAuth; **Autorizar
     nuevos activos** abre Meta y actualiza la allowlist.
 
 ## Fuentes oficiales

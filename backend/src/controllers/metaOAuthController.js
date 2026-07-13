@@ -111,7 +111,8 @@ export async function completeMetaOAuth(req, res) {
         req,
         req.body?.returnPath || req.body?.return_path || fallbackReturnPath,
         fallbackReturnPath
-      )
+      ),
+      publicBaseUrl: publicBaseUrl(req)
     }
     const data = kind
       ? await completeMetaOAuthIntegration(options)

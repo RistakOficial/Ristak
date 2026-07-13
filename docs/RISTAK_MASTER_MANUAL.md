@@ -2354,8 +2354,9 @@ Ristak usa Meta en varias areas:
   anuncios, Dataset/CAPI, Facebook, Instagram, mensajes y comentarios.
 - **Conectar con Meta** abre directamente el dialogo oficial. Meta controla la
   elección y la persona autoriza libremente sus activos; Ristak no muestra una
-  guía intermedia ni intenta preseleccionar opciones. Los activos futuros
-  requieren **Autorizar nuevos activos**.
+  guía intermedia ni intenta preseleccionar opciones. Al volver, la conexión se
+  completa en la misma petición y la pantalla se actualiza sin recargarse. Los
+  activos futuros requieren **Autorizar nuevos activos**.
 - La interfaz se divide en **Cuenta Meta**, **Redes sociales**, **Rastreo web**
   y **Dataset Test**. Cuenta Meta muestra una sola tabla de la conexion activa;
   no muestra una tabla separada de capacidades OAuth. Redes sociales concentra
@@ -2386,21 +2387,23 @@ Ristak usa Meta en varias areas:
   `/api/meta/oauth/{status,connect-url,complete,finalize,disconnect}`. Los
   endpoints `/api/meta/oauth/:integrationKind/*` siguen disponibles solo para
   compatibilidad con instalaciones que ya usaron la etapa separada.
-- Ristak reclama el handoff server-to-server, clasifica `USER|SYSTEM_USER` con
-  `debug_token` y valida los once permisos, activos
-  y `granular_scopes.target_ids`, y conserva una sesion cifrada con TTL hasta
-  finalizar. Cancelar, expirar o fallar deja intacta la conexion anterior.
+- Ristak reclama el handoff server-to-server y termina la conexión en esa misma
+  petición. Installer ya clasificó `USER|SYSTEM_USER` con `debug_token` y validó
+  permisos, activos y `granular_scopes.target_ids`; Ristak no repite esas
+  llamadas. La sesión cifrada con TTL sólo protege el commit interno y nunca se
+  vuelve un paso visible. Cancelar, expirar o fallar deja intacta la conexion
+  anterior.
 - Al iniciar OAuth, Ristak convierte la ruta de regreso en una URL absoluta del
   host publico que origino la solicitud. Installer valida ese origin contra la
   instalacion antes de guardarlo en `state`; asi el callback central no manda al
   usuario al dominio generico `app.ristak.com` cuando conecto desde un tenant
   Render. Con Strict Mode de Meta, la lista de redirects debe incluir el callback
   central completo, no solo la raiz de `www.ristak.com`.
-- Al volver, sólo la Page es obligatoria; Ad Account, Dataset e Instagram son
-  opcionales. La Page se filtra por el Business de la cuenta publicitaria cuando
-  se eligió una e
-  Instagram debe estar enlazado a la Page. Si Meta devuelve tareas de Page,
-  Ristak exige `ANALYZE`, `MESSAGING` y `MODERATE`.
+- Al volver, Ristak conserva activos anteriores todavía autorizados o toma la
+  primera Page operable, la primera Ad Account disponible y el Instagram
+  enlazado. Dataset queda vacío en una primera conexión y se activa sólo por una
+  elección posterior. Si Meta devuelve tareas de Page, Ristak exige `ANALYZE`,
+  `MESSAGING` y `MODERATE`.
 - El Dataset se descubre por `/act_<AD_ACCOUNT_ID>/adspixels` y tambien por
   `/{BUSINESS_ID}/owned_pixels|client_pixels`. En BISU, Installer y Ristak
   exigen `UPLOAD` en `assigned_users`; en USER, Ristak valida lectura directa y

@@ -8,6 +8,7 @@ import { reconcileMetaBusinessWithHighLevel } from '../src/services/highlevelSyn
 import {
   META_OAUTH_REQUIRED_SCOPES,
   completeMetaOAuthConnection,
+  prepareMetaOAuthConnection,
   cleanupMetaOAuthPendingSessions,
   createMetaOAuthConnectionUrl,
   disconnectMetaOAuthConnection,
@@ -160,6 +161,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
         activeCentralConnection = {
           connected: true,
           connection_id: input.connectionId,
+          available: handoffMeta.assets,
           webhook_selections: [{
             page_id: input.pageId,
             instagram_account_id: input.instagramAccountId || null,
@@ -235,7 +237,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     graphScopes = META_OAUTH_REQUIRED_SCOPES.filter(scope => scope !== 'ads_read')
     handoffScopes = [...graphScopes]
     await assert.rejects(
-      () => completeMetaOAuthConnection({ handoffToken: 'handoff-missing-scope' }),
+      () => prepareMetaOAuthConnection({ handoffToken: 'handoff-missing-scope' }),
       error => error.code === 'META_OAUTH_REQUIRED_SCOPES_MISSING'
     )
     assert.equal((await getMetaConfig()).access_token, 'manual-token')
@@ -244,7 +246,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     handoffScopes = [...META_OAUTH_REQUIRED_SCOPES]
 
     handoffMeta.granular_scopes = [{ scope: 'pages_messaging', target_ids: ['otra-page'] }]
-    const granularMismatch = await completeMetaOAuthConnection({ handoffToken: 'handoff-granular-mismatch' })
+    const granularMismatch = await prepareMetaOAuthConnection({ handoffToken: 'handoff-granular-mismatch' })
     await assert.rejects(
       () => finalizeMetaOAuthConnection({ sessionId: granularMismatch.sessionId, publicBaseUrl: 'https://tenant.test' }),
       error => error.code === 'META_OAUTH_GRANULAR_TARGET_MISMATCH'
@@ -254,16 +256,20 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
 
     handoffMeta.granular_scopes = [{ scope: 'pages_messaging', target_ids: ['page-1'] }]
     handoffMeta.assets.pages[0].tasks = ['ANALYZE', 'MODERATE']
-    const missingTasks = await completeMetaOAuthConnection({ handoffToken: 'handoff-missing-page-tasks' })
+    const missingTasks = await prepareMetaOAuthConnection({ handoffToken: 'handoff-missing-page-tasks' })
     await assert.rejects(
-      () => finalizeMetaOAuthConnection({ sessionId: missingTasks.sessionId, publicBaseUrl: 'https://tenant.test' }),
+      () => finalizeMetaOAuthConnection({
+        sessionId: missingTasks.sessionId,
+        pageId: 'page-1',
+        publicBaseUrl: 'https://tenant.test'
+      }),
       error => error.code === 'META_OAUTH_PAGE_TASKS_MISSING'
     )
     assert.equal((await getMetaConfig()).access_token, 'manual-token')
     await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [missingTasks.sessionId])
     handoffMeta.assets.pages[0].tasks = ['ANALYZE', 'MESSAGING', 'MODERATE']
 
-    const completed = await completeMetaOAuthConnection({ handoffToken: 'handoff-ok' })
+    const completed = await prepareMetaOAuthConnection({ handoffToken: 'handoff-ok' })
     const serialized = JSON.stringify(completed)
     assert.equal(serialized.includes('oauth-bisu-token'), false)
     assert.equal(serialized.includes('oauth-page-token'), false)
@@ -365,7 +371,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     // durante rollback como la conexión recién promovida al terminar.
     handoffMeta.connection_id = 'connection-same-page'
     failBusinessesEdge = true
-    const samePageReconnect = await completeMetaOAuthConnection({ handoffToken: 'handoff-same-page' })
+    const samePageReconnect = await prepareMetaOAuthConnection({ handoffToken: 'handoff-same-page' })
     assert.equal(samePageReconnect.businesses[0]?.id, 'business-1')
     const removalsBeforeSamePageReconnect = removedRuntimeSubscriptions
     failRegister = true
@@ -392,7 +398,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     failBusinessesEdge = false
 
     handoffMeta.connection_id = 'connection-without-dataset'
-    const withoutDatasetReconnect = await completeMetaOAuthConnection({ handoffToken: 'handoff-without-dataset' })
+    const withoutDatasetReconnect = await prepareMetaOAuthConnection({ handoffToken: 'handoff-without-dataset' })
     const withoutDatasetFinalized = await finalizeMetaOAuthConnection({
       sessionId: withoutDatasetReconnect.sessionId,
       pixelId: '',
@@ -405,7 +411,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal(JSON.parse(await getAppConfig('meta_payment_purchase_event_config')).enabled, false)
 
     handoffMeta.connection_id = 'connection-social-only'
-    const socialOnlyReconnect = await completeMetaOAuthConnection({ handoffToken: 'handoff-social-only' })
+    const socialOnlyReconnect = await prepareMetaOAuthConnection({ handoffToken: 'handoff-social-only' })
     const socialOnlyFinalized = await finalizeMetaOAuthConnection({
       sessionId: socialOnlyReconnect.sessionId,
       adAccountId: '',
@@ -446,9 +452,27 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal(await getAppConfig('meta_messenger_messaging_enabled'), '0')
     assert.ok(graphCalls.length >= 6)
 
+    handoffMeta.connection_id = 'connection-auto'
+    const automatic = await completeMetaOAuthConnection({
+      handoffToken: 'handoff-auto',
+      publicBaseUrl: 'https://tenant.test'
+    })
+    assert.equal(automatic.connected, true)
+    assert.equal(automatic.selected.pageId, 'page-1')
+    assert.equal(automatic.selected.adAccountId, '123')
+    assert.equal(automatic.selected.pixelId, '')
+    const automaticStatus = await getMetaOAuthConnectionStatus()
+    assert.deepEqual(automaticStatus.selectedAssets.page, { id: 'page-1', name: 'Página Uno' })
+    assert.deepEqual(automaticStatus.selectedAssets.adAccount, { id: '123', name: 'Ads' })
+    await db.run('DELETE FROM meta_oauth_authorized_assets')
+    const legacyNameFallback = await getMetaOAuthConnectionStatus()
+    assert.deepEqual(legacyNameFallback.selectedAssets.page, { id: 'page-1', name: 'Página Uno' })
+    assert.deepEqual(legacyNameFallback.selectedAssets.adAccount, { id: '123', name: 'Ads' })
+    await disconnectMetaOAuthConnection()
+
     handoffMeta.connection_id = 'connection-2'
     timeoutAfterCommit = true
-    const timeoutSession = await completeMetaOAuthConnection({ handoffToken: 'handoff-timeout-after-commit' })
+    const timeoutSession = await prepareMetaOAuthConnection({ handoffToken: 'handoff-timeout-after-commit' })
     const reconciled = await finalizeMetaOAuthConnection({
       sessionId: timeoutSession.sessionId,
       publicBaseUrl: 'https://tenant.test'
@@ -462,7 +486,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal(JSON.parse(await getAppConfig('meta_payment_purchase_event_config')).enabled, false)
     timeoutAfterCommit = false
     await disconnectMetaOAuthConnection()
-    assert.equal(disconnectCalls, 2)
+    assert.equal(disconnectCalls, 3)
     assert.equal(safeMetaGraphTransportError(
       new Error('request to https://graph.facebook.com/me?access_token=secret&appsecret_proof=proof failed')
     ), 'No se pudo contactar Meta Graph.')
@@ -562,7 +586,7 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
       return graphResponse({ error: { message: `unexpected ${path}` } }, 404)
     })
 
-    const completed = await completeMetaOAuthConnection({ handoffToken: 'user-handoff' })
+    const completed = await prepareMetaOAuthConnection({ handoffToken: 'user-handoff' })
     assert.equal(completed.connectionMode, 'oauth_user')
     assert.deepEqual(completed.businesses.map(item => item.id).sort(), [
       'business-ads',
@@ -659,7 +683,7 @@ test('Meta OAuth USER guarda el handoff verificado aunque Graph esté limitado',
       }, 403)
     })
 
-    const completed = await completeMetaOAuthConnection({ handoffToken: 'rate-limited-handoff' })
+    const completed = await prepareMetaOAuthConnection({ handoffToken: 'rate-limited-handoff' })
 
     assert.equal(graphCalls, 0, 'el cliente no debe volver a validar el handoff contra Graph')
     assert.equal(completed.connectionMode, 'oauth_user')

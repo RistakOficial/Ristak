@@ -20,6 +20,12 @@ export interface MetaOAuthStatus {
     pageId?: string
     instagramAccountId?: string
   }
+  selectedAssets?: {
+    adAccount: { id: string; name: string } | null
+    dataset: { id: string; name: string } | null
+    page: { id: string; name: string } | null
+    instagram: { id: string; name: string; username?: string } | null
+  }
   oauth: {
     connected: boolean
     validated: boolean
@@ -165,14 +171,14 @@ export const metaOAuthService = {
   ),
 
   complete: (input: { handoffToken?: string; code?: string; configId?: string }) => (
-    requestMetaOAuth<MetaOAuthSession>('/api/meta/oauth/complete', {
+    refreshIntegrationsStatusAfter(requestMetaOAuth<MetaOAuthFinalizeResult>('/api/meta/oauth/complete', {
       method: 'POST',
       body: JSON.stringify({
         handoffToken: input.handoffToken || undefined,
         code: input.code || undefined,
         configId: input.configId || undefined
       })
-    })
+    }))
   ),
 
   reconfigure: () => (

@@ -1233,6 +1233,45 @@ async function loadAuthorizedAssets() {
   }
 }
 
+function summarizeSelectedMetaAssets(config = null, authorized = null) {
+  const selected = {
+    businessId: cleanString(config?.oauth_business_id || config?.meta_business_id),
+    adAccountId: normalizeAdAccountId(config?.ad_account_id),
+    pixelId: cleanString(config?.pixel_id),
+    pageId: cleanString(config?.page_id),
+    instagramAccountId: cleanString(config?.instagram_account_id)
+  }
+  const inventory = authorized && typeof authorized === 'object' ? authorized : {}
+  const adAccount = (inventory.adAccounts || []).find(item => (
+    normalizeAdAccountId(item?.id) === selected.adAccountId
+  )) || null
+  const dataset = (inventory.datasets || []).find(item => cleanString(item?.id) === selected.pixelId) || null
+  const page = (inventory.pages || []).find(item => cleanString(item?.id) === selected.pageId) || null
+  const instagram = (page?.instagramAccounts || []).find(item => (
+    cleanString(item?.id) === selected.instagramAccountId
+  )) || null
+
+  const asset = (id, name, extra = {}) => id ? {
+    id,
+    name: cleanString(name) || id,
+    ...extra
+  } : null
+
+  return {
+    selected,
+    selectedAssets: {
+      adAccount: asset(selected.adAccountId, adAccount?.name),
+      dataset: asset(selected.pixelId, dataset?.name),
+      page: asset(selected.pageId, page?.name),
+      instagram: asset(
+        selected.instagramAccountId,
+        instagram?.username ? `@${instagram.username}` : instagram?.name,
+        instagram?.username ? { username: cleanString(instagram.username) } : {}
+      )
+    }
+  }
+}
+
 function localMetaOAuthState(config) {
   const connectionMode = config ? normalizeMetaConnectionMode(config.connection_mode) : null
   const oauthConnected = isMetaOAuthConnectionMode(connectionMode) && Number(config?.oauth_connected) === 1
@@ -1273,12 +1312,15 @@ function localMetaOAuthState(config) {
 
 export async function getMetaOAuthConnectionStatus() {
   if (!metaConnectionMutationRunning) await cleanupMetaOAuthPendingSessions()
-  const localConfig = await getMetaConfig().catch(error => {
-    logger.warn(`No se pudo leer estado local Meta OAuth: ${error.message}`)
-    return null
-  })
+  const [localConfig, manualBackup, authorized] = await Promise.all([
+    getMetaConfig().catch(error => {
+      logger.warn(`No se pudo leer estado local Meta OAuth: ${error.message}`)
+      return null
+    }),
+    loadManualConnectionBackup(),
+    loadAuthorizedAssets()
+  ])
   const local = localMetaOAuthState(localConfig)
-  const manualBackup = await loadManualConnectionBackup()
   let central = {}
   let centralError = ''
   try {
@@ -1286,6 +1328,11 @@ export async function getMetaOAuthConnectionStatus() {
   } catch (error) {
     centralError = error.message || 'No se pudo consultar el Installer'
   }
+  // Conexiones creadas antes del vault local todavía pueden recuperar nombres
+  // desde el inventario cifrado del Installer. Esto es sólo estado cacheado: no
+  // abre Graph ni agrega llamadas pasivas a Meta.
+  const selectedInventory = authorized || normalizeHintAssets(central?.connection?.available || {})
+  const selectedSummary = summarizeSelectedMetaAssets(localConfig, selectedInventory)
 
   return {
     configured: central?.configured === true,
@@ -1299,6 +1346,7 @@ export async function getMetaOAuthConnectionStatus() {
     configId: cleanString(central?.config_id || central?.configId),
     requiredScopes: toStringArray(central?.required_scopes || central?.requiredScopes || META_OAUTH_REQUIRED_SCOPES),
     ...local,
+    ...selectedSummary,
     manualBackupAvailable: Boolean(manualBackup?.config?.access_token),
     centralConnection: central?.connection || null,
     error: centralError || null
@@ -1322,7 +1370,44 @@ function unwrapHandoffMeta(handoff = {}) {
   return handoff?.payload?.meta || handoff?.meta || handoff?.payload || handoff || {}
 }
 
-export async function completeMetaOAuthConnection({
+function chooseAutomaticMetaSelection(discovered, pageSecrets = {}, previousConfig = null) {
+  const pageCanOperate = page => {
+    const secrets = pageSecrets?.[cleanString(page?.id)] || {}
+    if (!cleanString(secrets.pageAccessToken) || !cleanString(secrets.pageAppSecretProof)) return false
+    if (!page?.tasksAvailable) return true
+    const tasks = new Set(toStringArray(page.tasks).map(task => task.toUpperCase()))
+    return META_REQUIRED_PAGE_TASKS.every(task => tasks.has(task))
+  }
+  const usablePages = discovered.pages.filter(pageCanOperate)
+  const previousPageId = cleanString(previousConfig?.page_id)
+  const page = usablePages.find(item => cleanString(item.id) === previousPageId) || usablePages[0] || null
+  const previousInstagramId = cleanString(previousConfig?.instagram_account_id)
+  const instagram = page?.instagramAccounts?.find(item => cleanString(item.id) === previousInstagramId)
+    || page?.instagramAccounts?.[0]
+    || null
+
+  const previousAdAccountId = normalizeAdAccountId(previousConfig?.ad_account_id)
+  const adAccount = discovered.adAccounts.find(item => normalizeAdAccountId(item.id) === previousAdAccountId)
+    || discovered.adAccounts[0]
+    || null
+  const previousPixelId = cleanString(previousConfig?.pixel_id)
+  const dataset = discovered.datasets.find(item => cleanString(item.id) === previousPixelId) || null
+  const businessId = cleanString(
+    dataset?.businessId || adAccount?.businessId || page?.businessId || discovered.defaults?.businessId
+  )
+
+  return {
+    businessId,
+    adAccountId: normalizeAdAccountId(adAccount?.id),
+    // Un Dataset activa envíos server-side. Sólo se conserva cuando ya estaba
+    // elegido; la primera conexión no adivina cuál quiere usar el negocio.
+    pixelId: dataset?.id || '',
+    pageId: page?.id || '',
+    instagramAccountId: instagram?.id || ''
+  }
+}
+
+export async function prepareMetaOAuthConnection({
   code = '',
   configId = '',
   handoffToken = '',
@@ -1364,11 +1449,13 @@ export async function completeMetaOAuthConnection({
       'META_OAUTH_REQUIRED_ASSETS_MISSING'
     )
   }
+  const pageSecrets = extractPageSecrets(handoffMeta.assets)
+  const previousConfig = await getMetaConfig().catch(() => null)
   const pendingPayload = {
     id: crypto.randomUUID(),
     accessToken,
     appSecretProof: cleanString(handoffMeta.appsecret_proof || handoffMeta.appSecretProof),
-    pageSecrets: extractPageSecrets(handoffMeta.assets),
+    pageSecrets,
     connectionMode: discovered.connectionMode,
     source: cleanString(handoffMeta.source) || discovered.connectionMode,
     debugTokenType: cleanString(handoffMeta.debug_token_type || handoffMeta.debugTokenType).toUpperCase(),
@@ -1383,10 +1470,23 @@ export async function completeMetaOAuthConnection({
     adAccounts: discovered.adAccounts,
     datasets: discovered.datasets,
     pages: discovered.pages,
-    defaults: discovered.defaults
+    defaults: chooseAutomaticMetaSelection(discovered, pageSecrets, previousConfig)
   }
   const session = await createPendingSession(pendingPayload)
   return sanitizeSessionData({ ...pendingPayload, id: session.id }, session.expiresAt)
+}
+
+/**
+ * Flujo público de conexión: reclamar handoff, elegir defaults seguros y
+ * persistir todo en una sola petición. La sesión temporal existe únicamente
+ * para rollback/idempotencia interna; nunca es un paso para el usuario.
+ */
+export async function completeMetaOAuthConnection(options = {}) {
+  const session = await prepareMetaOAuthConnection(options)
+  return finalizeMetaOAuthConnection({
+    sessionId: session.sessionId,
+    publicBaseUrl: options.publicBaseUrl
+  })
 }
 
 export async function prepareMetaOAuthReconfiguration() {
