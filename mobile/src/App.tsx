@@ -22501,9 +22501,12 @@ function NativeConversationScreen({
       || businessPhones[0]
       || null;
     const qrReady = isBusinessPhoneQrReady(phone);
-    const apiUnavailable = Boolean(phone) && phone?.api_send_enabled === false;
+    const apiUnavailable = Boolean(phone) && (
+      phone?.availability?.apiAvailable === false
+      || phone?.api_send_enabled === false
+    );
     const replyWindowOpen = getNativeApiReplyWindowOpen(messagesRef.current);
-    const transport: 'qr' | 'api' = qrReady && (!replyWindowOpen || apiUnavailable) ? 'qr' : 'api';
+    const transport: 'qr' | 'api' = qrReady && apiUnavailable ? 'qr' : 'api';
     return { phone, qrReady, apiUnavailable, replyWindowOpen, transport };
   }, [businessPhones, selectedRoutePhoneNumberId]);
   const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0 || paymentLinkDraftPreview);
@@ -22845,9 +22848,8 @@ function NativeConversationScreen({
     sendLockedRef.current = true;
     setSending(true);
 
-    // Resolve the WhatsApp transport (qr/api) and the 24h reply-window gate,
-    // mirroring /movil's resolvedTransport so QR-only numbers and closed-window
-    // chats route correctly instead of failing at the backend.
+    // Resuelve el transporte sin usar la ventana como selector: API activa
+    // manda por API; QR sólo es primario cuando esa API no está disponible.
     const contactChannelKind = getContactChannelKind(contact);
     const isCommentContact = contactChannelKind === 'facebook_comment' || contactChannelKind === 'instagram_comment';
     const privateCommentReply = !selectedCommentReplyTarget &&
@@ -22860,9 +22862,9 @@ function NativeConversationScreen({
         : undefined;
     const sendingWhatsApp = selectedRouteChannel === 'whatsapp';
     const whatsAppSend = sendingWhatsApp ? resolveWhatsAppSendTransport() : null;
-    if (whatsAppSend && !whatsAppSend.replyWindowOpen && !whatsAppSend.qrReady) {
-      // No API window and no QR fallback: free text can't be delivered. Route the
-      // user to the (already available) templates sheet, like /movil does.
+    if (whatsAppSend && !whatsAppSend.replyWindowOpen && !whatsAppSend.apiUnavailable) {
+      // Con API operativa, una ventana cerrada exige plantilla oficial aunque
+      // exista QR conectado como respaldo.
       sendLockedRef.current = false;
       setSending(false);
       openTemplatesSheet();
@@ -23740,9 +23742,8 @@ function NativeConversationScreen({
       Alert.alert('Programar mensaje', channelUnavailableReason);
       return;
     }
-    // Resolve the WhatsApp transport and enforce the 24h reply window for the
-    // FUTURE send time, mirroring /movil: a free-text message scheduled past the
-    // window can't be delivered via API without a QR fallback.
+    // La ventana futura nunca cambia el transporte. Con API disponible exige
+    // plantilla; QR sólo queda habilitado si esa API ya no está disponible.
     let scheduledTransport: 'qr' | 'api' | undefined;
     if (selectedRouteChannel === 'whatsapp') {
       const whatsAppSend = resolveWhatsAppSendTransport();
@@ -23750,8 +23751,8 @@ function NativeConversationScreen({
       const lastInbound = getNativeLastReplyWindowInboundTime(messagesRef.current);
       const windowEnd = lastInbound ? lastInbound + 24 * 60 * 60 * 1000 : 0;
       const scheduledWithinWindow = windowEnd > 0 && scheduledDate.getTime() < windowEnd;
-      if (!whatsAppSend.qrReady && !scheduledWithinWindow) {
-        const reason = 'Para esa hora WhatsApp ya no permitirá un mensaje libre. Programa una plantilla aprobada o conecta este número por QR.';
+      if (!whatsAppSend.apiUnavailable && !scheduledWithinWindow) {
+        const reason = 'Para esa hora WhatsApp ya no permitirá un mensaje libre. Programa una plantilla aprobada.';
         setScheduleError(reason);
         Alert.alert('Programar mensaje', reason);
         return;

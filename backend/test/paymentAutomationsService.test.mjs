@@ -274,7 +274,7 @@ async function withOnlyQrPaymentSender(callback, { includeApiSender = false } = 
     ])
 
     setBaileysRuntimeForTest(createFakeBaileysRuntime(connectedJid, sentMessages))
-    return await callback({ phoneNumberId, sentMessages })
+    return await callback({ phoneNumberId, apiPhoneNumberId, businessPhone, sentMessages })
   } finally {
     resetWhatsAppQrServiceForTest()
     await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
@@ -389,6 +389,7 @@ async function createPaymentFixture({
   const phoneDigits = String([...String(suffix)].reduce((sum, char) => sum + char.charCodeAt(0), 0))
     .padEnd(8, '0')
     .slice(0, 8)
+  const phone = `+52155${phoneDigits}`
 
   await db.run(`
     INSERT INTO contacts (
@@ -396,7 +397,7 @@ async function createPaymentFixture({
     ) VALUES (?, ?, ?, 'Maria Lopez', 'Maria', 'Lopez', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     contactId,
-    `+52155${phoneDigits}`,
+    phone,
     `${contactId}@example.test`
   ])
 
@@ -418,7 +419,7 @@ async function createPaymentFixture({
     updatedAt || new Date().toISOString()
   ])
 
-  return { contactId, paymentId }
+  return { contactId, paymentId, phone }
 }
 
 async function cleanupFixtures(ids = []) {
@@ -515,12 +516,30 @@ test('envia recordatorio de pago como mensaje directo por WhatsApp API', async (
   })
 })
 
-test('envia recordatorio de pago por WhatsApp QR solo aunque exista API', async () => {
+test('un canal QR configurado no brinca una API activa del mismo número', async () => {
   await withYCloudCapture(async (captures) => {
-    await withOnlyQrPaymentSender(async ({ sentMessages }) => {
+    await withOnlyQrPaymentSender(async ({ apiPhoneNumberId, businessPhone, sentMessages }) => {
       const fixture = await createPaymentFixture({ status: 'pending', suffix: 'directqr1' })
 
       try {
+        await db.run(`
+          INSERT INTO whatsapp_api_messages (
+            id, provider, origin, business_phone_number_id, contact_id, phone,
+            from_phone, to_phone, business_phone, transport, direction,
+            message_type, message_text, status, message_timestamp,
+            created_at, updated_at
+          ) VALUES (?, 'ycloud', 'test_open_window', ?, ?, ?, ?, ?, ?, 'api',
+            'inbound', 'text', 'Hola', 'received', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `, [
+          `wa_payment_qr_route_${fixture.paymentId}`,
+          apiPhoneNumberId,
+          fixture.contactId,
+          fixture.phone,
+          fixture.phone,
+          businessPhone,
+          businessPhone,
+          new Date().toISOString()
+        ])
         await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
           automations: {
             remindersEnabled: true,
@@ -533,10 +552,11 @@ test('envia recordatorio de pago por WhatsApp QR solo aunque exista API', async 
         const result = await sendPaymentAutomationMessage('reminder', fixture.paymentId)
         assert.equal(result.sent, true)
         assert.deepEqual(result.channels, ['whatsapp_qr'])
-        assert.equal(captures.length, 0)
-        assert.equal(sentMessages.length, 1)
-        assert.match(sentMessages[0].payload.text, /QR pago para Maria/)
-        assert.match(sentMessages[0].payload.text, /https:\/\/pagos\.example\.test\/pay\/pay_auto_directqr1/)
+        assert.equal(captures.length, 1)
+        assert.equal(captures[0].type, 'text')
+        assert.match(captures[0].text.body, /QR pago para Maria/)
+        assert.match(captures[0].text.body, /https:\/\/pagos\.example\.test\/pay\/pay_auto_directqr1/)
+        assert.equal(sentMessages.length, 0)
 
         const storedMessage = await db.get(`
           SELECT transport, message_type, message_text
@@ -545,7 +565,7 @@ test('envia recordatorio de pago por WhatsApp QR solo aunque exista API', async 
           ORDER BY created_at DESC
           LIMIT 1
         `, [fixture.contactId])
-        assert.equal(storedMessage.transport, 'qr')
+        assert.equal(storedMessage.transport, 'api')
         assert.equal(storedMessage.message_type, 'text')
 
         const dispatch = await db.get(

@@ -877,7 +877,7 @@ test('envío API convierte un MP3 real, sube OGG/Opus decodificable y manda Medi
         const raw = JSON.parse(row.raw_payload_json)
         assert.equal(raw.audio.id, captures.uploads[0].mediaId)
         assert.equal(raw.audio.providerMimeType, 'audio/ogg; codecs=opus')
-        assert.equal(raw.audio.asyncQrFallbackAllowed, false)
+        assert.equal(raw.audio.asyncQrFallbackAllowed, undefined)
         assert.equal(raw.audio.deliveryMediaAssetId, undefined)
         assert.equal(raw.audio.previewMediaAssetId, previewMediaAssetId)
       } finally {
@@ -1096,6 +1096,97 @@ test('Meta Direct envía la nota de voz por Graph API con audio.link y voice', a
       assert.equal(raw.audio.deliveryUrl, audioUrl)
     } finally {
       await db.run('DELETE FROM whatsapp_api_messages WHERE id = ? OR wamid = ? OR phone = ? OR to_phone = ?', [inboundId, 'wamid.meta_audio_1', to, to]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, to]).catch(() => undefined)
+    }
+  })
+})
+
+test('Meta Direct envía foto, documento, video y ubicación sin pasar por YCloud', async () => {
+  await withMetaDirectAudioCapture(async ({ captures, businessPhone, phoneNumberId }) => {
+    const suffix = randomUUID()
+    const to = `+52158${Date.now().toString().slice(-8)}`
+    const contactId = `meta_media_contact_${suffix}`
+    const inboundId = `meta_media_inbound_${suffix}`
+    const imageUrl = 'https://cdn.example.test/chat/foto.jpg'
+    const documentUrl = 'https://cdn.example.test/chat/documento.pdf'
+    const videoUrl = 'https://cdn.example.test/chat/video.mp4'
+
+    try {
+      await db.run(`
+        INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+        VALUES (?, ?, 'Cliente Meta Media', 'Cliente', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [contactId, to])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, meta_message_id, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'meta_direct', ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text',
+          'Ventana abierta', 'received', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [inboundId, inboundId, contactId, to, to, businessPhone, businessPhone, phoneNumberId])
+
+      await sendWhatsAppApiImageMessage({
+        to,
+        from: businessPhone,
+        contactId,
+        phoneNumberId,
+        imageUrl,
+        caption: 'Foto Meta',
+        externalId: `meta-image-${suffix}`,
+        allowQrFallback: false
+      })
+      await sendWhatsAppApiDocumentMessage({
+        to,
+        from: businessPhone,
+        contactId,
+        phoneNumberId,
+        documentUrl,
+        filename: 'documento.pdf',
+        mimeType: 'application/pdf',
+        externalId: `meta-document-${suffix}`,
+        allowQrFallback: false
+      })
+      await sendWhatsAppApiVideoMessage({
+        to,
+        from: businessPhone,
+        contactId,
+        phoneNumberId,
+        videoUrl,
+        caption: 'Video Meta',
+        externalId: `meta-video-${suffix}`,
+        allowQrFallback: false
+      })
+      await sendWhatsAppApiLocationMessage({
+        to,
+        from: businessPhone,
+        contactId,
+        phoneNumberId,
+        latitude: 31.6904,
+        longitude: -106.4245,
+        name: 'Ristak',
+        externalId: `meta-location-${suffix}`,
+        allowQrFallback: false
+      })
+
+      assert.deepEqual(captures.map(item => item.type), ['image', 'document', 'video', 'location'])
+      assert.deepEqual(captures[0].image, { link: imageUrl, caption: 'Foto Meta' })
+      assert.deepEqual(captures[1].document, { link: documentUrl, filename: 'documento.pdf' })
+      assert.deepEqual(captures[2].video, { link: videoUrl, caption: 'Video Meta' })
+      assert.equal(captures[3].location.latitude, 31.6904)
+
+      const rows = await db.all(`
+        SELECT provider, source_adapter, ycloud_message_id, message_type
+        FROM whatsapp_api_messages
+        WHERE contact_id = ? AND direction = 'outbound'
+        ORDER BY created_at ASC
+      `, [contactId])
+      assert.deepEqual(rows.map(row => row.message_type).sort(), ['document', 'image', 'location', 'video'])
+      assert.equal(rows.every(row => row.provider === 'meta_direct'), true)
+      assert.equal(rows.every(row => row.source_adapter === 'meta_direct'), true)
+      assert.equal(rows.every(row => row.ycloud_message_id === null), true)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR id = ? OR phone = ? OR to_phone = ?', [contactId, inboundId, to, to]).catch(() => undefined)
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)
       await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, to]).catch(() => undefined)
     }

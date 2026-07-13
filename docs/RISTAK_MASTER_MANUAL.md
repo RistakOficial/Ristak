@@ -566,11 +566,18 @@ emisor, WABA y disponibilidad desde esa fila; la preferencia global histórica
 Una fila solamente QR usa Baileys. Si el mismo teléfono también tiene una fila
 oficial sana, API conserva prioridad aunque una ruta histórica solicite QR; esa
 sesión queda como respaldo. Si la API está indisponible y ese mismo número tiene
-respaldo QR listo, el mensaje puede salir por QR. Un rechazo HTTP
-4xx permite respaldo; un timeout, error de red o 5xx no lo dispara
-automáticamente porque la API pudo aceptar el mensaje y se evitarían dobles
-envíos. Cuando Meta pierde permisos, sólo su fila queda inactiva y YCloud/QR
-continúan operando.
+respaldo QR listo, el mensaje puede salir por QR únicamente cuando la solicitud
+lo autorizó. La ventana de 24 horas, una plantilla no aprobada, errores de
+contenido o destinatario, `131047`, `131053`, timeout, red o HTTP 5xx jamás
+autorizan Baileys. La ventana cerrada exige plantilla oficial. Sólo una
+indisponibilidad inequívoca del transporte (desconexión, autorización perdida,
+suspensión/restricción o límite confirmado) permite el respaldo. Cuando Meta
+pierde permisos, sólo su fila queda inactiva y YCloud/QR continúan operando.
+
+Un webhook sólo concilia estado y puede marcar la API como restringida para
+solicitudes futuras; nunca origina por sí mismo un reenvío QR. Campañas y
+acciones masivas usan `allowQrFallback=false`: si la API falla, el lote registra
+el error y se detiene sin derramarse a Baileys.
 
 En Meta directo, la respuesta síncrona de Graph se guarda como el mensaje
 saliente real con su texto, `wamid`, `meta_message_id`, `contact_id` y
@@ -954,10 +961,9 @@ conservar ahí la extensión original `.mp3`
 después de convertir el archivo: mezclar bytes/MIME OGG con filename MP3 deja un
 contrato contradictorio para el procesador de media del proveedor.
 YCloud conserva el envío por su cola asíncrona con filtros de desuscritos y
-bloqueados. Si Meta devuelve `131053` en el webhook, el claim atómico existente
-activa una sola vez el respaldo QR/PTT cuando esa sesión está lista, sin duplicar
-la nota. Meta Direct usa `audio.link` con `voice=true` a través de Graph API,
-porque no atraviesa el importador de YCloud.
+bloqueados. Si Meta devuelve `131053`, la nota permanece fallida en transporte
+API y no se reenvía por QR. Meta Direct usa `audio.link` con `voice=true` a
+través de Graph API, porque no atraviesa el importador de YCloud.
 El bloque **Audio** conserva byte por byte los formatos normales que WhatsApp
 acepta (MP3/MPEG, M4A/MP4, AAC, AMR y OGG/Opus); WAV y WebM se normalizan a
 M4A/AAC reproducible, nunca a Opus/PTT. En WhatsApp API se envía sin `voice=true`
@@ -1191,8 +1197,9 @@ entrante del cliente para ese contacto y numero de negocio. Si la ventana de 24
 horas sigue abierta, los envios manuales del chat deben salir por la API oficial
 de esa fila aunque el frontend haya pedido `transport='qr'` por un calculo local
 incompleto. Si la ventana ya esta cerrada o no existe una respuesta entrante
-comprobable, no debe intentar la API: debe usar WhatsApp QR/Baileys directamente
-cuando exista un QR usable para ese número. Desktop y movil deben calcular el
+comprobable, no debe intentar un mensaje libre ni cambiar a QR: debe solicitar
+una plantilla oficial. QR sólo es primario cuando la API de ese número está
+indisponible o cuando se trata de un número QR standalone. Desktop y movil deben calcular el
 transporte antes de pintar el mensaje optimista, pero el backend es la autoridad
 final para evitar tanto que un QR previo secuestre conversaciones API como que
 una preferencia global vieja cruce YCloud y Meta directo. Las plantillas quedan
@@ -1206,10 +1213,12 @@ las vistas de revision/estado, pero no deben aparecer como opcion seleccionable
 en el flujo de envio.
 
 Los mensajes programados del chat deben guardar proveedor/canal de forma
-explicita. En movil, WhatsApp usa `provider='whatsapp_api'` con `transport='api'`
-y SMS usa `provider='highlevel'` con `channel='sms_qr'`; Messenger, Instagram y
-correo no se programan desde la app nativa hasta tener scheduler real para esos
-canales.
+explicita. En movil, WhatsApp usa `provider='whatsapp_api'`; `transport='api'`
+permanece mientras la API esté disponible y una hora futura fuera de ventana
+exige plantilla. `transport='qr'` sólo corresponde a un número QR standalone o
+a una API ya indisponible. SMS usa `provider='highlevel'` con
+`channel='sms_qr'`; Messenger, Instagram y correo no se programan desde la app
+nativa hasta tener scheduler real para esos canales.
 
 La sincronizacion historica de mensajeria es exhaustiva dentro de lo que cada
 proveedor realmente expone y siempre es idempotente. Al vincular WhatsApp QR,
@@ -1319,6 +1328,10 @@ historial interno si lo necesita para pintar la burbuja del chat en vez de
 mostrar solo el nombre del archivo o un audio roto. Las notas de voz son la
 excepcion deliberada: conservan un OGG/Opus público para entrega por enlace y
 otra variante reproducible para el historial.
+Meta Direct nunca usa el upload ni el endpoint de mensajes de YCloud: texto,
+plantilla, interactivo, ubicación, foto, documento, video y audio salen por
+Graph. Los archivos que nacen como bytes locales se publican primero en el
+storage HTTPS de Ristak y Graph recibe su `link`.
 Cuando una foto se envia directamente por WhatsApp QR/Baileys desde un archivo
 local o `dataUrl`, el envio puede usar el buffer privado de Baileys, pero el
 historial interno debe guardar una copia publica de preview en
@@ -1337,11 +1350,13 @@ y ACK se guardan como identidad/estado autoritativo separado y se fusionan en
 background dentro de ese mismo globo. El final del POST no debe cambiar la key
 visible, recargar toda la conversacion, desmontar la imagen ni mover el scroll;
 el siguiente SSE/poll silencioso solo completa los datos remotos.
-Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el eco saliente
-que WhatsApp Web emite para esa foto no debe crear una segunda burbuja `QR` con
-el texto generico `Foto`. En Coexistence, el WAMID de YCloud/Meta contiene la
-misma identidad interna que Baileys entrega como `key.id`; Ristak la guarda en
-`protocol_message_key_id` y ambos adaptadores hacen upsert sobre una sola fila.
+Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, Baileys no debe
+capturar tráfico vivo inbound ni outbound mientras la API oficial esté
+operativa; el webhook oficial es la única fuente y no aparece una burbuja QR
+transitoria. Los bloques de HistorySync sí se importan. En históricos, el WAMID
+de YCloud/Meta contiene la misma identidad interna que Baileys entrega como
+`key.id`; Ristak la guarda en `protocol_message_key_id` y ambos adaptadores hacen
+upsert sobre una sola fila.
 No se comparan texto, minuto, telefono, tipo de media ni hashes del archivo para
 decidir que dos globos son el mismo: dos mensajes iguales o dos envios del mismo
 archivo siguen separados cuando WhatsApp les dio IDs distintos. Al arrancar, la
@@ -1355,31 +1370,20 @@ el cuerpo visible, footer y acciones legibles y persistirlos en
 `whatsapp_api_messages.message_text` para que `/chat` y `/movil` pinten el mismo
 contenido que el usuario ve en WhatsApp.
 
-Cuando un envio saliente intenta WhatsApp API oficial por YCloud o Meta directo
-y la API lo rechaza por una
-restriccion recuperable o por la ventana de 24 horas, `whatsappApiService` debe
-usar WhatsApp QR/Baileys como respaldo si el numero tiene QR habilitado y
-conectado. Si el respaldo QR confirma el envio, el historial y la respuesta al
-frontend deben quedar como mensaje `qr` exitoso, sin exponer el error de la API
-en el globo del chat. La burbuja del chat debe mostrar solo el contenido y la
-etiqueta `QR`; la razon tecnica de ruteo/fallback no debe pintarse como nota
-debajo del mensaje cuando el envio QR fue exitoso. La ruta de fallback conserva
-la misma fila mediante su claim e identidad de despacho; no intenta enlazar un
-eco posterior porque tenga el mismo texto o haya llegado cerca. El fallo
-asíncrono de media `131053` en una nota de voz también
-debe usar este respaldo cuando el envío permitió QR: el webhook suele traer solo
-`audio.id`, así que el backend recupera de la fila original la URL de entrega o
-preview y reintenta una sola vez con `ptt=true`. Ante webhooks duplicados o
-concurrentes, un claim atómico en la fila del mensaje permite que sólo un proceso
-ejecute el respaldo QR. Si despues llega un
-webhook tardio de WhatsApp API con estado `failed` para un mensaje que ya quedo
-resuelto por QR, el historial debe conservar el transporte `qr` y mantener
-limpios esos campos de error. Solo se guarda error visible cuando no existe
-respaldo QR usable o cuando el respaldo QR tambien falla.
-Para media manual (foto, video, audio o documento), el fallback por ventana
-cerrada debe conservar el tipo real del contenido: una foto fuera de 24 horas se
-manda por WhatsApp QR como imagen, no como mensaje de texto ni como placeholder
-`Foto`.
+Cuando una solicitud saliente intenta WhatsApp API oficial por YCloud o Meta
+Direct y recibe una indisponibilidad inequívoca, `whatsappApiService` puede usar
+el QR asociado al mismo teléfono sólo si esa solicitud tenía
+`allowQrFallback=true`. La decisión y el envío ocurren dentro de esa única
+solicitud; ninguna capa superior vuelve a interpretar texto de errores y ningún
+webhook manda mensajes. Si el proveedor aceptó la solicitud y después reporta
+`failed`, se conserva el fallo API: no se crea un segundo envío silencioso.
+
+La ventana cerrada, una plantilla pendiente/rechazada, errores de contenido o
+media (`131053`) y errores de conversación (`131047`) no son indisponibilidad de
+la API y nunca cambian a QR. Para texto o media fuera de 24 horas, el flujo se
+detiene y ofrece una plantilla oficial. Si un fallback legítimo confirma el
+envío, el historial registra el transporte real `qr` y la UI muestra un solo
+globo; no se oculta una segunda fila para aparentar deduplicación.
 Una vez que Baileys devuelve `key.id`, el request manual responde `sent` sin
 esperar hasta 20 segundos por `delivered`/`read`. Los ACK posteriores se guardan
 en background y actualizan la misma fila; si el ACK llega antes del INSERT, el
@@ -1831,13 +1835,13 @@ Esta sección y todo su despacho en segundo plano requieren
 - `channel='whatsapp'` usa API oficial con plantillas aprobadas cuando hay
   remitente API conectado; QR solo entra como respaldo si el switch de respaldo
   esta activo o si no existe API y QR es la unica ruta disponible.
-- `channel='whatsapp_qr'` usa WhatsApp QR como canal principal aunque tambien
-  exista API conectada. En ese modo Ristak renderiza el mensaje como texto y no
-  exige aprobacion de Meta ni ventana de 24 horas.
+- `channel='whatsapp_qr'` usa QR como canal principal sólo para un remitente QR
+  standalone o con API indisponible. Si el mismo teléfono conserva API activa,
+  el backend sustituye la petición QR por API.
 - Los mensajes directos por WhatsApp API no sustituyen a las plantillas fuera de
-  la ventana permitida por Meta: solo salen si existe conversacion abierta de 24
-  horas o si QR queda como ruta principal/respaldo. Fuera de esa ventana, para
-  automatizaciones proactivas debe usarse plantilla aprobada o QR.
+  la ventana permitida por Meta: sólo salen si existe conversación abierta de
+  24 horas. Fuera de esa ventana debe usarse plantilla aprobada; QR sólo aplica
+  si la API dejó de estar disponible o el remitente es QR standalone.
 - WhatsApp registra el despacho en `payment_automation_dispatches` con
   `channel='whatsapp'` o `channel='whatsapp_qr'` segun la ruta elegida.
 - Correo electronico usa la conexion SMTP guardada en Configuracion > Integraciones
@@ -1885,11 +1889,12 @@ correo, o una solicitud que lo declara). "Por el canal que agendo" usa ese dato
 guardado y, si falla, prueba los demas canales disponibles. No deduce el canal
 desde el ultimo mensaje del contacto: eso podria pertenecer a otra conversacion.
 Las citas antiguas o formularios que no informan canal usan directamente la
-prioridad configurada. "Por canal disponible" siempre usa esa prioridad fija:
-WhatsApp API, WhatsApp QR, Instagram, Messenger y correo electronico.
+prioridad configurada. "Por canal disponible" hace un solo intento de WhatsApp:
+API si está disponible o QR si es standalone; después prueba Instagram,
+Messenger y correo electrónico.
 `channel='whatsapp'` usa WhatsApp API como ruta principal y QR solo como
-respaldo opcional. `channel='whatsapp_qr'` usa WhatsApp QR como ruta principal
-aunque tambien exista API conectada. En los dos canales de WhatsApp, el contenido
+respaldo opcional. `channel='whatsapp_qr'` usa QR como ruta principal sólo si la
+API del mismo teléfono no está disponible. En los dos canales de WhatsApp, el contenido
 puede ser `content_mode='template'` para seleccionar un mensaje guardado o
 `content_mode='direct'` para texto editable; en QR el mensaje guardado se renderiza
 como texto y no depende de aprobacion de Meta. En correo, Messenger e Instagram,
@@ -1909,16 +1914,16 @@ apagado, el mensaje queda como `message_type='reminder'` aunque su ancla sea
 
 Si solo hay WhatsApp QR conectado, recordatorios y avisos de cita envian el
 texto renderizado del mensaje por QR aunque la plantilla de WhatsApp API este
-pendiente o no exista remotamente. Si hay API y QR conectados, `whatsapp` sigue
-usando API como ruta principal y QR entra solo como respaldo cuando el switch de
-respaldo esta activo; `whatsapp_qr` usa QR como canal elegido y no muestra el
-switch de respaldo.
+pendiente o no exista remotamente. Si hay API y QR conectados para el mismo
+teléfono, API sigue como ruta principal incluso si una configuración histórica
+guardó `whatsapp_qr`; QR entra sólo ante indisponibilidad real y cuando el switch
+de respaldo autorizó esa solicitud.
 
 Los mensajes directos por WhatsApp API en citas tambien dependen de ventana de
 conversacion abierta de 24 horas. Si no existe una respuesta reciente del
 contacto, el envio libre por API falla de forma explicita; para mensajes
-proactivos fuera de ventana debe usarse plantilla aprobada o QR cuando este
-conectado y habilitado.
+proactivos fuera de ventana debe usarse plantilla aprobada. Tener QR conectado
+no evita esta regla mientras la API esté disponible.
 
 Cada par `reminder_id + appointment_id` se reclama en
 `appointment_reminder_sends` antes de enviar para evitar duplicados. Estados

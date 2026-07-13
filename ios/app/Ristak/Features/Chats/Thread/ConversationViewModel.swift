@@ -1028,14 +1028,21 @@ final class ConversationViewModel {
         return phone.isQRConnected && phone.qrSendEnabled
     }
 
-    /// Transporte resuelto para envíos libres WhatsApp (lógica /movil).
-    private func resolveWhatsAppTransport() -> WhatsAppSendTransport {
-        let phone = selectedWhatsAppPhone
-        let apiAvailable = (whatsAppStatus?.connected ?? false) && (phone?.apiSendEnabled ?? false)
-        if selectedPhoneQRReady && (!apiReplyWindowOpen || !apiAvailable) {
-            return .qr
+    private var selectedPhoneAPIAvailable: Bool {
+        guard let phone = selectedWhatsAppPhone else { return false }
+        if let availability = phone.availability {
+            return availability.apiAvailable
         }
-        return .api
+        return (whatsAppStatus?.connected ?? false) && phone.apiSendEnabled
+    }
+
+    /// QR sólo es transporte primario para un número QR standalone o cuando la
+    /// API oficial del mismo número dejó de estar disponible.
+    private func resolveWhatsAppTransport() -> WhatsAppSendTransport {
+        WhatsAppReplyWindowRules.resolveTransport(
+            apiAvailable: selectedPhoneAPIAvailable,
+            qrReady: selectedPhoneQRReady
+        )
     }
 
     private func presentTemplatesSheet(reason: String?) {
@@ -1145,8 +1152,12 @@ final class ConversationViewModel {
                 )
                 return
             }
-            // Ventana cerrada sin QR → forzar plantilla (doc 05 §1.1).
-            if !apiReplyWindowOpen && !selectedPhoneQRReady {
+            // Con API operativa, una ventana cerrada siempre exige plantilla.
+            // El QR conectado sigue siendo respaldo, no un atajo de política.
+            if WhatsAppReplyWindowRules.requiresOfficialTemplate(
+                apiAvailable: selectedPhoneAPIAvailable,
+                replyWindowOpen: apiReplyWindowOpen
+            ) {
                 presentTemplatesSheet(reason: WhatsAppReplyWindowRules.closedReason)
                 return
             }

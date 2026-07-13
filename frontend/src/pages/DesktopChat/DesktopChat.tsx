@@ -6712,10 +6712,10 @@ export const DesktopChat: React.FC = () => {
       activeContact.phone &&
       (whatsappConnected || selectedQrReady) &&
       !apiReplyWindowOpen &&
-      !selectedQrReady &&
+      nativeWhatsAppTransport === 'api' &&
       !sendAttachmentsThroughHighLevel
     ) {
-      showToast('warning', 'Usa plantilla o QR', 'La ventana de 24 horas está cerrada. Envía una plantilla aprobada o conecta QR para mensajes libres.')
+      showToast('warning', 'Usa una plantilla', 'La ventana de 24 horas está cerrada. Con WhatsApp API activa debes enviar una plantilla aprobada.')
       return
     }
 

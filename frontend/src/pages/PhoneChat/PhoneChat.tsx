@@ -6769,6 +6769,11 @@ export const PhoneChat: React.FC = () => {
   const apiReplyWindowOpen = isInsideReplyWindow(lastInboundForSelectedPhone?.date)
   const highLevelWhatsAppReplyWindowOpen = isInsideReplyWindow(lastInboundWhatsAppReplyWindowMessage?.date)
   const selectedQrReady = isBusinessPhoneQrReady(selectedBusinessPhone)
+  const selectedApiUnavailable = Boolean(selectedBusinessPhone) && (
+    selectedBusinessPhone?.availability?.apiAvailable === false ||
+    selectedBusinessPhone?.api_send_enabled === false ||
+    !whatsappConnected
+  )
   const outsideReplyWindow = Boolean(activeContact?.phone && !apiReplyWindowOpen)
   const inferredHighLevelChatChannel = useMemo(() => inferHighLevelChatChannel(activeContact, messages), [activeContact, messages])
   const activeContactHighLevelChannelOverride = activeContact?.id ? contactHighLevelChannelOverrides[activeContact.id] : undefined
@@ -6848,7 +6853,7 @@ export const PhoneChat: React.FC = () => {
     : sendingThroughMetaSocial
     ? Boolean(activeContact?.id)
     : Boolean(activeContact?.phone)
-  const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedQrReady && !sendingThroughHighLevel && !sendingThroughMetaSocial && !selectedCommentReplyTarget)
+  const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedApiUnavailable && !sendingThroughHighLevel && !sendingThroughMetaSocial && !selectedCommentReplyTarget)
   const composerTemplateOnlyMode = composerBlockedByReplyWindow
   const hasComposerText = Boolean(messageText.trim())
   const hasComposerContent = Boolean(hasComposerText || draftAttachments.length > 0 || voiceDraft)
@@ -6862,7 +6867,7 @@ export const PhoneChat: React.FC = () => {
       ? 'Preparando audio...'
     : voiceDraft
       ? 'Audio listo'
-      : composerTemplateOnlyMode || (outsideReplyWindow && selectedQrReady)
+      : composerTemplateOnlyMode
         ? ''
       : selectedChannelCanSend
         ? ''
@@ -12833,14 +12838,14 @@ export const PhoneChat: React.FC = () => {
         return
       }
 
-      transport = selectedQrReady && (!apiReplyWindowOpen || !whatsappConnected) ? 'qr' : 'api'
+      transport = selectedQrReady && selectedApiUnavailable ? 'qr' : 'api'
 
       if (transport === 'api' && !whatsappConnected) {
         setScheduleError('Conecta WhatsApp API antes de programar este mensaje.')
         return
       }
 
-      if (!apiReplyWindowOpen && !selectedQrReady) {
+      if (!apiReplyWindowOpen && transport === 'api') {
         setScheduleError('Para este chat necesitas mandar una plantilla antes de programar un mensaje libre.')
         return
       }
@@ -12851,8 +12856,8 @@ export const PhoneChat: React.FC = () => {
       }
 
       const lastInboundTime = parseSortableDateValue(lastInboundForSelectedPhone?.date)
-      if (transport === 'api' && !selectedQrReady && lastInboundTime && scheduledDate.getTime() > lastInboundTime + 24 * 60 * 60 * 1000) {
-        setScheduleError('Para esa hora WhatsApp ya no dejará responder así. Usa una plantilla o QR.')
+      if (transport === 'api' && lastInboundTime && scheduledDate.getTime() > lastInboundTime + 24 * 60 * 60 * 1000) {
+        setScheduleError('Para esa hora WhatsApp ya no dejará responder así. Usa una plantilla oficial.')
         return
       }
     }
@@ -13755,13 +13760,13 @@ export const PhoneChat: React.FC = () => {
       setNumberIssueOpen(true)
       return
     }
-    const apiUnavailableForSelected = Boolean(sendAvailability && !sendAvailability.apiAvailable)
+    const apiUnavailableForSelected = selectedApiUnavailable
     if (apiUnavailableForSelected && sendAvailability?.qrReady && selectedBusinessPhone?.id && !qrRiskAcceptedIds[selectedBusinessPhone.id]) {
       setQrRiskPhone(selectedBusinessPhone)
       return
     }
 
-    const resolvedTransport: 'api' | 'qr' = selectedQrReady && (transport === 'qr' || !apiReplyWindowOpen || !whatsappConnected || apiUnavailableForSelected)
+    const resolvedTransport: 'api' | 'qr' = selectedQrReady && apiUnavailableForSelected
       ? 'qr'
       : 'api'
 
@@ -13770,7 +13775,7 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (!apiReplyWindowOpen && !selectedQrReady) {
+    if (!apiReplyWindowOpen && resolvedTransport === 'api') {
       handleOpenTemplatesSheet()
       return
     }

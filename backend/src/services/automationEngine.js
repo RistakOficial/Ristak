@@ -4025,29 +4025,6 @@ async function resolveAutomationQrSender(preferredPhoneNumberId) {
   }
 }
 
-function shouldRetryWhatsAppAutomationViaQr(error) {
-  const message = cleanString(error?.message)
-  if (!message) return false
-  const normalized = message
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-
-  return (
-    normalized.includes('whatsapp_api no esta conectado') ||
-    normalized.includes('whatsapp api no esta conectado') ||
-    normalized.includes('falta el numero emisor') ||
-    normalized.includes('restricc') ||
-    normalized.includes('bloque') ||
-    normalized.includes('quality') ||
-    normalized.includes('messaging limit') ||
-    normalized.includes('customer service window') ||
-    normalized.includes('outside the 24') ||
-    normalized.includes('24 horas') ||
-    /\b(470|131021|131026|131047)\b/.test(normalized)
-  )
-}
-
 function whatsappTransportFromResult(result) {
   const transport = typeof result === 'string' ? result : result?.transport
   return cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
@@ -4071,20 +4048,10 @@ async function sendWhatsAppAutomationMessage({ send, allowQrFallback, qrPrimary 
     })
   }
 
-  try {
-    return await send({ phoneNumberId, fromPhone, transport: 'api', allowQrFallback })
-  } catch (error) {
-    if (!allowQrFallback || !shouldRetryWhatsAppAutomationViaQr(error)) throw error
-
-    const qrSender = await resolveAutomationQrSender(phoneNumberId)
-    logger.warn(`[Automatizaciones] WhatsApp API no disponible; usando QR como respaldo para ${description || 'mensaje'}: ${error.message}`)
-    return send({
-      phoneNumberId: qrSender.phoneNumberId,
-      fromPhone: qrSender.fromPhone,
-      transport: 'qr',
-      allowQrFallback: true
-    })
-  }
+  // La capa oficial clasifica el error y sólo ella puede autorizar el respaldo
+  // asociado al mismo número. Reintentar aquí por texto de error podía brincar
+  // a un QR ajeno o usar Baileys por ventana/contenido inválido.
+  return send({ phoneNumberId, fromPhone, transport: 'api', allowQrFallback })
 }
 
 async function sendWhatsAppBlocks(node, ctx) {

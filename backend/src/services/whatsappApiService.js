@@ -224,7 +224,11 @@ const API_FALLBACK_PHONE_STATUSES = new Set([
   'MIGRATED'
 ])
 const QR_FALLBACK_READY_STATUSES = new Set(['connected', 'reconnecting', 'restarting', 'connection_replaced'])
-const API_FALLBACK_ERROR_PATTERN = /\b(WABA|BUSINESS ACCOUNT|PHONE NUMBER|SENDER|FROM|ACCOUNT|QUALITY|MESSAGING LIMIT|RATE.?LIMIT|RESTRICT|BANNED|BLOCKED|DISABLED|SUSPENDED|LOCKED|NOT ALLOWED|NOT_ALLOWED|CUSTOMER SERVICE WINDOW|24.?HOUR|24 HORAS|OUTSIDE.*WINDOW)\b/i
+// El respaldo QR sólo puede activarse cuando la API oficial dejó de ser un
+// transporte utilizable para ESE número/cuenta. Los errores de conversación
+// (ventana de 24 h), destinatario, contenido o validación no autorizan Baileys.
+const API_FALLBACK_ERROR_PATTERN = /\b(MESSAGING LIMIT|RATE.?LIMIT|RESTRICT(?:ED|ION)?|BANNED|BLOCKED|DISABLED|SUSPENDED|LOCKED|NOT ALLOWED|NOT_ALLOWED|DISCONNECTED|MIGRATED)\b/i
+const API_CONNECTION_ERROR_PATTERN = /\b(ACCESS TOKEN|OAUTH|AUTHENTICATION|AUTHORIZATION|MISSING PERMISSIONS?|PERMISSION DENIED|UNSUPPORTED POST REQUEST|OBJECT .* DOES NOT EXIST|NOT CONNECTED|NO EST[AÁ] CONECTAD[OA]|NO SE ENCUENTRA CONECTAD[OA])\b/i
 const API_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(RECIPIENT|CUSTOMER|USER|DESTINATION|TO PHONE|UNSUBSCRIBED|OPTED.?OUT|BLOCKED BY USER|USER BLOCKED)\b/i
 
 const REQUIRED_WEBHOOK_EVENTS = [
@@ -3498,8 +3502,8 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
 
   // Una fila QR puede representar el respaldo del mismo número que vive en una
   // fila API separada. Si la API oficial está realmente disponible, esa fila es
-  // la autoridad de salida y QR queda reservado para un rechazo definitivo o
-  // una ventana de 24 horas cerrada.
+  // la autoridad de salida. La ventana de 24 horas nunca cambia el transporte:
+  // exige plantilla oficial y QR permanece reservado para indisponibilidad real.
   if (cleanString(requestedPhoneRow?.provider).toLowerCase() === 'qr') {
     const requestedPhones = getPhoneRowMatchValues(requestedPhoneRow)
     const officialRows = requestedPhones.length
@@ -3809,12 +3813,8 @@ function getOfficialApiRestrictionErrorReason(error) {
   if (API_FALLBACK_ERROR_PATTERN.test(text)) {
     return 'WhatsApp API rechazó el envío por restricción o límite.'
   }
-  // Un 4xx es un rechazo definitivo del proveedor: es seguro intentar el QR
-  // porque la API confirmó que no aceptó el mensaje. No hacemos esto con 5xx,
-  // timeouts o errores de red, donde el proveedor pudo aceptarlo y responder
-  // tarde; ahí un fallback automático podría mandar el mensaje dos veces.
-  if (statusCode >= 400 && statusCode < 500) {
-    return 'WhatsApp API rechazó el envío.'
+  if ([401, 403, 404].includes(statusCode) || API_CONNECTION_ERROR_PATTERN.test(text)) {
+    return 'WhatsApp API perdió autorización o conexión para este número.'
   }
   return ''
 }
@@ -3858,13 +3858,13 @@ async function getOfficialApiFallbackDecision({
     : ''
   const signalReason = await getOfficialApiRestrictionReason({ phoneRow, config })
   const errorReason = error ? getOfficialApiRestrictionErrorReason(error) : ''
-  // La ventana de 24 horas también amerita respaldo QR, pero es un asunto de
-  // ESTA conversación: decide el fallback sin marcar nada como restringido.
   const windowReason = error && !errorReason ? getOfficialApiConversationWindowReason(error) : ''
   const preflightWindowReason = !error && checkReplyWindow
     ? await getOfficialApiClosedReplyWindowReason({ contactId, toPhone, fromPhone, phoneNumberId })
     : ''
-  const reason = errorReason || windowReason || unavailableReason || signalReason || preflightWindowReason
+  // La ventana cerrada exige plantilla oficial. Nunca es una autorización para
+  // cambiar silenciosamente de API a QR.
+  const reason = errorReason || unavailableReason || signalReason
   const fallbackPhoneRow = reason
     ? await findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow })
     : null
@@ -3874,9 +3874,15 @@ async function getOfficialApiFallbackDecision({
     fallbackPhoneRow,
     reason,
     unavailableReason,
+    windowReason,
     preflightWindowReason,
     shouldFallback: Boolean(reason && fallbackPhoneRow?.id),
-    shouldBlockOfficialApi: Boolean((unavailableReason || preflightWindowReason) && !fallbackPhoneRow?.id)
+    shouldBlockOfficialApi: Boolean(
+      windowReason ||
+      preflightWindowReason ||
+      ((unavailableReason || signalReason) && !fallbackPhoneRow?.id)
+    ),
+    blockReason: windowReason || preflightWindowReason || ''
   }
 }
 
@@ -3900,14 +3906,14 @@ async function shouldPreferOfficialApiOverRequestedQr({
     phoneNumberId,
     toPhone,
     contactId,
-    checkReplyWindow: true
+    checkReplyWindow: false
   })
   return !decision.reason
 }
 
 function throwIfOfficialApiBlockedByReplyWindow(decision = {}) {
   if (!decision.shouldBlockOfficialApi) return
-  throw new Error(decision.reason || 'La conversación está fuera de la ventana de 24 horas; usa una plantilla o QR.')
+  throw new Error(decision.blockReason || decision.reason || 'WhatsApp API no está disponible para este número.')
 }
 
 async function activateOfficialApiRestrictionFromFailedMessage({ normalizedMessage, businessPhoneNumberId, businessPhone, reason } = {}) {
@@ -3936,298 +3942,6 @@ async function activateOfficialApiRestrictionFromFailedMessage({ normalizedMessa
       raw: { message: normalizedMessage }
     })
   }
-}
-
-const QR_FALLBACK_CLAIM_PREFIX = '__ristak_qr_fallback_claim__:'
-const QR_FALLBACK_CLAIM_STALE_MS = 2 * 60 * 1000
-
-async function claimFailedOfficialApiMessageForQrFallback({ messageId, routingReason = '' } = {}) {
-  const cleanMessageId = cleanString(messageId)
-  const previousRoutingReason = cleanString(routingReason)
-  if (!cleanMessageId) return { acquired: false, token: '', previousRoutingReason }
-
-  if (previousRoutingReason.startsWith(QR_FALLBACK_CLAIM_PREFIX)) {
-    const claimedAt = Number(previousRoutingReason.slice(QR_FALLBACK_CLAIM_PREFIX.length).split(':')[0])
-    if (Number.isFinite(claimedAt) && Date.now() - claimedAt < QR_FALLBACK_CLAIM_STALE_MS) {
-      return { acquired: false, token: '', previousRoutingReason }
-    }
-  }
-
-  const token = `${QR_FALLBACK_CLAIM_PREFIX}${Date.now()}:${crypto.randomUUID()}`
-  const result = await db.run(`
-    UPDATE whatsapp_api_messages
-    SET routing_reason = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-      AND LOWER(COALESCE(transport, '')) = 'api'
-      AND COALESCE(routing_reason, '') = ?
-  `, [token, cleanMessageId, previousRoutingReason])
-
-  return {
-    acquired: Number(result?.changes || 0) > 0,
-    token,
-    previousRoutingReason
-  }
-}
-
-async function releaseFailedOfficialApiMessageQrFallbackClaim({ messageId, token, previousRoutingReason = '' } = {}) {
-  if (!cleanString(messageId) || !cleanString(token)) return
-  await db.run(`
-    UPDATE whatsapp_api_messages
-    SET routing_reason = NULLIF(?, ''), updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND routing_reason = ?
-  `, [cleanString(previousRoutingReason), cleanString(messageId), cleanString(token)]).catch(() => undefined)
-}
-
-async function retryFailedOfficialApiMessageViaQr({
-  normalizedMessage,
-  identity,
-  businessPhoneNumberId,
-  messageId,
-  messageType,
-  messageText,
-  reason,
-  existingMessage,
-  agentMetadata = {}
-} = {}) {
-  const previousTransport = cleanString(existingMessage?.transport).toLowerCase()
-  const currentStatus = cleanString(normalizedMessage?.status).toLowerCase()
-  const previousStatus = cleanString(existingMessage?.status).toLowerCase()
-  if (
-    (previousTransport === 'qr' && cleanString(existingMessage?.routing_reason)) ||
-    (currentStatus !== 'failed' && previousStatus !== 'failed')
-  ) return null
-
-  const phoneRow = await findQrFallbackPhoneRowForSender({
-    phoneNumberId: businessPhoneNumberId,
-    fromPhone: identity?.businessPhone || normalizedMessage?.from
-  })
-  if (!phoneRow?.id) {
-    logger.warn(`[WhatsApp API] Cuenta restringida pero QR no está listo para ${identity?.businessPhone || normalizedMessage?.from || 'número desconocido'}`)
-    return null
-  }
-
-  const fromPhone = identity?.businessPhone || normalizedMessage?.from
-  const toPhone = identity?.phone || normalizedMessage?.to
-  const fallbackExternalId = `${cleanString(normalizedMessage?.externalId || messageId) || hashId('waapi_failed', safeJson(normalizedMessage))}-qr-fallback`
-  const cleanMessageType = cleanString(messageType).toLowerCase()
-  const existingPayload = parseJsonValue(existingMessage?.raw_payload_json, {}) || {}
-  const existingMedia = isPlainObject(existingPayload?.[cleanMessageType])
-    ? existingPayload[cleanMessageType]
-    : isPlainObject(existingPayload?.whatsappMessage?.[cleanMessageType])
-      ? existingPayload.whatsappMessage[cleanMessageType]
-      : {}
-
-  // El webhook puede llegar repetido o en paralelo desde YCloud/Meta. El claim
-  // CAS vive en la misma fila del mensaje, así que sólo un proceso puede mandar
-  // el respaldo por Baileys; los demás observan el token y no duplican la nota.
-  const fallbackClaim = await claimFailedOfficialApiMessageForQrFallback({
-    messageId,
-    routingReason: existingMessage?.routing_reason
-  })
-  if (!fallbackClaim.acquired) return null
-  let fallbackWasSent = false
-
-  try {
-    let fallbackResponse = null
-    if (['text', 'interactive', 'template'].includes(cleanMessageType) && messageText) {
-      fallbackResponse = await sendTextViaQrFallback({
-        phoneNumberId: phoneRow.id,
-        fromPhone,
-        toPhone,
-        body: messageText,
-        externalId: fallbackExternalId,
-        fallbackReason: reason,
-        persist: false
-      })
-    } else if (cleanMessageType === 'location') {
-      const location = normalizeWhatsAppLocation(normalizedMessage?.location || {})
-      if (!location) return null
-      fallbackResponse = await sendLocationViaQrFallback({
-        phoneNumberId: phoneRow.id,
-        fromPhone,
-        toPhone,
-        location,
-        externalId: fallbackExternalId,
-        fallbackReason: reason,
-        persist: false
-      })
-    } else if (cleanMessageType === 'image') {
-      const image = normalizedMessage?.image || {}
-      const link = cleanString(image.link || image.url)
-      if (!link) return null
-      fallbackResponse = await sendImageViaQrFallback({
-        phoneNumberId: phoneRow.id,
-        fromPhone,
-        toPhone,
-        requestImage: {
-          link,
-          ...(image.caption ? { caption: image.caption } : {})
-        },
-        externalId: fallbackExternalId,
-        fallbackReason: reason,
-        persist: false
-      })
-    } else if (cleanMessageType === 'audio') {
-      const audio = normalizedMessage?.audio || {}
-      // El webhook tardío de YCloud sólo devuelve `audio.id`; el enlace de
-      // entrega y el preview reproducible viven en la fila que guardamos al
-      // enviar. Recuperarlos permite que 131053 sí tenga respaldo QR.
-      const link = cleanString(
-        audio.link ||
-        audio.url ||
-        audio.deliveryUrl ||
-        audio.deliveryLink ||
-        existingMedia.deliveryUrl ||
-        existingMedia.deliveryLink ||
-        existingMedia.link ||
-        existingMedia.url ||
-        existingMessage?.media_url
-      )
-      if (!link) return null
-      const inlineAudioDataUrl = /^data:audio\//i.test(link) ? link : ''
-      const isVoiceNote = audio.voice === true || audio.ptt === true ||
-        existingMedia.voice === true || existingMedia.ptt === true
-      fallbackResponse = await sendAudioViaQrFallback({
-        phoneNumberId: phoneRow.id,
-        fromPhone,
-        toPhone,
-        requestAudio: {
-          ...(inlineAudioDataUrl ? {} : { link }),
-          ...(isVoiceNote ? { voice: true } : {}),
-          ...(existingMedia.mimeType || existingMessage?.media_mime_type
-            ? { mimeType: existingMedia.mimeType || existingMessage.media_mime_type }
-            : {})
-        },
-        audioDataUrl: inlineAudioDataUrl || undefined,
-        externalId: fallbackExternalId,
-        fallbackReason: reason,
-        durationMs: existingMedia.durationMs || existingMessage?.media_duration_ms,
-        persist: false
-      })
-    } else if (cleanMessageType === 'document') {
-      const document = normalizedMessage?.document || {}
-      const link = cleanString(document.link || document.url)
-      if (!link) return null
-      fallbackResponse = await sendDocumentViaQrFallback({
-        phoneNumberId: phoneRow.id,
-        fromPhone,
-        toPhone,
-        requestDocument: {
-          link,
-          ...(document.caption ? { caption: document.caption } : {}),
-          ...(document.filename || document.fileName ? { filename: document.filename || document.fileName } : {}),
-          ...(document.mimeType || document.mimetype ? { mimeType: document.mimeType || document.mimetype } : {})
-        },
-        externalId: fallbackExternalId,
-        fallbackReason: reason,
-        persist: false
-      })
-    } else if (cleanMessageType === 'video') {
-      const video = normalizedMessage?.video || {}
-      const link = cleanString(video.link || video.url)
-      if (!link) return null
-      fallbackResponse = await sendVideoViaQrFallback({
-        phoneNumberId: phoneRow.id,
-        fromPhone,
-        toPhone,
-        requestVideo: {
-          link,
-          ...(video.caption ? { caption: video.caption } : {}),
-          ...(video.mimeType || video.mimetype ? { mimeType: video.mimeType || video.mimetype } : {})
-        },
-        externalId: fallbackExternalId,
-        fallbackReason: reason,
-        persist: false
-      })
-    }
-
-    if (!fallbackResponse) return null
-    fallbackWasSent = true
-    const applied = await applyQrFallbackToExistingApiMessage({
-      messageId,
-      fallbackResponse,
-      reason,
-      messageType,
-      externalId: fallbackExternalId,
-      agentMetadata
-    })
-    return {
-      ...fallbackResponse,
-      fallback: true,
-      fallbackFrom: 'api',
-      fallbackReason: cleanString(reason),
-      routingReason: cleanString(reason),
-      transport: 'qr',
-      status: applied?.status || fallbackResponse.status || 'sent',
-      localMessageId: applied?.id || messageId
-    }
-  } catch (error) {
-    logger.warn(`[WhatsApp API] No se pudo reintentar por QR ${messageId}: ${error.message}`)
-  } finally {
-    if (!fallbackWasSent) {
-      await releaseFailedOfficialApiMessageQrFallbackClaim({
-        messageId,
-        token: fallbackClaim.token,
-        previousRoutingReason: fallbackClaim.previousRoutingReason
-      })
-    }
-  }
-
-  return null
-}
-
-async function applyQrFallbackToExistingApiMessage({ messageId, fallbackResponse, reason, messageType, externalId = '', agentMetadata = {} } = {}) {
-  const cleanMessageId = cleanString(messageId)
-  if (!cleanMessageId) return null
-
-  const existing = await db.get(`
-    SELECT id, contact_id, direction, message_timestamp, created_at
-    FROM whatsapp_api_messages
-    WHERE id = ?
-  `, [cleanMessageId]).catch(() => null)
-  if (!existing?.id) return null
-
-  const fallbackStatus = normalizeMessageDeliveryStatus(fallbackResponse?.status) || 'sent'
-  const fallbackWamid = cleanString(fallbackResponse?.wamid || fallbackResponse?.id)
-  await db.run(`
-    UPDATE whatsapp_api_messages
-    SET transport = 'qr',
-        routing_reason = ?,
-        status = ?,
-        error_code = NULL,
-        error_message = NULL,
-        wamid = COALESCE(NULLIF(?, ''), wamid),
-        raw_payload_json = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [
-    cleanString(reason) || 'WhatsApp API no pudo enviar el mensaje; se usó QR como respaldo.',
-    fallbackStatus,
-    fallbackWamid,
-    safeJson({
-      fallbackFrom: 'api',
-      fallbackTransport: 'qr',
-      fallbackReason: cleanString(reason),
-      ...(externalId ? { externalId: cleanString(externalId) } : {}),
-      ...agentMetadata,
-      whatsappMessage: fallbackResponse
-    }),
-    cleanMessageId
-  ])
-
-  publishChatMessageEvent({
-    contactId: existing.contact_id,
-    messageId: cleanMessageId,
-    channel: 'whatsapp',
-    provider: PROVIDER_NAME,
-    transport: 'qr',
-    direction: existing.direction || 'outbound',
-    messageType,
-    messageTimestamp: existing.message_timestamp || existing.created_at || nowIso(),
-    isNew: false
-  })
-
-  return { ...existing, transport: 'qr', status: fallbackStatus }
 }
 
 function buildSendResponseFromQrFallback(apiResponse = {}, fallbackResponse = null) {
@@ -7845,19 +7559,11 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   )
   const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true || normalizedMessage.business_echo === true
   const relayEventId = cleanString(payload.relayEventId || payload.relay_event_id)
-  const coexistenceBusinessAppEcho = cleanTransport === 'api' &&
-    cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
-    Boolean(protocolMessageKeyId) &&
-    protocolMessageKeyId === cleanString(existingMessage?.protocol_message_key_id) &&
-    (
-      businessEcho ||
-      /(?:^|[._])(?:smb[._])?message[._]echo(?:es)?(?:$|[._])/i.test(origin)
-    )
-  const storedTransport = existingQrFallbackApplied || coexistenceBusinessAppEcho ? 'qr' : cleanTransport
-  const storedSourceAdapter = coexistenceBusinessAppEcho
+  const storedTransport = existingQrFallbackApplied ? 'qr' : cleanTransport
+  const storedSourceAdapter = existingQrFallbackApplied
     ? (cleanString(existingMessage?.source_adapter) || 'baileys')
     : sourceAdapter
-  const storedRoutingReason = existingQrFallbackApplied || coexistenceBusinessAppEcho
+  const storedRoutingReason = existingQrFallbackApplied
     ? existingMessage?.routing_reason
     : routingReason
 
@@ -7879,8 +7585,9 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       source_adapter = CASE
         WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
           AND LOWER(COALESCE(excluded.transport, '')) = 'api'
-          AND COALESCE(excluded.protocol_message_key_id, '') != ''
-          AND (COALESCE(excluded.business_echo, 0) = 1 OR LOWER(COALESCE(excluded.origin, '')) LIKE '%message%echo%')
+          AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''
+          AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
+          AND LOWER(COALESCE(excluded.status, '')) = 'failed'
         THEN whatsapp_api_messages.source_adapter
         ELSE COALESCE(NULLIF(excluded.source_adapter, ''), whatsapp_api_messages.source_adapter)
       END,
@@ -7900,34 +7607,18 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       transport = CASE
         WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
           AND LOWER(COALESCE(excluded.transport, '')) = 'api'
-          AND (
-            (
-              COALESCE(excluded.protocol_message_key_id, '') != ''
-              AND (COALESCE(excluded.business_echo, 0) = 1 OR LOWER(COALESCE(excluded.origin, '')) LIKE '%message%echo%')
-            )
-            OR (
-              COALESCE(whatsapp_api_messages.routing_reason, '') != ''
-              AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
-              AND LOWER(COALESCE(excluded.status, '')) = 'failed'
-            )
-          )
+          AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''
+          AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
+          AND LOWER(COALESCE(excluded.status, '')) = 'failed'
         THEN whatsapp_api_messages.transport
         ELSE COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport)
       END,
       routing_reason = CASE
         WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
           AND LOWER(COALESCE(excluded.transport, '')) = 'api'
-          AND (
-            (
-              COALESCE(excluded.protocol_message_key_id, '') != ''
-              AND (COALESCE(excluded.business_echo, 0) = 1 OR LOWER(COALESCE(excluded.origin, '')) LIKE '%message%echo%')
-            )
-            OR (
-              COALESCE(whatsapp_api_messages.routing_reason, '') != ''
-              AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
-              AND LOWER(COALESCE(excluded.status, '')) = 'failed'
-            )
-          )
+          AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''
+          AND LOWER(COALESCE(excluded.direction, '')) = 'outbound'
+          AND LOWER(COALESCE(excluded.status, '')) = 'failed'
         THEN whatsapp_api_messages.routing_reason
         ELSE COALESCE(NULLIF(excluded.routing_reason, ''), whatsapp_api_messages.routing_reason)
       END,
@@ -8083,35 +7774,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     identity.direction === 'outbound' &&
     incomingStatus === 'failed'
   )
-  const canonicalCoexistenceBusinessAppEcho = coexistenceBusinessAppEcho || (
-    cleanTransport === 'api' &&
-    cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
-    Boolean(protocolMessageKeyId) &&
-    protocolMessageKeyId === cleanString(existingMessage?.protocol_message_key_id) &&
-    (
-      businessEcho ||
-      /(?:^|[._])(?:smb[._])?message[._]echo(?:es)?(?:$|[._])/i.test(origin)
-    )
-  )
   const canonicalStatus = canonicalQrFallbackApplied
     ? (normalizeMessageDeliveryStatus(existingMessage?.status) || status)
     : pickBestMessageDeliveryStatus(existingMessage?.status, incomingStatus)
-  const fallbackExistingMessage = existingMessageBeforePersistence
-    ? {
-        ...existingMessage,
-        status: existingMessageBeforePersistence.status || existingMessage?.status,
-        raw_payload_json: existingMessageBeforePersistence.raw_payload_json || existingMessage?.raw_payload_json,
-        media_url: existingMessageBeforePersistence.media_url || existingMessage?.media_url,
-        media_mime_type: existingMessageBeforePersistence.media_mime_type || existingMessage?.media_mime_type,
-        media_filename: existingMessageBeforePersistence.media_filename || existingMessage?.media_filename,
-        media_duration_ms: existingMessageBeforePersistence.media_duration_ms || existingMessage?.media_duration_ms
-      }
-    : existingMessage
-
-  // Si el webhook falló antes de que terminara la llamada de envío, esta
-  // segunda conciliación ya trae el payload completo (incluido el permiso de
-  // fallback). Conservamos el 131053 previo y ejecutamos aquí el respaldo; así
-  // no dependemos de que YCloud repita el webhook.
+  // Los webhooks sólo observan y concilian estado; nunca originan un segundo
+  // envío. Si reportan una restricción real, marcan la API como no disponible
+  // para que la SIGUIENTE solicitud autorizada pueda usar su respaldo.
   const effectiveErrorCode = errorCode || cleanString(existingMessage?.error_code)
   const effectiveErrorMessage = errorMessage || cleanString(existingMessage?.error_message)
   const effectiveFailure = incomingStatus === 'failed' || normalizeMessageDeliveryStatus(existingMessage?.status) === 'failed'
@@ -8119,61 +7787,26 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const restrictionReason = effectiveFailure
     ? getOfficialApiRestrictionErrorReason({ message: failureText })
     : ''
-  // Ventana de 24 horas (131047 y parecidos): el mensaje se reintenta por QR,
-  // pero NO se crea ninguna alerta de bloqueo porque el número y la cuenta
-  // estan perfectamente sanos.
-  const conversationWindowReason = effectiveFailure && !restrictionReason
-    ? getOfficialApiConversationWindowReason({ message: failureText })
-    : ''
-  const existingPayload = parseJsonValue(fallbackExistingMessage?.raw_payload_json, {}) || {}
-  const existingAudio = {
-    ...(isPlainObject(existingPayload?.whatsappMessage?.audio) ? existingPayload.whatsappMessage.audio : {}),
-    ...(isPlainObject(existingPayload?.audio) ? existingPayload.audio : {}),
-    ...(isPlainObject(normalizedMessage?.audio) ? normalizedMessage.audio : {})
-  }
-  const mediaProcessingReason = effectiveFailure && messageType === 'audio' && effectiveErrorCode === '131053'
-    ? (existingAudio.voice === true || existingAudio.ptt === true
-        ? 'WhatsApp API no pudo procesar la nota de voz; se usó WhatsApp QR como respaldo.'
-        : 'WhatsApp API no pudo procesar el audio; se usó WhatsApp QR como respaldo.')
-    : ''
-  const mediaFallbackAllowed = mediaProcessingReason && existingAudio.asyncQrFallbackAllowed === true
-
-  let qrFallbackResponse = null
   if (
     cleanTransport === 'api' &&
     identity.direction === 'outbound' &&
     !canonicalQrFallbackApplied &&
-    (restrictionReason || conversationWindowReason || mediaFallbackAllowed)
+    restrictionReason
   ) {
-    if (restrictionReason) {
-      await activateOfficialApiRestrictionFromFailedMessage({
-        normalizedMessage,
-        businessPhoneNumberId,
-        businessPhone: identity.businessPhone,
-        reason: restrictionReason
-      })
-    }
-    qrFallbackResponse = await retryFailedOfficialApiMessageViaQr({
+    await activateOfficialApiRestrictionFromFailedMessage({
       normalizedMessage,
-      identity,
       businessPhoneNumberId,
-      messageId,
-      messageType,
-      messageText,
-      reason: restrictionReason || conversationWindowReason || mediaProcessingReason,
-      existingMessage: fallbackExistingMessage,
-      agentMetadata: preservedAgentMetadata
+      businessPhone: identity.businessPhone,
+      reason: restrictionReason
     })
   }
 
-  const finalTransport = qrFallbackResponse || canonicalQrFallbackApplied || canonicalCoexistenceBusinessAppEcho ? 'qr' : cleanTransport
+  const finalTransport = canonicalQrFallbackApplied ? 'qr' : cleanTransport
   const finalSourceAdapter = resolveWhatsAppSourceAdapter({ provider, transport: finalTransport })
   const finalRoutingReason = cleanString(
-    qrFallbackResponse?.routingReason ||
-    qrFallbackResponse?.fallbackReason ||
     (canonicalQrFallbackApplied ? existingMessage?.routing_reason : routingReason)
   )
-  const finalStatus = qrFallbackResponse?.status || canonicalStatus
+  const finalStatus = canonicalStatus
 
   if (finalSourceAdapter !== sourceAdapter) {
     await db.run(`
@@ -8306,9 +7939,9 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     transport: finalTransport,
     status: finalStatus,
     routingReason: finalRoutingReason,
-    fallbackApplied: Boolean(qrFallbackResponse),
-    fallbackResponse: qrFallbackResponse || null,
-    fallbackReason: qrFallbackResponse?.fallbackReason || '',
+    fallbackApplied: false,
+    fallbackResponse: null,
+    fallbackReason: '',
     contactName: localContact.contactName,
     profileName,
     messageText,
@@ -8364,12 +7997,9 @@ async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'tex
 }
 
 // Persiste en el historial unificado un mensaje visto por la sesión de WhatsApp Web (Baileys).
-// Para el INBOUND: si la API oficial de ese número está sana, su webhook ya registra el mensaje y
-// guardarlo aquí duplicaría el chat, así que se omite. El OUTBOUND escrito en WhatsApp Business sí
-// puede llegar dos veces durante Coexistence: primero como `fromMe` de Baileys y después como
-// `smb.message.echoes` de YCloud/Meta. Ambos se persisten con la llave interna exacta de WhatsApp
-// (`protocol_message_key_id`) para que el upsert los reconozca como un solo evento sin comparar
-// texto, hora ni huellas de archivo.
+// Si la API oficial de ese mismo número está operativa, Baileys es sólo respaldo y NO participa
+// como fuente en vivo: inbound y outbound llegan por webhooks oficiales. Esto evita una fila QR
+// transitoria y, más importante, mantiene absoluta la separación entre transportes.
 export async function captureQrChatMessage({
   phoneNumberId,
   businessPhone,
@@ -8402,14 +8032,11 @@ export async function captureQrChatMessage({
     Boolean(phoneRow?.id) &&
     Number(phoneRow.api_send_enabled ?? 1) === 1 &&
     !(await getOfficialApiRestrictionReason({ phoneRow, config }))
-  // El inbound lo cubre de forma redundante el webhook oficial. El outbound se captura aquí para
-  // que aparezca de inmediato y después se reconcilia por identidad de protocolo con el eco SMB.
-  // En vivo, la API oficial sigue siendo la fuente primaria del inbound.
+  // En vivo, la API oficial es la única fuente mientras esté operativa. Durante un HistorySync QR
+  // sí importamos el pasado porque puede ser anterior a la conexión oficial.
   // Durante un HistorySync QR no podemos asumir que la API ya tenga ese pasado:
   // se importa y la identidad exacta de WhatsApp decide si ya existía.
-  if (officialApiOperational && cleanDirection === 'inbound' && !historyImport) {
-    // El número usa WhatsApp API (YCloud/oficial): la media entrante llega hospedada por el
-    // proveedor a través del webhook, así que NO descargamos ni rehospedamos en Bunny.
+  if (officialApiOperational && !historyImport) {
     return { skipped: true, reason: 'official_api_active' }
   }
 
@@ -10538,6 +10165,56 @@ async function sendAudioViaMetaDirect({ to, audio, from, externalId } = {}) {
   }
 }
 
+async function sendMediaViaMetaDirect({ to, type, media, from, externalId } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const mediaType = cleanString(type).toLowerCase()
+  const link = cleanString(media?.link)
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!['image', 'document', 'video'].includes(mediaType)) {
+    throw new Error('Tipo de archivo no compatible con Meta directo')
+  }
+  if (!/^https:\/\//i.test(link)) {
+    throw new Error(`Meta directo necesita un enlace HTTPS público para enviar ${mediaType === 'image' ? 'la foto' : mediaType === 'video' ? 'el video' : 'el documento'}`)
+  }
+
+  const requestMedia = {
+    link,
+    ...(media?.caption ? { caption: cleanString(media.caption).slice(0, 1024) } : {}),
+    ...(mediaType === 'document' && media?.filename ? { filename: cleanString(media.filename) } : {})
+  }
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+    method: 'POST',
+    token: config.systemUserToken,
+    operational: true,
+    phoneNumberId: config.phoneNumberId,
+    body: {
+      messaging_product: 'whatsapp',
+      to: toPhone,
+      type: mediaType,
+      [mediaType]: requestMedia,
+      ...(externalId ? { biz_opaque_callback_data: externalId } : {})
+    }
+  })
+  const message = Array.isArray(response?.messages) ? response.messages[0] : null
+  const contact = Array.isArray(response?.contacts) ? response.contacts[0] : null
+  const messageId = cleanString(response?.id || response?.messageId || response?.message_id || message?.id)
+
+  return {
+    ...response,
+    id: messageId || cleanString(externalId),
+    wamid: cleanString(response?.wamid || response?.waMessageId || message?.id) || messageId || null,
+    status: cleanString(response?.status || message?.message_status) || 'sent',
+    from: normalizePhoneForStorage(config.displayPhoneNumber || from) || cleanString(config.displayPhoneNumber || from),
+    to: normalizePhoneForStorage(contact?.input || toPhone) || cleanString(contact?.input || toPhone),
+    type: mediaType,
+    [mediaType]: requestMedia,
+    provider: META_DIRECT_PROVIDER_NAME,
+    transport: 'api'
+  }
+}
+
 async function sendReactionViaMetaDirect({ to, emoji, from, externalId, targetProviderMessageId } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
@@ -10583,6 +10260,7 @@ async function sendReactionViaMetaDirect({ to, emoji, from, externalId, targetPr
     context: {
       id: targetId
     },
+    provider: META_DIRECT_PROVIDER_NAME,
     transport: 'api'
   }
 }
@@ -10625,6 +10303,7 @@ async function sendLocationViaMetaDirect({ to, location, from, externalId } = {}
     from: normalizePhoneForStorage(config.displayPhoneNumber || from) || cleanString(config.displayPhoneNumber || from),
     to: normalizePhoneForStorage(contact?.input || toPhone) || cleanString(contact?.input || toPhone),
     type: 'location',
+    provider: META_DIRECT_PROVIDER_NAME,
     transport: 'api',
     location
   }
@@ -10671,6 +10350,7 @@ async function sendTemplateViaMetaDirect({ to, template, components, externalId 
     from: normalizePhoneForStorage(config.displayPhoneNumber) || cleanString(config.displayPhoneNumber),
     to: normalizePhoneForStorage(contact?.input || toPhone) || cleanString(contact?.input || toPhone),
     type: 'template',
+    provider: META_DIRECT_PROVIDER_NAME,
     transport: 'api',
     template: {
       name: template.name,
@@ -10776,14 +10456,14 @@ function buildInteractiveMessagePayload({ body, buttons, urlButton } = {}) {
   }
 }
 
-async function sendInteractiveViaMetaDirect({ to, interactive, externalId } = {}) {
+async function sendInteractiveViaMetaDirect({ to, interactive, from, externalId } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   if (!toPhone) throw new Error('Falta el número destino')
   if (!interactive) throw new Error('Falta el mensaje interactivo')
 
-  return metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
     operational: true,
@@ -10796,6 +10476,21 @@ async function sendInteractiveViaMetaDirect({ to, interactive, externalId } = {}
       ...(externalId ? { biz_opaque_callback_data: externalId } : {})
     }
   })
+  const message = Array.isArray(response?.messages) ? response.messages[0] : null
+  const contact = Array.isArray(response?.contacts) ? response.contacts[0] : null
+  const messageId = cleanString(response?.id || response?.messageId || response?.message_id || message?.id)
+  return {
+    ...response,
+    id: messageId || cleanString(externalId),
+    wamid: cleanString(response?.wamid || response?.waMessageId || message?.id) || messageId || null,
+    status: cleanString(response?.status || message?.message_status) || 'sent',
+    from: normalizePhoneForStorage(config.displayPhoneNumber || from) || cleanString(config.displayPhoneNumber || from),
+    to: normalizePhoneForStorage(contact?.input || toPhone) || cleanString(contact?.input || toPhone),
+    type: 'interactive',
+    interactive,
+    provider: META_DIRECT_PROVIDER_NAME,
+    transport: 'api'
+  }
 }
 
 export async function getWhatsAppApiTemplates({ status, limit } = {}) {
@@ -11479,68 +11174,12 @@ export async function sendWhatsAppApiTemplateMessage({
     },
     ...(templateComponents.length ? { components: templateComponents } : {})
   }
-
-  if (config.provider === META_DIRECT_PROVIDER_NAME) {
-    const response = await sendTemplateViaMetaDirect({
-      to: toPhone,
-      template: finalTemplate,
-      components: templateComponents,
-      externalId
-    })
-
-    const metaRequestBody = {
-      from: response.from || '',
-      to: response.to || toPhone,
-      type: 'template',
-      template: templateRequest,
-      provider: META_DIRECT_PROVIDER_NAME,
-      ...(externalId ? { externalId } : {})
-    }
-
-    await saveTemplateSend({
-      template: finalTemplate,
-      requestBody: {
-        ...metaRequestBody,
-        ...(renderedTemplateText ? { renderedText: renderedTemplateText } : {})
-      },
-      response,
-      variables: normalizedVariables,
-      renderedText: renderedTemplateText
-    })
-
-    await upsertMessage({
-      payload: {
-        id: response.id || externalId || hashId('waapi_meta_tpl_send_event', `${response.from}|${toPhone}|${finalTemplate.name}`),
-        type: 'whatsapp.message.updated',
-        createTime: nowIso(),
-        provider: META_DIRECT_PROVIDER_NAME,
-        whatsappMessage: response
-      },
-      message: {
-        ...response,
-        provider: META_DIRECT_PROVIDER_NAME,
-        origin: response.origin || 'manual_template_send',
-        from: response.from || metaRequestBody.from,
-        to: response.to || toPhone,
-        type: 'template',
-        template: response.template || templateRequest,
-        text: response.text || (renderedTemplateText ? { body: renderedTemplateText } : undefined),
-        transport: 'api',
-        createTime: response.createTime || nowIso()
-      },
-      direction: 'outbound',
-      transport: 'api',
-      contactId
-    })
-
-    return response
-  }
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
 
   if (config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
     throw new Error('WhatsApp_API no está conectado')
   }
 
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
   const requestBody = {
     from: fromPhone,
@@ -11607,11 +11246,18 @@ export async function sendWhatsAppApiTemplateMessage({
 
   let response
   try {
-    response = await ycloudRequest('/whatsapp/messages', {
-      apiKey: config.apiKey,
-      method: 'POST',
-      body: requestBody
-    })
+    response = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await sendTemplateViaMetaDirect({
+          to: toPhone,
+          template: finalTemplate,
+          components: templateComponents,
+          externalId
+        })
+      : await ycloudRequest('/whatsapp/messages', {
+          apiKey: config.apiKey,
+          method: 'POST',
+          body: requestBody
+        })
   } catch (error) {
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
@@ -11638,7 +11284,8 @@ export async function sendWhatsAppApiTemplateMessage({
       },
       externalId,
       contactId,
-      error
+      error,
+      provider: config.provider
     })
     throw error
   }
@@ -11647,6 +11294,7 @@ export async function sendWhatsAppApiTemplateMessage({
     template: finalTemplate,
     requestBody: {
       ...requestBody,
+      ...(config.provider === META_DIRECT_PROVIDER_NAME ? { provider: META_DIRECT_PROVIDER_NAME } : {}),
       ...(renderedTemplateText ? { renderedText: renderedTemplateText } : {})
     },
     response,
@@ -11739,14 +11387,6 @@ export async function sendWhatsAppApiInteractiveMessage({
     cleanTransport = 'api'
   }
 
-  if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
-    return sendInteractiveViaMetaDirect({
-      to: toPhone,
-      interactive: interactivePayload.interactive,
-      externalId
-    })
-  }
-
   if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
     throw new Error('WhatsApp_API no está conectado')
   }
@@ -11797,11 +11437,18 @@ export async function sendWhatsAppApiInteractiveMessage({
 
   let response
   try {
-    response = await ycloudRequest('/whatsapp/messages', {
-      apiKey: config.apiKey,
-      method: 'POST',
-      body: requestBody
-    })
+    response = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await sendInteractiveViaMetaDirect({
+          to: toPhone,
+          interactive: interactivePayload.interactive,
+          from: fromPhone,
+          externalId
+        })
+      : await ycloudRequest('/whatsapp/messages', {
+          apiKey: config.apiKey,
+          method: 'POST',
+          body: requestBody
+        })
   } catch (error) {
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
@@ -11831,7 +11478,8 @@ export async function sendWhatsAppApiInteractiveMessage({
       content: { interactive: interactivePayload.interactive },
       externalId,
       contactId,
-      error
+      error,
+      provider: config.provider
     })
     throw error
   }
@@ -12863,39 +12511,6 @@ export async function sendWhatsAppApiLocationMessage({
     cleanTransport = 'api'
   }
 
-  if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
-    const response = await sendLocationViaMetaDirect({ to: toPhone, location, from: fromPhone, externalId })
-    const persistedMessage = await upsertMessage({
-      payload: {
-        id: response.id || externalId || hashId('waapi_location_meta_event', `${fromPhone}|${toPhone}|${location.latitude}|${location.longitude}`),
-        type: 'whatsapp.message.updated',
-        createTime: nowIso(),
-        whatsappMessage: response
-      },
-      message: {
-        ...response,
-        from: response.from || fromPhone,
-        to: response.to || toPhone,
-        type: 'location',
-        text: { body: buildWhatsAppLocationText(location) },
-        location,
-        transport: 'api',
-        createTime: response.createTime || nowIso()
-      },
-      direction: 'outbound',
-      transport: 'api',
-      contactId
-    })
-    const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-    if (fallbackSendResponse) {
-      return {
-        ...fallbackSendResponse,
-        localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
-      }
-    }
-    return { ...response, localMessageId: persistedMessage?.messageId || null, location }
-  }
-
   if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
     throw new Error('WhatsApp_API no está conectado')
   }
@@ -12953,11 +12568,13 @@ export async function sendWhatsAppApiLocationMessage({
 
   let response
   try {
-    response = await ycloudRequest('/whatsapp/messages', {
-      apiKey: config.apiKey,
-      method: 'POST',
-      body: requestBody
-    })
+    response = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await sendLocationViaMetaDirect({ to: toPhone, location, from: fromPhone, externalId })
+      : await ycloudRequest('/whatsapp/messages', {
+          apiKey: config.apiKey,
+          method: 'POST',
+          body: requestBody
+        })
   } catch (error) {
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
@@ -12986,7 +12603,8 @@ export async function sendWhatsAppApiLocationMessage({
       content: { text: { body: buildWhatsAppLocationText(location) }, location },
       externalId,
       contactId,
-      error
+      error,
+      provider: config.provider
     })
     throw error
   }
@@ -13142,20 +12760,28 @@ export async function sendWhatsAppApiImageMessage({
 
   if (!link) {
     const optimizedImage = await getPreparedImage()
-    const uploads = await Promise.all([
-      uploadPreparedMediaToYCloud({
-        config,
-        fromPhone,
-        media: optimizedImage,
-        type: 'image'
-      }),
-      savePreparedMediaForChatPreview(optimizedImage, {
+    if (config.provider === META_DIRECT_PROVIDER_NAME) {
+      providerPreviewImage = await savePreparedMediaForChatPreview(optimizedImage, {
         type: 'image',
         mediaLabel: 'foto de WhatsApp API'
       })
-    ])
-    providerImage = uploads[0]
-    providerPreviewImage = uploads[1]
+      link = requirePublicMediaUrl(providerPreviewImage, publicBaseUrl, 'fotos')
+    } else {
+      const uploads = await Promise.all([
+        uploadPreparedMediaToYCloud({
+          config,
+          fromPhone,
+          media: optimizedImage,
+          type: 'image'
+        }),
+        savePreparedMediaForChatPreview(optimizedImage, {
+          type: 'image',
+          mediaLabel: 'foto de WhatsApp API'
+        })
+      ])
+      providerImage = uploads[0]
+      providerPreviewImage = uploads[1]
+    }
   }
 
   if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {
@@ -13201,11 +12827,19 @@ export async function sendWhatsAppApiImageMessage({
 
   let response
   try {
-    response = await ycloudRequest('/whatsapp/messages', {
-      apiKey: config.apiKey,
-      method: 'POST',
-      body: requestBody
-    })
+    response = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await sendMediaViaMetaDirect({
+          to: toPhone,
+          type: 'image',
+          media: requestImage,
+          from: fromPhone,
+          externalId
+        })
+      : await ycloudRequest('/whatsapp/messages', {
+          apiKey: config.apiKey,
+          method: 'POST',
+          body: requestBody
+        })
   } catch (error) {
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
@@ -13238,7 +12872,8 @@ export async function sendWhatsAppApiImageMessage({
       content: { image: storedImage },
       externalId,
       contactId,
-      error
+      error,
+      provider: config.provider
     })
     throw error
   }
@@ -13338,6 +12973,7 @@ export async function sendWhatsAppApiDocumentMessage({
 
   let link = cleanDocumentUrl
   let providerDocument = null
+  let providerDocumentPreview = null
   const fallbackFilename = sanitizeDocumentFilename(filename, cleanString(mimeType).toLowerCase())
 
   if (cleanTransport === 'qr') {
@@ -13390,12 +13026,20 @@ export async function sendWhatsAppApiDocumentMessage({
 
   if (!link) {
     const preparedDocument = await prepareWhatsAppDocumentForProviderUpload(documentDataUrl, filename, mimeType)
-    providerDocument = await uploadPreparedMediaToYCloud({
-      config,
-      fromPhone,
-      media: preparedDocument,
-      type: 'document'
-    })
+    if (config.provider === META_DIRECT_PROVIDER_NAME) {
+      providerDocumentPreview = await savePreparedMediaForChatPreview(preparedDocument, {
+        type: 'document',
+        mediaLabel: 'documento de WhatsApp API'
+      })
+      link = requirePublicMediaUrl(providerDocumentPreview, publicBaseUrl, 'documentos')
+    } else {
+      providerDocument = await uploadPreparedMediaToYCloud({
+        config,
+        fromPhone,
+        media: preparedDocument,
+        type: 'document'
+      })
+    }
   }
 
   if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {
@@ -13418,6 +13062,16 @@ export async function sendWhatsAppApiDocumentMessage({
       storage: providerDocument.storage,
       storageProvider: providerDocument.storageProvider,
       metadata: providerDocument.metadata
+    } : {}),
+    ...(providerDocumentPreview ? {
+      mediaUrl: providerDocumentPreview.mediaUrl,
+      publicUrl: providerDocumentPreview.publicUrl,
+      url: providerDocumentPreview.url,
+      link: providerDocumentPreview.link,
+      previewMediaAssetId: providerDocumentPreview.mediaAssetId,
+      previewStorage: providerDocumentPreview.storage,
+      previewStorageProvider: providerDocumentPreview.storageProvider,
+      mimeType: providerDocumentPreview.mimeType || cleanString(mimeType).toLowerCase()
     } : {})
   }
   const requestBody = {
@@ -13432,11 +13086,19 @@ export async function sendWhatsAppApiDocumentMessage({
 
   let response
   try {
-    response = await ycloudRequest('/whatsapp/messages', {
-      apiKey: config.apiKey,
-      method: 'POST',
-      body: requestBody
-    })
+    response = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await sendMediaViaMetaDirect({
+          to: toPhone,
+          type: 'document',
+          media: requestDocument,
+          from: fromPhone,
+          externalId
+        })
+      : await ycloudRequest('/whatsapp/messages', {
+          apiKey: config.apiKey,
+          method: 'POST',
+          body: requestBody
+        })
   } catch (error) {
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
@@ -13470,7 +13132,8 @@ export async function sendWhatsAppApiDocumentMessage({
       content: { document: storedDocument },
       externalId,
       contactId,
-      error
+      error,
+      provider: config.provider
     })
     throw error
   }
@@ -13568,6 +13231,7 @@ export async function sendWhatsAppApiVideoMessage({
 
   let link = cleanVideoUrl
   let providerVideo = null
+  let providerVideoPreview = null
   let preparedVideo = null
   let qrVideoDataUrl = ''
 
@@ -13637,12 +13301,20 @@ export async function sendWhatsAppApiVideoMessage({
 
   if (!link) {
     const media = await getPreparedVideo()
-    providerVideo = await uploadPreparedMediaToYCloud({
-      config,
-      fromPhone,
-      media,
-      type: 'video'
-    })
+    if (config.provider === META_DIRECT_PROVIDER_NAME) {
+      providerVideoPreview = await savePreparedMediaForChatPreview(media, {
+        type: 'video',
+        mediaLabel: 'video de WhatsApp API'
+      })
+      link = requirePublicMediaUrl(providerVideoPreview, publicBaseUrl, 'videos')
+    } else {
+      providerVideo = await uploadPreparedMediaToYCloud({
+        config,
+        fromPhone,
+        media,
+        type: 'video'
+      })
+    }
   }
 
   if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {
@@ -13666,6 +13338,17 @@ export async function sendWhatsAppApiVideoMessage({
       storage: providerVideo.storage,
       storageProvider: providerVideo.storageProvider,
       metadata: providerVideo.metadata
+    } : {}),
+    ...(providerVideoPreview ? {
+      mediaUrl: providerVideoPreview.mediaUrl,
+      publicUrl: providerVideoPreview.publicUrl,
+      url: providerVideoPreview.url,
+      link: providerVideoPreview.link,
+      previewMediaAssetId: providerVideoPreview.mediaAssetId,
+      previewStorage: providerVideoPreview.storage,
+      previewStorageProvider: providerVideoPreview.storageProvider,
+      mimeType: providerVideoPreview.mimeType,
+      filename: providerVideoPreview.filename
     } : {})
   }
   const requestBody = {
@@ -13680,11 +13363,19 @@ export async function sendWhatsAppApiVideoMessage({
 
   let response
   try {
-    response = await ycloudRequest('/whatsapp/messages', {
-      apiKey: config.apiKey,
-      method: 'POST',
-      body: requestBody
-    })
+    response = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await sendMediaViaMetaDirect({
+          to: toPhone,
+          type: 'video',
+          media: requestVideo,
+          from: fromPhone,
+          externalId
+        })
+      : await ycloudRequest('/whatsapp/messages', {
+          apiKey: config.apiKey,
+          method: 'POST',
+          body: requestBody
+        })
   } catch (error) {
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
@@ -13715,7 +13406,8 @@ export async function sendWhatsAppApiVideoMessage({
       content: { video: storedVideo },
       externalId,
       contactId,
-      error
+      error,
+      provider: config.provider
     })
     throw error
   }
@@ -13955,7 +13647,6 @@ export async function sendWhatsAppApiAudioMessage({
   const storedAudio = {
     ...requestAudio,
     ...(link ? { deliveryUrl: link } : {}),
-    asyncQrFallbackAllowed: Boolean(allowQrFallback),
     ...(providerAudio ? {
       mediaId: providerAudio.id,
       providerMediaId: providerAudio.providerMediaId,

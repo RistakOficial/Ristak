@@ -484,7 +484,10 @@ async function processWhatsAppTemplateItem({ action, item }) {
     contactId: contact.id,
     userId: action.createdBy,
     externalId: item.id,
-    phoneNumberId: config.phoneNumberId
+    phoneNumberId: config.phoneNumberId,
+    // Una campaña masiva nunca se derrama automáticamente a Baileys. Si la
+    // API oficial falla, el lote debe detenerse y mostrar el error.
+    allowQrFallback: false
   })
 }
 

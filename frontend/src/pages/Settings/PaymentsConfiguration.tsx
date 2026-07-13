@@ -3383,7 +3383,7 @@ export const PaymentsConfiguration: React.FC = () => {
             ? usesWhatsApp
               ? usesQrOnly
                 ? 'Usará este texto por WhatsApp QR como canal principal, sin aprobación de Meta ni ventana de 24 horas.'
-                : 'Usará este texto. En WhatsApp API necesita conversación abierta de 24 horas; con QR se manda como texto normal.'
+                : 'Usará este texto. Con WhatsApp API activa necesita conversación abierta de 24 horas; el QR sólo entra si la API deja de estar disponible.'
               : 'Usará el texto que escribas aquí para los canales seleccionados.'
             : usesWhatsApp
               ? usesQrOnly

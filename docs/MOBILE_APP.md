@@ -916,6 +916,19 @@ numero de WhatsApp disponible por separado y agrega Messenger/Instagram solo si
 la integracion Meta correspondiente esta conectada y el contacto pertenece a
 ese canal.
 
+La selección de transporte es idéntica en `/movil`, React Native Android y iOS:
+si la fila elegida tiene API disponible, el envío usa `transport=api` aunque el
+mismo número tenga QR conectado. Una ventana cerrada abre/solicita plantillas y
+nunca cambia a QR. `transport=qr` sólo se resuelve cuando la API de esa fila está
+indisponible o el número es QR standalone. La UI no debe pintar un globo QR
+optimista para después ocultarlo: el transporte se decide antes del request y el
+backend vuelve a validarlo.
+
+Con Coexistence y API operativa, Baileys no aporta tráfico vivo al historial;
+el webhook oficial es la única fuente. Esto evita el globo transitorio duplicado
+en iOS/Android sin usar deduplicación por texto o tiempo. HistorySync QR sí puede
+importar mensajes antiguos por identidad exacta.
+
 La info del contacto muestra "Contactando desde". Ese sheet es el control
 persistente del contacto: `Automatico` limpia `preferred_whatsapp_phone_number_id`
 para usar el numero por donde llego la conversacion o el principal actual; elegir
@@ -1414,11 +1427,13 @@ no como mensajes enviados normales con palomitas. Al tocar o mantener presionado
 un globo programado, las acciones deben permitir editar la programacion o
 eliminarla antes del envio. El calendario no debe permitir seleccionar dias ya
 vencidos y debe cerrar al elegir fecha para evitar capas/gestos trabados en iOS.
-En nativo, WhatsApp programado debe mandar `provider='whatsapp_api'` y
-`transport='api'`; SMS programado debe mandar `provider='highlevel'` y
-`channel='sms_qr'`. Messenger, Instagram y correo no tienen programacion movil
-activa todavia: la UI debe avisar que se pueden enviar al momento, pero no
-programar.
+En nativo, WhatsApp programado manda `provider='whatsapp_api'`. Conserva
+`transport='api'` mientras la API esté disponible; si la hora futura queda fuera
+de la ventana, exige una plantilla oficial aunque exista QR. Sólo un número QR
+standalone o una API ya indisponible puede guardar `transport='qr'`. SMS
+programado manda `provider='highlevel'` y `channel='sms_qr'`. Messenger,
+Instagram y correo no tienen programacion movil activa todavia: la UI debe
+avisar que se pueden enviar al momento, pero no programar.
 
 Los globos de la conversacion nativa pueden deslizarse a la derecha para activar
 `Responder` cuando son entrantes y a la izquierda cuando son salientes. En

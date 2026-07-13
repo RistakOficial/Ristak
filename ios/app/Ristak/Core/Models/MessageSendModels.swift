@@ -886,6 +886,17 @@ enum WhatsAppReplyWindowRules {
         guard let lastInboundDate else { return false }
         return now.timeIntervalSince(lastInboundDate) < windowDuration
     }
+
+    /// Selección de transporte estricta: la ventana de conversación nunca
+    /// convierte al QR en canal primario. QR sólo aplica cuando la API oficial
+    /// de ese número no está disponible.
+    static func resolveTransport(apiAvailable: Bool, qrReady: Bool) -> WhatsAppSendTransport {
+        qrReady && !apiAvailable ? .qr : .api
+    }
+
+    static func requiresOfficialTemplate(apiAvailable: Bool, replyWindowOpen: Bool) -> Bool {
+        apiAvailable && !replyWindowOpen
+    }
 }
 
 // NOTA plantillas (doc 05 §2.9): el modelo `WhatsAppTemplate` y el resumen

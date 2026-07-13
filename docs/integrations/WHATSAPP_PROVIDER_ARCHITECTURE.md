@@ -60,19 +60,25 @@ No puede sobreescribir el `provider` de la fila seleccionada. En particular:
 Si una fila QR representa el mismo teléfono que una fila oficial sana, la fila
 oficial toma la salida aunque el consumidor histórico haya solicitado
 `transport=qr`. QR es respaldo, no un segundo remitente: sólo toma el mensaje
-cuando la API no está disponible, la ventana de 24 horas está cerrada o el
-proveedor confirma un rechazo definitivo.
+cuando la API está inequívocamente indisponible y la solicitud puntual lo
+autorizó. Una ventana de 24 horas cerrada exige plantilla oficial y nunca cambia
+el transporte a Baileys.
 
 Si Meta pierde permisos, además de marcar su fila `AUTHORIZATION_REQUIRED`, se
 reconcilia la preferencia global a YCloud cuando esa conexión sigue disponible.
 Esto protege rutas históricas, pero no sustituye la regla por fila.
 
-El respaldo QR sólo se ejecuta cuando existe una sesión compatible y el fallo
-es inequívoco: API desactivada/no conectada, ventana cerrada, restricción
-conocida o rechazo HTTP 4xx. No se dispara automáticamente después de timeout,
-error de red o HTTP 5xx, porque la API pudo aceptar el mensaje antes de perderse
-la respuesta y Baileys provocaría un envío duplicado. Los ecos posteriores se
-reconcilian por IDs y `wamid`; no justifican mandar simultáneamente por API y QR.
+El respaldo QR sólo se ejecuta cuando existe una sesión compatible del mismo
+teléfono, la solicitud tiene `allowQrFallback=true` y el fallo confirma pérdida
+de conexión/autorización, suspensión, restricción o límite del transporte. No
+aplica a ventana cerrada, plantilla no aprobada, destinatario, contenido,
+`131047`, `131053`, timeout, red ni HTTP 5xx. Campañas/broadcasts siempre usan
+`allowQrFallback=false`.
+
+El webhook es un observador: persiste estados y puede marcar la API restringida
+para solicitudes futuras, pero jamás origina un envío QR. Si una solicitud fue
+aceptada y después llega `failed`, se conserva como fallo API. Esta frontera
+evita que un evento tardío mande una segunda copia sin autorización.
 
 ## Matriz de implementaciones
 
@@ -217,9 +223,10 @@ INSERT del envío la convierte en el mensaje real usando el mismo `wamid`.
 Todo envío de texto aceptado por Graph debe persistirse de inmediato con el texto
 visible, `provider=meta_direct`, `source_adapter=meta_direct`,
 `meta_message_id`, `wamid`, `contact_id` y `localMessageId`. Los ACK posteriores
-se fusionan con esa misma fila. El fallback QR aplica con las mismas reglas de
-seguridad que YCloud: ventana cerrada, API no disponible o rechazo 4xx; no se
-duplica ante timeout, error de red o 5xx ambiguo.
+se fusionan con esa misma fila. Texto, plantillas, interactivos, ubicación,
+foto, documento, video y audio seleccionados para Meta Direct salen por Graph y
+nunca usan el endpoint de mensajes ni el upload de YCloud. El fallback QR aplica
+con las mismas reglas estrictas de indisponibilidad que YCloud.
 
 Los mensajes Click to WhatsApp llegan en `value.messages[].referral`. Meta
 entrega el contrato plano `source_id`, `source_url`, `source_type`, `headline`,
@@ -238,7 +245,9 @@ en el mismo modelo interno, pero conservan `provider`, `source_adapter`,
 
 Baileys procesa `messages.upsert`, `messaging-history.set` y ACKs del socket.
 Es transporte QR y fallback; no es un proveedor de Cloud API, no usa las
-credenciales de Meta/YCloud y no debe consumir sus webhooks.
+credenciales de Meta/YCloud y no debe consumir sus webhooks. Mientras la API
+oficial del mismo número esté operativa, `captureQrChatMessage` omite todo el
+tráfico vivo inbound/outbound. Sólo HistorySync puede importarse en paralelo.
 
 ## Reglas de Coexistence
 
@@ -247,9 +256,10 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
    refrescar UI, pero no incrementa no leídos ni dispara push, confirmaciones,
    automatizaciones o agente conversacional.
 3. `smb_message_echoes` sí es tráfico nuevo enviado manualmente desde la app y
-   debe aparecer sin duplicar la captura `fromMe` que Baileys pudo guardar antes.
-   La unión se hace exclusivamente por `protocol_message_key_id`; nunca por
-   texto, minuto, tipo de media, `fileSha256` o parecido visual.
+   debe aparecer como única fila oficial. Con API operativa, la captura viva
+   `fromMe` de Baileys se omite antes de persistir. La identidad
+   `protocol_message_key_id` queda para reconciliar históricos demostrables;
+   nunca se compara texto, minuto, tipo de media o parecido visual.
 4. El historial puede llegar por lotes grandes, duplicado o fuera de orden. El
    procesamiento debe ser idempotente y asíncrono cuando el volumen lo exija.
 5. No existe un endpoint Graph genérico para volver a descargar toda la cuenta
@@ -273,14 +283,12 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
     con `ON CONFLICT(id) DO UPDATE`. Nunca se usa una actualización de conflicto
     sin objetivo: PostgreSQL la rechaza y el mensaje quedaría enviado por el
     proveedor pero marcado como error dentro de Ristak.
-11. El ID oficial del proveedor manda sobre la fila espejo de Baileys. En un
-    envío por API puede existir por unos milisegundos una fila `accepted` de
-    YCloud/Meta y otra captura QR con el `key.id` del protocolo. Cuando el WAMID
-    oficial demuestra que ambas identidades corresponden al mismo mensaje,
-    Ristak conserva la fila oficial, mueve sus referencias y fusiona la captura
-    QR. Los estados `accepted`, `sent`, `delivered` y `read` actualizan esa misma
-    fila. No se permite resolver este caso por texto, hora, teléfono aproximado
-    ni deduplicación visual.
+11. El ID oficial del proveedor manda. En tráfico nuevo con API operativa no se
+    crea la fila espejo de Baileys; YCloud/Meta produce la única fila y sus
+    estados `accepted`, `sent`, `delivered` y `read` la actualizan. La fusión por
+    `protocol_message_key_id` sólo repara/importa históricos exactos. No se
+    permite resolver ningún caso por texto, hora, teléfono aproximado ni
+    deduplicación visual.
 12. `(provider, provider_message_id)` es una identidad única. El mantenimiento
     de arranque fusiona duplicados históricos demostrables antes de crear el
     índice único parcial; si encuentra un conflicto entre conversaciones

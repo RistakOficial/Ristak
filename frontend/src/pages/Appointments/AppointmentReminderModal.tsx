@@ -812,15 +812,13 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                     : usesWhatsApp
                     ? isWhatsAppQrOnly
                       ? 'Ristak enviará este texto por WhatsApp QR como canal principal. No requiere aprobación de Meta ni ventana de 24 horas.'
-                      : 'Ristak enviará este texto si WhatsApp permite mensaje libre: por API requiere conversación abierta de 24 horas; por QR se manda como texto normal.'
+                      : 'Ristak enviará este texto si WhatsApp permite mensaje libre. Con API activa requiere conversación abierta de 24 horas; el QR sólo entra si la API deja de estar disponible.'
                     : 'Ristak enviará este texto tal cual, renderizando variables como {{contact.first_name}}, {{cita.fecha}} y {{cita.hora}}.'
                   : isWhatsAppQrOnly
                     ? 'Ristak tomará el texto del mensaje seleccionado y lo enviará por WhatsApp QR. No necesita aprobación de Meta porque no sale como plantilla API.'
                     : qrOnlyConnected
                     ? 'Con WhatsApp QR, Ristak manda el texto del mensaje seleccionado. No necesita aprobación de Meta porque no sale como plantilla API.'
-                    : whatsappAvailability.canShowQrFallbackSwitch
-                      ? 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido salvo que actives el respaldo por QR.'
-                      : 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido hasta que Meta la apruebe y WhatsApp API esté disponible.'}
+                    : 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido hasta que Meta la apruebe y WhatsApp API esté disponible.'}
               </span>
             </div>
 
@@ -872,9 +870,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
             {contentMode === 'template' && selectedTemplate && !selectedTemplateApproved && !draft.qrFallbackEnabled && !qrOnlyConnected && !isWhatsAppQrOnly && (
               <div className={styles.templateNotice}>
-                {whatsappAvailability.canShowQrFallbackSwitch
-                  ? 'Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe o actives el respaldo por QR.'
-                  : 'Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe y WhatsApp API esté disponible.'}
+                Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe y WhatsApp API esté disponible.
               </div>
             )}
 

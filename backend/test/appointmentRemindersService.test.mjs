@@ -509,7 +509,7 @@ test('recordatorios de citas con solo QR envían el texto aunque la plantilla no
   })
 })
 
-test('recordatorios de citas con canal WhatsApp QR solo usan QR aunque exista API', async () => {
+test('recordatorios con canal QR no brincan una API activa del mismo número', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const sentMessages = []
     await withReminderFixture({
@@ -517,8 +517,24 @@ test('recordatorios de citas con canal WhatsApp QR solo usan QR aunque exista AP
       apiSendEnabled: true,
       qrSendEnabled: true,
       qrStatus: 'connected'
-    }, async ({ reminder, appointmentId, phoneNumberId }) => {
+    }, async ({ reminder, appointmentId, contactId, phone, phoneNumberId }) => {
       await attachQrSessionForReminder(phoneNumberId, '+526561234567', sentMessages)
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, origin, business_phone_number_id, contact_id, phone,
+          from_phone, to_phone, business_phone, transport, direction,
+          message_type, message_text, status, message_timestamp,
+          created_at, updated_at
+        ) VALUES (?, 'ycloud', 'test_open_window', ?, ?, ?, ?, '+526561234567',
+          '+526561234567', 'api', 'inbound', 'text', 'Hola', 'received', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `wa_qr_channel_in_${appointmentId}`,
+        phoneNumberId,
+        contactId,
+        phone,
+        phone,
+        new Date().toISOString()
+      ])
       await db.run(`
         UPDATE appointment_reminders
         SET channel = 'whatsapp_qr',
@@ -533,9 +549,10 @@ test('recordatorios de citas con canal WhatsApp QR solo usan QR aunque exista AP
 
       assert.equal(result.sent, 1)
       assert.equal(result.errors, 0)
-      assert.equal(captures.length, 0)
-      assert.equal(sentMessages.length, 1)
-      assert.match(sentMessages[0].payload.text, /QR solo para Ana/)
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'text')
+      assert.match(captures[0].text.body, /QR solo para Ana/)
+      assert.equal(sentMessages.length, 0)
 
       const send = await db.get(
         'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
@@ -543,17 +560,17 @@ test('recordatorios de citas con canal WhatsApp QR solo usan QR aunque exista AP
       )
       assert.equal(send.status, 'sent')
       assert.equal(send.error_message, null)
-      assert.equal(send.sent_message_id, 'qr_appointment_msg_1')
+      assert.equal(send.sent_message_id, 'ycloud_appointment_msg_1')
 
       const overview = await getAppointmentRemindersOverview()
       const overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
-      assert.equal(overviewReminder?.deliveryHealth?.status, 'ready')
-      assert.match(overviewReminder?.deliveryHealth?.message || '', /WhatsApp QR/)
+      assert.equal(overviewReminder?.deliveryHealth?.status, 'warning')
+      assert.match(overviewReminder?.deliveryHealth?.message || '', /API activa/)
     })
   })
 })
 
-test('recordatorios por canal disponible caen de WhatsApp API a QR si API falla', async () => {
+test('recordatorios por canal disponible no brincan a QR si el respaldo no está autorizado', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const sentMessages = []
     await withReminderFixture({
@@ -590,19 +607,18 @@ test('recordatorios por canal disponible caen de WhatsApp API a QR si API falla'
 
       const result = await processDueAppointmentReminders({ batchSize: 1 })
 
-      assert.equal(result.sent, 1)
-      assert.equal(result.errors, 0)
+      assert.equal(result.sent, 0)
+      assert.equal(result.errors, 1)
       assert.equal(captures.length, 0)
-      assert.equal(sentMessages.length, 1)
-      assert.match(sentMessages[0].payload.text, /Canal disponible para Ana/)
+      assert.equal(sentMessages.length, 0)
 
       const send = await db.get(
         'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
         [appointmentId]
       )
-      assert.equal(send.status, 'sent')
-      assert.equal(send.error_message, null)
-      assert.equal(send.sent_message_id, 'qr_appointment_msg_1')
+      assert.equal(send.status, 'error')
+      assert.match(send.error_message, /WhatsApp Business no está conectado/)
+      assert.equal(send.sent_message_id, null)
     })
   }, {
     onMessage: async () => ycloudJsonResponse(
@@ -612,7 +628,7 @@ test('recordatorios por canal disponible caen de WhatsApp API a QR si API falla'
   })
 })
 
-test('recordatorios por canal que agendó respetan WhatsApp QR aunque API exista', async () => {
+test('recordatorios por canal que agendó no brincan una API activa del mismo número', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const sentMessages = []
     await withReminderFixture({
@@ -620,8 +636,24 @@ test('recordatorios por canal que agendó respetan WhatsApp QR aunque API exista
       apiSendEnabled: true,
       qrSendEnabled: true,
       qrStatus: 'connected'
-    }, async ({ reminder, appointmentId, phoneNumberId }) => {
+    }, async ({ reminder, appointmentId, contactId, phone, phoneNumberId }) => {
       await attachQrSessionForReminder(phoneNumberId, '+526561234567', sentMessages)
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, origin, business_phone_number_id, contact_id, phone,
+          from_phone, to_phone, business_phone, transport, direction,
+          message_type, message_text, status, message_timestamp,
+          created_at, updated_at
+        ) VALUES (?, 'ycloud', 'test_open_window', ?, ?, ?, ?, '+526561234567',
+          '+526561234567', 'api', 'inbound', 'text', 'Hola', 'received', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `wa_booking_qr_in_${appointmentId}`,
+        phoneNumberId,
+        contactId,
+        phone,
+        phone,
+        new Date().toISOString()
+      ])
       await db.run("UPDATE appointments SET source = 'ristak', booking_channel = 'whatsapp_qr' WHERE id = ?", [appointmentId])
       await db.run(`
         UPDATE appointment_reminders
@@ -637,9 +669,10 @@ test('recordatorios por canal que agendó respetan WhatsApp QR aunque API exista
 
       assert.equal(result.sent, 1)
       assert.equal(result.errors, 0)
-      assert.equal(captures.length, 0)
-      assert.equal(sentMessages.length, 1)
-      assert.match(sentMessages[0].payload.text, /Canal donde agendó para Ana/)
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'text')
+      assert.match(captures[0].text.body, /Canal donde agendó para Ana/)
+      assert.equal(sentMessages.length, 0)
 
       const send = await db.get(
         'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
@@ -647,7 +680,7 @@ test('recordatorios por canal que agendó respetan WhatsApp QR aunque API exista
       )
       assert.equal(send.status, 'sent')
       assert.equal(send.error_message, null)
-      assert.equal(send.sent_message_id, 'qr_appointment_msg_1')
+      assert.equal(send.sent_message_id, 'ycloud_appointment_msg_1')
     })
   })
 })

@@ -758,7 +758,7 @@ test('webhook fallido repetido conserva el globo respaldado por QR', async () =>
   }
 })
 
-test('Coexistence reconcilia el eco YCloud y la captura QR por identidad exacta', async () => {
+test('Coexistence ignora la captura QR viva y conserva sólo el eco oficial de YCloud', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52991${suffix}`
@@ -818,6 +818,8 @@ test('Coexistence reconcilia el eco YCloud y la captura QR por identidad exacta'
         contactPhone: phone,
         timestamp: messageAt
       })
+      assert.equal(qrResult.skipped, true)
+      assert.equal(qrResult.reason, 'official_api_active')
 
       const payload = {
         id: eventId,
@@ -852,13 +854,12 @@ test('Coexistence reconcilia el eco YCloud y la captura QR por identidad exacta'
       `, [contactId, body])
 
       assert.equal(rows.length, 1)
-      assert.equal(rows[0].id, qrResult.messageId)
       assert.equal(rows[0].provider_message_id, providerMessageId)
       assert.equal(rows[0].ycloud_message_id, providerMessageId)
       assert.equal(rows[0].wamid, officialWamid)
       assert.equal(rows[0].protocol_message_key_id, qrMessageKey)
-      assert.equal(rows[0].transport, 'qr')
-      assert.equal(rows[0].source_adapter, 'baileys')
+      assert.equal(rows[0].transport, 'api')
+      assert.equal(rows[0].source_adapter, 'ycloud')
     })
   } finally {
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
@@ -1149,10 +1150,7 @@ test('el mantenimiento historico fusiona los pares QR y SMB exactos ya guardados
   }
 })
 
-test('eco QR saliente escrito en el teléfono se captura aunque la API oficial esté operativa', async () => {
-  // Baileys debe capturarlo de inmediato aunque después llegue un eco SMB del
-  // proveedor. El skip 'official_api_active' sólo aplica al inbound; el
-  // outbound se reconcilia después por identidad exacta de protocolo.
+test('Baileys no captura tráfico vivo mientras la API oficial esté operativa', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52993${suffix}`
@@ -1188,7 +1186,7 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
           id, provider, waba_id, phone_number, display_phone_number, verified_name,
           is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
         ) VALUES (?, 'ycloud', 'waba_qr_outbound_echo_test', ?, ?, 'QR Outbound Echo Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
-      `, [phoneNumberId, businessPhone, businessPhone])
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
 
       await db.run(`
         INSERT INTO contacts (
@@ -1196,7 +1194,7 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
         ) VALUES (?, ?, 'Cliente Eco Saliente', 'Cliente', 'WhatsApp_API', ?, ?)
       `, [contactId, phone, messageAt, messageAt])
 
-      // Saliente escrito en el teléfono: sin fila API previa que dedupear -> debe capturarse.
+      // Saliente observado por Baileys: el webhook oficial es la única fuente viva.
       const outboundResult = await captureQrChatMessage({
         phoneNumberId,
         businessPhone,
@@ -1208,20 +1206,15 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
         timestamp: messageAt
       })
 
-      assert.equal(outboundResult.skipped, false)
-      assert.equal(outboundResult.isNew, true)
+      assert.equal(outboundResult.skipped, true)
+      assert.equal(outboundResult.reason, 'official_api_active')
 
       const outboundRow = await db.get(`
         SELECT direction, transport, origin, routing_reason, message_text, wamid
         FROM whatsapp_api_messages
         WHERE wamid = ?
       `, [outboundWamid])
-      assert.ok(outboundRow, 'el eco saliente debe persistirse')
-      assert.equal(outboundRow.direction, 'outbound')
-      assert.equal(outboundRow.transport, 'qr')
-      assert.equal(outboundRow.origin, 'whatsapp.qr.message.synced')
-      assert.equal(outboundRow.routing_reason, 'Capturado desde la sesión de WhatsApp Web.')
-      assert.equal(outboundRow.message_text, outboundBody)
+      assert.ok(!outboundRow, 'el saliente no debe persistirse por QR cuando la API oficial está operativa')
 
       // Entrante con la misma config: SÍ se omite porque el webhook de YCloud ya lo registra.
       const inboundResult = await captureQrChatMessage({
@@ -1418,7 +1411,8 @@ test('dos fotos sin identidad de protocolo compartida permanecen como mensajes d
         messageType: 'image',
         text: '',
         contactPhone: phone,
-        timestamp: messageAt
+        timestamp: messageAt,
+        historyImport: true
       })
 
       assert.equal(result.skipped, false)
@@ -1688,7 +1682,7 @@ test('un timeout o 5xx ambiguo de API nunca dispara tambien el respaldo QR', asy
   }
 })
 
-test('envio API fallido inmediato responde y persiste el respaldo QR limpio', async () => {
+test('un fallo reportado dentro del webhook nunca origina un segundo envío QR', async () => {
   const id = randomUUID()
   const phone = `+52994${Date.now().toString().slice(-7)}`
   const businessPhone = '+526561000002'
@@ -1697,11 +1691,14 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
   const contactId = `rstk_contact_api_qr_fallback_${id}`
   const ycloudMessageId = `ycloud_api_failed_${id}`
   const externalId = `manual_chat_${id}`
-  const body = 'Hola, esto debe salir por QR'
+  const body = 'Hola, esto no debe salir por QR'
+  const restrictionMessageId = `ycloud_api_restriction_${id}`
+  const restrictionBody = 'Tampoco debe reintentarse desde el webhook'
   const fallbackReason = 'Message failed to send because more than 24 hours have passed since the customer last replied to this number.'
   const keys = getWhatsAppApiConfigKeys()
   const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
   const sentMessages = []
+  let failureMode = 'window'
 
   await cleanup({ contactId, messageId: ycloudMessageId, phone })
   await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
@@ -1764,16 +1761,19 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
         const path = parsed.pathname.replace(/^\/v2/, '')
         const method = String(options.method || 'GET').toUpperCase()
         if (path === '/whatsapp/messages' && method === 'POST') {
+          const restrictionFailure = failureMode === 'restriction'
           return ycloudJsonResponse({
-            id: ycloudMessageId,
+            id: restrictionFailure ? restrictionMessageId : ycloudMessageId,
             from: businessPhone,
             to: phone,
             status: 'failed',
             type: 'text',
-            text: { body },
+            text: { body: restrictionFailure ? restrictionBody : body },
             error: {
-              code: '131047',
-              message: fallbackReason
+              code: restrictionFailure ? '403' : '131047',
+              message: restrictionFailure
+                ? 'Access token expired; authorization is no longer available for this sender.'
+                : fallbackReason
             },
             createTime: '2024-05-07T08:09:10.000Z'
           })
@@ -1791,17 +1791,9 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
         skipQrSendProtection: true
       })
 
-      assert.equal(result.transport, 'qr')
-      assert.equal(result.status, 'sent')
-      assert.equal(result.fallback, true)
-      assert.equal(result.fallbackFrom, 'api')
-      assert.equal(result.routingReason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
-      assert.equal(sentMessages.length, 1)
-      assert.equal(sentMessages[0].payload.text, body)
-
-      // El request ya respondio `sent`; el ACK asincrono debe reconciliar la
-      // fila poco despues aunque haya llegado antes de terminar el INSERT.
-      await new Promise(resolve => setTimeout(resolve, 150))
+      assert.equal(result.status, 'failed')
+      assert.equal(result.fallback, undefined)
+      assert.equal(sentMessages.length, 0)
 
       const message = await db.get(`
         SELECT transport, source_adapter, routing_reason, status, error_code, error_message, raw_payload_json, message_text
@@ -1809,17 +1801,47 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
         WHERE ycloud_message_id = ?
       `, [ycloudMessageId])
 
-      assert.equal(message.transport, 'qr')
-      assert.equal(message.source_adapter, 'baileys')
-      assert.equal(message.status, 'delivered')
-      assert.equal(message.error_code, null)
-      assert.equal(message.error_message, null)
+      assert.equal(message.transport, 'api')
+      assert.equal(message.source_adapter, 'ycloud')
+      assert.equal(message.status, 'failed')
+      assert.equal(message.error_code, '131047')
+      assert.equal(message.error_message, fallbackReason)
       assert.equal(message.message_text, body)
-      assert.equal(message.routing_reason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
-      const rawPayload = JSON.parse(message.raw_payload_json)
-      assert.equal(rawPayload.fallbackFrom, 'api')
-      assert.equal(rawPayload.fallbackTransport, 'qr')
-      assert.equal(rawPayload.whatsappMessage.transport, 'qr')
+      assert.equal(message.routing_reason, null)
+
+      failureMode = 'restriction'
+      const restrictionResult = await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: restrictionBody,
+        externalId: `${externalId}_restriction`,
+        contactId,
+        phoneNumberId,
+        skipQrSendProtection: true
+      })
+
+      assert.equal(restrictionResult.status, 'failed')
+      assert.equal(restrictionResult.fallback, undefined)
+      assert.equal(sentMessages.length, 0)
+
+      const restrictionMessage = await db.get(`
+        SELECT transport, status, error_code, message_text
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [restrictionMessageId])
+      assert.equal(restrictionMessage.transport, 'api')
+      assert.equal(restrictionMessage.status, 'failed')
+      assert.equal(restrictionMessage.error_code, '403')
+      assert.equal(restrictionMessage.message_text, restrictionBody)
+
+      const activeAlert = await db.get(`
+        SELECT status
+        FROM whatsapp_api_alerts
+        WHERE status = 'active' AND alert_type IN ('phone_status', 'business_account')
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `)
+      assert.equal(activeAlert?.status, 'active')
     })
   } finally {
     setYCloudFetchForTest(null)
@@ -1828,11 +1850,12 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
     await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ?', [restrictionMessageId]).catch(() => undefined)
     await cleanup({ contactId, messageId: ycloudMessageId, phone })
   }
 })
 
-test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
+test('webhook 131053 conserva el fallo de audio en API y nunca dispara QR', async () => {
   const id = randomUUID()
   const phone = `+52991${Date.now().toString().slice(-7)}`
   const businessPhone = '+526561000008'
@@ -1952,29 +1975,22 @@ test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
     ])
     await new Promise(resolve => setTimeout(resolve, 100))
 
-    assert.equal(sentMessages.length, 1)
-    assert.equal(sentMessages[0].payload.ptt, true)
-    assert.equal(sentMessages[0].payload.mimetype, 'audio/ogg; codecs=opus')
-    assert.ok(Buffer.isBuffer(sentMessages[0].payload.audio))
-    assert.equal(sentMessages[0].payload.audio.subarray(0, 4).toString('latin1'), 'OggS')
+    assert.equal(sentMessages.length, 0)
 
     const row = await db.get(`
       SELECT transport, routing_reason, status, error_code, error_message, raw_payload_json
       FROM whatsapp_api_messages
       WHERE id = ?
     `, [messageId])
-    assert.equal(row.transport, 'qr')
-    assert.ok(['sent', 'delivered'].includes(row.status))
-    assert.equal(row.error_code, null)
-    assert.equal(row.error_message, null)
-    assert.match(row.routing_reason, /no pudo procesar la nota de voz/i)
-    const raw = JSON.parse(row.raw_payload_json)
-    assert.equal(raw.fallbackFrom, 'api')
-    assert.equal(raw.fallbackTransport, 'qr')
+    assert.equal(row.transport, 'api')
+    assert.equal(row.status, 'failed')
+    assert.equal(row.error_code, '131053')
+    assert.equal(row.error_message, errorMessage)
+    assert.equal(row.routing_reason, null)
 
     await processFailure(`evt_audio_131053_b_${id}`)
     await new Promise(resolve => setTimeout(resolve, 50))
-    assert.equal(sentMessages.length, 1)
+    assert.equal(sentMessages.length, 0)
 
     const regularAudioDataUrl = `data:audio/mpeg;base64,${Buffer.from('ID3-audio-normal-fallback').toString('base64')}`
     await db.run(`
@@ -2012,28 +2028,24 @@ test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
     await processFailure(`evt_regular_audio_131053_${id}`, regularYCloudMessageId, false)
     await new Promise(resolve => setTimeout(resolve, 100))
 
-    assert.equal(sentMessages.length, 2)
-    assert.equal(sentMessages[1].payload.ptt, false)
-    assert.equal(sentMessages[1].payload.mimetype, 'audio/mpeg')
-    assert.deepEqual(sentMessages[1].payload.audio, Buffer.from('ID3-audio-normal-fallback'))
+    assert.equal(sentMessages.length, 0)
 
     const regularRow = await db.get(`
       SELECT transport, routing_reason, status, error_code, error_message
       FROM whatsapp_api_messages
       WHERE id = ?
     `, [regularMessageId])
-    assert.equal(regularRow.transport, 'qr')
-    assert.ok(['sent', 'delivered'].includes(regularRow.status))
-    assert.equal(regularRow.error_code, null)
-    assert.equal(regularRow.error_message, null)
-    assert.match(regularRow.routing_reason, /no pudo procesar el audio/i)
+    assert.equal(regularRow.transport, 'api')
+    assert.equal(regularRow.status, 'failed')
+    assert.equal(regularRow.error_code, '131053')
+    assert.equal(regularRow.error_message, errorMessage)
+    assert.equal(regularRow.routing_reason, null)
 
-    // Carrera real: el webhook 131053 puede llegar antes de que la respuesta
-    // del POST se persista con asyncQrFallbackAllowed. El segundo upsert debe
-    // detectar el fallo previo y mandar QR sin necesitar otro webhook.
+    // Carrera real: aunque el webhook llegue antes que el POST, ninguna de las
+    // dos rutas puede convertir un fallo de contenido en autorización QR.
     await processFailure(`evt_audio_race_failed_${id}`, raceYCloudMessageId, true)
     await new Promise(resolve => setTimeout(resolve, 50))
-    assert.equal(sentMessages.length, 2)
+    assert.equal(sentMessages.length, 0)
 
     const acceptedPayload = {
       id: `evt_audio_race_accepted_${id}`,
@@ -2065,18 +2077,17 @@ test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
     })
     await new Promise(resolve => setTimeout(resolve, 100))
 
-    assert.equal(sentMessages.length, 3)
-    assert.equal(sentMessages[2].payload.ptt, true)
+    assert.equal(sentMessages.length, 0)
     const raceRow = await db.get(`
       SELECT transport, status, error_code, error_message, routing_reason
       FROM whatsapp_api_messages
       WHERE ycloud_message_id = ?
     `, [raceYCloudMessageId])
-    assert.equal(raceRow.transport, 'qr')
-    assert.ok(['sent', 'delivered'].includes(raceRow.status))
-    assert.equal(raceRow.error_code, null)
-    assert.equal(raceRow.error_message, null)
-    assert.match(raceRow.routing_reason, /no pudo procesar la nota de voz/i)
+    assert.equal(raceRow.transport, 'api')
+    assert.equal(raceRow.status, 'failed')
+    assert.equal(raceRow.error_code, '131053')
+    assert.equal(raceRow.error_message, errorMessage)
+    assert.equal(raceRow.routing_reason, null)
   } finally {
     resetWhatsAppQrServiceForTest()
     resetWhatsAppQrDripRuntimeForTest()
@@ -2091,7 +2102,7 @@ test('webhook 131053 rescata una nota de voz por QR una sola vez', async () => {
   }
 })
 
-test('envio API fuera de ventana usa QR en preflight sin llamar YCloud', async () => {
+test('envio API fuera de ventana exige plantilla sin tocar YCloud ni Baileys', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52989${suffix}`
@@ -2202,23 +2213,22 @@ test('envio API fuera de ventana usa QR en preflight sin llamar YCloud', async (
         return ycloudJsonResponse({ items: [], total: 0 })
       })
 
-      const result = await sendWhatsAppApiTextMessage({
-        to: phone,
-        from: businessPhone,
-        text: body,
-        externalId,
-        contactId,
-        phoneNumberId,
-        skipQrSendProtection: true
-      })
+      await assert.rejects(
+        sendWhatsAppApiTextMessage({
+          to: phone,
+          from: businessPhone,
+          text: body,
+          externalId,
+          contactId,
+          phoneNumberId,
+          transport: 'qr',
+          skipQrSendProtection: true
+        }),
+        /24 horas.*plantillas/i
+      )
 
-      assert.equal(result.transport, 'qr')
-      assert.equal(result.fallback, true)
-      assert.equal(result.fallbackFrom, 'api')
-      assert.equal(result.routingReason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
       assert.equal(ycloudPostCalls, 0)
-      assert.equal(sentMessages.length, 1)
-      assert.equal(sentMessages[0].payload.text, body)
+      assert.equal(sentMessages.length, 0)
 
       const message = await db.get(`
         SELECT transport, routing_reason, status, error_code, error_message, message_text
@@ -2228,11 +2238,7 @@ test('envio API fuera de ventana usa QR en preflight sin llamar YCloud', async (
         LIMIT 1
       `, [contactId, body])
 
-      assert.equal(message.transport, 'qr')
-      assert.equal(message.error_code, null)
-      assert.equal(message.error_message, null)
-      assert.equal(message.message_text, body)
-      assert.equal(message.routing_reason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
+      assert.equal(message, null)
     })
   } finally {
     setYCloudFetchForTest(null)
@@ -2245,7 +2251,7 @@ test('envio API fuera de ventana usa QR en preflight sin llamar YCloud', async (
   }
 })
 
-test('envio de foto fuera de ventana usa QR como imagen y no como texto', async () => {
+test('envio de foto fuera de ventana exige plantilla y nunca toca Baileys', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52988${suffix}`
@@ -2346,23 +2352,21 @@ test('envio de foto fuera de ventana usa QR como imagen y no como texto', async 
         return ycloudJsonResponse({ items: [], total: 0 })
       })
 
-      const result = await sendWhatsAppApiImageMessage({
-        to: phone,
-        from: businessPhone,
-        imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
-        externalId,
-        contactId,
-        phoneNumberId,
-        skipQrSendProtection: true
-      })
+      await assert.rejects(
+        sendWhatsAppApiImageMessage({
+          to: phone,
+          from: businessPhone,
+          imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
+          externalId,
+          contactId,
+          phoneNumberId,
+          skipQrSendProtection: true
+        }),
+        /24 horas.*plantillas/i
+      )
 
-      assert.equal(result.transport, 'qr')
-      assert.equal(result.fallback, true)
-      assert.equal(result.fallbackFrom, 'api')
       assert.equal(ycloudPostCalls, 0)
-      assert.equal(sentMessages.length, 1)
-      assert.equal(sentMessages[0].payload.text, undefined)
-      assert.equal(sentMessages[0].payload.image instanceof Buffer, true)
+      assert.equal(sentMessages.length, 0)
 
       const message = await db.get(`
         SELECT transport, routing_reason, status, message_type, message_text
@@ -2372,10 +2376,7 @@ test('envio de foto fuera de ventana usa QR como imagen y no como texto', async 
         LIMIT 1
       `, [contactId])
 
-      assert.equal(message.transport, 'qr')
-      assert.equal(message.message_type, 'image')
-      assert.equal(message.message_text, null)
-      assert.equal(message.routing_reason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
+      assert.equal(message, null)
     })
   } finally {
     setYCloudFetchForTest(null)
@@ -2388,7 +2389,7 @@ test('envio de foto fuera de ventana usa QR como imagen y no como texto', async 
   }
 })
 
-test('envio API sin inbound conocido usa QR en preflight sin llamar YCloud', async () => {
+test('envio API sin inbound conocido exige plantilla sin tocar YCloud ni Baileys', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52988${suffix}`
@@ -2477,23 +2478,21 @@ test('envio API sin inbound conocido usa QR en preflight sin llamar YCloud', asy
         return ycloudJsonResponse({ items: [], total: 0 })
       })
 
-      const result = await sendWhatsAppApiTextMessage({
-        to: phone,
-        from: businessPhone,
-        text: body,
-        externalId,
-        contactId,
-        phoneNumberId,
-        skipQrSendProtection: true
-      })
+      await assert.rejects(
+        sendWhatsAppApiTextMessage({
+          to: phone,
+          from: businessPhone,
+          text: body,
+          externalId,
+          contactId,
+          phoneNumberId,
+          skipQrSendProtection: true
+        }),
+        /No hay una respuesta reciente.*24 horas/i
+      )
 
-      assert.equal(result.transport, 'qr')
-      assert.equal(result.fallback, true)
-      assert.equal(result.fallbackFrom, 'api')
-      assert.match(result.routingReason, /No hay una respuesta reciente del cliente registrada/)
       assert.equal(ycloudPostCalls, 0)
-      assert.equal(sentMessages.length, 1)
-      assert.equal(sentMessages[0].payload.text, body)
+      assert.equal(sentMessages.length, 0)
 
       const message = await db.get(`
         SELECT transport, routing_reason, status, error_code, error_message, message_text
@@ -2503,11 +2502,7 @@ test('envio API sin inbound conocido usa QR en preflight sin llamar YCloud', asy
         LIMIT 1
       `, [contactId, body])
 
-      assert.equal(message.transport, 'qr')
-      assert.equal(message.error_code, null)
-      assert.equal(message.error_message, null)
-      assert.equal(message.message_text, body)
-      assert.match(message.routing_reason, /No hay una respuesta reciente del cliente registrada/)
+      assert.equal(message, null)
     })
   } finally {
     setYCloudFetchForTest(null)
@@ -2520,7 +2515,7 @@ test('envio API sin inbound conocido usa QR en preflight sin llamar YCloud', asy
   }
 })
 
-test('envio API fuera de ventana usa QR aunque el QR viva en otro registro del mismo numero', async () => {
+test('131047 no usa el QR hermano del mismo número', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52993${suffix}`
@@ -2531,7 +2526,7 @@ test('envio API fuera de ventana usa QR aunque el QR viva en otro registro del m
   const contactId = `rstk_contact_api_qr_split_${id}`
   const ycloudMessageId = `ycloud_api_split_failed_${id}`
   const externalId = `manual_chat_split_${id}`
-  const body = 'Hola, esto debe salir por el QR separado'
+  const body = 'Hola, esto no debe salir por el QR separado'
   const fallbackReason = 'Message failed to send because more than 24 hours have passed since the customer last replied to this number.'
   const keys = getWhatsAppApiConfigKeys()
   const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
@@ -2634,11 +2629,9 @@ test('envio API fuera de ventana usa QR aunque el QR viva en otro registro del m
         skipQrSendProtection: true
       })
 
-      assert.equal(result.transport, 'qr')
-      assert.equal(result.status, 'delivered')
-      assert.equal(result.fallback, true)
-      assert.equal(sentMessages.length, 1)
-      assert.equal(sentMessages[0].payload.text, body)
+      assert.equal(result.status, 'failed')
+      assert.equal(result.fallback, undefined)
+      assert.equal(sentMessages.length, 0)
 
       const message = await db.get(`
         SELECT transport, routing_reason, status, error_code, error_message, raw_payload_json, message_text
@@ -2646,16 +2639,12 @@ test('envio API fuera de ventana usa QR aunque el QR viva en otro registro del m
         WHERE ycloud_message_id = ?
       `, [ycloudMessageId])
 
-      assert.equal(message.transport, 'qr')
-      assert.equal(message.status, 'delivered')
-      assert.equal(message.error_code, null)
-      assert.equal(message.error_message, null)
+      assert.equal(message.transport, 'api')
+      assert.equal(message.status, 'failed')
+      assert.equal(message.error_code, '131047')
+      assert.equal(message.error_message, fallbackReason)
       assert.equal(message.message_text, body)
-      assert.equal(message.routing_reason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
-      const rawPayload = JSON.parse(message.raw_payload_json)
-      assert.equal(rawPayload.fallbackFrom, 'api')
-      assert.equal(rawPayload.fallbackTransport, 'qr')
-      assert.equal(rawPayload.whatsappMessage.transport, 'qr')
+      assert.equal(message.routing_reason, null)
     })
   } finally {
     setYCloudFetchForTest(null)
@@ -2670,7 +2659,7 @@ test('envio API fuera de ventana usa QR aunque el QR viva en otro registro del m
   }
 })
 
-test('envio API fuera de ventana usa QR cuando la sesion esta reconectando', async () => {
+test('una pérdida 403 de autorización sí usa el QR de respaldo reconectando', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52992${suffix}`
@@ -2680,8 +2669,8 @@ test('envio API fuera de ventana usa QR cuando la sesion esta reconectando', asy
   const contactId = `rstk_contact_api_qr_reconnecting_${id}`
   const ycloudMessageId = `ycloud_api_reconnecting_failed_${id}`
   const externalId = `manual_chat_reconnecting_${id}`
-  const body = 'Hola, esto debe salir por el QR reconectado'
-  const fallbackReason = 'Message failed to send because more than 24 hours have passed since the customer last replied to this number.'
+  const body = 'Hola, esto sí debe salir por el QR reconectado'
+  const fallbackReason = 'Access token expired; authorization is no longer available for this sender.'
   const keys = getWhatsAppApiConfigKeys()
   const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
   const sentMessages = []
@@ -2747,19 +2736,10 @@ test('envio API fuera de ventana usa QR cuando la sesion esta reconectando', asy
         const path = parsed.pathname.replace(/^\/v2/, '')
         const method = String(options.method || 'GET').toUpperCase()
         if (path === '/whatsapp/messages' && method === 'POST') {
-          return ycloudJsonResponse({
-            id: ycloudMessageId,
-            from: businessPhone,
-            to: phone,
-            status: 'failed',
-            type: 'text',
-            text: { body },
-            error: {
-              code: '131047',
-              message: fallbackReason
-            },
-            createTime: '2024-05-07T08:09:10.000Z'
-          })
+          return ycloudJsonResponse(
+            { message: fallbackReason },
+            { status: 403, statusText: 'Forbidden' }
+          )
         }
         return ycloudJsonResponse({ items: [], total: 0 })
       })
@@ -2775,7 +2755,6 @@ test('envio API fuera de ventana usa QR cuando la sesion esta reconectando', asy
       })
 
       assert.equal(result.transport, 'qr')
-      assert.equal(result.status, 'delivered')
       assert.equal(result.fallback, true)
       assert.equal(sentMessages.length, 1)
       assert.equal(sentMessages[0].payload.text, body)
@@ -2783,15 +2762,17 @@ test('envio API fuera de ventana usa QR cuando la sesion esta reconectando', asy
       const message = await db.get(`
         SELECT transport, routing_reason, status, error_code, error_message, message_text
         FROM whatsapp_api_messages
-        WHERE ycloud_message_id = ?
-      `, [ycloudMessageId])
+        WHERE contact_id = ? AND message_text = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [contactId, body])
 
       assert.equal(message.transport, 'qr')
-      assert.equal(message.status, 'delivered')
+      assert.ok(['sent', 'delivered'].includes(message.status))
       assert.equal(message.error_code, null)
       assert.equal(message.error_message, null)
       assert.equal(message.message_text, body)
-      assert.equal(message.routing_reason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
+      assert.equal(message.routing_reason, 'WhatsApp API perdió autorización o conexión para este número.')
     })
   } finally {
     setYCloudFetchForTest(null)
