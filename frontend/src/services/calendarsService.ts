@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { refreshIntegrationsStatusAfter } from './integrationsService';
 import { parseSortableDateValue } from '@/utils/dateSort';
 import { getStoredBusinessTimezone, localDateTimeInputToUTCISOString, todayDateOnlyInTimezone } from '@/utils/timezone';
 
@@ -401,9 +402,9 @@ export const calendarsService = {
   },
 
   async claimGoogleOAuth(handoffToken: string): Promise<GoogleCalendarIntegrationStatus> {
-    return apiClient.post<GoogleCalendarIntegrationStatus>('/calendars/google-integration/connect/claim', {
+    return refreshIntegrationsStatusAfter(apiClient.post<GoogleCalendarIntegrationStatus>('/calendars/google-integration/connect/claim', {
       handoffToken
-    });
+    }));
   },
 
   async getGoogleCalendarOptions(): Promise<GoogleCalendarOption[]> {
@@ -430,7 +431,7 @@ export const calendarsService = {
   },
 
   async deleteGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {
-    return apiClient.delete<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
+    return refreshIntegrationsStatusAfter(apiClient.delete<GoogleCalendarIntegrationStatus>('/calendars/google-integration'));
   },
 
   async updateCalendarGoogleSync(calendarId: string, googleCalendarId: string): Promise<Calendar | null> {

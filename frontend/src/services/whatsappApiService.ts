@@ -1,4 +1,5 @@
 import apiClient from './apiClient'
+import { refreshIntegrationsStatusAfter } from './integrationsService'
 
 export interface WhatsAppApiPhoneNumber {
   id: string
@@ -664,9 +665,9 @@ export const whatsappApiService = {
   getMetaConnectUrl: () => apiClient.get<WhatsAppMetaDirectConnectUrlResponse>('/whatsapp-api/meta/connect-url'),
   prepareMetaSignup: () => apiClient.get<WhatsAppMetaEmbeddedSignupSession>('/whatsapp-api/meta/signup-session'),
   completeMetaSignup: (payload: { state: string; code?: string; signupData?: WhatsAppMetaEmbeddedSignupData }) => (
-    apiClient.post<{ completed: boolean; wabaId?: string; phoneNumberId?: string }>('/whatsapp-api/meta/signup-complete', payload)
+    refreshIntegrationsStatusAfter(apiClient.post<{ completed: boolean; wabaId?: string; phoneNumberId?: string }>('/whatsapp-api/meta/signup-complete', payload))
   ),
-  setProvider: (provider: 'ycloud' | 'meta_direct') => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/provider', { provider }),
+  setProvider: (provider: 'ycloud' | 'meta_direct') => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/provider', { provider })),
   testMetaDirect: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/test'),
   sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),
   sendMetaSocialText: (payload: MetaSocialTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/text', payload),
@@ -683,12 +684,12 @@ export const whatsappApiService = {
     return apiClient.get<MetaSocialPostsResponse>(`/whatsapp-api/meta/social/posts?${qs.toString()}`)
   },
   syncMetaDirectHistory: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/sync-history'),
-  disconnectMetaDirect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/disconnect'),
-  connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),
+  disconnectMetaDirect: () => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/disconnect')),
+  connect: (payload: WhatsAppApiConnectPayload) => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload)),
   previewPhoneNumbers: (apiKey?: string) => apiClient.post<WhatsAppApiPhoneNumbersPreviewResponse>('/whatsapp-api/phone-numbers/preview', { apiKey }),
   setDefaultPhoneNumber: (phoneNumberId: string) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/phone-numbers/default', { phoneNumberId }),
   disconnectPhoneNumber: (phoneNumberId: string, connection: 'api' | 'qr') => (
-    apiClient.post<WhatsAppApiStatus>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/disconnect`, { connection })
+    refreshIntegrationsStatusAfter(apiClient.post<WhatsAppApiStatus>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/disconnect`, { connection }))
   ),
   rerouteContacts: (phoneNumberId: string, targetPhoneNumberId: string, reason?: string) => (
     apiClient.post<{ moved: number; from: string; to: string }>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/reroute`, { targetPhoneNumberId, reason })
@@ -696,7 +697,7 @@ export const whatsappApiService = {
   restoreContacts: (phoneNumberId: string) => (
     apiClient.post<{ restored: number; phoneNumberId: string }>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/restore`)
   ),
-  refresh: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/refresh'),
+  refresh: () => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppApiStatus>('/whatsapp-api/refresh')),
   backfillContactProfilePictures: (payload: WhatsAppContactProfilePictureBackfillPayload = {}) => (
     apiClient.post<WhatsAppContactProfilePictureBackfillResult>('/whatsapp-api/contacts/profile-pictures/backfill', payload)
   ),
@@ -708,8 +709,8 @@ export const whatsappApiService = {
   getQrDripSettings: () => apiClient.get<WhatsAppQrDripSettings>('/whatsapp-api/qr/drip-settings'),
   updateQrDripSettings: (payload: WhatsAppQrDripSettingsPayload) => apiClient.put<WhatsAppQrDripSettings>('/whatsapp-api/qr/drip-settings', payload),
   createQrPhoneNumber: (payload: WhatsAppQrPhoneNumberPayload) => apiClient.post<WhatsAppApiPhoneNumber>('/whatsapp-api/qr/phone-numbers', payload),
-  connectQr: (payload: WhatsAppQrConnectPayload) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload),
-  disconnectQr: (phoneNumberId: string) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId }),
+  connectQr: (payload: WhatsAppQrConnectPayload) => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload)),
+  disconnectQr: (phoneNumberId: string) => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId })),
   getTemplates: (status: string | null = WHATSAPP_API_APPROVED_TEMPLATE_STATUS) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
     params: status ? { status } : undefined
   }),

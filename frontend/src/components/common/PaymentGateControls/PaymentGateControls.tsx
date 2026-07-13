@@ -4,11 +4,8 @@ import { CustomSelect } from '../CustomSelect'
 import { NumberInput } from '../NumberInput'
 import { Switch } from '../Switch'
 import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '../PaymentPlatformLogo'
-import {
-  getIntegrationsStatus,
-  readCachedIntegrationsStatus,
-  type IntegrationsStatus
-} from '@/services/integrationsService'
+import type { IntegrationsStatus } from '@/services/integrationsService'
+import { useIntegrationsStatus } from '@/hooks/useIntegrationsStatus'
 import { productsService, type ProductItem, type ProductPrice } from '@/services/productsService'
 import { ProductFormModal } from '@/components/common/ProductFormModal/ProductFormModal'
 import {
@@ -204,7 +201,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   currencyFallback = 'MXN',
   requireConnectedGateway = false
 }) => {
-  const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(() => readCachedIntegrationsStatus())
+  const { status: integrationsStatus } = useIntegrationsStatus()
   const allowedGatewayOptions = useMemo(() => {
     const requested = Array.isArray(availableGateways)
       ? availableGateways.filter(gateway => gatewayValues.has(gateway))
@@ -264,18 +261,6 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
           ...(config.gateway === 'conekta' ? [] : [{ value: 'daily', label: 'Diaria' }])
         ])
   ]
-
-  useEffect(() => {
-    let active = true
-    getIntegrationsStatus()
-      .then(status => {
-        if (active) setIntegrationsStatus(status)
-      })
-      .catch(() => {})
-    return () => {
-      active = false
-    }
-  }, [])
 
   const patchConfig = (patch: Partial<PaymentGateConfig>) => {
     onChange(normalizeAllowedPaymentGateConfig({ ...config, ...patch }))

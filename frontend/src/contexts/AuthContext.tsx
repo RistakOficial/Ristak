@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { ensureLocalDevAuth } from '@/services/authFetch'
 import { apiUrl, requiresRuntimeApiBaseUrl, isNativeAppRuntime, clearRuntimeApiBaseUrl } from '@/services/apiBaseUrl'
-import { getIntegrationsStatus } from '@/services/integrationsService'
+import { clearIntegrationsStatus } from '@/services/integrationsService'
+import { useIntegrationsStatus } from '@/hooks/useIntegrationsStatus'
 import type { AccountLocaleDefaults } from '@/utils/accountLocale'
 import type { AccessConfig, LicenseFeatures, UserRole } from '@/utils/accessControl'
 
@@ -92,6 +93,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [needsSetup, setNeedsSetup] = useState(false)
+  const { status: integrationsStatus } = useIntegrationsStatus({ enabled: Boolean(user) })
 
   // Verificar si hay un token guardado al cargar la app
   useEffect(() => {
@@ -168,34 +170,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     verifyToken()
   }, [])
 
-  // Cargar datos del location de HighLevel una vez autenticado
+  // Mantener credenciales runtime de HighLevel sincronizadas con la conexión
+  // compartida. Conectar o desconectar actualiza todas las rutas montadas.
   useEffect(() => {
-    if (!user) return
-
-    const fetchLocationData = async () => {
-      try {
-        const data = await getIntegrationsStatus()
-
-        if (data.highlevel?.locationData) {
-          const locationData = data.highlevel.locationData
-
-          // Guardar locationId y accessToken para usar en otras partes de la app
-          if (locationData.id) {
-            setLocationId(locationData.id)
-          }
-        }
-
-        // Guardar el accessToken si existe
-        if (data.highlevel?.accessToken) {
-          setAccessToken(data.highlevel.accessToken)
-        }
-      } catch (error) {
-        // Si falla, continuar sin location data
-      }
+    if (!user) {
+      setLocationId(null)
+      setAccessToken(null)
+      return
     }
 
-    fetchLocationData()
-  }, [user])
+    const highLevel = integrationsStatus?.highlevel
+    setLocationId(highLevel?.locationData?.id || highLevel?.locationId || null)
+    setAccessToken(highLevel?.accessToken || null)
+  }, [integrationsStatus, user])
 
   const login = async (email: string, password: string) => {
     try {
@@ -293,6 +280,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const logout = () => {
     localStorage.removeItem('auth_token')
+    clearIntegrationsStatus()
     setUser(null)
     setLocationId(null)
     setAccessToken(null)

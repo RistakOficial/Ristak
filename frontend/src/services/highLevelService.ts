@@ -1,5 +1,6 @@
 // Servicio de GoHighLevel para manejar configuración
 import { apiUrl } from './apiBaseUrl'
+import { refreshIntegrationsStatusAfter } from './integrationsService'
 
 // Evento que avisa al AppShell que se inició una sincronización manual,
 // para mostrar la barra de progreso sin sondear continuamente el backend.
@@ -155,7 +156,7 @@ class HighLevelService {
         },
         body: JSON.stringify(cleanConfig)
       })
-      return await response.json()
+      return await refreshIntegrationsStatusAfter(response.json())
     } catch (error) {
       // TODO: Implement proper logging service
       throw error
@@ -238,7 +239,7 @@ class HighLevelService {
           'Content-Type': 'application/json'
         }
       })
-      return await response.json()
+      return await refreshIntegrationsStatusAfter(response.json())
     } catch (error) {
       // TODO: Implement proper logging service
       throw error

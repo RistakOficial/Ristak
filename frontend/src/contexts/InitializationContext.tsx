@@ -1,10 +1,6 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { useAppConfig } from '@/hooks'
-import {
-  getIntegrationsStatus,
-  invalidateIntegrationsStatus,
-  type IntegrationsStatus
-} from '@/services/integrationsService'
+import React, { createContext, useCallback, useContext, useMemo } from 'react'
+import { useAppConfig, useIntegrationsStatus } from '@/hooks'
+import type { IntegrationsStatus } from '@/services/integrationsService'
 
 export type InitStepId =
   | 'facebook-page'
@@ -65,30 +61,11 @@ function buildSteps(status: IntegrationsStatus | null, metaAppDone: boolean): In
 export const InitializationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [hidden, setHiddenConfig] = useAppConfig<boolean>('initialization_hidden', false)
   const [metaAppDone, setMetaAppDoneConfig] = useAppConfig<boolean>('init_meta_app_done', false)
-  const [status, setStatus] = useState<IntegrationsStatus | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  const load = useCallback(async (forceRefresh = false) => {
-    try {
-      const data = await getIntegrationsStatus({ forceRefresh })
-      setStatus(data)
-    } catch {
-      // Si falla, dejamos status en null: la página de inicialización se mostrará
-      // con todo pendiente y el usuario podrá reintentar.
-      setStatus(null)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void load(false)
-  }, [load])
+  const { status, loading, refresh: refreshStatus } = useIntegrationsStatus()
 
   const refresh = useCallback(async () => {
-    invalidateIntegrationsStatus()
-    await load(true)
-  }, [load])
+    await refreshStatus()
+  }, [refreshStatus])
 
   const steps = useMemo(() => buildSteps(status, Boolean(metaAppDone)), [status, metaAppDone])
 

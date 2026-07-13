@@ -36,6 +36,8 @@ El item de menú vive en `frontend/src/components/layout/Sidebar/Sidebar.tsx` co
 - Permite configurar mensajes automáticos de cita: recordatorios antes de la cita
   y avisos después de agendar.
 - Permite abrir configuración de calendarios desde el botón de Settings.
+- Descarta respuestas de rangos/calendarios anteriores cuando una carga más nueva
+  o una mutación ya cambió la vista.
 
 ## Estado Global Usado
 
@@ -79,6 +81,12 @@ calendarsService.deleteEvent(eventId, accessToken)
 ```
 
 `AppointmentModal` maneja contacto, usuario asignado, título, estado, fechas, ubicación y notas.
+
+Después de crear o editar, la vista aplica únicamente la respuesta confirmada por
+backend y ejecuta un refetch canónico para respetar normalización de fechas,
+webhooks y sincronización externa. Después de eliminar, quita la fila confirmada
+de eventos y próximas citas inmediatamente y revalida ambas colecciones. Ninguno
+de estos flujos requiere recargar la página.
 
 ## Flujos De Horarios Bloqueados
 
@@ -192,6 +200,8 @@ Si no hay calendarios de atribución configurados, backend usa todos como fallba
 ## Notas Técnicas
 
 - Las fechas para llamadas de eventos se envían como timestamps en milisegundos.
+- `calendarsRequestRef`, `eventsRequestRef`, `upcomingEventsRequestRef` y
+  `blockedSlotsRequestRef` impiden que una petición vieja vuelva a pintar datos.
 - La grilla horaria calcula posiciones visuales por hora/minuto.
 - Los modales usan portal con componentes comunes; no deben usar `alert`, `confirm` ni `prompt`.
 - La página funciona con calendarios/citas de Ristak; HighLevel es una sincronización opcional y sólo debe mostrar estado pendiente cuando el usuario intenta operar recursos externos de esa integración.

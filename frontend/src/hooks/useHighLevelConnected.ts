@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react'
-import { getIntegrationsStatus } from '@/services/integrationsService'
+import { useIntegrationsStatus } from './useIntegrationsStatus'
 
 interface HighLevelConnection {
   connected: boolean
@@ -19,34 +18,10 @@ interface HighLevelConnection {
  *          y `loading` (verificación en curso).
  */
 export function useHighLevelConnected(): HighLevelConnection {
-  const [connected, setConnected] = useState(false)
-  const [configured, setConfigured] = useState(false)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let cancelled = false
-
-    const loadStatus = async () => {
-      try {
-        const data = await getIntegrationsStatus()
-        if (cancelled) return
-        setConnected(Boolean(data?.highlevel?.connected))
-        setConfigured(Boolean(data?.highlevel?.configured))
-      } catch {
-        if (cancelled) return
-        setConnected(false)
-        setConfigured(false)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    loadStatus()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  return { connected, configured, loading }
+  const { status, loading } = useIntegrationsStatus()
+  return {
+    connected: Boolean(status?.highlevel?.connected),
+    configured: Boolean(status?.highlevel?.configured),
+    loading
+  }
 }

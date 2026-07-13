@@ -37,6 +37,7 @@ import automationsService, {
   AUTOMATION_STATUS_LABELS,
   automationToSummary,
   automationsCache,
+  subscribeAutomationsOverview,
   type AutomationFolder,
   type AutomationSummary
 } from '@/services/automationsService'
@@ -117,21 +118,22 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
     }, 120)
   }
 
-  const reload = async () => {
+  const reload = async (options: { silent?: boolean } = {}) => {
     try {
-      const overview = await automationsService.getOverview()
-      setFolders(overview.folders)
-      setAutomations(overview.automations)
-      return overview
+      return await automationsService.getOverview()
     } catch {
-      showToast('error', 'No se pudo cargar la librería')
+      if (!options.silent) showToast('error', 'No se pudo cargar la librería')
       return null
     }
   }
 
   useEffect(() => {
-    if (automationsCache.overview) return
+    const unsubscribe = subscribeAutomationsOverview((overview) => {
+      setFolders(overview.folders)
+      setAutomations(overview.automations)
+    })
     void reload()
+    return unsubscribe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -190,7 +192,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
         ids.map((id) => automationsService.updateAutomation(id, { folderId: targetFolderId }))
       )
       setSelected(new Set())
-      await reload()
+      void reload({ silent: true })
       showToast(
         'success',
         ids.length > 1 ? `${ids.length} automatizaciones movidas` : 'Automatización movida'
@@ -210,9 +212,9 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
       `Vas a eliminar ${names}. Esta acción no se puede deshacer.`,
       () => {
         void Promise.all(ids.map((id) => automationsService.deleteAutomation(id)))
-          .then(async () => {
+          .then(() => {
             setSelected(new Set())
-            await reload()
+            void reload({ silent: true })
             showToast('success', ids.length > 1 ? 'Automatizaciones eliminadas' : 'Automatización eliminada')
             if (currentAutomationId && ids.includes(currentAutomationId)) navigate('/automations')
           })
@@ -232,9 +234,9 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
       () => {
         void automationsService
           .deleteFolder(folder.id)
-          .then(async () => {
+          .then(() => {
             if (folderId === folder.id) setFolderId(null)
-            await reload()
+            void reload({ silent: true })
             showToast('success', 'Carpeta eliminada')
           })
           .catch(() => showToast('error', 'No se pudo eliminar la carpeta'))
@@ -247,7 +249,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   const duplicateAutomation = async (id: string) => {
     try {
       const copy = await automationsService.duplicateAutomation(id)
-      await reload()
+      void reload({ silent: true })
       showToast('success', 'Automatización duplicada', copy.name)
     } catch {
       showToast('error', 'No se pudo duplicar')
@@ -287,7 +289,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
         )
         onAutomationUpdated?.(summary)
       }
-      await reload()
+      void reload({ silent: true })
       setNameModal(null)
     } catch (error) {
       showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : '')

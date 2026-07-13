@@ -478,6 +478,9 @@ export const Appointments: React.FC = () => {
   }, []);
 
   const selectCalendar = useCallback((calendar: Calendar | null) => {
+    eventsRequestRef.current += 1;
+    upcomingEventsRequestRef.current += 1;
+    blockedSlotsRequestRef.current += 1;
     setSelectedCalendar(calendar);
     persistLastSelectedCalendar(calendar?.id ?? null);
   }, [persistLastSelectedCalendar]);
@@ -515,6 +518,10 @@ export const Appointments: React.FC = () => {
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const handledOpenAppointmentRef = useRef<string | null>(null);
+  const calendarsRequestRef = useRef(0);
+  const eventsRequestRef = useRef(0);
+  const upcomingEventsRequestRef = useRef(0);
+  const blockedSlotsRequestRef = useRef(0);
 
   // Tooltip de eventos
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
@@ -575,9 +582,12 @@ export const Appointments: React.FC = () => {
   }, [currentDate, timezone, viewMode]);
 
   const loadCalendars = useCallback(async () => {
+    const requestId = calendarsRequestRef.current + 1;
+    calendarsRequestRef.current = requestId;
     try {
       setLoading(true);
       const calendarsData = await calendarsService.getCalendars(locationId, accessToken);
+      if (calendarsRequestRef.current !== requestId) return calendarsData;
       setCalendars(calendarsData);
 
       // Seleccionar calendario: último usado en esta sesión > predeterminado (configuración) > primer activo
@@ -606,15 +616,20 @@ export const Appointments: React.FC = () => {
         selectCalendar(null);
       }
     } catch (error) {
-      showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
+      if (calendarsRequestRef.current === requestId) {
+        showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
+      }
+      return [];
     } finally {
-      setLoading(false);
+      if (calendarsRequestRef.current === requestId) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationId, accessToken, defaultCalendarId, routeState.calendarId, selectCalendar]);
 
   const loadEvents = useCallback(async () => {
     if (!selectedCalendar) return;
+    const requestId = eventsRequestRef.current + 1;
+    eventsRequestRef.current = requestId;
 
     try {
       setLoading(true);
@@ -630,6 +645,7 @@ export const Appointments: React.FC = () => {
         selectedCalendar.id
       );
 
+      if (eventsRequestRef.current !== requestId) return;
       setEvents(eventsData);
 
       // Calcular estadísticas del mes visible
@@ -645,11 +661,14 @@ export const Appointments: React.FC = () => {
         selectedCalendar.id
       );
 
+      if (eventsRequestRef.current !== requestId) return;
       setStats(calendarsService.calculateStats(monthlyData));
     } catch (error) {
-      showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
+      if (eventsRequestRef.current === requestId) {
+        showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
+      }
     } finally {
-      setLoading(false);
+      if (eventsRequestRef.current === requestId) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationId, accessToken, selectedCalendar, currentDate, getDateRange, timezone]);
@@ -673,6 +692,8 @@ export const Appointments: React.FC = () => {
   // Cargar eventos próximos desde HOY (independiente del calendario visible)
   const loadUpcomingEvents = useCallback(async () => {
     if (!selectedCalendar) return;
+    const requestId = upcomingEventsRequestRef.current + 1;
+    upcomingEventsRequestRef.current = requestId;
 
     try {
       const upcomingData = await calendarsService.getFutureAppointments(
@@ -681,7 +702,9 @@ export const Appointments: React.FC = () => {
         accessToken || undefined
       );
 
-      setUpcomingEvents(upcomingData);
+      if (upcomingEventsRequestRef.current === requestId) {
+        setUpcomingEvents(upcomingData);
+      }
     } catch (error) {
       // Error silencioso - no afecta funcionalidad principal
     }
@@ -690,6 +713,8 @@ export const Appointments: React.FC = () => {
   // Cargar horarios bloqueados del calendario
   const loadBlockedSlots = useCallback(async () => {
     if (!selectedCalendar) return;
+    const requestId = blockedSlotsRequestRef.current + 1;
+    blockedSlotsRequestRef.current = requestId;
 
     try {
       // Usar el mismo rango de fechas que loadEvents
@@ -704,10 +729,12 @@ export const Appointments: React.FC = () => {
       );
 
       // Normalizar a segmentos por día en la zona de la cuenta (multi-día → una banda por día).
-      setBlockedSlots(expandBlockedSlots(rawBlockedSlots, timezone));
+      if (blockedSlotsRequestRef.current === requestId) {
+        setBlockedSlots(expandBlockedSlots(rawBlockedSlots, timezone));
+      }
     } catch (error) {
       // Error silencioso - si falla, simplemente no se muestran blocked slots
-      setBlockedSlots([]);
+      if (blockedSlotsRequestRef.current === requestId) setBlockedSlots([]);
     }
   }, [locationId, accessToken, selectedCalendar, getDateRange, timezone]);
 
@@ -978,7 +1005,7 @@ export const Appointments: React.FC = () => {
 
     try {
       setLoading(true);
-      await calendarsService.createAppointment(
+      const created = await calendarsService.createAppointment(
         {
           calendarId: selectedCalendar.id,
           ...(locationId ? { locationId } : {}),
@@ -986,6 +1013,12 @@ export const Appointments: React.FC = () => {
         },
         accessToken || undefined
       );
+      if (created) {
+        setEvents(current => [created, ...current.filter(event => event.id !== created.id)]);
+        if (parseSortableDateValue(created.endTime) >= Date.now()) {
+          setUpcomingEvents(current => [created, ...current.filter(event => event.id !== created.id)]);
+        }
+      }
       showToast('success', 'Cita programada', accessToken ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak.');
       closeCreateModal();
       await loadEvents();
@@ -1114,11 +1147,16 @@ export const Appointments: React.FC = () => {
     if (!updates) return;
 
     try {
-      await calendarsService.updateAppointment(eventId, updates, accessToken || undefined);
+      const updated = await calendarsService.updateAppointment(eventId, updates, accessToken || undefined);
+      if (updated) {
+        setEvents(current => current.map(event => event.id === updated.id ? updated : event));
+        setUpcomingEvents(current => current.map(event => event.id === updated.id ? updated : event));
+        setSelectedEvent(current => current?.id === updated.id ? updated : current);
+      }
       showToast('success', 'Cita actualizada', accessToken ? 'Los cambios se guardaron correctamente.' : 'Los cambios quedaron guardados en Ristak y pendientes de sync.');
 
-      // Recargar eventos
-      loadEvents();
+      // Refetch canónico: backend ya normalizó fechas y estado en la zona del negocio.
+      await Promise.all([loadEvents(), loadUpcomingEvents()]);
     } catch (error) {
       showToast('error', 'Error al actualizar', 'No se pudo guardar la cita. Intenta nuevamente.');
       throw error;
@@ -1129,10 +1167,11 @@ export const Appointments: React.FC = () => {
   const handleDeleteAppointment = async (eventId: string) => {
     try {
       await calendarsService.deleteEvent(eventId, accessToken || undefined);
+      setEvents(current => current.filter(event => event.id !== eventId));
+      setUpcomingEvents(current => current.filter(event => event.id !== eventId));
       showToast('success', 'Cita eliminada', 'La cita se eliminó correctamente.');
 
-      // Recargar eventos
-      loadEvents();
+      await Promise.all([loadEvents(), loadUpcomingEvents()]);
     } catch (error) {
       showToast('error', 'Error al eliminar', 'No se pudo eliminar la cita. Intenta nuevamente.');
       throw error;

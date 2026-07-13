@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getIntegrationsStatus, readCachedIntegrationsStatus, type IntegrationsStatus } from '@/services/integrationsService'
+import { useMemo } from 'react'
+import type { IntegrationsStatus } from '@/services/integrationsService'
+import { useIntegrationsStatus } from './useIntegrationsStatus'
 
 export type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
 
@@ -41,32 +42,8 @@ function getConnectionStateFromStatus(status: IntegrationsStatus | null, loading
 }
 
 export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
-  const [connectionState, setConnectionState] = useState<PaymentGatewayConnectionState>(() => {
-    const cachedStatus = readCachedIntegrationsStatus()
-    return getConnectionStateFromStatus(cachedStatus, !cachedStatus)
-  })
-
-  useEffect(() => {
-    let cancelled = false
-
-    const loadStatus = async () => {
-      try {
-        const data = await getIntegrationsStatus()
-        if (cancelled) return
-        setConnectionState(getConnectionStateFromStatus(data, false))
-      } catch {
-        if (cancelled) return
-        const cachedStatus = readCachedIntegrationsStatus()
-        setConnectionState(getConnectionStateFromStatus(cachedStatus, false))
-      }
-    }
-
-    loadStatus()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const { status, loading } = useIntegrationsStatus()
+  const connectionState = getConnectionStateFromStatus(status, loading)
 
   return useMemo(() => {
     const {

@@ -171,6 +171,15 @@ Providers globales:
 - Auth.
 - Date range.
 
+El estado remoto compartido no debe duplicarse en componentes que solo consultan
+una vez al montar. `frontend/src/services/integrationsService.ts` publica un
+snapshot reactivo y `useIntegrationsStatus()` lo consume con
+`useSyncExternalStore`: conectar, desconectar o cambiar Meta, WhatsApp,
+HighLevel, Google Calendar, OpenAI o una pasarela revalida el snapshot y repinta
+onboarding, permisos operativos y selectores dependientes sin recargar la ruta.
+Las respuestas anteriores a una revalidacion mas nueva se descartan. Al cerrar
+sesion se limpia tambien este snapshot para no heredar conexiones de otra sesion.
+
 Rutas publicas:
 
 - `/setup`: configuracion inicial.
@@ -1601,6 +1610,11 @@ Reglas base:
 - En `ios/app`, los snapshots de citas usan una clave compuesta por calendario y
   mes. Cambiar calendario vacia las filas anteriores antes de hidratar la clave
   correcta, y volver a foreground fuerza la revalidacion del calendario activo.
+- En `/appointments`, cada carga de calendarios, citas, proximas citas y bloqueos
+  lleva una generacion. Una respuesta anterior no puede sobrescribir la seleccion
+  o mutacion mas nueva. Crear o editar pinta solo la respuesta ya confirmada por
+  backend y despues espera el refetch canonico; eliminar quita la fila confirmada
+  inmediatamente y tambien revalida eventos y proximas citas.
 
 Documentacion especifica:
 
@@ -3070,6 +3084,13 @@ su estado runtime directo: inscripciones, entradas de goteo, ejecuciones de
 disparadores programados y jobs manuales/programados. Las notificaciones internas
 historicas no se borran, pero se les quitan las referencias a la automatizacion,
 nodo e inscripcion eliminados para evitar enlaces fantasma.
+
+La libreria frontend comparte un overview observable entre home y editor. Crear,
+duplicar, renombrar, mover o cambiar carpetas publica el resultado confirmado sin
+esperar una recarga completa. El borrado retira la fila antes de esperar otra
+consulta y la restaura en la misma posicion si la API falla. Las consultas del
+overview llevan version y revision local: una respuesta que empezo antes de una
+mutacion no puede revivir automatizaciones ni pisar el estado mas nuevo.
 
 Al cambiar entre automatizaciones dentro del editor visual, la ruta
 `/automations/:id` es frontera de estado: el editor se remonta por ID y limpia

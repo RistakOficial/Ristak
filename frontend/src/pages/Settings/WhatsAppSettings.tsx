@@ -40,6 +40,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useUrlStringState } from '@/hooks'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppMetaEmbeddedSignupSession, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
+import { invalidateIntegrationsStatus } from '@/services/integrationsService'
 import { formatInTimezone, getStoredBusinessTimezone } from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import { MessageTemplates } from './MessageTemplates'
@@ -458,6 +459,7 @@ export const WhatsAppSettings: React.FC = () => {
 
     if (connected === '1') {
       showToast('success', 'Meta conectado', 'La conexión directa quedó guardada. Actívala cuando quieras usarla para enviar.')
+      invalidateIntegrationsStatus()
       loadApiStatus().catch(() => null)
     } else {
       showToast('error', 'Meta no se conectó', params.get('meta_error') || 'Revisa la configuración en el portal.')
@@ -476,6 +478,7 @@ export const WhatsAppSettings: React.FC = () => {
     if (params.get('whatsapp_meta') !== 'success') return
 
     showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak mediante Coexistence.')
+    invalidateIntegrationsStatus()
     loadApiStatus().catch(() => null)
     navigate({ pathname: location.pathname, search: location.search, hash: '' }, { replace: true })
   }, [location.hash, location.pathname, location.search, navigate, showToast])

@@ -19,6 +19,7 @@ import {
   type MetaOAuthSession,
   type MetaOAuthStatus
 } from '@/services/metaOAuthService'
+import { invalidateIntegrationsStatus } from '@/services/integrationsService'
 import styles from './MetaAdsIntegration.module.css'
 
 interface MetaCredentials {
@@ -1414,6 +1415,7 @@ export const MetaAdsIntegration: React.FC = () => {
   )
 
   const resetLocalMetaState = () => {
+    invalidateIntegrationsStatus()
     setCredentials({
       adAccountId: '',
       accessToken: '',
@@ -1523,6 +1525,7 @@ export const MetaAdsIntegration: React.FC = () => {
       const data = await response.json()
 
       if (data.success) {
+        invalidateIntegrationsStatus()
         const autoPixelId = String(data.data?.pixelId || '').trim()
         const nextPixelId = credentials.pixelId || autoPixelId
 

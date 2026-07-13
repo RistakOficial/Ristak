@@ -1,4 +1,5 @@
 import { apiUrl } from './apiBaseUrl'
+import { refreshIntegrationsStatusAfter } from './integrationsService'
 
 export type AIAgentRole = 'user' | 'assistant'
 export type AIAgentResponseStyle = 'direct' | 'balanced' | 'advisor'
@@ -255,22 +256,22 @@ export const aiAgentService = {
   },
 
   saveConfig(config: AIAgentConfigInput): Promise<AIAgentConfigStatus> {
-    return request<AIAgentConfigStatus>('/config', {
+    return refreshIntegrationsStatusAfter(request<AIAgentConfigStatus>('/config', {
       method: 'POST',
       body: JSON.stringify(config)
-    })
+    }))
   },
 
   async deleteConfig(): Promise<void> {
-    await request('/config', {
+    await refreshIntegrationsStatusAfter(request('/config', {
       method: 'DELETE'
-    })
+    }))
   },
 
   deleteToken(): Promise<AIAgentConfigStatus> {
-    return request<AIAgentConfigStatus>('/config/token', {
+    return refreshIntegrationsStatusAfter(request<AIAgentConfigStatus>('/config/token', {
       method: 'DELETE'
-    })
+    }))
   },
 
   saveBusinessContextAnswer(

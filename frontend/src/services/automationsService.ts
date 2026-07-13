@@ -310,6 +310,30 @@ export const automationsCache = {
 
 const automationRequests = new Map<string, Promise<Automation>>()
 const deletedAutomationIds = new Set<string>()
+const overviewListeners = new Set<(overview: AutomationsOverview) => void>()
+let overviewRequestVersion = 0
+let overviewRevision = 0
+
+function publishOverview(overview: AutomationsOverview, localMutation = false) {
+  if (localMutation) overviewRevision += 1
+  automationsCache.overview = {
+    folders: [...overview.folders],
+    automations: overview.automations.filter(automation => !deletedAutomationIds.has(automation.id))
+  }
+  overviewListeners.forEach(listener => listener(automationsCache.overview as AutomationsOverview))
+}
+
+function mutateOverview(update: (overview: AutomationsOverview) => AutomationsOverview) {
+  if (!automationsCache.overview) return
+  publishOverview(update(automationsCache.overview), true)
+}
+
+export function subscribeAutomationsOverview(
+  listener: (overview: AutomationsOverview) => void
+): () => void {
+  overviewListeners.add(listener)
+  return () => overviewListeners.delete(listener)
+}
 
 export function automationToSummary(automation: Automation): AutomationSummary {
   return {
@@ -333,14 +357,14 @@ function cacheAutomation(automation: Automation) {
 
   const summary = automationToSummary(automation)
   const exists = automationsCache.overview.automations.some((item) => item.id === automation.id)
-  automationsCache.overview = {
+  publishOverview({
     ...automationsCache.overview,
     automations: exists
       ? automationsCache.overview.automations.map((item) =>
           item.id === automation.id ? { ...item, ...summary } : item
         )
       : [summary, ...automationsCache.overview.automations]
-  }
+  }, true)
 }
 
 function fetchAutomation(automationId: string): Promise<Automation> {
@@ -363,9 +387,20 @@ function fetchAutomation(automationId: string): Promise<Automation> {
 
 export const automationsService = {
   async getOverview(options: { suppressFeatureNotAvailableToast?: boolean } = {}): Promise<AutomationsOverview> {
+    const requestVersion = ++overviewRequestVersion
+    const startingRevision = overviewRevision
     const overview = await apiClient.get<AutomationsOverview>('/automations', options)
-    automationsCache.overview = overview
-    return overview
+    const normalized = {
+      ...overview,
+      automations: overview.automations.filter(automation => !deletedAutomationIds.has(automation.id))
+    }
+
+    if (requestVersion === overviewRequestVersion && startingRevision === overviewRevision) {
+      publishOverview(normalized)
+      return normalized
+    }
+
+    return automationsCache.overview || normalized
   },
 
   async getAutomation(automationId: string): Promise<Automation> {
@@ -399,36 +434,61 @@ export const automationsService = {
   },
 
   async deleteAutomation(automationId: string): Promise<void> {
+    const previousIndex = automationsCache.overview?.automations.findIndex(automation => automation.id === automationId) ?? -1
+    const previousSummary = previousIndex >= 0
+      ? automationsCache.overview?.automations[previousIndex] || null
+      : null
     deletedAutomationIds.add(automationId)
+    mutateOverview(overview => ({
+      ...overview,
+      automations: overview.automations.filter(automation => automation.id !== automationId)
+    }))
+
     try {
       await apiClient.delete(`/automations/${automationId}`)
       automationRequests.delete(automationId)
       automationsCache.automations.delete(automationId)
-      if (automationsCache.overview) {
-        automationsCache.overview = {
-          ...automationsCache.overview,
-          automations: automationsCache.overview.automations.filter((automation) => automation.id !== automationId)
-        }
-      }
     } catch (error) {
       deletedAutomationIds.delete(automationId)
+      if (previousSummary) {
+        mutateOverview(overview => {
+          if (overview.automations.some(automation => automation.id === automationId)) return overview
+          const automations = [...overview.automations]
+          automations.splice(Math.min(previousIndex, automations.length), 0, previousSummary)
+          return { ...overview, automations }
+        })
+      }
       throw error
     }
   },
 
   async createFolder(input: { name: string }): Promise<AutomationFolder> {
-    return apiClient.post<AutomationFolder>('/automations/folders', input)
+    const folder = await apiClient.post<AutomationFolder>('/automations/folders', input)
+    mutateOverview(overview => ({
+      ...overview,
+      folders: [...overview.folders.filter(item => item.id !== folder.id), folder]
+        .sort((a, b) => a.position - b.position)
+    }))
+    return folder
   },
 
   async updateFolder(
     folderId: string,
     input: { name?: string; position?: number }
   ): Promise<AutomationFolder> {
-    return apiClient.put<AutomationFolder>(`/automations/folders/${folderId}`, input)
+    const folder = await apiClient.put<AutomationFolder>(`/automations/folders/${folderId}`, input)
+    mutateOverview(overview => ({
+      ...overview,
+      folders: overview.folders.map(item => item.id === folder.id ? folder : item)
+        .sort((a, b) => a.position - b.position)
+    }))
+    return folder
   },
 
   async reorderFolders(orderedIds: string[]): Promise<AutomationFolder[]> {
-    return apiClient.post<AutomationFolder[]>('/automations/folders/reorder', { orderedIds })
+    const folders = await apiClient.post<AutomationFolder[]>('/automations/folders/reorder', { orderedIds })
+    mutateOverview(overview => ({ ...overview, folders }))
+    return folders
   },
 
   async getEnrollments(automationId: string): Promise<AutomationEnrollment[]> {
@@ -480,6 +540,12 @@ export const automationsService = {
 
   async deleteFolder(folderId: string): Promise<void> {
     await apiClient.delete(`/automations/folders/${folderId}`)
+    mutateOverview(overview => ({
+      folders: overview.folders.filter(folder => folder.id !== folderId),
+      automations: overview.automations.map(automation => (
+        automation.folderId === folderId ? { ...automation, folderId: null } : automation
+      ))
+    }))
   },
 
   /** Sube un archivo (data URL base64) y devuelve su URL pública en Ristak */

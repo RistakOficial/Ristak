@@ -1,3 +1,5 @@
+import { refreshIntegrationsStatusAfter } from './integrationsService'
+
 export type MetaOAuthConnectionMode = 'manual_system_user' | 'oauth_bisu' | 'oauth_user' | null
 
 export interface MetaOAuthStatus {
@@ -178,14 +180,14 @@ export const metaOAuthService = {
   ),
 
   finalize: (selection: MetaOAuthFinalizeSelection) => (
-    requestMetaOAuth<MetaOAuthFinalizeResult>('/api/meta/oauth/finalize', {
+    refreshIntegrationsStatusAfter(requestMetaOAuth<MetaOAuthFinalizeResult>('/api/meta/oauth/finalize', {
       method: 'POST',
       body: JSON.stringify(selection)
-    })
+    }))
   ),
 
   disconnect: () => (
-    requestMetaOAuth<{
+    refreshIntegrationsStatusAfter(requestMetaOAuth<{
       disconnected: boolean
       restoredManual?: boolean
       restoredSplitSocial?: boolean
@@ -194,11 +196,11 @@ export const metaOAuthService = {
     }>('/api/meta/oauth/disconnect', {
       method: 'POST',
       body: JSON.stringify({})
-    })
+    }))
   ),
 
   disconnectPreviousIntegration: (integrationKind: MetaOAuthPreviousIntegrationKind) => (
-    requestMetaOAuth<{
+    refreshIntegrationsStatusAfter(requestMetaOAuth<{
       disconnected: boolean
       restoredLegacy?: boolean
       runtimeWarning?: string | null
@@ -206,6 +208,6 @@ export const metaOAuthService = {
     }>(`/api/meta/oauth/${integrationKind}/disconnect`, {
       method: 'POST',
       body: JSON.stringify({})
-    })
+    }))
   )
 }
