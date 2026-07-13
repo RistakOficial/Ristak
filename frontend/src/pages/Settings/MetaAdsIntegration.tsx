@@ -912,6 +912,7 @@ export const MetaAdsIntegration: React.FC = () => {
       || readOAuthValue('meta_oauth_integration_kind')
       || readOAuthValue('integration_kind')
     const message = readOAuthValue('meta_oauth_message')
+    const errorCode = readOAuthValue('meta_oauth_error_code')
     if (!oauthResult && !handoffToken) return
 
     const oauthKeys = [
@@ -921,7 +922,8 @@ export const MetaAdsIntegration: React.FC = () => {
       'meta_oauth_kind',
       'meta_oauth_integration_kind',
       'integration_kind',
-      'meta_oauth_message'
+      'meta_oauth_message',
+      'meta_oauth_error_code'
     ]
     oauthKeys.forEach(key => {
       params.delete(key)
@@ -939,7 +941,13 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
     if (oauthResult === 'error' || !handoffToken || (integrationKindValue && integrationKindValue !== 'legacy')) {
-      showToast('error', 'Meta no se conectó', message || 'La autorización fue cancelada o Meta no devolvió acceso.')
+      showToast(
+        'error',
+        'Meta no se conectó',
+        message || (errorCode === 'meta_scopes_missing'
+          ? 'Meta no concedió todos los permisos. En Editar configuración activa todos los accesos y vuelve a conectar.'
+          : 'La autorización fue cancelada o Meta no devolvió acceso.')
+      )
       return
     }
 
@@ -2298,7 +2306,6 @@ export const MetaAdsIntegration: React.FC = () => {
     showManualConnection
     || isEditingMetaConfig
     || isManualWizardRoute
-    || (!isLoading && !isMetaConfigured && !metaOAuthSession)
   )
   const shouldShowAccessTokenAction = Boolean(
     credentials.accessToken &&
@@ -2598,18 +2605,13 @@ export const MetaAdsIntegration: React.FC = () => {
             ) : null}
             <Button
               type="button"
-              variant="ghost"
+              variant={connected ? 'ghost' : 'primary'}
               onClick={() => void startMetaAuthorization()}
               disabled={isConnectingMetaOAuth || metaOAuthStatus === null || metaOAuthStatus?.available === false}
             >
               {isConnectingMetaOAuth ? <RefreshCw size={16} className={styles.spinning} /> : <MetaBrandMark size={17} />}
               {isConnectingMetaOAuth ? 'Abriendo Meta' : connected ? 'Autorizar nuevos activos' : 'Conectar con Meta'}
             </Button>
-            {connected && (
-              <Button type="button" variant="ghost" onClick={handleEditMetaConfig}>
-                Usar configuración manual
-              </Button>
-            )}
           </div>
         ) : null}
       </div>

@@ -41,8 +41,9 @@ La migracion es gradual y no elimina lo que ya funciona:
 
 `Configuracion > Meta` se divide por funcion, no por credencial:
 
-1. **Cuenta Meta**: configuracion manual principal, tabla unica de la conexion
-   activa y acceso discreto al login OAuth en revision.
+1. **Cuenta Meta**: login OAuth unificado como entrada principal y tabla unica
+   de la conexion activa. El wizard de System User queda sólo como ruta heredada
+   para instalaciones que ya dependan de él.
 2. **Redes sociales**: credencial de Messenger en modo manual, activos sociales
    y switches de Messenger, comentarios de Facebook, Instagram DM y comentarios
    de Instagram. En OAuth las credenciales de Page quedan incluidas y no se
@@ -54,9 +55,9 @@ La migracion es gradual y no elimina lo que ya funciona:
 
 `/ads` es alias de `/settings/meta-ads/cuenta`; `/social` y `/mensajes` son
 aliases de `/settings/meta-ads/redes-sociales`. Ninguna ruta debe volver a
-presentar dos botones OAuth. El wizard manual permanece como entrada principal
-dentro de **Cuenta Meta** y el OAuth unificado queda debajo, sin una tabla de
-capacidades duplicada.
+presentar dos botones OAuth. Una cuenta sin configurar ve directamente
+**Conectar con Meta**; el wizard manual no se abre por defecto ni compite con el
+flujo oficial.
 
 ## WhatsApp Embedded Signup especializado
 
@@ -98,8 +99,10 @@ un alias de compatibilidad del transporte: desde producto representa la conexion
 **unificada** y usa `meta_business_login_config_id`.
 
 Installer crea y consume `state`, canjea el authorization code
-server-to-server, amplía el User Access Token a larga duración, valida el token,
-calcula `appsecret_proof`, enumera activos y
+server-to-server e intenta ampliar el User Access Token cuando Meta todavía lo
+entrega corto. Si el token ya es largo y Meta rechaza un segundo intercambio,
+conserva el token válido y su expiración real. Después valida el token, calcula
+`appsecret_proof`, enumera activos y
 crea un candidato central. El handoff es cifrado, one-time y ligado a cliente e
 instalacion. El App Secret nunca se copia a una instalacion ni llega al
 navegador.
@@ -163,7 +166,7 @@ https://www.facebook.com/v25.0/dialog/oauth
 
 ## Flujo completo
 
-1. **Cuenta Meta** carga primero el metodo manual y consulta en segundo plano el
+1. **Cuenta Meta** muestra primero el login OAuth y consulta en segundo plano el
    estado con `GET /api/meta/oauth/status` sin crear `state`.
 2. Al pulsar **Conectar con Meta** o **Autorizar nuevos activos**, Ristak solicita
    `POST /api/meta/oauth/connect-url` y abre Meta directamente, mandando como retorno absoluto
@@ -171,7 +174,7 @@ https://www.facebook.com/v25.0/dialog/oauth
 3. Installer valida ese origin contra la instalacion, crea un `state` opaco con
    TTL y abre el Config ID unificado.
 4. Meta vuelve al callback unico de Installer. Installer consume `state`,
-   canjea el code, amplía el token cuando es `USER` y valida `is_valid`,
+   canjea el code, amplía el token cuando es `USER` y todavía es corto, y valida `is_valid`,
    `app_id`, tipo `USER|SYSTEM_USER`, portafolio, expiraciones, permisos y
    `granular_scopes`.
 5. Installer enumera Pages, Instagram, Ad Accounts y Datasets autorizados, crea
