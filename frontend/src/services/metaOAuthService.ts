@@ -30,6 +30,8 @@ export interface MetaOAuthStatus {
     granularScopes: unknown[]
     tokenExpiresAt: string | null
     dataAccessExpiresAt: string | null
+    reauthorizationRequired?: boolean
+    reauthorizationRecommended?: boolean
     relayStatus: 'inactive' | 'pending' | 'registered' | 'repair_pending' | 'error'
   }
   error: string | null
@@ -69,6 +71,7 @@ export interface MetaOAuthPage {
 export interface MetaOAuthSession {
   sessionId: string
   expiresAt: string
+  connectionMode: 'oauth_bisu' | 'oauth_user'
   user: { id: string; name: string }
   permissions: {
     granted: string[]

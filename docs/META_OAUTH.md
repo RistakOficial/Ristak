@@ -3,8 +3,8 @@
 ## Proposito
 
 Este documento define el contrato OAuth oficial de Meta para instalaciones de
-Ristak. Las conexiones nuevas usan **Facebook Login for Business** con una
-credencial **Business Integration System User (BISU)** y una sola autorizacion
+Ristak. Las conexiones nuevas usan **Facebook Login for Business** con un
+**User Access Token de larga duración** y una sola autorizacion
 para cubrir:
 
 - lectura de cuentas publicitarias, campanas e Insights;
@@ -24,8 +24,9 @@ metodo anterior como fallback cifrado.
 Una vez conectado, **Cambiar activos en Ristak** reutiliza el inventario
 autorizado sin volver a abrir OAuth. **Autorizar nuevos activos** se usa sólo
 cuando se agregaron activos después del consentimiento o se revocó acceso en
-Meta. Facebook Login for Business con BISU no concede automáticamente activos
-futuros.
+Meta. Si la persona eligió “actuales y futuros”, el permiso puede cubrir activos
+nuevos, pero Ristak vuelve a pasar por el callback central para obtener el
+inventario actualizado y los Page tokens/proofs sin exponer el App Secret.
 
 La migracion es gradual y no elimina lo que ya funciona:
 
@@ -97,7 +98,8 @@ un alias de compatibilidad del transporte: desde producto representa la conexion
 **unificada** y usa `meta_business_login_config_id`.
 
 Installer crea y consume `state`, canjea el authorization code
-server-to-server, valida el BISU, calcula `appsecret_proof`, enumera activos y
+server-to-server, amplía el User Access Token a larga duración, valida el token,
+calcula `appsecret_proof`, enumera activos y
 crea un candidato central. El handoff es cifrado, one-time y ligado a cliente e
 instalacion. El App Secret nunca se copia a una instalacion ni llega al
 navegador.
@@ -105,7 +107,8 @@ navegador.
 ### Ristak instalado
 
 La conexion unificada activa vive cifrada en `meta_config` con
-`connection_mode=oauth_bisu`. Las sesiones temporales de seleccion viven
+`connection_mode=oauth_user`. `oauth_bisu` se conserva para conexiones System
+User anteriores. Las sesiones temporales de seleccion viven
 cifradas en `meta_oauth_pending_sessions` y tienen TTL/consumo unico.
 `meta_oauth_authorized_assets` conserva cifrados la allowlist completa y los
 Page tokens/proofs de cada Page autorizada. Nunca se devuelve al frontend y
@@ -168,13 +171,16 @@ https://www.facebook.com/v25.0/dialog/oauth
 3. Installer valida ese origin contra la instalacion, crea un `state` opaco con
    TTL y abre el Config ID unificado.
 4. Meta vuelve al callback unico de Installer. Installer consume `state`,
-   canjea el code y valida `is_valid`, `app_id`, tipo `SYSTEM_USER`,
-   portafolio, expiraciones, permisos y `granular_scopes`. Para BISU usa el
-   `user_id` explícito de `debug_token`; no depende del alias `GET /me`.
+   canjea el code, amplía el token cuando es `USER` y valida `is_valid`,
+   `app_id`, tipo `USER|SYSTEM_USER`, portafolio, expiraciones, permisos y
+   `granular_scopes`.
 5. Installer enumera Pages, Instagram, Ad Accounts y Datasets autorizados, crea
    el candidato y devuelve solamente un handoff opaco en el fragmento URL.
-6. Ristak reclama el handoff desde backend, consulta `/{SYSTEM_USER_ID}/assigned_pages`
-   y `/{SYSTEM_USER_ID}/assigned_ad_accounts`, y enriquece la allowlist firmada.
+6. Ristak reclama el handoff desde backend. Para `USER` consulta `/me`,
+   `/me/accounts`, `/me/adaccounts`, `/me/businesses` y `/me/permissions`.
+   Para `SYSTEM_USER` heredado usa el ID explícito con `assigned_pages` y
+   `assigned_ad_accounts`; nunca ejecuta `/me` con ese token. Después enriquece
+   la allowlist firmada.
    Si un edge opcional falla, conserva el snapshot autorizado y deja los
    preflights finales como autoridad; una asignacion ajena nunca se agrega.
 7. El usuario elige dentro de Ristak la Page; Ad Account, Dataset e Instagram son
@@ -218,17 +224,20 @@ publicitaria. Installer combina y deduplica:
 - `/{BUSINESS_ID}/client_pixels`;
 - `/act_<AD_ACCOUNT_ID>/adspixels`.
 
-Pertenecer al mismo Business no basta. Installer sólo lo entrega cuando el BISU
-aparece en `assigned_users` con `UPLOAD`; antes de guardarlo, Ristak repite el
-preflight de solo lectura:
+Pertenecer al mismo Business no basta. En una conexión System User, Installer
+sólo lo entrega cuando el BISU aparece en `assigned_users` con `UPLOAD`; antes
+de guardarlo, Ristak repite el preflight de solo lectura. En una conexión USER,
+Ristak valida lectura con el token/proof y no exige que la persona aparezca como
+System User en `assigned_users`:
 
 1. lee `/{DATASET_ID}`;
-2. consulta `/{DATASET_ID}/assigned_users?business={BUSINESS_ID}`;
-3. encuentra el BISU del handoff;
-4. exige la tarea `UPLOAD` en `tasks` o `permitted_tasks`.
+2. para BISU, consulta `/{DATASET_ID}/assigned_users?business={BUSINESS_ID}`;
+3. para BISU, encuentra el System User del handoff;
+4. para BISU, exige la tarea `UPLOAD` en `tasks` o `permitted_tasks`.
 
-Si falta `UPLOAD`, la conexion anterior queda intacta y Ristak pide corregir el
-acceso en Meta Business. No manda un evento automatico durante OAuth: un evento
+Si falta `UPLOAD` en una conexión BISU, la conexion anterior queda intacta y
+Ristak pide corregir el acceso en Meta Business. No manda un evento automatico
+durante OAuth: un evento
 de prueba tambien entra al Dataset y debe dispararse conscientemente desde la
 pestana **Dataset Test**.
 
@@ -253,8 +262,16 @@ enruta los eventos sociales:
    metadata/error sanitizado.
 
 La conexion unificada usa el Page Token para Messenger, Instagram y
-comentarios; usa el BISU para Ads y CAPI. Cada token conserva su propio
+comentarios; usa el User Access Token de larga duración para Ads y CAPI. Las
+conexiones heredadas pueden seguir usando BISU. Cada token conserva su propio
 `appsecret_proof`.
+
+El User Access Token no es “permanente”. Installer lo amplía al máximo permitido
+por Meta y Ristak guarda `expires_at` y `data_access_expires_at`. La pantalla
+avisa cuando debe renovarse; revocaciones, cambios de contraseña, políticas de
+Meta o vencimiento pueden exigir que la persona autorice otra vez. El Page token
+se guarda separado para que el inbox no dependa del endpoint `/me` en cada
+mensaje.
 
 ## Compatibilidad, reemplazo y desconexion
 
@@ -335,8 +352,9 @@ Installer, autenticado por licencia salvo callbacks publicos:
   clientes externos.
 - App Domain de Installer, HTTPS, Strict Mode y callback exacto en Valid OAuth
   Redirect URIs.
-- Un Config ID System-user access token con Ad Accounts, Pages, Instagram y
-  Datasets, y solo los once permisos de este documento.
+- Un Config ID User access token con Ad Accounts, Pages, Instagram y Datasets,
+  y solo los once permisos de este documento. Los Config IDs System-user
+  anteriores se conservan únicamente como compatibilidad.
 - Privacy Policy y Data Deletion URL publicas.
 - Webhooks de Pages, Messenger e Instagram apuntando al broker central.
 - Advanced Access individual para los permisos usados y `public_profile` antes
@@ -356,8 +374,10 @@ Installer, autenticado por licencia salvo callbacks publicos:
 4. Cambiar Ad Account filtra Page/Dataset por Business y limpia selecciones
    incompatibles.
 5. Un Dataset de `owned_pixels` o `client_pixels` aparece aunque
-   `/act_<ID>/adspixels` venga vacio sólo si el BISU tiene `UPLOAD`.
-6. Sin tarea `UPLOAD`, finalizar falla y conserva la conexion anterior.
+   `/act_<ID>/adspixels` venga vacio. BISU exige `UPLOAD`; USER valida acceso
+   directo y nunca se confunde con un System User en `assigned_users`.
+6. Sin tarea `UPLOAD` en modo BISU, finalizar falla y conserva la conexion
+   anterior.
 7. Con Dataset validado, CAPI queda activa y Dataset Test puede enviar un evento
    controlado; sin Dataset, Ads y social siguen activos pero CAPI no.
 8. Messenger, Instagram Direct y comentarios reciben relay firmado y hacen

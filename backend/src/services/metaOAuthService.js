@@ -85,7 +85,8 @@ export const META_OAUTH_SCOPES_BY_KIND = Object.freeze({
 })
 
 // El Config ID unificado del Installer concede en una sola autorización Ads,
-// Dataset, Pages, Instagram, mensajes y comentarios. Publicar/editar campañas
+// Dataset, Pages, Instagram, mensajes y comentarios. El Installer amplía los
+// User Access Tokens y conserva compatibilidad con BISU heredado. Publicar/editar campañas
 // sigue fuera de este flujo: cuando el producto lo habilite deberá solicitar y
 // revisar `ads_management` explícitamente, no exigirlo para reportes/CAPI.
 export const META_OAUTH_REQUIRED_SCOPES = [
@@ -140,6 +141,26 @@ export function setMetaOAuthMarkLocalRelayForTest(override = null) {
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+function isMetaOAuthConnectionMode(value) {
+  return ['oauth_user', 'oauth_bisu'].includes(normalizeMetaConnectionMode(value))
+}
+
+function resolveMetaOAuthConnectionMode(handoffMeta = {}) {
+  const explicitMode = cleanString(
+    handoffMeta.connection_mode || handoffMeta.connectionMode
+  ).toLowerCase()
+  if (explicitMode === 'oauth_user' || explicitMode === 'oauth_bisu') return explicitMode
+
+  const debugTokenType = cleanString(
+    handoffMeta.debug_token_type || handoffMeta.debugTokenType
+  ).toUpperCase()
+  if (debugTokenType === 'USER') return 'oauth_user'
+  if (debugTokenType === 'SYSTEM_USER') return 'oauth_bisu'
+
+  const source = cleanString(handoffMeta.source).toLowerCase()
+  return source === 'oauth_bisu' ? 'oauth_bisu' : 'oauth_user'
 }
 
 function parseJson(value, fallback) {
@@ -388,7 +409,7 @@ async function discoverPages({ token, appSecretProof = '', userId, systemUser = 
     'instagram_business_account{id,username,name}',
     'connected_instagram_account{id,username,name}'
   ].join(',')
-  if (userId) {
+  if (systemUser && userId) {
     try {
       const pages = await graphCollection(`${encodeURIComponent(userId)}/assigned_pages`, {
         token,
@@ -416,7 +437,7 @@ async function discoverPages({ token, appSecretProof = '', userId, systemUser = 
 
 async function discoverAdAccounts({ token, appSecretProof = '', userId, systemUser = false }) {
   const fields = 'id,account_id,name,currency,timezone_name,account_status,business{id,name}'
-  if (userId) {
+  if (systemUser && userId) {
     try {
       const accounts = await graphCollection(`${encodeURIComponent(userId)}/assigned_ad_accounts`, {
         token,
@@ -477,13 +498,13 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
   if (!accessToken) throw metaOAuthError('El handoff de Meta no incluyó token.', 400, 'META_OAUTH_TOKEN_MISSING')
   const hintAssets = normalizeHintAssets(handoffMeta.assets)
   const hintedUserId = cleanString(handoffMeta.user_id || handoffMeta.userId)
-  const systemUser = cleanString(handoffMeta.debug_token_type || handoffMeta.debugTokenType).toUpperCase() === 'SYSTEM_USER' ||
-    cleanString(handoffMeta.source).toLowerCase() === 'oauth_bisu'
+  const connectionMode = resolveMetaOAuthConnectionMode(handoffMeta)
+  const systemUser = connectionMode === 'oauth_bisu'
   let identity = {
     id: hintedUserId,
     name: cleanString(handoffMeta.user_name || handoffMeta.userName)
   }
-  if (hintedUserId) {
+  if (systemUser && hintedUserId) {
     identity = await graphJson(hintedUserId, { token: accessToken, appSecretProof, fields: 'id,name' })
       .then(value => ({ ...identity, ...value }))
       .catch(error => {
@@ -492,6 +513,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
       })
   } else if (!systemUser) {
     identity = await graphJson('me', { token: accessToken, appSecretProof, fields: 'id,name' })
+      .then(value => ({ ...identity, ...value }))
   }
   const userId = cleanString(identity?.id || hintedUserId)
   if (!userId) throw metaOAuthError('Meta no devolvió la identidad autorizada.', 502, 'META_OAUTH_IDENTITY_MISSING')
@@ -659,6 +681,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
   }
 
   return {
+    connectionMode,
     user: {
       id: userId,
       name: cleanString(identity?.name || handoffMeta.user_name || handoffMeta.userName)
@@ -681,7 +704,7 @@ function pendingSagaPageConfig(payload = {}) {
   const pageSecrets = payload?.pageSecrets?.[pageId] || {}
   return {
     access_token: payload?.accessToken,
-    connection_mode: 'oauth_bisu',
+    connection_mode: resolveMetaOAuthConnectionMode(payload),
     page_id: pageId,
     instagram_account_id: cleanString(saga?.selection?.instagramAccountId),
     oauth_appsecret_proof: payload?.appSecretProof,
@@ -694,7 +717,7 @@ function oauthConfigOwnsPage(config = null, pageId = '') {
   const mode = normalizeMetaConnectionMode(config?.connection_mode)
   return Boolean(
     config?.access_token &&
-    ['oauth_bisu', 'oauth_user'].includes(mode) &&
+    isMetaOAuthConnectionMode(mode) &&
     cleanString(config?.page_id) === cleanString(pageId)
   )
 }
@@ -1050,6 +1073,7 @@ function sanitizeSessionData(session, expiresAt) {
   return {
     sessionId: session.id,
     expiresAt,
+    connectionMode: resolveMetaOAuthConnectionMode(session),
     user: session.user,
     permissions: session.permissions,
     businesses: session.businesses,
@@ -1062,6 +1086,9 @@ function sanitizeSessionData(session, expiresAt) {
 function authorizedAssetsPayload(payload = {}) {
   return {
     connectionId: cleanString(payload.connectionId),
+    connectionMode: resolveMetaOAuthConnectionMode(payload),
+    source: cleanString(payload.source),
+    debugTokenType: cleanString(payload.debugTokenType || payload.debug_token_type).toUpperCase(),
     appId: cleanString(payload.appId),
     configId: cleanString(payload.configId),
     user: payload.user || {},
@@ -1111,7 +1138,14 @@ async function loadAuthorizedAssets() {
 
 function localMetaOAuthState(config) {
   const connectionMode = config ? normalizeMetaConnectionMode(config.connection_mode) : null
-  const oauthConnected = connectionMode === 'oauth_bisu' && Number(config?.oauth_connected) === 1
+  const oauthConnected = isMetaOAuthConnectionMode(connectionMode) && Number(config?.oauth_connected) === 1
+  const lifecycleInstants = [config?.token_expires_at, config?.oauth_data_access_expires_at]
+    .map(parseUtcDbInstant)
+    .filter(Number.isFinite)
+  const nextExpirationAt = lifecycleInstants.length ? Math.min(...lifecycleInstants) : NaN
+  const reauthorizationRequired = connectionMode === 'oauth_user' && Number.isFinite(nextExpirationAt) && nextExpirationAt <= Date.now()
+  const reauthorizationRecommended = connectionMode === 'oauth_user' && Number.isFinite(nextExpirationAt) &&
+    nextExpirationAt > Date.now() && nextExpirationAt <= Date.now() + 14 * 24 * 60 * 60 * 1000
   return {
     connectionMode,
     manualConfigured: Boolean(config?.access_token && connectionMode === 'manual_system_user'),
@@ -1129,6 +1163,8 @@ function localMetaOAuthState(config) {
       granularScopes: parseJson(config?.oauth_granular_scopes_json, []),
       tokenExpiresAt: config?.token_expires_at || null,
       dataAccessExpiresAt: config?.oauth_data_access_expires_at || null,
+      reauthorizationRequired,
+      reauthorizationRecommended,
       connectedAt: config?.oauth_connected_at || null,
       validatedAt: config?.oauth_validated_at || null,
       relayStatus: cleanString(config?.oauth_relay_status) || 'inactive',
@@ -1158,7 +1194,7 @@ export async function getMetaOAuthConnectionStatus() {
     configured: central?.configured === true,
     available: central?.available === true,
     mode: cleanString(central?.mode) || 'redirect',
-    source: cleanString(central?.source) || 'oauth_bisu',
+    source: cleanString(central?.source) || 'oauth_user',
     reviewPending: central?.review_pending !== false,
     connectUrl: '',
     connectEndpoint: '/api/meta/oauth/connect-url',
@@ -1232,7 +1268,9 @@ export async function completeMetaOAuthConnection({
     accessToken,
     appSecretProof: cleanString(handoffMeta.appsecret_proof || handoffMeta.appSecretProof),
     pageSecrets: extractPageSecrets(handoffMeta.assets),
-    source: 'oauth_bisu',
+    connectionMode: discovered.connectionMode,
+    source: cleanString(handoffMeta.source) || discovered.connectionMode,
+    debugTokenType: cleanString(handoffMeta.debug_token_type || handoffMeta.debugTokenType).toUpperCase(),
     connectionId: cleanString(handoffMeta.connection_id || handoffMeta.connectionId || handoff?.id) || crypto.randomUUID(),
     appId: cleanString(handoffMeta.app_id || handoffMeta.appId || connectMeta.app_id || connectMeta.appId),
     configId: cleanString(handoffMeta.config_id || handoffMeta.configId || configId),
@@ -1251,7 +1289,7 @@ export async function completeMetaOAuthConnection({
 
 export async function prepareMetaOAuthReconfiguration() {
   const config = await getMetaConfig().catch(() => null)
-  if (!config || normalizeMetaConnectionMode(config.connection_mode) !== 'oauth_bisu') {
+  if (!config || !isMetaOAuthConnectionMode(config.connection_mode)) {
     throw metaOAuthError('Primero conecta Meta con OAuth.', 409, 'META_OAUTH_RECONFIGURE_NOT_CONNECTED')
   }
   const authorized = await loadAuthorizedAssets()
@@ -1275,7 +1313,9 @@ export async function prepareMetaOAuthReconfiguration() {
     accessToken: config.access_token,
     appSecretProof: config.oauth_appsecret_proof,
     pageSecrets: authorized.pageSecrets,
-    source: 'oauth_bisu',
+    connectionMode: authorized.connectionMode || normalizeMetaConnectionMode(config.connection_mode),
+    source: authorized.source || normalizeMetaConnectionMode(config.connection_mode),
+    debugTokenType: authorized.debugTokenType || '',
     connectionId: authorized.connectionId,
     appId: authorized.appId || cleanString(config.oauth_app_id || config.app_id),
     configId: authorized.configId || cleanString(config.oauth_config_id),
@@ -1386,10 +1426,10 @@ async function validateDatasetUploadAccess(payload, selected) {
   if (!datasetId) return { validated: false, reason: 'dataset_not_selected' }
 
   const businessId = cleanString(selected?.businessId)
-  const systemUserId = cleanString(payload?.user?.id)
-  if (!businessId || !systemUserId) {
+  const authorizedUserId = cleanString(payload?.user?.id)
+  if (!businessId || !authorizedUserId) {
     throw metaOAuthError(
-      'Meta no devolvió el portafolio o el usuario de sistema necesario para validar el Dataset.',
+      'Meta no devolvió el portafolio o la identidad autorizada necesaria para validar el Dataset.',
       409,
       'META_OAUTH_DATASET_IDENTITY_REQUIRED'
     )
@@ -1407,6 +1447,16 @@ async function validateDatasetUploadAccess(payload, selected) {
     )
   })
 
+  // Un User Access Token representa al administrador que autorizó el negocio;
+  // no aparece necesariamente en /assigned_users, porque ese edge enumera
+  // usuarios del negocio y System Users con tareas sobre el Dataset. Haber
+  // leído el Dataset con el token/proof y la allowlist firmada es el preflight
+  // correcto para este modo. El POST real de CAPI seguirá reportando cualquier
+  // revocación posterior sin convertirla en un falso error de configuración.
+  if (resolveMetaOAuthConnectionMode(payload) === 'oauth_user') {
+    return { validated: true, datasetId, businessId, authorizedUserId, mode: 'oauth_user' }
+  }
+
   const assignedUsers = await graphCollection(`${encodeURIComponent(datasetId)}/assigned_users`, {
     token: payload.accessToken,
     appSecretProof: payload.appSecretProof,
@@ -1419,7 +1469,7 @@ async function validateDatasetUploadAccess(payload, selected) {
       'META_OAUTH_DATASET_UPLOAD_ACCESS_REQUIRED'
     )
   })
-  const assigned = assignedUsers.find(user => cleanString(user?.id) === systemUserId)
+  const assigned = assignedUsers.find(user => cleanString(user?.id) === authorizedUserId)
   const tasks = new Set(toStringArray([
     ...(Array.isArray(assigned?.tasks) ? assigned.tasks : []),
     ...(Array.isArray(assigned?.permitted_tasks) ? assigned.permitted_tasks : [])
@@ -1431,7 +1481,7 @@ async function validateDatasetUploadAccess(payload, selected) {
       'META_OAUTH_DATASET_UPLOAD_ACCESS_REQUIRED'
     )
   }
-  return { validated: true, datasetId, businessId, systemUserId }
+  return { validated: true, datasetId, businessId, systemUserId: authorizedUserId }
 }
 
 function buildRelayWebhookUrl(publicBaseUrl) {
@@ -1706,6 +1756,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
   }
   await validateDatasetUploadAccess(payload, selected)
   await consumePendingSession(sessionId)
+  const connectionMode = resolveMetaOAuthConnectionMode(payload)
 
   const webhookUrl = buildRelayWebhookUrl(publicBaseUrl)
   if (!webhookUrl) {
@@ -1723,7 +1774,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
 
   const pendingConfig = {
     access_token: payload.accessToken,
-    connection_mode: 'oauth_bisu',
+    connection_mode: connectionMode,
     page_id: selected.pageId,
     instagram_account_id: selected.instagramAccountId,
     oauth_appsecret_proof: payload.appSecretProof,
@@ -1765,7 +1816,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
       selected.pageId || null,
       selected.instagramAccountId || null,
       {
-        connectionMode: 'oauth_bisu',
+        connectionMode,
         oauthConnectionId: payload.connectionId,
         oauthUserId: payload.user?.id,
         oauthUserName: payload.user?.name,
@@ -1870,7 +1921,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
 
   if (repairPending) {
     return {
-      connectionMode: 'oauth_bisu',
+      connectionMode,
       connected: true,
       validated: true,
       repairPending: true,
@@ -1911,7 +1962,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
   const subscription = { subscribed: true, pageId: selected.pageId }
 
   return {
-    connectionMode: 'oauth_bisu',
+    connectionMode,
     connected: true,
     validated: true,
     selected,
@@ -1924,7 +1975,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
 
 async function disconnectMetaOAuthConnectionUnlocked({ publicBaseUrl = '' } = {}) {
   const config = await getMetaConfig().catch(() => null)
-  if (!config || normalizeMetaConnectionMode(config.connection_mode) !== 'oauth_bisu') {
+  if (!config || !isMetaOAuthConnectionMode(config.connection_mode)) {
     return { disconnected: false, reason: 'not-oauth' }
   }
   const splitSocialFallback = await getSplitSocialFallback()

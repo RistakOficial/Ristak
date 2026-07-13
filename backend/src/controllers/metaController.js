@@ -3709,7 +3709,7 @@ export const syncFromHighLevel = async (req, res) => {
         skipped: true,
         source: 'oauth_isolated',
         message: 'Meta OAuth está aislado de HighLevel y no se reemplazó.',
-        data: { connectionMode: 'oauth_bisu', adAccountId: currentMetaConfig.ad_account_id }
+        data: { connectionMode: cleanString(currentMetaConfig.connection_mode), adAccountId: currentMetaConfig.ad_account_id }
       });
     }
 

@@ -762,9 +762,9 @@ export async function getMetaDeveloperSetup() {
       selectedTab: 'API-Setup',
       productRoute: 'instagram-business'
     }),
-    // El BISU token OAuth ya es el token humano/de integración autorizado para
-    // derivar el Page token; no se duplica en messenger_user_token.
-    messengerUserTokenConfigured: connectionMode === 'oauth_bisu' || Boolean(normalizeId(config.messenger_user_token))
+    // El login OAuth unificado ya entrega el Page token que usa Messenger; no
+    // duplicamos el token principal en messenger_user_token, sea USER o BISU.
+    messengerUserTokenConfigured: ['oauth_user', 'oauth_bisu'].includes(connectionMode) || Boolean(normalizeId(config.messenger_user_token))
   }
 }
 
@@ -796,7 +796,7 @@ export async function saveMetaAccessToken(accessToken) {
   const encryptedToken = isEncrypted(normalizedToken) ? normalizedToken : encrypt(normalizedToken)
   const existing = await db.get('SELECT id, connection_mode FROM meta_config ORDER BY id LIMIT 1')
 
-  if (existing?.id && normalizeMetaConnectionMode(existing.connection_mode) === 'oauth_bisu') {
+  if (existing?.id && ['oauth_user', 'oauth_bisu'].includes(normalizeMetaConnectionMode(existing.connection_mode))) {
     throw new Error('El token OAuth de Meta sólo se reemplaza mediante el flujo seguro del Installer.')
   }
 
@@ -971,14 +971,14 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pageId = 
 /**
  * Guarda la configuración de Meta en la base de datos
  * ENCRIPTA el access_token antes de guardar.
- * CAPI usa siempre System User Token.
+ * CAPI usa el token principal de la conexión: User Access Token en el login
+ * unificado actual o System User Token en conexiones heredadas/manuales.
  * CREA/ACTUALIZA custom values en HighLevel automáticamente
  */
 export function normalizeMetaConnectionMode(value = '') {
   const normalized = String(value || '').trim().toLowerCase()
-  return normalized === 'oauth_user' || normalized === 'oauth_bisu'
-    ? 'oauth_bisu'
-    : 'manual_system_user'
+  if (normalized === 'oauth_user' || normalized === 'oauth_bisu') return normalized
+  return 'manual_system_user'
 }
 
 function jsonArray(value) {
@@ -1001,7 +1001,7 @@ export async function saveMetaConfig(
 ) {
   try {
     const connectionMode = normalizeMetaConnectionMode(options.connectionMode)
-    const isOAuth = connectionMode === 'oauth_bisu'
+    const isOAuth = ['oauth_user', 'oauth_bisu'].includes(connectionMode)
     const allowOAuthToManual = options.allowOAuthToManual === true
     const normalizedAccessToken = normalizeId(accessToken)
     if (!normalizedAccessToken) throw new Error('Falta el token de acceso de Meta')

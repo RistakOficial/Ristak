@@ -1668,11 +1668,11 @@ async function setupHighLevelWebhooks(locationId, apiToken, baseUrl) {
  */
 export async function saveMetaCustomValues(locationId, apiToken, metaCredentials) {
   try {
-    if (cleanString(metaCredentials?.connectionMode) === 'oauth_bisu') {
+    if (['oauth_user', 'oauth_bisu'].includes(cleanString(metaCredentials?.connectionMode))) {
       return {
         success: true,
         skipped: true,
-        message: 'El token OAuth/BISU se mantiene sólo en Ristak y no se exporta a HighLevel'
+        message: 'El token OAuth de Meta se mantiene sólo en Ristak y no se exporta a HighLevel'
       }
     }
     logger.info('Guardando credenciales de Meta en HighLevel custom values...')
@@ -1818,9 +1818,9 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
     const localCredentials = await getLocalMetaCredentials()
 
     // Cortar ANTES de consultar/escribir HighLevel. Además de no exportar el
-    // BISU token, esto impide que un fallo o desconexión de HighLevel participe
+    // token OAuth, esto impide que un fallo o desconexión de HighLevel participe
     // siquiera en la reconciliación de una conexión OAuth.
-    if (cleanString(localCredentials?.connectionMode) === 'oauth_bisu') {
+    if (['oauth_user', 'oauth_bisu'].includes(cleanString(localCredentials?.connectionMode))) {
       result.localConfigured = hasRequiredMetaCredentials(localCredentials)
       result.action = 'oauth_isolated'
       result.message = 'Meta OAuth se mantiene aislado de HighLevel'

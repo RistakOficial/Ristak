@@ -465,6 +465,136 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
   })
 })
 
+test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bisu', async () => {
+  await initializeMasterKey()
+  await withIsolatedMeta(async () => {
+    const graphCalls = []
+    const handoffMeta = {
+      connection_id: 'user-connection',
+      access_token: 'long-lived-user-token',
+      appsecret_proof: 'user-token-proof',
+      source: 'oauth_bisu',
+      debug_token_type: 'USER',
+      app_id: 'oauth-app',
+      config_id: 'flfb-user-config',
+      user_id: 'meta-user-1',
+      expires_at: Math.floor(Date.now() / 1000) + 50 * 24 * 60 * 60,
+      scopes: [...META_OAUTH_REQUIRED_SCOPES],
+      granular_scopes: [{ scope: 'pages_messaging', target_ids: ['page-user'] }],
+      assets: {
+        business_id: 'business-user',
+        pages: [{
+          id: 'page-user',
+          name: 'Página User Token',
+          business_id: 'business-user',
+          tasks: ['ANALYZE', 'MESSAGING', 'MODERATE'],
+          page_access_token: 'page-user-token',
+          page_appsecret_proof: 'page-user-proof',
+          instagram_business_account: { id: 'ig-user', username: 'user_demo' }
+        }],
+        ad_accounts: [{ id: '777', name: 'Ads User', business_id: 'business-user' }],
+        pixels: [{ id: 'pixel-user', name: 'Dataset User', ad_account_id: '777', business_id: 'business-user' }],
+        instagram_accounts: [{ id: 'ig-user', page_id: 'page-user', username: 'user_demo' }]
+      }
+    }
+
+    let centralConnected = false
+    setMetaOAuthCentralClientForTest({
+      getStatus: async () => ({
+        configured: true,
+        available: true,
+        source: 'oauth_bisu',
+        connection: { connected: centralConnected, connection_id: centralConnected ? 'user-connection' : null }
+      }),
+      claimHandoff: async () => ({ payload: { meta: handoffMeta } }),
+      updateWebhookSubscription: async input => {
+        centralConnected = input.action === 'register'
+        return { registered: centralConnected }
+      },
+      disconnect: async () => {
+        centralConnected = false
+        return { disconnected: true }
+      }
+    })
+    setMetaOAuthRuntimeClientForTest({
+      ensurePageSubscription: async ({ config }) => {
+        assert.equal(config.connection_mode, 'oauth_user')
+        assert.equal(config.oauth_page_access_token, 'page-user-token')
+        return { subscribed: true }
+      },
+      removePageSubscription: async () => ({ unsubscribed: true }),
+      syncCrons: async () => undefined,
+      enableSocialChannels: async () => ({ messengerMessaging: true }),
+      startSocialHistory: () => ({ syncStarted: true, started: ['messenger', 'instagram'], skipped: [] }),
+      updateRecentAds: async () => ({ success: true })
+    })
+    setMetaOAuthFetchForTest(async urlValue => {
+      const url = new URL(urlValue)
+      const path = url.pathname.replace(/^\/v\d+\.\d+/, '')
+      graphCalls.push(path)
+      assert.equal(url.searchParams.get('appsecret_proof'), 'user-token-proof')
+      if (path === '/me') return graphResponse({ id: 'meta-user-1', name: 'Administrador Meta' })
+      if (path === '/me/permissions') return graphResponse({
+        data: META_OAUTH_REQUIRED_SCOPES.map(permission => ({ permission, status: 'granted' }))
+      })
+      if (path === '/me/businesses') return graphResponse({ data: [{ id: 'business-user', name: 'Negocio User' }] })
+      if (path === '/me/adaccounts') return graphResponse({ data: [{
+        id: 'act_777', name: 'Ads User', timezone_name: 'America/Ciudad_Juarez', business: { id: 'business-user' }
+      }] })
+      if (path === '/me/accounts') return graphResponse({ data: [{
+        id: 'page-user',
+        name: 'Página User Token',
+        business: { id: 'business-user' },
+        tasks: ['ANALYZE', 'MESSAGING', 'MODERATE'],
+        instagram_business_account: { id: 'ig-user', username: 'user_demo' }
+      }] })
+      if (path === '/business-user/owned_pixels') return graphResponse({ data: [{ id: 'pixel-user', name: 'Dataset User' }] })
+      if (path === '/business-user/client_pixels') return graphResponse({ data: [] })
+      if (path === '/act_777/adspixels') return graphResponse({ data: [{ id: 'pixel-user', name: 'Dataset User' }] })
+      if (path === '/pixel-user') return graphResponse({ id: 'pixel-user', name: 'Dataset User' })
+      return graphResponse({ error: { message: `unexpected ${path}` } }, 404)
+    })
+
+    const completed = await completeMetaOAuthConnection({ handoffToken: 'user-handoff' })
+    assert.equal(completed.connectionMode, 'oauth_user')
+    assert.ok(graphCalls.includes('/me'))
+    assert.ok(graphCalls.includes('/me/accounts'))
+    assert.ok(graphCalls.includes('/me/adaccounts'))
+    assert.equal(graphCalls.some(path => path.includes('/assigned_pages')), false)
+    assert.equal(graphCalls.some(path => path.includes('/assigned_ad_accounts')), false)
+
+    const finalized = await finalizeMetaOAuthConnection({
+      sessionId: completed.sessionId,
+      pageId: 'page-user',
+      instagramAccountId: 'ig-user',
+      adAccountId: '777',
+      pixelId: 'pixel-user',
+      publicBaseUrl: 'https://tenant-user.onrender.com'
+    })
+    assert.equal(finalized.connectionMode, 'oauth_user')
+    assert.equal(finalized.connected, true)
+    const config = await getMetaConfig()
+    assert.equal(config.connection_mode, 'oauth_user')
+    assert.equal(config.access_token, 'long-lived-user-token')
+    assert.equal(config.oauth_page_access_token, 'page-user-token')
+    assert.equal(config.pixel_id, 'pixel-user')
+    assert.equal(graphCalls.some(path => path.includes('/assigned_users')), false)
+
+    const status = await getMetaOAuthConnectionStatus()
+    assert.equal(status.connectionMode, 'oauth_user')
+    assert.equal(status.oauth.connected, true)
+    assert.ok(status.oauth.tokenExpiresAt)
+
+    const reconfiguration = await prepareMetaOAuthReconfiguration()
+    assert.equal(reconfiguration.connectionMode, 'oauth_user')
+    assert.equal(reconfiguration.pages[0].id, 'page-user')
+    await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [reconfiguration.sessionId])
+
+    const disconnected = await disconnectMetaOAuthConnection({ publicBaseUrl: 'https://tenant-user.onrender.com' })
+    assert.equal(disconnected.disconnected, true)
+  })
+})
+
 test('desconectar OAuth combinado conserva subscribed_apps si split Social usa la misma Page', async () => {
   await initializeMasterKey()
   await withIsolatedMeta(async () => {

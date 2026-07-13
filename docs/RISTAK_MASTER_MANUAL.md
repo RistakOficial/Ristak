@@ -2344,8 +2344,10 @@ Ristak usa Meta en varias areas:
   conservan solo para migracion. El alias interno `integration_kind=legacy`
   identifica al contrato unificado sin segmento; no significa que la
   experiencia visible sea vieja o manual.
-- La conexion unificada cifrada vive en `meta_config` con
-  `connection_mode=oauth_bisu`; su sesion temporal vive en
+- La conexion unificada nueva usa un User Access Token ampliado por Installer y
+  vive cifrada en `meta_config` con `connection_mode=oauth_user`;
+  `oauth_bisu` queda como compatibilidad para System User anteriores. Su sesion
+  temporal vive en
   `meta_oauth_pending_sessions`. La allowlist completa y todos los Page
   tokens/proofs viven cifrados en `meta_oauth_authorized_assets`, lo que permite
   **Cambiar activos en Ristak** sin repetir OAuth. Las filas separadas anteriores en
@@ -2355,7 +2357,8 @@ Ristak usa Meta en varias areas:
   `/api/meta/oauth/{status,connect-url,complete,finalize,disconnect}`. Los
   endpoints `/api/meta/oauth/:integrationKind/*` siguen disponibles solo para
   compatibilidad con instalaciones que ya usaron la etapa separada.
-- Ristak reclama el handoff server-to-server, valida los once permisos, activos
+- Ristak reclama el handoff server-to-server, clasifica `USER|SYSTEM_USER` con
+  `debug_token` y valida los once permisos, activos
   y `granular_scopes.target_ids`, y conserva una sesion cifrada con TTL hasta
   finalizar. Cancelar, expirar o fallar deja intacta la conexion anterior.
 - Al iniciar OAuth, Ristak convierte la ruta de regreso en una URL absoluta del
@@ -2364,15 +2367,15 @@ Ristak usa Meta en varias areas:
   usuario al dominio generico `app.ristak.com` cuando conecto desde un tenant
   Render. Con Strict Mode de Meta, la lista de redirects debe incluir el callback
   central completo, no solo la raiz de `www.ristak.com`.
-- Al volver, Ad Account y Page son obligatorios; Dataset e Instagram son
-  opcionales. La Page se filtra por el Business de la cuenta publicitaria e
+- Al volver, sólo la Page es obligatoria; Ad Account, Dataset e Instagram son
+  opcionales. La Page se filtra por el Business de la cuenta publicitaria cuando
+  se eligió una e
   Instagram debe estar enlazado a la Page. Si Meta devuelve tareas de Page,
   Ristak exige `ANALYZE`, `MESSAGING` y `MODERATE`.
 - El Dataset se descubre por `/act_<AD_ACCOUNT_ID>/adspixels` y tambien por
-  `/{BUSINESS_ID}/owned_pixels|client_pixels`, pero Installer lo excluye si el
-  BISU no tiene `UPLOAD`; pertenecer al portafolio no basta. Antes de guardarlo,
-  Ristak repite esa validacion en
-  `/{DATASET_ID}/assigned_users?business=...`. No manda un evento automatico
+  `/{BUSINESS_ID}/owned_pixels|client_pixels`. En BISU, Installer y Ristak
+  exigen `UPLOAD` en `assigned_users`; en USER, Ristak valida lectura directa y
+  no busca a la persona como si fuera System User. No manda un evento automatico
   durante el login.
 - Ristak prepara `subscribed_apps`, Page token/proof, configuracion Ads/Dataset
   y ruta del broker antes de promocionar. Una confirmacion central con fallo
@@ -2381,6 +2384,12 @@ Ristak usa Meta en varias areas:
   valida `X-Hub-Signature-256`, deduplica, enruta por Page/Instagram y
   retransmite a `/webhooks/meta/installer-relay` con HMAC de licencia,
   timestamp, nonce e ID estable.
+- El callback registrado en Meta siempre es el central de Installer. El dominio
+  público de cada Render sólo se usa como regreso firmado después del callback y
+  como destino del relay; jamás necesita agregarse a Valid OAuth Redirect URIs.
+- El User Access Token no es permanente: Installer lo amplía y Ristak conserva
+  sus expiraciones, muestra aviso de renovación y mantiene separado el Page
+  token para que Messenger/comentarios no hagan `/me` en cada operación.
 - Al desconectar, Installer restaura la ruta OAuth Social separada si era el
   fallback de esa Page y Ristak restaura el System User Token manual cifrado si
   existia. Las filas separadas no se eliminan. HighLevel nunca recibe,
@@ -2399,7 +2408,8 @@ Ristak usa Meta en varias areas:
   `action_source=business_messaging` y permiten probar WhatsApp, Messenger o
   Instagram DM desde la UI. WhatsApp requiere `ctwa_clid` + `page_id`;
   Messenger requiere `page_scoped_user_id` + `page_id`; Instagram requiere
-  `ig_sid` + `ig_account_id`. Dataset/BISU y Page/Page Token salen de la misma
+  `ig_sid` + `ig_account_id`. Dataset/token principal y Page/Page Token salen de
+  la misma
   conexion unificada, cada uno con su proof correcto; las conexiones separadas
   y manuales siguen como fallback.
   `Purchase (Messaging)` se envia a Meta como `event_name=Purchase` y usa por
@@ -2431,7 +2441,8 @@ Ristak usa Meta en varias areas:
   distinto del System User Token: el usuario lo pega en
   `Configuracion > Meta > Redes sociales`, Ristak valida la Page y lo cifra en
   `meta_config.messenger_user_token`. En OAuth unificado, Installer entrega el
-  Page Token y su proof; no aparece un segundo campo. Ads/CAPI usan el BISU y
+  Page Token y su proof; no aparece un segundo campo. Ads/CAPI usan el User
+  Access Token de larga duración (`oauth_user`; BISU sólo en legado) y
   Messenger/Instagram/comentarios usan el Page Token. El toggle solo se
   habilita cuando existe la credencial requerida por el modo.
 - En modo manual, las tarjetas de Messenger e Instagram muestran botones de Meta Developers que
@@ -2477,7 +2488,7 @@ Ristak usa Meta en varias areas:
   enlazada a la Page. En manual Ristak deriva el Page token desde la credencial
   base y liga su cache al hash del token origen. En OAuth usa el Page token y
   `page_appsecret_proof` entregados por Installer para la Page seleccionada; no
-  reutiliza el proof BISU con otro token. Si Meta invalida esa credencial, exige
+  reutiliza el proof del token principal con el Page Token. Si Meta invalida esa credencial, exige
   reconectar OAuth en vez de pedir el App Secret central. En modo manual, un
   rechazo de token invalida la derivacion y permite repetir una sola vez el POST
   ya rechazado; en OAuth una credencial invalida exige reconexion. Texto, audio,

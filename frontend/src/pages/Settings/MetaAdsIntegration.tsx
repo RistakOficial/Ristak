@@ -849,7 +849,7 @@ export const MetaAdsIntegration: React.FC = () => {
         'Meta autorizó tu negocio',
         session.permissions.missing.length
           ? 'Faltan permisos de Meta; reconecta y acepta el acceso completo.'
-          : 'Elige la cuenta publicitaria, la Page y los activos opcionales que usará Ristak.'
+          : 'Elige la Facebook Page que usará Ristak. Publicidad, Dataset e Instagram son opcionales.'
       )
     } catch (error) {
       showToast('error', 'No se pudo conectar Meta', error instanceof Error ? error.message : 'La autorización no se pudo completar.')
@@ -2445,13 +2445,22 @@ export const MetaAdsIntegration: React.FC = () => {
                 ? 'Aquí sólo aparecen activos autorizados y utilizables. Elige cuáles usará Ristak; los demás siguen autorizados para cambiarlos después.'
                 : connected
                   ? 'Cambia entre activos ya autorizados sin repetir OAuth. Abre Meta únicamente cuando quieras agregar activos nuevos.'
-                  : 'Autoriza tus activos actuales una sola vez y elige dentro de Ristak cuáles quedarán trabajando.'}
+                  : 'Autoriza en Meta las cuentas actuales o futuras que quieras compartir y elige dentro de Ristak cuáles quedarán trabajando.'}
             </p>
           </div>
         </div>
 
         {metaOAuthStatus?.error ? <p className={styles.oauthWarning}>{metaOAuthStatus.error}</p> : null}
-        {!connected && metaConnectionMode === 'oauth_bisu' ? (
+        {connected && metaOAuthStatus?.connectionMode === 'oauth_user' && metaOAuthStatus.oauth.reauthorizationRequired ? (
+          <p className={styles.oauthWarning} role="status">
+            Meta venció esta autorización. Usa “Autorizar nuevos activos” para recuperar publicidad y cambios de cuenta; los mensajes seguirán usando el acceso de la Page mientras Meta lo conserve.
+          </p>
+        ) : connected && metaOAuthStatus?.connectionMode === 'oauth_user' && metaOAuthStatus.oauth.reauthorizationRecommended ? (
+          <p className={styles.oauthReviewNote} role="status">
+            Conviene renovar pronto el acceso de Meta. Usa “Autorizar nuevos activos” cuando tengas un minuto para evitar que se detenga la sincronización de publicidad.
+          </p>
+        ) : null}
+        {!connected && (metaConnectionMode === 'oauth_bisu' || metaConnectionMode === 'oauth_user') ? (
           <p className={styles.oauthReviewNote}>
             Detectamos la conexión anterior separada. Usa este único login para unificarla sin interrumpir lo que ya funciona.
           </p>

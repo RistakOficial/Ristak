@@ -800,7 +800,8 @@ export async function claimCentralOAuthHandoff({ provider, handoffToken } = {}) 
 /**
  * La app/secret/configuration id de Facebook Login for Business viven en el
  * Installer. La instalación sólo recibe configuración pública y, al terminar,
- * reclama un handoff de un uso con el BISU token.
+ * reclama un handoff de un uso con el User Access Token vigente. Las
+ * conexiones BISU anteriores siguen siendo compatibles durante la migración.
  */
 export async function getCentralMetaOAuthStatus({ integrationKind = '' } = {}) {
   const data = await callLicenseServer('/api/license/meta/status', integrationKind
