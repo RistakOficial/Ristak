@@ -810,7 +810,8 @@ html body .rstkCanvas .rstk-mp-pay:disabled { opacity: 1; }
 .rstkCanvas iframe { pointer-events: none; }
 /* El primer click selecciona el bloque; ya seleccionado, el reproductor de
    video debe recibir clicks para poder reproducir, pausar y usar sus controles. */
-.rstkCanvas .rstkSelActive .rstk-video-embed-frame iframe { pointer-events: auto; }
+.rstkCanvas .rstkSelActive > .rstk-video-embed-frame iframe,
+.rstkCanvas .rstkEmbeddedFormItemActive > .rstk-video-embed-frame iframe { pointer-events: auto; }
 
 /* Selectable block wrapper. */
 .rstkCanvas .rstkSel {
