@@ -273,6 +273,18 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks.
     con `ON CONFLICT(id) DO UPDATE`. Nunca se usa una actualización de conflicto
     sin objetivo: PostgreSQL la rechaza y el mensaje quedaría enviado por el
     proveedor pero marcado como error dentro de Ristak.
+11. El ID oficial del proveedor manda sobre la fila espejo de Baileys. En un
+    envío por API puede existir por unos milisegundos una fila `accepted` de
+    YCloud/Meta y otra captura QR con el `key.id` del protocolo. Cuando el WAMID
+    oficial demuestra que ambas identidades corresponden al mismo mensaje,
+    Ristak conserva la fila oficial, mueve sus referencias y fusiona la captura
+    QR. Los estados `accepted`, `sent`, `delivered` y `read` actualizan esa misma
+    fila. No se permite resolver este caso por texto, hora, teléfono aproximado
+    ni deduplicación visual.
+12. `(provider, provider_message_id)` es una identidad única. El mantenimiento
+    de arranque fusiona duplicados históricos demostrables antes de crear el
+    índice único parcial; si encuentra un conflicto entre conversaciones
+    distintas, no borra nada y deja una advertencia para revisión manual.
 
 ## Embedded Signup centralizado
 

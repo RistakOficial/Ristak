@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
+  databaseDialect,
   db,
   getAppConfig,
   repairWhatsAppApiContactIdentityFromMessages,
@@ -791,7 +792,7 @@ test('Coexistence reconcilia el eco YCloud y la captura QR por identidad exacta'
           id, provider, waba_id, phone_number, display_phone_number, verified_name,
           is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
         ) VALUES (?, 'ycloud', 'waba_protocol_echo_test', ?, ?, 'Protocol Echo Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
-      `, [phoneNumberId, businessPhone, businessPhone])
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
 
       await db.run(`
         INSERT INTO contacts (
@@ -865,6 +866,230 @@ test('Coexistence reconcilia el eco YCloud y la captura QR por identidad exacta'
   }
 })
 
+test('un envio API y su captura Baileys conservan una sola fila durante accepted, sent y delivered', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52990${suffix}`
+  const businessPhone = `+52650${suffix}`
+  const phoneNumberId = `phone_api_baileys_bridge_${id}`
+  const contactId = `rstk_contact_api_baileys_bridge_${id}`
+  const providerMessageId = `ycloud_api_baileys_bridge_${id}`
+  const externalId = `ios-text-${id}`
+  const qrMessageKey = `CE${id.replace(/-/g, '').toUpperCase().slice(0, 18)}`
+  const officialWamid = `wamid.${Buffer.from(`bridge:${qrMessageKey}`).toString('base64')}`
+  const body = `Mensaje API sin globo duplicado ${id}`
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+
+  await cleanup({ contactId, phone })
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_api_baileys_bridge_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_api_baileys_bridge_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_api_baileys_bridge_test', ?, ?, 'API Baileys Bridge', 1, 1, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+      await insertInboundMessageForOpenReplyWindow({ id, contactId, phone, businessPhone, phoneNumberId })
+
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        if (parsed.pathname.endsWith('/whatsapp/messages') && String(options.method || '').toUpperCase() === 'POST') {
+          return ycloudJsonResponse({
+            id: providerMessageId,
+            from: businessPhone,
+            to: phone,
+            externalId,
+            status: 'accepted',
+            type: 'text',
+            text: { body },
+            createTime: '2026-07-12T23:52:27.795Z'
+          })
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      const sendResult = await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: body,
+        externalId,
+        contactId,
+        phoneNumberId
+      })
+
+      const qrResult = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'outbound',
+        wamid: qrMessageKey,
+        messageType: 'text',
+        text: body,
+        contactPhone: phone,
+        timestamp: '2026-07-12T23:52:29.000Z'
+      })
+      assert.notEqual(qrResult.messageId, sendResult.localMessageId)
+
+      for (const status of ['sent', 'delivered']) {
+        const payload = {
+          id: `evt_api_baileys_bridge_${status}_${id}`,
+          type: 'whatsapp.message.updated',
+          apiVersion: 'v2',
+          createTime: '2026-07-12T23:52:30.634Z',
+          whatsappMessage: {
+            id: providerMessageId,
+            wamid: officialWamid,
+            status,
+            from: businessPhone,
+            to: phone,
+            wabaId: 'waba_api_baileys_bridge_test',
+            externalId,
+            type: 'text',
+            text: { body },
+            createTime: '2026-07-12T23:52:27.795Z',
+            sendTime: '2026-07-12T23:52:29.000Z'
+          }
+        }
+        await processYCloudWhatsAppWebhook({
+          payload,
+          rawBody: JSON.stringify(payload),
+          signatureHeader: '',
+          endpointId: ''
+        })
+      }
+
+      const rows = await db.all(`
+        SELECT id, provider, source_adapter, provider_message_id, ycloud_message_id,
+               wamid, protocol_message_key_id, transport, status, message_text
+        FROM whatsapp_api_messages
+        WHERE contact_id = ? AND message_text = ?
+      `, [contactId, body])
+      assert.equal(rows.length, 1)
+      assert.equal(rows[0].id, sendResult.localMessageId)
+      assert.equal(rows[0].provider, 'ycloud')
+      assert.equal(rows[0].source_adapter, 'ycloud')
+      assert.equal(rows[0].provider_message_id, providerMessageId)
+      assert.equal(rows[0].ycloud_message_id, providerMessageId)
+      assert.equal(rows[0].wamid, officialWamid)
+      assert.equal(rows[0].protocol_message_key_id, qrMessageKey)
+      assert.equal(rows[0].transport, 'api')
+      assert.equal(rows[0].status, 'delivered')
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, phone })
+  }
+})
+
+test('el mantenimiento fusiona estados historicos con el mismo ID oficial y activa su indice unico', async () => {
+  const id = randomUUID()
+  const phone = `+52984${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526501234567'
+  const contactId = `rstk_contact_provider_identity_${id}`
+  const canonicalId = `provider_identity_accepted_${id}`
+  const duplicateId = `provider_identity_delivered_${id}`
+  const providerMessageId = `ycloud_provider_identity_${id}`
+  const protocolMessageKeyId = `CE${id.replace(/-/g, '').toUpperCase().slice(0, 18)}`
+  const officialWamid = `wamid.${Buffer.from(`provider:${protocolMessageKeyId}`).toString('base64')}`
+  const body = `Estado oficial historico ${id}`
+
+  await cleanup({ contactId, phone })
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Cliente estado oficial', 'Cliente', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, phone])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, source_adapter, origin, provider_message_id, ycloud_message_id,
+        contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, status, raw_payload_json,
+        message_timestamp, created_at, updated_at
+      ) VALUES (?, 'ycloud', 'ycloud', 'manual_text_send', ?, ?, ?, ?, ?, ?, ?, 'api',
+        'outbound', 'text', ?, 'accepted', ?, '2026-07-12T23:52:27.795Z',
+        '2026-07-12T23:52:27.795Z', '2026-07-12T23:52:27.795Z')
+    `, [
+      canonicalId,
+      providerMessageId,
+      providerMessageId,
+      contactId,
+      phone,
+      businessPhone,
+      phone,
+      businessPhone,
+      body,
+      JSON.stringify({ id: providerMessageId, status: 'accepted' })
+    ])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, source_adapter, origin, provider_message_id, ycloud_message_id,
+        wamid, protocol_message_key_id, contact_id, phone, from_phone, to_phone,
+        business_phone, transport, direction, message_type, message_text, status,
+        raw_payload_json, message_timestamp, created_at, updated_at
+      ) VALUES (?, 'ycloud', 'ycloud', 'whatsapp.message.updated', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'api',
+        'outbound', 'text', ?, 'delivered', ?, '2026-07-12T23:52:29.000Z',
+        '2026-07-12T23:52:30.000Z', '2026-07-12T23:52:31.000Z')
+    `, [
+      duplicateId,
+      providerMessageId,
+      providerMessageId,
+      officialWamid,
+      protocolMessageKeyId,
+      contactId,
+      phone,
+      businessPhone,
+      phone,
+      businessPhone,
+      body,
+      JSON.stringify({ id: providerMessageId, wamid: officialWamid, status: 'delivered' })
+    ])
+
+    const repair = await repairWhatsAppProtocolMessageIdentities({ force: true })
+    assert.ok(repair.providerMerged >= 1)
+
+    const rows = await db.all(`
+      SELECT id, provider_message_id, ycloud_message_id, wamid,
+             protocol_message_key_id, status, raw_payload_json
+      FROM whatsapp_api_messages
+      WHERE provider = 'ycloud' AND provider_message_id = ?
+    `, [providerMessageId])
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].id, canonicalId)
+    assert.equal(rows[0].ycloud_message_id, providerMessageId)
+    assert.equal(rows[0].wamid, officialWamid)
+    assert.equal(rows[0].protocol_message_key_id, protocolMessageKeyId)
+    assert.equal(rows[0].status, 'delivered')
+    assert.equal(JSON.parse(rows[0].raw_payload_json).status, 'delivered')
+
+    const uniqueIndex = databaseDialect === 'postgres'
+      ? await db.get(`
+          SELECT indexname AS name
+          FROM pg_indexes
+          WHERE schemaname = current_schema()
+            AND indexname = 'idx_whatsapp_api_messages_provider_message_unique'
+        `)
+      : await db.get(`
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'index' AND name = 'idx_whatsapp_api_messages_provider_message_unique'
+        `)
+    assert.equal(uniqueIndex?.name, 'idx_whatsapp_api_messages_provider_message_unique')
+  } finally {
+    await cleanup({ contactId, phone })
+  }
+})
+
 test('el mantenimiento historico fusiona los pares QR y SMB exactos ya guardados', async () => {
   const id = randomUUID()
   const phone = `+52985${Date.now().toString().slice(-7)}`
@@ -877,6 +1102,10 @@ test('el mantenimiento historico fusiona los pares QR y SMB exactos ya guardados
   const body = `Historial exacto ${id}`
 
   await cleanup({ contactId, phone })
+  // La prueba fabrica un duplicado histórico que una instalación antigua sí
+  // podía tener; se retira el índice moderno para representar ese estado y el
+  // propio mantenimiento lo vuelve a crear después de fusionarlo.
+  await db.run('DROP INDEX IF EXISTS idx_whatsapp_api_messages_protocol_key_unique')
   try {
     await db.run(`
       INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)

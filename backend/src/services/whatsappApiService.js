@@ -93,7 +93,7 @@ const META_EMBEDDED_SIGNUP_TIMEOUT_MS = 20_000
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
-const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-07-12-v1'
+const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-07-12-v2'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
@@ -7296,6 +7296,254 @@ function rowsBelongToSameWhatsAppConversation(left = {}, right = {}) {
   return !(leftBusiness && rightBusiness && leftBusiness !== rightBusiness)
 }
 
+function whatsappMessageIdentityRank(row = {}, {
+  messageId = '',
+  provider = '',
+  providerMessageId = '',
+  ycloudMessageId = '',
+  metaMessageId = '',
+  wamid = '',
+  protocolMessageKeyId = ''
+} = {}) {
+  if (providerMessageId && cleanString(row.provider) === provider && cleanString(row.provider_message_id) === providerMessageId) return 0
+  if (messageId && cleanString(row.id) === messageId) return 1
+  if (ycloudMessageId && cleanString(row.ycloud_message_id) === ycloudMessageId) return 2
+  if (metaMessageId && cleanString(row.meta_message_id) === metaMessageId) return 3
+  if (wamid && cleanString(row.wamid) === wamid) return 4
+  if (protocolMessageKeyId && cleanString(row.protocol_message_key_id) === protocolMessageKeyId) return 5
+  return 99
+}
+
+function selectWhatsAppCanonicalMessage(rows = [], identifiers = {}) {
+  return [...rows].sort((left, right) => {
+    const rankDelta = whatsappMessageIdentityRank(left, identifiers) - whatsappMessageIdentityRank(right, identifiers)
+    if (rankDelta !== 0) return rankDelta
+    return cleanString(right.updated_at).localeCompare(cleanString(left.updated_at))
+  })[0] || null
+}
+
+function isExactWhatsAppProtocolMirror(row = {}, protocolMessageKeyId = '') {
+  const protocolKey = cleanString(protocolMessageKeyId)
+  if (!protocolKey || cleanString(row.protocol_message_key_id) !== protocolKey) return false
+
+  const transport = cleanString(row.transport).toLowerCase()
+  const sourceAdapter = cleanString(row.source_adapter).toLowerCase()
+  const providerMessageId = cleanString(row.provider_message_id)
+  const wamid = cleanString(row.wamid)
+  return transport === 'qr' || sourceAdapter === 'baileys' || providerMessageId === protocolKey || wamid === protocolKey
+}
+
+async function mergeExactWhatsAppMessageRows({ canonicalId, duplicateId }) {
+  const cleanCanonicalId = cleanString(canonicalId)
+  const cleanDuplicateId = cleanString(duplicateId)
+  if (!cleanCanonicalId || !cleanDuplicateId || cleanCanonicalId === cleanDuplicateId) return null
+
+  return db.transaction(async tx => {
+    const canonical = await tx.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [cleanCanonicalId])
+    const duplicate = await tx.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [cleanDuplicateId])
+    if (!canonical || !duplicate) return canonical || null
+
+    const bestStatus = pickBestMessageDeliveryStatus(canonical.status, duplicate.status)
+    const duplicateHasBetterReceipt = getMessageDeliveryStatusPriority(duplicate.status) >= getMessageDeliveryStatusPriority(canonical.status)
+    const successfulStatus = ['sent', 'delivered', 'read'].includes(normalizeMessageDeliveryStatus(bestStatus))
+    const canonicalIsQr = cleanString(canonical.transport).toLowerCase() === 'qr' || cleanString(canonical.source_adapter).toLowerCase() === 'baileys'
+    const duplicateIsOfficial = cleanString(duplicate.transport).toLowerCase() === 'api' && cleanString(duplicate.source_adapter).toLowerCase() !== 'baileys'
+    const preferDuplicateProviderIdentity = canonicalIsQr && duplicateIsOfficial && Boolean(cleanString(duplicate.provider_message_id))
+
+    await tx.run(`
+      UPDATE whatsapp_api_attribution
+      SET whatsapp_api_message_id = ?
+      WHERE whatsapp_api_message_id = ?
+    `, [cleanCanonicalId, cleanDuplicateId])
+    await tx.run(`
+      UPDATE scheduled_chat_messages
+      SET sent_message_id = ?
+      WHERE sent_message_id = ?
+    `, [cleanCanonicalId, cleanDuplicateId]).catch(() => undefined)
+    // Se elimina primero la fila espejo para que los índices únicos de identidad
+    // no bloqueen el traspaso del ID oficial a la fila canónica.
+    await tx.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [cleanDuplicateId])
+
+    await tx.run(`
+      UPDATE whatsapp_api_messages
+      SET provider = COALESCE(NULLIF(provider, ''), NULLIF(?, '')),
+          origin = COALESCE(NULLIF(?, ''), origin),
+          provider_message_id = CASE
+            WHEN ? = 1 THEN COALESCE(NULLIF(?, ''), provider_message_id)
+            ELSE COALESCE(NULLIF(provider_message_id, ''), NULLIF(?, ''))
+          END,
+          ycloud_message_id = CASE
+            WHEN ? = 1 THEN COALESCE(NULLIF(?, ''), ycloud_message_id)
+            ELSE COALESCE(NULLIF(ycloud_message_id, ''), NULLIF(?, ''))
+          END,
+          meta_message_id = CASE
+            WHEN ? = 1 THEN COALESCE(NULLIF(?, ''), meta_message_id)
+            ELSE COALESCE(NULLIF(meta_message_id, ''), NULLIF(?, ''))
+          END,
+          wamid = COALESCE(NULLIF(?, ''), wamid),
+          protocol_message_key_id = COALESCE(NULLIF(?, ''), protocol_message_key_id),
+          waba_id = COALESCE(NULLIF(waba_id, ''), NULLIF(?, '')),
+          business_phone_number_id = COALESCE(business_phone_number_id, ?),
+          whatsapp_api_contact_id = COALESCE(whatsapp_api_contact_id, ?),
+          contact_id = COALESCE(contact_id, ?),
+          phone = COALESCE(NULLIF(phone, ''), NULLIF(?, '')),
+          from_phone = COALESCE(NULLIF(from_phone, ''), NULLIF(?, '')),
+          to_phone = COALESCE(NULLIF(to_phone, ''), NULLIF(?, '')),
+          business_phone = COALESCE(NULLIF(business_phone, ''), NULLIF(?, '')),
+          routing_reason = COALESCE(NULLIF(routing_reason, ''), NULLIF(?, '')),
+          direction = COALESCE(NULLIF(direction, ''), NULLIF(?, '')),
+          message_type = CASE
+            WHEN LOWER(COALESCE(message_type, '')) IN ('', 'status')
+              THEN COALESCE(NULLIF(?, ''), message_type)
+            ELSE message_type
+          END,
+          message_text = COALESCE(NULLIF(message_text, ''), NULLIF(?, '')),
+          media_url = COALESCE(NULLIF(media_url, ''), NULLIF(?, '')),
+          media_mime_type = COALESCE(NULLIF(media_mime_type, ''), NULLIF(?, '')),
+          media_filename = COALESCE(NULLIF(media_filename, ''), NULLIF(?, '')),
+          media_duration_ms = COALESCE(media_duration_ms, ?),
+          status = COALESCE(NULLIF(?, ''), status),
+          business_echo = CASE WHEN COALESCE(?, 0) = 1 THEN 1 ELSE business_echo END,
+          relay_event_id = COALESCE(NULLIF(relay_event_id, ''), NULLIF(?, '')),
+          error_code = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(NULLIF(?, ''), error_code) END,
+          error_message = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(NULLIF(?, ''), error_message) END,
+          message_timestamp = COALESCE(message_timestamp, ?),
+          raw_payload_json = CASE
+            WHEN ? = 1 THEN COALESCE(NULLIF(?, ''), raw_payload_json)
+            ELSE COALESCE(NULLIF(raw_payload_json, ''), NULLIF(?, ''))
+          END,
+          context_json = COALESCE(NULLIF(context_json, 'null'), NULLIF(?, 'null')),
+          referral_json = COALESCE(NULLIF(referral_json, 'null'), NULLIF(?, 'null')),
+          detected_ctwa_clid = COALESCE(NULLIF(detected_ctwa_clid, ''), NULLIF(?, '')),
+          detected_source_id = COALESCE(NULLIF(detected_source_id, ''), NULLIF(?, '')),
+          detected_source_url = COALESCE(NULLIF(detected_source_url, ''), NULLIF(?, '')),
+          detected_source_type = COALESCE(NULLIF(detected_source_type, ''), NULLIF(?, '')),
+          detected_source_app = COALESCE(NULLIF(detected_source_app, ''), NULLIF(?, '')),
+          detected_entry_point = COALESCE(NULLIF(detected_entry_point, ''), NULLIF(?, '')),
+          detected_headline = COALESCE(NULLIF(detected_headline, ''), NULLIF(?, '')),
+          detected_body = COALESCE(NULLIF(detected_body, ''), NULLIF(?, '')),
+          detected_conversion_data = COALESCE(NULLIF(detected_conversion_data, ''), NULLIF(?, '')),
+          detected_ctwa_payload = COALESCE(NULLIF(detected_ctwa_payload, ''), NULLIF(?, '')),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      duplicate.provider,
+      duplicate.origin,
+      preferDuplicateProviderIdentity ? 1 : 0,
+      duplicate.provider_message_id,
+      duplicate.provider_message_id,
+      preferDuplicateProviderIdentity ? 1 : 0,
+      duplicate.ycloud_message_id,
+      duplicate.ycloud_message_id,
+      preferDuplicateProviderIdentity ? 1 : 0,
+      duplicate.meta_message_id,
+      duplicate.meta_message_id,
+      duplicate.wamid,
+      duplicate.protocol_message_key_id,
+      duplicate.waba_id,
+      duplicate.business_phone_number_id,
+      duplicate.whatsapp_api_contact_id,
+      duplicate.contact_id,
+      duplicate.phone,
+      duplicate.from_phone,
+      duplicate.to_phone,
+      duplicate.business_phone,
+      duplicate.routing_reason,
+      duplicate.direction,
+      duplicate.message_type,
+      duplicate.message_text,
+      duplicate.media_url,
+      duplicate.media_mime_type,
+      duplicate.media_filename,
+      duplicate.media_duration_ms,
+      bestStatus,
+      Number(duplicate.business_echo || 0) === 1 ? 1 : 0,
+      duplicate.relay_event_id,
+      successfulStatus ? 1 : 0,
+      duplicate.error_code,
+      successfulStatus ? 1 : 0,
+      duplicate.error_message,
+      duplicate.message_timestamp,
+      duplicateHasBetterReceipt ? 1 : 0,
+      duplicate.raw_payload_json,
+      duplicate.raw_payload_json,
+      duplicate.context_json,
+      duplicate.referral_json,
+      duplicate.detected_ctwa_clid,
+      duplicate.detected_source_id,
+      duplicate.detected_source_url,
+      duplicate.detected_source_type,
+      duplicate.detected_source_app,
+      duplicate.detected_entry_point,
+      duplicate.detected_headline,
+      duplicate.detected_body,
+      duplicate.detected_conversion_data,
+      duplicate.detected_ctwa_payload,
+      cleanCanonicalId
+    ])
+    return tx.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [cleanCanonicalId])
+  })
+}
+
+async function resolveWhatsAppCanonicalMessage({
+  messageId,
+  provider,
+  providerMessageId,
+  ycloudMessageId,
+  metaMessageId,
+  wamid,
+  protocolMessageKeyId
+}) {
+  const identifiers = {
+    messageId: cleanString(messageId),
+    provider: cleanString(provider),
+    providerMessageId: cleanString(providerMessageId),
+    ycloudMessageId: cleanString(ycloudMessageId),
+    metaMessageId: cleanString(metaMessageId),
+    wamid: cleanString(wamid),
+    protocolMessageKeyId: cleanString(protocolMessageKeyId)
+  }
+  const candidates = await db.all(`
+    SELECT *
+    FROM whatsapp_api_messages
+    WHERE id = ?
+      OR (? != '' AND provider = ? AND provider_message_id = ?)
+      OR (? != '' AND ycloud_message_id = ?)
+      OR (? != '' AND meta_message_id = ?)
+      OR (? != '' AND wamid = ?)
+      OR (? != '' AND protocol_message_key_id = ?)
+    ORDER BY updated_at DESC
+    LIMIT 12
+  `, [
+    identifiers.messageId,
+    identifiers.providerMessageId, identifiers.provider, identifiers.providerMessageId,
+    identifiers.ycloudMessageId, identifiers.ycloudMessageId,
+    identifiers.metaMessageId, identifiers.metaMessageId,
+    identifiers.wamid, identifiers.wamid,
+    identifiers.protocolMessageKeyId, identifiers.protocolMessageKeyId
+  ])
+  let canonical = selectWhatsAppCanonicalMessage(candidates, identifiers)
+  if (!canonical || !identifiers.providerMessageId || !identifiers.protocolMessageKeyId) return canonical
+
+  const canonicalHasOfficialIdentity = whatsappMessageIdentityRank(canonical, identifiers) === 0 ||
+    cleanString(canonical.id) === identifiers.messageId
+  if (!canonicalHasOfficialIdentity) return canonical
+
+  const protocolMirrors = candidates.filter(row =>
+    cleanString(row.id) !== cleanString(canonical.id) &&
+    cleanString(row.direction) === cleanString(canonical.direction) &&
+    rowsBelongToSameWhatsAppConversation(canonical, row) &&
+    isExactWhatsAppProtocolMirror(row, identifiers.protocolMessageKeyId)
+  )
+  for (const mirror of protocolMirrors) {
+    canonical = await mergeExactWhatsAppMessageRows({
+      canonicalId: canonical.id,
+      duplicateId: mirror.id
+    }) || canonical
+  }
+  return canonical
+}
+
 // Repara el historial creado antes de que Ristak conociera la identidad interna
 // compartida por Coexistence. Sólo fusiona pares demostrables: una captura QR y
 // un `smb.message.echoes` cuyo WAMID contiene exactamente el mismo key.id.
@@ -7304,7 +7552,7 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
   return db.withAdvisoryLock('whatsapp-protocol-message-identities', async () => {
     const appliedVersion = await getAppConfig(WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY).catch(() => '')
     if (!force && appliedVersion === WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION) {
-      return { skipped: true, version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION, backfilled: 0, merged: 0 }
+      return { skipped: true, version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION, backfilled: 0, merged: 0, providerMerged: 0 }
     }
 
     let lastId = ''
@@ -7338,6 +7586,60 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
       lastId = cleanString(rows.at(-1)?.id) || lastId
     }
 
+    // El ID remoto identifica un solo mensaje durante todo su ciclo
+    // accepted -> sent -> delivered -> read. Si una captura Baileys se coló
+    // entre esos estados, el ID oficial es la autoridad y ambas filas se
+    // fusionan. No se compara texto, hora ni contenido.
+    const duplicateProviderIdentities = await db.all(`
+      SELECT provider, provider_message_id
+      FROM whatsapp_api_messages
+      WHERE COALESCE(provider_message_id, '') != ''
+      GROUP BY provider, provider_message_id
+      HAVING COUNT(*) > 1
+    `)
+    let providerMerged = 0
+    for (const duplicateIdentity of duplicateProviderIdentities) {
+      const provider = cleanString(duplicateIdentity.provider)
+      const providerMessageId = cleanString(duplicateIdentity.provider_message_id)
+      const rows = await db.all(`
+        SELECT *
+        FROM whatsapp_api_messages
+        WHERE provider = ? AND provider_message_id = ?
+        ORDER BY created_at ASC, id ASC
+      `, [provider, providerMessageId])
+      let canonical = rows.find(row => cleanString(row.id) === hashId('waapi_msg', providerMessageId)) || rows[0]
+      if (!canonical) continue
+
+      for (const duplicate of rows) {
+        if (cleanString(duplicate.id) === cleanString(canonical.id)) continue
+        if (cleanString(duplicate.direction) !== cleanString(canonical.direction)) continue
+        if (!rowsBelongToSameWhatsAppConversation(canonical, duplicate)) continue
+        canonical = await mergeExactWhatsAppMessageRows({
+          canonicalId: canonical.id,
+          duplicateId: duplicate.id
+        }) || canonical
+        providerMerged += 1
+      }
+    }
+
+    const unresolvedProviderDuplicate = await db.get(`
+      SELECT provider, provider_message_id
+      FROM whatsapp_api_messages
+      WHERE COALESCE(provider_message_id, '') != ''
+      GROUP BY provider, provider_message_id
+      HAVING COUNT(*) > 1
+      LIMIT 1
+    `)
+    if (!unresolvedProviderDuplicate) {
+      await db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_api_messages_provider_message_unique
+        ON whatsapp_api_messages (provider, provider_message_id)
+        WHERE provider_message_id IS NOT NULL AND provider_message_id <> ''
+      `)
+    } else {
+      logger.warn(`[WhatsApp] El ID oficial ${unresolvedProviderDuplicate.provider}:${unresolvedProviderDuplicate.provider_message_id} requiere revisión antes de activar su índice único.`)
+    }
+
     const duplicateKeys = await db.all(`
       SELECT protocol_message_key_id
       FROM whatsapp_api_messages
@@ -7364,55 +7666,9 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
       for (const officialEcho of officialEchoRows) {
         const canonical = qrRows.find(qrRow => rowsBelongToSameWhatsAppConversation(qrRow, officialEcho))
         if (!canonical || canonical.id === officialEcho.id) continue
-        const bestStatus = pickBestMessageDeliveryStatus(canonical.status, officialEcho.status)
-
-        await db.transaction(async tx => {
-          await tx.run(`
-            UPDATE whatsapp_api_messages
-            SET provider = COALESCE(NULLIF(?, ''), provider),
-                origin = COALESCE(NULLIF(?, ''), origin),
-                provider_message_id = COALESCE(NULLIF(?, ''), provider_message_id),
-                ycloud_message_id = COALESCE(NULLIF(?, ''), ycloud_message_id),
-                meta_message_id = COALESCE(NULLIF(?, ''), meta_message_id),
-                wamid = COALESCE(NULLIF(?, ''), wamid),
-                waba_id = COALESCE(NULLIF(?, ''), waba_id),
-                business_phone_number_id = COALESCE(business_phone_number_id, ?),
-                whatsapp_api_contact_id = COALESCE(whatsapp_api_contact_id, ?),
-                contact_id = COALESCE(contact_id, ?),
-                status = COALESCE(NULLIF(?, ''), status),
-                business_echo = CASE WHEN ? = 1 THEN 1 ELSE business_echo END,
-                error_code = NULL,
-                error_message = NULL,
-                source_adapter = 'baileys',
-                transport = 'qr',
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `, [
-            officialEcho.provider,
-            officialEcho.origin,
-            officialEcho.provider_message_id,
-            officialEcho.ycloud_message_id,
-            officialEcho.meta_message_id,
-            officialEcho.wamid,
-            officialEcho.waba_id,
-            officialEcho.business_phone_number_id,
-            officialEcho.whatsapp_api_contact_id,
-            officialEcho.contact_id,
-            bestStatus,
-            Number(officialEcho.business_echo || 0) === 1 ? 1 : 0,
-            canonical.id
-          ])
-          await tx.run(`
-            UPDATE whatsapp_api_attribution
-            SET whatsapp_api_message_id = ?
-            WHERE whatsapp_api_message_id = ?
-          `, [canonical.id, officialEcho.id])
-          await tx.run(`
-            UPDATE scheduled_chat_messages
-            SET sent_message_id = ?
-            WHERE sent_message_id = ?
-          `, [canonical.id, officialEcho.id]).catch(() => undefined)
-          await tx.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [officialEcho.id])
+        await mergeExactWhatsAppMessageRows({
+          canonicalId: canonical.id,
+          duplicateId: officialEcho.id
         })
         merged += 1
       }
@@ -7437,10 +7693,11 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
     }
 
     await setAppConfig(WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY, WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION)
-    if (backfilled || merged) {
-      logger.info(`[WhatsApp] Identidades de protocolo: ${backfilled} filas preparadas y ${merged} ecos históricos fusionados.`)
+    const totalMerged = merged + providerMerged
+    if (backfilled || totalMerged) {
+      logger.info(`[WhatsApp] Identidades exactas: ${backfilled} filas preparadas, ${providerMerged} estados oficiales y ${merged} ecos históricos fusionados.`)
     }
-    return { skipped: false, version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION, backfilled, merged }
+    return { skipped: false, version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION, backfilled, merged: totalMerged, providerMerged }
   }, { pinConnection: false })
 }
 
@@ -7539,29 +7796,15 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     wamid
   })
   const computedMessageId = hashId('waapi_msg', providerMessageId || wamid || `${provider}|${payload.id}|${identity.direction}|${identity.phone}`)
-  let existingMessage = await db.get(`
-    SELECT id, provider, source_adapter, origin, provider_message_id, ycloud_message_id,
-           meta_message_id, wamid, protocol_message_key_id, contact_id, status,
-           transport, routing_reason, message_type, raw_payload_json,
-           media_url, media_mime_type, media_filename, media_duration_ms,
-           error_code, error_message
-    FROM whatsapp_api_messages
-    WHERE id = ?
-      OR (? != '' AND provider = ? AND provider_message_id = ?)
-      OR (? != '' AND ycloud_message_id = ?)
-      OR (? != '' AND meta_message_id = ?)
-      OR (? != '' AND wamid = ?)
-      OR (? != '' AND protocol_message_key_id = ?)
-    ORDER BY updated_at DESC
-    LIMIT 1
-  `, [
-    computedMessageId,
-    providerMessageId, provider, providerMessageId,
-    ycloudMessageId, ycloudMessageId,
-    metaMessageId, metaMessageId,
-    wamid, wamid,
-    protocolMessageKeyId, protocolMessageKeyId
-  ]).catch(() => null)
+  let existingMessage = await resolveWhatsAppCanonicalMessage({
+    messageId: computedMessageId,
+    provider,
+    providerMessageId,
+    ycloudMessageId,
+    metaMessageId,
+    wamid,
+    protocolMessageKeyId
+  })
   const existingMessageBeforePersistence = existingMessage
     ? { ...existingMessage }
     : null
@@ -7799,28 +8042,15 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   // y el segundo cayó en DO NOTHING. Resolvemos la fila ganadora por cualquiera
   // de sus identidades y, si esta llamada no conocía una fila previa, repetimos
   // por PK con un DO UPDATE válido tanto en PostgreSQL como en SQLite.
-  let canonicalMessage = await db.get(`
-    SELECT id, provider, source_adapter, origin, provider_message_id,
-           ycloud_message_id, meta_message_id, wamid, protocol_message_key_id,
-           contact_id, status, transport, routing_reason, message_type,
-           raw_payload_json, error_code, error_message
-    FROM whatsapp_api_messages
-    WHERE id = ?
-      OR (? != '' AND provider = ? AND provider_message_id = ?)
-      OR (? != '' AND ycloud_message_id = ?)
-      OR (? != '' AND meta_message_id = ?)
-      OR (? != '' AND wamid = ?)
-      OR (? != '' AND protocol_message_key_id = ?)
-    ORDER BY updated_at DESC
-    LIMIT 1
-  `, [
+  let canonicalMessage = await resolveWhatsAppCanonicalMessage({
     messageId,
-    providerMessageId, provider, providerMessageId,
-    ycloudMessageId, ycloudMessageId,
-    metaMessageId, metaMessageId,
-    wamid, wamid,
-    protocolMessageKeyId, protocolMessageKeyId
-  ]).catch(() => null)
+    provider,
+    providerMessageId,
+    ycloudMessageId,
+    metaMessageId,
+    wamid,
+    protocolMessageKeyId
+  })
 
   if (!canonicalMessage?.id) {
     throw new Error('No se pudo resolver la fila canónica del mensaje de WhatsApp después de persistirlo.')
