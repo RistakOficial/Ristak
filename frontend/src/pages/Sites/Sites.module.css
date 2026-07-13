@@ -21904,3 +21904,29 @@
   gap: 12px;
   padding: 12px 0 0;
 }
+
+/* The compact desktop editor keeps three panes. Without this override the
+   later one-column rule leaves the panes pinned to grid columns 1/2/3; CSS
+   creates implicit columns and the video canvas collapses to 1px. */
+@media (min-width: 1181px) and (max-width: 1320px) {
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(220px, 248px) minmax(0, 1fr) minmax(340px, 388px) !important;
+  }
+}
+
+@media (max-width: 1180px) {
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding > .blocksRail,
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding > .canvasColumn,
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding > .propertiesPanel,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm > .blocksRail,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm > .canvasColumn,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm > .propertiesPanel,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode > .formModeRail,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode > .canvasColumn,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode > .formModePanel {
+    grid-area: auto !important;
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+}

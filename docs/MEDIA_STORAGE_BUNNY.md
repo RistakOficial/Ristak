@@ -162,10 +162,15 @@ another account.
 - Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
 - Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
 - Imported HTML Sites do not persist Bunny/Storage URLs as their editable content contract. `public_site_content_assets` maps a stable per-site `asset_key` to the current `media_asset_id`; HTML uses `data-rstk-asset-id` or `data-rstk-background-asset-id`, and the public renderer resolves the current ready/public asset. Replacing an image or file changes the binding without changing the HTML key.
-- New configurable Site videos use the Bunny Stream embed in editor, preview and
-  published pages after finalization. Legacy Storage-backed videos keep their
-  existing Storage preview and switch to Stream when metadata is ready. Video
-  actions are bridged through Player.js in the live iframe.
+- New configurable Site videos use the Bunny Stream embed in the editor, preview
+  and published pages after finalization. The editor paints that iframe
+  immediately; if a ready Storage mirror is available it may use the mirror for
+  the native player controls and switch to the Stream iframe for live rendering.
+  If the mirror lookup is delayed or unavailable, the Stream iframe remains the
+  preview fallback instead of leaving a blank/placeholder block. Legacy
+  Storage-backed videos keep their existing Storage preview and switch to Stream
+  when metadata is ready. Video actions are bridged through Player.js in the
+  live iframe.
 
 ## App media explorer
 

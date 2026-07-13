@@ -15685,7 +15685,14 @@ function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context =
   if (asset?.publicUrl) {
     return renderVideoPlayer(asset.publicUrl, block, settings, { noTrack: false, context })
   }
-  return `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Video disponible en el sitio publicado</div>`
+  // A Stream embed can be previewed without a mapped Storage mirror. Keep
+  // tracking disabled in preview, but render the real iframe instead of a
+  // dead placeholder so manually pasted and newly finalized videos remain
+  // visible while the asset index catches up.
+  return renderBunnyStreamIframe(videoUrl, block, {
+    enabled: false,
+    stream: getBunnyStreamMetadataFromUrl(videoUrl)
+  }, settings, context)
 }
 
 function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, context = {}, stream = null) {

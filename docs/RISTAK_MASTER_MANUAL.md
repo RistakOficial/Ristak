@@ -2807,7 +2807,10 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   HTML externo solo reserva la zona donde se monta el reproductor.
   Un video nuevo se prepara en backend y se sube directo a Bunny Stream con TUS
   resumible y firma temporal; la API key nunca llega al navegador. Editor,
-  preview y publicado usan el iframe de Stream después de finalizar. Al cerrar
+  preview y publicado usan el iframe de Stream después de finalizar; el editor
+  lo pinta de inmediato y solo cambia a un espejo de Storage si existe para
+  conservar los controles nativos configurables. Si el espejo tarda o no existe,
+  el iframe de Stream se mantiene como respaldo visible. Al cerrar
   la sesión, backend valida la URL TUS, el tamaño reservado y que Bunny haya
   recibido todos los bytes antes de marcar el asset listo; estados de error de
   Stream nunca se convierten en éxito y liberan inmediatamente asset/video/cuota.

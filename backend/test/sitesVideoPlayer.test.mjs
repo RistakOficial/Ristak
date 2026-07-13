@@ -1398,3 +1398,18 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
 })
+
+test('editor preview keeps an unmapped Bunny Stream video playable in its iframe', async () => {
+  const streamVideoId = `stream-preview-fallback-${Date.now()}`
+  const embedUrl = `https://iframe.mediadelivery.net/embed/123456/${streamVideoId}`
+  const previewHtml = await renderPublicSiteHtml(baseSite({ mediaUrl: embedUrl }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(previewHtml, /class="[^"]*\brstk-video-stream-frame\b[^"]*"/)
+  assert.match(previewHtml, new RegExp(`data-rstk-stream-action-frame src="${escapeRegExp(embedUrl)}"`))
+  assert.doesNotMatch(previewHtml, /Video disponible en el sitio publicado/)
+  assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
+})
