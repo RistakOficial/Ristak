@@ -129,10 +129,18 @@ async function setAppConfigStamped(k, v) {
   }
 }
 
-async function maybeStartMetaSocialHistoryBackfillForConfig(config = {}, reason = 'app-config-updated') {
-  const platforms = [...new Set(Object.entries(config)
-    .filter(([key, value]) => META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key] && isEnabledConfigValue(value))
+export function getNewlyEnabledMetaSocialPlatforms(config = {}, previousConfig = {}) {
+  return [...new Set(Object.entries(config)
+    .filter(([key, value]) => (
+      META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key] &&
+      isEnabledConfigValue(value) &&
+      !isEnabledConfigValue(previousConfig[key])
+    ))
     .map(([key]) => META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key]))]
+}
+
+async function maybeStartMetaSocialHistoryBackfillForConfig(config = {}, previousConfig = {}, reason = 'app-config-updated') {
+  const platforms = getNewlyEnabledMetaSocialPlatforms(config, previousConfig)
   if (!platforms.length) return { syncStarted: false, started: [], skipped: [] }
 
   try {
@@ -154,8 +162,15 @@ export async function saveConfig(req, res) {
 
     // Modo 1: Guardar una sola key
     if (key && value !== undefined) {
+      const previousConfig = META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key]
+        ? { [key]: await getAppConfig(key) }
+        : {}
       await setAppConfigStamped(key, value)
-      const socialHistoryBackfill = await maybeStartMetaSocialHistoryBackfillForConfig({ [key]: value }, 'messaging-config-enabled')
+      const socialHistoryBackfill = await maybeStartMetaSocialHistoryBackfillForConfig(
+        { [key]: value },
+        previousConfig,
+        'messaging-config-enabled'
+      )
       logger.info(`Configuración guardada: ${key} = ${getSafeLogValue(key, value)}`)
 
       return res.json({
@@ -167,10 +182,20 @@ export async function saveConfig(req, res) {
 
     // Modo 2: Guardar múltiples keys
     if (config && typeof config === 'object') {
+      const previousConfig = {}
+      for (const key of Object.keys(config)) {
+        if (META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key]) {
+          previousConfig[key] = await getAppConfig(key)
+        }
+      }
       for (const [k, v] of Object.entries(config)) {
         await setAppConfigStamped(k, v)
       }
-      const socialHistoryBackfill = await maybeStartMetaSocialHistoryBackfillForConfig(config, 'messaging-config-enabled')
+      const socialHistoryBackfill = await maybeStartMetaSocialHistoryBackfillForConfig(
+        config,
+        previousConfig,
+        'messaging-config-enabled'
+      )
 
       logger.info(`${Object.keys(config).length} configuraciones guardadas`)
 

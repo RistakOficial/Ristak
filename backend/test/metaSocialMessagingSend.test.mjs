@@ -943,9 +943,10 @@ test('syncMetaSocialConversationHistory importa historial disponible de Messenge
           )
           assert.equal(profile.contact_id, contactId)
           assert.equal(profile.profile_name, 'Cliente Messenger Historial')
-          assert.equal(profile.profile_picture_url, 'https://cdn.example.test/messenger-history.jpg')
+          assert.equal(profile.profile_picture_url, null)
 
           assert.equal(calls.some(call => call.url.startsWith('/page-history-test/conversations')), true)
+          assert.equal(calls.some(call => call.url.startsWith(`/${senderId}?`)), false)
           const messagesCall = calls.find(call => call.url.startsWith('/conversation-messenger-history/messages'))
           assert.equal(messagesCall?.authorization, 'Bearer page-token-history-test')
         } finally {
@@ -1036,11 +1037,12 @@ test('syncMetaSocialConversationHistory importa historial disponible de Instagra
           assert.equal(profile.contact_id, contactId)
           assert.equal(profile.profile_name, 'Cliente Instagram Historial')
           assert.equal(profile.username, 'cliente.historial')
-          assert.equal(profile.profile_picture_url, 'https://cdn.example.test/instagram-history.jpg')
+          assert.equal(profile.profile_picture_url, null)
 
           const conversationsCall = calls.find(call => call.url.startsWith('/ig-business-history-test/conversations'))
           assert.equal(conversationsCall?.authorization, 'Bearer page-token-history-test')
           assert.equal(calls.some(call => call.url.startsWith('/me/conversations')), false)
+          assert.equal(calls.some(call => call.url.startsWith(`/${senderId}?`)), false)
           const messagesCall = calls.find(call => call.url.startsWith('/conversation-instagram-history/messages'))
           assert.equal(messagesCall?.authorization, 'Bearer page-token-history-test')
         } finally {

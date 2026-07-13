@@ -1742,28 +1742,24 @@ function buildMetaSocialMessageFromGraphConversation({ platform, config, convers
   }
 }
 
-async function resolveMetaSocialHistoryProfile({ platform, senderId, participant, businessId, accessToken, baseUrl, profileCache }) {
+async function resolveMetaSocialHistoryProfile({ platform, senderId, participant, profileCache }) {
   const key = `${platform}:${senderId}`
   if (profileCache.has(key)) return profileCache.get(key)
 
-  const graphProfile = await fetchMetaSenderProfile({
-    platform,
-    senderId,
-    businessId,
-    accessToken,
-    baseUrl
-  })
+  // Conversations API ya entrega la identidad del participante junto con cada
+  // conversación. Volver a consultar /{PSID|IGSID} por cada contacto duplica el
+  // tráfico, suele ser rechazado para PSIDs antiguos y no aporta nada al
+  // historial. Los webhooks nuevos conservan su enriquecimiento normal; el
+  // backfill usa únicamente los datos que Meta ya devolvió en la conversación.
   const profile = {
-    name: compactName(graphProfile.name) || compactName(participant?.name),
-    username: cleanString(graphProfile.username || participant?.username),
+    name: compactName(participant?.name),
+    username: cleanString(participant?.username),
     profilePictureUrl: cleanString(
-      graphProfile.profilePictureUrl ||
       participant?.profile_pic ||
       participant?.profile_picture_url
     ),
     raw: {
-      participant: participant || null,
-      graphProfile: graphProfile.raw || null
+      participant: participant || null
     }
   }
   profileCache.set(key, profile)
@@ -1843,9 +1839,6 @@ async function syncMetaSocialConversationMessages({
         platform: firstSocialMessage.platform,
         senderId: firstSocialMessage.senderId,
         participant,
-        businessId,
-        accessToken: graphToken,
-        baseUrl,
         profileCache
       })
       const localContact = await upsertLocalSocialContact({ socialMessage: firstSocialMessage, profile })

@@ -139,7 +139,6 @@ const META_AD_CREATIVE_FIELDS = [
   'thumbnail_url',
   'thumbnail_id',
   'image_url',
-  'preview_url',
   'video_id',
   'object_story_id',
   'effective_object_story_id',
@@ -433,7 +432,7 @@ function extractCreativeMedia(creative = {}, videoMediaById = new Map(), adImage
     videoMedia?.thumbnailUrl,
     imageUrl
   )
-  const previewUrl = pickFirstString(creative.preview_url, videoMedia?.previewUrl)
+  const previewUrl = pickFirstString(videoMedia?.previewUrl)
   const creativeType = videoId || videoUrl ? 'video' : (imageUrl || thumbnailUrl ? 'image' : null)
 
   return {
