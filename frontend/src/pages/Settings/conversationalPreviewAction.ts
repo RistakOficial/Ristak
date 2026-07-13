@@ -12,7 +12,13 @@ const PREVIEW_ACTION_MESSAGES: Record<string, string> = {
   mark_ready_to_advance: 'Prueba interna: el objetivo propio quedaría completado.'
 }
 
-export function describeConversationalPreviewAction(action: PreviewAction) {
-  return PREVIEW_ACTION_MESSAGES[String(action?.type || '').trim()]
+export function describeConversationalPreviewAction(action: PreviewAction): string | null {
+  const actionType = String(action?.type || '').trim()
+
+  if (actionType === 'offer_appointment_slot' || actionType === 'offer_appointment_options') {
+    return null
+  }
+
+  return PREVIEW_ACTION_MESSAGES[actionType]
     || 'Prueba interna: la capacidad configurada se ejecutaría aquí.'
 }

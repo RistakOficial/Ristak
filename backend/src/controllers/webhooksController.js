@@ -2,8 +2,13 @@ import crypto from 'crypto';
 import { db, getAppConfig } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { updateSingleContactStats } from '../utils/updateContactsStats.js';
-import { normalizeToUtcIso, getAccountTimezone } from '../utils/dateUtils.js';
 import { recordAttendanceAttributionSignal } from '../services/appointmentsMerge.js';
+import {
+  claimPreparedHighLevelMirrorIntent,
+  getLocalCalendar,
+  inspectInboundHighLevelAppointment,
+  reconcileInboundHighLevelAppointment
+} from '../services/localCalendarService.js';
 import {
   activatePendingPaymentFlowsForContact,
   markPaymentFlowInvoicePaid
@@ -20,6 +25,7 @@ import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
   prepareContactPhoneUpsert,
+  resolveContactIdByGhlId,
   resolveOrCreateContactForGhl
 } from '../services/contactIdentityService.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
@@ -1687,12 +1693,31 @@ export const handleAppointmentWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    let contactId = data.contact_id || data.contactId;
-    const usePostgres = process.env.DATABASE_URL ? true : false;
+    const remoteContactId = data.contact_id || data.contactId;
+    let contactId = remoteContactId;
+    const claimedMirrorIntent = await claimPreparedHighLevelMirrorIntent({
+      id: appointmentId,
+      calendarId: appointmentCalendarId,
+      contactId: remoteContactId,
+      locationId: data.location?.id || data.locationId || data.location_id,
+      title: calendar.title || data.title || calendar.calendarName,
+      startTime: calendar.startTime || data.startTime || data.start_time,
+      endTime: calendar.endTime || data.endTime || data.end_time
+    }, {
+      ghlAppointmentId: appointmentId,
+      remoteCalendarId: appointmentCalendarId,
+      remoteContactId
+    });
+    const inboundTarget = claimedMirrorIntent || await inspectInboundHighLevelAppointment(appointmentId);
 
-    // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
-    // queda ligado en ghl_contact_id. La cita se guarda con el ID local.
-    if (contactId) {
+    // Un eco de una cita Ristak no tiene autoridad para crear o relinkear
+    // contactos desde los datos que HighLevel devuelva.
+    if (inboundTarget.ownership === 'ristak') {
+      const resolvedRemoteContactId = remoteContactId
+        ? await resolveContactIdByGhlId(remoteContactId)
+        : null;
+      contactId = resolvedRemoteContactId || remoteContactId || inboundTarget.appointment?.contactId || null;
+    } else if (contactId) {
       const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
         ghlContactId: contactId,
         phone: data.phone,
@@ -1706,75 +1731,43 @@ export const handleAppointmentWebhook = async (req, res) => {
       }
     }
 
-    const query = usePostgres
-      ? `INSERT INTO appointments (id, calendar_id, contact_id, location_id, title, status,
-          appointment_status, assigned_user_id, notes, address, start_time, end_time, date_added, date_updated)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-         ON CONFLICT (id) DO UPDATE SET
-          status = EXCLUDED.status,
-          appointment_status = EXCLUDED.appointment_status,
-          start_time = EXCLUDED.start_time,
-          end_time = EXCLUDED.end_time,
-          notes = COALESCE(EXCLUDED.notes, appointments.notes),
-          address = COALESCE(EXCLUDED.address, appointments.address),
-          date_added = COALESCE(appointments.date_added, EXCLUDED.date_added),
-          date_updated = EXCLUDED.date_updated`
-      : `INSERT INTO appointments (id, calendar_id, contact_id, location_id, title, status,
-          appointment_status, assigned_user_id, notes, address, start_time, end_time, date_added, date_updated)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET
-          status = EXCLUDED.status,
-          appointment_status = EXCLUDED.appointment_status,
-          start_time = EXCLUDED.start_time,
-          end_time = EXCLUDED.end_time,
-          notes = COALESCE(EXCLUDED.notes, appointments.notes),
-          address = COALESCE(EXCLUDED.address, appointments.address),
-          date_added = COALESCE(appointments.date_added, EXCLUDED.date_added),
-          date_updated = EXCLUDED.date_updated`;
-
-    // Normalizar instantes a UTC real (GHL manda ISO con offset; lo convertimos
-    // para que el instante quede correcto sin importar el tipo de columna).
-    const accountZone = await getAccountTimezone();
-    const startTime = normalizeToUtcIso(calendar.startTime || data.startTime || data.start_time, accountZone);
-    const endTime = normalizeToUtcIso(calendar.endTime || data.endTime || data.end_time, accountZone);
-    const dateAdded = normalizeToUtcIso(calendar.date_created || data.dateAdded || data.date_added || new Date().toISOString(), accountZone);
-    const dateUpdated = normalizeToUtcIso(calendar.last_updated || data.dateUpdated || data.date_updated || new Date().toISOString(), accountZone);
-    const existingAppointment = await db.get(
-      'SELECT id, calendar_id, contact_id, title, status, appointment_status, start_time FROM appointments WHERE id = ?',
-      [appointmentId]
-    ).catch(() => null);
-
-    await db.run(query, [
-      appointmentId,
-      appointmentCalendarId,
+    const localCalendar = appointmentCalendarId
+      ? await getLocalCalendar(appointmentCalendarId)
+      : null;
+    const reconciliation = await reconcileInboundHighLevelAppointment({
+      id: appointmentId,
+      calendarId: localCalendar?.id || appointmentCalendarId,
       contactId,
-      data.location?.id || data.locationId || data.location_id,
-      calendar.title || data.title || calendar.calendarName,
-      calendar.status || data.status,
-      calendar.appoinmentStatus || calendar.appointmentStatus || data.appointment_status,
-      calendar.created_by_user_id || data.assignedUserId || data.assigned_user_id,
-      calendar.notes || data.notes,
-      calendar.address || data.address || data.location?.fullAddress,
-      startTime,
-      endTime,
-      dateAdded,
-      dateUpdated
-    ]);
+      locationId: data.location?.id || data.locationId || data.location_id,
+      title: calendar.title || data.title || calendar.calendarName,
+      status: calendar.status || data.status,
+      appointmentStatus: calendar.appoinmentStatus || calendar.appointmentStatus || data.appointment_status,
+      assignedUserId: calendar.created_by_user_id || data.assignedUserId || data.assigned_user_id,
+      notes: calendar.notes || data.notes,
+      address: calendar.address || data.address || data.location?.fullAddress,
+      startTime: calendar.startTime || data.startTime || data.start_time,
+      endTime: calendar.endTime || data.endTime || data.end_time,
+      dateAdded: calendar.date_created || data.dateAdded || data.date_added,
+      dateUpdated: calendar.last_updated || data.dateUpdated || data.date_updated
+    }, {
+      ghlAppointmentId: appointmentId,
+      calendarId: localCalendar?.id || appointmentCalendarId,
+      contactId,
+      locationId: data.location?.id || data.locationId || data.location_id,
+      lastWriteWins: true
+    });
 
-    // Actualizar appointment_date del contacto con la fecha de la cita más próxima
-    if (contactId && startTime) {
-      await db.run(`
-        UPDATE contacts
-        SET appointment_date = ?
-        WHERE id = ?
-        AND (appointment_date IS NULL OR appointment_date > ?)
-      `, [startTime, contactId, startTime]);
-    }
-
-    const appointmentStatus = calendar.appoinmentStatus || calendar.appointmentStatus || data.appointment_status || calendar.status || data.status;
+    const persistedAppointment = reconciliation.appointment;
+    const existingAppointment = reconciliation.previous;
+    const isRistakMirrorEcho = reconciliation.ownership === 'ristak';
+    const persistedAppointmentId = persistedAppointment.id;
+    const persistedCalendarId = persistedAppointment.calendarId || localCalendar?.id || appointmentCalendarId;
+    const persistedContactId = persistedAppointment.contactId || contactId;
+    const startTime = persistedAppointment.startTime;
+    const appointmentStatus = persistedAppointment.appointmentStatus || persistedAppointment.status;
     const appointmentStatusNormalized = String(appointmentStatus || '').toLowerCase();
-    const previousStatusNormalized = String(existingAppointment?.appointment_status || existingAppointment?.status || '').toLowerCase();
-    const previousStartMs = new Date(existingAppointment?.start_time).getTime();
+    const previousStatusNormalized = String(existingAppointment?.appointmentStatus || existingAppointment?.status || '').toLowerCase();
+    const previousStartMs = new Date(existingAppointment?.startTime).getTime();
     const nextStartMs = new Date(startTime).getTime();
     const appointmentStartChanged = Boolean(existingAppointment?.id) &&
       Number.isFinite(previousStartMs) &&
@@ -1789,14 +1782,14 @@ export const handleAppointmentWebhook = async (req, res) => {
       previousStatusNormalized.includes('noshow') ||
       previousStatusNormalized.includes('deleted');
 
-    if (contactId && !isCancelledAppointment) {
-      await triggerWhatsappAppointmentBookedEvent(contactId, {
-        calendarId: appointmentCalendarId,
-        appointmentId
+    if (!isRistakMirrorEcho && persistedContactId && !isCancelledAppointment) {
+      await triggerWhatsappAppointmentBookedEvent(persistedContactId, {
+        calendarId: persistedCalendarId,
+        appointmentId: persistedAppointmentId
       });
     }
 
-    if (contactId) {
+    if (!isRistakMirrorEcho && persistedContactId) {
       import('../services/automationEngine.js')
         .then(engine => {
           const statusEvent = appointmentStatusNormalized.includes('cancel') ? 'cancelled'
@@ -1804,26 +1797,26 @@ export const handleAppointmentWebhook = async (req, res) => {
               ? 'no_show'
               : appointmentStatusNormalized || 'booked';
           if (!isCancelledAppointment) {
-            engine.handleAutomationEvent('appointment-booked', { contactId, calendarId: appointmentCalendarId }).catch(() => {});
+            engine.handleAutomationEvent('appointment-booked', { contactId: persistedContactId, calendarId: persistedCalendarId }).catch(() => {});
           }
-          engine.handleAutomationEvent('appointment-status', { contactId, calendarId: appointmentCalendarId, status: statusEvent }).catch(() => {});
+          engine.handleAutomationEvent('appointment-status', { contactId: persistedContactId, calendarId: persistedCalendarId, status: statusEvent }).catch(() => {});
         })
         .catch(() => {});
     }
 
-    if (existingAppointment?.id && contactId && appointmentCalendarId) {
+    if (!isRistakMirrorEcho && existingAppointment?.id && persistedContactId && persistedCalendarId) {
       const notificationAppointment = {
-        id: appointmentId,
-        calendarId: appointmentCalendarId,
-        contactId,
-        title: calendar.title || data.title || existingAppointment.title || calendar.calendarName,
+        id: persistedAppointmentId,
+        calendarId: persistedCalendarId,
+        contactId: persistedContactId,
+        title: persistedAppointment.title || existingAppointment.title,
         appointmentStatus,
         startTime,
         contactName: data.contactName || data.fullName || data.full_name || ''
       };
       if (isCancelledAppointment && !wasCancelledAppointment) {
         sendAppointmentStatusNotification(notificationAppointment, {
-          calendarId: appointmentCalendarId,
+          calendarId: persistedCalendarId,
           eventType: 'cancelled',
           source: 'appointment_webhook'
         }).catch(error => {
@@ -1831,7 +1824,7 @@ export const handleAppointmentWebhook = async (req, res) => {
         });
       } else if (!isCancelledAppointment && appointmentStartChanged) {
         sendAppointmentStatusNotification(notificationAppointment, {
-          calendarId: appointmentCalendarId,
+          calendarId: persistedCalendarId,
           eventType: 'rescheduled',
           source: 'appointment_webhook'
         }).catch(error => {
@@ -1840,7 +1833,9 @@ export const handleAppointmentWebhook = async (req, res) => {
       }
     }
 
-    logger.info(`✅ Cita ${appointmentId} procesada exitosamente para contacto ${contactId}`);
+    logger.info(isRistakMirrorEcho
+      ? `✅ Eco HighLevel ${appointmentId} reconciliado sin alterar la cita Ristak ${persistedAppointmentId}`
+      : `✅ Cita HighLevel ${appointmentId} procesada como ocupación ${persistedAppointmentId}`);
     res.status(200).json({ success: true, message: 'Cita procesada' });
 
   } catch (error) {
@@ -1867,11 +1862,12 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       || data.event_id
       || data.id;
 
-    let contactId = data.contact_id
+    const remoteContactId = data.contact_id
       || data.contactId
       || data.contact?.id
       || appointment.contactId
       || appointment.contact_id;
+    let contactId = remoteContactId;
 
     logger.info(`📥 Webhook de cita asistida recibido: ${appointmentId || 'sin ID'}${contactId ? ` (contacto ${contactId})` : ''}`);
 
@@ -1880,11 +1876,18 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    const usePostgres = process.env.DATABASE_URL ? true : false;
+    const inboundTarget = appointmentId
+      ? await inspectInboundHighLevelAppointment(appointmentId)
+      : { appointment: null, ownership: null };
 
-    if (contactId) {
-      // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
-      // queda ligado en ghl_contact_id.
+    if (inboundTarget.ownership === 'ristak') {
+      const resolvedRemoteContactId = remoteContactId
+        ? await resolveContactIdByGhlId(remoteContactId)
+        : null;
+      contactId = resolvedRemoteContactId || remoteContactId || inboundTarget.appointment?.contactId || null;
+    } else if (appointmentId && contactId) {
+      // Sólo una cita identificada como propia/nueva de HighLevel puede crear o
+      // relinkear el contacto local desde el payload remoto.
       const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
         ghlContactId: contactId,
         phone: data.phone || data.contactPhone || data.contact?.phone,
@@ -1896,69 +1899,56 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       if (resolvedContactId) {
         contactId = resolvedContactId;
       }
+    } else if (!appointmentId && contactId) {
+      // Sin ID de cita no hay autoridad para crear una ficha nueva. Únicamente
+      // aceptamos una identidad GHL que ya estuviera ligada localmente.
+      contactId = await resolveContactIdByGhlId(contactId);
+      if (!contactId) {
+        logger.warn('Webhook showed sin appointmentId ni contacto GHL previamente ligado, ignorando');
+        return res.status(200).json({ success: true, message: 'Webhook recibido sin cita identificable' });
+      }
     }
 
+    const remoteCalendarId = calendar.id || appointment.calendarId || data.calendarId || data.calendar_id;
+    const localCalendar = remoteCalendarId ? await getLocalCalendar(remoteCalendarId) : null;
     const startTime = calendar.startTime || appointment.startTime || data.startTime || data.start_time;
     const endTime = calendar.endTime || appointment.endTime || data.endTime || data.end_time;
     const dateUpdated = calendar.last_updated || appointment.last_updated || data.dateUpdated || data.date_updated || new Date().toISOString();
     let updatedAppointmentId = appointmentId;
+    let isRistakMirrorEcho = false;
 
     if (appointmentId) {
-      const query = usePostgres
-        ? `INSERT INTO appointments (id, calendar_id, contact_id, location_id, title, status,
-            appointment_status, assigned_user_id, notes, address, start_time, end_time, date_added, date_updated)
-           VALUES ($1, $2, $3, $4, $5, $6, 'showed', $7, $8, $9, $10, $11, $12, $13)
-           ON CONFLICT (id) DO UPDATE SET
-            calendar_id = COALESCE(EXCLUDED.calendar_id, appointments.calendar_id),
-            contact_id = COALESCE(EXCLUDED.contact_id, appointments.contact_id),
-            location_id = COALESCE(EXCLUDED.location_id, appointments.location_id),
-            title = COALESCE(EXCLUDED.title, appointments.title),
-            status = COALESCE(EXCLUDED.status, appointments.status),
-            appointment_status = 'showed',
-            assigned_user_id = COALESCE(EXCLUDED.assigned_user_id, appointments.assigned_user_id),
-            notes = COALESCE(EXCLUDED.notes, appointments.notes),
-            address = COALESCE(EXCLUDED.address, appointments.address),
-            start_time = COALESCE(EXCLUDED.start_time, appointments.start_time),
-            end_time = COALESCE(EXCLUDED.end_time, appointments.end_time),
-            date_added = COALESCE(appointments.date_added, EXCLUDED.date_added),
-            date_updated = EXCLUDED.date_updated`
-        : `INSERT INTO appointments (id, calendar_id, contact_id, location_id, title, status,
-            appointment_status, assigned_user_id, notes, address, start_time, end_time, date_added, date_updated)
-           VALUES (?, ?, ?, ?, ?, ?, 'showed', ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (id) DO UPDATE SET
-            calendar_id = COALESCE(EXCLUDED.calendar_id, appointments.calendar_id),
-            contact_id = COALESCE(EXCLUDED.contact_id, appointments.contact_id),
-            location_id = COALESCE(EXCLUDED.location_id, appointments.location_id),
-            title = COALESCE(EXCLUDED.title, appointments.title),
-            status = COALESCE(EXCLUDED.status, appointments.status),
-            appointment_status = 'showed',
-            assigned_user_id = COALESCE(EXCLUDED.assigned_user_id, appointments.assigned_user_id),
-            notes = COALESCE(EXCLUDED.notes, appointments.notes),
-            address = COALESCE(EXCLUDED.address, appointments.address),
-            start_time = COALESCE(EXCLUDED.start_time, appointments.start_time),
-            end_time = COALESCE(EXCLUDED.end_time, appointments.end_time),
-            date_added = COALESCE(appointments.date_added, EXCLUDED.date_added),
-            date_updated = EXCLUDED.date_updated`;
-
-      await db.run(query, [
-        appointmentId,
-        calendar.id || appointment.calendarId || data.calendarId || data.calendar_id,
+      const reconciliation = await reconcileInboundHighLevelAppointment({
+        id: appointmentId,
+        calendarId: localCalendar?.id || remoteCalendarId,
         contactId,
-        data.location?.id || data.locationId || data.location_id,
-        calendar.title || appointment.title || data.title || calendar.calendarName || 'Cita',
-        calendar.status || appointment.status || data.status || null,
-        calendar.created_by_user_id || appointment.assignedUserId || data.assignedUserId || data.assigned_user_id,
-        calendar.notes || appointment.notes || data.notes,
-        calendar.address || appointment.address || data.address || data.location?.fullAddress,
+        locationId: data.location?.id || data.locationId || data.location_id,
+        title: calendar.title || appointment.title || data.title || calendar.calendarName,
+        status: calendar.status || appointment.status || data.status || 'showed',
+        appointmentStatus: 'showed',
+        assignedUserId: calendar.created_by_user_id || appointment.assignedUserId || data.assignedUserId || data.assigned_user_id,
+        notes: calendar.notes || appointment.notes || data.notes,
+        address: calendar.address || appointment.address || data.address || data.location?.fullAddress,
         startTime,
         endTime,
-        calendar.date_created || appointment.dateAdded || data.dateAdded || data.date_added || new Date().toISOString(),
+        dateAdded: calendar.date_created || appointment.dateAdded || data.dateAdded || data.date_added,
         dateUpdated
-      ]);
+      }, {
+        ghlAppointmentId: appointmentId,
+        calendarId: localCalendar?.id || remoteCalendarId,
+        contactId,
+        locationId: data.location?.id || data.locationId || data.location_id,
+        lastWriteWins: true
+      });
+      updatedAppointmentId = reconciliation.appointment.id;
+      contactId = reconciliation.appointment.contactId || contactId;
+      isRistakMirrorEcho = reconciliation.ownership === 'ristak';
     } else if (contactId) {
       const existingAppointment = await db.get(
         `SELECT id FROM appointments
          WHERE contact_id = ?
+           AND COALESCE(source, '') = 'ghl'
+           AND id NOT LIKE 'rstk_appt%'
          ORDER BY
           CASE WHEN start_time IS NULL THEN 1 ELSE 0 END,
           start_time DESC,
@@ -1968,8 +1958,8 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       );
 
       if (!existingAppointment) {
-        logger.warn(`Webhook showed sin appointmentId y sin cita existente para contacto ${contactId}`);
-        return res.status(200).json({ success: true, message: 'Cita asistida recibida sin cita local' });
+        logger.warn(`Webhook showed sin appointmentId y sin cita propia de HighLevel para contacto ${contactId}`);
+        return res.status(200).json({ success: true, message: 'Cita asistida recibida sin una cita HighLevel identificable' });
       }
 
       updatedAppointmentId = existingAppointment.id;
@@ -1983,7 +1973,7 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       );
     }
 
-    if (contactId && startTime) {
+    if (!isRistakMirrorEcho && contactId && startTime) {
       await db.run(`
         UPDATE contacts
         SET appointment_date = COALESCE(appointment_date, ?)
@@ -2000,7 +1990,7 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       attendanceContactId = appointmentRow?.contact_id;
     }
 
-    if (attendanceContactId) {
+    if (!isRistakMirrorEcho && attendanceContactId) {
       await recordAttendanceAttributionSignal({
         contactId: attendanceContactId,
         appointmentId: updatedAppointmentId,
@@ -2008,15 +1998,17 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       });
     }
 
-    logger.info(`✅ Cita marcada como asistida: ${updatedAppointmentId || 'sin ID'}${contactId ? ` para contacto ${contactId}` : ''}`);
+    logger.info(isRistakMirrorEcho
+      ? `✅ Eco showed de HighLevel reconciliado sin alterar la cita Ristak ${updatedAppointmentId}`
+      : `✅ Cita HighLevel marcada como asistida: ${updatedAppointmentId || 'sin ID'}${contactId ? ` para contacto ${contactId}` : ''}`);
     res.status(200).json({
       success: true,
-      message: 'Cita marcada como asistida',
+      message: isRistakMirrorEcho ? 'Eco de cita asistida reconciliado' : 'Cita marcada como asistida',
       appointment_id: updatedAppointmentId,
       contact_id: contactId
     });
 
-    if (contactId) {
+    if (!isRistakMirrorEcho && contactId) {
       import('../services/automationEngine.js')
         .then(engine => engine.handleAutomationEvent('appointment-status', { contactId, status: 'completed' }))
         .catch(() => {});

@@ -154,6 +154,8 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       source: 'ristak',
       slotDuration: 60,
       slotInterval: 60,
+      allowBookingFor: 365,
+      allowBookingForUnit: 'days',
       openHours: [{
         daysOfTheWeek: [1],
         hours: [{ openHour: 11, openMinute: 0, closeHour: 12, closeMinute: 0 }]

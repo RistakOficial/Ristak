@@ -3819,9 +3819,33 @@ nunca un booleano escrito por el modelo.
   comprobar que el horario exista y siga libre. La llamada nativa reemplaza el
   detector textual de confirmacion. Voluntad y seleccion son contratos
   distintos: decir que quiere agendar, que quiere ir o que ya acepto atenderse
-  nunca autoriza al modelo a escoger el primer hueco. Incluso si el cliente
-  propone dia y hora exactos, el agente debe consultar `get_free_slots` y llamar
-  `offer_appointment_slot` con un solo `startTime`. Esta tool vuelve a validar el
+  nunca autoriza al modelo a escoger el primer hueco. Una consulta amplia como
+  "que dias tienes" usa `get_free_slots` y despues
+  `offer_appointment_options`. El servidor agrupa opciones reales en hasta tres
+  dias, escribe cada encabezado entre asteriscos para que el canal lo muestre en
+  negritas y compacta slots consecutivos como ventanas legibles indicando su
+  cadencia (`cada hora`, `cada 30 min`, etc.) para no inventar inicios intermedios. La lista es
+  informativa: no crea una oferta durable, no aparta ningun horario y un `ok`
+  posterior no identifica cual opcion eligio. El agente debe pedir dia y hora;
+  cuando la persona elige uno, vuelve a consultar esa preferencia exacta.
+  `weekdays` usa numeracion ISO de lunes 1 a domingo 7,
+  `earliestLocalTime`/`latestLocalTime` acotan horas locales y
+  `relativeToPreviousOffer` permite negociar "mas tarde" o "mas temprano" sin
+  repetir el slot individual rechazado. Para sostener esa negociacion entre
+  mensajes, la lista guarda durante 24 horas una referencia interna minima y
+  maxima con instante exacto, fecha, hora y zona originales, ademas de identidad
+  de agente, contacto, canal, calendario, proposito y sesion de prueba; no guarda
+  una oferta aceptable ni convierte un `ok` en seleccion. "Mas tarde" y "mas
+  temprano" comparan la hora local que vio la persona: la misma hora de otro dia
+  no cuenta como posterior o anterior. El instante sólo desempata dos horas
+  repetidas del mismo dia y la misma zona durante un cambio DST. Si despues se
+  rechaza una oferta individual, esa referencia mas reciente manda sobre la lista
+  anterior. Una oferta individual vencida deja de ser confirmable, pero conserva
+  durante 24 horas la referencia semantica necesaria para pedir otra hora.
+
+  Incluso si el cliente propone dia y hora exactos, el agente debe consultar
+  `get_free_slots` y llamar `offer_appointment_slot` con un solo `startTime`.
+  Esta tool vuelve a validar el
   slot, guarda `appointment_slot_offer_created` en vivo o su sobre aislado de
   preview y construye el unico texto visible de la oferta. El modelo no escribe,
   reformula ni agrega horarios; live y preview
@@ -3829,19 +3853,26 @@ nunca un booleano escrito por el modelo.
   divisor de mensajes. Una oferta activa queda en fase durable
   `awaiting_decision` y no puede ser sobrescrita por otra ejecución. Antes de
   cada vuelta el backend hidrata ese hecho desde
-  `conversational_agent_events`, pero no oculta agenda, catalogo, cobro, enlaces,
-  lectura ni handoff por el simple hecho de que exista una oferta. La misma IA
-  puede responder una duda, consultar precios o usar otra capacidad y luego
-  regresar a esa oferta sin repetirla. `resolve_active_appointment_offer` sólo se
-  usa cuando el mensaje realmente decide sobre ella: aceptar, pedir otras
-  opciones, rechazar o entregar a una persona cuando handoff esté habilitado.
+  `conversational_agent_events`. La misma IA puede responder una duda, consultar
+  precios o usar otra capacidad y luego regresar a esa oferta sin repetirla, pero
+  no puede publicar otra lista u otro horario individual hasta resolver la oferta
+  vigente. `resolve_active_appointment_offer` sólo se usa cuando el mensaje
+  realmente decide sobre ella: aceptar, pedir otras opciones, rechazar o entregar
+  a una persona cuando handoff esté habilitado.
   Una duda o respuesta ambigua no llama al resolver ni cambia el evento. No
   existe detector de `ok`, listas de frases, regex, etapa ni tool `keep_open` que
   sustituya el trabajo semantico del modelo. Pedir otras opciones cambia la
   oferta anterior a `superseded` y devuelve el control al mismo Runner para que
-  pueda consultar y ofrecer otra en esa vuelta; rechazarla la cambia a
+  pueda reconsultar con las restricciones nuevas y mostrar una lista o una
+  oferta exacta en esa vuelta; rechazarla la cambia a
   `declined`; entregarla a una persona la reclama primero por CAS y termina en
   `handed_off`, por lo que nunca puede ganar también una aceptación concurrente.
+  El horario reemplazado se conserva hasta 24 horas como instante canonico y las
+  consultas siguientes lo excluyen aunque vuelva con otro offset equivalente.
+  La reconsulta es obligatoria antes de mostrar el reemplazo. En el retroceso de
+  horario de verano, dos horas locales visualmente iguales siguen siendo dos
+  instantes distintos y la respuesta agrega su offset UTC para que la persona
+  pueda distinguirlos.
   Además, el guard de persistencia rechaza por CAS cualquier intento accidental
   de pisar una oferta activa y conserva byte por byte la evidencia original.
   Si la lectura durable falla, aparecen varias ofertas activas o una entrega
@@ -3879,9 +3910,10 @@ nunca un booleano escrito por el modelo.
   continúa pendiente hasta recibir el webhook real. Un retry exacto puede
   reproducir la selección, pero nunca revivirla después de que otra selección la
   sustituyó.
-  `get_free_slots` entrega el instante UTC que sólo debe copiarse sin cambios a
-  `offer_appointment_slot` y, por separado, fecha, hora y etiqueta visibles ya
-  calculadas con la zona horaria del negocio. Las tools terminales recuperan ese
+  `get_free_slots` entrega el instante UTC y, por separado, fecha, hora y etiqueta
+  visibles ya calculadas con la zona horaria del negocio. Una exploracion entrega
+  esa coleccion a `offer_appointment_options`; una eleccion exacta copia un solo
+  UTC sin cambios a `offer_appointment_slot`. Las tools terminales recuperan ese
   instante del evento de oferta; el modelo no convierte UTC ni adivina el
   horario que debe decirle a la persona. Después de un anticipo confirmado,
   `book_appointment` recupera el mismo UTC de la cadena durable reconciliacion →
@@ -3940,8 +3972,48 @@ nunca un booleano escrito por el modelo.
   durable. Si un crash creo la cita pero no alcanzo a sellar el cierre, incluso un
   inbound posterior que proponga otro slot repara la cita ya existente en lugar de
   duplicarla. Una cita ajena o de otro calendario nunca se adopta como exito del
-  agente. El ID local/GHL se canonicaliza al calendario local activo. Un fallo de
-  calendario o disponibilidad cierra en seguro.
+  agente. La cita, su ID y su calendario canonicos son siempre locales de Ristak;
+  los IDs de Google o HighLevel sólo identifican sus espejos. Un fallo de
+  configuracion o de la BD local cierra en seguro; un fallo de espejo externo no
+  invalida la agenda local.
+  Para la agenda conversacional, la consulta comparte la ruta verificada del
+  calendario local. Google se refresca en modalidad best-effort para materializar
+  su ocupacion externa en Ristak, pero Google y HighLevel nunca intersectan ni
+  vetan los slots locales en vivo. Si un proveedor no responde, se usa la
+  ocupacion ya guardada en la BD y la conversación puede continuar. La ruta
+  calcula con la zona del negocio, respeta las unidades reales de duracion e
+  intervalo y no inventa el horario historico de lunes a viernes de 9 a 5 cuando
+  `openHours` falta o tiene un formato inutilizable. Las citas que
+  comienzan antes del rango pero lo atraviesan tambien bloquean los slots que
+  corresponden. La lista y la comprobacion final comparten las reglas del
+  calendario: anticipacion minima, horizonte maximo, maximo diario, bloqueos y
+  buffers antes/despues. Por eso una opcion que la configuracion no permitiria
+  confirmar tampoco se muestra como negociable.
+  Toda creacion, incluida la del agente, confirma primero una cita en el
+  calendario local de Ristak bajo el candado transaccional. Ese INSERT es el
+  commit canonico: su ID se guarda en el ledger idempotente antes de tocar Google,
+  HighLevel, notificaciones o automatizaciones. Google Calendar y HighLevel son
+  únicamente espejos opcionales. Si están conectados se sincronizan despues; si
+  falta conexión o el espejo falla, la cita local sigue confirmada y el proveedor
+  queda `pending`/`error` para conciliación sin invalidar el cierre del agente. Un
+  retry devuelve la misma cita local y nunca crea otra.
+
+  Los reintentos de espejo tampoco hacen POST a ciegas. Google usa un ID remoto
+  determinista derivado del ID local y reconcilia ese mismo evento despues de un
+  timeout o conflicto. HighLevel busca primero una cita remota equivalente; si el
+  primer write tuvo resultado ambiguo y todavía no puede encontrarla, conserva la
+  marca `remote_outcome_unknown` y espera otra conciliación en vez de duplicarla.
+  Cada cita conserva tambien el calendario proveedor exacto de su espejo Google.
+  Si la agenda cambia de Google A a Google B, el retry retira primero la copia de
+  A y sólo después crea la de B; un error de DELETE impide el segundo write para
+  no dejar dos espejos. La ocupacion importada del vínculo anterior se limpia al
+  religar o desvincular. Si alguien cancela en Google una copia creada por Ristak,
+  la cita local permanece activa y rota a una nueva generación determinista de ID
+  remoto, incluso cuando el POST termina en timeout y necesita reconciliación.
+  Antes de cada POST, PATCH o DELETE se vuelve a comprobar que ese calendario de
+  Google tenga un solo dueño local; una liga duplicada legacy falla antes de
+  escribir. Un tombstone viejo de otro calendario proveedor tampoco puede rotar
+  ni perder la referencia del espejo vigente.
   La opcion blindada `allowOverlaps` se aplica igual en consulta, oferta,
   validacion previa al cobro, confirmacion automatica y solicitud humana; apagada
   exige slot libre y encendida permite el empalme sin saltarse horas de atencion.
@@ -3985,12 +4057,24 @@ nunca un booleano escrito por el modelo.
   automatizacion. Un ID ajeno, invitado no solicitante, cita pasada, estado
   inactivo u oferta vieja falla sin crear una segunda cita. Las citas canceladas,
   `no_show`/`noshow`, invalidas o eliminadas dejan de ocupar disponibilidad.
-  Al sincronizar con HighLevel, la respuesta remota nunca sustituye el
-  `contact_id` local canonico. Una respuesta tardía tampoco puede pisar una
+  Al sincronizar con HighLevel, la respuesta remota sólo puede guardar el ID y el
+  estado tecnico del espejo: nunca sustituye contacto, titulo, horario, estado,
+  notas ni ningun otro dato canonico local. Una respuesta tardía tampoco puede pisar una
   cancelación o reagendamiento posterior: vuelve a tomar el candado, compara el
   estado y horario post-commit y, si ya cambiaron, conserva la versión nueva,
   responde conflicto y la marca `sync_status=pending` para reparar cualquier
-  mutación remota vieja. Si falla transitoriamente el DELETE de una cita
+  mutación remota vieja. Antes de cada alta remota, incluida la agenda pública y
+  el batch de reconexión, Ristak guarda una intención durable con calendario,
+  contacto y horario. Si el webhook de HighLevel se adelanta a la respuesta del
+  POST, esa intención liga el ID remoto a la cita local y la deja `pending` hasta
+  validar el eco completo; nunca importa una segunda cita ni crea otra ficha.
+  Los pulls, la apertura de la agenda y los webhooks de
+  HighLevel resuelven primero `ghl_appointment_id`: si es el eco de una cita
+  canónica de Ristak, sólo concilian el espejo y nunca crean otra fila, otra ficha
+  de contacto ni disparan de nuevo automatizaciones o avisos; si el proveedor
+  difiere, la versión local queda pendiente para volver a publicarse. Sólo un
+  evento que realmente nació en HighLevel puede importarse como ocupación
+  `source=ghl`. Si falla transitoriamente el DELETE de una cita
   cancelada en Google Calendar, queda `google_sync_status=error` y el reconciliador
   vuelve a intentar la eliminacion aunque la cita local ya este cancelada.
 - Pago: producto, precio, monto, concepto y moneda deben coincidir con la
@@ -4186,7 +4270,10 @@ nunca un booleano escrito por el modelo.
   omitio su URL, el servidor la agrega completa y una sola vez despues de
   sanitizar el mensaje. Los nombres de tools, IDs, payloads y codigos internos no
   se entregan al contacto; v2 tampoco dispone de una tool capaz de quedarse mudo.
-  Las ofertas estructuradas de horario siempre salen como un solo globo. Al
+  Para listas y ofertas de horario, el tester tampoco agrega el globo generico
+  "Prueba interna": simula el efecto por estado y deja visible solamente el
+  horario que recibiria el contacto. Esas listas y ofertas estructuradas siempre
+  salen como un solo globo. Al
   recibir cualquier comprobante, el fallback visible aclara que quedo pendiente
   de revision y que el pago todavia no esta confirmado, incluso si el handoff
   propio ya cambio el estado del chat a humano.

@@ -113,6 +113,7 @@ export const TOOL_CALLING_V2_MODEL_SETTINGS = Object.freeze({
 })
 const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
   'apply_safety_measure',
+  'offer_appointment_options',
   'offer_appointment_slot',
   'book_appointment',
   'request_human_booking',
@@ -128,7 +129,7 @@ const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
 
 function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
   const serverVisibleTerminal = (Array.isArray(toolResults) ? toolResults : []).find((result) => (
-    ['offer_appointment_slot', 'resolve_active_appointment_offer'].includes(String(result?.tool?.name || '').trim()) &&
+    ['offer_appointment_options', 'offer_appointment_slot', 'resolve_active_appointment_offer'].includes(String(result?.tool?.name || '').trim()) &&
     result?.output?.terminal === true &&
     result?.output?.suppressReply !== true &&
     String(result?.output?.visibleReply || '').trim()
@@ -232,7 +233,7 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
 export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email']
 
 // Identificadores internos que jamás deben llegar al cliente final.
-const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|reschedule_appointment|cancel_appointment|get_contact_appointments|resolve_active_appointment_offer|create_payment_link|get_payment_status|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
+const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|reschedule_appointment|cancel_appointment|get_contact_appointments|resolve_active_appointment_offer|offer_appointment_options|create_payment_link|get_payment_status|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
 
 export function normalizeConversationalChannel(value = 'whatsapp') {
   const raw = String(value || '').trim().toLowerCase()
@@ -1484,9 +1485,9 @@ function nativePreviewAppointmentSucceeded(action = {}) {
   return false
 }
 
-function hasStructuredAppointmentOffer(actions = []) {
+function hasServerVisibleAppointmentAvailability(actions = []) {
   return (Array.isArray(actions) ? actions : []).some((action) => (
-    action?.type === 'offer_appointment_slot' &&
+    ['offer_appointment_options', 'offer_appointment_slot'].includes(String(action?.type || '').trim()) &&
     !nativeActionFailed(action) &&
     String(action?.outcome?.visibleReply || action?.visibleReply || '').trim()
   ))
@@ -1513,13 +1514,13 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
     action?.outcome?.terminal === true
   ))
   if (preventiveSuppression) return ''
-  const structuredOffer = (Array.isArray(actions) ? actions : []).find((action) => (
-    action?.type === 'offer_appointment_slot' &&
+  const serverVisibleAvailability = (Array.isArray(actions) ? actions : []).find((action) => (
+    ['offer_appointment_options', 'offer_appointment_slot'].includes(String(action?.type || '').trim()) &&
     !nativeActionFailed(action) &&
     String(action?.outcome?.visibleReply || action?.visibleReply || '').trim()
   ))
-  if (structuredOffer) {
-    return String(structuredOffer?.outcome?.visibleReply || structuredOffer?.visibleReply).trim()
+  if (serverVisibleAvailability) {
+    return String(serverVisibleAvailability?.outcome?.visibleReply || serverVisibleAvailability?.visibleReply).trim()
   }
   let visible = sanitizeToolCallingV2Reply(reply)
   const contactIdentityUnavailable = (Array.isArray(actions) ? actions : [])
@@ -1842,6 +1843,8 @@ async function buildToolCallingV2AgentForRun({
 - Usa resolve_active_appointment_offer sólo cuando el último mensaje realmente decida algo sobre esta oferta: accept si la acepta; request_other_options si quiere otro horario; decline si ya no quiere agendar;${pendingOfferHandoffInstruction}
 - Si el mensaje trata otro asunto, responde o usa la herramienta correspondiente sin tocar la oferta. No fuerces al cliente a decidir antes de ayudarle.
 - Antes de ofrecer otro horario, resuelve esta oferta con request_other_options.
+- Si pide algo más tarde o más temprano, usa request_other_options y después reconsulta get_free_slots con relativeToPreviousOffer="later" o "earlier". Conserva el rango, weekdays y límites horarios que siga pidiendo; no vuelvas a mostrar el horario rechazado.
+- Si cambia a una consulta amplia, después de request_other_options usa offer_appointment_options. Si da o elige una fecha y hora exactas, reconsulta ese punto y usa offer_appointment_slot. Una lista múltiple es sólo informativa: nunca la trates como esta oferta individual ni aceptes un "ok" ambiguo como selección.
 ${pendingOfferAcceptanceInstruction}
 ${pendingOfferPurposeInstruction}- Este bloque describe estado interno verificado. No menciones herramientas, fases ni maquinaria en la respuesta visible.`
     : ''
@@ -2478,7 +2481,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       externalIdPrefix: `convagent_followup${followUpIndex}`,
       dependencies: {
         splitter: splitMessageIntoBubbles,
-        forceSingleMessage: hasStructuredAppointmentOffer(ctx.actions),
+        forceSingleMessage: hasServerVisibleAppointmentAvailability(ctx.actions),
         markReplyComplete: async ({ contactId: doneContactId, latest: doneLatest }) => {
           await db.run(`
             UPDATE conversational_agent_state
@@ -3124,7 +3127,7 @@ async function handleToolCallingV2InboundTurn({
     channel: normalizedChannel,
     dependencies: {
       splitter: splitMessageIntoBubbles,
-      forceSingleMessage: hasStructuredAppointmentOffer(ctx.actions),
+      forceSingleMessage: hasServerVisibleAppointmentAvailability(ctx.actions),
       markReplyComplete: async () => {
         await settleActiveClaim({ status: 'completed', answered: true })
       }
@@ -3575,7 +3578,7 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       externalIdPrefix: 'convagent_payment_resume',
       dependencies: {
         splitter: splitMessageIntoBubbles,
-        forceSingleMessage: hasStructuredAppointmentOffer(ctx.actions),
+        forceSingleMessage: hasServerVisibleAppointmentAvailability(ctx.actions),
         // La terminal ya confirmó un hecho real. Un inbound que llegue después
         // no vuelve obsoleta esta confirmación; se encola y se procesa aparte.
         loadNewerInbound: async () => null,
@@ -4496,7 +4499,7 @@ export async function runConversationalAgentPreview({
     historyEnvelope: { ...previewHistoryEnvelope, messages: hydratedMessages },
     runtimeEventContext: String(runtimeEventContext || '').trim()
   })
-  const splitResult = hasStructuredAppointmentOffer(turn.ctx.actions)
+  const splitResult = hasServerVisibleAppointmentAvailability(turn.ctx.actions)
     ? { messages: [turn.reply].filter(Boolean), source: 'structured_offer', reason: 'server_single_message' }
     : isEmailConversationalChannel(previewChannel)
     ? { messages: [turn.reply].filter(Boolean), source: 'email', reason: 'email_single_message' }

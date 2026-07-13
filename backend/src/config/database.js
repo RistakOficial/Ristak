@@ -3891,6 +3891,8 @@ async function initTablesUnlocked() {
         date_added DATETIME,
         date_updated DATETIME,
         google_event_id TEXT UNIQUE,
+        google_provider_calendar_id TEXT,
+        google_mirror_generation INTEGER NOT NULL DEFAULT 0,
         google_sync_status TEXT,
         google_sync_error TEXT,
         google_synced_at DATETIME,
@@ -3996,6 +3998,31 @@ async function initTablesUnlocked() {
       logger.warn('Advertencia al crear índice único de calendars.ghl_calendar_id:', err.message)
     }
 
+    // Intención durable del espejo HighLevel. Se prepara antes del POST remoto
+    // para que un webhook adelantado pueda reconocer la cita canónica de Ristak.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS appointment_highlevel_mirror_intents (
+        appointment_id TEXT PRIMARY KEY,
+        appointment_date_updated DATETIME,
+        local_calendar_id TEXT NOT NULL,
+        remote_calendar_id TEXT NOT NULL,
+        local_contact_id TEXT,
+        remote_contact_id TEXT,
+        location_id TEXT,
+        start_time DATETIME NOT NULL,
+        end_time DATETIME NOT NULL,
+        normalized_title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'prepared',
+        remote_appointment_id TEXT,
+        prepared_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_ghl_mirror_intent_match ON appointment_highlevel_mirror_intents(status, remote_calendar_id, remote_contact_id, start_time, end_time, expires_at)')
+    await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_appointment_ghl_mirror_intent_remote ON appointment_highlevel_mirror_intents(remote_appointment_id) WHERE remote_appointment_id IS NOT NULL AND remote_appointment_id != ''")
+
     await db.run(`
       CREATE TABLE IF NOT EXISTS blocked_slots (
         id TEXT PRIMARY KEY,
@@ -4021,6 +4048,8 @@ async function initTablesUnlocked() {
       ['synced_at', 'DATETIME'],
       ['deleted_at', 'DATETIME'],
       ['google_event_id', 'TEXT'],
+      ['google_provider_calendar_id', 'TEXT'],
+      ['google_mirror_generation', 'INTEGER NOT NULL DEFAULT 0'],
       ['google_sync_status', 'TEXT'],
       ['google_sync_error', 'TEXT'],
       ['google_synced_at', 'DATETIME'],

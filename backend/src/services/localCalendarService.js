@@ -42,6 +42,7 @@ const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp', 'messenger',
 const APPOINTMENT_BOOKING_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'messenger', 'instagram', 'email'])
 const APPOINTMENT_PARTICIPANT_ROLES = new Set(['requester', 'primary_attendee', 'guest'])
 const TEST_APPOINTMENT_PROVIDER_RECEIPT_PROVIDERS = new Set(['google', 'highlevel'])
+const HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER = '[remote_outcome_unknown]'
 const MAX_APPOINTMENT_PARTICIPANTS = 25
 const CALENDAR_BOOKING_LAYOUTS = new Set(['classic', 'compact', 'stacked'])
 const CALENDAR_BOOKING_FONT_FAMILIES = new Set(['system', 'modern', 'serif', 'mono'])
@@ -422,6 +423,51 @@ function safeCalendarImageUrl(value, fallback = '') {
 function toInt(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+export function calendarDurationToMinutes(value, unit = 'mins', fallback = 60) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount <= 0) return Math.max(1, Number(fallback) || 60)
+  const normalizedUnit = cleanString(unit || 'mins').toLowerCase()
+  if (['hour', 'hours', 'hr', 'hrs', 'hora', 'horas'].includes(normalizedUnit)) return amount * 60
+  if (['day', 'days', 'día', 'días', 'dia', 'dias'].includes(normalizedUnit)) return amount * 24 * 60
+  if (['week', 'weeks', 'semana', 'semanas'].includes(normalizedUnit)) return amount * 7 * 24 * 60
+  if (['second', 'seconds', 'sec', 'secs', 'segundo', 'segundos'].includes(normalizedUnit)) {
+    return Math.max(1, Math.ceil(amount / 60))
+  }
+  return amount
+}
+
+function addCalendarRuleDuration(dateTime, value, unit) {
+  const amount = Number(value)
+  if (!dateTime?.isValid || !Number.isFinite(amount) || amount <= 0) return dateTime
+  const normalizedUnit = cleanString(unit).toLowerCase()
+  if (['month', 'months', 'mes', 'meses'].includes(normalizedUnit)) return dateTime.plus({ months: amount })
+  if (['week', 'weeks', 'semana', 'semanas'].includes(normalizedUnit)) return dateTime.plus({ weeks: amount })
+  if (['day', 'days', 'día', 'días', 'dia', 'dias'].includes(normalizedUnit)) return dateTime.plus({ days: amount })
+  if (['minute', 'minutes', 'min', 'mins', 'minuto', 'minutos'].includes(normalizedUnit)) return dateTime.plus({ minutes: amount })
+  return dateTime.plus({ hours: amount })
+}
+
+function getCalendarBookingWindow(calendar, zone, currentTimeMs = Date.now()) {
+  const now = DateTime.fromMillis(Number(currentTimeMs), { zone })
+  if (!now.isValid) return { nowMs: Date.now(), earliestStartMs: Date.now(), latestStartMs: null }
+
+  const earliest = addCalendarRuleDuration(
+    now,
+    calendar.allowBookingAfter,
+    calendar.allowBookingAfterUnit || 'hours'
+  )
+  const horizonAmount = Number(calendar.allowBookingFor)
+  const latest = Number.isFinite(horizonAmount) && horizonAmount > 0
+    ? addCalendarRuleDuration(now, horizonAmount, calendar.allowBookingForUnit || 'days')
+    : null
+
+  return {
+    nowMs: now.toMillis(),
+    earliestStartMs: earliest.toMillis(),
+    latestStartMs: latest?.isValid ? latest.toMillis() : null
+  }
 }
 
 function toBoolInt(value, fallback = true) {
@@ -1399,6 +1445,70 @@ async function getCalendarByGhlId(ghlCalendarId) {
   return db.get('SELECT * FROM calendars WHERE ghl_calendar_id = ?', [ghlCalendarId])
 }
 
+function googleCalendarIdFromCalendarRecord(calendar = {}) {
+  calendar = calendar || {}
+  const rawJson = parseJson(calendar.rawJson || calendar.raw_json, {})
+  return cleanString(
+    calendar.googleCalendarId || calendar.google_calendar_id ||
+    rawJson?.googleCalendarId || rawJson?.google_calendar_id
+  )
+}
+
+function hasExplicitGoogleCalendarLinkInput(calendar = {}, options = {}) {
+  const keys = [
+    'googleCalendarId', 'google_calendar_id',
+    'googleAccessRole', 'google_access_role',
+    'googleCalendarSummary', 'google_calendar_summary',
+    'googleCalendarTimeZone', 'google_calendar_time_zone'
+  ]
+  if (keys.some(key => Object.prototype.hasOwnProperty.call(calendar || {}, key))) return true
+  const raw = parseJson(calendar?.rawJson || calendar?.raw_json, {})
+  const optionsRaw = parseJson(options?.rawJson, {})
+  return keys.some(key => (
+    Object.prototype.hasOwnProperty.call(raw || {}, key) ||
+    Object.prototype.hasOwnProperty.call(optionsRaw || {}, key)
+  ))
+}
+
+function preserveExistingGoogleCalendarMetadata(normalized = {}, existing = {}) {
+  const existingRaw = parseJson(existing?.rawJson || existing?.raw_json, {})
+  const normalizedRaw = parseJson(normalized?.rawJson || normalized?.raw_json, {})
+  const googleKeys = [
+    'googleCalendarId', 'googleAccessRole',
+    'googleCalendarSummary', 'googleCalendarTimeZone'
+  ]
+  const merged = { ...normalizedRaw }
+  for (const key of googleKeys) {
+    if (existingRaw?.[key] !== undefined) merged[key] = existingRaw[key]
+  }
+  normalized.rawJson = jsonOrNull(merged)
+}
+
+async function assertGoogleCalendarLinkPersistenceSafety({ normalized, existing, allowMutation = false } = {}) {
+  const desiredGoogleCalendarId = googleCalendarIdFromCalendarRecord(normalized)
+  const existingGoogleCalendarId = googleCalendarIdFromCalendarRecord(existing)
+  const linkChanged = desiredGoogleCalendarId.toLowerCase() !== existingGoogleCalendarId.toLowerCase()
+  if (linkChanged && !allowMutation) {
+    const error = new Error('El vínculo con Google sólo puede cambiarse desde la configuración de sincronización del calendario.')
+    error.status = 409
+    error.code = 'google_calendar_link_requires_sync_route'
+    throw error
+  }
+  if (!desiredGoogleCalendarId) return
+
+  const rows = await db.all('SELECT id, raw_json FROM calendars')
+  const conflictingOwner = rows.find(row => (
+    cleanString(row.id) !== cleanString(normalized?.id) &&
+    googleCalendarIdFromCalendarRecord(row).toLowerCase() === desiredGoogleCalendarId.toLowerCase()
+  ))
+  if (conflictingOwner?.id) {
+    const error = new Error('Ese calendario de Google ya está ligado a otra agenda de Ristak.')
+    error.status = 409
+    error.code = 'duplicate_google_calendar_owner'
+    throw error
+  }
+}
+
 export async function upsertLocalCalendar(raw = {}, options = {}) {
   const normalized = normalizeCalendarRecord(raw, options)
   const existingByGhl = normalized.ghlCalendarId ? await getCalendarByGhlId(normalized.ghlCalendarId) : null
@@ -1408,6 +1518,16 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
   const existingById = existingByGhl?.id
     ? existingByGhl
     : await db.get('SELECT * FROM calendars WHERE id = ?', [normalized.id])
+
+  if (existingById && !hasExplicitGoogleCalendarLinkInput(raw, options)) {
+    preserveExistingGoogleCalendarMetadata(normalized, existingById)
+  }
+
+  await assertGoogleCalendarLinkPersistenceSafety({
+    normalized,
+    existing: existingById,
+    allowMutation: options.allowGoogleSyncMetadata === true
+  })
 
   if (normalizeCalendarSource(normalized.source) === 'ristak') {
     normalized.slug = await ensureUniqueRistakPublicSlug(normalized.slug, normalized.id)
@@ -1526,7 +1646,7 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
   return row
 }
 
-export async function createLocalCalendar(calendarData = {}) {
+export async function createLocalCalendar(calendarData = {}, { allowGoogleSyncMetadata = false } = {}) {
   const connectedMetaDataset = await hasConnectedMetaDatasetConfig()
   const customEvents = connectedMetaDataset
     ? {
@@ -1548,7 +1668,8 @@ export async function createLocalCalendar(calendarData = {}) {
     source: 'ristak'
   }, {
     source: 'ristak',
-    syncStatus: 'pending'
+    syncStatus: 'pending',
+    allowGoogleSyncMetadata
   })
 }
 
@@ -2299,7 +2420,11 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
 
 export function renderPublicCalendarHtml(calendar, { host = '', embedded = false, style = {}, bookingForm = null, preview = false, metaPixelSnippet = '' } = {}) {
   const slug = publicCalendarSlug(calendar)
-  const duration = Math.max(1, toInt(calendar.slotDuration, 60))
+  const duration = Math.max(1, calendarDurationToMinutes(
+    calendar.slotDuration,
+    calendar.slotDurationUnit,
+    60
+  ))
   const title = calendar.eventTitle || calendar.name || 'Cita'
   const bookingDisplay = normalizeCalendarBookingDisplayConfig(calendar.bookingDisplay || calendar.booking_display || {}, {
     eventColor: calendar.eventColor || calendar.event_color
@@ -4084,7 +4209,10 @@ export async function listGoogleLinkedLocalCalendars({ includeInactive = false }
     .filter(calendar => cleanString(calendar.googleCalendarId))
 }
 
-export async function updateLocalCalendar(calendarId, updateData = {}, { syncStatus = 'pending' } = {}) {
+export async function updateLocalCalendar(calendarId, updateData = {}, {
+  syncStatus = 'pending',
+  allowGoogleSyncMetadata = false
+} = {}) {
   const existing = await getLocalCalendar(calendarId)
   if (!existing) return null
 
@@ -4096,7 +4224,8 @@ export async function updateLocalCalendar(calendarId, updateData = {}, { syncSta
     source: existing.source
   }, {
     source: existing.source,
-    syncStatus
+    syncStatus,
+    allowGoogleSyncMetadata
   })
 }
 
@@ -4158,6 +4287,8 @@ function appointmentRowToApi(row = {}) {
     id: row.id,
     ghlAppointmentId: row.ghl_appointment_id || null,
     googleEventId: row.google_event_id || null,
+    googleProviderCalendarId: row.google_provider_calendar_id || null,
+    googleMirrorGeneration: Math.max(0, Number(row.google_mirror_generation || 0)),
     calendarId: row.calendar_id || '',
     locationId: row.location_id || '',
     contactId: row.contact_id || undefined,
@@ -4194,6 +4325,14 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
   const source = options.source || appointment.source || (appointment.id && !String(appointment.id).startsWith(LOCAL_APPOINTMENT_PREFIX) ? 'ghl' : 'ristak')
   const ghlAppointmentId = cleanString(options.ghlAppointmentId || appointment.ghlAppointmentId || appointment.ghl_appointment_id || (source === 'ghl' ? appointment.id : '')) || null
   const googleEventId = cleanString(options.googleEventId || appointment.googleEventId || appointment.google_event_id || (source === 'google' ? appointment.id : '')) || null
+  const googleProviderCalendarId = cleanString(
+    options.googleProviderCalendarId || options.google_provider_calendar_id ||
+    appointment.googleProviderCalendarId || appointment.google_provider_calendar_id
+  ) || null
+  const googleMirrorGeneration = Math.max(0, Math.trunc(Number(
+    options.googleMirrorGeneration ?? options.google_mirror_generation ??
+    appointment.googleMirrorGeneration ?? appointment.google_mirror_generation ?? 0
+  ) || 0))
   const appointmentStatus = cleanString(appointment.appointmentStatus || appointment.appointment_status || appointment.status || 'confirmed') || 'confirmed'
   const id = cleanString(options.id || appointment.localId || appointment.local_id || appointment.id) || makeId(LOCAL_APPOINTMENT_PREFIX)
   const isTest = normalizeTestFlag(options.isTest ?? options.is_test ?? appointment.isTest ?? appointment.is_test)
@@ -4211,6 +4350,8 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
     id,
     ghlAppointmentId,
     googleEventId,
+    googleProviderCalendarId,
+    googleMirrorGeneration,
     calendarId: cleanString(options.calendarId || appointment.calendarId || appointment.calendar_id || ''),
     contactId: cleanString(appointment.contactId || appointment.contact_id || '') || null,
     locationId: cleanString(options.locationId || appointment.locationId || appointment.location_id || '') || null,
@@ -4937,15 +5078,22 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
 
   await db.run(`
     INSERT INTO appointments (
-      id, ghl_appointment_id, google_event_id, calendar_id, contact_id, location_id, title, status,
+      id, ghl_appointment_id, google_event_id, google_provider_calendar_id, google_mirror_generation,
+      calendar_id, contact_id, location_id, title, status,
       appointment_status, assigned_user_id, notes, address, start_time, end_time,
       date_added, date_updated, source, booking_channel, sync_status, sync_error, synced_at,
       google_sync_status, google_sync_error, google_synced_at,
       is_test, test_run_id, test_effect_id, test_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       ghl_appointment_id = COALESCE(excluded.ghl_appointment_id, appointments.ghl_appointment_id),
       google_event_id = COALESCE(excluded.google_event_id, appointments.google_event_id),
+      google_provider_calendar_id = COALESCE(excluded.google_provider_calendar_id, appointments.google_provider_calendar_id),
+      google_mirror_generation = CASE
+        WHEN COALESCE(excluded.google_mirror_generation, 0) > COALESCE(appointments.google_mirror_generation, 0)
+          THEN excluded.google_mirror_generation
+        ELSE COALESCE(appointments.google_mirror_generation, 0)
+      END,
       calendar_id = COALESCE(excluded.calendar_id, appointments.calendar_id),
       contact_id = COALESCE(excluded.contact_id, appointments.contact_id),
       location_id = COALESCE(excluded.location_id, appointments.location_id),
@@ -4976,6 +5124,8 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     normalized.id,
     normalized.ghlAppointmentId,
     normalized.googleEventId,
+    normalized.googleProviderCalendarId,
+    normalized.googleMirrorGeneration,
     normalized.calendarId || null,
     normalized.contactId,
     normalized.locationId,
@@ -5017,6 +5167,595 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
 
   const row = await getLocalAppointment(normalized.id)
   return row
+}
+
+const HIGHLEVEL_MIRROR_DIVERGED_MARKER = '[ghl_mirror_diverged]'
+const HIGHLEVEL_MIRROR_INTENT_TTL_MS = 15 * 60 * 1000
+
+function normalizeHighLevelMirrorIntentTitle(value = '') {
+  return cleanString(value).replace(/\s+/g, ' ').toLowerCase().slice(0, 500)
+}
+
+/**
+ * Deja un contrato durable antes del POST a HighLevel. El webhook puede llegar
+ * antes que la respuesta HTTP; este snapshot le permite reconocer la cita local
+ * sin crear otra fila ni tocar la identidad del contacto.
+ */
+export async function prepareHighLevelAppointmentMirrorIntent({
+  appointmentId,
+  remoteCalendarId,
+  remoteContactId,
+  locationId = null
+} = {}) {
+  const normalizedAppointmentId = cleanString(appointmentId)
+  const normalizedRemoteCalendarId = cleanString(remoteCalendarId)
+  const normalizedRemoteContactId = cleanString(remoteContactId)
+  if (!normalizedAppointmentId || !normalizedRemoteCalendarId || !normalizedRemoteContactId) {
+    throw new Error('La intención del espejo HighLevel requiere cita, calendario y contacto remotos')
+  }
+
+  const row = await db.get('SELECT * FROM appointments WHERE id = ? LIMIT 1', [normalizedAppointmentId])
+  if (!row || !isRistakOwnedRow(row, LOCAL_APPOINTMENT_PREFIX)) {
+    throw new Error('Sólo una cita canónica de Ristak puede preparar un espejo HighLevel')
+  }
+  if (cleanString(row.ghl_appointment_id)) {
+    return { prepared: false, alreadyLinked: true, appointmentId: row.id }
+  }
+  const startTime = normalizeToUtcIso(row.start_time, 'UTC')
+  const endTime = normalizeToUtcIso(row.end_time, 'UTC')
+  if (!startTime || !endTime) throw new Error('La cita local no conserva horas válidas para preparar su espejo HighLevel')
+
+  const now = new Date()
+  const expiresAt = new Date(now.getTime() + HIGHLEVEL_MIRROR_INTENT_TTL_MS).toISOString()
+  await db.run(`
+    INSERT INTO appointment_highlevel_mirror_intents (
+      appointment_id, appointment_date_updated, local_calendar_id,
+      remote_calendar_id, local_contact_id, remote_contact_id, location_id,
+      start_time, end_time, normalized_title, status, remote_appointment_id,
+      prepared_at, expires_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', NULL, ?, ?, ?)
+    ON CONFLICT (appointment_id) DO UPDATE SET
+      appointment_date_updated = excluded.appointment_date_updated,
+      local_calendar_id = excluded.local_calendar_id,
+      remote_calendar_id = excluded.remote_calendar_id,
+      local_contact_id = excluded.local_contact_id,
+      remote_contact_id = excluded.remote_contact_id,
+      location_id = excluded.location_id,
+      start_time = excluded.start_time,
+      end_time = excluded.end_time,
+      normalized_title = excluded.normalized_title,
+      status = 'prepared',
+      remote_appointment_id = NULL,
+      prepared_at = excluded.prepared_at,
+      expires_at = excluded.expires_at,
+      updated_at = excluded.updated_at
+  `, [
+    row.id,
+    row.date_updated,
+    row.calendar_id,
+    normalizedRemoteCalendarId,
+    row.contact_id || null,
+    normalizedRemoteContactId,
+    cleanString(locationId || row.location_id) || null,
+    startTime,
+    endTime,
+    normalizeHighLevelMirrorIntentTitle(row.title),
+    now.toISOString(),
+    expiresAt,
+    now.toISOString()
+  ])
+  return { prepared: true, appointmentId: row.id, expiresAt }
+}
+
+export async function completeHighLevelAppointmentMirrorIntent(appointmentId, remoteAppointmentId) {
+  const normalizedAppointmentId = cleanString(appointmentId)
+  const normalizedRemoteAppointmentId = cleanString(remoteAppointmentId)
+  if (!normalizedAppointmentId || !normalizedRemoteAppointmentId) return false
+  const result = await db.run(`
+    UPDATE appointment_highlevel_mirror_intents
+    SET status = 'linked', remote_appointment_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE appointment_id = ?
+      AND (remote_appointment_id IS NULL OR remote_appointment_id = ?)
+  `, [normalizedRemoteAppointmentId, normalizedAppointmentId, normalizedRemoteAppointmentId])
+  return Number(result?.changes ?? result?.rowCount ?? 0) === 1
+}
+
+function highLevelInboundValue(source = {}, keys = []) {
+  for (const key of keys) {
+    const value = source?.[key]
+    if (value !== undefined && value !== null && cleanString(value)) return value
+  }
+  return null
+}
+
+function normalizeHighLevelMirrorStatus(value) {
+  const status = cleanString(value).toLowerCase()
+  if (!status) return ''
+  if (status === 'pending' || status === 'rescheduled') return 'confirmed'
+  if (status === 'canceled') return 'cancelled'
+  if (status === 'no-show' || status === 'no_show') return 'noshow'
+  return status
+}
+
+function normalizeHighLevelMirrorNotes(value) {
+  return cleanString(value)
+    .replace(/\[RISTAK-TEST:[^\]]+\]/gi, '')
+    .trim()
+}
+
+function buildHighLevelMirrorObservation(raw = {}, options = {}) {
+  const observedRaw = options.observedRaw && typeof options.observedRaw === 'object'
+    ? options.observedRaw
+    : raw
+  const appointment = observedRaw.appointment && typeof observedRaw.appointment === 'object'
+    ? observedRaw.appointment
+    : observedRaw
+
+  return {
+    calendarId: cleanString(options.calendarId) || cleanString(highLevelInboundValue(appointment, ['calendarId', 'calendar_id'])) || null,
+    contactId: cleanString(options.contactId) || cleanString(highLevelInboundValue(appointment, ['contactId', 'contact_id'])) || null,
+    locationId: cleanString(options.locationId) || cleanString(highLevelInboundValue(appointment, ['locationId', 'location_id'])) || null,
+    title: highLevelInboundValue(appointment, ['title', 'name', 'summary', 'calendarEventName']),
+    appointmentStatus: highLevelInboundValue(appointment, ['appointmentStatus', 'appointment_status', 'status', 'state']),
+    assignedUserId: highLevelInboundValue(appointment, ['assignedUserId', 'assigned_user_id', 'assignedTo', 'userId', 'teamMemberId']),
+    notes: highLevelInboundValue(appointment, ['notes', 'note', 'description']),
+    address: highLevelInboundValue(appointment, ['address', 'addressLine']),
+    startTime: highLevelInboundValue(appointment, ['startTime', 'start_time', 'startDateTime', 'startAt', 'start']),
+    endTime: highLevelInboundValue(appointment, ['endTime', 'end_time', 'endDateTime', 'endAt', 'end'])
+  }
+}
+
+function compareHighLevelMirrorWithCanonical(row = {}, observation = {}) {
+  const changedFields = []
+  const compareText = (field, remoteValue, localValue, normalizer = cleanString) => {
+    if (remoteValue === null || remoteValue === undefined || !cleanString(remoteValue)) return
+    if (normalizer(remoteValue) !== normalizer(localValue)) changedFields.push(field)
+  }
+
+  compareText('calendar_id', observation.calendarId, row.calendar_id)
+  compareText('contact_id', observation.contactId, row.contact_id)
+  compareText('location_id', observation.locationId, row.location_id)
+  compareText('title', observation.title, row.title, value => cleanString(value).toLowerCase())
+  compareText(
+    'appointment_status',
+    observation.appointmentStatus,
+    row.appointment_status || row.status,
+    normalizeHighLevelMirrorStatus
+  )
+  compareText('assigned_user_id', observation.assignedUserId, row.assigned_user_id)
+  compareText('notes', observation.notes, row.notes, normalizeHighLevelMirrorNotes)
+  compareText('address', observation.address, row.address, value => cleanString(value).toLowerCase())
+
+  if (observation.startTime && !sameExactInstant(observation.startTime, row.start_time)) {
+    changedFields.push('start_time')
+  }
+  if (observation.endTime && !sameExactInstant(observation.endTime, row.end_time)) {
+    changedFields.push('end_time')
+  }
+
+  const hasCompleteEcho = Boolean(
+    observation.title
+    && observation.appointmentStatus
+    && observation.startTime
+    && observation.endTime
+  )
+
+  return { changedFields, hasCompleteEcho }
+}
+
+async function findHighLevelInboundAppointmentRow(remoteAppointmentId) {
+  const normalizedRemoteId = cleanString(remoteAppointmentId)
+  if (!normalizedRemoteId) return null
+  return db.get(`
+    SELECT *
+    FROM appointments
+    WHERE ghl_appointment_id = ? OR id = ?
+    ORDER BY CASE WHEN ghl_appointment_id = ? THEN 0 ELSE 1 END
+    LIMIT 1
+  `, [normalizedRemoteId, normalizedRemoteId, normalizedRemoteId])
+}
+
+/**
+ * Reclama un webhook adelantado usando la intención preparada antes del POST.
+ * La coincidencia exige calendario, contacto y ambos instantes remotos exactos;
+ * si fuera ambigua, falla cerrado en vez de adjudicar propiedad al proveedor.
+ */
+export async function claimPreparedHighLevelMirrorIntent(raw = {}, options = {}) {
+  const appointmentPayload = raw.appointment && typeof raw.appointment === 'object' ? raw.appointment : raw
+  const remoteAppointmentId = cleanString(
+    options.ghlAppointmentId || options.remoteAppointmentId ||
+    appointmentPayload.ghlAppointmentId || appointmentPayload.ghl_appointment_id ||
+    appointmentPayload.appointmentId || appointmentPayload.appointment_id || appointmentPayload.id
+  )
+  const remoteCalendarId = cleanString(
+    options.remoteCalendarId || appointmentPayload.remoteCalendarId ||
+    appointmentPayload.calendarId || appointmentPayload.calendar_id
+  )
+  const remoteContactId = cleanString(
+    options.remoteContactId || appointmentPayload.remoteContactId ||
+    appointmentPayload.contactId || appointmentPayload.contact_id
+  )
+  const startTime = normalizeToUtcIso(
+    options.startTime || highLevelInboundValue(appointmentPayload, ['startTime', 'start_time', 'startDateTime', 'startAt', 'start']),
+    'UTC'
+  )
+  const endTime = normalizeToUtcIso(
+    options.endTime || highLevelInboundValue(appointmentPayload, ['endTime', 'end_time', 'endDateTime', 'endAt', 'end']),
+    'UTC'
+  )
+  if (!remoteAppointmentId || !remoteCalendarId || !remoteContactId || !startTime || !endTime) return null
+
+  return db.transaction(async () => {
+    if (process.env.DATABASE_URL) {
+      await db.get(
+        'SELECT pg_advisory_xact_lock(hashtext(?)) AS highlevel_appointment_locked',
+        [`highlevel-inbound:${remoteAppointmentId}`]
+      )
+    }
+
+    const alreadyLinked = await findHighLevelInboundAppointmentRow(remoteAppointmentId)
+    if (alreadyLinked) {
+      return {
+        appointment: appointmentRowToApi(alreadyLinked),
+        ownership: isRistakOwnedRow(alreadyLinked, LOCAL_APPOINTMENT_PREFIX) ? 'ristak' : 'ghl',
+        claimedIntent: false
+      }
+    }
+
+    let candidates = await db.all(`
+      SELECT i.*, a.date_updated AS current_date_updated, a.source AS appointment_source,
+             a.ghl_appointment_id AS current_remote_appointment_id,
+             a.deleted_at AS appointment_deleted_at
+      FROM appointment_highlevel_mirror_intents i
+      JOIN appointments a ON a.id = i.appointment_id
+      WHERE i.status = 'prepared'
+        AND i.expires_at > ?
+        AND LOWER(i.remote_calendar_id) = LOWER(?)
+        AND LOWER(i.remote_contact_id) = LOWER(?)
+        AND i.start_time = ?
+        AND i.end_time = ?
+        AND (a.ghl_appointment_id IS NULL OR a.ghl_appointment_id = '')
+      ORDER BY i.prepared_at DESC, i.appointment_id ASC
+      ${process.env.DATABASE_URL ? 'FOR UPDATE' : ''}
+    `, [new Date().toISOString(), remoteCalendarId, remoteContactId, startTime, endTime])
+
+    if (candidates.length > 1) {
+      const normalizedTitle = normalizeHighLevelMirrorIntentTitle(
+        options.title || highLevelInboundValue(appointmentPayload, ['title', 'name', 'summary', 'calendarEventName'])
+      )
+      const titleMatches = normalizedTitle
+        ? candidates.filter(candidate => candidate.normalized_title === normalizedTitle)
+        : []
+      if (titleMatches.length === 1) candidates = titleMatches
+    }
+    if (candidates.length !== 1) {
+      if (candidates.length > 1) {
+        const error = new Error('Más de una cita Ristak coincide con el webhook adelantado de HighLevel; no se importó ninguna fila externa.')
+        error.code = 'highlevel_mirror_intent_ambiguous'
+        error.status = 409
+        error.statusCode = 409
+        throw error
+      }
+      return null
+    }
+
+    const intent = candidates[0]
+    let claimed
+    try {
+      claimed = await db.run(`
+        UPDATE appointments
+        SET ghl_appointment_id = ?,
+            sync_status = CASE WHEN sync_status = 'pending_delete' THEN 'pending_delete' ELSE 'pending' END,
+            sync_error = ?,
+            synced_at = synced_at
+        WHERE id = ?
+          AND (ghl_appointment_id IS NULL OR ghl_appointment_id = '')
+      `, [
+        remoteAppointmentId,
+        `${HIGHLEVEL_MIRROR_DIVERGED_MARKER} HighLevel adelantó el webhook; Ristak todavía debe validar el eco completo.`,
+        intent.appointment_id
+      ])
+    } catch (error) {
+      const winner = await findHighLevelInboundAppointmentRow(remoteAppointmentId)
+      if (!winner) throw error
+      return {
+        appointment: appointmentRowToApi(winner),
+        ownership: isRistakOwnedRow(winner, LOCAL_APPOINTMENT_PREFIX) ? 'ristak' : 'ghl',
+        claimedIntent: false
+      }
+    }
+    if (Number(claimed?.changes ?? claimed?.rowCount ?? 0) !== 1) {
+      const winner = await findHighLevelInboundAppointmentRow(remoteAppointmentId)
+      if (winner) {
+        return {
+          appointment: appointmentRowToApi(winner),
+          ownership: isRistakOwnedRow(winner, LOCAL_APPOINTMENT_PREFIX) ? 'ristak' : 'ghl',
+          claimedIntent: false
+        }
+      }
+      throw Object.assign(new Error('La cita local cambió de dueño remoto mientras se reclamaba el webhook de HighLevel.'), {
+        code: 'highlevel_mirror_intent_claim_conflict',
+        status: 409,
+        statusCode: 409
+      })
+    }
+
+    await db.run(`
+      UPDATE appointment_highlevel_mirror_intents
+      SET status = 'linked', remote_appointment_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE appointment_id = ? AND status = 'prepared'
+    `, [remoteAppointmentId, intent.appointment_id])
+    return {
+      appointment: await getLocalAppointment(intent.appointment_id),
+      ownership: 'ristak',
+      claimedIntent: true
+    }
+  })
+}
+
+export async function inspectInboundHighLevelAppointment(remoteAppointmentId) {
+  const row = await findHighLevelInboundAppointmentRow(remoteAppointmentId)
+  if (!row) return { appointment: null, ownership: null }
+  return {
+    appointment: appointmentRowToApi(row),
+    ownership: isRistakOwnedRow(row, LOCAL_APPOINTMENT_PREFIX) ? 'ristak' : 'ghl'
+  }
+}
+
+/**
+ * Puerta única para cualquier cita que entra desde HighLevel.
+ *
+ * - Si el ID remoto ya está ligado a una cita canónica de Ristak, HighLevel es
+ *   sólo un espejo: jamás puede cambiar sus campos, source ni primary key.
+ * - Si el remoto difiere, la cita queda pending para que Ristak vuelva a
+ *   publicar su estado canónico.
+ * - Si el evento nació en HighLevel, sí se importa como ocupación source=ghl.
+ */
+export async function reconcileInboundHighLevelAppointment(raw = {}, options = {}) {
+  const appointmentPayload = raw.appointment && typeof raw.appointment === 'object' ? raw.appointment : raw
+  const remoteAppointmentId = cleanString(
+    options.ghlAppointmentId || options.ghl_appointment_id ||
+    appointmentPayload.ghlAppointmentId || appointmentPayload.ghl_appointment_id ||
+    appointmentPayload.appointmentId || appointmentPayload.appointment_id || appointmentPayload.id
+  )
+  if (!remoteAppointmentId) {
+    const error = new Error('HighLevel no envió el ID remoto de la cita')
+    error.code = 'highlevel_appointment_id_required'
+    error.status = 400
+    throw error
+  }
+
+  // Segunda compuerta común para pulls, refreshes y webhooks que no pasaron por
+  // el preflight de identidad. La intención sólo liga el ID; esta reconciliación
+  // sigue siendo la única que puede declarar el eco completo como sincronizado.
+  await claimPreparedHighLevelMirrorIntent(options.observedRaw || raw, {
+    ghlAppointmentId: remoteAppointmentId,
+    remoteCalendarId: options.remoteCalendarId,
+    remoteContactId: options.remoteContactId
+  })
+
+  const inboundPayload = {
+    ...appointmentPayload,
+    id: remoteAppointmentId,
+    ghlAppointmentId: remoteAppointmentId,
+    ...(cleanString(options.calendarId) ? { calendarId: cleanString(options.calendarId) } : {}),
+    ...(cleanString(options.contactId) ? { contactId: cleanString(options.contactId) } : {}),
+    ...(cleanString(options.locationId) ? { locationId: cleanString(options.locationId) } : {}),
+    source: 'ghl'
+  }
+  const observation = buildHighLevelMirrorObservation(raw, options)
+
+  return db.transaction(async () => {
+    if (process.env.DATABASE_URL) {
+      await db.get(
+        'SELECT pg_advisory_xact_lock(hashtext(?)) AS highlevel_appointment_locked',
+        [`highlevel-inbound:${remoteAppointmentId}`]
+      )
+    }
+
+    const existing = await findHighLevelInboundAppointmentRow(remoteAppointmentId)
+
+    if (existing && isRistakOwnedRow(existing, LOCAL_APPOINTMENT_PREFIX)) {
+      const { changedFields, hasCompleteEcho } = compareHighLevelMirrorWithCanonical(existing, observation)
+      const previousSyncStatus = cleanString(existing.sync_status).toLowerCase() || 'pending'
+      const preservesPendingDelete = previousSyncStatus === 'pending_delete'
+      const shouldStayPending = changedFields.length > 0
+        || (['pending', 'error'].includes(previousSyncStatus) && !hasCompleteEcho)
+      const nextSyncStatus = preservesPendingDelete
+        ? 'pending_delete'
+        : (shouldStayPending ? 'pending' : 'synced')
+      const nextSyncError = changedFields.length > 0
+        ? `${HIGHLEVEL_MIRROR_DIVERGED_MARKER} HighLevel difiere en: ${changedFields.join(', ')}`
+        : (nextSyncStatus === 'synced' ? null : existing.sync_error)
+
+      const result = await db.run(`
+        UPDATE appointments
+        SET ghl_appointment_id = ?,
+            sync_status = ?,
+            sync_error = ?,
+            synced_at = CASE WHEN ? = 'synced' THEN CURRENT_TIMESTAMP ELSE synced_at END
+        WHERE id = ?
+          AND date_updated = ?
+      `, [remoteAppointmentId, nextSyncStatus, nextSyncError, nextSyncStatus, existing.id, existing.date_updated])
+
+      if (Number(result?.changes ?? result?.rowCount ?? 0) !== 1) {
+        const error = new Error('La cita local cambió mientras se reconciliaba el eco de HighLevel; se conservó la versión más reciente.')
+        error.status = 409
+        error.statusCode = 409
+        error.code = 'appointment_provider_response_stale'
+        throw error
+      }
+
+      return {
+        appointment: await getLocalAppointment(existing.id),
+        previous: appointmentRowToApi(existing),
+        ownership: 'ristak',
+        imported: false,
+        mirrorMatched: changedFields.length === 0,
+        mirrorDiverged: changedFields.length > 0,
+        changedFields,
+        syncStatus: nextSyncStatus
+      }
+    }
+
+    const imported = await upsertLocalAppointment(inboundPayload, {
+      source: 'ghl',
+      ghlAppointmentId: remoteAppointmentId,
+      calendarId: cleanString(options.calendarId) || inboundPayload.calendarId,
+      locationId: cleanString(options.locationId) || inboundPayload.locationId,
+      syncStatus: 'synced',
+      lastWriteWins: options.lastWriteWins !== false
+    })
+
+    return {
+      appointment: imported,
+      previous: existing ? appointmentRowToApi(existing) : null,
+      ownership: 'ghl',
+      imported: !existing,
+      mirrorMatched: false,
+      mirrorDiverged: false,
+      changedFields: [],
+      syncStatus: imported.syncStatus
+    }
+  })
+}
+
+function highLevelMirrorFence(expectedAppointment = null) {
+  const fencedAppointment = expectedAppointment && typeof expectedAppointment === 'object'
+    ? expectedAppointment
+    : null
+  const fenceSql = fencedAppointment
+    ? `
+        AND date_updated = ?
+        AND start_time = ?
+        AND end_time = ?
+        AND COALESCE(calendar_id, '') = ?
+        AND COALESCE(contact_id, '') = ?
+        AND COALESCE(location_id, '') = ?
+        AND COALESCE(title, '') = ?
+        AND COALESCE(status, '') = ?
+        AND COALESCE(appointment_status, '') = ?
+        AND COALESCE(assigned_user_id, '') = ?
+        AND COALESCE(notes, '') = ?
+        AND COALESCE(address, '') = ?
+      `
+    : ''
+  const fenceParams = fencedAppointment
+    ? [
+        normalizeToUtcIso(fencedAppointment.dateUpdated || fencedAppointment.date_updated, 'UTC'),
+        normalizeToUtcIso(fencedAppointment.startTime || fencedAppointment.start_time, 'UTC'),
+        normalizeToUtcIso(fencedAppointment.endTime || fencedAppointment.end_time, 'UTC'),
+        cleanString(fencedAppointment.calendarId || fencedAppointment.calendar_id),
+        cleanString(fencedAppointment.contactId || fencedAppointment.contact_id),
+        cleanString(fencedAppointment.locationId || fencedAppointment.location_id),
+        cleanString(fencedAppointment.title),
+        cleanString(fencedAppointment.status || fencedAppointment.appointmentStatus || fencedAppointment.appointment_status),
+        cleanString(fencedAppointment.appointmentStatus || fencedAppointment.appointment_status || fencedAppointment.status),
+        cleanString(fencedAppointment.assignedUserId || fencedAppointment.assigned_user_id),
+        cleanString(fencedAppointment.notes),
+        cleanString(fencedAppointment.address)
+      ]
+    : []
+
+  if (fencedAppointment && fenceParams.slice(0, 3).some(value => !value)) {
+    throw new Error('La versión local esperada de la cita no es válida')
+  }
+
+  return { fencedAppointment, fenceSql, fenceParams }
+}
+
+function highLevelMirrorResponseStaleError() {
+  const error = new Error('La cita volvió a cambiar mientras respondía el calendario externo. Se conservó la versión más reciente.')
+  error.status = 409
+  error.statusCode = 409
+  error.code = 'appointment_provider_response_stale'
+  return error
+}
+
+async function preserveHighLevelMirrorPendingAfterStale(
+  appointmentId,
+  remoteAppointmentId = '',
+  pendingMessage = ''
+) {
+  const normalizedRemoteId = cleanString(remoteAppointmentId)
+  const safePendingMessage = cleanString(pendingMessage).includes(HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER)
+    ? cleanString(pendingMessage).slice(0, 1000)
+    : ''
+  await db.run(`
+    UPDATE appointments
+    SET ghl_appointment_id = CASE
+          WHEN COALESCE(ghl_appointment_id, '') = '' THEN ?
+          ELSE ghl_appointment_id
+        END,
+        sync_status = CASE
+          WHEN sync_status = 'pending_delete' THEN 'pending_delete'
+          ELSE 'pending'
+        END,
+        sync_error = CASE WHEN ? != '' THEN ? ELSE sync_error END
+    WHERE id = ?
+  `, [normalizedRemoteId || null, safePendingMessage, safePendingMessage, appointmentId])
+  return getLocalAppointment(appointmentId)
+}
+
+// HighLevel sólo recibe una copia de la cita local. Confirmar esa copia nunca
+// debe mezclar campos de negocio devueltos por el proveedor sobre Ristak.
+export async function markHighLevelAppointmentMirrorSynced(
+  appointmentId,
+  ghlAppointmentId,
+  { expectedAppointment = null } = {}
+) {
+  const normalizedAppointmentId = cleanString(appointmentId)
+  const normalizedRemoteId = cleanString(ghlAppointmentId)
+  if (!normalizedAppointmentId || !normalizedRemoteId) {
+    throw new Error('La cita local y el ID del espejo HighLevel son requeridos')
+  }
+  const { fencedAppointment, fenceSql, fenceParams } = highLevelMirrorFence(expectedAppointment)
+
+  const result = await db.run(`
+    UPDATE appointments
+    SET ghl_appointment_id = ?,
+        sync_status = 'synced',
+        sync_error = NULL,
+        synced_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND (
+        COALESCE(ghl_appointment_id, '') = ''
+        OR ghl_appointment_id = ?
+      )
+    ${fenceSql}
+  `, [normalizedRemoteId, normalizedAppointmentId, normalizedRemoteId, ...fenceParams])
+
+  if (Number(result?.changes ?? result?.rowCount ?? 0) !== 1) {
+    await preserveHighLevelMirrorPendingAfterStale(normalizedAppointmentId, normalizedRemoteId)
+    throw highLevelMirrorResponseStaleError()
+  }
+
+  return getLocalAppointment(normalizedAppointmentId)
+}
+
+export async function markHighLevelAppointmentMirrorError(
+  appointmentId,
+  message,
+  { expectedAppointment = null } = {}
+) {
+  const normalizedAppointmentId = cleanString(appointmentId)
+  if (!normalizedAppointmentId) return null
+  const { fencedAppointment, fenceSql, fenceParams } = highLevelMirrorFence(expectedAppointment)
+  const safeMessage = cleanString(message || 'HighLevel no confirmó el espejo.').slice(0, 1000)
+  const result = await db.run(`
+    UPDATE appointments
+    SET sync_status = 'error',
+        sync_error = ?
+    WHERE id = ?
+    ${fenceSql}
+  `, [safeMessage, normalizedAppointmentId, ...fenceParams])
+
+  if (fencedAppointment && Number(result?.changes ?? result?.rowCount ?? 0) !== 1) {
+    await preserveHighLevelMirrorPendingAfterStale(normalizedAppointmentId, '', safeMessage)
+    throw highLevelMirrorResponseStaleError()
+  }
+
+  return getLocalAppointment(normalizedAppointmentId)
 }
 
 export async function createLocalAppointment(appointmentData = {}, { locationId = null, syncStatus = 'pending' } = {}) {
@@ -5085,7 +5824,7 @@ export async function getLocalAppointment(appointmentId) {
   return appointment
 }
 
-export async function listLocalAppointments({ startTime, endTime, calendarId } = {}) {
+export async function listLocalAppointments({ startTime, endTime, calendarId, includeOverlapping = false } = {}) {
   // IMPORTANTE: esta consulta hace JOIN con `contacts`, y AMBAS tablas (appointments y
   // contacts) tienen columnas `deleted_at`/`sync_status`. En Postgres, referenciarlas sin
   // el alias de tabla lanza «column reference "deleted_at" is ambiguous» y revienta el
@@ -5096,7 +5835,7 @@ export async function listLocalAppointments({ startTime, endTime, calendarId } =
   const params = []
 
   if (startTime) {
-    conditions.push('a.start_time >= ?')
+    conditions.push(includeOverlapping ? 'COALESCE(a.end_time, a.start_time) >= ?' : 'a.start_time >= ?')
     params.push(new Date(Number(startTime) || startTime).toISOString())
   }
 
@@ -5183,6 +5922,7 @@ export async function deleteLocalAppointment(appointmentId, { markPendingDelete 
     // participantes explícitamente y dentro de la misma transacción para no
     // dejar snapshots huérfanos.
     await db.transaction(async () => {
+      await db.run('DELETE FROM appointment_highlevel_mirror_intents WHERE appointment_id = ?', [existing.id])
       await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [existing.id])
       await db.run('DELETE FROM appointments WHERE id = ?', [existing.id])
     })
@@ -5340,7 +6080,7 @@ function normalizeWeekDay(value) {
   return n >= 0 && n <= 6 ? n : null
 }
 
-function getCalendarOpenIntervals(calendar, date) {
+function getCalendarOpenIntervals(calendar, date, { allowDefault = true } = {}) {
   const openHours = normalizeOpenHours(calendar.openHours || calendar.open_hours)
   const jsDay = date.getDay()
 
@@ -5349,7 +6089,7 @@ function getCalendarOpenIntervals(calendar, date) {
     (jsDay === 0 || jsDay === 6) ? [] : [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
 
   if (!openHours.length) {
-    return defaultIntervalsForDay()
+    return allowDefault ? defaultIntervalsForDay() : []
   }
 
   let matchedAnyDay = false
@@ -5378,14 +6118,152 @@ function getCalendarOpenIntervals(calendar, date) {
   // utilizables (formato no reconocido), degradamos al horario por defecto en vez de
   // dejar el calendario público sin un solo día agendable.
   if (!matchedAnyDay) {
-    return defaultIntervalsForDay()
+    return allowDefault ? defaultIntervalsForDay() : []
   }
 
   return intervals
 }
 
+function normalizeCalendarOpenInterval(interval, { allowFallback = true } = {}) {
+  if (!interval || typeof interval !== 'object') return null
+
+  if (allowFallback) {
+    return {
+      openHour: toInt(interval.openHour, 9),
+      openMinute: toInt(interval.openMinute, 0),
+      closeHour: toInt(interval.closeHour, 17),
+      closeMinute: toInt(interval.closeMinute, 0)
+    }
+  }
+
+  const normalized = {
+    openHour: Number(interval.openHour),
+    openMinute: Number(interval.openMinute),
+    closeHour: Number(interval.closeHour),
+    closeMinute: Number(interval.closeMinute)
+  }
+  if (!Object.values(normalized).every(Number.isInteger)) return null
+  if (normalized.openHour < 0 || normalized.openHour > 23) return null
+  if (normalized.closeHour < 0 || normalized.closeHour > 24) return null
+  if (normalized.openMinute < 0 || normalized.openMinute > 59) return null
+  if (normalized.closeMinute < 0 || normalized.closeMinute > 59) return null
+  if (normalized.closeHour === 24 && normalized.closeMinute !== 0) return null
+
+  const openMinuteOfDay = normalized.openHour * 60 + normalized.openMinute
+  const closeMinuteOfDay = normalized.closeHour * 60 + normalized.closeMinute
+  return closeMinuteOfDay > openMinuteOfDay ? normalized : null
+}
+
+function checkStrictSlotOpenHours(calendar, slotStartMs, slotEndMs, zone) {
+  const slotStart = DateTime.fromMillis(slotStartMs, { zone })
+  const slotEnd = DateTime.fromMillis(slotEndMs, { zone })
+  if (!slotStart.isValid || !slotEnd.isValid) {
+    return { available: false, reason: 'invalid_slot' }
+  }
+
+  const intervals = getCalendarOpenIntervals(
+    calendar,
+    { getDay: () => slotStart.weekday % 7 },
+    { allowDefault: false }
+  )
+    .map(interval => normalizeCalendarOpenInterval(interval, { allowFallback: false }))
+    .filter(Boolean)
+
+  const localDay = slotStart.startOf('day')
+  const containingIntervals = intervals
+    .map((interval) => ({
+      open: localDay.set({
+        hour: interval.openHour,
+        minute: interval.openMinute,
+        second: 0,
+        millisecond: 0
+      }),
+      close: localDay.set({
+        hour: interval.closeHour,
+        minute: interval.closeMinute,
+        second: 0,
+        millisecond: 0
+      })
+    }))
+    .filter(({ open, close }) => (
+      open.isValid
+      && close.isValid
+      && slotStartMs >= open.toMillis()
+      && slotEndMs <= close.toMillis()
+    ))
+
+  if (!containingIntervals.length) {
+    return { available: false, reason: 'outside_open_hours' }
+  }
+
+  const intervalMinutes = Math.max(1, calendarDurationToMinutes(
+    calendar.slotInterval,
+    calendar.slotIntervalUnit,
+    calendarDurationToMinutes(calendar.slotDuration, calendar.slotDurationUnit, 60)
+  ))
+  const intervalMs = intervalMinutes * 60 * 1000
+  const aligned = containingIntervals.some(({ open }) => (
+    (slotStartMs - open.toMillis()) % intervalMs === 0
+  ))
+
+  return aligned
+    ? { available: true }
+    : { available: false, reason: 'slot_not_aligned' }
+}
+
 function overlaps(startA, endA, startB, endB) {
   return startA < endB && endA > startB
+}
+
+const NON_BLOCKING_APPOINTMENT_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'no_show',
+  'no-show',
+  'noshow',
+  'invalid',
+  'deleted'
+])
+
+function isBlockingCalendarAppointment(appointment = {}) {
+  const status = cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
+  return !NON_BLOCKING_APPOINTMENT_STATUSES.has(status)
+}
+
+function appointmentStartsOnBusinessDate(appointment = {}, dateKey, zone) {
+  const start = DateTime.fromISO(cleanString(appointment.startTime), { setZone: true })
+  return start.isValid && start.setZone(zone).toISODate() === dateKey
+}
+
+function getCalendarBufferMinutes(calendar = {}) {
+  const toBufferMinutes = (value, unit) => {
+    const amount = Number(value)
+    return Number.isFinite(amount) && amount > 0
+      ? Math.max(0, calendarDurationToMinutes(amount, unit, 0))
+      : 0
+  }
+  return {
+    before: toBufferMinutes(calendar.preBuffer, calendar.preBufferUnit),
+    after: toBufferMinutes(calendar.slotBuffer, calendar.slotBufferUnit)
+  }
+}
+
+function bufferedAppointmentOverlaps(
+  slotStartMs,
+  slotEndMs,
+  eventStartMs,
+  eventEndMs,
+  { before = 0, after = 0 } = {}
+) {
+  if (![slotStartMs, slotEndMs, eventStartMs, eventEndMs].every(Number.isFinite)) return false
+  const beforeMs = Math.max(0, Number(before) || 0) * 60 * 1000
+  const afterMs = Math.max(0, Number(after) || 0) * 60 * 1000
+  return overlaps(
+    slotStartMs - beforeMs,
+    slotEndMs + afterMs,
+    eventStartMs - beforeMs,
+    eventEndMs + afterMs
+  )
 }
 
 function sameText(a, b) {
@@ -5447,36 +6325,103 @@ export async function checkSlotAvailability(calendarId, startTime, endTime, opti
   if (!calendar) return { available: true, limit: Number.POSITIVE_INFINITY, overlapping: 0 }
 
   const limit = getEffectiveSlotAppointmentLimit(calendar, options)
-  if (!Number.isFinite(limit)) return { available: true, limit, overlapping: 0 }
-
   const slotStartMs = new Date(startTime).getTime()
   const slotEndMs = new Date(endTime || startTime).getTime()
-  if (!Number.isFinite(slotStartMs) || !Number.isFinite(slotEndMs)) {
-    return { available: true, limit, overlapping: 0 }
+  if (!Number.isFinite(slotStartMs) || !Number.isFinite(slotEndMs) || slotEndMs <= slotStartMs) {
+    return { available: false, limit, overlapping: 0, reason: 'invalid_slot' }
+  }
+
+  const zone = isValidTimezone(options.timezone) ? options.timezone : await getAccountTimezone()
+  const enforceCalendarRules = options.enforceCalendarRules === true
+  if (enforceCalendarRules) {
+    const bookingWindow = getCalendarBookingWindow(calendar, zone, options.currentTimeMs)
+    if (
+      slotStartMs < bookingWindow.earliestStartMs
+      || (Number.isFinite(bookingWindow.latestStartMs) && slotStartMs > bookingWindow.latestStartMs)
+    ) {
+      return {
+        available: false,
+        limit,
+        overlapping: 0,
+        reason: 'outside_booking_window',
+        earliestStart: new Date(bookingWindow.earliestStartMs).toISOString(),
+        latestStart: Number.isFinite(bookingWindow.latestStartMs)
+          ? new Date(bookingWindow.latestStartMs).toISOString()
+          : null
+      }
+    }
+
+    const openHoursCheck = checkStrictSlotOpenHours(calendar, slotStartMs, slotEndMs, zone)
+    if (!openHoursCheck.available) {
+      return {
+        available: false,
+        limit,
+        overlapping: 0,
+        reason: openHoursCheck.reason
+      }
+    }
   }
 
   const excludeId = cleanString(options.excludeAppointmentId || '')
-  const existing = await listLocalAppointments({ calendarId })
-  const overlapping = existing.filter(event => {
-    if (excludeId && cleanString(event.id) === excludeId) return false
-    const status = cleanString(event.appointmentStatus || event.status).toLowerCase()
-    if (['cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'invalid', 'deleted'].includes(status)) return false
-    return overlaps(
-      slotStartMs,
-      slotEndMs,
-      new Date(event.startTime).getTime(),
-      new Date(event.endTime || event.startTime).getTime()
+  const existing = (await listLocalAppointments({ calendarId }))
+    .filter(event => (
+      (!excludeId || cleanString(event.id) !== excludeId)
+      && isBlockingCalendarAppointment(event)
+    ))
+  const buffers = enforceCalendarRules && Number.isFinite(limit)
+    ? getCalendarBufferMinutes(calendar)
+    : { before: 0, after: 0 }
+  const overlapping = existing.filter(event => overlaps(
+    slotStartMs,
+    slotEndMs,
+    new Date(event.startTime).getTime(),
+    new Date(event.endTime || event.startTime).getTime()
+  )).length
+  const bufferConflict = existing.some(event => {
+    const eventStartMs = new Date(event.startTime).getTime()
+    const eventEndMs = new Date(event.endTime || event.startTime).getTime()
+    return (
+      !overlaps(slotStartMs, slotEndMs, eventStartMs, eventEndMs)
+      && bufferedAppointmentOverlaps(slotStartMs, slotEndMs, eventStartMs, eventEndMs, buffers)
     )
-  }).length
+  })
+
+  const dailyLimit = Math.max(0, toInt(calendar.appoinmentPerDay, 0))
+  if (enforceCalendarRules && dailyLimit > 0) {
+    const slotDateKey = DateTime.fromMillis(slotStartMs, { zone }).toISODate()
+    const appointmentsOnDay = existing.filter(event => (
+      appointmentStartsOnBusinessDate(event, slotDateKey, zone)
+    )).length
+    if (appointmentsOnDay >= dailyLimit) {
+      return {
+        available: false,
+        limit,
+        overlapping,
+        dailyLimit,
+        appointmentsOnDay,
+        reason: 'daily_limit_reached'
+      }
+    }
+  }
 
   // (APT-004) Bloqueos de horario nativos: si el slot cae sobre un horario bloqueado,
   // no está disponible (igual que una cita), aunque no haya HighLevel.
-  const blockedOverlaps = await getOverlappingLocalBlockedSlots(calendarId, slotStartMs, slotEndMs)
+  const blockedOverlaps = await getOverlappingLocalBlockedSlots(
+    calendarId,
+    slotStartMs - buffers.before * 60 * 1000,
+    slotEndMs + buffers.after * 60 * 1000
+  )
   if (blockedOverlaps.length > 0) {
-    return { available: false, limit, overlapping, blocked: true }
+    return { available: false, limit, overlapping, blocked: true, reason: 'blocked' }
   }
 
-  return { available: overlapping < limit, limit, overlapping }
+  return {
+    available: (!Number.isFinite(limit) || overlapping < limit) && !bufferConflict,
+    limit,
+    overlapping,
+    ...(bufferConflict ? { bufferConflict: true, reason: 'buffer_conflict' } : {}),
+    ...(!bufferConflict && Number.isFinite(limit) && overlapping >= limit ? { reason: 'slot_conflict' } : {})
+  }
 }
 
 // (APT-004) Bloqueos de horario NATIVOS (calendarios Ristak/Google, no solo HighLevel).
@@ -5570,16 +6515,38 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
   const endDay = DateTime.fromISO(endDate, { zone }).startOf('day')
   if (!startDay.isValid || !endDay.isValid || endDay < startDay) return []
 
+  const requestedDurationMinutes = Number(options.durationMinutes)
+  const durationMinutes = Number.isFinite(requestedDurationMinutes) && requestedDurationMinutes > 0
+    ? requestedDurationMinutes
+    : Math.max(1, calendarDurationToMinutes(calendar.slotDuration, calendar.slotDurationUnit, 60))
+  const intervalMinutes = Math.max(1, calendarDurationToMinutes(
+    calendar.slotInterval,
+    calendar.slotIntervalUnit,
+    durationMinutes
+  ))
+  const appointmentLimit = getEffectiveSlotAppointmentLimit(calendar, options)
+  const dailyLimit = Math.max(0, toInt(calendar.appoinmentPerDay, 0))
+  const buffers = Number.isFinite(appointmentLimit)
+    ? getCalendarBufferMinutes(calendar)
+    : { before: 0, after: 0 }
+  const bookingWindow = getCalendarBookingWindow(calendar, zone, options.currentTimeMs)
+  const conflictMarginMs = (buffers.before + buffers.after) * 60 * 1000
+
   // Las citas existentes están en UTC en la BD; comparamos por instante absoluto.
-  const rangeStart = startDay.toUTC().toISO()
-  const rangeEnd = endDay.endOf('day').toUTC().toISO()
+  // Extendemos la consulta por los buffers para no perder una cita que termina antes
+  // de medianoche pero todavía consume el tiempo libre configurado del día siguiente.
+  const rangeStart = DateTime.fromMillis(startDay.toUTC().toMillis() - conflictMarginMs, { zone: 'utc' }).toISO()
+  const rangeEnd = DateTime.fromMillis(endDay.endOf('day').toUTC().toMillis() + conflictMarginMs, { zone: 'utc' }).toISO()
   const excludedAppointmentId = cleanString(options.excludeAppointmentId || '')
-  const existing = (await listLocalAppointments({ startTime: rangeStart, endTime: rangeEnd, calendarId }))
+  const existing = (await listLocalAppointments({
+    startTime: rangeStart,
+    endTime: rangeEnd,
+    calendarId,
+    includeOverlapping: true
+  }))
     .filter((appointment) => (
-      (!excludedAppointmentId || cleanString(appointment.id) !== excludedAppointmentId) &&
-      !['cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'invalid', 'deleted'].includes(
-        cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
-      )
+      (!excludedAppointmentId || cleanString(appointment.id) !== excludedAppointmentId)
+      && isBlockingCalendarAppointment(appointment)
     ))
 
   // (APT-004) Excluir los horarios bloqueados nativos del listado de slots libres.
@@ -5597,33 +6564,37 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
     blockedRanges = []
   }
 
-  const requestedDurationMinutes = Number(options.durationMinutes)
-  const durationMinutes = Number.isFinite(requestedDurationMinutes) && requestedDurationMinutes > 0
-    ? requestedDurationMinutes
-    : Math.max(1, toInt(calendar.slotDuration, 60))
-  const intervalMinutes = Math.max(1, toInt(calendar.slotInterval, durationMinutes))
-  const appointmentLimit = getEffectiveSlotAppointmentLimit(calendar, options)
-  const nowMs = Date.now()
   const slotsByDate = []
 
   for (let cursor = startDay; cursor <= endDay; cursor = cursor.plus({ days: 1 })) {
     const dateKey = cursor.toISODate()
+    const appointmentsOnDay = existing.filter(event => (
+      appointmentStartsOnBusinessDate(event, dateKey, zone)
+    )).length
     // getCalendarOpenIntervals usa getDay() (0=domingo); construir una Date con los
     // componentes de la fecha preserva el día de la semana correcto.
-    const intervals = getCalendarOpenIntervals(calendar, new Date(cursor.year, cursor.month - 1, cursor.day))
+    const intervals = getCalendarOpenIntervals(
+      calendar,
+      new Date(cursor.year, cursor.month - 1, cursor.day),
+      { allowDefault: options.allowDefaultOpenHours !== false }
+    )
     const slots = []
     const seenSlots = new Set()
 
     for (const interval of intervals) {
+      const normalizedInterval = normalizeCalendarOpenInterval(interval, {
+        allowFallback: options.allowDefaultOpenHours !== false
+      })
+      if (!normalizedInterval) continue
       const open = cursor.set({
-        hour: toInt(interval.openHour, 9),
-        minute: toInt(interval.openMinute, 0),
+        hour: normalizedInterval.openHour,
+        minute: normalizedInterval.openMinute,
         second: 0,
         millisecond: 0
       })
       const close = cursor.set({
-        hour: toInt(interval.closeHour, 17),
-        minute: toInt(interval.closeMinute, 0),
+        hour: normalizedInterval.closeHour,
+        minute: normalizedInterval.closeMinute,
         second: 0,
         millisecond: 0
       })
@@ -5637,10 +6608,29 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
           new Date(event.startTime).getTime(),
           new Date(event.endTime || event.startTime).getTime()
         )).length
-        const hasConflict = Number.isFinite(appointmentLimit) && overlappingAppointments >= appointmentLimit
-        const isBlocked = blockedRanges.some(([blockStart, blockEnd]) => overlaps(slotStartMs, slotEndMs, blockStart, blockEnd))
+        const hasBufferConflict = existing.some(event => {
+          const eventStartMs = new Date(event.startTime).getTime()
+          const eventEndMs = new Date(event.endTime || event.startTime).getTime()
+          return (
+            !overlaps(slotStartMs, slotEndMs, eventStartMs, eventEndMs)
+            && bufferedAppointmentOverlaps(slotStartMs, slotEndMs, eventStartMs, eventEndMs, buffers)
+          )
+        })
+        const hasConflict = (
+          Number.isFinite(appointmentLimit) && overlappingAppointments >= appointmentLimit
+        ) || hasBufferConflict
+        const reachedDailyLimit = dailyLimit > 0 && appointmentsOnDay >= dailyLimit
+        const bufferedSlotStartMs = slotStartMs - buffers.before * 60 * 1000
+        const bufferedSlotEndMs = slotEndMs + buffers.after * 60 * 1000
+        const isBlocked = blockedRanges.some(([blockStart, blockEnd]) => (
+          overlaps(bufferedSlotStartMs, bufferedSlotEndMs, blockStart, blockEnd)
+        ))
+        const outsideBookingWindow = (
+          slotStartMs < bookingWindow.earliestStartMs
+          || (Number.isFinite(bookingWindow.latestStartMs) && slotStartMs > bookingWindow.latestStartMs)
+        )
 
-        if (!hasConflict && !isBlocked && slotStartMs >= nowMs) {
+        if (!hasConflict && !reachedDailyLimit && !isBlocked && !outsideBookingWindow) {
           const slotIso = slot.toUTC().toISO()
           if (!seenSlots.has(slotIso)) {
             slots.push(slotIso)
@@ -5985,16 +6975,23 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
         const endMs = new Date(appointment.endTime || appointment.startTime).getTime()
         const searchStart = Number.isFinite(startMs) ? startMs - 5 * 60000 : Date.now() - 5 * 60000
         const searchEnd = Number.isFinite(endMs) ? endMs + 5 * 60000 : searchStart + 15 * 60000
-        const existingEvents = await highlevelCalendarService.getCalendarEvents(
-          locationId,
-          searchStart,
-          searchEnd,
-          apiToken,
-          remoteCalendarId
-        ).catch(error => {
-          logger.warn(`No se pudo buscar cita existente antes de crear ${appointment.id}: ${error.message}`)
-          return []
-        })
+        let existingEvents
+        try {
+          existingEvents = await highlevelCalendarService.getCalendarEvents(
+            locationId,
+            searchStart,
+            searchEnd,
+            apiToken,
+            remoteCalendarId
+          )
+        } catch (error) {
+          // Un fallo de lectura no significa "no existe". Después de un POST
+          // ambiguo podríamos duplicar el espejo si degradáramos a lista vacía.
+          throw new Error(
+            `No se pudo reconciliar el espejo HighLevel de ${appointment.id}; no se enviará otro POST: ${error.message}`,
+            { cause: error }
+          )
+        }
 
         const existingRemote = existingEvents.find(event => (
           sameTime(event.startTime || event.start_time, appointment.startTime) &&
@@ -6006,6 +7003,13 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
           ghlAppointmentId = existingRemote.id
           response = existingRemote
           matched += 1
+        } else if (String(appointment.syncError || '').includes(HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER)) {
+          // Un timeout o una respuesta sin ID puede haber creado el evento aunque
+          // todavía no aparezca en la lectura. Reconciliamos en corridas futuras,
+          // pero jamás enviamos un segundo POST a ciegas.
+          throw new Error(
+            `${HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER} El resultado remoto de HighLevel para ${appointment.id} sigue ambiguo; no se enviará otro POST hasta poder reconciliarlo`
+          )
         }
       }
 
@@ -6015,8 +7019,8 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
         response = await highlevelCalendarService.updateAppointment(ghlAppointmentId, payload, apiToken)
         updated += 1
       } else {
-        response = appointment.isTest
-          ? await createConversationalTestHighLevelAppointment({
+        if (appointment.isTest) {
+          response = await createConversationalTestHighLevelAppointment({
               appointment,
               appointmentData: payload,
               locationId,
@@ -6024,7 +7028,15 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
               contactId,
               apiToken
             })
-          : await highlevelCalendarService.createAppointment(payload, locationId, apiToken)
+        } else {
+          await prepareHighLevelAppointmentMirrorIntent({
+            appointmentId: appointment.id,
+            remoteCalendarId,
+            remoteContactId: contactId,
+            locationId
+          })
+          response = await highlevelCalendarService.createAppointment(payload, locationId, apiToken)
+        }
         created += 1
       }
 
@@ -6052,14 +7064,16 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
         } catch (receiptError) {
           const fallback = await db.run(`
             UPDATE appointments
-            SET ghl_appointment_id = ?, sync_error = ?, date_updated = CURRENT_TIMESTAMP
+            SET ghl_appointment_id = ?, sync_error = ?
             WHERE id = ? AND is_test = 1 AND test_run_id = ? AND test_effect_id = ?
+              AND date_updated = ?
           `, [
             ghlAppointmentId,
             `Recibo HighLevel pendiente: ${cleanString(receiptError.message).slice(0, 800)}`,
             appointment.id,
             appointment.testRunId,
-            appointment.testEffectId
+            appointment.testEffectId,
+            normalizeToUtcIso(appointment.dateUpdated, 'UTC')
           ]).catch(() => null)
           if (Number(fallback?.changes ?? fallback?.rowCount ?? 0) !== 1) {
             try {
@@ -6077,29 +7091,26 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
         }
       }
 
-      await upsertLocalAppointment({
-        ...appointment,
-        ...remoteAppointment,
-        id: appointment.id,
-        ghlAppointmentId,
-        calendarId: appointment.calendarId,
-        locationId,
-        contactId
-      }, {
-        id: appointment.id,
-        source: appointment.source || 'ristak',
-        ghlAppointmentId,
-        calendarId: appointment.calendarId,
-        locationId,
-        syncStatus: 'synced'
+      await markHighLevelAppointmentMirrorSynced(appointment.id, ghlAppointmentId, {
+        expectedAppointment: appointment
       })
+      if (!appointment.isTest) {
+        await completeHighLevelAppointmentMirrorIntent(appointment.id, ghlAppointmentId)
+      }
     } catch (error) {
       failed += 1
-      await db.run(
-        "UPDATE appointments SET sync_status = 'error', sync_error = ?, date_updated = CURRENT_TIMESTAMP WHERE id = ?",
-        [error.message, appointment.id]
-      )
-      logger.warn(`No se pudo sincronizar cita ${appointment.id} a HighLevel: ${error.message}`)
+      const stickyRemoteOutcomeUnknown = String(appointment.syncError || '').includes(HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER)
+      const syncErrorMessage = stickyRemoteOutcomeUnknown && !String(error.message || '').includes(HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER)
+        ? `${HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER} ${error.message}`
+        : error.message
+      if (error?.code !== 'appointment_provider_response_stale') {
+        await markHighLevelAppointmentMirrorError(appointment.id, syncErrorMessage, {
+          expectedAppointment: appointment
+        }).catch((markError) => {
+          if (markError?.code !== 'appointment_provider_response_stale') throw markError
+        })
+      }
+      logger.warn(`No se pudo sincronizar cita ${appointment.id} a HighLevel: ${syncErrorMessage}`)
     }
   }
 
@@ -6122,5 +7133,12 @@ export default {
   syncLocalAppointmentsToHighLevel,
   syncLocalCalendarsToHighLevel,
   updateLocalAppointment,
-  upsertLocalAppointment
+  upsertLocalAppointment,
+  prepareHighLevelAppointmentMirrorIntent,
+  claimPreparedHighLevelMirrorIntent,
+  completeHighLevelAppointmentMirrorIntent,
+  inspectInboundHighLevelAppointment,
+  reconcileInboundHighLevelAppointment,
+  markHighLevelAppointmentMirrorSynced,
+  markHighLevelAppointmentMirrorError
 }

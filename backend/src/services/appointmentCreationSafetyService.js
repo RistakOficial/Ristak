@@ -288,11 +288,30 @@ async function reconcileConversationalAppointmentRequest({
       if (row.request_hash !== hash && !isLegacyConversationalSlotRequest(clientRequestId)) {
         return { created: false, row }
       }
+      const checkpointedAppointment = await loadCanonicalAppointment(row.appointment_id)
+      if (checkpointedAppointment?.id) {
+        const state = appointmentReplayState(checkpointedAppointment, payload)
+        const response = canonicalAppointmentResponse(row, checkpointedAppointment, state)
+        const completed = await db.run(
+          `UPDATE appointment_creation_requests
+           SET status = 'completed', processing_token = NULL, response_json = ?,
+               error_status = NULL, error_message = NULL, updated_at = ?
+           WHERE client_request_id = ? AND request_hash = ? AND status = 'failed'
+             AND appointment_id = ?`,
+          [JSON.stringify(response), nowIso, clientRequestId, row.request_hash, checkpointedAppointment.id]
+        )
+        if (Number(completed?.changes || 0) === 1) return { replay: response }
+        const raced = await loadCreationRequestForUpdate(clientRequestId)
+        return { created: false, row: raced }
+      }
       return resetCreationRequestToProcessing({ row, hash, processingToken, nowIso })
     }
 
     if (row.status === 'processing') {
       if (!processingLeaseExpired(row, nowIso)) return { created: false, row }
+      if (row.request_hash !== hash && !isLegacyConversationalSlotRequest(clientRequestId)) {
+        return { created: false, row }
+      }
 
       const recoveredAppointment = await loadCanonicalAppointment(row.appointment_id)
         || (row.request_hash === hash ? await findAppointmentCreatedForRequest(payload) : null)
@@ -311,9 +330,6 @@ async function reconcileConversationalAppointmentRequest({
         return { created: false, row: raced }
       }
 
-      if (row.request_hash !== hash && !isLegacyConversationalSlotRequest(clientRequestId)) {
-        return { created: false, row }
-      }
       return resetCreationRequestToProcessing({ row, hash, processingToken, nowIso })
     }
 
@@ -430,6 +446,49 @@ export async function runIdempotentAppointmentCreation({ clientRequestId, payloa
     }
     return result
   } catch (error) {
+    // El controller puede haber confirmado ya la cita local y guardado su ID
+    // antes de que falle un espejo, automatización o efecto posterior. En ese
+    // caso la cita local manda: cerramos la idempotencia con esa misma cita en
+    // vez de convertir el intento en fallido y arriesgar una segunda alta.
+    const checkpoint = await db.get(
+      `SELECT * FROM appointment_creation_requests
+       WHERE client_request_id = ? AND request_hash = ?
+         AND status = 'processing' AND processing_token = ?`,
+      [cleanKey, hash, processingToken]
+    ).catch(() => null)
+    const checkpointedAppointment = checkpoint?.appointment_id
+      ? await loadCanonicalAppointment(checkpoint.appointment_id).catch(() => null)
+      : null
+    if (checkpointedAppointment?.id) {
+      const state = appointmentReplayState(checkpointedAppointment, payload)
+      const response = canonicalAppointmentResponse(checkpoint, checkpointedAppointment, state)
+      const completedAt = new Date().toISOString()
+      const recovered = await db.run(
+        `UPDATE appointment_creation_requests
+         SET status = 'completed', processing_token = NULL,
+             response_json = ?, error_status = NULL, error_message = NULL,
+             updated_at = ?
+         WHERE client_request_id = ? AND request_hash = ?
+           AND status = 'processing' AND processing_token = ? AND appointment_id = ?`,
+        [
+          JSON.stringify(response),
+          completedAt,
+          cleanKey,
+          hash,
+          processingToken,
+          checkpointedAppointment.id
+        ]
+      ).catch(() => null)
+      if (Number(recovered?.changes || 0) === 1) return response
+      const raced = await db.get(
+        'SELECT * FROM appointment_creation_requests WHERE client_request_id = ?',
+        [cleanKey]
+      ).catch(() => null)
+      if (raced?.status === 'completed' && raced.request_hash === hash) {
+        return replayAppointmentCreation(raced, hash)
+      }
+    }
+
     const errorStatus = normalizeErrorStatus(error)
     if (error && typeof error === 'object') error.status = errorStatus
     const failed = await db.run(

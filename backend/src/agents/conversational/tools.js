@@ -1,10 +1,15 @@
 import { tool } from '@openai/agents'
 import { z } from 'zod'
 import { createHash } from 'node:crypto'
+import { DateTime } from 'luxon'
 import { db } from '../../config/database.js'
 import { invokeController, toToolResult } from '../invokeController.js'
-import { createAppointment, updateAppointment } from '../../controllers/calendarsController.js'
-import { getLocalFreeSlots } from '../../services/localCalendarService.js'
+import {
+  createAppointment,
+  getFreeSlots as getCalendarFreeSlots,
+  updateAppointment
+} from '../../controllers/calendarsController.js'
+import { calendarDurationToMinutes, getLocalFreeSlots } from '../../services/localCalendarService.js'
 import { inspectChangedAppointmentCreationReplay } from '../../services/appointmentCreationSafetyService.js'
 import {
   buildConversationalPaymentLinkIdempotencyKey,
@@ -1573,8 +1578,9 @@ async function resolveNativeScheduleCalendar(capability = {}) {
   const configuredId = String(capability?.calendarId || '').trim()
   if (!configuredId) return null
   const calendar = await db.get(
-    `SELECT id, ghl_calendar_id, name, slot_duration, is_active,
-            allow_reschedule, allow_cancellation
+    `SELECT id, ghl_calendar_id, name, slot_duration, slot_duration_unit,
+            slot_interval, slot_interval_unit, is_active, source, open_hours,
+            appoinment_per_slot, allow_reschedule, allow_cancellation
      FROM calendars
      WHERE id = ? OR ghl_calendar_id = ?
      LIMIT 1`,
@@ -1799,11 +1805,269 @@ export function buildNativeFreeSlotDays(days = [], fallbackTimezone = '') {
   }).filter((day) => day.options.length > 0)
 }
 
+function normalizeNativeAvailabilityTime(value = '') {
+  const clean = String(value || '').trim()
+  const match = /^(\d{2}):(\d{2})$/.exec(clean)
+  if (!match) return ''
+  const hour = Number(match[1])
+  const minute = Number(match[2])
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return ''
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+function nativeLocalTimeToMinutes(value = '') {
+  const normalized = normalizeNativeAvailabilityTime(value)
+  if (!normalized) return NaN
+  const [hour, minute] = normalized.split(':').map(Number)
+  return hour * 60 + minute
+}
+
+function nativeAppointmentEpochMinute(value = '') {
+  const timestamp = Date.parse(String(value || '').trim())
+  return Number.isFinite(timestamp) ? Math.floor(timestamp / 60000) : null
+}
+
+function mergeNativeRejectedAppointmentStartTimes(...groups) {
+  const byEpochMinute = new Map()
+  for (const value of groups.flatMap((group) => (Array.isArray(group) ? group : []))) {
+    const startTime = String(value || '').trim()
+    const epochMinute = nativeAppointmentEpochMinute(startTime)
+    if (epochMinute === null || byEpochMinute.has(epochMinute)) continue
+    byEpochMinute.set(epochMinute, startTime)
+  }
+  return [...byEpochMinute.values()].slice(-100)
+}
+
+function nativeAvailabilityTimeLabel(value = '') {
+  const totalMinutes = nativeLocalTimeToMinutes(value)
+  if (!Number.isFinite(totalMinutes)) return String(value || '').trim()
+  const hour24 = Math.floor(totalMinutes / 60)
+  const minute = totalMinutes % 60
+  const hour12 = hour24 % 12 || 12
+  return `${hour12}:${String(minute).padStart(2, '0')} ${hour24 < 12 ? 'a.m.' : 'p.m.'}`
+}
+
+function nativeAvailabilityDayLabel(localDate = '', timezone = '') {
+  const local = DateTime.fromISO(String(localDate || ''), { zone: resolveTimezone(timezone) }).setLocale('es-MX')
+  if (!local.isValid) return String(localDate || '').trim()
+  const label = local.toFormat("cccc d 'de' LLLL")
+  return label ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : String(localDate || '').trim()
+}
+
+export function filterNativeFreeSlotDays(days = [], {
+  timezone = '',
+  weekdays = null,
+  earliestLocalTime = null,
+  latestLocalTime = null,
+  excludedStartTimes = [],
+  relativeToStartTime = null,
+  relativeToLocalTime = null,
+  relativeToLocalDate = null,
+  relativeToTimezone = null,
+  relativeReferenceKind = 'individual',
+  relativeDirection = null
+} = {}) {
+  const resolvedTimezone = resolveTimezone(timezone)
+  const allowedWeekdays = new Set((Array.isArray(weekdays) ? weekdays : [])
+    .map(Number)
+    .filter((value) => Number.isInteger(value) && value >= 1 && value <= 7))
+  const earliest = normalizeNativeAvailabilityTime(earliestLocalTime)
+  const latest = normalizeNativeAvailabilityTime(latestLocalTime)
+  const excluded = new Set((Array.isArray(excludedStartTimes) ? excludedStartTimes : [])
+    .map(nativeAppointmentEpochMinute)
+    .filter((value) => value !== null))
+  const referenceTimezone = resolveTimezone(relativeToTimezone, resolvedTimezone)
+  const relativeSlot = buildCanonicalAppointmentSlotOption(relativeToStartTime, referenceTimezone)
+  const relativeTime = normalizeNativeAvailabilityTime(relativeToLocalTime) || relativeSlot?.localTime || ''
+  const relativeDate = String(relativeToLocalDate || relativeSlot?.localDate || '').trim()
+  const relativeEpochMinute = nativeAppointmentEpochMinute(relativeToStartTime)
+  const normalizedDirection = ['later', 'earlier'].includes(String(relativeDirection || '').trim())
+    ? String(relativeDirection).trim()
+    : ''
+
+  return (Array.isArray(days) ? days : []).flatMap((day) => {
+    const dayTimezone = resolveTimezone(day?.timezone, resolvedTimezone)
+    const localDate = String(day?.localDate || '').trim()
+    const localDay = DateTime.fromISO(localDate, { zone: dayTimezone })
+    if (!localDay.isValid || (allowedWeekdays.size && !allowedWeekdays.has(localDay.weekday))) return []
+    const options = (Array.isArray(day?.options) ? day.options : []).filter((option) => {
+      const startTime = String(option?.startTime || '').trim()
+      const epochMinute = nativeAppointmentEpochMinute(startTime)
+      const localTime = normalizeNativeAvailabilityTime(option?.localTime)
+      const optionLocalDate = String(option?.localDate || localDate || '').trim()
+      if (!startTime || epochMinute === null || !localTime || excluded.has(epochMinute)) return false
+      if (earliest && localTime < earliest) return false
+      if (latest && localTime > latest) return false
+      if (normalizedDirection === 'later' && relativeTime) {
+        if (localTime < relativeTime) return false
+        if (localTime === relativeTime) {
+          const isLaterRepeatedClockTime = Boolean(
+            relativeDate &&
+            optionLocalDate === relativeDate &&
+            dayTimezone === referenceTimezone &&
+            relativeEpochMinute !== null &&
+            epochMinute > relativeEpochMinute
+          )
+          if (!isLaterRepeatedClockTime) return false
+        }
+      }
+      if (normalizedDirection === 'earlier' && relativeTime) {
+        if (localTime > relativeTime) return false
+        if (localTime === relativeTime) {
+          const isEarlierRepeatedClockTime = Boolean(
+            relativeDate &&
+            optionLocalDate === relativeDate &&
+            dayTimezone === referenceTimezone &&
+            relativeEpochMinute !== null &&
+            epochMinute < relativeEpochMinute
+          )
+          if (!isEarlierRepeatedClockTime) return false
+        }
+      }
+      return true
+    })
+    return options.length ? [{ ...day, timezone: dayTimezone, localDate, options }] : []
+  })
+}
+
+function buildNativeAvailabilityRanges(options = [], intervalMinutes = 60, timezone = '') {
+  const step = Math.max(1, Math.round(Number(intervalMinutes) || 60))
+  const seenEpochMinutes = new Set()
+  const times = (Array.isArray(options) ? options : []).flatMap((option) => {
+    const localTime = normalizeNativeAvailabilityTime(option?.localTime)
+    const startTime = String(option?.startTime || '').trim()
+    const epochMinute = nativeAppointmentEpochMinute(startTime)
+    if (!localTime || epochMinute === null || seenEpochMinutes.has(epochMinute)) return []
+    seenEpochMinutes.add(epochMinute)
+    const local = DateTime.fromISO(startTime, { setZone: true })
+      .setZone(resolveTimezone(option?.timezone, timezone))
+    return [{
+      ...option,
+      startTime,
+      localTime,
+      minutes: nativeLocalTimeToMinutes(localTime),
+      epochMinute,
+      utcOffset: local.isValid ? `UTC${local.toFormat('ZZ')}` : ''
+    }]
+  }).sort((left, right) => left.epochMinute - right.epochMinute)
+  const ranges = []
+  for (const item of times) {
+    const current = ranges.at(-1)
+    if (
+      current &&
+      item.minutes === current.end.minutes + step &&
+      item.epochMinute > current.end.epochMinute &&
+      item.utcOffset === current.end.utcOffset
+    ) {
+      current.end = item
+      current.count += 1
+      current.items.push(item)
+    } else {
+      ranges.push({ start: item, end: item, count: 1, items: [item] })
+    }
+  }
+  return ranges
+}
+
+function nativeAvailabilityRangeItemLabel(item = {}, duplicatedLocalTimes = new Set()) {
+  const timeLabel = nativeAvailabilityTimeLabel(item.localTime)
+  return duplicatedLocalTimes.has(item.localTime) && item.utcOffset
+    ? `${timeLabel} (${item.utcOffset})`
+    : timeLabel
+}
+
+export function buildNativeAppointmentAvailabilityPresentation(days = [], {
+  timezone = '',
+  intervalMinutes = 60,
+  maxDays = 3,
+  maxRangesPerDay = 3
+} = {}) {
+  const selectedDays = (Array.isArray(days) ? days : [])
+    .filter((day) => Array.isArray(day?.options) && day.options.length)
+    .slice(0, Math.max(1, Math.min(3, Number(maxDays) || 3)))
+  if (!selectedDays.length) return { visibleReply: '', displayedStartTimes: [], displayedDays: 0 }
+
+  const blocks = []
+  const displayedStartTimes = []
+  for (const day of selectedDays) {
+    const dayTimezone = resolveTimezone(day?.timezone, timezone)
+    const localTimeEpochs = new Map()
+    for (const option of day.options) {
+      const localTime = normalizeNativeAvailabilityTime(option?.localTime)
+      const epochMinute = nativeAppointmentEpochMinute(option?.startTime)
+      if (!localTime || epochMinute === null) continue
+      const epochs = localTimeEpochs.get(localTime) || new Set()
+      epochs.add(epochMinute)
+      localTimeEpochs.set(localTime, epochs)
+    }
+    const duplicatedLocalTimes = new Set(
+      [...localTimeEpochs.entries()]
+        .filter(([, epochs]) => epochs.size > 1)
+        .map(([localTime]) => localTime)
+    )
+    const ranges = buildNativeAvailabilityRanges(day.options, intervalMinutes, dayTimezone)
+      .slice(0, Math.max(1, Math.min(3, Number(maxRangesPerDay) || 3)))
+    if (!ranges.length) continue
+    const lines = ranges.map((range) => {
+      displayedStartTimes.push(...range.items.map((option) => String(option.startTime || '').trim()).filter(Boolean))
+      if (range.count >= 3 && Number(intervalMinutes) <= 60) {
+        const cadence = Number(intervalMinutes) === 60 ? 'cada hora' : `cada ${Number(intervalMinutes)} min`
+        return `${nativeAvailabilityRangeItemLabel(range.start, duplicatedLocalTimes)} a ${nativeAvailabilityRangeItemLabel(range.end, duplicatedLocalTimes)} (${cadence})`
+      }
+      if (range.count === 2) {
+        return `${nativeAvailabilityRangeItemLabel(range.start, duplicatedLocalTimes)} y ${nativeAvailabilityRangeItemLabel(range.end, duplicatedLocalTimes)}`
+      }
+      if (range.count > 2) {
+        const labels = range.items.map((item) => nativeAvailabilityRangeItemLabel(item, duplicatedLocalTimes))
+        return `${labels.slice(0, -1).join(', ')} y ${labels.at(-1)}`
+      }
+      return nativeAvailabilityRangeItemLabel(range.start, duplicatedLocalTimes)
+    })
+    blocks.push(`*${nativeAvailabilityDayLabel(day.localDate, dayTimezone)}*\n${lines.join('\n')}`)
+  }
+  if (!blocks.length) return { visibleReply: '', displayedStartTimes: [], displayedDays: 0 }
+  return {
+    visibleReply: `Sí, mira, tengo:\n\n${blocks.join('\n\n')}\n\n¿Qué día y horario te acomoda mejor?`,
+    displayedStartTimes: [...new Set(displayedStartTimes)],
+    displayedDays: blocks.length
+  }
+}
+
+async function lookupVerifiedAppointmentSlots(
+  calendarId,
+  startDate,
+  endDate,
+  timezone = null,
+  options = {}
+) {
+  const businessTimezone = resolveTimezone(timezone || await getAccountTimezone())
+  const response = toToolResult(await invokeController(getCalendarFreeSlots, {
+    params: { id: calendarId },
+    query: { startDate, endDate, timezone: businessTimezone },
+    internalContext: {
+      availabilityOptions: {
+        ...options,
+        allowDefaultOpenHours: false
+      }
+    }
+  }))
+  if (!response.ok) {
+    throw Object.assign(
+      new Error(response.error || 'No se pudo comprobar la disponibilidad actual.'),
+      { statusCode: response.statusCode }
+    )
+  }
+  if (!Array.isArray(response.data)) throw new Error('El calendario devolvió una respuesta inválida.')
+  return response.data
+}
+
 const NATIVE_APPOINTMENT_SELECTION_EVENT = 'appointment_slot_selection_verified'
 const NATIVE_APPOINTMENT_OFFER_EVENT = 'appointment_slot_offer_created'
+const NATIVE_APPOINTMENT_OPTIONS_REFERENCE_EVENT = 'appointment_availability_options_presented'
 const NATIVE_APPOINTMENT_DEPOSIT_INTENT_EVENT = 'appointment_deposit_intent_pending'
 const NATIVE_APPOINTMENT_RECEIPT_INTENT_EVENT = 'appointment_deposit_receipt_intent_bound'
 const NATIVE_APPOINTMENT_SELECTION_COLLECTION_TTL_MS = 15 * 60 * 1000
+const NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS = 24 * 60 * 60 * 1000
 const NATIVE_APPOINTMENT_TRANSFER_INTENT_TTL_MS = 24 * 60 * 60 * 1000
 
 function buildNativeTransferProofBindingEventId({ contactId = '', channel = 'whatsapp', receiptMessageId = '' } = {}) {
@@ -1836,6 +2100,331 @@ function nativeAppointmentEventMatchesChannel(detail = {}, channel = '', { allow
   const eventChannel = normalizeNativeAppointmentChannel(detail?.channel)
   if (!eventChannel) return allowLegacy
   return Boolean(expectedChannel) && eventChannel === expectedChannel
+}
+
+function nativeAppointmentReferenceMatches({
+  detail = {},
+  channel = '',
+  calendarId = '',
+  purpose = 'book',
+  appointmentId = '',
+  previewScopeId = ''
+} = {}) {
+  const normalizedPurpose = purpose === 'reschedule' ? 'reschedule' : 'book'
+  const normalizedAppointmentId = normalizedPurpose === 'reschedule'
+    ? String(appointmentId || '').trim()
+    : ''
+  const detailPurpose = String(detail?.purpose || 'book').trim() === 'reschedule'
+    ? 'reschedule'
+    : 'book'
+  const detailPreviewScopeId = String(detail?.previewScopeId || '').trim()
+  return String(detail?.calendarId || '').trim() === String(calendarId || '').trim() &&
+    nativeAppointmentEventMatchesChannel(detail, channel, { allowLegacy: false }) &&
+    detailPurpose === normalizedPurpose &&
+    String(detail?.appointmentId || '').trim() === normalizedAppointmentId &&
+    (previewScopeId
+      ? detailPreviewScopeId === String(previewScopeId).trim()
+      : !detailPreviewScopeId)
+}
+
+async function persistNativeAppointmentOptionsReference({
+  ctx,
+  config,
+  calendarId,
+  purpose = 'book',
+  appointmentId = '',
+  timezone = '',
+  rangeStartDate = '',
+  rangeEndDate = '',
+  displayedStartTimes = []
+} = {}) {
+  const agentId = String(config?.id || ctx?.agentId || '').trim()
+  const contactId = String(ctx?.contactId || '').trim()
+  const channel = normalizeNativeAppointmentChannel(ctx?.channel)
+  const previewScopeId = ctx?.dryRun && isConversationalAppointmentPreviewScopeId(ctx?.previewScopeId)
+    ? String(ctx.previewScopeId).trim()
+    : ''
+  const normalizedPurpose = purpose === 'reschedule' ? 'reschedule' : 'book'
+  const normalizedAppointmentId = normalizedPurpose === 'reschedule'
+    ? String(appointmentId || '').trim()
+    : ''
+  if (
+    !agentId || !contactId || !channel || !String(calendarId || '').trim() ||
+    (ctx?.dryRun && !previewScopeId) ||
+    (normalizedPurpose === 'reschedule' && !normalizedAppointmentId)
+  ) {
+    throw new Error('No se pudo identificar de forma durable la lista de horarios')
+  }
+
+  const resolvedTimezone = resolveTimezone(timezone)
+  const displayed = (Array.isArray(displayedStartTimes) ? displayedStartTimes : [])
+    .flatMap((startTime) => {
+      const canonical = buildCanonicalAppointmentSlotOption(startTime, resolvedTimezone)
+      return canonical
+        ? [{
+            startTime: canonical.startTime,
+            localDate: canonical.localDate,
+            localTime: canonical.localTime,
+            timezone: canonical.timezone,
+            epochMinute: nativeAppointmentEpochMinute(canonical.startTime)
+          }]
+        : []
+    })
+    .filter((item) => item.localTime && item.epochMinute !== null)
+    .sort((left, right) => (
+      left.localTime.localeCompare(right.localTime) || left.epochMinute - right.epochMinute
+    ))
+  if (!displayed.length) throw new Error('La lista no conserva referencias de horario válidas')
+
+  const displayedAt = new Date().toISOString()
+  const detail = {
+    agentId,
+    contactId,
+    channel,
+    calendarId: String(calendarId).trim(),
+    purpose: normalizedPurpose,
+    appointmentId: normalizedAppointmentId || null,
+    previewScopeId: previewScopeId || null,
+    timezone: resolvedTimezone,
+    rangeStartDate: String(rangeStartDate || '').trim() || null,
+    rangeEndDate: String(rangeEndDate || '').trim() || null,
+    minimumDisplayedStartTime: displayed[0].startTime,
+    maximumDisplayedStartTime: displayed.at(-1).startTime,
+    displayedAt,
+    expiresAt: new Date(Date.now() + NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS).toISOString()
+  }
+  const recorded = await recordConversationalAgentEvent({
+    contactId,
+    eventType: NATIVE_APPOINTMENT_OPTIONS_REFERENCE_EVENT,
+    detail,
+    throwOnError: true
+  })
+  if (!recorded?.inserted || !recorded?.id) {
+    throw new Error('No se pudo guardar la referencia durable de la lista')
+  }
+  const stored = await db.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?`,
+    [recorded.id]
+  )
+  const storedDetail = parseNativeEventDetail(stored?.detail_json)
+  if (
+    stored?.event_type !== NATIVE_APPOINTMENT_OPTIONS_REFERENCE_EVENT ||
+    String(stored?.contact_id || '') !== contactId ||
+    String(stored?.agent_id || '') !== agentId ||
+    !nativeAppointmentReferenceMatches({
+      detail: storedDetail,
+      channel,
+      calendarId,
+      purpose: normalizedPurpose,
+      appointmentId: normalizedAppointmentId,
+      previewScopeId
+    }) ||
+    String(storedDetail.minimumDisplayedStartTime || '') !== detail.minimumDisplayedStartTime ||
+    String(storedDetail.maximumDisplayedStartTime || '') !== detail.maximumDisplayedStartTime ||
+    String(storedDetail.displayedAt || '') !== displayedAt
+  ) {
+    throw new Error('La referencia durable de la lista quedó incompleta')
+  }
+  return { id: recorded.id, detail }
+}
+
+async function loadNativeAppointmentRelativeReference({
+  ctx,
+  config,
+  calendarId,
+  purpose = 'book',
+  appointmentId = '',
+  timezone = ''
+} = {}) {
+  const agentId = String(config?.id || ctx?.agentId || '').trim()
+  const contactId = String(ctx?.contactId || '').trim()
+  const channel = normalizeNativeAppointmentChannel(ctx?.channel)
+  const previewScopeId = ctx?.dryRun && isConversationalAppointmentPreviewScopeId(ctx?.previewScopeId)
+    ? String(ctx.previewScopeId).trim()
+    : ''
+  if (!agentId || !contactId || !channel || !String(calendarId || '').trim()) return null
+  if (ctx?.dryRun && !previewScopeId) return null
+
+  const individualEventType = previewScopeId
+    ? CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT
+    : NATIVE_APPOINTMENT_OFFER_EVENT
+  const rows = await db.all(
+    `SELECT id, event_type, detail_json
+     FROM conversational_agent_events
+     WHERE contact_id = ? AND agent_id = ? AND event_type IN (?, ?)
+     ORDER BY created_at DESC, id DESC LIMIT 160`,
+    [
+      contactId,
+      agentId,
+      NATIVE_APPOINTMENT_OPTIONS_REFERENCE_EVENT,
+      individualEventType
+    ]
+  )
+  const now = Date.now()
+  const candidates = []
+  for (const row of rows || []) {
+    const detail = parseNativeEventDetail(row?.detail_json)
+    if (!nativeAppointmentReferenceMatches({
+      detail,
+      channel,
+      calendarId,
+      purpose,
+      appointmentId,
+      previewScopeId
+    })) continue
+
+    if (row.event_type === NATIVE_APPOINTMENT_OPTIONS_REFERENCE_EVENT) {
+      const displayedAtMs = Date.parse(String(detail.displayedAt || ''))
+      const expiresAtMs = Date.parse(String(detail.expiresAt || ''))
+      if (
+        !Number.isFinite(displayedAtMs) ||
+        !Number.isFinite(expiresAtMs) ||
+        displayedAtMs > now ||
+        expiresAtMs <= now ||
+        now - displayedAtMs > NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS
+      ) continue
+      const minimum = buildCanonicalAppointmentSlotOption(
+        detail.minimumDisplayedStartTime,
+        resolveTimezone(detail.timezone, timezone)
+      )
+      const maximum = buildCanonicalAppointmentSlotOption(
+        detail.maximumDisplayedStartTime,
+        resolveTimezone(detail.timezone, timezone)
+      )
+      if (!minimum?.localTime || !maximum?.localTime || minimum.localTime > maximum.localTime) continue
+      candidates.push({
+        kind: 'list',
+        referenceAtMs: displayedAtMs,
+        minimum: {
+          startTime: minimum.startTime,
+          localDate: minimum.localDate,
+          localTime: minimum.localTime,
+          timezone: minimum.timezone
+        },
+        maximum: {
+          startTime: maximum.startTime,
+          localDate: maximum.localDate,
+          localTime: maximum.localTime,
+          timezone: maximum.timezone
+        }
+      })
+      continue
+    }
+
+    const status = String(detail.status || '')
+    const resolution = String(detail.resolution || '')
+    const resolvedAtMs = Date.parse(String(detail.resolvedAt || ''))
+    const offeredAtMs = Date.parse(String(detail.offeredAt || ''))
+    const expiresAtMs = Date.parse(String(detail.expiresAt || ''))
+    const rejectedForOtherOptions = Boolean(
+      status === 'superseded' &&
+      resolution === 'request_other_options' &&
+      Number.isFinite(resolvedAtMs) &&
+      resolvedAtMs <= now &&
+      now - resolvedAtMs <= NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS
+    )
+    const expiredActiveOffer = Boolean(
+      status === 'active' &&
+      Number.isFinite(offeredAtMs) &&
+      offeredAtMs <= now &&
+      now - offeredAtMs <= NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS &&
+      Number.isFinite(expiresAtMs) &&
+      expiresAtMs <= now
+    )
+    if (
+      row.event_type !== individualEventType ||
+      (!rejectedForOtherOptions && !expiredActiveOffer) ||
+      nativeAppointmentEpochMinute(detail.startTime) === null
+    ) continue
+    const offerTimezone = resolveTimezone(detail.timezone, timezone)
+    const canonical = buildCanonicalAppointmentSlotOption(detail.startTime, offerTimezone)
+    if (!canonical?.localDate || !canonical?.localTime) continue
+    candidates.push({
+      kind: 'individual',
+      referenceAtMs: rejectedForOtherOptions ? resolvedAtMs : offeredAtMs,
+      startTime: canonical.startTime,
+      localDate: canonical.localDate,
+      localTime: canonical.localTime,
+      timezone: canonical.timezone
+    })
+  }
+  candidates.sort((left, right) => (
+    right.referenceAtMs - left.referenceAtMs ||
+    (left.kind === right.kind ? 0 : (left.kind === 'individual' ? -1 : 1))
+  ))
+  return candidates[0] || null
+}
+
+function nativeRejectedAppointmentStartTimesFromDetail(detail = {}, { preview = false } = {}) {
+  const carried = Array.isArray(detail?.rejectedStartTimes) ? detail.rejectedStartTimes : []
+  const resolvedAtMs = Date.parse(String(detail?.resolvedAt || ''))
+  const recentRequestForOtherOptions = Boolean(
+    String(detail?.status || '') === 'superseded' &&
+    String(detail?.resolution || '') === 'request_other_options' &&
+    Number.isFinite(resolvedAtMs) &&
+    Date.now() - resolvedAtMs <= NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS
+  )
+  return mergeNativeRejectedAppointmentStartTimes(
+    preview || recentRequestForOtherOptions ? carried : [],
+    recentRequestForOtherOptions ? [detail?.startTime] : []
+  )
+}
+
+async function loadRecentNativeRejectedAppointmentStartTimes({ ctx, config, calendarId } = {}) {
+  const contactId = String(ctx?.contactId || '').trim()
+  const agentId = String(config?.id || ctx?.agentId || '').trim()
+  const cleanCalendarId = String(calendarId || '').trim()
+  const channel = normalizeNativeAppointmentChannel(ctx?.channel)
+  const previewScopeId = ctx?.dryRun && isConversationalAppointmentPreviewScopeId(ctx?.previewScopeId)
+    ? String(ctx.previewScopeId).trim()
+    : ''
+  if (!contactId || !agentId || !cleanCalendarId || (ctx?.dryRun && !previewScopeId)) return []
+
+  const rows = previewScopeId
+    ? [await db.get(
+        `SELECT detail_json FROM conversational_agent_events
+         WHERE id = ? AND contact_id = ? AND agent_id = ? AND event_type = ?`,
+        [
+          buildConversationalAppointmentPreviewOfferEventId(previewScopeId),
+          contactId,
+          agentId,
+          CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT
+        ]
+      )].filter(Boolean)
+    : await db.all(
+        `SELECT detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = ?
+         ORDER BY created_at DESC, id DESC LIMIT 120`,
+        [contactId, agentId, NATIVE_APPOINTMENT_OFFER_EVENT]
+      )
+
+  return mergeNativeRejectedAppointmentStartTimes(...(rows || []).flatMap((row) => {
+    const detail = parseNativeEventDetail(row?.detail_json)
+    if (
+      String(detail?.calendarId || '') !== cleanCalendarId ||
+      !nativeAppointmentEventMatchesChannel(detail, channel) ||
+      (previewScopeId && String(detail?.previewScopeId || '') !== previewScopeId)
+    ) return []
+    return [nativeRejectedAppointmentStartTimesFromDetail(detail, { preview: Boolean(previewScopeId) })]
+  }))
+}
+
+async function hydrateNativeRejectedAppointmentStartTimes({ ctx, config, calendarId } = {}) {
+  const cleanCalendarId = String(calendarId || '').trim()
+  if (
+    ctx?.nativeRejectedAppointmentStartTimesHydrated === true &&
+    String(ctx?.nativeRejectedAppointmentCalendarId || '') === cleanCalendarId
+  ) return Array.isArray(ctx.rejectedAppointmentStartTimes) ? ctx.rejectedAppointmentStartTimes : []
+
+  const durable = await loadRecentNativeRejectedAppointmentStartTimes({ ctx, config, calendarId: cleanCalendarId })
+  ctx.rejectedAppointmentStartTimes = mergeNativeRejectedAppointmentStartTimes(
+    ctx.rejectedAppointmentStartTimes,
+    durable
+  )
+  ctx.nativeRejectedAppointmentStartTimesHydrated = true
+  ctx.nativeRejectedAppointmentCalendarId = cleanCalendarId
+  return ctx.rejectedAppointmentStartTimes
 }
 
 function appointmentSelectionError(message, code = 'appointment_selection_required') {
@@ -1940,8 +2529,12 @@ async function persistNativeAppointmentOffer({
       )
       const currentDetail = parseNativeEventDetail(current?.detail_json)
       const currentStatus = String(currentDetail.status || '')
+      const currentExpiresAtMs = Date.parse(String(currentDetail.expiresAt || ''))
+      const currentActiveAndUnexpired = currentStatus === 'active' &&
+        Number.isFinite(currentExpiresAtMs) &&
+        currentExpiresAtMs > Date.now()
       const exactReplay = Boolean(
-        currentStatus === 'active' &&
+        currentActiveAndUnexpired &&
         String(currentDetail.executionId || '') === executionId &&
         String(currentDetail.calendarId || '') === String(calendarId) &&
         String(currentDetail.startTime || '') === String(startTime) &&
@@ -1960,16 +2553,21 @@ async function persistNativeAppointmentOffer({
         String(current?.agent_id || '') !== agentId ||
         String(currentDetail.previewScopeId || '') !== previewScopeId ||
         (String(currentDetail.channel || '') && String(currentDetail.channel || '') !== String(detail.channel || '')) ||
-        ['active', 'resolving_handoff'].includes(currentStatus) ||
+        currentActiveAndUnexpired ||
+        currentStatus === 'resolving_handoff' ||
         ['accepted', 'materializing', 'materialized'].includes(currentStatus)
       ) {
         previewConflict = true
         return
       }
+      const carriedRejectedStartTimes = nativeRejectedAppointmentStartTimesFromDetail(currentDetail, { preview: true })
+      const replacementDetail = carriedRejectedStartTimes.length
+        ? { ...detail, rejectedStartTimes: carriedRejectedStartTimes }
+        : detail
       const updated = await db.run(
         `UPDATE conversational_agent_events SET detail_json = ?
          WHERE id = ? AND contact_id = ? AND agent_id = ? AND event_type = ? AND detail_json = ?`,
-        [JSON.stringify(detail), eventId, contactId, agentId, eventType, current.detail_json]
+        [JSON.stringify(replacementDetail), eventId, contactId, agentId, eventType, current.detail_json]
       )
       if (Number(updated?.changes ?? updated?.rowCount ?? 0) !== 1) previewConflict = true
     })
@@ -2998,7 +3596,7 @@ async function validateNativeAppointmentDepositIntent({
       requestedStartTime: new Date(startMs).toISOString(),
       windowStart: normalizeDateOnlyInTimezone(new Date(startMs - 86400000).toISOString(), timezone),
       windowEnd: normalizeDateOnlyInTimezone(new Date(startMs + 86400000).toISOString(), timezone),
-      lookupSlots: getLocalFreeSlots,
+      lookupSlots: lookupVerifiedAppointmentSlots,
       ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
     })
     if (!slotValidation.ok) {
@@ -4508,6 +5106,18 @@ export function createConversationalTools(ctx) {
   const appointmentOfferDecisionMode = ctx.appointmentOfferDecision?.active === true
   const canResolveOfferWithHandoff = Boolean(handoffCapability)
 
+  const verifiedRescheduleSlotLookup = ({ appointmentId, durationMs } = {}) => (
+    calendarId,
+    startDate,
+    endDate,
+    timezone,
+    options = {}
+  ) => lookupVerifiedAppointmentSlots(calendarId, startDate, endDate, timezone, {
+    ...options,
+    excludeAppointmentId: appointmentId,
+    durationMinutes: Number(durationMs) / 60000
+  })
+
   const failClosedPreventiveMeasureToHuman = async ({ action, category, reason, cause }) => {
     try {
       const committed = await withConversationalAgentSafetyLock({
@@ -5273,23 +5883,75 @@ export function createConversationalTools(ctx) {
       scheduleCapability?.allowOverlaps
         ? 'Obtiene horarios reales del calendario blindado. El negocio permite empalmar citas dentro de sus horas de atención.'
         : 'Obtiene horarios reales y libres del calendario blindado; no devuelve horarios ocupados.',
-      'Cada opción incluye localLabel/localDate/localTime ya calculados en la zona del negocio: usa esos campos para hablar con la persona y NO conviertas el horario por tu cuenta.',
-      'Para agendar, pasa options[].startTime exactamente como aparece, sin recalcularlo ni reconstruirlo. Para reagendar manda también el appointmentId exacto: Ristak excluirá esa misma cita y usará su duración real.'
+      'Filtra aquí mismo por días y horas cuando la persona diga cosas como "miércoles o viernes", "después de las 5" o "más tarde".',
+      'Cada opción incluye localLabel/localDate/localTime ya calculados en la zona del negocio: NO conviertas el horario por tu cuenta.',
+      'Si pidió opciones amplias, llama offer_appointment_options. Si eligió o propuso una fecha y hora exactas, pasa options[].startTime sin modificar a offer_appointment_slot. Para reagendar manda también el appointmentId exacto.'
     ].join(' '),
     parameters: z.object({
       startDate: z.string().describe('Fecha inicial YYYY-MM-DD en la zona horaria del negocio'),
       endDate: z.string().describe('Fecha final YYYY-MM-DD en la zona horaria del negocio'),
       appointmentId: z.preprocess((value) => value ?? null, z.string().nullable())
-        .describe('ID exacto de get_contact_appointments para buscar horarios de reagenda; null para una cita nueva')
+        .describe('ID exacto de get_contact_appointments para buscar horarios de reagenda; null para una cita nueva'),
+      weekdays: z.preprocess(
+        (value) => value ?? null,
+        z.array(z.number().int().min(1).max(7)).max(7).nullable()
+      ).describe('Días ISO solicitados: 1=lunes, 2=martes, ... 7=domingo; null cuando no restringió días'),
+      earliestLocalTime: z.preprocess(
+        (value) => value ?? null,
+        z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable()
+      ).describe('Hora local mínima inclusiva HH:mm, por ejemplo 17:00 para "después de las 5"; null si no aplica'),
+      latestLocalTime: z.preprocess(
+        (value) => value ?? null,
+        z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable()
+      ).describe('Hora local máxima inclusiva HH:mm; null si no aplica'),
+      relativeToPreviousOffer: z.preprocess(
+        (value) => value ?? null,
+        z.enum(['later', 'earlier']).nullable()
+      ).describe('later o earlier cuando pidió algo más tarde/temprano que la última lista mostrada o el horario individual rechazado; null en los demás casos')
     }),
-    execute: async ({ startDate, endDate, appointmentId }) => {
+    execute: async ({
+      startDate,
+      endDate,
+      appointmentId,
+      weekdays,
+      earliestLocalTime,
+      latestLocalTime,
+      relativeToPreviousOffer
+    }) => {
+      delete ctx.nativeAppointmentAvailability
       const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
       const effectiveCalendarId = nativeCalendar?.id || null
       if (!effectiveCalendarId) {
         return { ok: false, total: 0, slots: [], error: 'El calendario blindado de la capacidad no existe o ya no está activo. Pasa la conversación a una persona.' }
       }
+      await hydrateNativeRejectedAppointmentStartTimes({ ctx, config, calendarId: effectiveCalendarId })
       const overlapsAllowed = scheduleCapability?.allowOverlaps === true
       const accountTimezone = await getAccountTimezone()
+      const cleanEarliestLocalTime = normalizeNativeAvailabilityTime(earliestLocalTime)
+      const cleanLatestLocalTime = normalizeNativeAvailabilityTime(latestLocalTime)
+      if (
+        (earliestLocalTime !== null && !cleanEarliestLocalTime) ||
+        (latestLocalTime !== null && !cleanLatestLocalTime)
+      ) {
+        return {
+          ok: false,
+          total: 0,
+          slots: [],
+          error: 'La restricción de hora local no es válida. Vuelve a consultar con una hora real entre 00:00 y 23:59.'
+        }
+      }
+      if (
+        cleanEarliestLocalTime &&
+        cleanLatestLocalTime &&
+        nativeLocalTimeToMinutes(cleanEarliestLocalTime) > nativeLocalTimeToMinutes(cleanLatestLocalTime)
+      ) {
+        return {
+          ok: false,
+          total: 0,
+          slots: [],
+          error: 'El horario mínimo quedó después del máximo. Corrige el rango con base en lo que pidió la persona.'
+        }
+      }
       const cleanAppointmentId = String(appointmentId || '').trim()
       let rescheduledAppointment = null
       let durationMs = NaN
@@ -5310,14 +5972,89 @@ export function createConversationalTools(ctx) {
           return { ok: false, total: 0, slots: [], error: 'La cita no conserva una duración válida y no puede reagendarse automáticamente.' }
         }
       }
-      const rawSlots = await getLocalFreeSlots(effectiveCalendarId, startDate, endDate, accountTimezone, {
+      let relativeReference = null
+      if (relativeToPreviousOffer) {
+        try {
+          relativeReference = await loadNativeAppointmentRelativeReference({
+            ctx,
+            config,
+            calendarId: effectiveCalendarId,
+            purpose: rescheduledAppointment ? 'reschedule' : 'book',
+            appointmentId: rescheduledAppointment?.id || null,
+            timezone: accountTimezone
+          })
+        } catch (error) {
+          return {
+            ok: false,
+            total: 0,
+            slots: [],
+            error: 'No pude recuperar con seguridad la lista u oferta anterior. Vuelve a consultar opciones sin compararlas.'
+          }
+        }
+        if (!relativeReference) {
+          return {
+            ok: false,
+            total: 0,
+            slots: [],
+            error: 'No hay una lista u oferta anterior vigente para saber qué significa más tarde o más temprano.'
+          }
+        }
+      }
+      const availabilityOptions = {
         ignoreAppointmentConflicts: overlapsAllowed,
         appointmentLimit: overlapsAllowed ? undefined : 1,
+        allowDefaultOpenHours: false,
         ...(rescheduledAppointment
           ? { excludeAppointmentId: rescheduledAppointment.id, durationMinutes: durationMs / 60000 }
           : {})
-      })
-      const slots = buildNativeFreeSlotDays(rawSlots, accountTimezone)
+      }
+      let rawSlots
+      try {
+        rawSlots = await lookupVerifiedAppointmentSlots(
+          effectiveCalendarId,
+          startDate,
+          endDate,
+          accountTimezone,
+          availabilityOptions
+        )
+      } catch (error) {
+        return {
+          ok: false,
+          total: 0,
+          slots: [],
+          availabilityCheckFailed: true,
+          transferRequired: Number(error?.statusCode || 0) >= 500,
+          error: error?.message || 'No se pudo comprobar la disponibilidad real del calendario.'
+        }
+      }
+      const rejectedStartTimes = (Array.isArray(ctx.rejectedAppointmentStartTimes)
+        ? ctx.rejectedAppointmentStartTimes
+        : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+      const relativeBoundary = relativeReference?.kind === 'list'
+        ? (relativeToPreviousOffer === 'later' ? relativeReference.maximum : relativeReference.minimum)
+        : relativeReference
+      const relativeToStartTime = relativeBoundary?.startTime || null
+      const relativeToLocalTime = relativeBoundary?.localTime || null
+      const relativeToLocalDate = relativeBoundary?.localDate || null
+      const relativeToTimezone = relativeBoundary?.timezone || null
+      const slots = filterNativeFreeSlotDays(
+        buildNativeFreeSlotDays(rawSlots, accountTimezone),
+        {
+          timezone: accountTimezone,
+          weekdays,
+          earliestLocalTime: cleanEarliestLocalTime,
+          latestLocalTime: cleanLatestLocalTime,
+          excludedStartTimes: rejectedStartTimes,
+          relativeToStartTime,
+          relativeToLocalTime,
+          relativeToLocalDate,
+          relativeToTimezone,
+          relativeReferenceKind: relativeReference?.kind || 'individual',
+          relativeDirection: relativeToPreviousOffer
+        }
+      )
 
       if (!Array.isArray(slots) || !slots.length) {
         return {
@@ -5328,13 +6065,28 @@ export function createConversationalTools(ctx) {
         }
       }
 
+      const total = slots.reduce((sum, day) => sum + day.options.length, 0)
+      const intervalMinutes = Math.max(1, calendarDurationToMinutes(
+        nativeCalendar?.slot_interval,
+        nativeCalendar?.slot_interval_unit,
+        calendarDurationToMinutes(nativeCalendar?.slot_duration, nativeCalendar?.slot_duration_unit, 60)
+      ))
+      ctx.nativeAppointmentAvailability = {
+        calendarId: effectiveCalendarId,
+        purpose: rescheduledAppointment ? 'reschedule' : 'book',
+        appointmentId: rescheduledAppointment?.id || null,
+        timezone: accountTimezone,
+        slots,
+        total,
+        intervalMinutes,
+        startDate,
+        endDate
+      }
+      ctx.requireFreshAppointmentAvailability = false
+
       return {
         ok: true,
-        total: slots.reduce((total, day) => total + (
-          Array.isArray(day.options)
-            ? day.options.length
-            : (Array.isArray(day.slots) ? day.slots.length : 0)
-        ), 0),
+        total,
         overlapPolicy: overlapsAllowed ? 'allowed' : 'blocked',
         purpose: rescheduledAppointment ? 'reschedule' : 'book',
         appointmentId: rescheduledAppointment?.id || null,
@@ -5343,9 +6095,104 @@ export function createConversationalTools(ctx) {
           overlapsAllowed
             ? 'Empalme permitido: estos horarios respetan horas de atención, pero pueden coincidir con citas existentes.'
             : 'Empalme bloqueado: estos horarios no tienen otra cita activa encima.',
-          'No escribas horarios por tu cuenta: pasa un solo options[].startTime sin modificar a offer_appointment_slot; la hora local ya está calculada por Ristak.'
+          total === 1
+            ? 'Sólo hay una opción: pásala sin modificar a offer_appointment_slot.'
+            : 'Si la persona pidió fechas u opciones amplias, llama offer_appointment_options para que Ristak escriba una lista agrupada. Si ya eligió una fecha y hora exactas, usa offer_appointment_slot.'
         ].filter(Boolean).join(' '),
         slots
+      }
+    }
+  })
+
+  const offerAppointmentOptionsTool = tool({
+    name: 'offer_appointment_options',
+    description: 'Muestra varias opciones reales, agrupadas por día y con el formato de chat construido por Ristak. Úsala sólo después de get_free_slots cuando la persona pidió días, fechas u opciones amplias. Es informativa: no selecciona ni aparta ningún horario y cierra el turno.',
+    parameters: z.object({
+      maxDays: z.preprocess((value) => value ?? 3, z.number().int().min(1).max(3))
+        .describe('Cantidad máxima de días a mostrar; normalmente 3')
+    }),
+    execute: async ({ maxDays }) => {
+      if (ctx.appointmentOfferDecision?.active === true) {
+        return appointmentSelectionError(
+          'Primero resuelve el horario individual pendiente antes de mostrar otras opciones.',
+          'appointment_offer_resolution_required'
+        )
+      }
+      const availability = ctx.nativeAppointmentAvailability
+      const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
+      const calendarId = nativeCalendar?.id || null
+      if (
+        !calendarId ||
+        !availability ||
+        String(availability.calendarId || '') !== String(calendarId) ||
+        !Array.isArray(availability.slots)
+      ) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          error: 'Primero consulta get_free_slots en esta misma vuelta; no hay opciones verificadas para mostrar.'
+        }
+      }
+      if (Number(availability.total || 0) < 2) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          error: 'Sólo quedó un horario. Ofrécelo con offer_appointment_slot para conservar una confirmación exacta.'
+        }
+      }
+      const presentation = buildNativeAppointmentAvailabilityPresentation(availability.slots, {
+        timezone: availability.timezone,
+        intervalMinutes: availability.intervalMinutes,
+        maxDays
+      })
+      if (!presentation.visibleReply) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          error: 'No se pudo construir una lista segura con los horarios verificados.'
+        }
+      }
+      try {
+        await persistNativeAppointmentOptionsReference({
+          ctx,
+          config,
+          calendarId,
+          purpose: availability.purpose,
+          appointmentId: availability.appointmentId,
+          timezone: availability.timezone,
+          rangeStartDate: availability.startDate,
+          rangeEndDate: availability.endDate,
+          displayedStartTimes: presentation.displayedStartTimes
+        })
+      } catch (error) {
+        logger.error(`[Agente conversacional] No se pudo conservar la referencia de la lista de horarios: ${error.message}`)
+        return {
+          ok: false,
+          actionCompleted: false,
+          code: 'appointment_options_reference_persistence_failed',
+          error: 'No pude guardar de forma segura qué horarios iba a mostrar. No enseñes ni inventes opciones; vuelve a consultar.'
+        }
+      }
+      const action = pushAction(ctx, 'offer_appointment_options', {
+        purpose: availability.purpose,
+        appointmentId: availability.appointmentId,
+        displayedDays: presentation.displayedDays,
+        displayedStartTimes: presentation.displayedStartTimes,
+        visibleReply: presentation.visibleReply,
+        effect: { liveEffect: 'MOSTRARÍA varias opciones reales sin apartar ninguna', marksObjectiveCompleted: false }
+      })
+      settleAction(action, ctx.dryRun ? 'simulated' : 'ok', {
+        terminal: true,
+        actionCompleted: false,
+        visibleReply: presentation.visibleReply
+      })
+      return {
+        ok: true,
+        ...(ctx.dryRun ? { simulated: true } : {}),
+        actionCompleted: false,
+        terminal: true,
+        visibleReply: presentation.visibleReply,
+        displayedDays: presentation.displayedDays
       }
     }
   })
@@ -5361,6 +6208,13 @@ export function createConversationalTools(ctx) {
       ).describe('ID exacto devuelto por get_contact_appointments cuando esta oferta es para reagendar; null para una cita nueva')
     }),
     execute: async ({ startTime, appointmentId }) => {
+      if (ctx.appointmentOfferDecision?.active === true) {
+        return appointmentSelectionError(
+          'Primero resuelve el horario individual pendiente antes de ofrecer uno nuevo.',
+          'appointment_offer_resolution_required'
+        )
+      }
+      const cleanAppointmentId = String(appointmentId || '').trim()
       if (!String(appointmentId || '').trim() && getDepositRequirementForRuntime(ctx, config)) {
         // Desde que esta tool intenta ofrecer una cita nueva, cualquier cobro
         // del mismo turno pertenece a ese intento. Si el slot falla o todavía
@@ -5370,17 +6224,55 @@ export function createConversationalTools(ctx) {
       }
       const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
       const calendarId = nativeCalendar?.id || null
-      const startMs = Date.parse(startTime || '')
+      let requestedStartTime = String(startTime || '').trim()
+      let startMs = Date.parse(requestedStartTime)
       if (!calendarId || !Number.isFinite(startMs) || startMs <= Date.now()) {
         return { ok: false, actionCompleted: false, error: 'El horario ya no es válido o el calendario dejó de estar activo.' }
       }
-      const cleanAppointmentId = String(appointmentId || '').trim()
+      if (cleanAppointmentId && !nativeCalendarPermissionEnabled(nativeCalendar.allow_reschedule)) {
+        return { ok: false, actionCompleted: false, error: 'Este calendario no permite reagendar citas. Pasa la conversación a una persona.' }
+      }
+      const rejectedStartTimes = await hydrateNativeRejectedAppointmentStartTimes({ ctx, config, calendarId })
+      const requestedEpochMinute = nativeAppointmentEpochMinute(requestedStartTime)
+      const rejectedEpochMinutes = new Set(rejectedStartTimes
+        .map(nativeAppointmentEpochMinute)
+        .filter((value) => value !== null))
+      if (requestedEpochMinute !== null && rejectedEpochMinutes.has(requestedEpochMinute)) {
+        return appointmentSelectionError(
+          'Ese horario ya fue rechazado o reemplazado en esta conversación. Consulta disponibilidad y ofrece otro.',
+          'appointment_slot_previously_rejected'
+        )
+      }
+      if (ctx.requireFreshAppointmentAvailability === true) {
+        return appointmentSelectionError(
+          'Después de cambiar la oferta debes consultar get_free_slots otra vez antes de mostrar un horario nuevo.',
+          'appointment_fresh_availability_required'
+        )
+      }
+      const currentAvailability = ctx.nativeAppointmentAvailability
+      if (currentAvailability) {
+        const expectedAppointmentId = String(currentAvailability.appointmentId || '').trim()
+        const expectedPurpose = expectedAppointmentId ? 'reschedule' : 'book'
+        const matchingOption = (Array.isArray(currentAvailability.slots) ? currentAvailability.slots : [])
+          .flatMap((day) => (Array.isArray(day?.options) ? day.options : []))
+          .find((option) => nativeAppointmentEpochMinute(option?.startTime) === requestedEpochMinute)
+        if (
+          String(currentAvailability.calendarId || '') !== String(calendarId) ||
+          expectedAppointmentId !== cleanAppointmentId ||
+          String(currentAvailability.purpose || expectedPurpose) !== expectedPurpose ||
+          !matchingOption
+        ) {
+          return appointmentSelectionError(
+            'El horario no pertenece exactamente a la última disponibilidad consultada para este calendario y esta cita.',
+            'appointment_slot_not_in_current_availability'
+          )
+        }
+        requestedStartTime = String(matchingOption.startTime || '').trim()
+        startMs = Date.parse(requestedStartTime)
+      }
       let rescheduledAppointment = null
       let rescheduleDurationMs = NaN
       if (cleanAppointmentId) {
-        if (!nativeCalendarPermissionEnabled(nativeCalendar.allow_reschedule)) {
-          return { ok: false, actionCompleted: false, error: 'Este calendario no permite reagendar citas. Pasa la conversación a una persona.' }
-        }
         rescheduledAppointment = await loadOwnedConversationalAppointment({
           ctx,
           calendarId,
@@ -5395,14 +6287,18 @@ export function createConversationalTools(ctx) {
         }
       }
       const timezone = await getAccountTimezone()
+      const verifiedSlotLookup = rescheduledAppointment
+        ? verifiedRescheduleSlotLookup({
+            appointmentId: rescheduledAppointment.id,
+            durationMs: rescheduleDurationMs
+          })
+        : lookupVerifiedAppointmentSlots
       const slotValidation = await revalidateAppointmentSlot({
         calendarId,
         requestedStartTime: new Date(startMs).toISOString(),
         windowStart: normalizeDateOnlyInTimezone(new Date(startMs - 86400000).toISOString(), timezone),
         windowEnd: normalizeDateOnlyInTimezone(new Date(startMs + 86400000).toISOString(), timezone),
-        lookupSlots: rescheduledAppointment
-          ? rescheduleSlotLookup({ appointmentId: rescheduledAppointment.id, durationMs: rescheduleDurationMs })
-          : getLocalFreeSlots,
+        lookupSlots: verifiedSlotLookup,
         ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
       })
       if (!slotValidation.ok) return slotValidation
@@ -5605,7 +6501,11 @@ export function createConversationalTools(ctx) {
 
       const nativeExecutionId = String(ctx.executionId || '').trim()
       const nativeOverlapsAllowed = scheduleCapability?.allowOverlaps === true
-      const nativeDurationMinutes = Number(nativeCalendar?.slot_duration) > 0 ? Number(nativeCalendar.slot_duration) : 60
+      const nativeDurationMinutes = calendarDurationToMinutes(
+        nativeCalendar?.slot_duration,
+        nativeCalendar?.slot_duration_unit,
+        60
+      )
       if (!ctx.dryRun && !nativeExecutionId) {
         return {
           ok: false,
@@ -5811,7 +6711,11 @@ export function createConversationalTools(ctx) {
       const calendar = nativeCalendar
       if (!calendar) return { ok: false, actionCompleted: false, error: 'Calendario no encontrado: usa list_calendars para obtener el ID real. No se agendó nada.' }
 
-      const durationMinutes = Number(calendar.slot_duration) > 0 ? Number(calendar.slot_duration) : 60
+      const durationMinutes = calendarDurationToMinutes(
+        calendar.slot_duration,
+        calendar.slot_duration_unit,
+        60
+      )
       const overlapsAllowed = nativeOverlapsAllowed
       const clientRequestId = nativeClientRequestId
 
@@ -5827,7 +6731,7 @@ export function createConversationalTools(ctx) {
         requestedStartTime: start.toISOString(),
         windowStart: slotWindowStart,
         windowEnd: slotWindowEnd,
-        lookupSlots: getLocalFreeSlots,
+        lookupSlots: lookupVerifiedAppointmentSlots,
         ignoreAppointmentConflicts: overlapsAllowed
       })
       if (!slotValidation.ok) {
@@ -6378,7 +7282,7 @@ export function createConversationalTools(ctx) {
       requestedStartTime: new Date(targetStartMs).toISOString(),
       windowStart: normalizeDateOnlyInTimezone(new Date(targetStartMs - 86400000).toISOString(), businessTimezone),
       windowEnd: normalizeDateOnlyInTimezone(new Date(targetStartMs + 86400000).toISOString(), businessTimezone),
-      lookupSlots: rescheduleSlotLookup({ appointmentId: appointment.id, durationMs }),
+      lookupSlots: verifiedRescheduleSlotLookup({ appointmentId: appointment.id, durationMs }),
       ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
     })
     if (!slotValidation.ok) return slotValidation
@@ -6665,7 +7569,11 @@ export function createConversationalTools(ctx) {
         )
       }
 
-      const durationMinutes = Number(nativeCalendar.slot_duration) > 0 ? Number(nativeCalendar.slot_duration) : 60
+      const durationMinutes = calendarDurationToMinutes(
+        nativeCalendar.slot_duration,
+        nativeCalendar.slot_duration_unit,
+        60
+      )
       const startMs = start.getTime()
       const slotWindowStart = normalizeDateOnlyInTimezone(
         new Date(startMs - 24 * 60 * 60 * 1000).toISOString(),
@@ -6680,7 +7588,7 @@ export function createConversationalTools(ctx) {
         requestedStartTime: start.toISOString(),
         windowStart: slotWindowStart,
         windowEnd: slotWindowEnd,
-        lookupSlots: getLocalFreeSlots,
+        lookupSlots: lookupVerifiedAppointmentSlots,
         ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
       })
       if (!slotValidation.ok) return slotValidation
@@ -7193,7 +8101,7 @@ export function createConversationalTools(ctx) {
         requestedStartTime: new Date(targetStartMs).toISOString(),
         windowStart: normalizeDateOnlyInTimezone(new Date(targetStartMs - 86400000).toISOString(), timezone),
         windowEnd: normalizeDateOnlyInTimezone(new Date(targetStartMs + 86400000).toISOString(), timezone),
-        lookupSlots: rescheduleSlotLookup({ appointmentId: appointment.id, durationMs }),
+        lookupSlots: verifiedRescheduleSlotLookup({ appointmentId: appointment.id, durationMs }),
         ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
       })
       if (!slotValidation.ok) return slotValidation
@@ -8940,7 +9848,15 @@ export function createConversationalTools(ctx) {
             phase: 'resolved',
             resolvedAt,
             resolvedExecutionId: String(ctx.executionId || '').trim(),
-            resolution: decision
+            resolution: decision,
+            ...(decision === 'request_other_options'
+              ? {
+                  rejectedStartTimes: mergeNativeRejectedAppointmentStartTimes(
+                    currentDetail.rejectedStartTimes,
+                    [currentDetail.startTime]
+                  )
+                }
+              : {})
           }
           const updated = await db.run(
             `UPDATE conversational_agent_events SET detail_json = ?
@@ -8958,12 +9874,21 @@ export function createConversationalTools(ctx) {
           }
         }
         if (decision === 'request_other_options') {
+          ctx.rejectedAppointmentStartTimes = mergeNativeRejectedAppointmentStartTimes(
+            ctx.rejectedAppointmentStartTimes,
+            [candidate.offer.detail.startTime]
+          )
+          ctx.nativeRejectedAppointmentStartTimesHydrated = true
+          ctx.nativeRejectedAppointmentCalendarId = String(candidate.offer.detail.calendarId || '').trim()
+          ctx.appointmentOfferDecision = null
+          delete ctx.nativeAppointmentAvailability
+          ctx.requireFreshAppointmentAvailability = true
           return {
             ok: true,
             actionCompleted: true,
             terminal: false,
             visibleReply: null,
-            continueWith: 'Consulta disponibilidad según lo que pidió la persona y ofrece una sola opción nueva en esta misma vuelta.'
+            continueWith: 'Consulta disponibilidad según lo que pidió la persona. Si pidió algo amplio o relativo, filtra get_free_slots y muestra varias opciones con offer_appointment_options; si pidió una fecha y hora exactas, usa offer_appointment_slot. Nunca repitas el horario rechazado.'
           }
         }
         return {
@@ -9098,6 +10023,7 @@ export function createConversationalTools(ctx) {
           visibleReply: missingDataReply || 'no pude terminar la cita con ese horario. necesito que el equipo lo revise antes de volver a intentarlo'
         }
       }
+      ctx.appointmentOfferDecision = null
       const humanBooking = expected.terminalToolName === 'request_human_booking'
       return {
         ...bookingResult,
@@ -9141,6 +10067,7 @@ export function createConversationalTools(ctx) {
   if (!ctx.followUpMode && availableCapabilityIds.has('schedule_appointment')) {
     nativeTools.push(getContactAppointmentsTool)
     nativeTools.push(getFreeSlotsForAgentTool)
+    nativeTools.push(offerAppointmentOptionsTool)
     nativeTools.push(offerAppointmentSlotTool)
     nativeTools.push(
       scheduleCapability?.bookingOwner === 'human'

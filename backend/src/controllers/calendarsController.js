@@ -28,7 +28,8 @@ import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
   generateContactId,
-  prepareContactPhoneUpsert
+  prepareContactPhoneUpsert,
+  resolveContactIdByGhlId
 } from '../services/contactIdentityService.js';
 import {
   assertPaidPaymentGate,
@@ -61,6 +62,7 @@ const CALENDAR_EVENTS_MAX_RANGE_DAYS = 370;
 const CALENDAR_AVAILABILITY_MAX_RANGE_DAYS = 45;
 const CALENDAR_BLOCKED_SLOTS_MAX_RANGE_DAYS = 45;
 const APPOINTMENT_BOOKING_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'messenger', 'instagram', 'email']);
+const HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER = '[remote_outcome_unknown]';
 
 async function lockCalendarAppointmentCreation(calendarId) {
   // SQLite ya entra con BEGIN IMMEDIATE en db.transaction. En PostgreSQL este
@@ -203,6 +205,191 @@ async function getCalendarSourcePreference(override = '') {
 
 function cleanString(value) {
   return String(value ?? '').trim();
+}
+
+function withoutGoogleCalendarLinkMutation(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const sanitized = { ...source };
+  for (const key of [
+    'googleCalendarId', 'google_calendar_id',
+    'googleAccessRole', 'google_access_role',
+    'googleCalendarSummary', 'google_calendar_summary',
+    'googleCalendarTimeZone', 'google_calendar_time_zone'
+  ]) {
+    delete sanitized[key];
+  }
+
+  for (const rawKey of ['rawJson', 'raw_json']) {
+    if (!(rawKey in sanitized)) continue;
+    let parsed = sanitized[rawKey];
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed); } catch { continue; }
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+    const safeRaw = { ...parsed };
+    for (const key of [
+      'googleCalendarId', 'google_calendar_id',
+      'googleAccessRole', 'google_access_role',
+      'googleCalendarSummary', 'google_calendar_summary',
+      'googleCalendarTimeZone', 'google_calendar_time_zone'
+    ]) {
+      delete safeRaw[key];
+    }
+    sanitized[rawKey] = safeRaw;
+  }
+  return sanitized;
+}
+
+async function markAppointmentMirrorSyncError({
+  appointmentId,
+  provider,
+  message,
+  expectedAppointment = null
+} = {}) {
+  const normalizedAppointmentId = cleanString(appointmentId);
+  if (!normalizedAppointmentId) return null;
+  const safeMessage = cleanString(message || 'El espejo externo no confirmó la sincronización.').slice(0, 1000);
+  if (provider !== 'google') {
+    return localCalendarService.markHighLevelAppointmentMirrorError(
+      normalizedAppointmentId,
+      safeMessage,
+      { expectedAppointment }
+    );
+  }
+
+  if (!expectedAppointment) {
+    await db.run(`
+      UPDATE appointments
+      SET google_sync_status = 'error', google_sync_error = ?
+      WHERE id = ?
+    `, [safeMessage, normalizedAppointmentId]);
+    return localCalendarService.getLocalAppointment(normalizedAppointmentId);
+  }
+
+  return withAppointmentMirrorFenceLock(expectedAppointment, async () => {
+    const current = await localCalendarService.getLocalAppointment(normalizedAppointmentId);
+    if (!appointmentMatchesMirrorFence(current, expectedAppointment)) {
+      await db.run(`
+        UPDATE appointments
+        SET google_sync_status = 'pending'
+        WHERE id = ?
+      `, [normalizedAppointmentId]);
+      return localCalendarService.getLocalAppointment(normalizedAppointmentId);
+    }
+    await db.run(`
+      UPDATE appointments
+      SET google_sync_status = 'error', google_sync_error = ?
+      WHERE id = ?
+    `, [safeMessage, normalizedAppointmentId]);
+    return localCalendarService.getLocalAppointment(normalizedAppointmentId);
+  });
+}
+
+function highLevelMirrorWriteOutcomeIsAmbiguous(error) {
+  if (error?.code === 'highlevel_mirror_remote_outcome_unknown') return true;
+  const status = Number(error?.status || error?.statusCode || 0);
+  return !status || status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
+function appointmentMirrorFenceSnapshot(appointment = {}) {
+  const instant = (value) => {
+    const timestamp = new Date(value || '').getTime();
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+  };
+  return {
+    id: cleanString(appointment.id),
+    calendarId: cleanString(appointment.calendarId || appointment.calendar_id),
+    contactId: cleanString(appointment.contactId || appointment.contact_id),
+    locationId: cleanString(appointment.locationId || appointment.location_id),
+    title: cleanString(appointment.title),
+    status: cleanString(appointment.status || appointment.appointmentStatus || appointment.appointment_status),
+    appointmentStatus: cleanString(appointment.appointmentStatus || appointment.appointment_status || appointment.status),
+    assignedUserId: cleanString(appointment.assignedUserId || appointment.assigned_user_id),
+    notes: cleanString(appointment.notes),
+    address: cleanString(appointment.address),
+    startTime: instant(appointment.startTime || appointment.start_time),
+    endTime: instant(appointment.endTime || appointment.end_time),
+    dateUpdated: instant(appointment.dateUpdated || appointment.date_updated)
+  };
+}
+
+function appointmentMatchesMirrorFence(appointment, expectedAppointment) {
+  if (!appointment?.id || !expectedAppointment?.id) return false;
+  return JSON.stringify(appointmentMirrorFenceSnapshot(appointment)) ===
+    JSON.stringify(appointmentMirrorFenceSnapshot(expectedAppointment));
+}
+
+function appointmentProviderResponseStaleError() {
+  const error = new Error('La cita volvió a cambiar mientras respondía el calendario externo. Se conservó la versión más reciente.');
+  error.status = 409;
+  error.statusCode = 409;
+  error.code = 'appointment_provider_response_stale';
+  return error;
+}
+
+async function withAppointmentMirrorFenceLock(expectedAppointment, callback) {
+  const calendarId = cleanString(expectedAppointment?.calendarId || expectedAppointment?.calendar_id);
+  const lockKey = calendarId || cleanString(expectedAppointment?.id);
+  if (!lockKey) return callback();
+  return db.transaction(async () => {
+    await lockCalendarAppointmentCreation(lockKey);
+    return callback();
+  });
+}
+
+async function confirmHighLevelMirrorForExactLocalVersion(expectedAppointment, remoteAppointmentId) {
+  const settled = await withAppointmentMirrorFenceLock(expectedAppointment, async () => {
+    try {
+      return {
+        stale: false,
+        appointment: await localCalendarService.markHighLevelAppointmentMirrorSynced(
+          expectedAppointment.id,
+          remoteAppointmentId,
+          { expectedAppointment }
+        )
+      };
+    } catch (error) {
+      if (error?.code !== 'appointment_provider_response_stale') throw error;
+      return {
+        stale: true,
+        appointment: await localCalendarService.getLocalAppointment(expectedAppointment.id)
+      };
+    }
+  });
+
+  if (settled.stale) throw appointmentProviderResponseStaleError();
+  return settled.appointment;
+}
+
+async function resolveHighLevelMirrorUpdateFailure(expectedAppointment, providerError) {
+  const settled = await withAppointmentMirrorFenceLock(expectedAppointment, async () => {
+    const current = await localCalendarService.getLocalAppointment(expectedAppointment.id);
+    const stale = !appointmentMatchesMirrorFence(current, expectedAppointment);
+    if (stale) {
+      await db.run(`
+        UPDATE appointments
+        SET sync_status = CASE
+              WHEN sync_status = 'pending_delete' THEN 'pending_delete'
+              ELSE 'pending'
+            END
+        WHERE id = ?
+      `, [expectedAppointment.id]);
+    } else {
+      await db.run(`
+        UPDATE appointments
+        SET sync_status = CASE
+              WHEN sync_status = 'pending_delete' THEN 'pending_delete'
+              ELSE 'pending'
+            END,
+            sync_error = ?
+        WHERE id = ?
+      `, [cleanString(providerError?.message || 'HighLevel no confirmó el espejo.').slice(0, 1000), expectedAppointment.id]);
+    }
+    return { stale, appointment: current };
+  });
+
+  if (settled.stale) throw appointmentProviderResponseStaleError();
+  return settled.appointment;
 }
 
 function parseJsonObject(value, fallback = {}) {
@@ -636,26 +823,6 @@ function shouldUseLocalAvailabilityForOverlaps(calendar = {}) {
   return getCalendarSlotLimit(calendar) > 1;
 }
 
-function keepLocalContactOnRemoteAppointment(remote = {}, contactId = '') {
-  const localContactId = cleanString(contactId);
-  if (!localContactId) return remote;
-
-  if (remote?.appointment && typeof remote.appointment === 'object') {
-    return {
-      ...remote,
-      appointment: {
-        ...remote.appointment,
-        contactId: localContactId
-      }
-    };
-  }
-
-  return {
-    ...remote,
-    contactId: localContactId
-  };
-}
-
 async function getSavedHighLevelOnlyContext() {
   const saved = await getSavedHighLevelConfig().catch(() => null);
   return {
@@ -696,6 +863,208 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, tim
     endDate,
     timezone
   );
+}
+
+/**
+ * Resolución interna de disponibilidad para la ruta protegida y el agente.
+ * La agenda pública conserva deliberadamente su helper local separado.
+ */
+function verifiedAvailabilityError(message) {
+  const error = new Error(message);
+  error.status = 503;
+  return error;
+}
+
+function calendarAvailabilityFailureMessage(availability = {}, { reschedule = false, allowOverride = false } = {}) {
+  const reason = cleanString(availability.reason).toLowerCase();
+  const baseMessage = reason === 'invalid_slot'
+    ? 'Ese horario no es válido.'
+    : reason === 'outside_booking_window'
+      ? 'Ese horario está fuera del periodo permitido por el calendario.'
+      : reason === 'daily_limit_reached'
+        ? 'Ese día ya alcanzó el máximo de citas permitido.'
+        : reason === 'blocked'
+          ? 'Ese horario está bloqueado en el calendario.'
+          : reason === 'slot_conflict' && allowOverride
+            ? 'Ese horario ya alcanzó el límite de citas. Elige otro horario o confirma el sobreagendamiento.'
+            : 'Ese horario ya no está disponible.';
+  return reschedule ? `${baseMessage} La cita conserva su horario anterior.` : baseMessage;
+}
+
+function calendarAvailabilityFailureData(availability = {}) {
+  return {
+    reason: cleanString(availability.reason) || 'unavailable',
+    limit: availability.limit,
+    overlapping: availability.overlapping,
+    ...(availability.bufferConflict === true ? { bufferConflict: true } : {}),
+    ...(availability.dailyLimit !== undefined ? { dailyLimit: availability.dailyLimit } : {}),
+    ...(availability.appointmentsOnDay !== undefined ? { appointmentsOnDay: availability.appointmentsOnDay } : {}),
+    ...(availability.earliestStart ? { earliestStart: availability.earliestStart } : {}),
+    ...(availability.latestStart ? { latestStart: availability.latestStart } : {}),
+    ...(availability.blocked ? { blocked: true } : {})
+  };
+}
+
+export function resolveCalendarAvailabilityProvider(calendar = null, requestedCalendarId = '') {
+  const source = cleanString(calendar?.source).toLowerCase();
+  const highLevelCalendarId = cleanString(calendar?.ghlCalendarId || calendar?.ghl_calendar_id);
+  const googleCalendarId = cleanString(calendar?.googleCalendarId || calendar?.google_calendar_id);
+  const usesHighLevel = Boolean(highLevelCalendarId) || source === 'ghl';
+  const usesGoogle = Boolean(googleCalendarId) || source === 'google';
+
+  if (usesHighLevel && usesGoogle) {
+    return {
+      provider: 'ghl_google',
+      remoteCalendarId: highLevelCalendarId || null,
+      googleCalendarId: googleCalendarId || null
+    };
+  }
+  // Un calendario creado en Ristak conserva source=ristak aunque ya tenga espejo
+  // remoto. El ID ligado, no el source, determina dónde vive su disponibilidad.
+  if (usesHighLevel) {
+    return { provider: 'ghl', remoteCalendarId: highLevelCalendarId || null };
+  }
+  if (usesGoogle) {
+    return { provider: 'google', remoteCalendarId: googleCalendarId || null };
+  }
+  // Compatibilidad con llamadas legacy que todavía mandan directamente un ID GHL.
+  if (!calendar && cleanString(requestedCalendarId)) {
+    return { provider: 'ghl', remoteCalendarId: cleanString(requestedCalendarId), remoteOnly: true };
+  }
+  return { provider: 'local', remoteCalendarId: null };
+}
+
+function canonicalAvailabilityInstant(value) {
+  const candidate = value && typeof value === 'object'
+    ? (value.startTime || value.start_time || value.datetime || value.dateTime)
+    : value;
+  const timestamp = new Date(candidate || '').getTime();
+  return Number.isFinite(timestamp) ? String(timestamp) : '';
+}
+
+export function intersectCalendarAvailabilitySlots(localDays = [], remoteDays = []) {
+  const remoteInstants = new Set(
+    (Array.isArray(remoteDays) ? remoteDays : [])
+      .flatMap(day => Array.isArray(day?.slots) ? day.slots : [])
+      .map(canonicalAvailabilityInstant)
+      .filter(Boolean)
+  );
+
+  return (Array.isArray(localDays) ? localDays : []).map(day => {
+    const seen = new Set();
+    const slots = (Array.isArray(day?.slots) ? day.slots : []).filter(slot => {
+      const instant = canonicalAvailabilityInstant(slot);
+      if (!instant || !remoteInstants.has(instant) || seen.has(instant)) return false;
+      seen.add(instant);
+      return true;
+    });
+    return { ...day, slots };
+  });
+}
+
+export async function resolveCalendarAvailabilitySlots({
+  calendar = null,
+  requestedCalendarId = '',
+  startDate,
+  endDate,
+  timezone,
+  accessToken = null,
+  requireVerifiedExternalAvailability = false,
+  availabilityOptions = {}
+} = {}, dependencies = {}) {
+  const getLocalSlots = dependencies.getLocalFreeSlots || localCalendarService.getLocalFreeSlots;
+  const getHighLevelSlots = dependencies.getHighLevelFreeSlots || calendarService.getFreeSlots;
+  const syncGoogleSlots = dependencies.syncGoogleEventsForDateRange || googleCalendarService.syncGoogleEventsForDateRange;
+  const provider = resolveCalendarAvailabilityProvider(calendar, requestedCalendarId);
+  const localCalendarId = cleanString(calendar?.id || requestedCalendarId);
+  const cleanAccessToken = cleanString(accessToken);
+  const loadLocalSlots = () => getLocalSlots(
+    localCalendarId,
+    startDate,
+    endDate,
+    timezone,
+    availabilityOptions
+  );
+
+  const usesGoogle = provider.provider === 'google' || provider.provider === 'ghl_google';
+  const usesHighLevel = provider.provider === 'ghl' || provider.provider === 'ghl_google';
+  const linkedGoogleCalendarId = provider.provider === 'ghl_google'
+    ? provider.googleCalendarId
+    : provider.remoteCalendarId;
+
+  if (!usesGoogle && !usesHighLevel) {
+    return loadLocalSlots();
+  }
+
+  if (usesGoogle) {
+    if (!calendar?.id || !linkedGoogleCalendarId) {
+      logger.warn('[Calendars Controller] La agenda local conserva una liga Google incompleta; se usa la ocupación guardada en Ristak.');
+    } else {
+      try {
+        const syncResult = await syncGoogleSlots({
+          calendarId: calendar.id,
+          startDate,
+          endDate,
+          timezone
+        });
+        if (syncResult?.enabled !== true || Number(syncResult?.linkedCalendars || 0) < 1) {
+          logger.warn('[Calendars Controller] Google no confirmó la liga; se usa la ocupación local ya sincronizada.');
+        }
+      } catch (error) {
+        logger.warn(`[Calendars Controller] Sync Google para slots falló, usando DB local: ${error.message}`);
+      }
+    }
+  }
+
+  // Toda agenda persistida es canónica en Ristak. Google y HighLevel son espejos:
+  // sus eventos entrantes se materializan localmente por sincronización, pero una
+  // caída externa nunca veta ni reemplaza la disponibilidad que valida la BD.
+  if (calendar) {
+    return loadLocalSlots();
+  }
+
+  // Compatibilidad legacy para llamadas que aún mandan un ID remoto sin que
+  // exista una agenda local. Ese único caso sí necesita consultar HighLevel.
+  if (!provider.remoteCalendarId || !cleanAccessToken) {
+    if (requireVerifiedExternalAvailability) {
+      throw verifiedAvailabilityError(
+        !provider.remoteCalendarId
+          ? 'No se pudo identificar el calendario de HighLevel ligado a esta agenda.'
+          : 'No se pudo comprobar la disponibilidad actual porque HighLevel no está conectado.'
+      );
+    }
+    return calendar ? loadLocalSlots() : [];
+  }
+
+  let remoteSlots;
+  try {
+    remoteSlots = await getHighLevelSlots(
+      provider.remoteCalendarId,
+      startDate,
+      endDate,
+      cleanAccessToken,
+      timezone
+    );
+    if (!Array.isArray(remoteSlots)) {
+      throw new Error('HighLevel devolvió una respuesta de disponibilidad inválida.');
+    }
+  } catch (error) {
+    if (requireVerifiedExternalAvailability) {
+      throw verifiedAvailabilityError('No se pudo comprobar la disponibilidad actual contra HighLevel.');
+    }
+    logger.warn(`[Calendars Controller] Free slots GHL falló, usando local: ${error.message}`);
+    return calendar ? loadLocalSlots() : [];
+  }
+
+  return remoteSlots;
+}
+
+export function getCalendarAppointmentDurationMinutes(calendar = {}) {
+  return Math.max(1, localCalendarService.calendarDurationToMinutes(
+    calendar.slotDuration ?? calendar.slot_duration,
+    calendar.slotDurationUnit ?? calendar.slot_duration_unit,
+    60
+  ));
 }
 
 /**
@@ -899,7 +1268,7 @@ export async function updateCalendarGoogleSync(req, res) {
     });
   } catch (error) {
     logger.warn(`[Calendars Controller] No se pudo actualizar sync Google del calendario: ${error.message}`);
-    res.status(400).json({
+    res.status(error.status || 400).json({
       success: false,
       error: error.message
     });
@@ -1159,7 +1528,10 @@ export async function createCalendar(req, res) {
       accessToken: tokenFromBody
     });
 
-    const formSafeCalendarData = await enforceCalendarCustomFormAccess({}, calendarData);
+    const formSafeCalendarData = await enforceCalendarCustomFormAccess(
+      {},
+      withoutGoogleCalendarLinkMutation(calendarData)
+    );
     const safeCalendarData = await enforceCalendarPaymentConfigAccess({}, formSafeCalendarData);
 
     let calendar = await localCalendarService.createLocalCalendar({
@@ -1286,12 +1658,17 @@ export async function getEvents(req, res) {
         const eventCalendar = event.calendarId
           ? await localCalendarService.getLocalCalendar(event.calendarId)
           : null;
-        await localCalendarService.upsertLocalAppointment(event, {
-          source: 'ghl',
+        const remoteContactId = event.contactId || event.contact_id || null;
+        const localContactId = remoteContactId
+          ? await resolveContactIdByGhlId(remoteContactId)
+          : null;
+        await localCalendarService.reconcileInboundHighLevelAppointment(event, {
+          observedRaw: event,
           ghlAppointmentId: event.id,
           calendarId: eventCalendar?.id || localCalendar?.id || event.calendarId,
+          contactId: localContactId,
           locationId,
-          syncStatus: 'synced'
+          lastWriteWins: true
         });
       }
     };
@@ -1580,7 +1957,7 @@ export async function createPublicAppointment(req, res) {
       explicitContactId: trustedContactId
     });
 
-    const durationMinutes = Math.max(1, Number(calendar.slotDuration || 60));
+    const durationMinutes = getCalendarAppointmentDurationMinutes(calendar);
     const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
     const submittedNotes = [
       bookingSubmission.notes,
@@ -1643,9 +2020,16 @@ export async function createPublicAppointment(req, res) {
           new GHLClient(context.accessToken, context.locationId),
           { ...appointment, contactId }
         );
+        const remoteContactId = ghlContactId || contactId;
+        await localCalendarService.prepareHighLevelAppointmentMirrorIntent({
+          appointmentId: appointment.id,
+          remoteCalendarId: calendar.ghlCalendarId,
+          remoteContactId,
+          locationId: context.locationId
+        });
         const remote = await calendarService.createAppointment({
           calendarId: calendar.ghlCalendarId,
-          contactId: ghlContactId || contactId,
+          contactId: remoteContactId,
           title: renderedTemplates.title,
           appointmentStatus: calendar.autoConfirm ? 'confirmed' : 'pending',
           startTime: start.toISOString(),
@@ -1653,15 +2037,18 @@ export async function createPublicAppointment(req, res) {
           notes: renderedTemplates.notes
         }, context.locationId, context.accessToken);
 
-        appointment = await localCalendarService.upsertLocalAppointment(keepLocalContactOnRemoteAppointment(remote, contactId), {
-          id: appointment.id,
-          source: appointment.source || 'ristak',
-          ghlAppointmentId: remote.appointment?.id || remote.id,
-          calendarId: appointment.calendarId,
-          locationId: context.locationId,
-          syncStatus: 'synced'
-        });
+        appointment = await confirmHighLevelMirrorForExactLocalVersion(
+          appointment,
+          remote.appointment?.id || remote.id
+        );
+        await localCalendarService.completeHighLevelAppointmentMirrorIntent(
+          appointment.id,
+          remote.appointment?.id || remote.id
+        );
       } catch (error) {
+        if (error?.code === 'appointment_provider_response_stale') {
+          appointment = await localCalendarService.getLocalAppointment(appointment.id) || appointment;
+        }
         logger.warn(`[Calendars Controller] Cita publica guardada local, sync GHL pendiente: ${error.message}`);
       }
     }
@@ -1811,6 +2198,11 @@ export async function getFreeSlots(req, res) {
   try {
     const { id } = req.params;
     const { startDate, endDate, timezone } = req.query;
+    const internalAvailability = req[INTERNAL_CONTROLLER_CONTEXT] || {};
+    const requireVerifiedExternalAvailability = internalAvailability.requireVerifiedExternalAvailability === true;
+    const availabilityOptions = internalAvailability.availabilityOptions && typeof internalAvailability.availabilityOptions === 'object'
+      ? internalAvailability.availabilityOptions
+      : {};
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -1827,46 +2219,16 @@ export async function getFreeSlots(req, res) {
     });
     const { accessToken } = await getHighLevelContext(req);
     const localCalendar = await localCalendarService.getLocalCalendar(id);
-    let slots;
-
-    await googleCalendarService.syncGoogleEventsForDateRange({
-      calendarId: localCalendar?.id || id,
+    const slots = await resolveCalendarAvailabilitySlots({
+      calendar: localCalendar,
+      requestedCalendarId: id,
       startDate: range.startDate,
       endDate: range.endDate,
-      timezone
-    }).catch(error => {
-      logger.warn(`[Calendars Controller] Sync Google para slots falló, usando DB local: ${error.message}`);
+      timezone,
+      accessToken,
+      requireVerifiedExternalAvailability,
+      availabilityOptions
     });
-
-    if (localCalendar && shouldUseLocalAvailabilityForOverlaps(localCalendar)) {
-      slots = await localCalendarService.getLocalFreeSlots(
-        localCalendar.id,
-        range.startDate,
-        range.endDate,
-        timezone
-      );
-    } else if (accessToken && (localCalendar?.ghlCalendarId || (!localCalendar && id))) {
-      try {
-        slots = await calendarService.getFreeSlots(
-          localCalendar?.ghlCalendarId || id,
-          range.startDate,
-          range.endDate,
-          accessToken,
-          timezone
-        );
-      } catch (error) {
-        logger.warn(`[Calendars Controller] Free slots GHL falló, usando local: ${error.message}`);
-      }
-    }
-
-    if (!slots) {
-      slots = await localCalendarService.getLocalFreeSlots(
-        localCalendar?.id || id,
-        range.startDate,
-        range.endDate,
-        timezone
-      );
-    }
 
     res.json({
       success: true,
@@ -2130,6 +2492,7 @@ export async function createAppointment(req, res) {
       calendarError.code = 'calendar_not_found';
       throw calendarError;
     }
+    const appointmentRequestId = clientRequestId || legacyClientRequestId || null;
     // El render de variables de plantilla (título/notas) es cosmético y NUNCA debe
     // impedir crear la cita: si falla, degradamos a valores planos.
     let renderedTemplates;
@@ -2185,7 +2548,7 @@ export async function createAppointment(req, res) {
           database: db
         });
       }
-      if (!forceDoubleBooking && localCalendarId) {
+      if ((!forceDoubleBooking || strictAvailabilityCheck) && localCalendarId) {
         await lockCalendarAppointmentCreation(localCalendarId);
         // Legacy conserva el contrato fail-open del modal. El runtime conversacional v2
         // falla cerrado: si no podemos comprobar el horario real, no inventamos una cita.
@@ -2194,7 +2557,14 @@ export async function createAppointment(req, res) {
           availability = await localCalendarService.checkSlotAvailability(
             localCalendarId,
             localAppointmentData.startTime || localAppointmentData.start_time,
-            localAppointmentData.endTime || localAppointmentData.end_time
+            localAppointmentData.endTime || localAppointmentData.end_time,
+            strictAvailabilityCheck
+              ? {
+                  enforceCalendarRules: true,
+                  ignoreAppointmentConflicts: appointmentData.ignoreAppointmentConflicts === true,
+                  timezone: localAppointmentData.timeZone || localAppointmentData.timezone
+                }
+              : {}
           );
         } catch (error) {
           if (strictAvailabilityCheck) {
@@ -2207,10 +2577,12 @@ export async function createAppointment(req, res) {
           logger.warn(`[Calendars Controller] No se pudo verificar disponibilidad del slot, permito crear: ${error.message}`);
         }
         if (!availability.available) {
-          const conflictError = new Error('Ese horario ya alcanzó el límite de citas. Elige otro horario o confirma el sobreagendamiento.');
+          const conflictError = new Error(calendarAvailabilityFailureMessage(availability, {
+            allowOverride: !strictAvailabilityCheck
+          }));
           conflictError.status = 409;
           conflictError.code = 'slot_unavailable';
-          conflictError.data = { limit: availability.limit, overlapping: availability.overlapping };
+          conflictError.data = calendarAvailabilityFailureData(availability);
           throw conflictError;
         }
       }
@@ -2237,14 +2609,28 @@ export async function createAppointment(req, res) {
           database: db
         });
       }
+      if (appointmentRequestId && !localAppointment.isTest) {
+        // La cita local es el commit canónico. Guardamos su ID antes de tocar
+        // cualquier espejo o efecto posterior para que un crash recupere esta
+        // misma cita y jamás vuelva a crearla.
+        await db.run(`
+          UPDATE appointment_creation_requests
+          SET appointment_id = COALESCE(appointment_id, ?),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE client_request_id = ? AND status = 'processing'
+        `, [localAppointment.id, appointmentRequestId]);
+      }
       return localAppointment;
     };
 
-    let appointment = localCalendarId && (!forceDoubleBooking || depositFenceProvided || terminalAuthorityProvided)
+    let appointment = localCalendarId && (
+      !forceDoubleBooking || depositFenceProvided || terminalAuthorityProvided || strictAvailabilityCheck
+    )
       ? await db.transaction(createLocalWithAvailability)
       : await createLocalWithAvailability();
 
     if (context.locationId && context.accessToken && (localCalendar?.ghlCalendarId || !localCalendar)) {
+      let highLevelAppointmentWriteStarted = false;
       try {
         const localContactId = appointment.contactId || appointmentData.contactId || appointmentData.contact_id;
         const highLevelClient = new GHLClient(context.accessToken, context.locationId);
@@ -2264,42 +2650,105 @@ export async function createAppointment(req, res) {
           calendarId: remoteCalendarId,
           contactId: remoteContactId
         };
-        const remote = appointment.isTest
-          ? await localCalendarService.createConversationalTestHighLevelAppointment({
+        let remote;
+        if (appointment.isTest) {
+          remote = await localCalendarService.createConversationalTestHighLevelAppointment({
               appointment,
               appointmentData: remotePayload,
               locationId: context.locationId,
               remoteCalendarId,
               contactId: remoteContactId,
               apiToken: context.accessToken
-            })
-          : await calendarService.createAppointment(remotePayload, context.locationId, context.accessToken);
-        const remoteAppointmentId = remote.appointment?.id || remote.id;
-        appointment = await localCalendarService.upsertLocalAppointment(keepLocalContactOnRemoteAppointment(remote, localContactId), {
-          id: appointment.id,
-          source: appointment.source || 'ristak',
-          ghlAppointmentId: remoteAppointmentId,
-          calendarId: appointment.calendarId,
-          locationId: context.locationId,
-          syncStatus: 'synced'
-        });
+            });
+        } else {
+          await localCalendarService.prepareHighLevelAppointmentMirrorIntent({
+            appointmentId: appointment.id,
+            remoteCalendarId,
+            remoteContactId,
+            locationId: context.locationId
+          });
+          highLevelAppointmentWriteStarted = true;
+          remote = await calendarService.createAppointment(remotePayload, context.locationId, context.accessToken);
+        }
+        const remoteAppointmentId = remote?.appointment?.id || remote?.id;
+        if (!cleanString(remoteAppointmentId)) {
+          const missingIdError = new Error('HighLevel respondió sin un identificador verificable del espejo.');
+          missingIdError.code = 'highlevel_mirror_remote_outcome_unknown';
+          throw missingIdError;
+        }
+        appointment = await confirmHighLevelMirrorForExactLocalVersion(
+          appointment,
+          remoteAppointmentId
+        );
+        if (!appointment.isTest) {
+          await localCalendarService.completeHighLevelAppointmentMirrorIntent(
+            appointment.id,
+            remoteAppointmentId
+          );
+        }
       } catch (error) {
-        if (appointment?.isTest) throw error;
-        logger.warn(`[Calendars Controller] Cita guardada local, sync GHL pendiente: ${error.message}`);
+        if (error?.code === 'appointment_provider_response_stale') {
+          appointment = await localCalendarService.getLocalAppointment(appointment.id) || appointment;
+          logger.warn(`[Calendars Controller] El espejo GHL respondió para una versión anterior; la cita local vigente quedó pendiente.`);
+        } else {
+          const mirrorErrorMessage = !appointment?.isTest && highLevelAppointmentWriteStarted && highLevelMirrorWriteOutcomeIsAmbiguous(error)
+            ? `${HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER} ${error.message}`
+            : error.message;
+          await markAppointmentMirrorSyncError({
+            appointmentId: appointment?.id,
+            provider: 'highlevel',
+            message: mirrorErrorMessage,
+            clientRequestId: appointmentRequestId,
+            expectedAppointment: appointment
+          }).catch((markError) => {
+            logger.error(`[Calendars Controller] No se pudo marcar el fallo del espejo GHL de la cita ${appointment?.id}: ${markError.message}`);
+          });
+          if (appointment?.isTest) throw error;
+          logger.warn(`[Calendars Controller] Cita local confirmada; espejo GHL pendiente/error: ${mirrorErrorMessage}`);
+        }
       }
     }
 
+    const hasGoogleMirror = Boolean(
+      cleanString(localCalendar?.googleCalendarId || localCalendar?.google_calendar_id)
+    );
     try {
       const googleResult = await googleCalendarService.syncAppointmentToGoogle(appointment);
       if (googleResult?.appointment) {
         appointment = googleResult.appointment;
       }
+      if (hasGoogleMirror) {
+        const googleEventId = cleanString(
+          googleResult?.appointment?.googleEventId ||
+          googleResult?.appointment?.google_event_id ||
+          googleResult?.event?.id ||
+          appointment?.googleEventId ||
+          appointment?.google_event_id
+        );
+        if (googleResult?.enabled !== true || !googleEventId) {
+          throw new Error('Google Calendar no confirmó el espejo de la cita local.');
+        }
+      }
     } catch (error) {
+      if (hasGoogleMirror) {
+        await markAppointmentMirrorSyncError({
+          appointmentId: appointment?.id,
+          provider: 'google',
+          message: error.message,
+          clientRequestId: appointmentRequestId,
+          expectedAppointment: appointment
+        }).catch((markError) => {
+          logger.error(`[Calendars Controller] No se pudo marcar el fallo del espejo Google de la cita ${appointment?.id}: ${markError.message}`);
+        });
+      }
       if (appointment?.isTest) throw error;
-      logger.warn(`[Calendars Controller] Cita guardada local, sync Google pendiente/error: ${error.message}`);
+      logger.warn(`[Calendars Controller] Cita local confirmada; espejo Google pendiente/error: ${error.message}`);
     }
 
-    const automationResult = await dispatchAppointmentCreatedAutomations(appointment);
+    const automationResult = await dispatchAppointmentCreatedAutomations(appointment).catch(error => {
+      logger.warn(`[Calendars Controller] La cita local quedó confirmada, pero falló una automatización posterior: ${error.message}`);
+      return { ok: false, error: error.message };
+    });
     if (appointment?.isTest) {
       appointment = {
         ...appointment,
@@ -2421,7 +2870,6 @@ export async function updateAppointment(req, res) {
     const existing = await localCalendarService.getLocalAppointment(id);
     let appointment;
     let lifecycleReplay = null;
-    let localLifecycleFence = null;
 
     if (!existing && (strictAvailabilityCheck || strictLifecycleMutation)) {
       return res.status(404).json({
@@ -2555,28 +3003,24 @@ export async function updateAppointment(req, res) {
             requestedEnd,
             {
               excludeAppointmentId: current.id,
-              ignoreAppointmentConflicts
+              ignoreAppointmentConflicts,
+              ...(strictAvailabilityCheck
+                ? {
+                    enforceCalendarRules: true,
+                    timezone: updateData.timeZone || updateData.timezone || current.timeZone || current.time_zone
+                  }
+                : {})
             }
           );
           if (!availability.available) {
-            const error = new Error('Ese horario ya no está disponible. La cita conserva su horario anterior.');
+            const error = new Error(calendarAvailabilityFailureMessage(availability, { reschedule: true }));
             error.status = 409;
             error.code = 'slot_unavailable';
-            error.data = { limit: availability.limit, overlapping: availability.overlapping };
+            error.data = calendarAvailabilityFailureData(availability);
             throw error;
           }
           return localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
         });
-        if (appointment && !lifecycleReplay) {
-          localLifecycleFence = {
-            calendarId,
-            startMs: new Date(appointment.startTime || appointment.start_time).getTime(),
-            endMs: new Date(appointment.endTime || appointment.end_time).getTime(),
-            status: cleanString(
-              appointment.appointmentStatus || appointment.appointment_status || appointment.status
-            ).toLowerCase()
-          };
-        }
       }
     }
 
@@ -2586,6 +3030,35 @@ export async function updateAppointment(req, res) {
         data: { ...appointment, lifecycleReplay }
       });
     }
+
+    // Ristak siempre es la autoridad de la cita. Incluso para una edición
+    // ordinaria (título, notas, responsable, etc.) persistimos primero la
+    // versión local y sólo después intentamos actualizar sus espejos externos.
+    // Antes, una cita con ghlAppointmentId podía saltarse este UPDATE local:
+    // HighLevel respondía bien, se marcaba el espejo como sincronizado y la
+    // cita canónica conservaba los datos viejos.
+    if (!appointment) {
+      const persistOrdinaryLocalUpdate = () => localCalendarService.updateLocalAppointment(
+        id,
+        updateData,
+        { syncStatus: 'pending' }
+      );
+      const updateLockKey = cleanString(existing?.calendarId || existing?.calendar_id || existing?.id);
+      appointment = updateLockKey
+        ? await db.transaction(async () => {
+            await lockCalendarAppointmentCreation(updateLockKey);
+            return persistOrdinaryLocalUpdate();
+          })
+        : await persistOrdinaryLocalUpdate();
+      if (!appointment?.id) {
+        return res.status(404).json({
+          success: false,
+          code: 'appointment_not_found',
+          error: 'La cita ya no existe o dejó de estar disponible.'
+        });
+      }
+    }
+    const localProviderFence = appointment;
 
     // (APT-006) Token de fallback: cuando un admin cancela por cambio de estado puede
     // NO venir accessToken en el body. Si la cita está vinculada a HL pero no tenemos
@@ -2603,93 +3076,16 @@ export async function updateAppointment(req, res) {
 
     if (context.accessToken && existing?.ghlAppointmentId) {
       try {
-        const remote = await calendarService.updateAppointment(existing.ghlAppointmentId, updateData, context.accessToken);
-        const remoteAppointment = remote?.appointment && typeof remote.appointment === 'object'
-          ? remote.appointment
-          : remote;
-        const upsertRemote = () => localCalendarService.upsertLocalAppointment({
-            ...remoteAppointment,
-            contactId: existing.contactId || null
-          }, {
-            id: existing.id,
-            source: existing.source || 'ristak',
-            ghlAppointmentId: existing.ghlAppointmentId,
-            calendarId: existing.calendarId,
-            locationId: context.locationId || existing.locationId,
-            syncStatus: 'synced'
-          });
-        appointment = localLifecycleFence
-          ? await db.transaction(async () => {
-              await lockCalendarAppointmentCreation(localLifecycleFence.calendarId);
-              const current = await localCalendarService.getLocalAppointment(id);
-              const currentStartMs = new Date(current?.startTime || current?.start_time).getTime();
-              const currentEndMs = new Date(current?.endTime || current?.end_time).getTime();
-              const currentStatus = cleanString(
-                current?.appointmentStatus || current?.appointment_status || current?.status
-              ).toLowerCase();
-              if (
-                !current?.id ||
-                currentStartMs !== localLifecycleFence.startMs ||
-                currentEndMs !== localLifecycleFence.endMs ||
-                currentStatus !== localLifecycleFence.status
-              ) {
-                if (current?.id) {
-                  await db.run(
-                    `UPDATE appointments
-                     SET sync_status = 'pending', date_updated = CURRENT_TIMESTAMP
-                     WHERE id = ?`,
-                    [current.id]
-                  );
-                }
-                const error = new Error('La cita volvió a cambiar mientras respondía el calendario externo. Se conservó la versión más reciente.');
-                error.status = 409;
-                error.code = 'appointment_provider_response_stale';
-                throw error;
-              }
-              return upsertRemote();
-            })
-          : await upsertRemote();
+        await calendarService.updateAppointment(existing.ghlAppointmentId, updateData, context.accessToken);
+        appointment = await confirmHighLevelMirrorForExactLocalVersion(
+          localProviderFence,
+          existing.ghlAppointmentId
+        );
       } catch (error) {
         if (error?.code === 'appointment_provider_response_stale') throw error;
         logger.warn(`[Calendars Controller] Update GHL falló, guardando pendiente local: ${error.message}`);
-        if (localLifecycleFence) {
-          const fenceResult = await db.transaction(async () => {
-            await lockCalendarAppointmentCreation(localLifecycleFence.calendarId);
-            const current = await localCalendarService.getLocalAppointment(id);
-            const currentStartMs = new Date(current?.startTime || current?.start_time).getTime();
-            const currentEndMs = new Date(current?.endTime || current?.end_time).getTime();
-            const currentStatus = cleanString(
-              current?.appointmentStatus || current?.appointment_status || current?.status
-            ).toLowerCase();
-            const changed = Boolean(
-              !current?.id ||
-              currentStartMs !== localLifecycleFence.startMs ||
-              currentEndMs !== localLifecycleFence.endMs ||
-              currentStatus !== localLifecycleFence.status
-            );
-            if (changed && current?.id) {
-              await db.run(
-                `UPDATE appointments
-                 SET sync_status = 'pending', date_updated = CURRENT_TIMESTAMP
-                 WHERE id = ?`,
-                [current.id]
-              );
-            }
-            return { changed, current };
-          });
-          if (fenceResult.changed) {
-            const staleError = new Error('La cita volvió a cambiar mientras respondía el calendario externo. Se conservó la versión más reciente.');
-            staleError.status = 409;
-            staleError.code = 'appointment_provider_response_stale';
-            throw staleError;
-          }
-          appointment = fenceResult.current;
-        }
+        appointment = await resolveHighLevelMirrorUpdateFailure(localProviderFence, error);
       }
-    }
-
-    if (!appointment) {
-      appointment = await localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
     }
 
     // (APT-003) Si la cita se reprogramó (cambió start_time), olvidar recordatorios ya
@@ -2783,7 +3179,10 @@ export async function updateCalendar(req, res) {
       });
     }
 
-    const formSafeUpdateData = await enforceCalendarCustomFormAccess(existing, updateData);
+    const formSafeUpdateData = await enforceCalendarCustomFormAccess(
+      existing,
+      withoutGoogleCalendarLinkMutation(updateData)
+    );
     const safeUpdateData = await enforceCalendarPaymentConfigAccess(existing, formSafeUpdateData);
     const paymentSourceConflict = await findCalendarPaymentSourceConflict(existing, safeUpdateData);
     if (paymentSourceConflict) {

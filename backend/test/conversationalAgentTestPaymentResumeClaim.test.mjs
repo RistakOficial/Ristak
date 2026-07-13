@@ -100,6 +100,8 @@ test('el webhook sandbox autoriza materializar la oferta aceptada sin cambiar su
       source: 'ristak',
       slotDuration: 60,
       slotInterval: 60,
+      allowBookingFor: 365,
+      allowBookingForUnit: 'days',
       openHours: [{
         daysOfTheWeek: [slot.weekday],
         hours: [{ openHour: 13, openMinute: 0, closeHour: 16, closeMinute: 0 }]

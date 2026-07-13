@@ -23,7 +23,7 @@ import {
   findVerifiedPaymentEvidence,
   verifyNativeAppointmentSelectionEvidence
 } from '../src/agents/conversational/actionEvidence.js'
-import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import { upsertLocalCalendar as upsertLocalCalendarService } from '../src/services/localCalendarService.js'
 import { registerAgentTransferPaymentProofForReview } from '../src/services/paymentFlowService.js'
 import { setConversationalAgentLivePaymentDependenciesForTests } from '../src/services/conversationalAgentLivePaymentService.js'
 import {
@@ -58,6 +58,16 @@ test.beforeEach(() => {
 test.afterEach(() => {
   setConversationalPaymentTerminalReplyHandlerForTest(null)
 })
+
+// Estas pruebas aíslan candados conversacionales, no el horizonte de reservación.
+// Mantienen sus fechas lejanas deliberadas sin quedar limitadas por el default de 30 días.
+function upsertLocalCalendar(calendar, options) {
+  return upsertLocalCalendarService({
+    allowBookingFor: 36500,
+    allowBookingForUnit: 'days',
+    ...calendar
+  }, options)
+}
 
 function mockResponse() {
   return {
@@ -1918,7 +1928,6 @@ test('un Link de pago no expone análisis de fotos ni acepta comprobantes altern
 test('v2 agenda una frase natural sin pasar por el detector léxico legacy', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_v2_natural_${suffix}`
-  const ghlCalendarId = `ghl_calendar_v2_natural_${suffix}`
   const timezone = await getAccountTimezone()
   const baseDay = DateTime.now().setZone(timezone).plus({ days: 21 }).startOf('day')
   const nextTuesday = baseDay.plus({ days: (2 - baseDay.weekday + 7) % 7 })
@@ -1927,8 +1936,6 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
   try {
     await upsertLocalCalendar({
       id: calendarId,
-      ghlCalendarId,
-      locationId: 'location_v2_natural',
       name: 'Agenda v2 natural',
       source: 'ristak',
       slotDuration: 60,
@@ -1939,7 +1946,7 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     }, { source: 'ristak', syncStatus: 'synced' })
 
     const ctx = v2Context([
-      { id: 'schedule_appointment', enabled: true, calendarId: ghlCalendarId, allowOverlaps: false }
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
     ], {
       conversationMessages: [
         { role: 'user', content: 'Quiero ver horarios para el martes.' },
@@ -7373,8 +7380,6 @@ test('si el cierre de una cita v2 falla, no confirma al cliente y el siguiente i
   try {
     await upsertLocalCalendar({
       id: calendarId,
-      ghlCalendarId: `ghl_${calendarId}`,
-      locationId: `location_${suffix}`,
       name: 'Agenda recovery cierre',
       source: 'ristak',
       slotDuration: 60,
@@ -8320,7 +8325,7 @@ test('cancelar y reagendar compiten con CAS: sólo una mutación gana y una cita
   }
 })
 
-test('un update remoto de HighLevel nunca reemplaza el contacto local por el ID externo', async () => {
+test('una edición se guarda primero en Ristak y la respuesta de HighLevel sólo confirma el espejo', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_preserve_contact_${suffix}`
   const contactId = `contact_preserve_contact_${suffix}`
@@ -8352,7 +8357,8 @@ test('un update remoto de HighLevel nunca reemplaza el contacto local por el ID 
       appointment: {
         id: ghlAppointmentId,
         contactId: `external_contact_${suffix}`,
-        title: 'Título remoto actualizado',
+        title: 'Título remoto que no debe mandar',
+        notes: 'Notas remotas que no deben mandar',
         startTime: start.toISO(),
         endTime: start.plus({ hours: 1 }).toISO(),
         appointmentStatus: 'confirmed',
@@ -8362,12 +8368,108 @@ test('un update remoto de HighLevel nunca reemplaza el contacto local por el ID 
 
     const response = await invokeController(updateCalendarAppointment, {
       params: { id: appointmentId },
-      body: { title: 'Título remoto actualizado', accessToken: 'test_highlevel_token' },
+      body: {
+        title: 'Título local nuevo',
+        notes: 'Notas locales nuevas',
+        accessToken: 'test_highlevel_token'
+      },
       query: { locationId: `location_${suffix}` }
     })
     assert.equal(response.statusCode, 200, JSON.stringify(response.payload))
-    assert.equal((await db.get('SELECT contact_id FROM appointments WHERE id = ?', [appointmentId])).contact_id, contactId)
+    const stored = await db.get(
+      'SELECT contact_id, title, notes, sync_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(stored.contact_id, contactId)
+    assert.equal(stored.title, 'Título local nuevo')
+    assert.equal(stored.notes, 'Notas locales nuevas')
+    assert.equal(stored.sync_status, 'synced')
   } finally {
+    globalThis.fetch = previousFetch
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('una respuesta tardía de HighLevel no marca synced la versión nueva ni devuelve el snapshot viejo', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_update_fence_${suffix}`
+  const contactId = `contact_update_fence_${suffix}`
+  const appointmentId = `appointment_update_fence_${suffix}`
+  const ghlAppointmentId = `ghl_appointment_update_fence_${suffix}`
+  const start = DateTime.now().toUTC().plus({ days: 61 }).startOf('hour')
+  const previousFetch = globalThis.fetch
+  let releaseFirstRemote
+  let signalFirstRemoteStarted
+  const firstRemoteStarted = new Promise(resolve => { signalFirstRemoteStarted = resolve })
+  const firstRemoteRelease = new Promise(resolve => { releaseFirstRemote = resolve })
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId: `ghl_calendar_update_fence_${suffix}`,
+      name: 'Agenda fence de actualización',
+      source: 'ghl'
+    }, { source: 'ghl', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto fence actualización', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, ghl_appointment_id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, source, sync_status, date_added, date_updated
+      ) VALUES (?, ?, ?, ?, 'Versión inicial', 'confirmed', 'confirmed', ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [appointmentId, ghlAppointmentId, calendarId, contactId, start.toISO(), start.plus({ hours: 1 }).toISO()]
+    )
+
+    globalThis.fetch = async (_url, options = {}) => {
+      const payload = JSON.parse(String(options.body || '{}'))
+      if (payload.title === 'Versión A') {
+        signalFirstRemoteStarted()
+        await firstRemoteRelease
+      }
+      return new Response(JSON.stringify({
+        appointment: {
+          id: ghlAppointmentId,
+          title: payload.title,
+          startTime: start.toISO(),
+          endTime: start.plus({ hours: 1 }).toISO(),
+          appointmentStatus: 'confirmed'
+        }
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+
+    const firstResponsePromise = invokeController(updateCalendarAppointment, {
+      params: { id: appointmentId },
+      body: { title: 'Versión A', accessToken: 'test_highlevel_token' },
+      query: { locationId: `location_${suffix}` }
+    })
+    await firstRemoteStarted
+
+    const secondResponse = await invokeController(updateCalendarAppointment, {
+      params: { id: appointmentId },
+      body: { title: 'Versión B', accessToken: 'test_highlevel_token' },
+      query: { locationId: `location_${suffix}` }
+    })
+    assert.equal(secondResponse.statusCode, 200, JSON.stringify(secondResponse.payload))
+    assert.equal(secondResponse.payload.data.title, 'Versión B')
+
+    releaseFirstRemote()
+    const firstResponse = await firstResponsePromise
+    assert.equal(firstResponse.statusCode, 409, JSON.stringify(firstResponse.payload))
+    assert.equal(firstResponse.payload.code, 'appointment_provider_response_stale')
+
+    const stored = await db.get(
+      'SELECT title, sync_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(stored.title, 'Versión B')
+    assert.equal(stored.sync_status, 'pending')
+  } finally {
+    releaseFirstRemote?.()
     globalThis.fetch = previousFetch
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})

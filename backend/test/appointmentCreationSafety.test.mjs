@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import { createAppointment as createAppointmentController } from '../src/controllers/calendarsController.js'
 import { runIdempotentAppointmentCreation } from '../src/services/appointmentCreationSafetyService.js'
-import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import { createLocalAppointment, upsertLocalCalendar } from '../src/services/localCalendarService.js'
 
 function uniqueKey(label) {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}_123456`
@@ -31,6 +31,87 @@ function createResponse() {
     }
   }
 }
+
+test('un fallo posterior al commit local reproduce la misma cita en vez de marcar el intento fallido', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const calendarId = `calendar_local_commit_${suffix}`
+  const contactId = `contact_local_commit_${suffix}`
+  const key = `conv-v2-attempt:${uniqueKey('local_commit')}`
+  const payload = {
+    calendarId,
+    contactId,
+    startTime: '2099-08-10T15:00:00.000Z',
+    endTime: '2099-08-10T16:00:00.000Z',
+    source: 'conversational_agent_v2'
+  }
+  let createCalls = 0
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente con commit local', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda canónica local',
+      source: 'ristak',
+      openHours: [{
+        daysOfTheWeek: [0, 1, 2, 3, 4, 5, 6],
+        hours: [{ openHour: 0, openMinute: 0, closeHour: 24, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    const recovered = await runIdempotentAppointmentCreation({
+      clientRequestId: key,
+      payload,
+      create: async () => {
+        createCalls += 1
+        const appointment = await createLocalAppointment({
+          ...payload,
+          title: 'Cita ya confirmada localmente',
+          appointmentStatus: 'confirmed'
+        }, { syncStatus: 'pending' })
+        await db.run(
+          `UPDATE appointment_creation_requests
+           SET appointment_id = ? WHERE client_request_id = ? AND status = 'processing'`,
+          [appointment.id, key]
+        )
+        throw new Error('falló una automatización posterior al commit')
+      }
+    })
+
+    assert.ok(recovered.id)
+    assert.equal(recovered.calendarId, calendarId)
+    assert.equal(recovered.idempotencyReplay?.state, 'appointment_current')
+    assert.equal(createCalls, 1)
+    assert.equal(
+      await db.get('SELECT status FROM appointment_creation_requests WHERE client_request_id = ?', [key]).then(row => row.status),
+      'completed'
+    )
+
+    const replay = await runIdempotentAppointmentCreation({
+      clientRequestId: key,
+      payload,
+      create: async () => {
+        createCalls += 1
+        return { id: 'must_not_run' }
+      }
+    })
+    assert.equal(replay.id, recovered.id)
+    assert.equal(createCalls, 1)
+    assert.equal(
+      await db.get('SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?', [calendarId]).then(row => Number(row.total)),
+      1
+    )
+  } finally {
+    await db.run('DELETE FROM appointment_participants WHERE appointment_id IN (SELECT id FROM appointments WHERE calendar_id = ?)', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await cleanup(key)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
 
 test('la misma creación de cita se ejecuta una vez y reproduce su respuesta durable', async () => {
   const key = uniqueKey('appointment_replay')
@@ -438,7 +519,12 @@ test('un inbound nuevo del mismo contacto reclama el slot liberado y dos inbound
       source: 'ristak',
       slotDuration: 60,
       slotInterval: 60,
-      openHours: []
+      allowBookingFor: 36500,
+      allowBookingForUnit: 'days',
+      openHours: [{
+        daysOfTheWeek: [0, 1, 2, 3, 4, 5, 6],
+        hours: [{ openHour: 0, openMinute: 0, closeHour: 24, closeMinute: 0 }]
+      }]
     }, { source: 'ristak', syncStatus: 'synced' })
 
     const firstResponse = createResponse()
@@ -557,6 +643,85 @@ test('una llave de cita reutilizada con datos distintos se rechaza', async () =>
     assert.equal(executions, 1)
   } finally {
     await cleanup(key)
+  }
+})
+
+test('un checkpoint local fallido o con lease vencida no se reproduce con un payload distinto', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const calendarId = `calendar_checkpoint_mismatch_${suffix}`
+  const contactId = `contact_checkpoint_mismatch_${suffix}`
+  const appointmentId = `appointment_checkpoint_mismatch_${suffix}`
+  const failedKey = `conv-v2-attempt:${uniqueKey('failed_checkpoint_mismatch')}`
+  const processingKey = `conv-v2-attempt:${uniqueKey('processing_checkpoint_mismatch')}`
+  const payload = {
+    calendarId,
+    contactId,
+    startTime: '2099-09-10T15:00:00.000Z',
+    endTime: '2099-09-10T16:00:00.000Z',
+    source: 'conversational_agent_v2'
+  }
+  let unexpectedExecutions = 0
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto checkpoint mismatch', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({ id: calendarId, name: 'Agenda checkpoint mismatch', source: 'ristak' }, {
+      source: 'ristak',
+      syncStatus: 'synced'
+    })
+    await createLocalAppointment({
+      ...payload,
+      id: appointmentId,
+      title: 'Cita local original',
+      appointmentStatus: 'confirmed'
+    }, { syncStatus: 'pending' })
+
+    for (const key of [failedKey, processingKey]) {
+      await runIdempotentAppointmentCreation({
+        clientRequestId: key,
+        payload,
+        create: async () => ({ id: appointmentId, ...payload, status: 'confirmed' })
+      })
+    }
+    await db.run(
+      `UPDATE appointment_creation_requests
+       SET status = 'failed', response_json = NULL, error_status = 503,
+           error_message = 'fallo posterior', processing_token = NULL
+       WHERE client_request_id = ?`,
+      [failedKey]
+    )
+    await db.run(
+      `UPDATE appointment_creation_requests
+       SET status = 'processing', response_json = NULL, processing_token = 'stale-token',
+           updated_at = '2000-01-01T00:00:00.000Z'
+       WHERE client_request_id = ?`,
+      [processingKey]
+    )
+
+    const mismatchedPayload = { ...payload, endTime: '2099-09-10T16:30:00.000Z' }
+    for (const key of [failedKey, processingKey]) {
+      await assert.rejects(
+        () => runIdempotentAppointmentCreation({
+          clientRequestId: key,
+          payload: mismatchedPayload,
+          create: async () => {
+            unexpectedExecutions += 1
+            return { id: 'must_not_run' }
+          }
+        }),
+        (error) => error?.status === 409 && /datos distintos/i.test(error.message)
+      )
+    }
+    assert.equal(unexpectedExecutions, 0)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await cleanup(failedKey)
+    await cleanup(processingKey)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
   }
 })
 
@@ -682,6 +847,8 @@ test('alta v2 y alta legacy concurrentes serializan check+insert y no duplican e
       source: 'ristak',
       slotDuration: 60,
       slotInterval: 60,
+      allowBookingFor: 36500,
+      allowBookingForUnit: 'days',
       openHours: []
     }, { source: 'ristak', syncStatus: 'synced' })
 

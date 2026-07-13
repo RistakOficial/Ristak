@@ -56,8 +56,16 @@ function googleJson(body, status = 200) {
   })
 }
 
-function createGoogleApiFetchMock(requests, { cancelledAppointmentId = '', failDeleteOnce = false } = {}) {
+function createGoogleApiFetchMock(requests, {
+  cancelledAppointmentId = '',
+  failDeleteOnce = false,
+  failCreateAmbiguouslyOnce = false,
+  conflictOnDuplicateCreate = false,
+  beforeCreateResponse = null
+} = {}) {
   let deleteAttempts = 0
+  let createAttempts = 0
+  const createdEvents = new Map()
   return async (url, options = {}) => {
     const parsed = new URL(String(url))
     const method = String(options.method || 'GET').toUpperCase()
@@ -84,6 +92,14 @@ function createGoogleApiFetchMock(requests, { cancelledAppointmentId = '', failD
 
     if (parsed.pathname.includes('/calendar/v3/calendars/ventas%40test.com/events')) {
       if (method === 'GET') {
+        const eventPathMatch = parsed.pathname.match(/\/events\/([^/]+)$/)
+        if (eventPathMatch) {
+          const eventId = decodeURIComponent(eventPathMatch[1])
+          const event = createdEvents.get(eventId)
+          return event
+            ? googleJson(event)
+            : googleJson({ error: { message: 'not_found' } }, 404)
+        }
         return googleJson({
           items: [
             {
@@ -103,11 +119,27 @@ function createGoogleApiFetchMock(requests, { cancelledAppointmentId = '', failD
         })
       }
 
-      if (method === 'POST' || method === 'PATCH') {
-        return googleJson({
-          id: method === 'POST' ? 'evt_google_created' : 'evt_google_created',
-          ...body
-        })
+      if (method === 'POST') {
+        createAttempts += 1
+        const event = { ...body, id: body?.id || 'evt_google_created' }
+        if (conflictOnDuplicateCreate && createdEvents.has(event.id)) {
+          return googleJson({ error: { message: 'already_exists' } }, 409)
+        }
+        createdEvents.set(event.id, event)
+        if (typeof beforeCreateResponse === 'function') {
+          await beforeCreateResponse({ event, createAttempts })
+        }
+        if (failCreateAmbiguouslyOnce && createAttempts === 1) {
+          return googleJson({ error: { message: 'temporary_create_timeout' } }, 503)
+        }
+        return googleJson(event)
+      }
+
+      if (method === 'PATCH') {
+        const eventId = decodeURIComponent(parsed.pathname.split('/').at(-1))
+        const event = { ...body, id: eventId }
+        createdEvents.set(eventId, event)
+        return googleJson(event)
       }
 
       if (method === 'DELETE') {
@@ -121,6 +153,81 @@ function createGoogleApiFetchMock(requests, { cancelledAppointmentId = '', failD
 
     return googleJson({ error: 'not_found' }, 404)
   }
+}
+
+function createGoogleRelinkFetchMock(requests, { failOldDeleteOnce = false } = {}) {
+  const calendarA = 'calendar-a@test.com'
+  const calendarB = 'calendar-b@test.com'
+  const eventsByCalendar = new Map([
+    [calendarA, new Map()],
+    [calendarB, new Map()]
+  ])
+  let oldDeleteAttempts = 0
+
+  const handler = async (url, options = {}) => {
+    const parsed = new URL(String(url))
+    const method = String(options.method || 'GET').toUpperCase()
+    const headers = options.headers || {}
+    const bodyText = options.body ? String(options.body) : ''
+    const body = bodyText ? JSON.parse(bodyText) : null
+    assert.equal(headers.Authorization, 'Bearer google-local-access')
+    requests.push({ method, path: `${parsed.pathname}${parsed.search}`, body })
+
+    if (parsed.pathname === '/calendar/v3/users/me/calendarList') {
+      return googleJson({
+        items: [calendarA, calendarB].map((id, index) => ({
+          id,
+          summary: index === 0 ? 'Google A' : 'Google B',
+          accessRole: 'owner',
+          timeZone: 'America/Ciudad_Juarez',
+          primary: index === 0
+        }))
+      })
+    }
+
+    const match = parsed.pathname.match(/^\/calendar\/v3\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/)
+    if (!match) return googleJson({ error: 'not_found' }, 404)
+    const providerCalendarId = decodeURIComponent(match[1])
+    const eventId = match[2] ? decodeURIComponent(match[2]) : ''
+    const events = eventsByCalendar.get(providerCalendarId)
+    if (!events) return googleJson({ error: 'calendar_not_found' }, 404)
+
+    if (method === 'GET') {
+      if (eventId) {
+        return events.has(eventId)
+          ? googleJson(events.get(eventId))
+          : googleJson({ error: { message: 'not_found' } }, 404)
+      }
+      return googleJson({ items: [...events.values()] })
+    }
+    if (method === 'POST') {
+      const event = { ...body, id: body?.id || `event-${randomUUID()}` }
+      events.set(event.id, event)
+      return googleJson(event)
+    }
+    if (method === 'PATCH') {
+      if (!events.has(eventId)) return googleJson({ error: { message: 'not_found' } }, 404)
+      const event = { ...body, id: eventId }
+      events.set(eventId, event)
+      return googleJson(event)
+    }
+    if (method === 'DELETE') {
+      if (providerCalendarId === calendarA) {
+        oldDeleteAttempts += 1
+        if (failOldDeleteOnce && oldDeleteAttempts === 1) {
+          return googleJson({ error: { message: 'temporary_old_delete_failure' } }, 503)
+        }
+      }
+      events.delete(eventId)
+      return new Response(null, { status: 204 })
+    }
+    return googleJson({ error: 'unsupported_method' }, 405)
+  }
+
+  handler.eventsByCalendar = eventsByCalendar
+  handler.calendarA = calendarA
+  handler.calendarB = calendarB
+  return handler
 }
 
 async function startLicenseServer(requests) {
@@ -422,7 +529,10 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
     process.env.APP_URL = 'https://demo.onrender.com'
     process.env.APP_VERSION = '1.0.0'
     process.env.OWNER_EMAIL = 'dueno@clinica.test'
-    const googleFetch = createGoogleApiFetchMock(googleRequests, { failDeleteOnce: true })
+    const googleFetch = createGoogleApiFetchMock(googleRequests, {
+      failDeleteOnce: true,
+      failCreateAmbiguouslyOnce: true
+    })
     global.fetch = (url, options) => String(url).startsWith(baseUrl)
       ? previousFetch(url, options)
       : googleFetch(url, options)
@@ -443,7 +553,7 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
       accessRole: 'owner',
       googleCalendarSummary: 'Ventas',
       googleCalendarTimeZone: 'America/Mexico_City'
-    })
+    }, { allowGoogleSyncMetadata: true })
     assert.equal(calendar.googleCalendarId, 'ventas@test.com')
 
     let appointment = await localCalendarService.createLocalAppointment({
@@ -455,15 +565,18 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
       notes: 'Primera visita'
     })
 
+    const deterministicGoogleEventId = googleCalendarService.googleAppointmentEventIdForLocalAppointment(appointmentId)
     const created = await googleCalendarService.syncAppointmentToGoogle(appointment)
-    assert.equal(created.appointment.googleEventId, 'evt_google_created')
+    assert.equal(created.appointment.googleEventId, deterministicGoogleEventId)
+    assert.equal(created.appointment.googleProviderCalendarId, 'ventas@test.com')
+    assert.equal(googleRequests[0].body.id, deterministicGoogleEventId)
 
     appointment = await localCalendarService.updateLocalAppointment(appointmentId, {
       startTime: '2026-06-16T20:00:00.000Z',
       endTime: '2026-06-16T21:00:00.000Z'
     })
     const updated = await googleCalendarService.syncAppointmentToGoogle(appointment)
-    assert.equal(updated.appointment.googleEventId, 'evt_google_created')
+    assert.equal(updated.appointment.googleEventId, deterministicGoogleEventId)
 
     appointment = await localCalendarService.updateLocalAppointment(appointmentId, {
       appointmentStatus: 'cancelled',
@@ -474,7 +587,7 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
       /Google Calendar|temporary_delete_failure|503/i
     )
     const failedDelete = await localCalendarService.getLocalAppointment(appointmentId)
-    assert.equal(failedDelete.googleEventId, 'evt_google_created')
+    assert.equal(failedDelete.googleEventId, deterministicGoogleEventId)
     assert.equal(failedDelete.googleSyncStatus, 'error')
 
     const retriedDelete = await googleCalendarService.syncLocalAppointmentsToGoogle({ calendarId })
@@ -500,17 +613,19 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
     assert.equal(requests[0].body.provider, 'google_calendar')
     assert.equal(requests[1].path, '/api/license/google-calendar/refresh-token')
 
-    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'PATCH', 'DELETE', 'DELETE', 'GET'])
+    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'GET', 'PATCH', 'DELETE', 'DELETE', 'GET'])
     assert.match(googleRequests[0].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\?sendUpdates=all$/)
     assert.equal(googleRequests[0].body.start.dateTime, '2026-06-15T18:00:00.000Z')
-    assert.match(googleRequests[1].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created\?sendUpdates=all$/)
-    assert.equal(googleRequests[1].body.start.dateTime, '2026-06-16T20:00:00.000Z')
-    assert.match(googleRequests[2].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created\?sendUpdates=all$/)
-    assert.match(googleRequests[3].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created\?sendUpdates=all$/)
-    assert.match(googleRequests[4].path, /showDeleted=true/)
+    assert.match(googleRequests[1].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}$`))
+    assert.match(googleRequests[2].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}\\?sendUpdates=all$`))
+    assert.equal(googleRequests[2].body.start.dateTime, '2026-06-16T20:00:00.000Z')
+    assert.match(googleRequests[3].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}\\?sendUpdates=all$`))
+    assert.match(googleRequests[4].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}\\?sendUpdates=all$`))
+    assert.match(googleRequests[5].path, /showDeleted=true/)
 
     const finalAppointment = await localCalendarService.getLocalAppointment(appointmentId)
     assert.equal(finalAppointment.googleEventId, null)
+    assert.equal(finalAppointment.googleProviderCalendarId, null)
 
   } finally {
     if (db) {
@@ -526,7 +641,388 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
   }
 })
 
-test('OAuth Google local cancela en Ristak los eventos cancelados desde Google Calendar', async () => {
+test('una respuesta vieja de Google no pisa la edición local y el reintento repara el mismo evento sin duplicarlo', async () => {
+  await initializeMasterKey()
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const googleRequests = []
+  const previousFetch = global.fetch
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_google_version_cas_${suffix}`
+  const appointmentId = `rstk_appt_google_version_cas_${suffix}`
+  let db = null
+  let googleCalendarService = null
+  let injectedConcurrentEdit = false
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@negocio.test'
+    const googleFetch = createGoogleApiFetchMock(googleRequests, {
+      conflictOnDuplicateCreate: true,
+      beforeCreateResponse: async ({ createAttempts }) => {
+        if (createAttempts !== 1 || injectedConcurrentEdit) return
+        injectedConcurrentEdit = true
+        await db.run(`
+          UPDATE appointments
+          SET title = ?, notes = ?, google_sync_status = 'pending', date_updated = ?
+          WHERE id = ?
+        `, [
+          'Versión local editada durante el POST',
+          'Esta versión nueva es la que debe mandar',
+          '2030-01-01T00:00:00.000Z',
+          appointmentId
+        ])
+      }
+    })
+    global.fetch = (url, options) => String(url).startsWith(baseUrl)
+      ? previousFetch(url, options)
+      : googleFetch(url, options)
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    googleCalendarService = await import('../src/services/googleCalendarService.js')
+    await googleCalendarService.claimGoogleCalendarOAuthHandoff('google_handoff_test')
+
+    await localCalendarService.createLocalCalendar({
+      id: calendarId,
+      name: 'Agenda canónica con carrera de versión',
+      googleCalendarId: 'ventas@test.com',
+      googleAccessRole: 'owner',
+      googleCalendarSummary: 'Ventas'
+    }, { allowGoogleSyncMetadata: true })
+    const outgoing = await localCalendarService.createLocalAppointment({
+      id: appointmentId,
+      calendarId,
+      title: 'Versión local que salió primero',
+      notes: 'Esta versión ya quedó vieja',
+      startTime: '2027-08-18T18:00:00.000Z',
+      endTime: '2027-08-18T19:00:00.000Z'
+    })
+
+    await assert.rejects(
+      () => googleCalendarService.syncAppointmentToGoogle(outgoing),
+      error => error?.code === 'appointment_provider_response_stale'
+    )
+
+    let preserved = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(preserved.title, 'Versión local editada durante el POST')
+    assert.equal(preserved.notes, 'Esta versión nueva es la que debe mandar')
+    assert.equal(preserved.googleEventId, null)
+    assert.equal(preserved.googleSyncStatus, 'pending')
+
+    // El POST anterior sí alcanzó a crear el ID determinista en Google. El
+    // reintento recibe 409, recupera ese mismo evento y lo corrige con PATCH.
+    const repaired = await googleCalendarService.syncAppointmentToGoogle(preserved)
+    const deterministicEventId = googleCalendarService.googleAppointmentEventIdForLocalAppointment(appointmentId)
+    assert.equal(repaired.appointment.googleEventId, deterministicEventId)
+    assert.equal(repaired.appointment.googleSyncStatus, 'synced')
+    assert.equal(repaired.event.summary, 'Versión local editada durante el POST')
+    assert.equal(repaired.event.description, 'Esta versión nueva es la que debe mandar')
+
+    preserved = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(preserved.title, 'Versión local editada durante el POST')
+    assert.equal(preserved.googleEventId, deterministicEventId)
+    assert.equal(preserved.googleSyncStatus, 'synced')
+    assert.deepEqual(
+      googleRequests.map(request => request.method),
+      ['POST', 'POST', 'GET', 'PATCH']
+    )
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
+    global.fetch = previousFetch
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('relink Google A→B retira primero el espejo viejo y conserva intacta la cita local', async () => {
+  await initializeMasterKey()
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const googleRequests = []
+  const previousFetch = global.fetch
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_google_relink_${suffix}`
+  const appointmentId = `rstk_appt_google_relink_${suffix}`
+  let db = null
+  let googleCalendarService = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@negocio.test'
+    const googleFetch = createGoogleRelinkFetchMock(googleRequests, { failOldDeleteOnce: true })
+    global.fetch = (url, options) => String(url).startsWith(baseUrl)
+      ? previousFetch(url, options)
+      : googleFetch(url, options)
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    googleCalendarService = await import('../src/services/googleCalendarService.js')
+    await googleCalendarService.claimGoogleCalendarOAuthHandoff('google_handoff_test')
+
+    await localCalendarService.createLocalCalendar({
+      id: calendarId,
+      name: 'Agenda canónica para relink',
+      googleCalendarId: googleFetch.calendarA,
+      googleAccessRole: 'owner',
+      googleCalendarSummary: 'Google A'
+    }, { allowGoogleSyncMetadata: true })
+    const local = await localCalendarService.createLocalAppointment({
+      id: appointmentId,
+      calendarId,
+      title: 'Cita local que no se mueve',
+      notes: 'Ristak conserva estos datos',
+      startTime: '2026-08-18T18:00:00.000Z',
+      endTime: '2026-08-18T19:00:00.000Z'
+    })
+    const created = await googleCalendarService.syncAppointmentToGoogle(local)
+    const eventId = created.appointment.googleEventId
+    assert.equal(created.appointment.googleProviderCalendarId, googleFetch.calendarA)
+    assert.equal(googleFetch.eventsByCalendar.get(googleFetch.calendarA).size, 1)
+
+    await googleCalendarService.updateLocalCalendarGoogleSync({
+      calendarId,
+      googleCalendarId: googleFetch.calendarB
+    })
+    const pendingMove = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(pendingMove.googleEventId, eventId)
+    assert.equal(pendingMove.googleProviderCalendarId, googleFetch.calendarA)
+    assert.equal(pendingMove.googleSyncStatus, 'pending')
+
+    const failedMove = await googleCalendarService.syncLocalAppointmentsToGoogle({ calendarId })
+    assert.equal(failedMove.failed, 1)
+    assert.equal(googleFetch.eventsByCalendar.get(googleFetch.calendarA).size, 1)
+    assert.equal(googleFetch.eventsByCalendar.get(googleFetch.calendarB).size, 0)
+    const afterFailedMove = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(afterFailedMove.googleEventId, eventId)
+    assert.equal(afterFailedMove.googleProviderCalendarId, googleFetch.calendarA)
+    assert.equal(afterFailedMove.googleSyncStatus, 'error')
+
+    const moved = await googleCalendarService.syncLocalAppointmentsToGoogle({ calendarId })
+    assert.equal(moved.synced, 1)
+    assert.equal(googleFetch.eventsByCalendar.get(googleFetch.calendarA).size, 0)
+    assert.equal(googleFetch.eventsByCalendar.get(googleFetch.calendarB).size, 1)
+    const finalAppointment = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(finalAppointment.id, appointmentId)
+    assert.equal(finalAppointment.calendarId, calendarId)
+    assert.equal(finalAppointment.title, 'Cita local que no se mueve')
+    assert.equal(finalAppointment.notes, 'Ristak conserva estos datos')
+    assert.equal(finalAppointment.startTime, '2026-08-18T18:00:00.000Z')
+    assert.equal(finalAppointment.googleProviderCalendarId, googleFetch.calendarB)
+
+    const stableRetry = await googleCalendarService.syncLocalAppointmentsToGoogle({ calendarId })
+    assert.equal(stableRetry.total, 0)
+    const writes = googleRequests.filter(request => request.method !== 'GET')
+    assert.deepEqual(writes.map(request => request.method), ['POST', 'DELETE', 'DELETE', 'POST'])
+    assert.match(writes[1].path, /calendar-a%40test\.com/)
+    assert.match(writes[2].path, /calendar-a%40test\.com/)
+    assert.match(writes[3].path, /calendar-b%40test\.com/)
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
+    global.fetch = previousFetch
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('un tombstone viejo tras B→A→B no rota el espejo que todavía pertenece a A', async () => {
+  await initializeMasterKey()
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const googleRequests = []
+  const previousFetch = global.fetch
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_google_stale_tombstone_${suffix}`
+  const appointmentId = `rstk_appt_google_stale_tombstone_${suffix}`
+  let db = null
+  let googleCalendarService = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@negocio.test'
+    const googleFetch = createGoogleRelinkFetchMock(googleRequests)
+    global.fetch = (url, options) => String(url).startsWith(baseUrl)
+      ? previousFetch(url, options)
+      : googleFetch(url, options)
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    googleCalendarService = await import('../src/services/googleCalendarService.js')
+    await googleCalendarService.claimGoogleCalendarOAuthHandoff('google_handoff_test')
+
+    // Estado final de B→A→B: la agenda ya apunta otra vez a B, pero la cita
+    // todavía registra A como dueño de su espejo mientras termina la migración.
+    await localCalendarService.createLocalCalendar({
+      id: calendarId,
+      name: 'Agenda religada de vuelta a B',
+      googleCalendarId: googleFetch.calendarB,
+      googleAccessRole: 'owner',
+      googleCalendarSummary: 'Google B'
+    }, { allowGoogleSyncMetadata: true })
+    const eventId = googleCalendarService.googleAppointmentEventIdForLocalAppointment(appointmentId, 3)
+    await localCalendarService.createLocalAppointment({
+      id: appointmentId,
+      calendarId,
+      googleEventId: eventId,
+      googleProviderCalendarId: googleFetch.calendarA,
+      googleMirrorGeneration: 3,
+      googleSyncStatus: 'pending',
+      googleSyncError: 'Migración de A hacia B pendiente',
+      title: 'Cita local con ownership en A',
+      startTime: '2026-08-20T18:00:00.000Z',
+      endTime: '2026-08-20T19:00:00.000Z'
+    })
+
+    // B conserva un tombstone de su espejo anterior con el mismo ID
+    // determinista. Verlo no le da autoridad para invalidar el espejo de A.
+    googleFetch.eventsByCalendar.get(googleFetch.calendarB).set(eventId, {
+      id: eventId,
+      status: 'cancelled',
+      extendedProperties: {
+        private: {
+          ristakAppointmentId: appointmentId,
+          ristakCalendarId: calendarId
+        }
+      }
+    })
+
+    const pulled = await googleCalendarService.syncGoogleEventsToLocal({
+      calendarId,
+      startTime: '2026-08-20T00:00:00.000Z',
+      endTime: '2026-08-21T00:00:00.000Z'
+    })
+    assert.equal(pulled.deleted, 0)
+
+    const preserved = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(preserved.googleEventId, eventId)
+    assert.equal(preserved.googleProviderCalendarId, googleFetch.calendarA)
+    assert.equal(preserved.googleMirrorGeneration, 3)
+    assert.equal(preserved.googleSyncStatus, 'pending')
+    assert.equal(preserved.googleSyncError, 'Migración de A hacia B pendiente')
+    assert.equal(preserved.status, 'confirmed')
+    assert.deepEqual(googleRequests.map(request => request.method), ['GET'])
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
+    global.fetch = previousFetch
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('un dueño Google duplicado legacy bloquea outbound antes de cualquier fetch remoto', async () => {
+  await initializeMasterKey()
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const googleRequests = []
+  const previousFetch = global.fetch
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const firstCalendarId = `rstk_cal_google_legacy_owner_a_${suffix}`
+  const secondCalendarId = `rstk_cal_google_legacy_owner_b_${suffix}`
+  const appointmentId = `rstk_appt_google_legacy_owner_${suffix}`
+  let db = null
+  let googleCalendarService = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@negocio.test'
+    const googleFetch = createGoogleRelinkFetchMock(googleRequests)
+    global.fetch = (url, options) => String(url).startsWith(baseUrl)
+      ? previousFetch(url, options)
+      : googleFetch(url, options)
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    googleCalendarService = await import('../src/services/googleCalendarService.js')
+    await googleCalendarService.claimGoogleCalendarOAuthHandoff('google_handoff_test')
+
+    await localCalendarService.createLocalCalendar({
+      id: firstCalendarId,
+      name: 'Dueño Google legítimo',
+      googleCalendarId: googleFetch.calendarA,
+      googleAccessRole: 'owner'
+    }, { allowGoogleSyncMetadata: true })
+    await localCalendarService.createLocalCalendar({
+      id: secondCalendarId,
+      name: 'Agenda legacy duplicada'
+    })
+    const appointment = await localCalendarService.createLocalAppointment({
+      id: appointmentId,
+      calendarId: firstCalendarId,
+      title: 'No debe salir de Ristak',
+      startTime: '2026-08-21T18:00:00.000Z',
+      endTime: '2026-08-21T19:00:00.000Z'
+    })
+
+    // Bypass deliberado de las rutas protegidas para simular una BD creada por
+    // una versión antigua que ya contiene dos dueños del mismo Google Calendar.
+    await db.run(
+      'UPDATE calendars SET raw_json = ? WHERE id = ?',
+      [JSON.stringify({ googleCalendarId: googleFetch.calendarA }), secondCalendarId]
+    )
+
+    await assert.rejects(
+      () => googleCalendarService.syncAppointmentToGoogle(appointment),
+      error => error?.status === 409 && error?.code === 'duplicate_google_calendar_owner'
+    )
+    assert.equal(googleRequests.length, 0, 'el conflicto local debe detectarse antes de tocar Google')
+
+    const local = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(local.googleEventId, null)
+    assert.equal(local.googleProviderCalendarId, null)
+    assert.equal(local.title, 'No debe salir de Ristak')
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id IN (?, ?)', [firstCalendarId, secondCalendarId]).catch(() => undefined)
+    }
+    await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
+    global.fetch = previousFetch
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('OAuth Google conserva la cita local si alguien cancela sólo su espejo en Google', async () => {
   await initializeMasterKey()
   const previousEnv = snapshotEnv()
   const requests = []
@@ -547,7 +1043,10 @@ test('OAuth Google local cancela en Ristak los eventos cancelados desde Google C
     process.env.APP_URL = 'https://demo.onrender.com'
     process.env.APP_VERSION = '1.0.0'
     process.env.OWNER_EMAIL = 'dueno@clinica.test'
-    const googleFetch = createGoogleApiFetchMock(googleRequests, { cancelledAppointmentId: appointmentId })
+    const googleFetch = createGoogleApiFetchMock(googleRequests, {
+      cancelledAppointmentId: appointmentId,
+      failCreateAmbiguouslyOnce: true
+    })
     global.fetch = (url, options) => String(url).startsWith(baseUrl)
       ? previousFetch(url, options)
       : googleFetch(url, options)
@@ -564,12 +1063,15 @@ test('OAuth Google local cancela en Ristak los eventos cancelados desde Google C
       accessRole: 'owner',
       googleCalendarSummary: 'Ventas',
       googleCalendarTimeZone: 'America/Mexico_City'
-    })
+    }, { allowGoogleSyncMetadata: true })
 
     await localCalendarService.createLocalAppointment({
       id: appointmentId,
       calendarId,
       googleEventId: 'evt_google_cancelled',
+      // La comparación de ownership debe ser case-insensitive: Google puede
+      // devolver el mismo ID con distinta capitalización en datos legacy.
+      googleProviderCalendarId: 'VENTAS@TEST.COM',
       title: 'Cita borrada en Google',
       startTime: '2026-06-18T18:00:00.000Z',
       endTime: '2026-06-18T19:00:00.000Z'
@@ -582,20 +1084,38 @@ test('OAuth Google local cancela en Ristak los eventos cancelados desde Google C
     })
 
     assert.equal(result.saved, 1)
-    assert.equal(result.deleted, 1)
+    assert.equal(result.deleted, 0)
     assert.equal(result.linkedCalendars, 1)
 
-    const cancelledAppointment = await localCalendarService.getLocalAppointment(appointmentId)
-    assert.equal(cancelledAppointment.status, 'cancelled')
-    assert.equal(cancelledAppointment.appointmentStatus, 'cancelled')
-    assert.equal(cancelledAppointment.googleEventId, 'evt_google_cancelled')
+    const preservedAppointment = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(preservedAppointment.status, 'confirmed')
+    assert.equal(preservedAppointment.appointmentStatus, 'confirmed')
+    assert.equal(preservedAppointment.googleEventId, null)
+    assert.equal(preservedAppointment.googleProviderCalendarId, 'ventas@test.com')
+    assert.equal(preservedAppointment.googleMirrorGeneration, 1)
+    assert.equal(preservedAppointment.googleSyncStatus, 'pending')
+    assert.match(preservedAppointment.googleSyncError || '', /copia de Google/i)
+
+    const repaired = await googleCalendarService.syncLocalAppointmentsToGoogle({ calendarId })
+    assert.equal(repaired.synced, 1)
+    const repairedAppointment = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(
+      repairedAppointment.googleEventId,
+      googleCalendarService.googleAppointmentEventIdForLocalAppointment(appointmentId, 1)
+    )
+    assert.notEqual(repairedAppointment.googleEventId, 'evt_google_cancelled')
+    assert.equal(repairedAppointment.googleSyncStatus, 'synced')
+    assert.equal(repairedAppointment.status, 'confirmed')
 
     assert.equal(requests.length, 2)
     assert.equal(requests[0].path, '/api/license/oauth-handoff/claim')
     assert.equal(requests[1].path, '/api/license/google-calendar/refresh-token')
-    assert.equal(googleRequests.length, 1)
+    assert.equal(googleRequests.length, 3)
     assert.equal(googleRequests[0].method, 'GET')
     assert.match(googleRequests[0].path, /showDeleted=true/)
+    assert.equal(googleRequests[1].method, 'POST')
+    assert.equal(googleRequests[2].method, 'GET')
+    assert.match(googleRequests[2].path, new RegExp(`/events/${repairedAppointment.googleEventId}$`))
   } finally {
     if (db) {
       await db.run('DELETE FROM appointments WHERE google_event_id IN (?, ?)', ['evt_google_imported', 'evt_google_cancelled']).catch(() => undefined)

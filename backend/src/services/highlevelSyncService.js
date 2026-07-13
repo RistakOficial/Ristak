@@ -26,10 +26,12 @@ import { sanitizeContactName, normalizePhoneDigits } from '../utils/phoneUtils.j
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 import GHLClient from './ghlClient.js'
 import {
+  claimPreparedHighLevelMirrorIntent,
   getLocalCalendar,
+  inspectInboundHighLevelAppointment,
+  reconcileInboundHighLevelAppointment,
   syncLocalAppointmentsToHighLevel,
   syncLocalCalendarsToHighLevel,
-  upsertLocalAppointment,
   upsertLocalCalendar
 } from './localCalendarService.js'
 import { syncProductsWithHighLevel } from './localProductService.js'
@@ -692,6 +694,70 @@ async function fetchCalendarEventsByCalendar({
   }
 
   return { events, total }
+}
+
+export async function persistHighLevelAppointmentFromPull({
+  rawEvent = {},
+  normalized = null,
+  localContactId = null,
+  localCalendarId = null,
+  locationId = null
+} = {}) {
+  const record = normalized || normalizeAppointmentRecord(rawEvent, locationId)
+  return reconcileInboundHighLevelAppointment({
+    ...record,
+    contactId: localContactId || record.contactId || null,
+    calendarId: localCalendarId || record.calendarId || null,
+    locationId: locationId || record.locationId || null
+  }, {
+    observedRaw: rawEvent,
+    ghlAppointmentId: record.id,
+    contactId: localContactId || null,
+    calendarId: localCalendarId || record.calendarId || null,
+    locationId: locationId || record.locationId || null,
+    lastWriteWins: true
+  })
+}
+
+export async function resolveHighLevelPullAppointmentContact({
+  remoteAppointmentId,
+  remoteContactId,
+  rawEvent = null,
+  remoteCalendarId = null,
+  apiToken,
+  usePostgres = Boolean(process.env.DATABASE_URL),
+  locationId,
+  ensureContact = ensureContactExists
+} = {}) {
+  const claimedMirrorIntent = rawEvent
+    ? await claimPreparedHighLevelMirrorIntent(rawEvent, {
+        ghlAppointmentId: remoteAppointmentId,
+        remoteCalendarId,
+        remoteContactId
+      })
+    : null
+  const inboundTarget = claimedMirrorIntent || await inspectInboundHighLevelAppointment(remoteAppointmentId)
+  if (inboundTarget.ownership === 'ristak') {
+    const resolvedRemoteContactId = remoteContactId
+      ? await resolveContactIdByGhlId(remoteContactId)
+      : null
+    return {
+      // Si el ID remoto no está ligado, conservarlo sólo como valor observado
+      // permite detectar la divergencia sin crear ni relinkear una ficha.
+      localContactId: resolvedRemoteContactId || cleanString(remoteContactId) || inboundTarget.appointment?.contactId || null,
+      canonicalContactId: inboundTarget.appointment?.contactId || null,
+      created: false,
+      ownership: 'ristak'
+    }
+  }
+
+  const ensuredContact = await ensureContact(remoteContactId, apiToken, usePostgres, locationId)
+  return {
+    localContactId: ensuredContact.localContactId || null,
+    canonicalContactId: ensuredContact.localContactId || null,
+    created: Boolean(ensuredContact.created),
+    ownership: inboundTarget.ownership || 'ghl'
+  }
 }
 
 // Garantiza que el contacto de HighLevel exista localmente.
@@ -1434,45 +1500,49 @@ async function syncHighLevelAppointments(locationId, apiToken) {
   let contactsCreated = 0
   const usePostgres = Boolean(process.env.DATABASE_URL)
 
-  for (const { normalized } of uniqueEvents) {
+  for (const { raw, normalized } of uniqueEvents) {
     try {
-      // Verificar si el contacto existe y resolver su ID local de Ristak
-      const ensuredContact = await ensureContactExists(normalized.contactId, apiToken, usePostgres, locationId)
-      if (ensuredContact.created) {
-        contactsCreated++
-      }
-      const localContactId = ensuredContact.localContactId || normalized.contactId || null
-
+      // Un eco de una cita canónica no tiene autoridad para crear ni mezclar
+      // contactos. Sólo resolvemos/importamos el contacto si la cita realmente
+      // pertenece a HighLevel o todavía no existe localmente.
       const localCalendar = normalized.calendarId
         ? await getLocalCalendar(normalized.calendarId)
         : null
+      const contactResolution = await resolveHighLevelPullAppointmentContact({
+        remoteAppointmentId: normalized.id,
+        remoteContactId: normalized.contactId,
+        rawEvent: raw,
+        remoteCalendarId: normalized.calendarId,
+        apiToken,
+        usePostgres,
+        locationId
+      })
+      if (contactResolution.created) {
+        contactsCreated++
+      }
+      const localContactId = contactResolution.localContactId
 
-      await upsertLocalAppointment({
-        ...normalized,
-        contactId: localContactId,
-        id: normalized.id,
-        ghlAppointmentId: normalized.id,
-        calendarId: localCalendar?.id || normalized.calendarId,
-        googleEventId: normalized.googleEventId // (GHL-004) alimenta google_event_id para deduplicar contra Google
-      }, {
-        source: 'ghl',
-        ghlAppointmentId: normalized.id,
-        calendarId: localCalendar?.id || normalized.calendarId,
-        locationId,
-        syncStatus: 'synced',
-        // (GHL-003) Pull horario de HL: aplicar last-write-wins para no pisar ediciones
-        // locales recientes ni revivir citas borradas en Ristak con datos viejos de HL.
-        lastWriteWins: true
+      const reconciliation = await persistHighLevelAppointmentFromPull({
+        rawEvent: raw,
+        normalized,
+        localContactId,
+        localCalendarId: localCalendar?.id || normalized.calendarId,
+        locationId
       })
 
       // Actualizar appointment_date del contacto con la fecha de la cita más próxima
-      if (localContactId && normalized.startTime) {
+      const persistedAppointment = reconciliation.appointment
+      if (
+        reconciliation.ownership === 'ghl'
+        && persistedAppointment?.contactId
+        && persistedAppointment?.startTime
+      ) {
         await db.run(`
           UPDATE contacts
           SET appointment_date = ?
           WHERE id = ?
           AND (appointment_date IS NULL OR appointment_date > ?)
-        `, [normalized.startTime, localContactId, normalized.startTime])
+        `, [persistedAppointment.startTime, persistedAppointment.contactId, persistedAppointment.startTime])
       }
 
       saved++

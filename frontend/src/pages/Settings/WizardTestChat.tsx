@@ -224,9 +224,11 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
         }
       )
       for (const action of result.actions || []) {
+        const actionMessage = describeConversationalPreviewAction(action)
+        if (!actionMessage) continue
         setMessages((current) => [
           ...current,
-          { role: 'assistant', content: describeConversationalPreviewAction(action), internal: true }
+          { role: 'assistant', content: actionMessage, internal: true }
         ])
       }
       const replies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])

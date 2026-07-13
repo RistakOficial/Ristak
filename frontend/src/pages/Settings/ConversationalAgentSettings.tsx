@@ -2879,8 +2879,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
     for (const [index, action] of (result.actions || []).entries()) {
       if (!canContinue()) return false
+      const actionMessage = describeConversationalPreviewAction(action)
+      if (!actionMessage) continue
       appendMessage(
-        { role: 'assistant', content: describeConversationalPreviewAction(action), internal: true },
+        { role: 'assistant', content: actionMessage, internal: true },
         `action-${index}`
       )
     }

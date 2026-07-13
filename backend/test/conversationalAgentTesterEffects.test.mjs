@@ -839,6 +839,8 @@ test('si otra petición reemplaza el slot aceptado antes de materializarlo, no c
       source: 'ristak',
       slotDuration: 60,
       slotInterval: 60,
+      allowBookingFor: 365,
+      allowBookingForUnit: 'days',
       openHours: [{
         daysOfTheWeek: [slotA.weekday],
         hours: [{ openHour: 13, openMinute: 0, closeHour: 17, closeMinute: 0 }]
