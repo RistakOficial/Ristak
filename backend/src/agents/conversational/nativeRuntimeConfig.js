@@ -394,8 +394,11 @@ function normalizeCapabilityItem(input, legacyTestMode = DEFAULT_CONVERSATIONAL_
     return {
       id,
       enabled,
-      productId: cleanId(input.productId, 160),
-      priceId: cleanId(input.priceId, 160),
+      // Producto y precio sólo tienen autoridad en ese tipo de cobro. Al
+      // cambiar a anticipo o cobro directo no permitimos que residuos del
+      // formulario anterior contaminen la identidad financiera del link.
+      productId: chargeType === 'product' ? cleanId(input.productId, 160) : '',
+      priceId: chargeType === 'product' ? cleanId(input.priceId, 160) : '',
       paymentMode: chargeType === 'deposit' ? 'deposit' : 'full_payment',
       chargeType,
       collectionMethod,

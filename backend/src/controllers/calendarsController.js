@@ -2395,9 +2395,41 @@ export async function updateAppointment(req, res) {
   try {
     const { id } = req.params;
     const { accessToken, ...updateData } = req.body;
+    const strictAvailabilityCheck = updateData.strictAvailabilityCheck === true;
+    const ignoreAppointmentConflicts = updateData.ignoreAppointmentConflicts === true;
+    const expectedStartTime = updateData.expectedStartTime || updateData.expected_start_time || null;
+    const expectedEndTime = updateData.expectedEndTime || updateData.expected_end_time || null;
+    const expectedAppointmentStatus = cleanString(
+      updateData.expectedAppointmentStatus || updateData.expected_appointment_status
+    ).toLowerCase() || null;
+    const strictLifecycleMutation = ['cancel', 'reschedule'].includes(
+      cleanString(updateData.strictLifecycleMutation || updateData.strict_lifecycle_mutation).toLowerCase()
+    )
+      ? cleanString(updateData.strictLifecycleMutation || updateData.strict_lifecycle_mutation).toLowerCase()
+      : null;
+    delete updateData.strictAvailabilityCheck;
+    delete updateData.ignoreAppointmentConflicts;
+    delete updateData.expectedStartTime;
+    delete updateData.expected_start_time;
+    delete updateData.expectedEndTime;
+    delete updateData.expected_end_time;
+    delete updateData.expectedAppointmentStatus;
+    delete updateData.expected_appointment_status;
+    delete updateData.strictLifecycleMutation;
+    delete updateData.strict_lifecycle_mutation;
     const context = await getHighLevelContext(req, { accessToken });
     const existing = await localCalendarService.getLocalAppointment(id);
     let appointment;
+    let lifecycleReplay = null;
+    let localLifecycleFence = null;
+
+    if (!existing && (strictAvailabilityCheck || strictLifecycleMutation)) {
+      return res.status(404).json({
+        success: false,
+        code: 'appointment_not_found',
+        error: 'La cita ya no existe o dejó de estar disponible.'
+      });
+    }
 
     // (APT-006) Normaliza el nuevo estado ANTES de hablar con HL. El front puede
     // mandar el estado como status / appointmentStatus / appointment_status; usamos
@@ -2410,6 +2442,149 @@ export async function updateAppointment(req, res) {
     ).trim().toLowerCase();
     if (incomingStatus === 'cancelled' && !updateData.appointmentStatus && !updateData.appointment_status) {
       updateData.appointmentStatus = incomingStatus;
+    }
+    const cancellationMutationRequested = ['cancelled', 'canceled'].includes(incomingStatus);
+    if (!existing && cancellationMutationRequested) {
+      return res.status(404).json({
+        success: false,
+        code: 'appointment_not_found',
+        error: 'La cita ya no existe o dejó de estar disponible.'
+      });
+    }
+
+    // Reagendar desde el agente y cualquier cancelación pasan por un check+update
+    // local serializado por calendario. La UI/admin conserva su payload legacy,
+    // pero comparte el candado al cancelar. El proveedor externo se sincroniza
+    // después del commit local y, si falla, `sync_status=pending` conserva la
+    // edición para el reconciliador existente.
+    if ((strictAvailabilityCheck || strictLifecycleMutation || cancellationMutationRequested) && existing) {
+      const requestedStart = updateData.startTime || updateData.start_time;
+      const requestedEnd = updateData.endTime || updateData.end_time;
+      const startChanged = requestedStart && (
+        new Date(requestedStart).getTime() !== new Date(existing.startTime || existing.start_time).getTime()
+      );
+      const cancelRequested = strictLifecycleMutation === 'cancel' || cancellationMutationRequested;
+      const rescheduleRequested = strictLifecycleMutation === 'reschedule' || startChanged;
+      if (cancelRequested || rescheduleRequested) {
+        const calendarId = existing.calendarId || existing.calendar_id;
+        const startMs = requestedStart ? new Date(requestedStart).getTime() : NaN;
+        const endMs = requestedEnd ? new Date(requestedEnd).getTime() : NaN;
+        if (
+          !calendarId ||
+          (rescheduleRequested && (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs))
+        ) {
+          return res.status(400).json({
+            success: false,
+            code: 'appointment_reschedule_range_invalid',
+            error: 'El nuevo horario de la cita no es válido.'
+          });
+        }
+        const calendar = await localCalendarService.getLocalCalendar(calendarId);
+        if (!calendar?.id) {
+          return res.status(404).json({
+            success: false,
+            code: 'calendar_not_found',
+            error: 'El calendario de la cita ya no existe o dejó de estar disponible.'
+          });
+        }
+        appointment = await db.transaction(async () => {
+          await lockCalendarAppointmentCreation(calendarId);
+          const current = await localCalendarService.getLocalAppointment(id);
+          if (!current?.id) {
+            const error = new Error('La cita dejó de existir mientras se reprogramaba.');
+            error.status = 404;
+            error.code = 'appointment_not_found';
+            throw error;
+          }
+          const currentStatus = cleanString(
+            current.appointmentStatus || current.appointment_status || current.status
+          ).toLowerCase();
+          const currentStartMs = new Date(current.startTime || current.start_time).getTime();
+          const currentEndMs = new Date(current.endTime || current.end_time).getTime();
+          const cancelledStatuses = new Set(['cancelled', 'canceled']);
+          const inactiveStatuses = new Set([
+            ...cancelledStatuses,
+            'no_show', 'no-show', 'noshow', 'invalid', 'deleted',
+            'showed', 'show', 'attended', 'completed', 'complete'
+          ]);
+
+          if (cancelRequested && cancelledStatuses.has(currentStatus)) {
+            lifecycleReplay = 'already_cancelled';
+            return { ...current, lifecycleReplay };
+          }
+          if (rescheduleRequested && Number.isFinite(startMs) && Number.isFinite(endMs) &&
+              currentStartMs === startMs && currentEndMs === endMs && !inactiveStatuses.has(currentStatus)) {
+            lifecycleReplay = 'already_rescheduled';
+            return { ...current, lifecycleReplay };
+          }
+          if (inactiveStatuses.has(currentStatus)) {
+            const error = new Error(cancelRequested
+              ? 'La cita ya no está activa y no puede cancelarse.'
+              : 'La cita ya no está activa y no puede reagendarse.');
+            error.status = 409;
+            error.code = 'appointment_lifecycle_inactive';
+            throw error;
+          }
+          if (
+            expectedStartTime &&
+            new Date(expectedStartTime).getTime() !== currentStartMs
+          ) {
+            const error = new Error('La cita cambió mientras se reprogramaba. Se conservó su horario vigente.');
+            error.status = 409;
+            error.code = 'appointment_reschedule_stale';
+            throw error;
+          }
+          if (expectedEndTime && new Date(expectedEndTime).getTime() !== currentEndMs) {
+            const error = new Error('La duración de la cita cambió mientras se procesaba. Se conservó su horario vigente.');
+            error.status = 409;
+            error.code = 'appointment_duration_stale';
+            throw error;
+          }
+          if (expectedAppointmentStatus && currentStatus !== expectedAppointmentStatus) {
+            const error = new Error('El estado de la cita cambió mientras se procesaba. No se aplicó la acción.');
+            error.status = 409;
+            error.code = 'appointment_status_stale';
+            throw error;
+          }
+          if (cancelRequested) {
+            return localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
+          }
+          const availability = await localCalendarService.checkSlotAvailability(
+            calendarId,
+            requestedStart,
+            requestedEnd,
+            {
+              excludeAppointmentId: current.id,
+              ignoreAppointmentConflicts
+            }
+          );
+          if (!availability.available) {
+            const error = new Error('Ese horario ya no está disponible. La cita conserva su horario anterior.');
+            error.status = 409;
+            error.code = 'slot_unavailable';
+            error.data = { limit: availability.limit, overlapping: availability.overlapping };
+            throw error;
+          }
+          return localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
+        });
+        if (appointment && !lifecycleReplay) {
+          localLifecycleFence = {
+            calendarId,
+            startMs: new Date(appointment.startTime || appointment.start_time).getTime(),
+            endMs: new Date(appointment.endTime || appointment.end_time).getTime(),
+            status: cleanString(
+              appointment.appointmentStatus || appointment.appointment_status || appointment.status
+            ).toLowerCase()
+          };
+        }
+      }
+    }
+
+    if (lifecycleReplay) {
+      return res.json({
+        success: true,
+        data: { ...appointment, lifecycleReplay }
+      });
     }
 
     // (APT-006) Token de fallback: cuando un admin cancela por cambio de estado puede
@@ -2429,16 +2604,87 @@ export async function updateAppointment(req, res) {
     if (context.accessToken && existing?.ghlAppointmentId) {
       try {
         const remote = await calendarService.updateAppointment(existing.ghlAppointmentId, updateData, context.accessToken);
-        appointment = await localCalendarService.upsertLocalAppointment(remote, {
-          id: existing.id,
-          source: existing.source || 'ristak',
-          ghlAppointmentId: existing.ghlAppointmentId,
-          calendarId: existing.calendarId,
-          locationId: context.locationId || existing.locationId,
-          syncStatus: 'synced'
-        });
+        const remoteAppointment = remote?.appointment && typeof remote.appointment === 'object'
+          ? remote.appointment
+          : remote;
+        const upsertRemote = () => localCalendarService.upsertLocalAppointment({
+            ...remoteAppointment,
+            contactId: existing.contactId || null
+          }, {
+            id: existing.id,
+            source: existing.source || 'ristak',
+            ghlAppointmentId: existing.ghlAppointmentId,
+            calendarId: existing.calendarId,
+            locationId: context.locationId || existing.locationId,
+            syncStatus: 'synced'
+          });
+        appointment = localLifecycleFence
+          ? await db.transaction(async () => {
+              await lockCalendarAppointmentCreation(localLifecycleFence.calendarId);
+              const current = await localCalendarService.getLocalAppointment(id);
+              const currentStartMs = new Date(current?.startTime || current?.start_time).getTime();
+              const currentEndMs = new Date(current?.endTime || current?.end_time).getTime();
+              const currentStatus = cleanString(
+                current?.appointmentStatus || current?.appointment_status || current?.status
+              ).toLowerCase();
+              if (
+                !current?.id ||
+                currentStartMs !== localLifecycleFence.startMs ||
+                currentEndMs !== localLifecycleFence.endMs ||
+                currentStatus !== localLifecycleFence.status
+              ) {
+                if (current?.id) {
+                  await db.run(
+                    `UPDATE appointments
+                     SET sync_status = 'pending', date_updated = CURRENT_TIMESTAMP
+                     WHERE id = ?`,
+                    [current.id]
+                  );
+                }
+                const error = new Error('La cita volvió a cambiar mientras respondía el calendario externo. Se conservó la versión más reciente.');
+                error.status = 409;
+                error.code = 'appointment_provider_response_stale';
+                throw error;
+              }
+              return upsertRemote();
+            })
+          : await upsertRemote();
       } catch (error) {
+        if (error?.code === 'appointment_provider_response_stale') throw error;
         logger.warn(`[Calendars Controller] Update GHL falló, guardando pendiente local: ${error.message}`);
+        if (localLifecycleFence) {
+          const fenceResult = await db.transaction(async () => {
+            await lockCalendarAppointmentCreation(localLifecycleFence.calendarId);
+            const current = await localCalendarService.getLocalAppointment(id);
+            const currentStartMs = new Date(current?.startTime || current?.start_time).getTime();
+            const currentEndMs = new Date(current?.endTime || current?.end_time).getTime();
+            const currentStatus = cleanString(
+              current?.appointmentStatus || current?.appointment_status || current?.status
+            ).toLowerCase();
+            const changed = Boolean(
+              !current?.id ||
+              currentStartMs !== localLifecycleFence.startMs ||
+              currentEndMs !== localLifecycleFence.endMs ||
+              currentStatus !== localLifecycleFence.status
+            );
+            if (changed && current?.id) {
+              await db.run(
+                `UPDATE appointments
+                 SET sync_status = 'pending', date_updated = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [current.id]
+              );
+            }
+            return { changed, current };
+          });
+          if (fenceResult.changed) {
+            const staleError = new Error('La cita volvió a cambiar mientras respondía el calendario externo. Se conservó la versión más reciente.');
+            staleError.status = 409;
+            staleError.code = 'appointment_provider_response_stale';
+            throw staleError;
+          }
+          appointment = fenceResult.current;
+        }
       }
     }
 
@@ -2512,8 +2758,9 @@ export async function updateAppointment(req, res) {
     });
   } catch (error) {
     logger.error(`[Calendars Controller] Error en updateAppointment: ${error.message}`);
-    res.status(500).json({
+    res.status(Number(error.status || error.statusCode || 500)).json({
       success: false,
+      ...(error.code ? { code: error.code } : {}),
       error: error.message
     });
   }

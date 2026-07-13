@@ -72,6 +72,9 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
   const agentId = `agent_payment_resume_${suffix}`
   const contactId = `contact_payment_resume_${suffix}`
   const calendarId = `calendar_payment_resume_${suffix}`
+  const productId = `product_payment_resume_${suffix}`
+  const priceId = `price_payment_resume_${suffix}`
+  const productName = `Consulta para desvío ${suffix}`
   const username = `user_payment_resume_${suffix}`
   const offerMessageId = `message_offer_${suffix}`
   const confirmationMessageId = `message_confirm_${suffix}`
@@ -157,6 +160,16 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       }]
     }, { source: 'ristak', syncStatus: 'synced' })
     await db.run(
+      `INSERT INTO products (id, name, currency, is_active, source)
+       VALUES (?, ?, ?, 1, 'ristak')`,
+      [productId, productName, currency]
+    )
+    await db.run(
+      `INSERT INTO product_prices (id, product_id, name, currency, amount, source)
+       VALUES (?, ?, 'Precio de la consulta', ?, 1350, 'ristak')`,
+      [priceId, productId, currency]
+    )
+    await db.run(
       `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
        VALUES (?, 'Agente sandbox con anticipo', 1, 'tool_calling_v2', ?)`,
       [agentId, JSON.stringify(capabilitiesConfig)]
@@ -234,7 +247,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     }
     const offered = await createConversationalTools(offerCtx)
       .find((item) => item.name === 'offer_appointment_slot')
-      .invoke(null, JSON.stringify({ startTime }))
+      .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
     assert.equal(offered.ok, true, JSON.stringify(offered))
 
     const confirmationRun = await prepareConversationalAgentTestRun({
@@ -262,7 +275,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     )
     const wrongReoffer = await createConversationalTools(confirmationCtx)
       .find((item) => item.name === 'offer_appointment_slot')
-      .invoke(null, JSON.stringify({ startTime }))
+      .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
     assert.equal(wrongReoffer.ok, false, JSON.stringify(wrongReoffer))
     assert.equal(wrongReoffer.code, 'appointment_preview_offer_pending_decision')
     assert.equal((await db.get(
@@ -276,22 +289,34 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     })
     assert.equal(confirmationCtx.appointmentOfferDecision?.active, true)
     const decisionTools = createConversationalTools(confirmationCtx)
-    assert.equal(decisionTools.some((item) => item.name === 'get_free_slots'), false)
-    assert.equal(decisionTools.some((item) => item.name === 'offer_appointment_slot'), false)
-    assert.equal(decisionTools.some((item) => item.name === 'book_appointment'), false)
-    const keptOpen = await decisionTools
-      .find((item) => item.name === 'resolve_active_appointment_offer')
-      .invoke(null, JSON.stringify({
-        decision: 'keep_open',
-        reply: 'claro, la valoración tiene el valor configurado; el horario sigue disponible',
-        agreedAmount: null,
-        ...terminalBookingArgs()
-      }))
-    assert.equal(keptOpen.ok, true, JSON.stringify(keptOpen))
-    assert.equal(JSON.parse((await db.get(
+    for (const expected of [
+      'list_products',
+      'get_contact_appointments',
+      'get_free_slots',
+      'offer_appointment_slot',
+      'book_appointment',
+      'reschedule_appointment',
+      'cancel_appointment',
+      'create_payment_link',
+      'resolve_active_appointment_offer'
+    ]) assert.ok(decisionTools.some((item) => item.name === expected), `${expected} debe seguir disponible`)
+
+    const offerBeforePriceLookup = (await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerEventId]
-    )).detail_json).status, 'active')
+    )).detail_json
+    const productLookup = await decisionTools
+      .find((item) => item.name === 'list_products')
+      .invoke(null, JSON.stringify({ query: productName }))
+    assert.equal(productLookup.ok, true, JSON.stringify(productLookup))
+    assert.equal(productLookup.total, 1)
+    assert.equal(productLookup.products[0].prices[0].amount, 1350)
+    assert.equal(productLookup.products[0].prices[0].currency, currency)
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, offerBeforePriceLookup)
+    const priceReply = `La consulta cuesta 1350 ${currency}; el horario que vimos sigue disponible.`
 
     const acceptanceRun = await prepareConversationalAgentTestRun({
       testRunId: runId,
@@ -309,7 +334,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
         { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' },
         { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
         { id: confirmationRun.executionId, role: 'user', content: 'antes dime cuánto cuesta' },
-        { id: `assistant_keep_open_${suffix}`, role: 'assistant', content: keptOpen.visibleReply },
+        { id: `assistant_price_${suffix}`, role: 'assistant', content: priceReply },
         { id: acceptanceRun.executionId, role: 'user', content: 'ok, sí apártalo' }
       ]
     }
@@ -507,7 +532,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     }
     const rejectedReoffer = await createConversationalTools(rejectedReofferCtx)
       .find((item) => item.name === 'offer_appointment_slot')
-      .invoke(null, JSON.stringify({ startTime }))
+      .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
     assert.equal(rejectedReoffer.ok, false, JSON.stringify(rejectedReoffer))
     assert.equal((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
@@ -612,6 +637,8 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
+    await db.run('DELETE FROM product_prices WHERE id = ?', [priceId]).catch(() => undefined)
+    await db.run('DELETE FROM products WHERE id = ?', [productId]).catch(() => undefined)
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
     if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => undefined)

@@ -510,6 +510,7 @@ function buildStripePaymentMetadataPatch(intent = {}, savedMethod = null) {
   )
   const patch = {
     paymentIntentId: cleanString(intent?.id),
+    status: cleanString(intent?.status),
     paymentMethodId,
     paymentMethodType
   }
@@ -1584,6 +1585,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     throw error
   }
   const { stripe, config, requestOptions } = await getStripeClient(row.payment_mode || '')
+  const rowMetadata = parseJson(row.metadata_json, {})
 
   if (['paid', 'refunded', 'void', 'deleted'].includes(row.status)) {
     const error = new Error('Este pago ya no acepta nuevos cobros.')
@@ -1621,6 +1623,10 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
             },
           requestOptions
         )
+        await db.run(
+          'UPDATE payments SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [JSON.stringify(mergeStripePaymentMetadata(rowMetadata, updated)), row.id]
+        )
         return {
           paymentIntentId: updated.id,
           clientSecret: updated.client_secret,
@@ -1630,6 +1636,10 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
         }
       }
 
+      await db.run(
+        'UPDATE payments SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [JSON.stringify(mergeStripePaymentMetadata(rowMetadata, existing)), row.id]
+      )
       return {
         paymentIntentId: existing.id,
         clientSecret: existing.client_secret,
@@ -1644,7 +1654,6 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
   }
 
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
-  const rowMetadata = parseJson(row.metadata_json, {})
   const stripeInstallments = normalizeStripeInstallmentOptions(rowMetadata.stripeInstallments, {
     amount: row.amount,
     currency,
@@ -1706,9 +1715,10 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     `UPDATE payments
      SET stripe_payment_intent_id = ?,
          status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
+         metadata_json = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [intent.id, row.id]
+    [intent.id, JSON.stringify(mergeStripePaymentMetadata(rowMetadata, intent)), row.id]
   )
 
   return {

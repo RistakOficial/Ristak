@@ -3652,6 +3652,25 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conversational_payment_link_requests_status ON conversational_payment_link_requests(status, updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conversational_payment_link_requests_target ON conversational_payment_link_requests(contact_id, invoice_id, status)')
 
+    // Reserva semántica entre mensajes distintos: una identidad financiera sólo
+    // puede tener un creador activo aunque cada inbound use otra idempotency key.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_payment_semantic_claims (
+        semantic_key TEXT PRIMARY KEY,
+        identity_hash TEXT NOT NULL,
+        owner_request_key TEXT NOT NULL,
+        canonical_request_key TEXT,
+        status TEXT NOT NULL DEFAULT 'processing',
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_conversational_payment_semantic_claim_owner
+      ON conversational_payment_semantic_claims(owner_request_key, status)
+    `)
+
     await db.run(`
       CREATE TABLE IF NOT EXISTS payment_automation_dispatches (
         id TEXT PRIMARY KEY,

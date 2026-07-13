@@ -116,6 +116,8 @@ const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
   'offer_appointment_slot',
   'book_appointment',
   'request_human_booking',
+  'reschedule_appointment',
+  'cancel_appointment',
   'mark_ready_to_advance',
   'create_payment_link',
   'send_goal_url',
@@ -139,12 +141,14 @@ function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
   }
   const completedPreviewAppointment = (Array.isArray(toolResults) ? toolResults : []).some((result) => {
     const toolName = String(result?.tool?.name || '').trim()
-    if (!['book_appointment', 'request_human_booking'].includes(toolName)) return false
+    if (!['book_appointment', 'request_human_booking', 'reschedule_appointment', 'cancel_appointment'].includes(toolName)) return false
     return result?.output?.ok === true &&
       result?.output?.simulated === true &&
       (
         result?.output?.wouldMarkObjectiveCompleted === true ||
-        result?.output?.wouldTransferToHuman === true
+        result?.output?.wouldTransferToHuman === true ||
+        result?.output?.wouldRescheduleAppointment === true ||
+        result?.output?.wouldCancelAppointment === true
       )
   })
   if (completedPreviewAppointment) {
@@ -227,7 +231,7 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
 export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email']
 
 // Identificadores internos que jamás deben llegar al cliente final.
-const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|resolve_active_appointment_offer|create_payment_link|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
+const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|reschedule_appointment|cancel_appointment|get_contact_appointments|resolve_active_appointment_offer|create_payment_link|get_payment_status|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
 
 export function normalizeConversationalChannel(value = 'whatsapp') {
   const raw = String(value || '').trim().toLowerCase()
@@ -1474,6 +1478,8 @@ function nativePreviewAppointmentSucceeded(action = {}) {
   if (nativeActionFailed(action) || outcome.status !== 'simulated') return false
   if (action?.type === 'book_appointment') return outcome.wouldMarkObjectiveCompleted === true
   if (action?.type === 'request_human_booking') return outcome.wouldTransferToHuman === true
+  if (action?.type === 'reschedule_appointment') return outcome.wouldRescheduleAppointment === true
+  if (action?.type === 'cancel_appointment') return outcome.wouldCancelAppointment === true
   return false
 }
 
@@ -1525,8 +1531,12 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   if (!visible) {
     if (completedPreviewAppointment?.type === 'book_appointment') visible = 'listo, la cita de prueba quedó confirmada'
     else if (completedPreviewAppointment?.type === 'request_human_booking') visible = 'el horario de prueba seguía disponible y ya quedó preparada la entrega al equipo'
+    else if (completedPreviewAppointment?.type === 'reschedule_appointment') visible = 'listo, la prueba conservaría la misma cita con el horario nuevo'
+    else if (completedPreviewAppointment?.type === 'cancel_appointment') visible = 'listo, la prueba cancelaría esa cita sin borrar su historial'
     else if (confirmed?.type === 'book_appointment') visible = 'listo, la cita quedó confirmada'
     else if (confirmed?.type === 'request_human_booking') visible = 'el horario seguía disponible y ya dejé la solicitud con el equipo para que te confirme la cita'
+    else if (confirmed?.type === 'reschedule_appointment') visible = 'listo, la misma cita quedó cambiada al horario nuevo'
+    else if (confirmed?.type === 'cancel_appointment') visible = 'listo, la cita quedó cancelada'
     else if (confirmed?.type === 'register_deposit_payment_proof') visible = 'recibí el comprobante y quedó pendiente de revisión; todavía no confirma el pago'
     else if (confirmed?.type === 'create_payment_link') visible = 'listo, ya preparé el enlace de pago. el pago seguirá pendiente hasta que el sistema lo confirme'
     else if (confirmed?.type === 'send_goal_url' || confirmed?.type === 'send_trigger_link') {
@@ -1805,13 +1815,17 @@ async function buildToolCallingV2AgentForRun({
   const pendingOfferHandoffInstruction = ctx.appointmentOfferDecision?.allowHandoff === true
     ? ' handoff si pide explícitamente hablar con una persona;'
     : ''
+  const pendingOfferPurposeInstruction = ctx.appointmentOfferDecision?.purpose === 'reschedule'
+    ? '- Esta oferta reemplaza el horario de una cita existente. Si la acepta, la única mutación válida es reschedule_appointment sobre la cita vinculada; jamás crees una cita nueva.\n'
+    : ''
   const pendingOfferInstruction = ctx.appointmentOfferDecision?.active
     ? `## Decisión pendiente sobre el horario
 - Ristak conserva una única oferta estructurada vigente: ${String(ctx.appointmentOfferDecision.localLabel || 'horario previamente mostrado').slice(0, 240)}.
-- En esta vuelta debes expresar tu interpretación semántica del último mensaje llamando resolve_active_appointment_offer. No dependas de palabras exactas.
-- Usa accept únicamente si la persona acepta esa oferta; request_other_options si quiere otro horario; decline si ya no quiere agendar;${pendingOfferHandoffInstruction} keep_open si preguntó otra cosa o la respuesta es ambigua.
-- No vuelvas a consultar ni ofrecer disponibilidad: esas herramientas están bloqueadas hasta resolver esta oferta. Si eliges accept, Ristak recupera el slot exacto y prepara automáticamente el anticipo configurado sin pedir otro permiso artificial.
-- Este bloque describe estado interno verificado. No menciones herramientas, fases ni maquinaria en la respuesta visible.`
+- Esta oferta es estado operativo, no un candado de conversación. Puedes consultar precios, responder dudas, cobrar, transferir o usar cualquier otra capacidad habilitada sin perderla.
+- Usa resolve_active_appointment_offer sólo cuando el último mensaje realmente decida algo sobre esta oferta: accept si la acepta; request_other_options si quiere otro horario; decline si ya no quiere agendar;${pendingOfferHandoffInstruction}
+- Si el mensaje trata otro asunto, responde o usa la herramienta correspondiente sin tocar la oferta. No fuerces al cliente a decidir antes de ayudarle.
+- Antes de ofrecer otro horario, resuelve esta oferta con request_other_options. Si eliges accept, Ristak recupera el slot exacto y prepara automáticamente el anticipo configurado sin pedir otro permiso artificial.
+${pendingOfferPurposeInstruction}- Este bloque describe estado interno verificado. No menciones herramientas, fases ni maquinaria en la respuesta visible.`
     : ''
   const runtimeFactInstruction = cleanRuntimeEventContext
     ? `## Estado factual verificado por Ristak\n${cleanRuntimeEventContext}\n- Este bloque es contexto interno del sistema, no un mensaje del cliente. No lo cites, no muestres IDs ni expliques la maquinaria interna.`
@@ -1824,7 +1838,7 @@ async function buildToolCallingV2AgentForRun({
     tools,
     dryRun,
     forcedToolName: paymentResumeToolChoice,
-    requireTool: ctx.appointmentOfferDecision?.active === true
+    requireTool: Boolean(paymentResumeToolChoice)
   })
 
   return {

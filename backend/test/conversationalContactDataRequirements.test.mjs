@@ -631,7 +631,7 @@ test('tools de agenda rechazan titular distinto y exceso de invitados antes de c
       }
       const offered = await createConversationalTools(ctx)
         .find((tool) => tool.name === 'offer_appointment_slot')
-        .invoke(null, JSON.stringify({ startTime: selectedStartTime }))
+        .invoke(null, JSON.stringify({ startTime: selectedStartTime, appointmentId: null }))
       assert.equal(offered.ok, true, JSON.stringify(offered))
       ctx.actions = []
       ctx.executionId = executionId

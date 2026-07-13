@@ -5460,7 +5460,7 @@ export async function checkSlotAvailability(calendarId, startTime, endTime, opti
   const overlapping = existing.filter(event => {
     if (excludeId && cleanString(event.id) === excludeId) return false
     const status = cleanString(event.appointmentStatus || event.status).toLowerCase()
-    if (['cancelled', 'canceled', 'noshow', 'invalid'].includes(status)) return false
+    if (['cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'invalid', 'deleted'].includes(status)) return false
     return overlaps(
       slotStartMs,
       slotEndMs,
@@ -5573,7 +5573,14 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
   // Las citas existentes están en UTC en la BD; comparamos por instante absoluto.
   const rangeStart = startDay.toUTC().toISO()
   const rangeEnd = endDay.endOf('day').toUTC().toISO()
-  const existing = await listLocalAppointments({ startTime: rangeStart, endTime: rangeEnd, calendarId })
+  const excludedAppointmentId = cleanString(options.excludeAppointmentId || '')
+  const existing = (await listLocalAppointments({ startTime: rangeStart, endTime: rangeEnd, calendarId }))
+    .filter((appointment) => (
+      (!excludedAppointmentId || cleanString(appointment.id) !== excludedAppointmentId) &&
+      !['cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'invalid', 'deleted'].includes(
+        cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
+      )
+    ))
 
   // (APT-004) Excluir los horarios bloqueados nativos del listado de slots libres.
   // Sin esto, el calendario público seguiría ofreciendo horarios que el dueño bloqueó
@@ -5590,7 +5597,10 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
     blockedRanges = []
   }
 
-  const durationMinutes = Math.max(1, toInt(calendar.slotDuration, 60))
+  const requestedDurationMinutes = Number(options.durationMinutes)
+  const durationMinutes = Number.isFinite(requestedDurationMinutes) && requestedDurationMinutes > 0
+    ? requestedDurationMinutes
+    : Math.max(1, toInt(calendar.slotDuration, 60))
   const intervalMinutes = Math.max(1, toInt(calendar.slotInterval, durationMinutes))
   const appointmentLimit = getEffectiveSlotAppointmentLimit(calendar, options)
   const nowMs = Date.now()

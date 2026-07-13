@@ -1570,7 +1570,11 @@ export async function reconcileConektaOrderFromWebhook(event = {}) {
   const ignorePendingRegression = shouldIgnorePendingWebhookRegression(payment, newStatus)
   const changed = !ignorePendingRegression && currentStatus !== newStatus
   const config = await getConektaPaymentConfig({ mode: payment.payment_mode || '' })
-  const nextPayment = changed
+  // Aunque el estado local no cambie (por ejemplo, Conekta expira/cancela una
+  // orden que nuestra política conserva como pending), sí debemos persistir el
+  // estado crudo del proveedor. Sólo omitimos por completo un webhook pending
+  // tardío que intentaría degradar un pago ya confirmado.
+  const nextPayment = changed || !ignorePendingRegression
     ? await updatePaymentFromOrder(order, payment)
     : payment
 
@@ -1940,6 +1944,7 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
         : {}),
       orderId,
       chargeId,
+      paymentStatus: cleanString(order.payment_status || charge?.status || order.status).toLowerCase(),
       paymentMethodType: cleanString(chargePaymentMethod.type || 'card'),
       paymentSourceId: sourceId,
       monthlyInstallments: monthlyInstallments > 1 ? monthlyInstallments : null
@@ -1990,7 +1995,7 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
       logger.warn(`No se pudo enviar push de pago Conekta ${updated.id}: ${error.message}`)
     })
   }
-  if (updated?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
+  if (updated?.contact_id && statusChanged && nextStatus === 'paid' && !suppressProductionEffects) {
     updateSingleContactStats(updated.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Conekta ${updated.id}: ${error.message}`)
     })

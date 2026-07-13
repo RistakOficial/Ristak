@@ -2420,6 +2420,16 @@ export async function bindConversationalPaymentSourceEvent({
        WHERE binding_event_id = ? AND status = 'completed'`,
       [boundAt, boundAt, cleanEventId]
     )
+    // La llave por inbound evita repetir una llamada concreta; la reserva
+    // semántica evita que dos mensajes distintos creen el mismo cobro. Ambas
+    // quedan cerradas dentro de la misma transacción que liga el evento real,
+    // para que ningún proceso observe un link "canónico" todavía huérfano.
+    await db.run(
+      `UPDATE conversational_payment_semantic_claims
+       SET canonical_request_key = ?, status = 'bound', error_message = NULL, updated_at = ?
+       WHERE owner_request_key = ? AND status = 'processing'`,
+      [request.idempotency_key, boundAt, request.idempotency_key]
+    )
     if (appointmentDepositIntent && String(appointmentDepositIntentDetail.status || '') === 'collecting') {
       const nextIntentDetail = {
         ...appointmentDepositIntentDetail,

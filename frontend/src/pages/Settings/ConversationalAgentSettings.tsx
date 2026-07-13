@@ -1538,6 +1538,8 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                 ...paymentCapability,
                 chargeType,
                 paymentMode: chargeType === 'deposit' ? 'deposit' : 'full_payment',
+                productId: chargeType === 'product' ? paymentCapability.productId : '',
+                priceId: chargeType === 'product' ? paymentCapability.priceId : '',
                 deposit: { ...paymentCapability.deposit, enabled: chargeType === 'deposit', currency: accountCurrency },
                 installments: { enabled: false, maxInstallments: 0 }
               })

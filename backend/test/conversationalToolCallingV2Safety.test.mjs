@@ -4,9 +4,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 
 import { db } from '../src/config/database.js'
+import { invokeController } from '../src/agents/invokeController.js'
 import {
   buildNativeFreeSlotDays,
   createConversationalTools,
+  loadConversationalAppointmentOfferDecisionContext,
   setNativeHandoffAfterAssignmentHookForTest,
   setNativeHumanBookingAfterCommitHookForTest,
   setNativePaymentResumeBeforeTerminalCommitHookForTest,
@@ -39,6 +41,7 @@ import {
 } from '../src/services/conversationalAgentService.js'
 import { getAccountCurrency } from '../src/utils/accountLocale.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
+import { updateAppointment as updateCalendarAppointment } from '../src/controllers/calendarsController.js'
 import {
   approveTransferProof,
   deleteTransaction,
@@ -117,7 +120,7 @@ async function authorizeAppointmentOffer(ctx, startTime, timezone, customerQuote
   ctx.executionId = `${confirmationExecutionId}_offer`
   const offered = await createConversationalTools(ctx)
     .find((item) => item.name === 'offer_appointment_slot')
-    .invoke(null, JSON.stringify({ startTime }))
+    .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
   assert.equal(offered.ok, true, JSON.stringify(offered))
   assert.doesNotMatch(offered.visibleReply, /[ap]\.\s?m\.\./i)
   const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
@@ -216,7 +219,7 @@ async function createLiveDepositSelection({ calendarId, contactId, agentId, star
   ctx.config.id = agentId
   const offerResult = await createConversationalTools(ctx)
     .find((item) => item.name === 'offer_appointment_slot')
-    .invoke(null, JSON.stringify({ startTime }))
+    .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
   assert.equal(offerResult.ok, true, JSON.stringify(offerResult))
   const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
   ctx.executionId = executionId
@@ -871,6 +874,105 @@ test('create_payment_link usa el contacto virtual del preview sin pedir teléfon
   }
 })
 
+test('get_payment_status falla cerrado con modo ambiguo, vencimiento inválido, raw cancelado y minor units distintas', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_payment_status_closed_${suffix}`
+  const agentId = `agent_payment_status_closed_${suffix}`
+  const futureDue = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const rows = [
+    {
+      id: `payment_status_mode_${suffix}`,
+      amount: 500,
+      currency: 'MXN',
+      status: 'paid',
+      mode: null,
+      due: futureDue,
+      metadata: null,
+      eventAmount: 500
+    },
+    {
+      id: `payment_status_due_${suffix}`,
+      amount: 600,
+      currency: 'MXN',
+      status: 'sent',
+      mode: 'live',
+      due: null,
+      metadata: null,
+      eventAmount: 600
+    },
+    {
+      id: `payment_status_raw_${suffix}`,
+      amount: 700,
+      currency: 'MXN',
+      status: 'pending',
+      mode: 'live',
+      due: futureDue,
+      metadata: { stripe: { status: 'canceled' } },
+      eventAmount: 700
+    },
+    {
+      id: `payment_status_minor_${suffix}`,
+      amount: 1.004,
+      currency: 'KWD',
+      status: 'sent',
+      mode: 'live',
+      due: futureDue,
+      metadata: null,
+      eventAmount: 1.001
+    }
+  ]
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Estado de pago cerrado', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    for (const [index, row] of rows.entries()) {
+      await db.run(
+        `INSERT INTO payments (
+           id, contact_id, amount, currency, status, payment_mode, payment_provider,
+           public_payment_id, payment_url, due_date, metadata_json, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 'stripe', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [row.id, contactId, row.amount, row.currency, row.status, row.mode, `public_${row.id}`, `https://app.example/pay/${row.id}`, row.due, row.metadata ? JSON.stringify(row.metadata) : null]
+      )
+      await recordConversationalAgentEvent({
+        eventId: `event_payment_status_${index}_${suffix}`,
+        contactId,
+        eventType: 'payment_link_created',
+        detail: {
+          agentId,
+          ledgerPaymentId: row.id,
+          amount: row.eventAmount,
+          currency: row.currency,
+          paymentProvider: 'stripe',
+          paymentEnvironment: 'live',
+          paymentPurpose: 'purchase'
+        },
+        throwOnError: true
+      })
+    }
+    const ctx = v2Context([{ id: 'collect_payment', enabled: true, paymentMode: 'full_payment' }], {
+      contactId,
+      agentId,
+      dryRun: false
+    })
+    ctx.config.id = agentId
+    const result = await createConversationalTools(ctx)
+      .find((item) => item.name === 'get_payment_status')
+      .invoke(null, '{}')
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.payments.length, 3, 'el monto KWD distinto por minor units no debe vincularse')
+    assert.ok(result.payments.every((payment) => payment.fundsConfirmed === false))
+    assert.ok(result.payments.every((payment) => payment.canReuseLink === false))
+    assert.deepEqual(new Set(result.payments.map((payment) => payment.state)), new Set(['unknown', 'expired', 'cancelled']))
+    assert.ok(result.payments.every((payment) => !payment.paymentUrl))
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
 test('v2 expone la unión exacta de capacidades y nunca las tools de silencio/descarte legacy', () => {
   const ctx = v2Context([
     { id: 'schedule_appointment', enabled: true, calendarId: 'calendar_locked' },
@@ -1043,7 +1145,7 @@ test('agenda v2 no convierte "sí quiere ir" en un slot y sí acepta "el martes 
     ctx.executionId = `offer_selection_${suffix}`
     const offered = await createConversationalTools(ctx)
       .find((item) => item.name === 'offer_appointment_slot')
-      .invoke(null, JSON.stringify({ startTime }))
+      .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
     assert.equal(offered.ok, true, JSON.stringify(offered))
     ctx.actions = []
     ctx.executionId = `confirm_selection_${suffix}`
@@ -1125,7 +1227,7 @@ test('una oferta canónica de un slot ya ocupado no crea selección durable ni p
     ctx.config.id = agentId
     const blocked = await createConversationalTools(ctx)
       .find((item) => item.name === 'offer_appointment_slot')
-      .invoke(null, JSON.stringify({ startTime }))
+      .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
     assert.equal(blocked.ok, false)
     assert.equal(blocked.invalidSlot, true)
     assert.equal(Number((await db.get(
@@ -1181,7 +1283,7 @@ test('una oferta estructurada adulterada con otro horario jamás autoriza la cit
     ctx.config.id = agentId
     const tools = createConversationalTools(ctx)
     const offered = await tools.find((item) => item.name === 'offer_appointment_slot')
-      .invoke(null, JSON.stringify({ startTime }))
+      .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
     assert.equal(offered.ok, true, JSON.stringify(offered))
     const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
     ctx.executionId = confirmationId
@@ -1579,9 +1681,24 @@ test('replay del turno y retry concurrente/secuencial del link reutilizan provee
     assert.equal(replayedBookingTurn.paymentEvidenceRequired, true)
     assert.match(replayedBookingTurn.error, /create_payment_link/)
     assert.equal(second.ok, true, JSON.stringify(second))
+    const crossTurnCtx = {
+      ...ctx,
+      executionId: `message_payment_link_retry_second_turn_${suffix}`,
+      actions: [],
+      conversationMessages: [
+        { id: `assistant_payment_link_retry_${suffix}`, role: 'assistant', content: 'Aquí está el link de tu anticipo.' },
+        { id: `message_payment_link_retry_second_turn_${suffix}`, role: 'user', content: 'Oye, mándame otra vez el mismo link.' }
+      ]
+    }
+    const crossTurn = await createConversationalTools(crossTurnCtx)
+      .find((item) => item.name === 'create_payment_link')
+      .invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+    assert.equal(crossTurn.ok, true, JSON.stringify(crossTurn))
     assert.equal(first.paymentLink, paymentUrl)
     assert.equal(concurrentReplay.paymentLink, paymentUrl)
     assert.equal(second.paymentLink, paymentUrl)
+    assert.equal(crossTurn.paymentLink, paymentUrl)
+    assert.match(crossTurn.note, /reutiliz/i)
     assert.equal(providerCalls, 1)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?', [contactId])).total), 1)
     const sourceEvents = await db.all(
@@ -1601,6 +1718,16 @@ test('replay del turno y retry concurrente/secuencial del link reutilizan provee
     assert.equal(intent.collectionMethod, 'paymentLink')
     assert.equal(intent.sourceEventId, sourceEvents[0].id)
     assert.ok(intent.claimToken)
+    const requestAliases = await db.all(
+      `SELECT idempotency_key, binding_event_id, binding_status
+       FROM conversational_payment_link_requests
+       WHERE contact_id = ?
+       ORDER BY created_at ASC`,
+      [contactId]
+    )
+    assert.equal(requestAliases.length, 2)
+    assert.ok(requestAliases.every((row) => row.binding_status === 'bound'))
+    assert.ok(requestAliases.every((row) => row.binding_event_id === sourceEvents[0].id))
     assert.equal(Number((await db.get(
       `SELECT COUNT(*) AS total FROM conversational_agent_events
        WHERE contact_id = ? AND event_type = 'appointment_deposit_intent_pending'`,
@@ -1610,6 +1737,8 @@ test('replay del turno y retry concurrente/secuencial del link reutilizan provee
     assert.equal(linkActions.length, 3)
     assert.ok(linkActions.filter((action) => action.outcome?.reused === true).length >= 2)
     assert.ok(linkActions.filter((action) => action.outcome?.priorEquivalentLinkFound === true).length >= 2)
+    assert.equal(crossTurnCtx.actions.length, 1)
+    assert.equal(crossTurnCtx.actions[0].outcome?.crossTurnReuse, true)
   } finally {
     setConversationalAgentLivePaymentDependenciesForTests(null)
     await db.run('DELETE FROM conversational_payment_link_requests WHERE contact_id = ?', [contactId]).catch(() => {})
@@ -1723,7 +1852,7 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
     ctx.executionId = `offer_natural_${suffix}`
     const offered = await createConversationalTools(ctx)
       .find((item) => item.name === 'offer_appointment_slot')
-      .invoke(null, JSON.stringify({ startTime: returnedSlot.startTime }))
+      .invoke(null, JSON.stringify({ startTime: returnedSlot.startTime, appointmentId: null }))
     assert.equal(offered.ok, true, JSON.stringify(offered))
     ctx.actions = []
     ctx.executionId = `confirm_natural_${suffix}`
@@ -1828,7 +1957,7 @@ test('dos requests de preview recuperan el UTC guardado y confirman sin startTim
         const tools = createConversationalTools(ctx)
         const output = turnNumber === 1
           ? await tools.find((item) => item.name === 'offer_appointment_slot')
-              .invoke(null, JSON.stringify({ startTime }))
+              .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
           : await tools.find((item) => item.name === 'book_appointment')
               .invoke(null, JSON.stringify({
                 title: 'Valoración de rodilla',
@@ -2531,7 +2660,7 @@ test('agenda humana rechaza un slot ocupado y no usa la asignación del handoff 
     ctx.config.id = agentId
     const result = await createConversationalTools(ctx)
       .find((item) => item.name === 'offer_appointment_slot')
-      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO() }))
+      .invoke(null, JSON.stringify({ startTime: slot.toUTC().toISO(), appointmentId: null }))
 
     assert.equal(result.ok, false)
     assert.equal(result.invalidSlot, true)
@@ -6368,6 +6497,757 @@ test('si el cierre de una cita v2 falla, no confirma al cliente y el siguiente i
     await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('get_contact_appointments limita la agenda al dueño o solicitante del hilo y nunca autoriza a un invitado', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_owned_appointments_${suffix}`
+  const contactId = `contact_owned_appointments_${suffix}`
+  const otherContactId = `contact_other_appointments_${suffix}`
+  const agentId = `agent_owned_appointments_${suffix}`
+  const timezone = await getAccountTimezone()
+  const monday = DateTime.now().setZone(timezone).plus({ days: 28 }).startOf('day')
+    .plus({ days: (1 - DateTime.now().setZone(timezone).plus({ days: 28 }).weekday + 7) % 7 })
+  const ownedId = `appointment_owned_${suffix}`
+  const requesterId = `appointment_requester_${suffix}`
+  const guestId = `appointment_guest_${suffix}`
+  const cancelledId = `appointment_cancelled_${suffix}`
+  const pastId = `appointment_past_${suffix}`
+  const appointmentIds = [ownedId, requesterId, guestId, cancelledId, pastId]
+
+  const insertAppointment = async ({ id, ownerId, start, status = 'confirmed' }) => {
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, source, sync_status, date_added, date_updated
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [id, calendarId, ownerId, `Cita ${id}`, status, status, start.toUTC().toISO(), start.plus({ hours: 1 }).toUTC().toISO()]
+    )
+  }
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda con propiedad conversacional',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      allowReschedule: true,
+      allowCancellation: true,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto del hilo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Otro contacto', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [otherContactId]
+    )
+
+    await insertAppointment({ id: ownedId, ownerId: contactId, start: monday.set({ hour: 9 }) })
+    await insertAppointment({ id: requesterId, ownerId: otherContactId, start: monday.set({ hour: 11 }) })
+    await insertAppointment({ id: guestId, ownerId: otherContactId, start: monday.set({ hour: 13 }) })
+    await insertAppointment({ id: cancelledId, ownerId: contactId, start: monday.set({ hour: 15 }), status: 'cancelled' })
+    await insertAppointment({ id: pastId, ownerId: contactId, start: DateTime.now().setZone(timezone).minus({ days: 2 }).startOf('hour') })
+    await db.run(
+      `INSERT INTO appointment_participants (
+        id, appointment_id, role, position, contact_id, name_snapshot, created_at, updated_at
+      ) VALUES (?, ?, 'requester', 0, ?, 'Contacto del hilo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [`participant_requester_${suffix}`, requesterId, contactId]
+    )
+    await db.run(
+      `INSERT INTO appointment_participants (
+        id, appointment_id, role, position, contact_id, name_snapshot, created_at, updated_at
+      ) VALUES (?, ?, 'guest', 0, ?, 'Contacto invitado', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [`participant_guest_${suffix}`, guestId, contactId]
+    )
+
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
+    ], { contactId, agentId, dryRun: false, executionId: `message_owned_${suffix}` })
+    ctx.config.id = agentId
+    const tools = createConversationalTools(ctx)
+    const listed = await tools.find((item) => item.name === 'get_contact_appointments').invoke(null, '{}')
+    assert.equal(listed.ok, true, JSON.stringify(listed))
+    assert.equal(listed.found, true)
+    assert.equal(listed.policy.canReschedule, true)
+    assert.equal(listed.policy.canCancel, true)
+    assert.deepEqual(
+      new Set(listed.appointments.map((appointment) => appointment.appointmentId)),
+      new Set([ownedId, requesterId])
+    )
+    assert.ok(listed.appointments.every((appointment) => appointment.localLabel && appointment.startTime.endsWith('Z')))
+
+    const forbiddenCancellation = await tools.find((item) => item.name === 'cancel_appointment').invoke(null, JSON.stringify({
+      appointmentId: guestId,
+      reason: 'El invitado no puede controlar esta cita'
+    }))
+    assert.equal(forbiddenCancellation.ok, false)
+    assert.match(forbiddenCancellation.error, /no encontré|contacto/i)
+    const guestRow = await db.get('SELECT appointment_status, deleted_at FROM appointments WHERE id = ?', [guestId])
+    assert.equal(guestRow.appointment_status, 'confirmed')
+    assert.equal(guestRow.deleted_at, null)
+  } finally {
+    await db.run(
+      `DELETE FROM appointment_participants WHERE appointment_id IN (${appointmentIds.map(() => '?').join(', ')})`,
+      appointmentIds
+    ).catch(() => {})
+    await db.run(
+      `DELETE FROM appointments WHERE id IN (${appointmentIds.map(() => '?').join(', ')})`,
+      appointmentIds
+    ).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactId, otherContactId]).catch(() => {})
+  }
+})
+
+test('cancel_appointment hace soft cancel idempotente, conserva participantes y respeta allowCancellation', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_cancel_tool_${suffix}`
+  const contactId = `contact_cancel_tool_${suffix}`
+  const agentId = `agent_cancel_tool_${suffix}`
+  const appointmentId = `appointment_cancel_tool_${suffix}`
+  const deniedAppointmentId = `appointment_cancel_denied_${suffix}`
+  const timezone = await getAccountTimezone()
+  const monday = DateTime.now().setZone(timezone).plus({ days: 31 }).startOf('day')
+    .plus({ days: (1 - DateTime.now().setZone(timezone).plus({ days: 31 }).weekday + 7) % 7 })
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda cancelación segura',
+      source: 'ristak',
+      allowCancellation: true,
+      allowReschedule: true,
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente cancelación segura', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    for (const [id, hour] of [[appointmentId, 10], [deniedAppointmentId, 13]]) {
+      const start = monday.set({ hour, minute: 0 })
+      await db.run(
+        `INSERT INTO appointments (
+          id, calendar_id, contact_id, title, status, appointment_status,
+          start_time, end_time, source, sync_status, date_added, date_updated
+        ) VALUES (?, ?, ?, 'Cita cancelable', 'confirmed', 'confirmed', ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [id, calendarId, contactId, start.toUTC().toISO(), start.plus({ hours: 1 }).toUTC().toISO()]
+      )
+    }
+    await db.run(
+      `INSERT INTO appointment_participants (
+        id, appointment_id, role, position, contact_id, name_snapshot, created_at, updated_at
+      ) VALUES (?, ?, 'requester', 0, ?, 'Cliente cancelación segura', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [`participant_cancel_${suffix}`, appointmentId, contactId]
+    )
+
+    const previewCtx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
+    ], { contactId, agentId, dryRun: true, executionId: `preview_offer_cancel_${suffix}` })
+    previewCtx.config.id = agentId
+    const previewOffer = await createConversationalTools(previewCtx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({
+        startTime: monday.set({ hour: 12, minute: 0 }).toUTC().toISO(),
+        appointmentId
+      }))
+    assert.equal(previewOffer.ok, true, JSON.stringify(previewOffer))
+    previewCtx.executionId = `preview_cancel_${suffix}`
+    const previewCancel = await createConversationalTools(previewCtx)
+      .find((item) => item.name === 'cancel_appointment')
+      .invoke(null, JSON.stringify({ appointmentId, reason: null }))
+    assert.equal(previewCancel.ok, true, JSON.stringify(previewCancel))
+    assert.equal(previewCancel.simulated, true)
+    const previewOfferEvent = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'appointment_slot_preview_offer_created'`,
+      [contactId]
+    )
+    const previewOfferDetail = JSON.parse(previewOfferEvent.detail_json)
+    assert.equal(previewOfferDetail.status, 'superseded')
+    assert.equal(previewOfferDetail.resolution, 'appointment_cancelled')
+
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
+    ], { contactId, agentId, dryRun: false, executionId: `message_cancel_${suffix}` })
+    ctx.config.id = agentId
+    const activeRescheduleOffer = await createConversationalTools(ctx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({
+        startTime: monday.set({ hour: 11, minute: 0 }).toUTC().toISO(),
+        appointmentId
+      }))
+    assert.equal(activeRescheduleOffer.ok, true, JSON.stringify(activeRescheduleOffer))
+    ctx.executionId = `message_cancel_after_offer_${suffix}`
+    const cancel = createConversationalTools(ctx).find((item) => item.name === 'cancel_appointment')
+    const first = await cancel.invoke(null, JSON.stringify({ appointmentId, reason: 'Ya no podré asistir' }))
+    assert.equal(first.ok, true, JSON.stringify(first))
+    assert.equal(first.actionCompleted, true)
+    assert.equal(first.appointmentCancelled, true)
+
+    const stored = await db.get(
+      'SELECT status, appointment_status, deleted_at FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(stored.status, 'cancelled')
+    assert.equal(stored.appointment_status, 'cancelled')
+    assert.equal(stored.deleted_at, null)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointment_participants WHERE appointment_id = ?',
+      [appointmentId]
+    )).total), 1)
+    const supersededOffer = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'appointment_slot_offer_created'`,
+      [contactId]
+    )
+    const supersededDetail = JSON.parse(supersededOffer.detail_json)
+    assert.equal(supersededDetail.appointmentId, appointmentId)
+    assert.equal(supersededDetail.status, 'superseded')
+    assert.equal(supersededDetail.resolution, 'appointment_cancelled')
+
+    const replay = await cancel.invoke(null, JSON.stringify({ appointmentId, reason: 'Retry del mismo mensaje' }))
+    assert.equal(replay.ok, true, JSON.stringify(replay))
+    assert.equal(replay.alreadyCancelled, true)
+    assert.match(replay.visibleReply, /ya estaba cancelada/i)
+    const cancelActions = ctx.actions.filter((action) => action.type === 'cancel_appointment')
+    assert.equal(cancelActions.length, 2)
+    assert.equal(cancelActions[1].outcome?.alreadyCancelled, true)
+    assert.equal(ensureToolCallingV2VisibleReply('', [cancelActions[1]]), 'listo, la cita quedó cancelada')
+
+    await db.run('UPDATE calendars SET allow_cancellation = 0 WHERE id = ?', [calendarId])
+    const deniedCtx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
+    ], { contactId, agentId, dryRun: false, executionId: `message_cancel_denied_${suffix}` })
+    deniedCtx.config.id = agentId
+    const denied = await createConversationalTools(deniedCtx)
+      .find((item) => item.name === 'cancel_appointment')
+      .invoke(null, JSON.stringify({ appointmentId: deniedAppointmentId, reason: null }))
+    assert.equal(denied.ok, false)
+    assert.match(denied.error, /no permite cancelar/i)
+    assert.equal((await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [deniedAppointmentId]
+    )).appointment_status, 'confirmed')
+  } finally {
+    await db.run('DELETE FROM appointment_participants WHERE appointment_id IN (?, ?)', [appointmentId, deniedAppointmentId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE id IN (?, ?)', [appointmentId, deniedAppointmentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('aceptar una oferta de reagendamiento conserva ID y participantes, mueve disponibilidad y no crea cita ni cobro', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_reschedule_tool_${suffix}`
+  const contactId = `contact_reschedule_tool_${suffix}`
+  const agentId = `agent_reschedule_tool_${suffix}`
+  const appointmentId = `appointment_reschedule_tool_${suffix}`
+  const currency = await getAccountCurrency()
+  const timezone = await getAccountTimezone()
+  const monday = DateTime.now().setZone(timezone).plus({ days: 35 }).startOf('day')
+    .plus({ days: (1 - DateTime.now().setZone(timezone).plus({ days: 35 }).weekday + 7) % 7 })
+  const originalStart = monday.set({ hour: 9, minute: 0, second: 0, millisecond: 0 })
+  const targetStart = monday.set({ hour: 12, minute: 0, second: 0, millisecond: 0 })
+  const thirdStart = monday.set({ hour: 14, minute: 0, second: 0, millisecond: 0 })
+  const capabilities = [
+    { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false },
+    {
+      id: 'collect_payment',
+      enabled: true,
+      collectionMethod: 'payment_link',
+      paymentMode: 'deposit',
+      gateway: 'stripe',
+      deposit: {
+        enabled: true,
+        mode: 'fixed',
+        amount: 500,
+        currency,
+        methods: { paymentLink: true }
+      }
+    }
+  ]
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda reagendamiento seguro',
+      source: 'ristak',
+      allowReschedule: true,
+      allowCancellation: true,
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 16, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente reagendamiento seguro', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, source, sync_status, date_added, date_updated
+      ) VALUES (?, ?, ?, 'Valoración inicial', 'confirmed', 'confirmed', ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [appointmentId, calendarId, contactId, originalStart.toUTC().toISO(), originalStart.plus({ minutes: 90 }).toUTC().toISO()]
+    )
+    await db.run(
+      `INSERT INTO appointment_participants (
+        id, appointment_id, role, position, contact_id, name_snapshot, created_at, updated_at
+      ) VALUES (?, ?, 'requester', 0, ?, 'Cliente reagendamiento seguro', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [`participant_reschedule_${suffix}`, appointmentId, contactId]
+    )
+
+    const ctx = v2Context(capabilities, {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `offer_reschedule_${suffix}`,
+      accountLocale: { currency }
+    })
+    ctx.config.id = agentId
+    const rescheduleAvailability = await createConversationalTools(ctx)
+      .find((item) => item.name === 'get_free_slots')
+      .invoke(null, JSON.stringify({
+        startDate: monday.toISODate(),
+        endDate: monday.toISODate(),
+        appointmentId
+      }))
+    assert.equal(rescheduleAvailability.ok, true, JSON.stringify(rescheduleAvailability))
+    assert.equal(rescheduleAvailability.purpose, 'reschedule')
+    assert.equal(rescheduleAvailability.appointmentId, appointmentId)
+    assert.equal(rescheduleAvailability.durationMinutes, 90)
+    assert.ok(
+      rescheduleAvailability.slots.flatMap((day) => day.options).some((option) => option.startTime === targetStart.toUTC().toISO())
+    )
+    const offered = await createConversationalTools(ctx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({
+        startTime: targetStart.toUTC().toISO(),
+        appointmentId
+      }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+
+    const confirmationExecutionId = `confirm_reschedule_${suffix}`
+    ctx.executionId = confirmationExecutionId
+    ctx.actions = []
+    ctx.conversationMessages = [
+      { id: `visible_offer_reschedule_${suffix}`, role: 'assistant', content: offered.visibleReply },
+      { id: confirmationExecutionId, role: 'user', content: 'Sí, mejor cámbiamela a ese horario.' }
+    ]
+    ctx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx,
+      config: ctx.config
+    })
+    assert.equal(ctx.appointmentOfferDecision?.purpose, 'reschedule')
+    assert.equal(ctx.appointmentOfferDecision?.appointmentId, appointmentId)
+
+    const wrongBook = await createConversationalTools(ctx)
+      .find((item) => item.name === 'book_appointment')
+      .invoke(null, JSON.stringify({
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(wrongBook.ok, false, JSON.stringify(wrongBook))
+    assert.equal(wrongBook.code, 'appointment_reschedule_terminal_mismatch')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
+      [calendarId]
+    )).total), 1)
+
+    const humanCtx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'human', allowOverlaps: false }
+    ], {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: confirmationExecutionId
+    })
+    humanCtx.config.id = agentId
+    humanCtx.conversationMessages = ctx.conversationMessages
+    const wrongHandoff = await createConversationalTools(humanCtx)
+      .find((item) => item.name === 'request_human_booking')
+      .invoke(null, JSON.stringify({
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: []
+      }))
+    assert.equal(wrongHandoff.ok, false, JSON.stringify(wrongHandoff))
+    assert.equal(wrongHandoff.code, 'appointment_reschedule_terminal_mismatch')
+
+    const resolved = await createConversationalTools(ctx)
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'accept',
+        reply: null,
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(resolved.ok, true, JSON.stringify(resolved))
+    assert.equal(resolved.actionCompleted, true)
+    assert.match(resolved.visibleReply, /cita quedó cambiada/i)
+
+    const appointments = await db.all(
+      'SELECT id, start_time, end_time, status, appointment_status, deleted_at FROM appointments WHERE calendar_id = ?',
+      [calendarId]
+    )
+    assert.equal(appointments.length, 1)
+    assert.equal(appointments[0].id, appointmentId)
+    assert.equal(new Date(appointments[0].start_time).toISOString(), targetStart.toUTC().toISO())
+    assert.equal(new Date(appointments[0].end_time).toISOString(), targetStart.plus({ minutes: 90 }).toUTC().toISO())
+    assert.equal(appointments[0].deleted_at, null)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointment_participants WHERE appointment_id = ?',
+      [appointmentId]
+    )).total), 1)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?',
+      [contactId]
+    )).total), 0)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_link_created'`,
+      [contactId]
+    )).total), 0)
+    assert.equal(ctx.actions.some((action) => action.type === 'book_appointment'), false)
+    assert.equal(ctx.actions.some((action) => action.type === 'create_payment_link'), false)
+    assert.equal(ctx.actions.filter((action) => action.type === 'reschedule_appointment').length, 1)
+
+    const replay = await createConversationalTools(ctx)
+      .find((item) => item.name === 'reschedule_appointment')
+      .invoke(null, JSON.stringify({ appointmentId }))
+    assert.equal(replay.ok, true, JSON.stringify(replay))
+    assert.equal(replay.alreadyRescheduled, true)
+    assert.match(replay.visibleReply, /ya tenía el horario nuevo/i)
+    assert.equal(ctx.actions.filter((action) => action.type === 'reschedule_appointment').length, 2)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
+      [calendarId]
+    )).total), 1)
+
+    const availability = await createConversationalTools(ctx)
+      .find((item) => item.name === 'get_free_slots')
+      .invoke(null, JSON.stringify({ startDate: monday.toISODate(), endDate: monday.toISODate() }))
+    const availableStarts = availability.slots.flatMap((day) => day.options).map((option) => option.startTime)
+    assert.ok(availableStarts.includes(originalStart.toUTC().toISO()), JSON.stringify(availability))
+    assert.equal(availableStarts.includes(targetStart.toUTC().toISO()), false)
+
+    await db.run('UPDATE calendars SET allow_reschedule = 0 WHERE id = ?', [calendarId])
+    ctx.executionId = `offer_reschedule_denied_${suffix}`
+    const deniedOffer = await createConversationalTools(ctx)
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({ startTime: thirdStart.toUTC().toISO(), appointmentId }))
+    assert.equal(deniedOffer.ok, false)
+    assert.match(deniedOffer.error, /no permite reagendar/i)
+  } finally {
+    await db.run(
+      `DELETE FROM appointment_creation_requests
+       WHERE appointment_id IN (SELECT id FROM appointments WHERE calendar_id = ?)`,
+      [calendarId]
+    ).catch(() => {})
+    await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [appointmentId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('get_contact_appointments pagina todas las citas futuras sin abrir IDs de otros contactos', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_paginated_appointments_${suffix}`
+  const contactId = `contact_paginated_appointments_${suffix}`
+  const agentId = `agent_paginated_appointments_${suffix}`
+  const appointmentIds = Array.from({ length: 12 }, (_, index) => `appointment_paginated_${index}_${suffix}`)
+  const base = DateTime.now().toUTC().plus({ days: 45 }).startOf('day')
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda paginada',
+      source: 'ristak',
+      allowCancellation: true,
+      allowReschedule: true
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente con recurrencias', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    for (let index = 0; index < appointmentIds.length; index += 1) {
+      const start = base.plus({ days: index, hours: 10 })
+      await db.run(
+        `INSERT INTO appointments (
+          id, calendar_id, contact_id, title, status, appointment_status,
+          start_time, end_time, source, sync_status, date_added, date_updated
+        ) VALUES (?, ?, ?, ?, 'confirmed', 'confirmed', ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [appointmentIds[index], calendarId, contactId, `Cita recurrente ${index + 1}`, start.toISO(), start.plus({ hours: 1 }).toISO()]
+      )
+    }
+
+    const ctx = v2Context([
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
+    ], { contactId, agentId, dryRun: false, executionId: `message_pagination_${suffix}` })
+    ctx.config.id = agentId
+    const listTool = createConversationalTools(ctx).find((item) => item.name === 'get_contact_appointments')
+    const firstPage = await listTool.invoke(null, JSON.stringify({ page: 1, pageSize: 5 }))
+    const thirdPage = await listTool.invoke(null, JSON.stringify({ page: 3, pageSize: 5 }))
+
+    assert.equal(firstPage.ok, true)
+    assert.equal(firstPage.total, 12)
+    assert.equal(firstPage.returned, 5)
+    assert.equal(firstPage.hasMore, true)
+    assert.equal(firstPage.nextPage, 2)
+    assert.deepEqual(firstPage.appointments.map((item) => item.appointmentId), appointmentIds.slice(0, 5))
+    assert.equal(thirdPage.total, 12)
+    assert.equal(thirdPage.returned, 2)
+    assert.equal(thirdPage.hasMore, false)
+    assert.equal(thirdPage.nextPage, null)
+    assert.deepEqual(thirdPage.appointments.map((item) => item.appointmentId), appointmentIds.slice(10))
+  } finally {
+    await db.run(
+      `DELETE FROM appointments WHERE id IN (${appointmentIds.map(() => '?').join(', ')})`,
+      appointmentIds
+    ).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('dos cancelaciones concurrentes se serializan y la segunda queda como replay sin repetir mutación', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_concurrent_cancel_${suffix}`
+  const contactId = `contact_concurrent_cancel_${suffix}`
+  const appointmentId = `appointment_concurrent_cancel_${suffix}`
+  const agentId = `agent_concurrent_cancel_${suffix}`
+  const start = DateTime.now().toUTC().plus({ days: 50 }).startOf('hour')
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda cancelación concurrente',
+      source: 'ristak',
+      allowCancellation: true
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente cancelación concurrente', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, source, sync_status, date_added, date_updated
+      ) VALUES (?, ?, ?, 'Cita concurrente', 'confirmed', 'confirmed', ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [appointmentId, calendarId, contactId, start.toISO(), start.plus({ hours: 1 }).toISO()]
+    )
+
+    const makeCtx = (executionId) => {
+      const ctx = v2Context([
+        { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
+      ], { contactId, agentId, dryRun: false, executionId })
+      ctx.config.id = agentId
+      return ctx
+    }
+    const contexts = [makeCtx(`cancel_a_${suffix}`), makeCtx(`cancel_b_${suffix}`)]
+    const results = await Promise.all(contexts.map((ctx) => createConversationalTools(ctx)
+      .find((item) => item.name === 'cancel_appointment')
+      .invoke(null, JSON.stringify({ appointmentId, reason: null }))))
+
+    assert.ok(results.every((result) => result.ok === true), JSON.stringify(results))
+    assert.equal(results.filter((result) => result.alreadyCancelled === true).length, 1)
+    assert.ok(contexts.every((ctx) => ctx.actions.filter((action) => action.type === 'cancel_appointment').length === 1))
+    assert.equal((await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )).appointment_status, 'cancelled')
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('cancelar y reagendar compiten con CAS: sólo una mutación gana y una cita cancelada nunca se reporta reagendada', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_lifecycle_cas_${suffix}`
+  const contactId = `contact_lifecycle_cas_${suffix}`
+  const appointmentId = `appointment_lifecycle_cas_${suffix}`
+  const originalStart = DateTime.now().toUTC().plus({ days: 55 }).startOf('hour')
+  const targetStart = originalStart.plus({ hours: 3 })
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda CAS lifecycle',
+      source: 'ristak',
+      allowCancellation: true,
+      allowReschedule: true,
+      openHours: [{
+        daysOfTheWeek: [targetStart.setZone(await getAccountTimezone()).weekday % 7],
+        hours: [{ openHour: 0, openMinute: 0, closeHour: 23, closeMinute: 59 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente CAS lifecycle', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, source, sync_status, date_added, date_updated
+      ) VALUES (?, ?, ?, 'Cita CAS', 'confirmed', 'confirmed', ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [appointmentId, calendarId, contactId, originalStart.toISO(), originalStart.plus({ hours: 1 }).toISO()]
+    )
+
+    const expected = {
+      expectedStartTime: originalStart.toISO(),
+      expectedEndTime: originalStart.plus({ hours: 1 }).toISO(),
+      expectedAppointmentStatus: 'confirmed'
+    }
+    const [cancelResponse, rescheduleResponse] = await Promise.all([
+      invokeController(updateCalendarAppointment, {
+        params: { id: appointmentId },
+        body: {
+          ...expected,
+          appointmentStatus: 'cancelled',
+          status: 'cancelled',
+          strictLifecycleMutation: 'cancel'
+        }
+      }),
+      invokeController(updateCalendarAppointment, {
+        params: { id: appointmentId },
+        body: {
+          ...expected,
+          startTime: targetStart.toISO(),
+          endTime: targetStart.plus({ hours: 1 }).toISO(),
+          strictAvailabilityCheck: true,
+          strictLifecycleMutation: 'reschedule'
+        }
+      })
+    ])
+
+    assert.deepEqual([cancelResponse.statusCode, rescheduleResponse.statusCode].sort(), [200, 409])
+    let stored = await db.get(
+      'SELECT start_time, end_time, appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    const cancelledWon = stored.appointment_status === 'cancelled'
+    if (!cancelledWon) {
+      assert.equal(new Date(stored.start_time).toISOString(), targetStart.toISO())
+      const finalCancel = await invokeController(updateCalendarAppointment, {
+        params: { id: appointmentId },
+        body: {
+          appointmentStatus: 'cancelled',
+          status: 'cancelled',
+          expectedStartTime: targetStart.toISO(),
+          expectedEndTime: targetStart.plus({ hours: 1 }).toISO(),
+          expectedAppointmentStatus: 'confirmed',
+          strictLifecycleMutation: 'cancel'
+        }
+      })
+      assert.equal(finalCancel.statusCode, 200)
+    }
+    stored = await db.get('SELECT start_time, end_time, appointment_status FROM appointments WHERE id = ?', [appointmentId])
+    assert.equal(stored.appointment_status, 'cancelled')
+
+    const rejectedReschedule = await invokeController(updateCalendarAppointment, {
+      params: { id: appointmentId },
+      body: {
+        startTime: targetStart.plus({ hours: 2 }).toISO(),
+        endTime: targetStart.plus({ hours: 3 }).toISO(),
+        expectedStartTime: stored.start_time,
+        expectedEndTime: stored.end_time,
+        expectedAppointmentStatus: 'cancelled',
+        strictAvailabilityCheck: true,
+        strictLifecycleMutation: 'reschedule'
+      }
+    })
+    assert.equal(rejectedReschedule.statusCode, 409)
+    assert.equal(rejectedReschedule.payload.code, 'appointment_lifecycle_inactive')
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('un update remoto de HighLevel nunca reemplaza el contacto local por el ID externo', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_preserve_contact_${suffix}`
+  const contactId = `contact_preserve_contact_${suffix}`
+  const appointmentId = `appointment_preserve_contact_${suffix}`
+  const ghlAppointmentId = `ghl_appointment_preserve_contact_${suffix}`
+  const start = DateTime.now().toUTC().plus({ days: 60 }).startOf('hour')
+  const previousFetch = globalThis.fetch
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId: `ghl_calendar_preserve_contact_${suffix}`,
+      name: 'Agenda HighLevel contacto local',
+      source: 'ghl'
+    }, { source: 'ghl', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto local canónico', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, ghl_appointment_id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, source, sync_status, date_added, date_updated
+      ) VALUES (?, ?, ?, ?, 'Cita ligada a GHL', 'confirmed', 'confirmed', ?, ?, 'ghl', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [appointmentId, ghlAppointmentId, calendarId, contactId, start.toISO(), start.plus({ hours: 1 }).toISO()]
+    )
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      appointment: {
+        id: ghlAppointmentId,
+        contactId: `external_contact_${suffix}`,
+        title: 'Título remoto actualizado',
+        startTime: start.toISO(),
+        endTime: start.plus({ hours: 1 }).toISO(),
+        appointmentStatus: 'confirmed',
+        status: 'confirmed'
+      }
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
+    const response = await invokeController(updateCalendarAppointment, {
+      params: { id: appointmentId },
+      body: { title: 'Título remoto actualizado', accessToken: 'test_highlevel_token' },
+      query: { locationId: `location_${suffix}` }
+    })
+    assert.equal(response.statusCode, 200, JSON.stringify(response.payload))
+    assert.equal((await db.get('SELECT contact_id FROM appointments WHERE id = ?', [appointmentId])).contact_id, contactId)
+  } finally {
+    globalThis.fetch = previousFetch
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
   }

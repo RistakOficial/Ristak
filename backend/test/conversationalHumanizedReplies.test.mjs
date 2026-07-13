@@ -733,7 +733,7 @@ test('offer_appointment_slot rechaza un horario inventado o fuera de horario de 
     const offerTool = createConversationalTools(ctx).find((item) => item.name === 'offer_appointment_slot')
     assert.ok(offerTool)
 
-    const result = await offerTool.invoke(null, JSON.stringify({ startTime: outOfHours }))
+    const result = await offerTool.invoke(null, JSON.stringify({ startTime: outOfHours, appointmentId: null }))
     assert.equal(result.ok, false)
     assert.equal(result.invalidSlot, true)
     assert.equal(ctx.actions.length, 0)

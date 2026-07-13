@@ -1164,8 +1164,17 @@ export async function syncLocalAppointmentsToGoogle({ calendarId = null, limit =
   const conditions = [
     'deleted_at IS NULL',
     "COALESCE(sync_status, '') != 'pending_delete'",
-    "(COALESCE(source, 'ristak') = 'ristak' OR id LIKE 'rstk_appt_%')",
-    "LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'invalid')",
+    `(
+      (
+        (COALESCE(source, 'ristak') = 'ristak' OR id LIKE 'rstk_appt_%')
+        AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'invalid')
+      )
+      OR (
+        LOWER(COALESCE(appointment_status, status, '')) IN ('cancelled', 'canceled')
+        AND COALESCE(google_event_id, '') != ''
+        AND COALESCE(google_sync_status, '') != 'synced'
+      )
+    )`,
     "(COALESCE(google_sync_status, '') != 'synced' OR COALESCE(google_event_id, '') = '')",
     `calendar_id IN (${linkedCalendarIds.map(() => '?').join(', ')})`
   ]

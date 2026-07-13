@@ -168,7 +168,7 @@ test('Agent v2 puede exigir una herramienta terminal exacta sin aceptar nombres 
   assert.equal(unavailableAgent.modelSettings.toolChoice, undefined)
 })
 
-test('una oferta durable pendiente activa un menú focalizado y exige una decisión nativa', async () => {
+test('una oferta durable pendiente no fuerza resolver ni oculta las demás capacidades', async () => {
   const suffix = randomUUID()
   const agentId = `agent_offer_decision_${suffix}`
   const contactId = `contact_offer_decision_${suffix}`
@@ -218,6 +218,7 @@ test('una oferta durable pendiente activa un menú focalizado y exige una decisi
       })]
     )
 
+    let activeOfferAgent = null
     const result = await runToolCallingV2Turn({
       config,
       runtime: { modelProvider: {} },
@@ -233,18 +234,25 @@ test('una oferta durable pendiente activa un menú focalizado y exige una decisi
       conversationModel: 'gpt-4.1-mini'
     }, {
       executeAgent: async ({ agent }) => {
+        activeOfferAgent = agent
         const names = agent.tools.map((item) => item.name)
-        assert.equal(agent.modelSettings.toolChoice, 'required')
-        assert.equal(agent.resetToolChoice, false)
-        assert.ok(names.includes('resolve_active_appointment_offer'))
-        assert.equal(names.includes('get_business_profile'), false)
-        assert.equal(names.includes('list_products'), false)
-        assert.equal(names.includes('get_contact_profile'), false)
+        assert.equal(agent.modelSettings.toolChoice, undefined)
+        assert.equal(agent.resetToolChoice, true)
+        for (const expected of [
+          'resolve_active_appointment_offer',
+          'get_business_profile',
+          'list_products',
+          'get_contact_profile',
+          'get_contact_appointments',
+          'get_free_slots',
+          'offer_appointment_slot',
+          'book_appointment',
+          'reschedule_appointment',
+          'cancel_appointment',
+          'create_payment_link',
+          'send_to_human'
+        ]) assert.ok(names.includes(expected), `${expected} debe seguir disponible con una oferta activa`)
         assert.equal(names.includes('get_conversation_history'), false)
-        assert.equal(names.includes('get_free_slots'), false)
-        assert.equal(names.includes('offer_appointment_slot'), false)
-        assert.equal(names.includes('book_appointment'), false)
-        assert.equal(names.includes('create_payment_link'), false)
         return 'respuesta de prueba'
       },
       runInChannel: (_channel, callback) => callback()
@@ -269,26 +277,21 @@ test('una oferta durable pendiente activa un menú focalizado y exige una decisi
       ],
       actions: []
     }
-    const keepOpen = await createConversationalTools(decisionCtx)
-      .find((item) => item.name === 'resolve_active_appointment_offer')
-      .invoke(null, JSON.stringify({
-        decision: 'keep_open',
-        reply: 'la consulta tiene el valor configurado; el horario sigue pendiente',
-        title: null,
-        notes: null,
-        attendeeName: null,
-        attendeeContext: null,
-        primaryAttendee: null,
-        guests: [],
-        agreedAmount: null
-      }))
-    assert.equal(keepOpen.ok, true)
-    assert.equal(JSON.parse((await db.get(
+    const decisionTools = createConversationalTools(decisionCtx)
+    const offerBeforePriceQuestion = (await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerEventId]
-    )).detail_json).status, 'active')
+    )).detail_json
+    const priceLookup = await decisionTools
+      .find((item) => item.name === 'list_products')
+      .invoke(null, JSON.stringify({ query: `consulta inexistente ${suffix}` }))
+    assert.equal(priceLookup.ok, true)
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, offerBeforePriceQuestion)
 
-    const otherOptions = await createConversationalTools(decisionCtx)
+    const otherOptions = await decisionTools
       .find((item) => item.name === 'resolve_active_appointment_offer')
       .invoke(null, JSON.stringify({
         decision: 'request_other_options',
@@ -302,7 +305,14 @@ test('una oferta durable pendiente activa un menú focalizado y exige una decisi
         agreedAmount: null
       }))
     assert.equal(otherOptions.ok, true)
-    assert.match(otherOptions.visibleReply, /otro día/i)
+    assert.equal(otherOptions.terminal, false)
+    assert.equal(otherOptions.visibleReply, null)
+    assert.match(otherOptions.continueWith, /consulta disponibilidad/i)
+    const continuation = await activeOfferAgent.toolUseBehavior(null, [{
+      tool: { name: 'resolve_active_appointment_offer' },
+      output: otherOptions
+    }])
+    assert.equal(continuation.isFinalOutput, false)
     assert.equal(JSON.parse((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerEventId]
@@ -1086,9 +1096,11 @@ test('prompt de agenda humana ofrece espacios pero prohíbe crear o confirmar la
   assert.match(instructions, /request_human_booking/)
   assert.match(instructions, /sin crear una cita/i)
   assert.match(instructions, /nunca digas que la cita ya quedó agendada/i)
-  assert.match(instructions, /pausa cualquier guion, interrogatorio o pregunta de calificación/i)
-  assert.match(instructions, /no la uses para sustituir ni adelantar este flujo de agenda/i)
-  assert.match(instructions, /sus reglas tienen precedencia sobre el guion editable/i)
+  assert.match(instructions, /estrategia y capacitación del dueño decide cuándo conviene/i)
+  assert.match(instructions, /una oferta pendiente no encierra la conversación/i)
+  assert.match(instructions, /pueden usarse, consultarse y retomarse cuantas veces/i)
+  assert.doesNotMatch(instructions, /pausa cualquier guion, interrogatorio o pregunta de calificación/i)
+  assert.doesNotMatch(instructions, /sus reglas tienen precedencia sobre el guion editable/i)
   assert.match(instructions, /contacto solicitante siempre es el contacto de este hilo/i)
   assert.match(instructions, /no busques otra ficha ni pidas otro teléfono/i)
   assert.doesNotMatch(instructions, /selectionEvidence|customerQuote|assistantOfferQuote|mismo startTime/i)

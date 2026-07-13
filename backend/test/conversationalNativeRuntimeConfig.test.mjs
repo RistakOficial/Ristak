@@ -300,6 +300,25 @@ test('cobro nuevo usa Stripe y separa link de pago de transferencia sin herramie
   assert.deepEqual(link.deposit.methods, { paymentLink: true, bankTransfer: false })
   assert.equal(link.installments.enabled, true)
   assert.equal(link.expirationMinutes, 60)
+  assert.equal(link.productId, '')
+  assert.equal(link.priceId, '')
+
+  const depositWithoutProductResidue = normalizeConversationalCapabilitiesConfig({
+    items: [{
+      id: 'collect_payment',
+      enabled: true,
+      collectionMethod: 'payment_link',
+      chargeType: 'deposit',
+      productId: 'stale_product',
+      priceId: '',
+      deposit: { enabled: true, mode: 'fixed', amount: 300, currency: 'MXN' }
+    }]
+  })
+  const normalizedDeposit = depositWithoutProductResidue.items[0]
+  assert.equal(normalizedDeposit.productId, '')
+  assert.equal(normalizedDeposit.priceId, '')
+  assert.equal(buildConversationalCapabilityManifest({ capabilitiesConfig: depositWithoutProductResidue })
+    .find((item) => item.id === 'collect_payment')?.ready, true)
 
   const legacyHighLevel = normalizeConversationalCapabilitiesConfig({
     items: [{

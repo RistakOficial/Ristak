@@ -56,7 +56,8 @@ function googleJson(body, status = 200) {
   })
 }
 
-function createGoogleApiFetchMock(requests, { cancelledAppointmentId = '' } = {}) {
+function createGoogleApiFetchMock(requests, { cancelledAppointmentId = '', failDeleteOnce = false } = {}) {
+  let deleteAttempts = 0
   return async (url, options = {}) => {
     const parsed = new URL(String(url))
     const method = String(options.method || 'GET').toUpperCase()
@@ -110,6 +111,10 @@ function createGoogleApiFetchMock(requests, { cancelledAppointmentId = '' } = {}
       }
 
       if (method === 'DELETE') {
+        deleteAttempts += 1
+        if (failDeleteOnce && deleteAttempts === 1) {
+          return googleJson({ error: { message: 'temporary_delete_failure' } }, 503)
+        }
         return new Response(null, { status: 204 })
       }
     }
@@ -417,7 +422,7 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
     process.env.APP_URL = 'https://demo.onrender.com'
     process.env.APP_VERSION = '1.0.0'
     process.env.OWNER_EMAIL = 'dueno@clinica.test'
-    const googleFetch = createGoogleApiFetchMock(googleRequests)
+    const googleFetch = createGoogleApiFetchMock(googleRequests, { failDeleteOnce: true })
     global.fetch = (url, options) => String(url).startsWith(baseUrl)
       ? previousFetch(url, options)
       : googleFetch(url, options)
@@ -460,8 +465,20 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
     const updated = await googleCalendarService.syncAppointmentToGoogle(appointment)
     assert.equal(updated.appointment.googleEventId, 'evt_google_created')
 
-    const deleted = await googleCalendarService.deleteGoogleEventForAppointment(updated.appointment)
-    assert.equal(deleted.deleted, true)
+    appointment = await localCalendarService.updateLocalAppointment(appointmentId, {
+      appointmentStatus: 'cancelled',
+      status: 'cancelled'
+    })
+    await assert.rejects(
+      googleCalendarService.deleteGoogleEventForAppointment(appointment),
+      /Google Calendar|temporary_delete_failure|503/i
+    )
+    const failedDelete = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(failedDelete.googleEventId, 'evt_google_created')
+    assert.equal(failedDelete.googleSyncStatus, 'error')
+
+    const retriedDelete = await googleCalendarService.syncLocalAppointmentsToGoogle({ calendarId })
+    assert.equal(retriedDelete.synced, 1)
 
     const imported = await googleCalendarService.syncGoogleEventsToLocal({
       startTime: '2026-06-17T00:00:00.000Z',
@@ -483,13 +500,14 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
     assert.equal(requests[0].body.provider, 'google_calendar')
     assert.equal(requests[1].path, '/api/license/google-calendar/refresh-token')
 
-    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'PATCH', 'DELETE', 'GET'])
+    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'PATCH', 'DELETE', 'DELETE', 'GET'])
     assert.match(googleRequests[0].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\?sendUpdates=all$/)
     assert.equal(googleRequests[0].body.start.dateTime, '2026-06-15T18:00:00.000Z')
     assert.match(googleRequests[1].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created\?sendUpdates=all$/)
     assert.equal(googleRequests[1].body.start.dateTime, '2026-06-16T20:00:00.000Z')
     assert.match(googleRequests[2].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created\?sendUpdates=all$/)
-    assert.match(googleRequests[3].path, /showDeleted=true/)
+    assert.match(googleRequests[3].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\/evt_google_created\?sendUpdates=all$/)
+    assert.match(googleRequests[4].path, /showDeleted=true/)
 
     const finalAppointment = await localCalendarService.getLocalAppointment(appointmentId)
     assert.equal(finalAppointment.googleEventId, null)

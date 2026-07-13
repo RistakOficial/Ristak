@@ -201,6 +201,11 @@ test('Stripe permite reintentar un link cuyo PaymentIntent fue cancelado sin fal
         sync: true
       })
       assert.equal(synced.status, 'pending')
+      const canceledRow = await db.get(
+        'SELECT metadata_json FROM payments WHERE public_payment_id = ?',
+        [paymentLink.publicPaymentId]
+      )
+      assert.equal(JSON.parse(canceledRow.metadata_json).stripe.status, 'canceled')
 
       const retryIntent = await createStripePaymentIntent(paymentLink.publicPaymentId, {
         savePaymentMethod: false
@@ -211,11 +216,12 @@ test('Stripe permite reintentar un link cuyo PaymentIntent fue cancelado sin fal
       assert.match(createCalls[1].requestOptions.idempotencyKey, /:replace:pi_canceled_old$/)
 
       const row = await db.get(
-        'SELECT status, stripe_payment_intent_id FROM payments WHERE public_payment_id = ?',
+        'SELECT status, stripe_payment_intent_id, metadata_json FROM payments WHERE public_payment_id = ?',
         [paymentLink.publicPaymentId]
       )
       assert.equal(row.status, 'pending')
       assert.equal(row.stripe_payment_intent_id, 'pi_canceled_retry')
+      assert.equal(JSON.parse(row.metadata_json).stripe.status, 'requires_payment_method')
     } finally {
       await cleanupPublicPayments(createdPublicIds)
     }

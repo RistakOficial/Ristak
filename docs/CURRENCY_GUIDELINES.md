@@ -76,10 +76,11 @@ Lee y aplica esta guia antes de tocar:
   tenga.
 - Al crear pagos, productos, precios, planes, suscripciones, payment flows o
   eventos locales con importe, persiste la moneda resuelta en el registro.
-- En planes de pago, el total y las parcialidades se comparan en unidades
-  mínimas enteras de la moneda (centavos cuando existen; unidad completa en
-  monedas de cero decimales). La suma debe ser exacta: no se permiten
-  tolerancias ocultas de centavos ni márgenes como `0.50`.
+- En planes de pago, links conversacionales y vínculos contra el ledger, los
+  importes se comparan en unidades mínimas enteras de la moneda (centavos cuando
+  existen; unidad completa en monedas de cero decimales). La comparación debe
+  ser exacta: no se permiten tolerancias ocultas ni márgenes fijos como `0.005`
+  o `0.50` que cambien de significado según la currency.
 - `DEFAULT_CURRENCY` en servicios de pasarela es fallback defensivo para datos
   vacios o invalidos. No lo uses como fuente principal para nuevas rutas.
 - En Meta/CAPI, los eventos `Purchase` (y cualquier evento con `currency` en

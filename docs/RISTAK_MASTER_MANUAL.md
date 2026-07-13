@@ -3331,6 +3331,32 @@ ledger a `NUMERIC(20,6)` con un `lock_timeout` local; SQLite conserva `REAL` par
 desarrollo. Los contratos HTTP/MCP serializan el decimal de PostgreSQL como
 número JSON para no cambiar la API pública.
 
+Los links conversacionales también tienen una reserva durable por identidad
+financiera en `conversational_payment_semantic_claims`. La idempotency key evita
+repetir el mismo inbound; el claim semántico impide que dos mensajes distintos y
+concurrentes creen dos links para el mismo agente, contacto, producto/precio,
+monto, moneda, pasarela, propósito y, cuando aplica, selección de cita. Un
+segundo turno espera el request canónico ya ligado y reutiliza exactamente su
+ledger; si el primer intento quedó ambiguo, la búsqueda falla o el vínculo no es
+verificable, se bloquea antes de volver a llamar al proveedor. Un cobro ya
+pagado, cancelado, rechazado, reembolsado o vencido libera la identidad para un
+nuevo cobro legítimo, pero nunca se reutiliza como pendiente.
+Si un proceso muere después de reservar la identidad pero antes de crear el
+request durable, una lease permite que otro inbound recupere el claim sólo
+cuando no existe ninguna fila de request; el dueño anterior debe revalidar el
+claim después de insertar su request y antes de llamar al proveedor. Una vez que
+existe request, nunca hay takeover ciego: un fallo potencialmente ambiguo queda
+bloqueado para revisión humana en vez de intentar un segundo cobro.
+
+`get_payment_status` sólo expone cobros ligados por el mismo agente al contacto
+del hilo. `fundsConfirmed=true` exige status exitoso y `payment_mode=live`
+explícito. Un link sólo vuelve a mostrarse si su status interno sigue abierto,
+su estado crudo guardado por la pasarela no es terminal y conserva un
+`due_date` válido; las fechas de calendario se comparan en la zona del negocio y
+los instantes UTC no dependen de la zona del servidor. Monto y moneda se
+revalidan en unidades mínimas reales de cada currency, no con una tolerancia
+decimal fija.
+
 El bloque **Control y datos** y las capacidades guardan estos contratos dentro de
 `capabilities_config` schema 3:
 
@@ -3487,10 +3513,15 @@ seguimientos y runtime vivo comparten el constructor; la telemetria registra
 mensajes totales, incluidos, omitidos, bytes y paginas cargadas. No existe una IA
 de resumen o compactacion escondida.
 
-El prompt se arma en servidor con el texto editable, contexto real recuperado
-y la zona blindada al final. El texto del dueño puede cambiar personalidad y
-conocimiento, pero no agregar tools, cambiar calendario/producto/monto/moneda ni
-convertir un resultado pendiente o fallido en exito.
+El prompt se arma en servidor con estrategia/capacitacion y personalidad como
+las instrucciones editoriales del dueño, contexto real recuperado y una zona
+blindada que sólo protege seguridad, permisos, identidad, configuracion y hechos
+operativos. La estrategia es el cerebro de la conversacion: decide semanticamente
+si primero pregunta, informa, consulta, agenda, cobra, retoma, cancela o entrega.
+Activar una capacidad no crea una etapa, prioridad ni atajo obligatorio. El texto
+editable no puede agregar tools, cambiar calendario/producto/monto/moneda ni
+convertir un resultado pendiente o fallido en exito, pero fuera de esos limites
+el backend no reemplaza su criterio con un embudo propio.
 
 La proteccion preventiva tampoco usa regex ni detectores de palabras. El mismo
 modelo principal puede decidir `apply_safety_measure` sólo con contexto claro,
@@ -3655,19 +3686,19 @@ nunca un booleano escrito por el modelo.
   divisor de mensajes. Una oferta activa queda en fase durable
   `awaiting_decision` y no puede ser sobrescrita por otra ejecución. Antes de
   cada vuelta el backend hidrata ese hecho desde
-  `conversational_agent_events`; mientras siga pendiente oculta
-  `get_free_slots`, `offer_appointment_slot` y las tools de cobro directo, y
-  exige a la misma IA resolverla mediante una llamada estructurada: aceptar,
-  pedir otras opciones, rechazar o conservar la oferta abierta porque el mensaje
-  es ambiguo o trata otro tema. Entregar el chat a una persona aparece como
-  quinta decisión únicamente cuando la capacidad de handoff está habilitada; no
-  puede brincarse la configuración del dueño. No existe detector de
-  `ok`, listas de frases ni regex: el modelo conserva el trabajo semántico, pero
-  ya no tiene una tool con la que pueda volver a ofrecer el mismo horario. Pedir
-  otras opciones cambia la oferta anterior a `superseded`; rechazarla la cambia
-  a `declined`; entregarla a una persona la reclama primero por CAS y termina en
-  `handed_off`, por lo que nunca puede ganar también una aceptación concurrente;
-  sólo entonces se vuelve a habilitar la consulta de agenda.
+  `conversational_agent_events`, pero no oculta agenda, catalogo, cobro, enlaces,
+  lectura ni handoff por el simple hecho de que exista una oferta. La misma IA
+  puede responder una duda, consultar precios o usar otra capacidad y luego
+  regresar a esa oferta sin repetirla. `resolve_active_appointment_offer` sólo se
+  usa cuando el mensaje realmente decide sobre ella: aceptar, pedir otras
+  opciones, rechazar o entregar a una persona cuando handoff esté habilitado.
+  Una duda o respuesta ambigua no llama al resolver ni cambia el evento. No
+  existe detector de `ok`, listas de frases, regex, etapa ni tool `keep_open` que
+  sustituya el trabajo semantico del modelo. Pedir otras opciones cambia la
+  oferta anterior a `superseded` y devuelve el control al mismo Runner para que
+  pueda consultar y ofrecer otra en esa vuelta; rechazarla la cambia a
+  `declined`; entregarla a una persona la reclama primero por CAS y termina en
+  `handed_off`, por lo que nunca puede ganar también una aceptación concurrente.
   Además, el guard de persistencia rechaza por CAS cualquier intento accidental
   de pisar una oferta activa y conserva byte por byte la evidencia original.
   Si la lectura durable falla, aparecen varias ofertas activas o una entrega
@@ -3788,6 +3819,32 @@ nunca un booleano escrito por el modelo.
   misma revalidacion estricta y el mismo slot UTC, pero sella una solicitud humana
   idempotente en lugar de llamar al controller de creacion. Un retry exacto no
   duplica el aviso y un slot ocupado no cambia estado, asignacion ni notificaciones.
+  `get_contact_appointments` pagina todas las citas futuras activas del contacto
+  solicitante en el calendario configurado; cada pagina conserva total,
+  `hasMore` y `nextPage`, de modo que una recurrencia posterior no obliga a aceptar
+  un ID escrito por el cliente. Para reagendar, `get_free_slots` recibe el
+  `appointmentId`, excluye esa misma fila del conflicto y calcula cada opcion con
+  la duracion real de la cita, no con la duracion generica del calendario.
+  `cancel_appointment` respeta `allowCancellation`, hace cancelacion suave,
+  conserva fila, participantes e historial y supersede cualquier oferta activa de
+  reagendamiento ligada a esa cita. `reschedule_appointment` respeta
+  `allowReschedule`, exige una oferta durable `purpose=reschedule` ligada al ID,
+  horario, fin, duracion y estado anteriores exactos, y mueve la misma fila con los
+  mismos participantes. Cancelar y reagendar comparten el candado transaccional
+  del calendario y un CAS de estado/hora/duracion: sólo una mutacion concurrente
+  gana, una cita cancelada nunca se reporta como reagendada y el segundo intento
+  identico se devuelve como replay visible sin repetir proveedor, push ni
+  automatizacion. Un ID ajeno, invitado no solicitante, cita pasada, estado
+  inactivo u oferta vieja falla sin crear una segunda cita. Las citas canceladas,
+  `no_show`/`noshow`, invalidas o eliminadas dejan de ocupar disponibilidad.
+  Al sincronizar con HighLevel, la respuesta remota nunca sustituye el
+  `contact_id` local canonico. Una respuesta tardía tampoco puede pisar una
+  cancelación o reagendamiento posterior: vuelve a tomar el candado, compara el
+  estado y horario post-commit y, si ya cambiaron, conserva la versión nueva,
+  responde conflicto y la marca `sync_status=pending` para reparar cualquier
+  mutación remota vieja. Si falla transitoriamente el DELETE de una cita
+  cancelada en Google Calendar, queda `google_sync_status=error` y el reconciliador
+  vuelve a intentar la eliminacion aunque la cita local ya este cancelada.
 - Pago: producto, precio, monto, concepto y moneda deben coincidir con la
   capacidad blindada o el catalogo real. `payment_link` expone exclusivamente
   `create_payment_link`; `bank_transfer` expone exclusivamente
@@ -3795,8 +3852,13 @@ nunca un booleano escrito por el modelo.
   mismo cobro. Antes de hablar con el proveedor, v2
   reserva una llave durable
   por agente, contacto, producto/precio, monto, moneda, canal y mensaje entrante;
-  concurrencia o replay del mismo mensaje reproducen el resultado, mientras un
-  mensaje posterior permite una compra nueva legitima. Si la reserva no se puede
+  concurrencia o replay del mismo mensaje reproducen el resultado. Un mensaje
+  posterior con la misma identidad exacta reutiliza el link pendiente y vigente,
+  incluso si el cliente se desvio y después retomo el cobro; no llama otra vez a
+  la pasarela ni vuelve a reclamar el anticipo. Cambiar agente, contacto,
+  producto/precio, monto, moneda, proveedor, canal, proposito, MSI o binding de
+  cita crea un contrato distinto. Un link pagado, cancelado, reembolsado, fallido
+  o vencido tampoco se recicla. Si la reserva no se puede
   guardar, falla cerrado. La reserva guarda tambien el request canonico y el
   evento determinista que vincula el cobro con agente, contacto, proposito y
   ejecucion. Crear/enviar link deja la compra `pending`; solo un pago real la
@@ -3877,7 +3939,11 @@ nunca un booleano escrito por el modelo.
   `request_json` debe conservar su hash original; una mutacion de proposito, monto
   o identidad bloquea el cobro. Los filtros persistidos de contacto e invoice
   permiten reparar el webhook objetivo sin quedar detras de otros pendientes.
-  La reconciliacion exige status exitoso
+  `get_payment_status` no acepta IDs ni otro contacto: consulta sólo ledgers
+  vinculados durablemente por ese agente al hilo actual, y devuelve estado,
+  monto, moneda, proveedor y vencimiento sin exponer IDs internos. Sólo
+  `fundsConfirmed=true`, derivado de un estado exitoso live, demuestra fondos;
+  `pending` y `pending_review` nunca autorizan el siguiente paso. La reconciliacion exige status exitoso
   explicito y cruza el invoice contra su fila exacta, monto en unidades menores,
   moneda, proposito inmutable y ambiente.
   Los tres ambientes deben ser `live`: pagos `test`/sandbox, datos ausentes o

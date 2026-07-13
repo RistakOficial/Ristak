@@ -1248,6 +1248,7 @@ export async function recoverProcessingConversationalPaymentRequest(database, ro
 export async function runIdempotentConversationalPaymentLinkCreation({
   idempotencyKey,
   payload,
+  beforeCreate,
   create,
   database = db
 } = {}) {
@@ -1284,6 +1285,7 @@ export async function runIdempotentConversationalPaymentLinkCreation({
 
   let result
   try {
+    if (typeof beforeCreate === 'function') await beforeCreate()
     result = await create()
   } catch (error) {
     const status = Number(error?.status || error?.statusCode || 502)
@@ -1452,6 +1454,7 @@ export async function createSinglePaymentLink(payload = {}) {
       dueDate: payload.dueDate || null,
       channels: payload.channels || {}
     },
+    beforeCreate: payload.beforeCreate,
     create: () => createSinglePaymentLinkOnce(payload)
   })
 }

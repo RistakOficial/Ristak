@@ -348,12 +348,13 @@ test('Conekta pagos: expirado o cancelado queda reintentable y solo rechazo real
     assert.equal(expiredWebhookResult.status, 'pending')
 
     const expiredRow = await db.get(
-      'SELECT status, public_payment_id, payment_url FROM payments WHERE id = ?',
+      'SELECT status, public_payment_id, payment_url, metadata_json FROM payments WHERE id = ?',
       [paymentId]
     )
     assert.equal(expiredRow.status, 'pending')
     assert.equal(expiredRow.public_payment_id, publicPaymentId)
     assert.equal(expiredRow.payment_url, `https://app.example.test/pay/${publicPaymentId}`)
+    assert.equal(JSON.parse(expiredRow.metadata_json).conekta.paymentStatus, 'expired')
 
     const canceledWebhookResult = await reconcileConektaOrderFromWebhook({
       type: 'order.canceled',
@@ -371,6 +372,10 @@ test('Conekta pagos: expirado o cancelado queda reintentable y solo rechazo real
     assert.equal(canceledWebhookResult.matched, true)
     assert.equal(canceledWebhookResult.changed, false)
     assert.equal(canceledWebhookResult.status, 'pending')
+    assert.equal(
+      JSON.parse((await db.get('SELECT metadata_json FROM payments WHERE id = ?', [paymentId])).metadata_json).conekta.paymentStatus,
+      'canceled'
+    )
 
     const declinedWebhookResult = await reconcileConektaOrderFromWebhook({
       type: 'order.declined',

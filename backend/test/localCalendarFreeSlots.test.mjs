@@ -154,6 +154,125 @@ test('getLocalFreeSlots deduplica slots cuando horarios personalizados se empalm
   }
 })
 
+test('getLocalFreeSlots libera inmediatamente el horario de una cita cancelada sin borrar su historial', async () => {
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_cancelled_slot_${suffix}`
+  const appointmentId = `rstk_appt_cancelled_slot_${suffix}`
+  const baseDay = DateTime.utc().plus({ days: 33 }).startOf('day')
+  const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const dateKey = nextMonday.toISODate()
+  const slotStart = nextMonday.set({ hour: 14, minute: 0 })
+  const slotEnd = slotStart.plus({ minutes: 60 })
+  const expectedSlot = slotStart.toISO()
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda que libera cancelaciones',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        {
+          daysOfTheWeek: [1],
+          hours: [{ openHour: 14, openMinute: 0, closeHour: 16, closeMinute: 0 }]
+        }
+      ]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    await createLocalAppointment({
+      id: appointmentId,
+      calendarId,
+      title: 'Cita que después se cancela',
+      source: 'ristak',
+      startTime: slotStart.toISO(),
+      endTime: slotEnd.toISO(),
+      appointmentStatus: 'confirmed',
+      status: 'confirmed'
+    }, { syncStatus: 'synced' })
+
+    let slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC')
+    assert.equal(slots[0]?.slots.includes(expectedSlot), false, 'la cita activa debe ocupar el horario')
+
+    await db.run(
+      `UPDATE appointments
+       SET appointment_status = 'cancelled', status = 'cancelled', date_updated = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [appointmentId]
+    )
+
+    slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC')
+    assert.equal(slots[0]?.slots.includes(expectedSlot), true, 'la cancelación suave debe liberar el horario')
+    const preserved = await db.get('SELECT id, deleted_at FROM appointments WHERE id = ?', [appointmentId])
+    assert.equal(preserved.id, appointmentId)
+    assert.equal(preserved.deleted_at, null)
+  } finally {
+    await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [appointmentId]).catch(() => undefined)
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+  }
+})
+
+test('getLocalFreeSlots excluye la propia cita y valida toda su duración real al reagendar', async () => {
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_reschedule_duration_${suffix}`
+  const ownAppointmentId = `rstk_appt_reschedule_own_${suffix}`
+  const blockingAppointmentId = `rstk_appt_reschedule_block_${suffix}`
+  const baseDay = DateTime.utc().plus({ days: 37 }).startOf('day')
+  const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const dateKey = nextMonday.toISODate()
+  const partialOwnOverlap = nextMonday.set({ hour: 10, minute: 30 }).toISO()
+  const partialOtherOverlap = nextMonday.set({ hour: 11, minute: 30 }).toISO()
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda con duración real de reagenda',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 30,
+      openHours: [{
+        daysOfTheWeek: [1],
+        hours: [{ openHour: 9, openMinute: 0, closeHour: 15, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    await createLocalAppointment({
+      id: ownAppointmentId,
+      calendarId,
+      title: 'Cita de 90 minutos a mover',
+      startTime: nextMonday.set({ hour: 10, minute: 0 }).toISO(),
+      endTime: nextMonday.set({ hour: 11, minute: 30 }).toISO(),
+      appointmentStatus: 'confirmed'
+    }, { syncStatus: 'synced' })
+    await createLocalAppointment({
+      id: blockingAppointmentId,
+      calendarId,
+      title: 'Otra cita que sí debe bloquear',
+      startTime: nextMonday.set({ hour: 12, minute: 30 }).toISO(),
+      endTime: nextMonday.set({ hour: 13, minute: 30 }).toISO(),
+      appointmentStatus: 'confirmed'
+    }, { syncStatus: 'synced' })
+
+    const ordinarySlots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC')
+    assert.equal(ordinarySlots[0].slots.includes(partialOwnOverlap), false)
+
+    const rescheduleSlots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC', {
+      excludeAppointmentId: ownAppointmentId,
+      durationMinutes: 90
+    })
+    assert.equal(rescheduleSlots[0].slots.includes(partialOwnOverlap), true)
+    assert.equal(
+      rescheduleSlots[0].slots.includes(partialOtherOverlap),
+      false,
+      '11:30–13:00 debe bloquearse porque la duración real alcanza la otra cita de 12:30'
+    )
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id IN (?, ?)', [ownAppointmentId, blockingAppointmentId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+  }
+})
+
 test('createLocalCalendar genera IDs y URLs publicas unicas para calendarios Ristak con el mismo nombre', async () => {
   const suffix = randomUUID()
   const name = `Mi calendario ${suffix}`
