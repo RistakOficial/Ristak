@@ -18,6 +18,7 @@ import {
   estimateToolCallingV2HistoryMessageBytes,
   ensureToolCallingV2VisibleReply,
   loadToolCallingV2ConversationEnvelope,
+  resolveConversationalFollowUpAIProvider,
   resumeToolCallingV2AfterVerifiedPayment,
   runConversationalAgentPreview,
   runToolCallingV2Turn,
@@ -166,6 +167,22 @@ test('Agent v2 puede exigir una herramienta terminal exacta sin aceptar nombres 
     forcedToolName: 'request_human_booking'
   })
   assert.equal(unavailableAgent.modelSettings.toolChoice, undefined)
+
+  assert.throws(
+    () => createToolCallingV2Agent({
+      model: 'gpt-4.1-mini',
+      instructions: 'Prueba',
+      tools: [bookTool],
+      forcedToolName: 'request_human_booking',
+      requireTool: true
+    }),
+    (error) => error?.code === 'required_conversational_tool_unavailable'
+  )
+})
+
+test('seguimiento v2 resuelve proveedor aun cuando una configuración legacy no lo traiga', () => {
+  assert.equal(resolveConversationalFollowUpAIProvider({}), 'openai')
+  assert.equal(resolveConversationalFollowUpAIProvider({ aiProvider: 'gemini' }), 'gemini')
 })
 
 test('una oferta durable pendiente no fuerza resolver ni oculta las demás capacidades', async () => {
@@ -369,6 +386,90 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
         agreedAmount: null
       }))
     assert.equal(staleAcceptance.ok, false)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [offerEventId]).catch(() => {})
+  }
+})
+
+test('oferta de reagenda humana pendiente conserva request_human_booking como única terminal', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_human_pending_${suffix}`
+  const contactId = `contact_human_pending_${suffix}`
+  const scopeToken = randomUUID().replaceAll('-', '').padEnd(48, 'a').slice(0, 48)
+  const previewScopeId = `appointment_preview_${scopeToken}`
+  const offerEventId = `cae_appointment_preview_offer_${previewScopeId}`
+  const offerExecutionId = `test:human_offer_${suffix}`
+  const confirmationExecutionId = `test:human_confirm_${suffix}`
+  const config = {
+    id: agentId,
+    runtimeMode: 'tool_calling_v2',
+    aiProvider: 'openai',
+    model: 'gpt-4.1-mini',
+    capabilitiesConfig: {
+      items: [{
+        id: 'schedule_appointment',
+        enabled: true,
+        calendarId: `calendar_${suffix}`,
+        bookingOwner: 'human'
+      }]
+    }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, 'appointment_slot_preview_offer_created', ?)`,
+      [offerEventId, contactId, agentId, JSON.stringify({
+        agentId,
+        contactId,
+        calendarId: `calendar_${suffix}`,
+        startTime: '2030-07-16T19:00:00.000Z',
+        localLabel: 'martes 16 de julio de 2030 a la 1:00 p.m.',
+        timezone: 'America/Mexico_City',
+        channel: 'whatsapp',
+        executionId: offerExecutionId,
+        offerText: 'Tengo disponible martes 16 de julio de 2030 a la 1:00 p.m. ¿Te funciona ese horario?',
+        purpose: 'reschedule',
+        appointmentId: `appointment_${suffix}`,
+        expectedStartTime: '2030-07-15T16:00:00.000Z',
+        expectedEndTime: '2030-07-15T17:00:00.000Z',
+        durationMs: 60 * 60 * 1000,
+        status: 'active',
+        phase: 'awaiting_decision',
+        previewScopeId,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      })]
+    )
+
+    const result = await runToolCallingV2Turn({
+      config,
+      runtime: { modelProvider: {} },
+      messages: [
+        { id: offerExecutionId, role: 'assistant', content: 'Tengo disponible martes 16 de julio de 2030 a la 1:00 p.m. ¿Te funciona ese horario?' },
+        { id: confirmationExecutionId, role: 'user', content: 'sí, cámbiamela a ese horario' }
+      ],
+      contactId,
+      dryRun: true,
+      channel: 'whatsapp',
+      executionId: confirmationExecutionId,
+      previewScopeId,
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      executeAgent: async ({ agent }) => {
+        const names = agent.tools.map((item) => item.name)
+        assert.ok(names.includes('request_human_booking'))
+        assert.equal(names.includes('reschedule_appointment'), false)
+        assert.match(agent.instructions, /única terminal válida es request_human_booking/i)
+        assert.match(agent.instructions, /sin modificar el calendario/i)
+        assert.match(agent.instructions, /no prepara un anticipo nuevo/i)
+        assert.doesNotMatch(agent.instructions, /única mutación válida es reschedule_appointment/i)
+        return 'respuesta de prueba'
+      },
+      runInChannel: (_channel, callback) => callback()
+    })
+
+    assert.equal(result.appointmentOfferDecision?.purpose, 'reschedule')
+    assert.equal(result.appointmentOfferDecision?.terminalToolName, 'request_human_booking')
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [offerEventId]).catch(() => {})
   }
@@ -640,6 +741,7 @@ test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silen
   assert.ok(names.includes('book_appointment'))
   for (const forbidden of [
     'create_payment_link',
+    'send_trigger_link',
     'send_goal_url',
     'send_to_human',
     'mark_ready_to_advance',
@@ -652,19 +754,56 @@ test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silen
   }
 })
 
+test('una capacidad activada con configuración incompleta no se presenta como disponible ni expone tools', () => {
+  const capabilitiesConfig = {
+    schemaVersion: 3,
+    items: [{ id: 'schedule_appointment', enabled: true, calendarId: '' }]
+  }
+  const capabilityManifest = [{
+    id: 'schedule_appointment',
+    label: 'Agendar cita',
+    enabled: true,
+    ready: false,
+    missingConfiguration: ['Selecciona un calendario.']
+  }]
+  const instructions = buildNativeConversationalInstructions({
+    capabilitiesConfig,
+    capabilityManifest
+  })
+  const names = createConversationalTools({
+    config: { runtimeMode: 'tool_calling_v2', capabilitiesConfig },
+    runtimeMode: 'tool_calling_v2',
+    capabilitiesConfig,
+    followUpMode: false,
+    actions: []
+  }).map((candidate) => candidate.name)
+
+  assert.match(instructions, /activada, pero todavía NO está disponible/i)
+  assert.match(instructions, /configuración está incompleta/i)
+  assert.match(instructions, /No existe una herramienta operativa para esta capacidad/i)
+  assert.doesNotMatch(instructions, /Agendar cita: Esta capacidad está disponible/i)
+  assert.equal(names.includes('get_free_slots'), false)
+  assert.equal(names.includes('offer_appointment_slot'), false)
+  assert.equal(names.includes('book_appointment'), false)
+})
+
 test('cobro expone una sola tool según Link de pago o Transferencia/Depósito', () => {
-  const toolNamesFor = (collectionMethod) => {
+  const toolNamesFor = (collectionMethod, { afterPayment = 'continue', withGeneralHandoff = false } = {}) => {
     const capabilitiesConfig = {
-      items: [{
-        id: 'collect_payment',
-        enabled: true,
-        collectionMethod,
-        chargeType: 'direct',
-        direct: { amount: 1200, currency: 'MXN', concept: 'Consulta' },
-        ...(collectionMethod === 'bank_transfer'
-          ? { bankTransfer: { details: 'Banco de prueba · cuenta 1234' } }
-          : {})
-      }]
+      items: [
+        {
+          id: 'collect_payment',
+          enabled: true,
+          collectionMethod,
+          chargeType: 'direct',
+          afterPayment,
+          direct: { amount: 1200, currency: 'MXN', concept: 'Consulta' },
+          ...(collectionMethod === 'bank_transfer'
+            ? { bankTransfer: { details: 'Banco de prueba · cuenta 1234' } }
+            : {})
+        },
+        ...(withGeneralHandoff ? [{ id: 'handoff_human', enabled: true }] : [])
+      ]
     }
     return createConversationalTools({
       config: { runtimeMode: 'tool_calling_v2', capabilitiesConfig },
@@ -679,6 +818,8 @@ test('cobro expone una sola tool según Link de pago o Transferencia/Depósito',
   const linkTools = toolNamesFor('payment_link')
   assert.equal(linkTools.includes('create_payment_link'), true)
   assert.equal(linkTools.includes('register_deposit_payment_proof'), false)
+  assert.equal(toolNamesFor('payment_link', { afterPayment: 'handoff' }).includes('send_to_human'), false)
+  assert.equal(toolNamesFor('payment_link', { afterPayment: 'handoff', withGeneralHandoff: true }).includes('send_to_human'), true)
 
   const transferTools = toolNamesFor('bank_transfer')
   assert.equal(transferTools.includes('create_payment_link'), false)
@@ -712,6 +853,7 @@ test('bookingOwner human reemplaza agendar por la solicitud humana estructurada'
   assert.ok(names.includes('get_free_slots'))
   assert.ok(names.includes('request_human_booking'))
   assert.equal(names.includes('book_appointment'), false)
+  assert.equal(names.includes('reschedule_appointment'), false)
   const request = tools.find((candidate) => candidate.name === 'request_human_booking')
   assert.deepEqual(
     Object.keys(request.parameters.properties).sort(),
@@ -725,19 +867,24 @@ test('seguimiento v2 conserva sólo herramientas de lectura', () => {
     items: [
       { id: 'schedule_appointment', enabled: true, calendarId: 'calendar-real' },
       { id: 'collect_payment', enabled: true, productId: 'product-real', priceId: 'price-real' },
-      { id: 'handoff_human', enabled: true }
+      { id: 'handoff_human', enabled: true, pastClientsToHuman: true }
     ]
   }
-  const names = createConversationalTools({
+  const tools = createConversationalTools({
     config: { runtimeMode: 'tool_calling_v2', capabilitiesConfig },
     runtimeMode: 'tool_calling_v2',
     capabilitiesConfig,
     followUpMode: true,
     accountLocale: { currency: 'MXN' },
     actions: []
-  }).map((candidate) => candidate.name)
+  })
+  const names = tools.map((candidate) => candidate.name)
+  const contactProfile = tools.find((candidate) => candidate.name === 'get_contact_profile')
 
   assert.deepEqual(names.sort(), ['get_business_profile', 'get_contact_profile', 'list_products'])
+  assert.match(contactProfile.description, /sólo lectura/i)
+  assert.match(contactProfile.description, /no activa reglas de traspaso ni autoriza acciones/i)
+  assert.doesNotMatch(contactProfile.description, /consulta obligatoria|usa send_to_human/i)
 })
 
 test('buildInputItems conserva el límite base y acepta completo el sobre nativo ya acotado por bytes', () => {
@@ -1068,6 +1215,47 @@ test('prompt nativo separa estrategia, personalidad, contexto real y capacidades
   assert.match(instructions, /Nunca afirmes que una cita, cobro, enlace, transferencia o meta quedó lista/i)
 })
 
+test('estrategia gobierna el proceso aunque personalidad intente adelantar una capacidad', () => {
+  const strategyText = 'PROHIBIDO ofrecer horarios o agendar hasta conocer el motivo principal de la persona.'
+  const personalityText = 'Habla casual. Si pide una cita, agenda inmediatamente y pídele su nombre completo.'
+  const instructions = buildNativeConversationalInstructions({
+    promptConfig: { strategyText, personalityText },
+    capabilitiesConfig: {
+      dataRequirements: {
+        fields: [],
+        participants: { guestFields: ['name', 'phone'], maxGuests: 5 }
+      },
+      items: [{
+        id: 'schedule_appointment',
+        enabled: true,
+        calendarId: 'calendar-hierarchy-test',
+        bookingOwner: 'ai'
+      }]
+    },
+    capabilityManifest: [{
+      id: 'schedule_appointment',
+      label: 'Agendar cita',
+      enabled: true,
+      ready: true,
+      missingConfiguration: []
+    }]
+  })
+
+  const personalityIndex = instructions.indexOf('<personality_style_only>')
+  const strategyIndex = instructions.indexOf('<business_strategy_authority>')
+  const resolutionIndex = instructions.indexOf('## Resolución de contradicciones entre zonas')
+  assert.ok(personalityIndex >= 0)
+  assert.ok(strategyIndex > personalityIndex)
+  assert.ok(resolutionIndex > strategyIndex)
+  assert.match(instructions, /Personalidad controla exclusivamente cómo suena/i)
+  assert.match(instructions, /Estrategia y capacitación controla qué objetivo.*cuándo decide usar una capacidad/is)
+  assert.match(instructions, /Si ambos textos chocan sobre el proceso o una acción, gana la Estrategia/i)
+  assert.match(instructions, /Tener una capacidad activa jamás la dispara por sí solo/i)
+  assert.match(instructions, /Pedir una cita.*no permite saltarse condiciones previas/is)
+  assert.match(instructions, /primaryAttendee=null y guests=\[\]/i)
+  assert.doesNotMatch(instructions, /cuando quien escribe confirme un dato suyo, usa save_contact_data/i)
+})
+
 test('prompt de agenda humana ofrece espacios pero prohíbe crear o confirmar la cita', () => {
   const capabilitiesConfig = {
     schemaVersion: 1,
@@ -1095,7 +1283,7 @@ test('prompt de agenda humana ofrece espacios pero prohíbe crear o confirmar la
 
   assert.match(instructions, /request_human_booking/)
   assert.match(instructions, /sin crear una cita/i)
-  assert.match(instructions, /nunca digas que la cita ya quedó agendada/i)
+  assert.match(instructions, /nunca digas que la cita nueva quedó agendada/i)
   assert.match(instructions, /estrategia y capacitación del dueño decide cuándo conviene/i)
   assert.match(instructions, /una oferta pendiente no encierra la conversación/i)
   assert.match(instructions, /pueden usarse, consultarse y retomarse cuantas veces/i)
@@ -1186,6 +1374,67 @@ test('prompt v2 incluye criterios útiles de capacidades sin exponer identificad
   assert.doesNotMatch(instructions, /customerEvidence/)
   assert.match(instructions, /Confirmar que desea una demostración/)
   assert.doesNotMatch(instructions, /internal-product-id|internal-price-id/)
+})
+
+test('prompt asigna herramientas distintas al enlace general y al enlace de Objetivo propio', () => {
+  const standalone = buildNativeConversationalInstructions({
+    capabilityManifest: [{ id: 'send_link', label: 'Mandar enlace', enabled: true, ready: true, missingConfiguration: [] }],
+    capabilitiesConfig: {
+      items: [{ id: 'send_link', enabled: true, linkKind: 'verified_goal', url: 'https://example.test/recurso' }]
+    }
+  })
+  assert.match(standalone, /usa exclusivamente send_trigger_link/i)
+  assert.match(standalone, /Nunca crea, prepara ni completa un Objetivo propio/i)
+  assert.match(standalone, /no pasa la conversación a una persona/i)
+
+  const goalLink = buildNativeConversationalInstructions({
+    capabilityManifest: [
+      { id: 'send_link', label: 'Mandar enlace', enabled: true, ready: true, missingConfiguration: [] },
+      { id: 'custom_goal', label: 'Objetivo propio', enabled: true, ready: true, missingConfiguration: [] }
+    ],
+    capabilitiesConfig: {
+      items: [
+        { id: 'send_link', enabled: true, linkKind: 'verified_goal', url: 'https://example.test/registro' },
+        { id: 'custom_goal', enabled: true, description: 'Completar el registro', completion: 'send_link' }
+      ]
+    }
+  })
+  assert.match(goalLink, /enlace general, usa exclusivamente send_trigger_link/i)
+  assert.match(goalLink, /esta meta, usa exclusivamente send_goal_url/i)
+  assert.match(goalLink, /deja el objetivo pendiente/i)
+  assert.match(goalLink, /Nunca uses send_trigger_link para cumplir este Objetivo propio/i)
+  assert.match(goalLink, /no declares la meta cumplida al enviarlo/i)
+
+  const incompleteGoalLink = buildNativeConversationalInstructions({
+    capabilityManifest: [
+      { id: 'send_link', label: 'Mandar enlace', enabled: true, ready: true, missingConfiguration: [] },
+      { id: 'custom_goal', label: 'Objetivo propio', enabled: true, ready: false, missingConfiguration: ['Describe el objetivo propio.'] }
+    ],
+    capabilitiesConfig: {
+      items: [
+        { id: 'send_link', enabled: true, linkKind: 'verified_goal', url: 'https://example.test/registro' },
+        { id: 'custom_goal', enabled: true, description: '', completion: 'send_link' }
+      ]
+    }
+  })
+  assert.match(incompleteGoalLink, /send_trigger_link sólo entrega el enlace general/i)
+  assert.match(incompleteGoalLink, /NO está disponible porque su configuración está incompleta/i)
+  assert.doesNotMatch(incompleteGoalLink, /esta meta, usa exclusivamente send_goal_url/i)
+
+  const triggerGoalLink = buildNativeConversationalInstructions({
+    capabilityManifest: [
+      { id: 'send_link', label: 'Mandar enlace', enabled: true, ready: true, missingConfiguration: [] },
+      { id: 'custom_goal', label: 'Objetivo propio', enabled: true, ready: false, missingConfiguration: ['Activa y configura un enlace verificable.'] }
+    ],
+    capabilitiesConfig: {
+      items: [
+        { id: 'send_link', enabled: true, linkKind: 'trigger', url: 'https://example.test/registro' },
+        { id: 'custom_goal', enabled: true, description: 'Completar registro', completion: 'send_link' }
+      ]
+    }
+  })
+  assert.match(triggerGoalLink, /send_trigger_link sólo entrega el enlace general/i)
+  assert.doesNotMatch(triggerGoalLink, /esta meta, usa exclusivamente send_goal_url/i)
 })
 
 test('runtime v2 ejecuta sólo el agente principal con el transcript real y nunca devuelve silencio', async () => {
@@ -1324,6 +1573,13 @@ test('fallback visible v2 sólo afirma éxito cuando la acción quedó confirmad
       outcome: { status: 'ok', sentUrl: 'https://example.com/continuar?goal=real' }
     }]),
     /https:\/\/example\.com\/continuar\?goal=real/
+  )
+  assert.match(
+    ensureToolCallingV2VisibleReply('', [
+      { type: 'save_contact_data', outcome: { status: 'ok', ok: true, actionCompleted: true } },
+      { type: 'book_appointment', outcome: { status: 'ok', ok: true, actionCompleted: true } }
+    ]),
+    /cita quedó confirmada/i
   )
 })
 

@@ -779,7 +779,8 @@ function getFollowUpError(followUp: AgentFollowUpConfig) {
   if (firstDelay > MAX_FOLLOW_UP_MINUTES) return 'Revisa el tiempo del seguimiento.'
   if (followUp.second.enabled) {
     const secondDelay = getFollowUpDelayMinutes(followUp.second)
-    if (secondDelay > MAX_FOLLOW_UP_MINUTES || secondDelay <= firstDelay) return 'Revisa el orden de los seguimientos.'
+    if (secondDelay > MAX_FOLLOW_UP_MINUTES) return 'Revisa el tiempo del segundo seguimiento.'
+    if (firstDelay + secondDelay > MAX_FOLLOW_UP_MINUTES) return 'Los dos seguimientos juntos no pueden pasar de 23 horas.'
   }
   if (!followUp.strategy.trim()) return 'Falta la estrategia de seguimiento.'
   return ''
@@ -1427,7 +1428,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                 <option value="">Avisar al equipo sin asignar</option>
                 {teamUsers.map((user) => <option key={user.id} value={user.id}>{getTeamUserDisplayName(user)}</option>)}
               </CustomSelect>
-              <p className={styles.helper}>La IA muestra horarios reales. Cuando la persona elige uno, vuelve a comprobarlo y entrega el chat con esa fecha y hora; no crea ni promete la cita.</p>
+              <p className={styles.helper}>La IA muestra horarios reales. Cuando la persona confirma una cita nueva o un cambio, vuelve a comprobarlo y entrega el chat con la fecha exacta; no crea ni modifica la cita.</p>
             </>
           ) : (
             <p className={styles.helper}>La IA vuelve a comprobar el horario elegido, crea la cita y sólo entonces la confirma.</p>
@@ -1436,7 +1437,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
             <div>
               <strong>Modo test para citas</strong>
               <span>{scheduleCapability.bookingOwner === 'human'
-                ? 'Hace la entrega y notificación de prueba; después restaura al responsable anterior.'
+                ? (scheduleCapability.handoffUserId
+                    ? 'Asigna temporalmente la solicitud, manda la notificación de prueba y después restaura al responsable anterior.'
+                    : 'Valida el horario y avisa al equipo, sin asignar a una persona ni crear o modificar la cita.')
                 : 'Crea una cita marcada como prueba y la elimina automáticamente después de 5 minutos.'}</span>
             </div>
             <Switch
@@ -1477,10 +1480,17 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                 <strong>Modo test para pagos</strong>
                 <span>{paymentCapability.collectionMethod === 'bank_transfer'
                   ? 'Permite probar el análisis del comprobante sin usar una pasarela ni confirmar dinero.'
-                  : 'Crea un link sandbox, escucha la confirmación de prueba y elimina el registro después de 5 minutos.'}</span>
+                  : paymentCapability.gateway === 'highlevel'
+                    ? 'La conexión anterior no puede forzar sandbox. Cambia a Stripe u otra pasarela compatible.'
+                    : 'Crea un link sandbox, escucha la confirmación de prueba y elimina el registro después de 5 minutos.'}</span>
               </div>
               <Switch
                 checked={paymentCapability.testMode.enabled}
+                disabled={
+                  paymentCapability.collectionMethod === 'payment_link' &&
+                  paymentCapability.gateway === 'highlevel' &&
+                  !paymentCapability.testMode.enabled
+                }
                 onChange={(enabled) => updateCapability({
                   ...paymentCapability,
                   testMode: { ...paymentCapability.testMode, enabled, cleanupAfterMinutes: 5 }
@@ -1488,6 +1498,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                 aria-label="Activar modo test para pagos"
               />
             </div>
+            {paymentCapability.collectionMethod === 'payment_link' && paymentCapability.gateway === 'highlevel' && (
+              <p className={styles.helper}>La conexión anterior no permite forzar sandbox por conversación. Cambia a Stripe u otra pasarela compatible; si este switch ya venía activo, apágalo para poder publicar.</p>
+            )}
           </div>
           <Modal
             isOpen={paymentSettingsOpen}
@@ -2060,7 +2073,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
           <ExpandableTextareaField
             id={`agent-${agent.id}-strategy`}
             label="Estrategia y capacitación"
-            description="Qué debe saber del negocio, qué debe conseguir, cómo atender y qué proceso debe seguir."
+            description="El cerebro: qué debe saber y conseguir, qué proceso sigue y cuándo debe agendar, cobrar, mandar un enlace o pasar a humano."
             value={strategyText}
             rows={12}
             placeholder="Describe el negocio, productos, proceso, respuestas, objetivos y forma de llevar la conversación."
@@ -2072,7 +2085,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
           <ExpandableTextareaField
             id={`agent-${agent.id}-personality`}
             label="Personalidad del agente"
-            description="Cómo debe hablar: tono, vocabulario, formalidad, humor, emojis y estilo. Si lo dejas vacío, usa la voz general del negocio."
+            description="Sólo cómo debe hablar: tono, vocabulario, formalidad, humor, emojis y estilo. Las reglas de proceso van en Estrategia."
             value={personalityText}
             rows={7}
             placeholder="Ejemplo: cálido, directo, mexicano, breve y sin frases acartonadas."
@@ -2263,9 +2276,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                           portal
                           aria-label={`Cuándo pedir ${option.label}`}
                         >
-                          <option value="any_action">Antes de cualquier acción</option>
-                          <option value="appointment">Sólo para citas</option>
-                          <option value="payment">Sólo para cobros</option>
+                          <option value="any_action">Para cualquier acción final</option>
+                          <option value="appointment">Para confirmar una cita nueva</option>
+                          <option value="payment">Para cobrar</option>
                         </CustomSelect>
                       ) : (
                         <CustomSelect
@@ -2582,13 +2595,27 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     testScheduleCapability?.enabled && testScheduleCapability.bookingOwner === 'human'
   )
   const scheduleTestModeEnabled = Boolean(testScheduleCapability?.enabled && testScheduleCapability.testMode?.enabled)
-  const paymentTestModeEnabled = Boolean(testPaymentCapability?.enabled && testPaymentCapability.testMode?.enabled)
+  const paymentTestModeConfigured = Boolean(testPaymentCapability?.enabled && testPaymentCapability.testMode?.enabled)
+  const paymentTestModeEnabled = Boolean(
+    paymentTestModeConfigured && !(
+      testPaymentCapability?.collectionMethod === 'payment_link' &&
+      testPaymentCapability?.gateway === 'highlevel'
+    )
+  )
+  const testPaymentWebhookEnabled = Boolean(
+    paymentTestModeEnabled && testPaymentCapability?.collectionMethod === 'payment_link'
+  )
   const testAssignmentCapabilityEnabled = Boolean(testHumanScheduleCapabilityEnabled && testScheduleCapability?.handoffUserId)
   const testEffectsEnabled = scheduleTestModeEnabled || paymentTestModeEnabled
   const effectiveTestEffects: ConversationalAgentTestEffects = {
     enabled: testEffectsEnabled,
-    scheduleAppointment: scheduleTestModeEnabled && testAiScheduleCapabilityEnabled,
-    collectPayment: paymentTestModeEnabled && testPaymentCapability?.collectionMethod === 'payment_link',
+    // Agenda humana también necesita una corrida real cuando el dueño eligió
+    // "avisar al equipo sin asignar". El efecto de agenda valida el horario y
+    // notifica; la asignación temporal sólo existe si hay una persona concreta.
+    scheduleAppointment: scheduleTestModeEnabled && Boolean(testScheduleCapability?.enabled),
+    // Tanto el link sandbox como la lectura real de un comprobante necesitan una
+    // corrida durable de prueba. Sólo el link espera después un webhook.
+    collectPayment: paymentTestModeEnabled,
     assignUser: scheduleTestModeEnabled && testAssignmentCapabilityEnabled,
     notifyOwner: Boolean(
       (scheduleTestModeEnabled && testScheduleCapability?.testMode?.notify !== false) ||
@@ -2968,7 +2995,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   useEffect(() => {
-    if (!testEffectsEnabled || !effectiveTestEffects.collectPayment || testPracticeExpired) return
+    if (!testEffectsEnabled || !testPaymentWebhookEnabled || testPracticeExpired) return
     let cancelled = false
 
     const pollVerifiedPayment = async () => {
@@ -3057,6 +3084,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     effectiveTestEffects.enabled,
     effectiveTestEffects.notifyOwner,
     effectiveTestEffects.scheduleAppointment,
+    testPaymentWebhookEnabled,
     showToast,
     refreshTestRunHistory,
     testContact?.id,
@@ -3911,7 +3939,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                       <div className={styles.agentTestOptionSwitch}>
                         <span>
                           <strong>Agenda confirmada por humano</strong>
-                          <small>La IA consulta horarios y entrega la fecha elegida al equipo; no crea ni promete la cita.</small>
+                          <small>{testScheduleCapability?.handoffUserId
+                            ? 'La IA valida el horario, asigna temporalmente la solicitud a la persona configurada y después restaura al responsable anterior.'
+                            : 'La IA valida el horario y avisa al equipo sin asignar a una persona; no crea ni modifica la cita.'}</small>
                         </span>
                         <Badge variant={testScheduleCapability?.handoffUserId ? 'info' : 'neutral'}>
                           {testScheduleCapability?.handoffUserId ? 'Asignación activa' : 'Sin asignar'}
@@ -3924,11 +3954,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                         <span>
                           <strong>{testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Comprobante de transferencia' : 'Pago sandbox'}</strong>
                           <small>{testPaymentCapability?.collectionMethod === 'bank_transfer'
-                            ? 'Prueba el análisis de la imagen sin usar una pasarela ni confirmar dinero.'
+                            ? 'Lee y comprueba de verdad la imagen; queda pendiente de revisión y nunca confirma dinero.'
                             : 'Genera un link de prueba, escucha el webhook y nunca usa credenciales en vivo como respaldo.'}</small>
                         </span>
-                        <Badge variant={testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'neutral' : 'info'}>
-                          {testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Simulación' : 'Activo'}
+                        <Badge variant="info">
+                          {testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Lectura real' : 'Activo'}
                         </Badge>
                       </div>
                     )}
@@ -3967,9 +3997,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               )}
               {testEffectsEnabled && !expectsTestRun && (
                 <p className={styles.helper}>
-                  {paymentTestModeEnabled && testPaymentCapability?.collectionMethod === 'bank_transfer'
-                    ? 'La transferencia no usa pasarela: el tester permite ensayar el envío y análisis del comprobante, pero no registra dinero confirmado.'
-                    : testHumanScheduleCapabilityEnabled
+                  {testHumanScheduleCapabilityEnabled
                     ? 'La agenda la termina una persona. Sin responsable asignado, el tester muestra el handoff pero no crea citas ni hace una asignación real.'
                     : 'El switch de prueba está activo, pero esta configuración no tiene una acción real que ejecutar. La conversación sigue siendo una simulación.'}
                 </p>

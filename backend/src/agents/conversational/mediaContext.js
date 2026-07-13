@@ -410,6 +410,13 @@ async function readMediaBuffer(row = {}, { maxBytes = MAX_INLINE_MEDIA_BYTES, fe
     return fetchMediaBuffer({ row, mediaUrl, maxBytes })
   }
 
+  // El probador del agente conserva adjuntos locales como data URLs. Permitirlos
+  // aquí hace que el mismo lector de comprobantes valide la imagen real tanto en
+  // la vista previa como en los canales conectados, sin subir archivos temporales.
+  if (isDataUrl(mediaUrl)) {
+    return dataUrlToBuffer(mediaUrl, maxBytes)
+  }
+
   const assetId = extractMediaAssetIdFromUrl(mediaUrl)
   if (assetId) {
     const media = await getMediaAssetBuffer(assetId)

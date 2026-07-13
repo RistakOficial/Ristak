@@ -117,13 +117,21 @@ test('ctx.actions registra outcomes verificables para objetivo, links, pago y ha
     config: {
       capabilitiesConfig: {
         schemaVersion: 1,
-        items: [{
-          id: 'send_link',
-          enabled: true,
-          linkKind: 'verified_goal',
-          url: 'https://agenda.example/reservar',
-          trackingParam: 'goal_id'
-        }]
+        items: [
+          {
+            id: 'send_link',
+            enabled: true,
+            linkKind: 'verified_goal',
+            url: 'https://agenda.example/reservar',
+            trackingParam: 'goal_id'
+          },
+          {
+            id: 'custom_goal',
+            enabled: true,
+            description: 'Completar la reservación externa',
+            completion: 'send_link'
+          }
+        ]
       }
     }
   }
@@ -152,7 +160,7 @@ test('ctx.actions registra outcomes verificables para objetivo, links, pago y ha
       }
     }
   }
-  const triggerTool = createConversationalTools(triggerCtx).find((item) => item.name === 'send_goal_url')
+  const triggerTool = createConversationalTools(triggerCtx).find((item) => item.name === 'send_trigger_link')
   const triggerResult = await triggerTool.invoke(null, JSON.stringify({
     intencionDetectada: 'Quiere continuar',
     resumen: 'Aceptó el enlace',

@@ -133,6 +133,74 @@ test('normaliza efectos sólo cuando hay una acción explícita y no activa noti
   })
 })
 
+test('agenda humana sin persona asignada abre una corrida durable de cita y notificación sin exigir assignUser', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_human_team_test_${suffix}`
+  const contactId = `contact_human_team_test_${suffix}`
+  const runId = `session_human_team_test_${suffix}`
+  const requestedByUserId = `user_human_team_test_${suffix}`
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto agenda humana sin asignar', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+       VALUES (?, 'Agente agenda humana sin asignar', 1, 'tool_calling_v2', ?)`,
+      [agentId, JSON.stringify({
+        schemaVersion: 3,
+        items: [{
+          id: 'schedule_appointment',
+          enabled: true,
+          calendarId: `calendar_human_team_test_${suffix}`,
+          bookingOwner: 'human',
+          handoffUserId: '',
+          handoffUserName: '',
+          testMode: { enabled: true, cleanupAfterMinutes: 5, notify: true }
+        }]
+      })]
+    )
+
+    const run = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: `message_human_team_test_${suffix}`,
+      agentId,
+      requestedByUserId,
+      contactId,
+      effects: {
+        enabled: true,
+        scheduleAppointment: true,
+        notifyOwner: true
+      }
+    })
+
+    assert.equal(run.id, runId)
+    assert.equal(run.effects.enabled, true)
+    assert.equal(run.effects.scheduleAppointment, true)
+    assert.equal(run.effects.assignUser, false)
+    assert.equal(run.effects.notifyOwner, true)
+    const stored = await db.get(
+      'SELECT effects_json, status FROM conversational_agent_test_runs WHERE id = ?',
+      [runId]
+    )
+    assert.equal(stored.status, 'active')
+    assert.deepEqual(
+      {
+        scheduleAppointment: JSON.parse(stored.effects_json).scheduleAppointment,
+        assignUser: JSON.parse(stored.effects_json).assignUser,
+        notifyOwner: JSON.parse(stored.effects_json).notifyOwner
+      },
+      { scheduleAppointment: true, assignUser: false, notifyOwner: true }
+    )
+  } finally {
+    await db.run('DELETE FROM conversational_agent_test_effects WHERE run_id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('historial de pruebas recientes queda limitado al agente y usuario solicitante', async () => {
   const suffix = randomUUID()
   const agentId = `agent_test_history_${suffix}`
@@ -340,12 +408,13 @@ test('cada efecto exige su propio switch y transferencia nunca abre un checkout 
   const agentId = `agent_test_scoped_${suffix}`
   const contactId = `contact_test_scoped_${suffix}`
   const requestedByUserId = `user_test_scoped_${suffix}`
+  const currency = await getAccountCurrency()
   const basePayment = {
     id: 'collect_payment',
     enabled: true,
     collectionMethod: 'payment_link',
     chargeType: 'direct',
-    direct: { amount: 1200, currency: 'MXN', concept: 'Consulta' },
+    direct: { amount: 1200, currency, concept: 'Consulta' },
     testMode: { enabled: false, notify: true }
   }
   try {
@@ -429,23 +498,204 @@ test('cada efecto exige su propio switch y transferencia nunca abre un checkout 
         }]
       }), agentId]
     )
-    await assert.rejects(
-      prepareConversationalAgentTestRun({
-        testRunId: `session_transfer_${suffix}`,
-        testMessageId: `message_transfer_${suffix}`,
-        agentId,
-        requestedByUserId,
-        contactId,
-        effects: { enabled: true, collectPayment: true }
-      }),
-      (error) => error?.code === 'test_payment_link_required'
-    )
-
+    const transferRunId = `session_transfer_${suffix}`
+    const transferRun = await prepareConversationalAgentTestRun({
+      testRunId: transferRunId,
+      testMessageId: `message_transfer_${suffix}`,
+      agentId,
+      requestedByUserId,
+      contactId,
+      effects: { enabled: true, collectPayment: true }
+    })
+    const transferEffects = await recordConversationalAgentPreviewEffects({
+      runContext: transferRun,
+      actions: [{
+        type: 'register_deposit_payment_proof',
+        amount: 1200,
+        currency,
+        paymentPurpose: 'purchase',
+        afterPayment: 'continue',
+        outcome: {
+          status: 'simulated',
+          expectedAmount: 1200,
+          expectedCurrency: currency,
+          wouldRegisterPendingReview: true,
+          paymentConfirmed: false,
+          manualReviewRequired: true,
+          analysis: {
+            ok: true,
+            isPaymentReceipt: true,
+            amount: 1200,
+            currency,
+            bank: 'Banco de prueba',
+            reference: 'REF-TEST',
+            confidence: 0.98
+          }
+        }
+      }]
+    })
+    assert.equal(transferEffects.length, 1)
+    assert.equal(transferEffects[0].status, 'recorded')
+    assert.equal(transferEffects[0].payload.collectionMethod, 'bank_transfer')
+    assert.equal(transferEffects[0].payload.paymentCreated, false)
+    assert.equal(transferEffects[0].payload.paymentConfirmed, false)
+    assert.equal(transferEffects[0].payload.manualReviewRequired, true)
+    assert.equal(transferEffects[0].payload.receiptMatchesConfiguredPayment, true)
+    assert.match(transferEffects[0].summary, /pendiente de revisión/i)
     assert.equal(Number((await db.get(
-      'SELECT COUNT(*) AS total FROM conversational_agent_test_runs WHERE agent_id = ?',
-      [agentId]
+      'SELECT COUNT(*) AS total FROM conversational_agent_test_payment_links WHERE test_run_id = ?',
+      [transferRunId]
     )).total), 0)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?',
+      [contactId]
+    )).total), 0)
+
+    const cleaned = await cleanupConversationalAgentTestRun({
+      testRunId: transferRunId,
+      requestedByUserId
+    })
+    assert.equal(cleaned.cleaned, true)
+    assert.equal(cleaned.effects[0].status, 'cleaned')
+
+    await db.run(
+      'UPDATE conversational_agents SET capabilities_config = ? WHERE id = ?',
+      [JSON.stringify({
+        schemaVersion: 3,
+        items: [{
+          id: 'collect_payment',
+          enabled: true,
+          collectionMethod: 'bank_transfer',
+          paymentMode: 'deposit',
+          chargeType: 'deposit',
+          bankTransfer: { details: 'Banco de prueba · cuenta 1234' },
+          deposit: {
+            enabled: true,
+            mode: 'range',
+            minAmount: 200,
+            maxAmount: 500,
+            currency,
+            methods: { paymentLink: false, bankTransfer: true }
+          },
+          receiptProof: { enabled: true },
+          testMode: { enabled: true, notify: true }
+        }]
+      }), agentId]
+    )
+    const unreadableRunId = `session_transfer_unreadable_${suffix}`
+    const unreadableRun = await prepareConversationalAgentTestRun({
+      testRunId: unreadableRunId,
+      testMessageId: `message_transfer_unreadable_${suffix}`,
+      agentId,
+      requestedByUserId,
+      contactId,
+      effects: { enabled: true, collectPayment: true }
+    })
+    const unreadableEffects = await recordConversationalAgentPreviewEffects({
+      runContext: unreadableRun,
+      actions: [{
+        type: 'register_deposit_payment_proof',
+        amount: null,
+        currency,
+        paymentPurpose: 'deposit',
+        afterPayment: 'continue',
+        outcome: {
+          status: 'simulated',
+          expectedMode: 'range',
+          expectedAmount: null,
+          expectedMinAmount: 200,
+          expectedMaxAmount: 500,
+          expectedCurrency: currency,
+          wouldRegisterPendingReview: true,
+          paymentConfirmed: false,
+          manualReviewRequired: true,
+          analysis: {
+            ok: false,
+            isPaymentReceipt: false,
+            reason: 'analysis_failed'
+          }
+        }
+      }]
+    })
+    assert.equal(unreadableEffects.length, 1)
+    assert.equal(unreadableEffects[0].status, 'recorded')
+    assert.equal(unreadableEffects[0].payload.amount, null)
+    assert.equal(unreadableEffects[0].payload.expectedPayment.mode, 'range')
+    assert.equal(unreadableEffects[0].payload.expectedPayment.minAmount, 200)
+    assert.equal(unreadableEffects[0].payload.expectedPayment.maxAmount, 500)
+    assert.equal(unreadableEffects[0].payload.receiptMatchesConfiguredPayment, false)
+    assert.equal(unreadableEffects[0].payload.manualReviewRequired, true)
+    assert.equal(unreadableEffects[0].payload.wouldRegisterPendingReview, true)
+    assert.equal('amount' in unreadableEffects[0].payload.receiptAnalysis, false)
+    assert.match(unreadableEffects[0].summary, /revisión humana/i)
+
+    const unreadableCleaned = await cleanupConversationalAgentTestRun({
+      testRunId: unreadableRunId,
+      requestedByUserId
+    })
+    assert.equal(unreadableCleaned.cleaned, true)
+    assert.equal(unreadableCleaned.effects[0].status, 'cleaned')
+
+    const mismatchRunId = `session_transfer_mismatch_${suffix}`
+    const mismatchRun = await prepareConversationalAgentTestRun({
+      testRunId: mismatchRunId,
+      testMessageId: `message_transfer_mismatch_${suffix}`,
+      agentId,
+      requestedByUserId,
+      contactId,
+      effects: { enabled: true, collectPayment: true }
+    })
+    const mismatchEffects = await recordConversationalAgentPreviewEffects({
+      runContext: mismatchRun,
+      actions: [{
+        type: 'register_deposit_payment_proof',
+        amount: null,
+        currency,
+        paymentPurpose: 'deposit',
+        afterPayment: 'continue',
+        outcome: {
+          status: 'simulated',
+          expectedMode: 'range',
+          expectedAmount: null,
+          expectedMinAmount: 200,
+          expectedMaxAmount: 500,
+          expectedCurrency: currency,
+          wouldRegisterPendingReview: true,
+          paymentConfirmed: false,
+          manualReviewRequired: true,
+          analysis: {
+            ok: true,
+            isPaymentReceipt: true,
+            amount: 900,
+            currency,
+            reason: 'amount_mismatch'
+          }
+        }
+      }]
+    })
+    assert.equal(mismatchEffects.length, 1)
+    assert.equal(mismatchEffects[0].status, 'recorded')
+    assert.equal(mismatchEffects[0].payload.amount, null)
+    assert.equal(mismatchEffects[0].payload.receiptAnalysis.amount, 900)
+    assert.equal(mismatchEffects[0].payload.receiptMatchesConfiguredPayment, false)
+    assert.equal(mismatchEffects[0].payload.manualReviewRequired, true)
+    assert.equal(mismatchEffects[0].payload.wouldRegisterPendingReview, true)
+
+    const mismatchCleaned = await cleanupConversationalAgentTestRun({
+      testRunId: mismatchRunId,
+      requestedByUserId
+    })
+    assert.equal(mismatchCleaned.cleaned, true)
+    assert.equal(mismatchCleaned.effects[0].status, 'cleaned')
   } finally {
+    await db.run(
+      'DELETE FROM internal_notifications WHERE category = ? AND contact_id = ?',
+      ['conversational_agent_test', contactId]
+    ).catch(() => undefined)
+    await db.run(
+      'DELETE FROM conversational_agent_test_effects WHERE run_id IN (SELECT id FROM conversational_agent_test_runs WHERE agent_id = ?)',
+      [agentId]
+    ).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_test_runs WHERE agent_id = ?', [agentId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -1060,6 +1310,52 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
       'SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?',
       [contactId]
     )).total), 1)
+
+    const standaloneDepositCapabilitiesConfig = {
+      ...capabilitiesConfig,
+      items: capabilitiesConfig.items.map((item) => item.id === 'collect_payment'
+        ? {
+            ...item,
+            collectionMethod: 'payment_link',
+            paymentMode: 'deposit',
+            chargeType: 'deposit',
+            deposit: { enabled: true, mode: 'fixed', amount: 100, currency },
+            testMode: { enabled: true, notify: true }
+          }
+        : item)
+    }
+    await db.run(
+      'UPDATE conversational_agents SET capabilities_config = ? WHERE id = ?',
+      [JSON.stringify(standaloneDepositCapabilitiesConfig), agentId]
+    )
+    const standaloneDepositRun = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: `message_standalone_deposit_${suffix}`,
+      agentId,
+      requestedByUserId: userId,
+      contactId,
+      effects
+    })
+    const standaloneDeposit = await recordConversationalAgentPreviewEffects({
+      runContext: standaloneDepositRun,
+      actions: [{
+        type: 'create_payment_link',
+        amount: 100,
+        currency,
+        quantity: 1,
+        concept: 'Anticipo general',
+        paymentPurpose: 'deposit',
+        afterPayment: 'continue',
+        outcome: { status: 'simulated' }
+      }]
+    })
+    assert.equal(standaloneDeposit[0].status, 'prepared', JSON.stringify(standaloneDeposit[0], null, 2))
+    assert.equal(standaloneDeposit[0].payload.paymentPurpose, 'deposit')
+    assert.equal(standaloneDeposit[0].payload.appointmentOfferBinding, undefined)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?',
+      [contactId]
+    )).total), 2)
 
     const humanScheduleCapabilitiesConfig = {
       ...capabilitiesConfig,

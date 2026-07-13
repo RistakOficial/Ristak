@@ -64,7 +64,7 @@ function createResponse() {
   }
 }
 
-test('una URL genérica se entrega sin fetch, sin token y con meta pendiente', async (t) => {
+test('custom_goal con URL verificable se entrega sin fetch, sin token y con meta pendiente', async (t) => {
   const contactId = await createContact('generic')
   t.after(() => removeContact(contactId))
   const originalFetch = globalThis.fetch
@@ -89,13 +89,21 @@ test('una URL genérica se entrega sin fetch, sin token y con meta pendiente', a
       objective: 'citas',
       capabilitiesConfig: {
         schemaVersion: 1,
-        items: [{
-          id: 'send_link',
-          enabled: true,
-          linkKind: 'verified_goal',
-          url: 'https://calendly.example/reservar',
-          trackingParam: 'booking_ref'
-        }]
+        items: [
+          {
+            id: 'send_link',
+            enabled: true,
+            linkKind: 'verified_goal',
+            url: 'https://calendly.example/reservar',
+            trackingParam: 'booking_ref'
+          },
+          {
+            id: 'custom_goal',
+            enabled: true,
+            description: 'Completar la reservación externa',
+            completion: 'send_link'
+          }
+        ]
       }
     }
   }

@@ -120,6 +120,7 @@ const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
   'cancel_appointment',
   'mark_ready_to_advance',
   'create_payment_link',
+  'send_trigger_link',
   'send_goal_url',
   'send_to_human',
   'register_deposit_payment_proof'
@@ -1526,7 +1527,12 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   if (contactIdentityUnavailable) {
     return 'tuve un problema para abrir la información de este chat. no te voy a pedir datos que ya deberían estar registrados; necesito que una persona del equipo lo revise'
   }
-  const confirmed = (Array.isArray(actions) ? actions : []).find(nativeActionSucceeded)
+  // Un mismo turno puede guardar primero un dato requerido y después completar
+  // la acción terminal. La confirmación visible debe describir el último efecto
+  // exitoso, no el primer paso auxiliar del turno.
+  const confirmed = [...(Array.isArray(actions) ? actions : [])]
+    .reverse()
+    .find(nativeActionSucceeded)
   const completedPreviewAppointment = (Array.isArray(actions) ? actions : []).find(nativePreviewAppointmentSucceeded)
   if (!visible) {
     if (completedPreviewAppointment?.type === 'book_appointment') visible = 'listo, la cita de prueba quedó confirmada'
@@ -1665,6 +1671,12 @@ export function createToolCallingV2Agent({
   const exactToolChoice = cleanForcedToolName && tools.some((item) => String(item?.name || '').trim() === cleanForcedToolName)
     ? cleanForcedToolName
     : ''
+  if (requireTool && cleanForcedToolName && !exactToolChoice) {
+    throw Object.assign(
+      new Error(`La herramienta obligatoria ${cleanForcedToolName} no está disponible en esta ejecución.`),
+      { code: 'required_conversational_tool_unavailable' }
+    )
+  }
   const toolChoice = exactToolChoice || (requireTool && tools.length ? 'required' : '')
   return new Agent({
     name: 'Ristak · Agente conversacional nativo',
@@ -1816,15 +1828,21 @@ async function buildToolCallingV2AgentForRun({
     ? ' handoff si pide explícitamente hablar con una persona;'
     : ''
   const pendingOfferPurposeInstruction = ctx.appointmentOfferDecision?.purpose === 'reschedule'
-    ? '- Esta oferta reemplaza el horario de una cita existente. Si la acepta, la única mutación válida es reschedule_appointment sobre la cita vinculada; jamás crees una cita nueva.\n'
+    ? (ctx.appointmentOfferDecision?.terminalToolName === 'request_human_booking'
+        ? '- Esta oferta propone cambiar una cita existente en modo humano. Si la acepta, la única terminal válida es request_human_booking: entrega al equipo la cita original y el horario elegido, sin modificar el calendario ni afirmar que el cambio ya quedó hecho.\n'
+        : '- Esta oferta reemplaza el horario de una cita existente. Si la acepta, la única mutación válida es reschedule_appointment sobre la cita vinculada; jamás crees una cita nueva.\n')
     : ''
+  const pendingOfferAcceptanceInstruction = ctx.appointmentOfferDecision?.purpose === 'reschedule'
+    ? '- Si eliges accept, Ristak recupera el slot exacto y usa la terminal de reagenda configurada; no prepara un anticipo nuevo por ese cambio.'
+    : '- Si eliges accept, Ristak recupera el slot exacto y, sólo si hay un anticipo configurado para esta cita, lo prepara sin pedir otro permiso artificial.'
   const pendingOfferInstruction = ctx.appointmentOfferDecision?.active
     ? `## Decisión pendiente sobre el horario
 - Ristak conserva una única oferta estructurada vigente: ${String(ctx.appointmentOfferDecision.localLabel || 'horario previamente mostrado').slice(0, 240)}.
 - Esta oferta es estado operativo, no un candado de conversación. Puedes consultar precios, responder dudas, cobrar, transferir o usar cualquier otra capacidad habilitada sin perderla.
 - Usa resolve_active_appointment_offer sólo cuando el último mensaje realmente decida algo sobre esta oferta: accept si la acepta; request_other_options si quiere otro horario; decline si ya no quiere agendar;${pendingOfferHandoffInstruction}
 - Si el mensaje trata otro asunto, responde o usa la herramienta correspondiente sin tocar la oferta. No fuerces al cliente a decidir antes de ayudarle.
-- Antes de ofrecer otro horario, resuelve esta oferta con request_other_options. Si eliges accept, Ristak recupera el slot exacto y prepara automáticamente el anticipo configurado sin pedir otro permiso artificial.
+- Antes de ofrecer otro horario, resuelve esta oferta con request_other_options.
+${pendingOfferAcceptanceInstruction}
 ${pendingOfferPurposeInstruction}- Este bloque describe estado interno verificado. No menciones herramientas, fases ni maquinaria en la respuesta visible.`
     : ''
   const runtimeFactInstruction = cleanRuntimeEventContext
@@ -2090,10 +2108,32 @@ function getNextFollowUpStep(agentConfig = {}, sentCount = 0) {
   return step ? { step, index: index + 1, total: steps.length } : null
 }
 
-function getFollowUpDueAtMs(latest, step) {
-  const baseMs = messageTimestampMs(latest)
-  if (!baseMs) return 0
-  return baseMs + getAgentFollowUpStepDelayMs(step)
+export function getConversationalFollowUpTiming({ latest, state, step, nowMs = Date.now() } = {}) {
+  const inboundMs = messageTimestampMs(latest)
+  const lastReplyMs = toTimestampMs(state?.lastReplyAt || state?.last_reply_at)
+  const lastFollowUpMs = toTimestampMs(state?.followUpLastSentAt || state?.follow_up_last_sent_at)
+  // La configuracion visible promete esperar desde el ultimo mensaje enviado.
+  // El inbound sigue siendo la identidad estable del ciclo y el limite de la
+  // ventana, pero nunca debe ser el reloj si ya entregamos una respuesta mas
+  // tarde. Para el segundo seguimiento, follow_up_last_sent_at hace que el
+  // tiempo empiece despues de terminar de entregar el primero.
+  const anchorMs = Math.max(inboundMs, lastReplyMs, lastFollowUpMs)
+  const delayMs = getAgentFollowUpStepDelayMs(step)
+  const dueAtMs = anchorMs > 0 ? anchorMs + delayMs : 0
+  return {
+    inboundMs,
+    anchorMs,
+    delayMs,
+    dueAtMs,
+    remainingMs: dueAtMs > 0 ? dueAtMs - Number(nowMs) : 0
+  }
+}
+
+export function resolveConversationalFollowUpAIProvider(agentConfig = {}) {
+  // getConversationalAgent ya materializa el proveedor efectivo. No debe haber
+  // una referencia a una variable `config` inexistente cuando el valor legacy
+  // venga vacío; el normalizador aplica el fallback seguro del runtime.
+  return normalizeConversationalAIProvider(agentConfig?.aiProvider)
 }
 
 async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone, channel = 'whatsapp' }) {
@@ -2142,11 +2182,13 @@ function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, re
   const next = getNextFollowUpStep(agentConfig, state.followUpSentCount)
   if (!next) return false
 
-  const dueAtMs = getFollowUpDueAtMs(latest, next.step)
-  const baseMs = messageTimestampMs(latest)
-  if (!dueAtMs || !baseMs) return false
+  const timing = getConversationalFollowUpTiming({ latest, state, step: next.step })
+  const { dueAtMs, inboundMs, anchorMs } = timing
+  if (!dueAtMs || !inboundMs || !anchorMs) return false
   const nowMs = Date.now()
-  if (dueAtMs - baseMs > FOLLOW_UP_WINDOW_MS || nowMs - baseMs > FOLLOW_UP_WINDOW_MS) return false
+  // WhatsApp limita el ciclo desde el ultimo inbound, aunque el retraso de cada
+  // recordatorio se mida desde la ultima salida realmente entregada.
+  if (dueAtMs - inboundMs > FOLLOW_UP_WINDOW_MS || nowMs - inboundMs > FOLLOW_UP_WINDOW_MS) return false
 
   const delayMs = Math.max(0, Math.min(dueAtMs - nowMs, MAX_TIMER_MS))
   const timer = setTimeout(() => {
@@ -2166,6 +2208,7 @@ function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, re
       channel: normalizedChannel,
       followUpIndex: next.index,
       dueAt: new Date(dueAtMs).toISOString(),
+      anchorAt: new Date(anchorMs).toISOString(),
       delayMs,
       reason
     }
@@ -2286,7 +2329,24 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     return
   }
 
-  const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
+  // Un timer puede haber nacido antes de que terminara una respuesta demorada
+  // o antes de otra salida relevante (por ejemplo, una confirmacion de pago).
+  // Recalcular al despertar evita mandar el seguimiento pegado a ese mensaje.
+  const startTiming = getConversationalFollowUpTiming({ latest, state, step: next.step })
+  if (startTiming.dueAtMs > Date.now()) {
+    scheduleNextFollowUp({
+      contactId,
+      phone,
+      latest,
+      state,
+      agentConfig,
+      reason: 'actividad saliente mas reciente',
+      channel: normalizedChannel
+    })
+    return
+  }
+
+  const aiProvider = resolveConversationalFollowUpAIProvider(agentConfig)
   const runtime = await resolveConversationalAIRuntime(aiProvider)
   agentConfig = { ...agentConfig, aiProvider }
   const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
@@ -2337,8 +2397,8 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       }
     }).catch(() => {})
 
-    // Estado, ventana y llegada de mensajes nuevos son hechos externos. Son las
-    // unicas razones para frenar un seguimiento que ya produjo texto visible.
+    // Estado, ventana y actividad nueva son hechos externos. Son las razones
+    // para frenar o reprogramar un seguimiento que ya produjo texto visible.
     const postState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel })
     if (postState?.status !== 'active' || postState?.signal) {
       await recordConversationalAgentEvent({
@@ -2353,6 +2413,36 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
           reason: 'external_conversation_state',
           status: postState?.status || null,
           signal: postState?.signal || null
+        }
+      }).catch(() => {})
+      return
+    }
+
+    // La llamada al modelo tambien puede tardar. Si durante ese tiempo se
+    // entrego otra respuesta, este borrador ya no debe salir inmediatamente:
+    // conserva el mismo paso y vuelve a contar desde la salida mas reciente.
+    const beforeSendTiming = getConversationalFollowUpTiming({ latest, state: postState, step: next.step })
+    if (beforeSendTiming.dueAtMs > Date.now()) {
+      scheduleNextFollowUp({
+        contactId,
+        phone,
+        latest,
+        state: postState,
+        agentConfig,
+        reason: 'actividad saliente durante el seguimiento',
+        channel: normalizedChannel
+      })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'follow_up_suppressed',
+        detail: {
+          agentId: agentConfig.id,
+          baseMessageId,
+          followUpIndex,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: 'newer_outbound_during_follow_up',
+          rescheduledFor: new Date(beforeSendTiming.dueAtMs).toISOString()
         }
       }).catch(() => {})
       return
@@ -3382,10 +3472,14 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
     const messages = hydrated
     const runtimeEventContext = [
       `El ${paymentPurpose === 'appointment_deposit' ? 'anticipo requerido para la cita' : 'pago pendiente'} fue confirmado contra el ledger real por ${Number(amount)} ${String(currency || '').trim().toUpperCase()} en ambiente ${paymentEnvironment}.`,
-      'Continúa ahora desde el paso pendiente sin volver a cobrar ni pedir comprobante.',
-      'Si la persona ya eligió día y hora, usa directamente la herramienta terminal de agenda que esté disponible. El servidor recupera el horario exacto ligado al pago y vuelve a validar su disponibilidad; no copies ni reconstruyas fecha u hora.',
-      'Si ese horario ya no está libre, avisa con naturalidad y ofrece opciones reales.'
-    ].join(' ')
+      'Continúa ahora desde el paso pendiente de la estrategia sin volver a cobrar ni pedir comprobante.',
+      paymentPurpose === 'appointment_deposit'
+        ? 'La persona ya eligió día y hora: usa directamente la herramienta terminal de agenda disponible. El servidor recupera el horario exacto ligado al pago y vuelve a validar su disponibilidad; no copies ni reconstruyas fecha u hora.'
+        : 'Este pago no obliga a agendar ni a ejecutar otra capacidad. Retoma el objetivo que corresponda según la estrategia y el hilo completo.',
+      paymentPurpose === 'appointment_deposit'
+        ? 'Si ese horario ya no está libre, avisa con naturalidad y ofrece opciones reales.'
+        : ''
+    ].filter(Boolean).join(' ')
     const turn = await runNativeTurn({
       config: agentConfig,
       runtime,
@@ -4027,7 +4121,9 @@ async function recoverScheduledFollowUps() {
       s.agent_id,
       s.channel,
       s.follow_up_base_message_id,
-      s.follow_up_sent_count
+      s.follow_up_sent_count,
+      s.last_reply_at,
+      s.follow_up_last_sent_at
     FROM conversational_agent_state s
     WHERE s.status = 'active'
       AND s.agent_id IS NOT NULL
@@ -4045,6 +4141,8 @@ async function recoverScheduledFollowUps() {
       signal: null,
       followUpBaseMessageId: row.follow_up_base_message_id,
       followUpSentCount: Math.max(0, Number(row.follow_up_sent_count) || 0),
+      lastReplyAt: row.last_reply_at || null,
+      followUpLastSentAt: row.follow_up_last_sent_at || null,
       channel: row.channel || 'whatsapp'
     }
     const channel = normalizeConversationalChannel(row.channel || 'whatsapp')

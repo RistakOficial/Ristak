@@ -42,6 +42,7 @@ import {
   buildReplyPartDelaySchedule,
   normalizeConversationalChannel,
   RECOVERABLE_CONVERSATIONAL_CHANNELS,
+  getConversationalFollowUpTiming,
   sendReplyParts,
   waitForConversationalResponseWindow,
   shouldSendConversationalReplyThroughHighLevel,
@@ -502,6 +503,57 @@ test('normaliza seguimiento del agente conversacional dentro de ventana WhatsApp
   assert.equal(followUp.strategy, 'retomar contexto sin sonar automático')
 })
 
+test('el primer seguimiento espera desde la respuesta realmente entregada, no desde el inbound original', () => {
+  const timing = getConversationalFollowUpTiming({
+    latest: {
+      id: 'inbound_follow_up_timing_1',
+      message_timestamp: '2026-07-13T12:00:00.000Z'
+    },
+    state: {
+      followUpSentCount: 0,
+      lastReplyAt: '2026-07-13 12:07:00'
+    },
+    step: { enabled: true, value: 30, unit: 'minutes' },
+    nowMs: Date.parse('2026-07-13T12:31:00.000Z')
+  })
+
+  assert.equal(new Date(timing.anchorMs).toISOString(), '2026-07-13T12:07:00.000Z')
+  assert.equal(new Date(timing.dueAtMs).toISOString(), '2026-07-13T12:37:00.000Z')
+  assert.equal(timing.remainingMs, 6 * 60 * 1000)
+})
+
+test('el segundo seguimiento empieza su propio reloj después del primero y respeta una salida posterior', () => {
+  const afterFirstFollowUp = getConversationalFollowUpTiming({
+    latest: {
+      id: 'inbound_follow_up_timing_2',
+      message_timestamp: '2026-07-13T12:00:00.000Z'
+    },
+    state: {
+      followUpSentCount: 1,
+      lastReplyAt: '2026-07-13 12:37:00',
+      followUpLastSentAt: '2026-07-13 12:37:00'
+    },
+    step: { enabled: true, value: 2, unit: 'hours' },
+    nowMs: Date.parse('2026-07-13T12:38:00.000Z')
+  })
+  assert.equal(new Date(afterFirstFollowUp.dueAtMs).toISOString(), '2026-07-13T14:37:00.000Z')
+
+  const afterNewerOutbound = getConversationalFollowUpTiming({
+    latest: {
+      id: 'inbound_follow_up_timing_2',
+      message_timestamp: '2026-07-13T12:00:00.000Z'
+    },
+    state: {
+      followUpSentCount: 1,
+      followUpLastSentAt: '2026-07-13 12:37:00',
+      lastReplyAt: '2026-07-13 13:05:00'
+    },
+    step: { enabled: true, value: 2, unit: 'hours' }
+  })
+  assert.equal(new Date(afterNewerOutbound.anchorMs).toISOString(), '2026-07-13T13:05:00.000Z')
+  assert.equal(new Date(afterNewerOutbound.dueAtMs).toISOString(), '2026-07-13T15:05:00.000Z')
+})
+
 test('rechaza rangos invertidos al guardar el agente conversacional', async () => {
   const agent = await createConversationalAgent({
     name: 'Agente rango inválido',
@@ -554,17 +606,69 @@ test('rechaza rangos invertidos al guardar el agente conversacional', async () =
       /23 horas/
     )
 
+    const sequentialFollowUp = await updateConversationalAgent(agent.id, {
+      followUp: {
+        enabled: true,
+        first: { enabled: true, value: 3, unit: 'hours' },
+        second: { enabled: true, value: 2, unit: 'hours' },
+        strategy: 'retomar sin sonar automático'
+      }
+    })
+    assert.equal(sequentialFollowUp.followUp.first.value, 3)
+    assert.equal(sequentialFollowUp.followUp.second.value, 2)
+
     await assert.rejects(
       updateConversationalAgent(agent.id, {
         followUp: {
           enabled: true,
-          first: { enabled: true, value: 3, unit: 'hours' },
-          second: { enabled: true, value: 2, unit: 'hours' },
+          first: { enabled: true, value: 12, unit: 'hours' },
+          second: { enabled: true, value: 12, unit: 'hours' },
           strategy: 'retomar sin sonar automático'
         }
       }),
-      /orden de los seguimientos/
+      /juntos no pueden pasar de 23 horas/
     )
+  } finally {
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+  }
+})
+
+test('conserva todos los ajustes visibles de globitos al guardar el agente', async () => {
+  const agent = await createConversationalAgent({
+    name: 'Agente globitos configurables',
+    enabled: false
+  })
+
+  try {
+    const updated = await updateConversationalAgent(agent.id, {
+      replyDelivery: {
+        mode: 'split',
+        splitMessagesEnabled: true,
+        minMessageLengthToSplit: 240,
+        maxBubbles: 3,
+        minBubbleLength: 35,
+        maxBubbleLength: 180,
+        targetChars: 150,
+        randomizeSplitting: false,
+        delayBetweenBubblesEnabled: false,
+        minDelaySeconds: 4,
+        maxDelaySeconds: 9
+      }
+    })
+
+    assert.deepEqual(updated.replyDelivery, {
+      mode: 'split',
+      splitMessagesEnabled: true,
+      minMessageLengthToSplit: 240,
+      maxBubbles: 3,
+      minBubbleLength: 35,
+      maxBubbleLength: 180,
+      targetChars: 150,
+      randomizeSplitting: false,
+      delayBetweenBubblesEnabled: false,
+      minDelaySeconds: 4,
+      maxDelaySeconds: 9
+    })
   } finally {
     await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
   }

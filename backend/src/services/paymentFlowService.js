@@ -1665,6 +1665,7 @@ export async function registerAgentTransferPaymentProofForReview({
   const cleanBindingKey = String(binding?.bindingKey || mediaMessageId || '').trim()
   const cleanBindingChannel = String(binding?.channel || 'whatsapp').trim().toLowerCase()
   const paymentPurpose = String(binding?.paymentPurpose || '').trim().toLowerCase()
+  const afterPayment = binding?.afterPayment === 'handoff' ? 'handoff' : 'continue'
   const appointmentDeposit = binding?.appointmentDeposit === true
   const manualReviewOnly = binding?.manualReviewOnly === true
   const autoResumeAllowed = binding?.autoResumeAllowed !== false
@@ -1749,6 +1750,7 @@ export async function registerAgentTransferPaymentProofForReview({
             bindingEventId,
             channel: cleanBindingChannel,
             paymentPurpose,
+            afterPayment,
             appointmentDeposit,
             manualReviewOnly,
             autoResumeAllowed,
@@ -1834,6 +1836,7 @@ export async function registerAgentTransferPaymentProofForReview({
           runtimeMode: 'tool_calling_v2',
           paymentMode: appointmentDeposit || paymentPurpose === 'deposit' ? 'deposit' : 'full_payment',
           paymentPurpose,
+          afterPayment,
           appointmentDeposit,
           manualReviewOnly,
           autoResumeAllowed,
@@ -1874,6 +1877,7 @@ export async function registerAgentTransferPaymentProofForReview({
             String(existingBinding?.contact_id || '') !== cleanContactId ||
             String(existingDetail.channel || 'whatsapp').trim().toLowerCase() !== cleanBindingChannel ||
             existingDetail.paymentPurpose !== paymentPurpose ||
+            (existingDetail.afterPayment === 'handoff' ? 'handoff' : 'continue') !== afterPayment ||
             existingDetail.appointmentDeposit !== appointmentDeposit ||
             existingDetail.manualReviewOnly !== manualReviewOnly ||
             existingDetail.autoResumeAllowed !== autoResumeAllowed ||

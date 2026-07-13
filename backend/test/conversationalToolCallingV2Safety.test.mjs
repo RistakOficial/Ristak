@@ -34,6 +34,7 @@ import {
   deleteConversationalAgent,
   recordConversationalAgentEvent,
   reserveConversationalAppointmentDepositEvidence,
+  setConversationSignal,
   setConversationalPaymentAfterStateInspectionHookForTest,
   setConversationalPriorityNotificationSenderForTest,
   setConversationalPaymentResumeHandlerForTest,
@@ -951,7 +952,15 @@ test('get_payment_status falla cerrado con modo ambiguo, vencimiento inválido, 
         throwOnError: true
       })
     }
-    const ctx = v2Context([{ id: 'collect_payment', enabled: true, paymentMode: 'full_payment' }], {
+    const ctx = v2Context([{
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'deposit',
+      chargeType: 'deposit',
+      collectionMethod: 'payment_link',
+      gateway: 'stripe',
+      deposit: { enabled: true, mode: 'fixed', amount: 500, currency: 'MXN' }
+    }], {
       contactId,
       agentId,
       dryRun: false
@@ -990,14 +999,14 @@ test('v2 expone la unión exacta de capacidades y nunca las tools de silencio/de
     'get_free_slots',
     'book_appointment',
     'create_payment_link',
-    'send_goal_url',
+    'send_trigger_link',
     'send_to_human',
     'mark_ready_to_advance'
   ]) assert.ok(names.includes(expected), `${expected} debe estar expuesta`)
 
   for (const forbidden of [
     'list_calendars',
-    'send_trigger_link',
+    'send_goal_url',
     'update_closing_context',
     'discard_conversation',
     'stay_silent',
@@ -1014,7 +1023,108 @@ test('v2 expone la unión exacta de capacidades y nunca las tools de silencio/de
   assert.ok(!noActions.includes('send_to_human'))
   assert.ok(!noActions.includes('mark_ready_to_advance'))
   assert.ok(!noActions.includes('send_goal_url'))
+  assert.ok(!noActions.includes('send_trigger_link'))
   assert.ok(!noActions.includes('save_contact_data'))
+})
+
+test('v2 separa físicamente link general y link de objetivo en cada combinación de capacidades', () => {
+  const onlyLink = createConversationalTools(v2Context([{
+    id: 'send_link',
+    enabled: true,
+    linkKind: 'verified_goal',
+    url: 'https://example.com/recurso'
+  }]))
+  assert.deepEqual(
+    onlyLink.map((item) => item.name).filter((name) => ['send_trigger_link', 'send_goal_url'].includes(name)),
+    ['send_trigger_link']
+  )
+  assert.match(onlyLink.find((item) => item.name === 'send_trigger_link').description, /No crea, prepara, completa ni rastrea un Objetivo propio/i)
+
+  const both = createConversationalTools(v2Context([
+    {
+      id: 'send_link',
+      enabled: true,
+      linkKind: 'verified_goal',
+      url: 'https://example.com/registro'
+    },
+    {
+      id: 'custom_goal',
+      enabled: true,
+      description: 'Completar el registro externo',
+      completion: 'send_link'
+    }
+  ]))
+  assert.deepEqual(
+    both.map((item) => item.name).filter((name) => ['send_trigger_link', 'send_goal_url'].includes(name)),
+    ['send_trigger_link', 'send_goal_url']
+  )
+  assert.match(both.find((item) => item.name === 'send_goal_url').description, /exclusivamente el enlace rastreable/i)
+  assert.match(both.find((item) => item.name === 'send_goal_url').description, /No la uses para mandar un enlace general/i)
+
+  const incompleteGoal = createConversationalTools(v2Context([
+    {
+      id: 'send_link',
+      enabled: true,
+      linkKind: 'verified_goal',
+      url: 'https://example.com/registro'
+    },
+    {
+      id: 'custom_goal',
+      enabled: true,
+      description: '',
+      completion: 'send_link'
+    }
+  ]))
+  assert.deepEqual(
+    incompleteGoal.map((item) => item.name).filter((name) => ['send_trigger_link', 'send_goal_url'].includes(name)),
+    ['send_trigger_link']
+  )
+})
+
+test('una reanudación por pago confirmado no puede volver a cobrar aunque la capacidad siga activa', () => {
+  const linkCtx = v2Context([{
+    id: 'collect_payment',
+    enabled: true,
+    chargeType: 'direct',
+    collectionMethod: 'payment_link',
+    gateway: 'stripe',
+    direct: { amount: 100, currency: 'MXN', concept: 'Consulta' }
+  }])
+  linkCtx.paymentResumeClaim = {
+    reconciliationId: 'carec_no_double_charge_link',
+    claimToken: 'capr_no_double_charge_link',
+    agentId: linkCtx.config.id,
+    channel: 'whatsapp'
+  }
+  const linkNames = createConversationalTools(linkCtx).map((item) => item.name)
+  assert.ok(linkNames.includes('get_payment_status'))
+  assert.ok(!linkNames.includes('create_payment_link'))
+
+  const transferCtx = v2Context([{
+    id: 'collect_payment',
+    enabled: true,
+    chargeType: 'deposit',
+    paymentMode: 'deposit',
+    collectionMethod: 'bank_transfer',
+    currency: 'MXN',
+    deposit: {
+      enabled: true,
+      mode: 'fixed',
+      amount: 100,
+      currency: 'MXN',
+      bankTransferDetails: 'Cuenta de prueba'
+    },
+    bankTransfer: { details: 'Cuenta de prueba' }
+  }])
+  transferCtx.paymentResumeClaim = {
+    reconciliationId: 'carec_no_double_charge_transfer',
+    claimToken: 'capr_no_double_charge_transfer',
+    agentId: transferCtx.config.id,
+    channel: 'whatsapp'
+  }
+  const transferNames = createConversationalTools(transferCtx).map((item) => item.name)
+  assert.ok(transferNames.includes('get_payment_status'))
+  assert.ok(!transferNames.includes('register_deposit_payment_proof'))
 })
 
 test('todas las tools v2 conservan JSON Schema estricto y todos sus campos son requeridos', () => {
@@ -1683,6 +1793,9 @@ test('replay del turno y retry concurrente/secuencial del link reutilizan provee
     assert.equal(second.ok, true, JSON.stringify(second))
     const crossTurnCtx = {
       ...ctx,
+      // La marca efímera del turno de agenda ya no existe. El segundo turno
+      // debe conservar el alcance sólo por el intent durable source_bound.
+      nativePaymentCollectionScope: undefined,
       executionId: `message_payment_link_retry_second_turn_${suffix}`,
       actions: [],
       conversationMessages: [
@@ -1738,6 +1851,7 @@ test('replay del turno y retry concurrente/secuencial del link reutilizan provee
     assert.ok(linkActions.filter((action) => action.outcome?.reused === true).length >= 2)
     assert.ok(linkActions.filter((action) => action.outcome?.priorEquivalentLinkFound === true).length >= 2)
     assert.equal(crossTurnCtx.actions.length, 1)
+    assert.equal(crossTurnCtx.actions[0].paymentPurpose, 'appointment_deposit')
     assert.equal(crossTurnCtx.actions[0].outcome?.crossTurnReuse, true)
   } finally {
     setConversationalAgentLivePaymentDependenciesForTests(null)
@@ -3414,6 +3528,324 @@ test('confirmación real de pago v2 no levanta sub-IA ni aplica asignación o ex
   }
 })
 
+test('después de pagar continuar reanuda el mismo agente y no cierra el chat', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_payment_continue_${suffix}`
+  const paymentId = `payment_continue_${suffix}`
+  let agent = null
+  let resumeCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+       VALUES (?, 'Cliente pago que continúa', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    agent = await createConversationalAgent({
+      name: `Pago y continuar ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{
+          id: 'collect_payment',
+          enabled: true,
+          paymentMode: 'full_payment',
+          afterPayment: 'continue'
+        }]
+      }
+    })
+    await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agent.id])
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 640,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'full_payment',
+        paymentPurpose: 'purchase',
+        appointmentDeposit: false,
+        afterPayment: 'continue',
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         paid_at, created_at, updated_at
+       ) VALUES (?, ?, 640, 'MXN', 'paid', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPaymentResumeHandlerForTest(async (payload) => {
+      resumeCalls += 1
+      assert.equal(payload.paymentPurpose, 'purchase')
+      assert.equal(payload.reconciliationClaimToken.length > 0, true)
+      return { resumed: true, sent: true }
+    })
+
+    const input = {
+      contactId,
+      paymentId,
+      amount: 640,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+    const result = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(result.signal, 'payment_confirmed')
+    assert.equal(result.afterPayment, 'continue')
+    assert.equal(result.resumed, true)
+    assert.equal(result.objectiveCompleted, true)
+    const state = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agent.id]
+    )
+    assert.equal(state.status, 'active')
+    assert.equal(state.signal, null)
+
+    const replay = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(replay.alreadyCompleted, true)
+    assert.equal(resumeCalls, 1)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_link_goal_completed'`,
+      [contactId]
+    )).total), 1)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('después de pagar pasar al equipo hace handoff durable sin exponer send_to_human al modelo', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_payment_handoff_${suffix}`
+  const paymentId = `payment_handoff_${suffix}`
+  let agent = null
+  let resumeCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+       VALUES (?, 'Cliente pago con handoff', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    agent = await createConversationalAgent({
+      name: `Pago y handoff ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{
+          id: 'collect_payment',
+          enabled: true,
+          paymentMode: 'full_payment',
+          afterPayment: 'handoff'
+        }]
+      }
+    })
+    await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agent.id])
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 980,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'full_payment',
+        paymentPurpose: 'purchase',
+        appointmentDeposit: false,
+        afterPayment: 'handoff',
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         paid_at, created_at, updated_at
+       ) VALUES (?, ?, 980, 'MXN', 'paid', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      return { resumed: true, sent: true }
+    })
+
+    const input = {
+      contactId,
+      paymentId,
+      amount: 980,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+    const result = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(result.signal, 'ready_for_human')
+    assert.equal(result.afterPayment, 'handoff')
+    assert.equal(result.handoffCompleted, true)
+    assert.equal(result.objectiveCompleted, true)
+    assert.equal(resumeCalls, 0)
+    const state = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agent.id]
+    )
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+
+    const replay = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(replay.alreadyCompleted, true)
+    const events = await db.get(
+      `SELECT
+         SUM(CASE WHEN event_type = 'signal_set' THEN 1 ELSE 0 END) AS signals,
+         SUM(CASE WHEN event_type = 'payment_after_action_completed' THEN 1 ELSE 0 END) AS handoffs,
+         SUM(CASE WHEN event_type = 'payment_link_goal_completed' THEN 1 ELSE 0 END) AS completions
+       FROM conversational_agent_events WHERE contact_id = ?`,
+      [contactId]
+    )
+    assert.equal(Number(events.signals), 1)
+    assert.equal(Number(events.handoffs), 1)
+    assert.equal(Number(events.completions), 1)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('un webhook de pago nunca pisa una pausa ni un takeover humano existentes', async () => {
+  let resumeCalls = 0
+  setConversationalPaymentResumeHandlerForTest(async () => {
+    resumeCalls += 1
+    return { resumed: true, sent: true }
+  })
+
+  const runScenario = async ({ afterPayment, status, signal }) => {
+    const suffix = randomUUID()
+    const contactId = `contact_payment_preserve_${suffix}`
+    const paymentId = `payment_preserve_${suffix}`
+    let agent = null
+    try {
+      await db.run(
+        `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+         VALUES (?, 'Cliente con estado protegido', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [contactId]
+      )
+      agent = await createConversationalAgent({
+        name: `Pago conserva estado ${suffix}`,
+        enabled: false,
+        runtimeMode: 'tool_calling_v2',
+        capabilitiesConfig: {
+          schemaVersion: 3,
+          items: [{ id: 'collect_payment', enabled: true, paymentMode: 'full_payment', afterPayment }]
+        }
+      })
+      await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agent.id])
+      await db.run(
+        `INSERT OR REPLACE INTO conversational_agent_state (
+           contact_id, agent_id, channel, status, signal, updated_by, updated_at
+         ) VALUES (?, ?, 'whatsapp', ?, ?, 'human', CURRENT_TIMESTAMP)`,
+        [contactId, agent.id, status, signal]
+      )
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'payment_link_created',
+        detail: {
+          agentId: agent.id,
+          ledgerPaymentId: paymentId,
+          invoiceId: paymentId,
+          amount: 410,
+          currency: 'MXN',
+          paymentEnvironment: 'live',
+          paymentProvider: 'stripe',
+          paymentMode: 'full_payment',
+          paymentPurpose: 'purchase',
+          appointmentDeposit: false,
+          afterPayment,
+          runtimeMode: 'tool_calling_v2'
+        },
+        throwOnError: true
+      })
+      await db.run(
+        `INSERT INTO payments (
+           id, contact_id, amount, currency, status, payment_mode, payment_provider,
+           paid_at, created_at, updated_at
+         ) VALUES (?, ?, 410, 'MXN', 'paid', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [paymentId, contactId]
+      )
+
+      const result = await completeConversationalAgentSalePaymentFromInvoice({
+        contactId,
+        paymentId,
+        amount: 410,
+        currency: 'MXN',
+        status: 'paid',
+        paymentMode: 'live'
+      })
+      const preserved = await db.get(
+        'SELECT status, signal, updated_by FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+        [contactId, agent.id]
+      )
+      assert.equal(result.statePreserved, true)
+      assert.equal(preserved.status, status)
+      assert.equal(preserved.signal, signal)
+      assert.equal(preserved.updated_by, 'human')
+      assert.equal(result.signal, 'payment_confirmed_state_preserved')
+      if (afterPayment === 'handoff') assert.equal(result.handoffCompleted, false)
+    } finally {
+      await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+      await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+      await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+      if (agent?.id) {
+        await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+        await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+      }
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    }
+  }
+
+  try {
+    await runScenario({ afterPayment: 'continue', status: 'human', signal: 'ready_for_human' })
+    await runScenario({ afterPayment: 'handoff', status: 'paused', signal: null })
+    assert.equal(resumeCalls, 0)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+  }
+})
+
 test('un pago completo conserva su cierre histórico sin reasignar el contacto a un agente eliminado', async () => {
   const suffix = randomUUID()
   const contactId = `contact_deleted_sales_agent_${suffix}`
@@ -4412,6 +4844,234 @@ test('si eliminan el agente con un anticipo pendiente, el webhook conserva el pa
   }
 })
 
+test('un anticipo tardío de un agente eliminado no secuestra al agente que reemplazó el chat', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_deleted_deposit_reassigned_${suffix}`
+  const paymentId = `payment_deleted_deposit_reassigned_${suffix}`
+  const calendarId = `calendar_deleted_deposit_reassigned_${suffix}`
+  let deletedAgent = null
+  let currentAgent = null
+  let resumeCalls = 0
+  let terminalReplyCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente reasignado con anticipo tardío', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_deleted_deposit_reassigned_${suffix}`,
+      name: 'Agenda de agente eliminado y reemplazado',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 18, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    deletedAgent = await createConversationalAgent({
+      name: `Agente eliminado con anticipo pendiente ${suffix}`,
+      enabled: true,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{ id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai' }]
+      }
+    })
+    const deletedAgentId = deletedAgent.id
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, deletedAgentId]
+    )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: deletedAgentId,
+      calendarId,
+      bookingOwner: 'ai',
+      suffix: `deleted_deposit_reassigned_${suffix}`
+    })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: deletedAgentId,
+        channel: 'whatsapp',
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 100,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        afterPayment: 'continue',
+        ...sourceBinding,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_method, payment_mode,
+         payment_provider, paid_at, created_at, updated_at
+       ) VALUES (?, ?, 100, 'MXN', 'paid', 'card', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    assert.equal(await deleteConversationalAgent(deletedAgentId), true)
+    currentAgent = await createConversationalAgent({
+      name: `Agente reemplazo protegido del anticipo ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2'
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_by, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, 'replacement_agent', CURRENT_TIMESTAMP)`,
+      [contactId, currentAgent.id]
+    )
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      throw new Error('el agente eliminado no debe reanudarse')
+    })
+    setConversationalPaymentTerminalReplyHandlerForTest(async () => {
+      terminalReplyCalls += 1
+      return { sent: true, testDelivery: true }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 100,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(result.matched, true)
+    assert.equal(result.signal, 'appointment_deposit_manual_review_required')
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(resumeCalls, 0)
+    assert.equal(terminalReplyCalls, 0)
+    const protectedState = await db.get(
+      `SELECT status, signal, updated_by
+       FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [contactId, currentAgent.id]
+    )
+    assert.equal(protectedState.status, 'active')
+    assert.equal(protectedState.signal, null)
+    assert.equal(protectedState.updated_by, 'replacement_agent')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'signal_set'`,
+      [contactId, currentAgent.id]
+    )).total), 0)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    setConversationalPaymentTerminalReplyHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    for (const agent of [deletedAgent, currentAgent]) {
+      if (!agent?.id) continue
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('un webhook legacy sin agente fuente nunca se adjudica al agente que hoy atiende el contacto', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_unowned_payment_source_${suffix}`
+  const paymentId = `payment_unowned_source_${suffix}`
+  let currentAgent = null
+  let resumeCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente con cobro legacy sin dueño', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    currentAgent = await createConversationalAgent({
+      name: `Agente actual ajeno al cobro legacy ${suffix}`,
+      enabled: true,
+      runtimeMode: 'tool_calling_v2'
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_by, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, 'current_agent_before_legacy_webhook', CURRENT_TIMESTAMP)`,
+      [contactId, currentAgent.id]
+    )
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        channel: 'whatsapp',
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 640,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'full_payment',
+        paymentPurpose: 'purchase',
+        appointmentDeposit: false,
+        afterPayment: 'continue',
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         paid_at, created_at, updated_at
+       ) VALUES (?, ?, 640, 'MXN', 'paid', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      return { resumed: true, sent: true }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 640,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(result.matched, true)
+    assert.equal(result.agentId, null)
+    assert.equal(result.statePreserved, true)
+    assert.equal(result.signal, 'payment_confirmed_state_preserved')
+    assert.equal(resumeCalls, 0)
+    const protectedState = await db.get(
+      `SELECT status, signal, updated_by
+       FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [contactId, currentAgent.id]
+    )
+    assert.equal(protectedState.status, 'active')
+    assert.equal(protectedState.signal, null)
+    assert.equal(protectedState.updated_by, 'current_agent_before_legacy_webhook')
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (currentAgent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [currentAgent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [currentAgent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
 test('un anticipo legado sin selección ni draft completos pasa a revisión y jamás recicla el pago', async () => {
   const suffix = randomUUID()
   const contactId = `contact_manual_appointment_deposit_${suffix}`
@@ -5173,7 +5833,7 @@ test('send_link tipo trigger entrega sólo el destino y jamás agrega contact_id
     linkKind: 'trigger',
     url: targetUrl
   }], { contactId: 'contacto_que_no_debe_salir' })
-  const sendLink = createConversationalTools(ctx).find((item) => item.name === 'send_goal_url')
+  const sendLink = createConversationalTools(ctx).find((item) => item.name === 'send_trigger_link')
   const result = await sendLink.invoke(null, JSON.stringify({ intencionDetectada: null, resumen: null }))
 
   assert.equal(result.ok, true)
@@ -5184,21 +5844,166 @@ test('send_link tipo trigger entrega sólo el destino y jamás agrega contact_id
   assert.equal(ctx.actions[0]?.outcome?.sentUrl, targetUrl)
 })
 
-test('send_link verificable reusa el mismo inbound, crea otra meta en otro inbound y nunca expone goalId', async () => {
+test('send_link verificable independiente entrega URL directa sin crear meta ni pasar a humano', async () => {
+  const contactId = `contact_v2_direct_link_${randomUUID()}`
+  const targetUrl = 'https://example.com/recurso-directo?utm_source=ristak'
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, 'Cliente enlace directo v2']
+    )
+    const ctx = v2Context([{
+      id: 'send_link',
+      enabled: true,
+      linkKind: 'verified_goal',
+      url: targetUrl,
+      trackingParam: 'goal_ref'
+    }], { contactId, dryRun: false, agentId: null, executionId: `message_direct_link_${randomUUID()}` })
+    ctx.config.id = null
+
+    const result = await createConversationalTools(ctx)
+      .find((item) => item.name === 'send_trigger_link')
+      .invoke(null, JSON.stringify({
+        intencionDetectada: 'Pidió el recurso',
+        resumen: 'La estrategia indicó mandar el enlace'
+      }))
+
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.sentUrl, targetUrl)
+    assert.equal(result.confirmationMode, 'none')
+    assert.equal(result.objectiveCompleted, false)
+    assert.equal('goalId' in result, false)
+    assert.equal(new URL(result.sentUrl).searchParams.has('goal_ref'), false)
+    assert.equal(ctx.actions[0]?.objective, 'send_link')
+    assert.equal(ctx.actions[0]?.outcome?.goalId, undefined)
+
+    const goalLinks = await db.get(
+      'SELECT COUNT(*) AS total FROM conversational_agent_goal_links WHERE contact_id = ?',
+      [contactId]
+    )
+    assert.equal(Number(goalLinks.total), 0)
+
+    const state = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE contact_id = ?',
+      [contactId]
+    )
+    assert.ok(!state || state.signal !== 'ready_for_human')
+
+    const events = await db.all(
+      'SELECT event_type FROM conversational_agent_events WHERE contact_id = ? ORDER BY id ASC',
+      [contactId]
+    )
+    assert.deepEqual(events.map((event) => event.event_type), ['safe_link_sent'])
+  } finally {
+    await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('con ambas capacidades, el envío general nunca se convierte en meta y sólo send_goal_url crea tracking', async () => {
+  const contactId = `contact_v2_split_link_${randomUUID()}`
+  const targetUrl = 'https://example.com/registro-separado'
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, 'Cliente links separados v2']
+    )
+    const ctx = v2Context([
+      {
+        id: 'send_link',
+        enabled: true,
+        linkKind: 'verified_goal',
+        url: targetUrl,
+        trackingParam: 'goal_ref'
+      },
+      {
+        id: 'custom_goal',
+        enabled: true,
+        description: 'Completar el registro externo',
+        completion: 'send_link'
+      }
+    ], {
+      contactId,
+      dryRun: false,
+      agentId: null,
+      executionId: `message_split_link_${randomUUID()}`
+    })
+    ctx.config.id = null
+    const tools = createConversationalTools(ctx)
+
+    const generalResult = await tools
+      .find((item) => item.name === 'send_trigger_link')
+      .invoke(null, JSON.stringify({
+        intencionDetectada: 'Pidió el recurso general',
+        resumen: 'No pidió completar la meta'
+      }))
+    assert.equal(generalResult.ok, true, JSON.stringify(generalResult))
+    assert.equal(generalResult.sentUrl, targetUrl)
+    assert.equal(generalResult.confirmationMode, 'none')
+    assert.equal(ctx.actions[0]?.type, 'send_trigger_link')
+    assert.equal(ctx.actions[0]?.objective, 'send_link')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM conversational_agent_goal_links WHERE contact_id = ?',
+      [contactId]
+    )).total), 0)
+
+    const goalResult = await tools
+      .find((item) => item.name === 'send_goal_url')
+      .invoke(null, JSON.stringify({
+        intencionDetectada: 'Ahora sí quiere completar el registro',
+        resumen: 'La estrategia autorizó avanzar con el objetivo propio'
+      }))
+    assert.equal(goalResult.ok, true, JSON.stringify(goalResult))
+    assert.equal(goalResult.confirmationMode, 'trusted_integration')
+    assert.notEqual(goalResult.sentUrl, targetUrl)
+    assert.equal(new URL(goalResult.sentUrl).searchParams.has('goal_ref'), true)
+    assert.equal(ctx.actions[1]?.type, 'send_goal_url')
+    assert.equal(ctx.actions[1]?.objective, 'custom')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM conversational_agent_goal_links WHERE contact_id = ?',
+      [contactId]
+    )).total), 1)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('custom_goal con send_link verificable reusa el mismo inbound, crea otra meta en otro inbound y nunca expone goalId', async () => {
   const contactId = `contact_v2_goal_${randomUUID()}`
   const targetUrl = 'https://example.com/finalizar'
+  const trackedGoalItems = [
+    {
+      id: 'send_link',
+      enabled: true,
+      linkKind: 'verified_goal',
+      url: targetUrl
+    },
+    {
+      id: 'custom_goal',
+      enabled: true,
+      description: 'Completar el registro externo',
+      completion: 'send_link'
+    }
+  ]
   try {
     await db.run(
       `INSERT INTO contacts (id, full_name, created_at, updated_at)
        VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [contactId, 'Cliente goal v2']
     )
-    const ctx = v2Context([{
-      id: 'send_link',
-      enabled: true,
-      linkKind: 'verified_goal',
-      url: targetUrl
-    }], { contactId, dryRun: false, agentId: null, executionId: `message_goal_1_${randomUUID()}` })
+    const ctx = v2Context(trackedGoalItems, {
+      contactId,
+      dryRun: false,
+      agentId: null,
+      executionId: `message_goal_1_${randomUUID()}`
+    })
     ctx.config.id = null
     const sendLink = createConversationalTools(ctx).find((item) => item.name === 'send_goal_url')
     const result = await sendLink.invoke(null, JSON.stringify({
@@ -5218,12 +6023,12 @@ test('send_link verificable reusa el mismo inbound, crea otra meta en otro inbou
     }))
     assert.equal(replay.sentUrl, result.sentUrl)
 
-    const nextCtx = v2Context([{
-      id: 'send_link',
-      enabled: true,
-      linkKind: 'verified_goal',
-      url: targetUrl
-    }], { contactId, dryRun: false, agentId: null, executionId: `message_goal_2_${randomUUID()}` })
+    const nextCtx = v2Context(trackedGoalItems, {
+      contactId,
+      dryRun: false,
+      agentId: null,
+      executionId: `message_goal_2_${randomUUID()}`
+    })
     nextCtx.config.id = null
     const nextSendLink = createConversationalTools(nextCtx).find((item) => item.name === 'send_goal_url')
     const nextResult = await nextSendLink.invoke(null, JSON.stringify({
@@ -5239,9 +6044,12 @@ test('send_link verificable reusa el mismo inbound, crea otra meta en otro inbou
     )
     assert.equal(Number(count.total), 2)
 
-    const missingCtx = v2Context([{
-      id: 'send_link', enabled: true, linkKind: 'verified_goal', url: targetUrl
-    }], { contactId, dryRun: false, agentId: null, executionId: '' })
+    const missingCtx = v2Context(trackedGoalItems, {
+      contactId,
+      dryRun: false,
+      agentId: null,
+      executionId: ''
+    })
     missingCtx.config.id = null
     const missingResult = await createConversationalTools(missingCtx)
       .find((item) => item.name === 'send_goal_url')
@@ -5318,6 +6126,8 @@ test('comprobantes inciertos crean un solo caso manual, alertan una vez y nunca 
   const suffix = randomUUID()
   const contactId = `contact_uncertain_proofs_${suffix}`
   const agentId = `agent_uncertain_proofs_${suffix}`
+  const historicalPaymentId = `payment_historical_proof_${suffix}`
+  const historicalReconciliationId = `carec_historical_proof_${suffix}`
   const currency = await getAccountCurrency()
   const cases = [
     { failureReason: 'analysis_failed', analysis: { ok: false, reason: 'analysis_failed' } },
@@ -5331,6 +6141,28 @@ test('comprobantes inciertos crean un solo caso manual, alertan una vez y nunca 
       `INSERT INTO contacts (id, full_name, created_at, updated_at)
        VALUES (?, 'Contacto comprobantes inciertos', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [contactId]
+    )
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         paid_at, created_at, updated_at
+       ) VALUES (?, ?, 1200, ?, 'paid', 'live', 'manual', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [historicalPaymentId, contactId, currency]
+    )
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, 'payment_reconciliation_v2', ?)`,
+      [historicalReconciliationId, contactId, agentId, JSON.stringify({
+        agentId,
+        status: 'completed',
+        result: { matched: true },
+        ledgerPaymentId: historicalPaymentId,
+        amount: 1200,
+        currency,
+        paymentEnvironment: 'live',
+        paymentPurpose: 'purchase',
+        appointmentDeposit: false
+      })]
     )
     const ctx = v2Context([{
       id: 'collect_payment',
@@ -5360,6 +6192,7 @@ test('comprobantes inciertos crean un solo caso manual, alertan una vez y nunca 
          ) VALUES (?, ?, 'inbound', 'image', ?, 'image/jpeg', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         [mediaMessageId, contactId, `https://example.com/uncertain-${index}.jpg`, new Date(Date.now() + (index + 1) * 1000).toISOString()]
       )
+      ctx.executionId = mediaMessageId
       setNativePaymentReceiptAnalysisHookForTest(async () => current.analysis)
       const proof = createConversationalTools(ctx).find((item) => item.name === 'register_deposit_payment_proof')
       const first = await proof.invoke(null, JSON.stringify({ montoIndicado: null, referencia: null }))
@@ -5396,7 +6229,12 @@ test('comprobantes inciertos crean un solo caso manual, alertan una vez y nunca 
       assert.equal(detail.autoResumeAllowed, false)
     }
 
-    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?', [contactId])).total), 0)
+    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?', [contactId])).total), 1)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM payments
+       WHERE contact_id = ? AND id != ?`,
+      [contactId, historicalPaymentId]
+    )).total), 0)
     assert.equal(Number((await db.get(
       `SELECT COUNT(*) AS total FROM conversational_agent_events
        WHERE contact_id = ? AND event_type = 'payment_proof_manual_review_required'`,
@@ -5411,7 +6249,7 @@ test('comprobantes inciertos crean un solo caso manual, alertan una vez y nunca 
       `SELECT COUNT(*) AS total FROM conversational_agent_events
        WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
       [contactId]
-    )).total), 0)
+    )).total), 1)
     const state = await db.get(
       `SELECT status, signal FROM conversational_agent_state
        WHERE contact_id = ? AND agent_id = ?`,
@@ -5424,6 +6262,103 @@ test('comprobantes inciertos crean un solo caso manual, alertan una vez y nunca 
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('un source_bound viejo no convierte el comprobante actual en anticipo de cita', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_stale_source_bound_${suffix}`
+  const agentId = `agent_stale_source_bound_${suffix}`
+  const receiptMessageId = `message_stale_source_bound_${suffix}`
+  const currency = await getAccountCurrency()
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto source bound viejo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, 'appointment_deposit_intent_pending', ?)`,
+      [`intent_stale_source_bound_${suffix}`, contactId, agentId, JSON.stringify({
+        status: 'source_bound',
+        collectionMethod: 'bankTransfer',
+        sourceEventId: `old_payment_source_${suffix}`,
+        methods: { paymentLink: false, bankTransfer: true },
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      })]
+    )
+    setNativePaymentReceiptAnalysisHookForTest(async () => ({
+      ok: false,
+      isPaymentReceipt: false,
+      reason: 'analysis_failed'
+    }))
+    const ctx = v2Context([
+      {
+        id: 'schedule_appointment',
+        enabled: true,
+        calendarId: `calendar_stale_source_bound_${suffix}`,
+        bookingOwner: 'ai'
+      },
+      {
+        id: 'collect_payment',
+        enabled: true,
+        collectionMethod: 'bank_transfer',
+        paymentMode: 'deposit',
+        chargeType: 'deposit',
+        deposit: {
+          enabled: true,
+          mode: 'fixed',
+          amount: 300,
+          currency,
+          methods: { paymentLink: false, bankTransfer: true }
+        },
+        bankTransfer: { details: 'Banco de prueba · cuenta 1234' },
+        receiptProof: { enabled: true }
+      }
+    ], {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: receiptMessageId,
+      accountLocale: { currency },
+      conversationMessages: [{
+        id: receiptMessageId,
+        role: 'user',
+        content: 'Esta transferencia es aparte',
+        messageTimestamp: new Date().toISOString(),
+        attachments: [{
+          kind: 'image',
+          mimeType: 'image/jpeg',
+          dataUrl: 'data:image/jpeg;base64,STALESOURCE'
+        }]
+      }]
+    })
+    ctx.config.id = agentId
+    const result = await createConversationalTools(ctx)
+      .find((item) => item.name === 'register_deposit_payment_proof')
+      .invoke(null, JSON.stringify({ montoIndicado: 300, referencia: null }))
+
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.paymentConfirmed, false)
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(ctx.actions[0].paymentPurpose, 'deposit')
+    const review = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_proof_manual_review_required'
+       ORDER BY created_at DESC LIMIT 1`,
+      [contactId]
+    )
+    assert.equal(JSON.parse(review.detail_json).paymentPurpose, 'deposit')
+    assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM payments WHERE contact_id = ?', [contactId])).total), 0)
+  } finally {
+    setNativePaymentReceiptAnalysisHookForTest(null)
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
   }
 })
@@ -5516,7 +6451,7 @@ test('comprobantes válidos registran purchase y anticipo independiente como pen
         contactId,
         agentId,
         dryRun: false,
-        executionId: `message_valid_proof_execution_${variant.kind}_${suffix}`,
+        executionId: mediaMessageId,
         accountLocale: { currency }
       })
       ctx.config.id = agentId
@@ -6353,8 +7288,37 @@ test('binding de comprobante v2 es atómico, idempotente por mensaje y falla cer
     assert.equal(replay.paymentId, first.paymentId)
     assert.equal(replay.alreadyRegistered, true)
 
+    const legacyBinding = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE id = ? AND event_type = 'deposit_transfer_pending_review'`,
+      [first.bindingEventId]
+    )
+    const legacyBindingDetail = JSON.parse(legacyBinding.detail_json)
+    delete legacyBindingDetail.afterPayment
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
+      [JSON.stringify(legacyBindingDetail), first.bindingEventId, legacyBinding.detail_json]
+    )
+    const legacyReplay = await registerAgentTransferPaymentProofForReview(input)
+    assert.equal(legacyReplay.paymentId, first.paymentId)
+    assert.equal(legacyReplay.alreadyRegistered, true)
+
     await assert.rejects(
       registerAgentTransferPaymentProofForReview({ ...input, amount: 275 }),
+      /incompatible|revisión humana/i
+    )
+    await assert.rejects(
+      registerAgentTransferPaymentProofForReview({ ...input, currency: 'USD' }),
+      /incompatible|revisión humana/i
+    )
+    await assert.rejects(
+      registerAgentTransferPaymentProofForReview({
+        ...input,
+        conversationalBinding: {
+          ...input.conversationalBinding,
+          paymentPurpose: 'purchase'
+        }
+      }),
       /incompatible|revisión humana/i
     )
     const rows = await db.all('SELECT id FROM payments WHERE contact_id = ?', [contactId])
@@ -6871,29 +7835,6 @@ test('aceptar una oferta de reagendamiento conserva ID y participantes, mueve di
       [calendarId]
     )).total), 1)
 
-    const humanCtx = v2Context([
-      { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'human', allowOverlaps: false }
-    ], {
-      contactId,
-      agentId,
-      dryRun: false,
-      executionId: confirmationExecutionId
-    })
-    humanCtx.config.id = agentId
-    humanCtx.conversationMessages = ctx.conversationMessages
-    const wrongHandoff = await createConversationalTools(humanCtx)
-      .find((item) => item.name === 'request_human_booking')
-      .invoke(null, JSON.stringify({
-        title: null,
-        notes: null,
-        attendeeName: null,
-        attendeeContext: null,
-        primaryAttendee: null,
-        guests: []
-      }))
-    assert.equal(wrongHandoff.ok, false, JSON.stringify(wrongHandoff))
-    assert.equal(wrongHandoff.code, 'appointment_reschedule_terminal_mismatch')
-
     const resolved = await createConversationalTools(ctx)
       .find((item) => item.name === 'resolve_active_appointment_offer')
       .invoke(null, JSON.stringify({
@@ -6973,6 +7914,187 @@ test('aceptar una oferta de reagendamiento conserva ID y participantes, mueve di
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('agenda humana entrega un reagendamiento confirmado sin exponer la tool que mueve la cita', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_human_reschedule_${suffix}`
+  const contactId = `contact_human_reschedule_${suffix}`
+  const agentId = `agent_human_reschedule_${suffix}`
+  const appointmentId = `appointment_human_reschedule_${suffix}`
+  const participantId = `participant_human_reschedule_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 42 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const originalStart = monday.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
+  const requestedStart = monday.set({ hour: 13, minute: 0, second: 0, millisecond: 0 })
+  const capabilities = [{
+    id: 'schedule_appointment',
+    enabled: true,
+    calendarId,
+    bookingOwner: 'human',
+    allowOverlaps: false
+  }]
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda humana para cambios',
+      source: 'ristak',
+      allowReschedule: true,
+      allowCancellation: true,
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{
+        daysOfTheWeek: [1],
+        hours: [{ openHour: 9, openMinute: 0, closeHour: 16, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente con reagenda humana', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+         id, calendar_id, contact_id, title, status, appointment_status,
+         start_time, end_time, source, sync_status, date_added, date_updated
+       ) VALUES (?, ?, ?, 'Cita que sólo moverá el equipo', 'confirmed', 'confirmed', ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        appointmentId,
+        calendarId,
+        contactId,
+        originalStart.toUTC().toISO(),
+        originalStart.plus({ hours: 1 }).toUTC().toISO()
+      ]
+    )
+    await db.run(
+      `INSERT INTO appointment_participants (
+         id, appointment_id, role, position, contact_id, name_snapshot, created_at, updated_at
+       ) VALUES (?, ?, 'requester', 0, ?, 'Cliente con reagenda humana', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [participantId, appointmentId, contactId]
+    )
+
+    const ctx = v2Context(capabilities, {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId: `offer_human_reschedule_${suffix}`
+    })
+    ctx.config.id = agentId
+    const initialTools = createConversationalTools(ctx)
+    assert.ok(initialTools.some((item) => item.name === 'request_human_booking'))
+    assert.equal(initialTools.some((item) => item.name === 'reschedule_appointment'), false)
+
+    const availability = await initialTools
+      .find((item) => item.name === 'get_free_slots')
+      .invoke(null, JSON.stringify({
+        startDate: monday.toISODate(),
+        endDate: monday.toISODate(),
+        appointmentId
+      }))
+    assert.equal(availability.ok, true, JSON.stringify(availability))
+    assert.equal(availability.purpose, 'reschedule')
+    assert.ok(
+      availability.slots
+        .flatMap((day) => day.options)
+        .some((option) => option.startTime === requestedStart.toUTC().toISO()),
+      JSON.stringify(availability)
+    )
+    const offered = await initialTools
+      .find((item) => item.name === 'offer_appointment_slot')
+      .invoke(null, JSON.stringify({
+        startTime: requestedStart.toUTC().toISO(),
+        appointmentId
+      }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+
+    const confirmationExecutionId = `confirm_human_reschedule_${suffix}`
+    ctx.executionId = confirmationExecutionId
+    ctx.actions = []
+    ctx.conversationMessages = [
+      { id: `visible_human_reschedule_${suffix}`, role: 'assistant', content: offered.visibleReply },
+      { id: confirmationExecutionId, role: 'user', content: 'Sí, ese nuevo horario me funciona.' }
+    ]
+    ctx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx,
+      config: ctx.config
+    })
+    assert.equal(ctx.appointmentOfferDecision?.purpose, 'reschedule')
+    assert.equal(ctx.appointmentOfferDecision?.terminalToolName, 'request_human_booking')
+
+    const confirmationTools = createConversationalTools(ctx)
+    assert.ok(confirmationTools.some((item) => item.name === 'resolve_active_appointment_offer'))
+    assert.equal(confirmationTools.some((item) => item.name === 'reschedule_appointment'), false)
+    const resolved = await confirmationTools
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'accept',
+        reply: null,
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(resolved.ok, true, JSON.stringify(resolved))
+    assert.equal(resolved.actionCompleted, true)
+    assert.equal(resolved.transferredToHuman, true)
+    assert.equal(resolved.appointmentRescheduled, false)
+    assert.match(resolved.visibleReply, /conserva el horario anterior/i)
+
+    const appointment = await db.get(
+      `SELECT id, start_time, end_time, status, appointment_status, deleted_at
+       FROM appointments WHERE id = ?`,
+      [appointmentId]
+    )
+    assert.equal(appointment.id, appointmentId)
+    assert.equal(new Date(appointment.start_time).toISOString(), originalStart.toUTC().toISO())
+    assert.equal(new Date(appointment.end_time).toISOString(), originalStart.plus({ hours: 1 }).toUTC().toISO())
+    assert.equal(appointment.status, 'confirmed')
+    assert.equal(appointment.appointment_status, 'confirmed')
+    assert.equal(appointment.deleted_at, null)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
+      [calendarId]
+    )).total), 1)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointment_participants WHERE appointment_id = ?',
+      [appointmentId]
+    )).total), 1)
+
+    const state = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [contactId, agentId]
+    )
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+    const handoffEvent = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'human_reschedule_requested'`,
+      [contactId, agentId]
+    )).detail_json)
+    assert.equal(handoffEvent.appointmentId, appointmentId)
+    assert.equal(handoffEvent.appointmentRescheduled, false)
+    assert.equal(handoffEvent.requestedStartTime, requestedStart.toUTC().toISO())
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'priority_push_notification'`,
+      [contactId]
+    )).total), 1)
+    assert.equal(ctx.actions.some((action) => action.type === 'reschedule_appointment'), false)
+    assert.equal(ctx.actions.filter((action) => action.type === 'request_human_booking').length, 1)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [appointmentId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
   }
@@ -7249,6 +8371,473 @@ test('un update remoto de HighLevel nunca reemplaza el contacto local por el ID 
     globalThis.fetch = previousFetch
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('afterPayment handoff convierte el cierre appointment_booked de la IA en entrega humana durable', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_ai_deposit_handoff_${suffix}`
+  const paymentId = `payment_ai_deposit_handoff_${suffix}`
+  const calendarId = `calendar_ai_deposit_handoff_${suffix}`
+  let agent = null
+  let resumeCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+       VALUES (?, 'Cliente anticipo y entrega', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    agent = await createConversationalAgent({
+      name: `Agenda IA, anticipo y humano ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [
+          { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai' },
+          {
+            id: 'collect_payment',
+            enabled: true,
+            chargeType: 'deposit',
+            paymentMode: 'deposit',
+            collectionMethod: 'payment_link',
+            gateway: 'stripe',
+            afterPayment: 'handoff',
+            deposit: { enabled: true, mode: 'fixed', amount: 300, currency: 'MXN' }
+          }
+        ]
+      }
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: agent.id,
+      calendarId,
+      bookingOwner: 'ai',
+      suffix: `after_payment_handoff_${suffix}`
+    })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        channel: 'whatsapp',
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 300,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        afterPayment: 'handoff',
+        ...sourceBinding,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_method, payment_mode,
+         payment_provider, paid_at, created_at, updated_at
+       ) VALUES (?, ?, 300, 'MXN', 'paid', 'card', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPaymentResumeHandlerForTest(async (payload) => {
+      resumeCalls += 1
+      assert.equal(payload.bookingOwner, 'ai')
+      assert.equal(payload.terminalToolName, 'book_appointment')
+      await setConversationSignal(contactId, 'appointment_booked', {
+        reason: 'Cita agendada por el agente',
+        summary: 'Cita real ligada al anticipo',
+        status: 'completed',
+        agentId: agent.id,
+        channel: 'whatsapp',
+        eventId: `appointment_booked_before_handoff_${suffix}`,
+        strictEvent: true
+      })
+      return { resumed: true, sent: true }
+    })
+
+    const input = {
+      contactId,
+      paymentId,
+      amount: 300,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+    const result = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(result.signal, 'ready_for_human')
+    assert.equal(result.handoffCompleted, true)
+    assert.equal(result.objectiveCompleted, true)
+    const state = await db.get(
+      `SELECT status, signal, agent_id, channel
+       FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [contactId, agent.id]
+    )
+    assert.equal(state.status, 'human')
+    assert.equal(state.signal, 'ready_for_human')
+    assert.equal(state.agent_id, agent.id)
+    assert.equal(resumeCalls, 1)
+    const reconciliation = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )
+    const reconciliationDetail = JSON.parse(reconciliation.detail_json)
+    assert.ok(reconciliationDetail.afterPaymentActionCompletedAt)
+    assert.equal(reconciliationDetail.afterPaymentActionResult.handoffCompleted, true)
+    const replay = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(replay.alreadyCompleted, true)
+    assert.equal(resumeCalls, 1)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('afterPayment handoff de un agente eliminado nunca toca al agente activo que lo reemplazó', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_deleted_handoff_isolation_${suffix}`
+  const paymentId = `payment_deleted_handoff_isolation_${suffix}`
+  let deletedAgent = null
+  let currentAgent = null
+  let notificationCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+       VALUES (?, 'Cliente con reemplazo de agente', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    deletedAgent = await createConversationalAgent({
+      name: `Agente fuente eliminado ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{ id: 'collect_payment', enabled: true, paymentMode: 'full_payment', afterPayment: 'handoff' }]
+      }
+    })
+    const deletedAgentId = deletedAgent.id
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, deletedAgentId]
+    )
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: deletedAgentId,
+        channel: 'whatsapp',
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 990,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'full_payment',
+        paymentPurpose: 'purchase',
+        appointmentDeposit: false,
+        afterPayment: 'handoff',
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         paid_at, created_at, updated_at
+       ) VALUES (?, ?, 990, 'MXN', 'paid', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    assert.equal(await deleteConversationalAgent(deletedAgentId), true)
+    currentAgent = await createConversationalAgent({
+      name: `Agente actual protegido ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2'
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_by, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, 'current_agent', CURRENT_TIMESTAMP)`,
+      [contactId, currentAgent.id]
+    )
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      notificationCalls += 1
+      return { sent: 1 }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 990,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(result.matched, true)
+    assert.equal(result.handoffCompleted, false)
+    assert.equal(result.statePreserved, true)
+    assert.equal(result.signal, 'payment_confirmed_state_preserved')
+    const protectedState = await db.get(
+      `SELECT status, signal, updated_by FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [contactId, currentAgent.id]
+    )
+    assert.equal(protectedState.status, 'active')
+    assert.equal(protectedState.signal, null)
+    assert.equal(protectedState.updated_by, 'current_agent')
+    assert.equal(notificationCalls, 0)
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )).detail_json)
+    assert.equal(Boolean(reconciliation.afterPaymentActionCompletedAt), false)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_after_action_completed'`,
+      [contactId]
+    )).total), 0)
+  } finally {
+    setConversationalPriorityNotificationSenderForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    for (const agent of [deletedAgent, currentAgent]) {
+      if (!agent?.id) continue
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('afterPayment continuar de un agente eliminado tampoco cierra el chat del agente que lo reemplazó', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_deleted_continue_isolation_${suffix}`
+  const paymentId = `payment_deleted_continue_isolation_${suffix}`
+  let deletedAgent = null
+  let currentAgent = null
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+       VALUES (?, 'Cliente con pago tardío aislado', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    deletedAgent = await createConversationalAgent({
+      name: `Agente continue eliminado ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{ id: 'collect_payment', enabled: true, paymentMode: 'full_payment', afterPayment: 'continue' }]
+      }
+    })
+    const deletedAgentId = deletedAgent.id
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, deletedAgentId]
+    )
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: deletedAgentId,
+        channel: 'whatsapp',
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 880,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'full_payment',
+        paymentPurpose: 'purchase',
+        appointmentDeposit: false,
+        afterPayment: 'continue',
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         paid_at, created_at, updated_at
+       ) VALUES (?, ?, 880, 'MXN', 'paid', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    assert.equal(await deleteConversationalAgent(deletedAgentId), true)
+    currentAgent = await createConversationalAgent({
+      name: `Agente continue actual ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2'
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_by, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, 'current_agent_continue', CURRENT_TIMESTAMP)`,
+      [contactId, currentAgent.id]
+    )
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 880,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(result.matched, true)
+    assert.equal(result.signal, 'payment_confirmed_state_preserved')
+    assert.equal(result.statePreserved, true)
+    const protectedState = await db.get(
+      `SELECT status, signal, updated_by FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [contactId, currentAgent.id]
+    )
+    assert.equal(protectedState.status, 'active')
+    assert.equal(protectedState.signal, null)
+    assert.equal(protectedState.updated_by, 'current_agent_continue')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'signal_set'`,
+      [contactId, currentAgent.id]
+    )).total), 0)
+  } finally {
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    for (const agent of [deletedAgent, currentAgent]) {
+      if (!agent?.id) continue
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('afterPayment handoff conserva una pausa y no manda ni registra una entrega falsa', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_paused_handoff_${suffix}`
+  const paymentId = `payment_paused_handoff_${suffix}`
+  let agent = null
+  let notificationCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+       VALUES (?, 'Cliente con pausa protegida', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    agent = await createConversationalAgent({
+      name: `Pago con pausa protegida ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [{ id: 'collect_payment', enabled: true, paymentMode: 'full_payment', afterPayment: 'handoff' }]
+      }
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_by, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'paused', NULL, 'staff_pause', CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        channel: 'whatsapp',
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 410,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'full_payment',
+        paymentPurpose: 'purchase',
+        appointmentDeposit: false,
+        afterPayment: 'handoff',
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         paid_at, created_at, updated_at
+       ) VALUES (?, ?, 410, 'MXN', 'paid', 'live', 'stripe', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      notificationCalls += 1
+      return { sent: 1 }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      paymentId,
+      amount: 410,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(result.handoffCompleted, false)
+    assert.equal(result.statePreserved, true)
+    const state = await db.get(
+      `SELECT status, signal, updated_by FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [contactId, agent.id]
+    )
+    assert.equal(state.status, 'paused')
+    assert.equal(state.signal, null)
+    assert.equal(state.updated_by, 'staff_pause')
+    assert.equal(notificationCalls, 0)
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )).detail_json)
+    assert.equal(Boolean(reconciliation.afterPaymentActionCompletedAt), false)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_after_action_completed'`,
+      [contactId]
+    )).total), 0)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_after_action_preserved'`,
+      [contactId]
+    )).total), 1)
+  } finally {
+    setConversationalPriorityNotificationSenderForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
   }
 })

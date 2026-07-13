@@ -58,7 +58,7 @@ const BOOKING_OWNERS = new Set(['ai', 'human'])
 const DEPOSIT_MODES = new Set(['fixed', 'range'])
 const LINK_KINDS = new Set(['trigger', 'verified_goal'])
 const CUSTOM_GOAL_COMPLETIONS = new Set(['handoff', 'send_link'])
-const CUSTOM_GOAL_SEND_LINK_REQUIRED_MESSAGE = 'Activa y configura la capacidad Mandar enlace para completar este objetivo.'
+const CUSTOM_GOAL_SEND_LINK_REQUIRED_MESSAGE = 'Activa y configura un enlace verificable en la capacidad Mandar enlace para completar este objetivo.'
 const SAFETY_ACTIONS = new Set(['stop_and_review', 'handoff_and_review'])
 const REQUIRED_DATA_FIELDS = new Set([
   'first_name',
@@ -151,6 +151,15 @@ function cleanText(value, maxLength = 8000) {
 
 function cleanId(value, maxLength = 180) {
   return cleanText(value, maxLength)
+}
+
+export function isSafeConversationalHttpUrl(value) {
+  try {
+    const parsed = new URL(String(value || '').trim())
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && Boolean(parsed.hostname)
+  } catch {
+    return false
+  }
 }
 
 function toBoolean(value) {
@@ -611,11 +620,19 @@ function getCapabilityMissingConfiguration(item) {
   }
 
   if (item.id === 'send_link') {
-    if (item.linkKind === 'trigger' && !item.triggerLinkId && !item.url) {
-      missing.push('Selecciona un enlace de disparo.')
+    if (item.linkKind === 'trigger' && !item.triggerLinkId) {
+      if (!item.url) {
+        missing.push('Selecciona un enlace de disparo.')
+      } else if (!isSafeConversationalHttpUrl(item.url)) {
+        missing.push('Configura una URL web válida para el enlace de disparo (http:// o https://).')
+      }
     }
-    if (item.linkKind === 'verified_goal' && !item.url) {
-      missing.push('Configura el enlace verificable que se va a enviar.')
+    if (item.linkKind === 'verified_goal') {
+      if (!item.url) {
+        missing.push('Configura el enlace verificable que se va a enviar.')
+      } else if (!isSafeConversationalHttpUrl(item.url)) {
+        missing.push('Configura un enlace verificable con una URL web válida (http:// o https://).')
+      }
     }
   }
 
@@ -632,10 +649,17 @@ export function getConversationalNativeRuntimeValidationErrors(config = {}) {
   for (const item of enabledCapabilities) {
     const missing = getCapabilityMissingConfiguration(item)
     for (const message of missing) {
+      const invalidInlineLinkUrl = item.id === 'send_link' && Boolean(item.url) &&
+        !isSafeConversationalHttpUrl(item.url) &&
+        (item.linkKind !== 'trigger' || !item.triggerLinkId)
       errors.push({
-        code: `CONVERSATIONAL_CAPABILITY_${item.id.toUpperCase()}_INVALID`,
+        code: invalidInlineLinkUrl
+          ? 'CONVERSATIONAL_CAPABILITY_LINK_URL_INVALID'
+          : `CONVERSATIONAL_CAPABILITY_${item.id.toUpperCase()}_INVALID`,
         capabilityId: item.id,
-        field: `capabilitiesConfig.items.${item.id}`,
+        field: invalidInlineLinkUrl
+          ? 'capabilitiesConfig.items.send_link.url'
+          : `capabilitiesConfig.items.${item.id}`,
         message
       })
     }
@@ -644,7 +668,7 @@ export function getConversationalNativeRuntimeValidationErrors(config = {}) {
   const sendLink = enabledCapabilities.find((item) => item.id === 'send_link')
   if (
     customGoal?.completion === 'send_link' &&
-    (!sendLink || getCapabilityMissingConfiguration(sendLink).length > 0)
+    (!sendLink || sendLink.linkKind !== 'verified_goal' || getCapabilityMissingConfiguration(sendLink).length > 0)
   ) {
     errors.push({
       code: 'CONVERSATIONAL_CAPABILITY_CUSTOM_GOAL_COMPLETION_INVALID',
@@ -660,7 +684,7 @@ export function buildConversationalCapabilityManifest(config = {}) {
   const capabilities = getConversationalCapabilitiesConfig(config)
   const byId = new Map(capabilities.items.map((item) => [item.id, item]))
   const sendLink = byId.get('send_link')
-  const sendLinkReady = Boolean(sendLink?.enabled) && getCapabilityMissingConfiguration(sendLink).length === 0
+  const sendLinkReady = Boolean(sendLink?.enabled) && sendLink.linkKind === 'verified_goal' && getCapabilityMissingConfiguration(sendLink).length === 0
   return CONVERSATIONAL_CAPABILITY_IDS.map((id) => {
     const item = byId.get(id) || { id, enabled: false }
     const missingConfiguration = getCapabilityMissingConfiguration(item)

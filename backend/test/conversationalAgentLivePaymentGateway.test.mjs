@@ -502,6 +502,7 @@ test('dos turnos equivalentes concurrentes comparten claim semántico y sólo un
         paymentEnvironment: result.paymentMode,
         publicPaymentId: result.publicPaymentId,
         paymentPurpose: payload.paymentPurpose,
+        afterPayment: payload.afterPayment,
         appointmentDeposit: false,
         executionId: payload.executionId,
         productId: payload.productId,
@@ -668,7 +669,8 @@ test('reuso cross-turn exige identidad financiera exacta y sólo admite links pe
     currency: 'MXN',
     paymentProvider: 'stripe',
     paymentEnvironment: 'live',
-    paymentPurpose: 'purchase'
+    paymentPurpose: 'purchase',
+    afterPayment: 'continue'
   }
 
   try {
@@ -727,6 +729,7 @@ test('reuso cross-turn exige identidad financiera exacta y sólo admite links pe
     assert.equal(reusable.paymentLink, paymentUrl)
     assert.equal(reusable.canonicalPaymentLinkRequestKey, canonicalRequestKey)
     assert.equal(reusable.canonicalBindingEventId, canonicalBindingEventId)
+    assert.equal(reusable.afterPayment, 'continue')
 
     for (const mismatch of [
       { ...currentPayload, agentId: `other_${agentId}` },
@@ -734,11 +737,22 @@ test('reuso cross-turn exige identidad financiera exacta y sólo admite links pe
       { ...currentPayload, amount: 876 },
       { ...currentPayload, currency: 'USD' },
       { ...currentPayload, gateway: 'conekta' },
-      { ...currentPayload, channel: 'sms' }
+      { ...currentPayload, channel: 'sms' },
+      { ...currentPayload, afterPayment: 'handoff' }
     ]) {
       assert.equal(await findReusable(mismatch), null, JSON.stringify(mismatch))
     }
     assert.equal(await findReusable({ ...currentPayload, contactId: `other_${contactId}` }), null)
+
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify({ ...eventDetail, afterPayment: 'handoff' }), canonicalBindingEventId]
+    )
+    assert.equal(await findReusable(), null, 'el evento durable no puede cambiar la acción posterior')
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify(eventDetail), canonicalBindingEventId]
+    )
 
     for (const closedStatus of ['paid', 'cancelled', 'void', 'refunded', 'expired', 'failed']) {
       await db.run('UPDATE payments SET status = ? WHERE id = ?', [closedStatus, paymentId])

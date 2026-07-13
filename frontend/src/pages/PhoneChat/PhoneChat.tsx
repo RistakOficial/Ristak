@@ -20168,8 +20168,8 @@ export const PhoneChat: React.FC = () => {
               </div>
               <p className={styles.agentMenuHint}>
                 {isStrategy
-                  ? 'Escribe todo lo que debe saber del negocio, qué debe conseguir y qué proceso debe seguir.'
-                  : 'Define tono, vocabulario, formalidad, humor, emojis y estilo de conversación.'}
+                  ? 'Escribe qué debe saber y conseguir, qué proceso sigue y cuándo debe usar agenda, cobro, enlaces o humano.'
+                  : 'Define únicamente tono, vocabulario, formalidad, humor, emojis y estilo. Las reglas de proceso van en Estrategia.'}
               </p>
               <PhoneTextArea
                 label={isStrategy ? 'Capacitación completa' : 'Personalidad completa'}
@@ -20232,7 +20232,7 @@ export const PhoneChat: React.FC = () => {
                 label="Estrategia y capacitación"
                 value={agentCreateDraft.strategyText}
                 onChange={(strategyText) => patchCreateDraft({ strategyText })}
-                placeholder="Qué debe saber del negocio, qué debe conseguir y qué proceso debe seguir."
+                placeholder="Qué debe saber, qué debe conseguir y cuándo debe usar cada capacidad."
                 rows={10}
                 disabled={agentCreating}
                 hint="Puedes dejar la plantilla, editarla o borrarla completa."
@@ -20256,7 +20256,7 @@ export const PhoneChat: React.FC = () => {
                 placeholder="Cómo debe hablar: tono, vocabulario, humor, formalidad y estilo."
                 rows={6}
                 disabled={agentCreating}
-                hint="Si lo dejas vacío, usará la voz general del negocio."
+                hint="Sólo estilo y tono. Las reglas de proceso van en Estrategia."
               />
               <button
                 type="button"
@@ -20513,7 +20513,13 @@ export const PhoneChat: React.FC = () => {
     })()
     const enabledNativeCapabilities = nativeCapabilities.items.filter((item) => item.enabled)
     const nativeCapabilityOptions: Array<{ id: ConversationalCapabilityId; label: string; description: string }> = [
-      { id: 'schedule_appointment', label: 'Agendar cita', description: 'Consulta horarios reales y crea la cita en el calendario elegido.' },
+      {
+        id: 'schedule_appointment',
+        label: 'Agendar cita',
+        description: scheduleCapability?.bookingOwner === 'human'
+          ? 'Consulta horarios reales y entrega citas nuevas o cambios al equipo; no modifica el calendario.'
+          : 'Consulta horarios reales y crea la cita en el calendario elegido.'
+      },
       { id: 'collect_payment', label: 'Cobrar', description: 'Genera el cobro con producto, precio o anticipo verificable.' },
       { id: 'send_link', label: 'Mandar enlace', description: 'Envía una URL configurada sin mostrar códigos internos.' },
       { id: 'handoff_human', label: 'Pasar a humano', description: 'Entrega el chat y su contexto a una persona.' },
@@ -20786,7 +20792,7 @@ export const PhoneChat: React.FC = () => {
                     buttonClassName={styles.agentMenuSelectButton}
                   />
                 </label>
-                <p className={styles.agentMenuHint}>La IA muestra horarios reales. Cuando el cliente elige uno, vuelve a comprobarlo y entrega el chat con esa fecha y hora; no crea ni promete la cita.</p>
+                <p className={styles.agentMenuHint}>La IA muestra horarios reales. Cuando el cliente confirma una cita nueva o un cambio, vuelve a comprobarlo y entrega el chat con la fecha exacta; no crea ni modifica la cita.</p>
               </>
             ) : (
               <p className={styles.agentMenuHint}>La IA vuelve a comprobar el horario elegido, crea la cita y sólo entonces la confirma.</p>
@@ -20809,7 +20815,9 @@ export const PhoneChat: React.FC = () => {
               <span>
                 <strong>Modo test de citas</strong>
                 <small>{scheduleCapability.bookingOwner === 'human'
-                  ? 'Hace la entrega y notificación de prueba; después restaura al responsable anterior.'
+                  ? (scheduleCapability.handoffUserId
+                      ? 'Asigna temporalmente la solicitud, manda la notificación de prueba y después restaura al responsable anterior.'
+                      : 'Valida el horario y avisa al equipo, sin asignar a una persona ni crear o modificar la cita.')
                   : 'Crea una cita real de prueba, manda la notificación y la elimina automáticamente después de 5 minutos.'}</small>
               </span>
             </label>
@@ -21219,7 +21227,13 @@ export const PhoneChat: React.FC = () => {
               <input
                 type="checkbox"
                 checked={paymentCapability.testMode.enabled}
-                disabled={agentConfigSaving}
+                disabled={
+                  agentConfigSaving || (
+                    paymentCapability.collectionMethod === 'payment_link' &&
+                    paymentCapability.gateway === 'highlevel' &&
+                    !paymentCapability.testMode.enabled
+                  )
+                }
                 onChange={(event) => saveNativeCapability({
                   ...paymentCapability,
                   testMode: {
@@ -21234,7 +21248,9 @@ export const PhoneChat: React.FC = () => {
                 <strong>Modo test de pagos</strong>
                 <small>{paymentCapability.collectionMethod === 'bank_transfer'
                   ? 'Prueba el análisis de la imagen sin usar pasarela ni dinero real.'
-                  : 'Fuerza un enlace sandbox, valida la señal de pago y limpia el registro después de 5 minutos.'}</small>
+                  : paymentCapability.gateway === 'highlevel'
+                    ? 'La conexión anterior no puede forzar sandbox. Cambia a Stripe u otra pasarela compatible; si ya estaba activo, apágalo para publicar.'
+                    : 'Fuerza un enlace sandbox, valida la señal de pago y limpia el registro después de 5 minutos.'}</small>
               </span>
             </label>
           </>
@@ -21284,6 +21300,21 @@ export const PhoneChat: React.FC = () => {
                 disabled={agentConfigSaving || agentTeamUsersLoading}
                 buttonClassName={styles.agentMenuSelectButton}
               />
+            </label>
+            <label className={`${styles.agentCompactToggle} ${handoffCapability.pastClientsToHuman ? styles.agentCompactToggleActive : ''}`}>
+              <input
+                type="checkbox"
+                checked={handoffCapability.pastClientsToHuman}
+                disabled={agentConfigSaving}
+                onChange={(event) => saveNativeCapability({
+                  ...handoffCapability,
+                  pastClientsToHuman: event.target.checked
+                })}
+              />
+              <span>
+                <strong>Clientes existentes van con tu equipo</strong>
+                <small>Usa citas anteriores o pagos confirmados de Ristak; no se basa sólo en lo que diga el mensaje.</small>
+              </span>
             </label>
           </>
         )
@@ -21346,7 +21377,7 @@ export const PhoneChat: React.FC = () => {
               placeholder="Qué debe saber del negocio, qué debe conseguir y qué proceso debe seguir."
               rows={12}
               disabled={agentConfigSaving}
-              hint="Conocimiento, objetivo, guion y proceso del negocio."
+              hint="El cerebro: conocimiento, objetivo, guion y cuándo usar cada capacidad."
             />
             <button
               type="button"
@@ -21370,7 +21401,7 @@ export const PhoneChat: React.FC = () => {
               placeholder="Cómo debe hablar: tono, vocabulario, humor, formalidad y estilo."
               rows={7}
               disabled={agentConfigSaving}
-              hint="Si queda vacío, usa la voz general del negocio."
+              hint="Sólo estilo y tono; las reglas de proceso van en Estrategia."
             />
             <button
               type="button"
@@ -21583,9 +21614,9 @@ export const PhoneChat: React.FC = () => {
                             scope: scope === 'appointment' || scope === 'payment' ? scope : 'any_action'
                           })}
                           options={[
-                            { value: 'any_action', label: 'Antes de cualquier acción' },
-                            { value: 'appointment', label: 'Sólo para citas' },
-                            { value: 'payment', label: 'Sólo para cobros' }
+                            { value: 'any_action', label: 'Para cualquier acción final' },
+                            { value: 'appointment', label: 'Para confirmar una cita nueva' },
+                            { value: 'payment', label: 'Para cobrar' }
                           ]}
                           title="Momento"
                           ariaLabel={`Cuándo pedir ${option.label}`}

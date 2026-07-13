@@ -198,9 +198,6 @@ export async function prepareConversationalAgentTestRun({
   if (normalizedEffects.collectPayment && !capabilityTestModeEnabled(paymentCapability)) {
     throw testError('Activa y guarda Modo test dentro de Cobrar antes de crear un cobro real desde el tester.', 409, 'test_payment_mode_not_enabled')
   }
-  if (normalizedEffects.collectPayment && paymentCapability?.collectionMethod !== 'payment_link') {
-    throw testError('La prueba con pasarela sólo está disponible para Link de pago. Las transferencias se validan con una imagen y nunca crean un checkout sandbox.', 409, 'test_payment_link_required')
-  }
   const assignmentUserId = cleanString(
     scheduleCapability?.bookingOwner === 'human' ? scheduleCapability.handoffUserId : ''
   )
@@ -324,9 +321,6 @@ async function assertCurrentTestRunAuthority(run, effectType = '') {
   }
   if (cleanEffectType === 'payment' && !capabilityTestModeEnabled(payment)) {
     throw testError('Modo test de Cobrar ya no está activo.', 409, 'test_payment_mode_not_enabled')
-  }
-  if (cleanEffectType === 'payment' && payment?.collectionMethod !== 'payment_link') {
-    throw testError('La configuración cambió a transferencia; no se creó ningún checkout sandbox.', 409, 'test_payment_link_required')
   }
   if (cleanEffectType === 'assignment') {
     const assignmentUserId = cleanString(
@@ -693,17 +687,49 @@ function normalizeMoney(value, currency) {
   return Math.round((amount + Number.EPSILON) * factor) / factor
 }
 
-async function verifyTestPaymentAction(action, paymentCapability) {
+function normalizeTestPaymentPurpose(action, usesDeposit) {
+  const requestedPurpose = cleanString(action?.paymentPurpose)
+  const allowedPurposes = usesDeposit
+    ? new Set(['deposit', 'appointment_deposit'])
+    : new Set(['purchase'])
+  const paymentPurpose = requestedPurpose || (usesDeposit ? 'deposit' : 'purchase')
+  if (!allowedPurposes.has(paymentPurpose)) {
+    throw testError('El propósito de este cobro ya no coincide con la configuración guardada.', 409, 'test_payment_purpose_changed')
+  }
+  return paymentPurpose
+}
+
+function publicTestReceiptAnalysis(value) {
+  const analysis = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const currency = cleanString(analysis.currency).toUpperCase()
+  const amount = Number(analysis.amount)
+  const confidence = Number(analysis.confidence)
+  return {
+    ok: analysis.ok === true,
+    isPaymentReceipt: analysis.isPaymentReceipt === true,
+    ...(Number.isFinite(amount) && amount > 0 ? { amount } : {}),
+    ...(/^[A-Z]{3}$/.test(currency) ? { currency } : {}),
+    ...(cleanString(analysis.reference) ? { reference: cleanString(analysis.reference).slice(0, 200) } : {}),
+    ...(cleanString(analysis.bank) ? { bank: cleanString(analysis.bank).slice(0, 200) } : {}),
+    ...(cleanString(analysis.date) ? { date: cleanString(analysis.date).slice(0, 80) } : {}),
+    ...(cleanString(analysis.reason) ? { reason: cleanString(analysis.reason).slice(0, 160) } : {}),
+    ...(Number.isFinite(confidence) ? { confidence: Math.max(0, Math.min(1, confidence)) } : {})
+  }
+}
+
+async function verifyTestPaymentAction(action, paymentCapability, { collectionMethod = 'payment_link' } = {}) {
   const accountCurrency = cleanString(await getAccountCurrency()).toUpperCase()
   const currency = cleanString(action?.currency).toUpperCase()
   const amount = normalizeMoney(action?.amount, currency)
   const quantity = Number(action?.quantity || 1)
+  const expectedCollectionMethod = collectionMethod === 'bank_transfer' ? 'bank_transfer' : 'payment_link'
+  const pendingTransferReview = expectedCollectionMethod === 'bank_transfer'
   if (
     !paymentCapability?.enabled ||
-    paymentCapability?.collectionMethod !== 'payment_link' ||
+    paymentCapability?.collectionMethod !== expectedCollectionMethod ||
     !/^[A-Z]{3}$/.test(accountCurrency) ||
     currency !== accountCurrency ||
-    !amount ||
+    (!pendingTransferReview && !amount) ||
     !Number.isInteger(quantity) ||
     quantity < 1 ||
     quantity > 100
@@ -712,25 +738,41 @@ async function verifyTestPaymentAction(action, paymentCapability) {
   }
 
   const usesDeposit = paymentCapability.paymentMode === 'deposit' || paymentCapability.deposit?.enabled === true
+  const paymentPurpose = normalizeTestPaymentPurpose(action, usesDeposit)
   if (usesDeposit) {
     const deposit = paymentCapability.deposit || {}
     const depositCurrency = cleanString(deposit.currency || accountCurrency).toUpperCase()
     const fixed = normalizeMoney(deposit.amount, accountCurrency)
     const min = normalizeMoney(deposit.minAmount, accountCurrency)
     const max = normalizeMoney(deposit.maxAmount, accountCurrency)
+    const rangeConfigured = deposit.mode === 'range' && Boolean(min || max) && (!min || !max || min <= max)
     const validAmount = deposit.mode === 'range'
-      ? (!min || amount >= min) && (!max || amount <= max)
+      ? rangeConfigured && amount > 0 && (!min || amount >= min) && (!max || amount <= max)
       : fixed > 0 && amount === fixed
-    if (quantity !== 1 || depositCurrency !== accountCurrency || !validAmount) {
+    const configuredAuthorityValid = deposit.mode === 'range' ? rangeConfigured : fixed > 0
+    if (quantity !== 1 || depositCurrency !== accountCurrency || !configuredAuthorityValid || (!pendingTransferReview && !validAmount)) {
       throw testError('El anticipo de prueba ya no coincide con el monto blindado del agente.', 409, 'test_payment_authority_changed')
     }
+    const expectedPayment = {
+      mode: deposit.mode === 'range' ? 'range' : 'fixed',
+      amount: deposit.mode === 'range' ? null : fixed,
+      minAmount: deposit.mode === 'range' && min > 0 ? min : null,
+      maxAmount: deposit.mode === 'range' && max > 0 ? max : null,
+      currency: accountCurrency
+    }
     return {
-      amount,
+      amount: pendingTransferReview
+        ? (deposit.mode === 'range' ? (validAmount ? amount : null) : fixed)
+        : amount,
       currency,
       quantity: 1,
       concept: cleanString(action?.concept) || 'Anticipo',
+      collectionMethod: expectedCollectionMethod,
+      paymentPurpose,
+      expectedPayment,
       gateway: cleanString(paymentCapability.gateway).toLowerCase(),
-      installments: paymentCapability.installments || { enabled: false, maxInstallments: 0 }
+      installments: paymentCapability.installments || { enabled: false, maxInstallments: 0 },
+      afterPayment: paymentCapability.afterPayment === 'handoff' ? 'handoff' : 'continue'
     }
   }
 
@@ -742,21 +784,32 @@ async function verifyTestPaymentAction(action, paymentCapability) {
     if (
       quantity !== 1 ||
       directCurrency !== accountCurrency ||
-      amount !== expectedAmount ||
+      !expectedAmount ||
+      (!pendingTransferReview && amount !== expectedAmount) ||
       !expectedConcept ||
-      cleanString(action?.catalogEvidence?.source) !== 'capability_direct'
+      (expectedCollectionMethod === 'payment_link' && cleanString(action?.catalogEvidence?.source) !== 'capability_direct')
     ) {
       throw testError('El cobro directo ya no coincide con el monto y concepto blindados del agente.', 409, 'test_payment_authority_changed')
     }
     return {
-      amount,
+      amount: pendingTransferReview ? expectedAmount : amount,
       currency,
       quantity: 1,
-      unitAmount: amount,
+      unitAmount: expectedAmount,
       concept: expectedConcept,
       description: cleanString(direct.description),
+      collectionMethod: expectedCollectionMethod,
+      paymentPurpose,
+      expectedPayment: {
+        mode: 'fixed',
+        amount: expectedAmount,
+        minAmount: null,
+        maxAmount: null,
+        currency: accountCurrency
+      },
       gateway: cleanString(paymentCapability.gateway).toLowerCase(),
-      installments: paymentCapability.installments || { enabled: false, maxInstallments: 0 }
+      installments: paymentCapability.installments || { enabled: false, maxInstallments: 0 },
+      afterPayment: paymentCapability.afterPayment === 'handoff' ? 'handoff' : 'continue'
     }
   }
 
@@ -782,24 +835,51 @@ async function verifyTestPaymentAction(action, paymentCapability) {
     !row ||
     catalogCurrency !== accountCurrency ||
     !unitAmount ||
-    amount !== expectedAmount ||
-    actionProductId !== cleanString(row.product_id) ||
-    actionPriceId !== cleanString(row.price_id)
+    (!pendingTransferReview && amount !== expectedAmount) ||
+    (expectedCollectionMethod === 'payment_link' && actionProductId !== cleanString(row.product_id)) ||
+    (expectedCollectionMethod === 'payment_link' && actionPriceId !== cleanString(row.price_id))
   ) {
     throw testError('El producto, precio o monto del cobro cambió. Vuelve a enviar el mensaje para probar el valor vigente.', 409, 'test_payment_authority_changed')
   }
   return {
-    amount,
+    amount: pendingTransferReview ? expectedAmount : amount,
     currency,
     quantity,
     unitAmount,
     concept: cleanString(action?.concept) || 'Pago',
+    collectionMethod: expectedCollectionMethod,
+    paymentPurpose,
+    expectedPayment: {
+      mode: 'fixed',
+      amount: expectedAmount,
+      minAmount: null,
+      maxAmount: null,
+      currency: accountCurrency
+    },
     gateway: cleanString(paymentCapability.gateway).toLowerCase(),
-    installments: paymentCapability.installments || { enabled: false, maxInstallments: 0 }
+    installments: paymentCapability.installments || { enabled: false, maxInstallments: 0 },
+    afterPayment: paymentCapability.afterPayment === 'handoff' ? 'handoff' : 'continue'
   }
 }
 
-async function resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig) {
+function testReceiptMatchesVerifiedPayment(receiptAnalysis, verifiedPayment) {
+  if (!receiptAnalysis?.ok || !receiptAnalysis?.isPaymentReceipt) return false
+  const expected = verifiedPayment?.expectedPayment || {}
+  const detectedCurrency = cleanString(receiptAnalysis.currency).toUpperCase()
+  const expectedCurrency = cleanString(expected.currency || verifiedPayment?.currency).toUpperCase()
+  if (detectedCurrency && detectedCurrency !== expectedCurrency) return false
+  const detectedAmount = normalizeMoney(receiptAnalysis.amount, expectedCurrency)
+  if (!detectedAmount) return false
+  if (expected.mode === 'range') {
+    const min = normalizeMoney(expected.minAmount, expectedCurrency)
+    const max = normalizeMoney(expected.maxAmount, expectedCurrency)
+    return (!min || detectedAmount >= min) && (!max || detectedAmount <= max)
+  }
+  return detectedAmount === normalizeMoney(expected.amount ?? verifiedPayment?.amount, expectedCurrency)
+}
+
+async function resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig, action) {
+  if (cleanString(action?.paymentPurpose) !== 'appointment_deposit') return null
   const schedule = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
   const payment = getConversationalCapability({ capabilitiesConfig }, 'collect_payment')
   const usesAppointmentDeposit = Boolean(
@@ -881,7 +961,7 @@ function actionForEffect(actions, effectType) {
   const acceptedTypes = effectType === 'appointment'
     ? new Set(['book_appointment', 'request_human_booking'])
     : effectType === 'payment'
-      ? new Set(['create_payment_link'])
+      ? new Set(['create_payment_link', 'register_deposit_payment_proof'])
       : new Set(['request_human_booking'])
   return (Array.isArray(actions) ? actions : []).find((action) => (
     acceptedTypes.has(cleanString(action?.type)) && previewActionSucceeded(action)
@@ -900,7 +980,7 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
     effects_json: JSON.stringify(runContext.effects)
   }, effectType)
   const appointmentOfferBinding = effectType === 'payment'
-    ? await resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig)
+    ? await resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig, action)
     : null
 
   const scheduleForAssignment = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
@@ -919,13 +999,34 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
       }
     : effectType === 'payment'
       ? {
-        amount: Number(action.amount),
-        unitAmount: Number(action.unitAmount),
+        amount: Number.isFinite(Number(action.amount)) && Number(action.amount) > 0 ? Number(action.amount) : null,
+        unitAmount: Number.isFinite(Number(action.unitAmount)) && Number(action.unitAmount) > 0 ? Number(action.unitAmount) : null,
         quantity: Number(action.quantity || 1),
         currency: cleanString(action.currency).toUpperCase(),
         concept: cleanString(action.concept),
         productId: cleanString(action.catalogEvidence?.productId),
         priceId: cleanString(action.catalogEvidence?.priceId),
+        collectionMethod: cleanString(action.type) === 'register_deposit_payment_proof' ? 'bank_transfer' : 'payment_link',
+        paymentPurpose: cleanString(action.paymentPurpose),
+        afterPayment: action.afterPayment === 'handoff' ? 'handoff' : 'continue',
+        ...(cleanString(action.type) === 'register_deposit_payment_proof'
+          ? {
+              receiptAnalysis: publicTestReceiptAnalysis(action.outcome?.analysis || action.analysis),
+              expectedMode: cleanString(action.outcome?.expectedMode) === 'range' ? 'range' : 'fixed',
+              expectedAmount: Number.isFinite(Number(action.outcome?.expectedAmount)) && Number(action.outcome.expectedAmount) > 0
+                ? Number(action.outcome.expectedAmount)
+                : null,
+              expectedMinAmount: Number.isFinite(Number(action.outcome?.expectedMinAmount)) && Number(action.outcome.expectedMinAmount) > 0
+                ? Number(action.outcome.expectedMinAmount)
+                : null,
+              expectedMaxAmount: Number.isFinite(Number(action.outcome?.expectedMaxAmount)) && Number(action.outcome.expectedMaxAmount) > 0
+                ? Number(action.outcome.expectedMaxAmount)
+                : null,
+              expectedCurrency: cleanString(action.outcome?.expectedCurrency || action.currency).toUpperCase(),
+              manualReviewRequired: true,
+              paymentConfirmed: false
+            }
+          : {}),
         ...(appointmentOfferBinding ? { appointmentOfferBinding } : {})
       }
       : {
@@ -963,10 +1064,10 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
     try {
       capabilitiesConfig = await assertCurrentTestRunAuthority(claim.run, effectType)
       if (effectType === 'payment' && appointmentOfferBinding) {
-        const currentBinding = await resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig)
+        const currentBinding = await resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig, action)
         if (JSON.stringify(currentBinding) !== JSON.stringify(appointmentOfferBinding)) {
           throw testError(
-            'La oferta de la cita cambió mientras se preparaba el anticipo de prueba. No se creó el link.',
+            'La oferta de la cita cambió mientras se preparaba el anticipo de prueba. No se registró el cobro de prueba.',
             409,
             'test_payment_appointment_offer_changed'
           )
@@ -1016,6 +1117,9 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         })
         const humanBooking = action.type === 'request_human_booking'
         if (humanBooking) {
+          const humanTargetLabel = cleanString(schedule?.handoffUserName)
+            ? `a ${cleanString(schedule.handoffUserName)}`
+            : 'al equipo sin asignar una persona'
           const completed = await completeConversationalAgentTestEffect({
             effectId: claim.effect.id,
             claimToken: claim.claimToken,
@@ -1027,7 +1131,7 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
               contactName: runContext.contact.full_name || runContext.contact.first_name || 'Contacto de prueba',
               safeTestRecord: true,
               appointmentCreated: false,
-              summary: 'El horario real sigue libre. La solicitud se entregará a la persona configurada en una prueba temporal de asignación.'
+              summary: `El horario real sigue libre. La solicitud quedó registrada para entregarse ${humanTargetLabel} y se solicitó la notificación de prueba; no se creó ni prometió una cita.`
             }
           })
           await markPreviewAppointmentOfferMaterialized({ runContext, effectId: claim.effect.id })
@@ -1103,8 +1207,41 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
 
       capabilitiesConfig = await assertCurrentTestRunAuthority(claim.run, 'payment')
       const payment = getConversationalCapability({ capabilitiesConfig }, 'collect_payment')
-      const verifiedPayment = await verifyTestPaymentAction(action, payment)
+      const bankTransferProof = cleanString(action.type) === 'register_deposit_payment_proof'
+      const verifiedPayment = await verifyTestPaymentAction(action, payment, {
+        collectionMethod: bankTransferProof ? 'bank_transfer' : 'payment_link'
+      })
       await assertCurrentTestRunAuthority(claim.run, 'payment')
+      if (bankTransferProof) {
+        const receiptAnalysis = publicTestReceiptAnalysis(action.outcome?.analysis || action.analysis)
+        const detectedAmount = normalizeMoney(receiptAnalysis.amount, receiptAnalysis.currency || verifiedPayment.currency)
+        const receiptMatchesConfiguredPayment = testReceiptMatchesVerifiedPayment(receiptAnalysis, verifiedPayment)
+        return await completeConversationalAgentTestEffect({
+          effectId: claim.effect.id,
+          claimToken: claim.claimToken,
+          status: 'recorded',
+          entityId: null,
+          payload: {
+            ...request,
+            ...verifiedPayment,
+            contactId: runContext.contact.id,
+            contactName: runContext.contact.full_name || runContext.contact.first_name || 'Contacto de prueba',
+            safeTestRecord: true,
+            paymentCreated: false,
+            paymentConfirmed: false,
+            linkSent: false,
+            manualReviewRequired: true,
+            wouldRegisterPendingReview: true,
+            receiptAnalyzed: true,
+            receiptMatchesConfiguredPayment,
+            receiptAnalysis,
+            paymentMode: 'test',
+            summary: receiptMatchesConfiguredPayment
+              ? `Comprobante analizado en Modo test: coincide con ${detectedAmount} ${verifiedPayment.currency}. En vivo quedaría pendiente de revisión; no se creó ni confirmó ningún pago.`
+              : 'La imagen se analizó en Modo test y en vivo quedaría pendiente de revisión humana. No se creó ni confirmó ningún pago.'
+          }
+        })
+      }
       const link = await createConversationalAgentTestPaymentLink({
         effectId: claim.effect.id,
         testRunId: runContext.id,
@@ -1211,16 +1348,21 @@ async function dispatchConversationalAgentTestEffectNotification(effectRow) {
   const payload = parseJson(effectRow.payload_json, {})
   const isAppointment = effectRow.effect_type === 'appointment'
   const isPayment = effectRow.effect_type === 'payment'
+  const isTransferReview = isPayment && payload.collectionMethod === 'bank_transfer'
   const title = isAppointment
-    ? (payload.appointmentCreated
+      ? (payload.appointmentCreated
         ? 'Modo test · cita temporal creada'
-        : 'Modo test · horario entregado a una persona')
-    : isPayment
+        : 'Modo test · horario entregado al equipo')
+    : isTransferReview
+      ? 'Modo test · comprobante analizado'
+      : isPayment
       ? 'Modo test · enlace sandbox creado'
       : 'Modo test · contacto asignado temporalmente'
   const message = isAppointment
     ? `${payload.startTime || 'Horario validado'} · ${payload.contactName || 'Contacto de prueba'} · se limpia en 5 minutos`
-    : isPayment
+    : isTransferReview
+      ? `${payload.amount ?? ''} ${payload.currency || ''} · ${payload.contactName || 'Contacto de prueba'} · pendiente de revisión, sin confirmar pago`.trim()
+      : isPayment
       ? `${payload.amount ?? ''} ${payload.currency || ''} · ${payload.contactName || 'Contacto de prueba'} · sandbox`.trim()
       : `${payload.contactName || 'Contacto de prueba'} · asignación temporal de 5 minutos`
   try {
@@ -1304,7 +1446,15 @@ export async function buildConversationalAgentTestRuntimeEventContext({ runConte
     // la IA afirme que una cita ya eliminada sigue creada.
     if (row.status === 'cleaned' || row.cleanup_status === 'cleaned') continue
     if (row.effect_type === 'payment' && row.status === 'paid_test') {
-      facts.push(`- El pago sandbox por ${payload.amount || ''} ${payload.currency || ''} fue confirmado por webhook. Trátalo como confirmado sólo dentro de esta prueba y continúa con el siguiente objetivo configurado.`)
+      facts.push(payload.afterPayment === 'handoff'
+        ? `- El pago sandbox por ${payload.amount || ''} ${payload.currency || ''} fue confirmado por webhook. En vivo, Ristak pasaría el chat al equipo en este punto. No ejecutes ni prometas otro objetivo después de este pago dentro de la prueba.`
+        : `- El pago sandbox por ${payload.amount || ''} ${payload.currency || ''} fue confirmado por webhook. Trátalo como confirmado sólo dentro de esta prueba y continúa con el siguiente objetivo configurado.`)
+    } else if (
+      row.effect_type === 'payment' &&
+      row.status === 'recorded' &&
+      payload.collectionMethod === 'bank_transfer'
+    ) {
+      facts.push('- El comprobante de transferencia ya fue analizado en esta prueba y quedó representado como pendiente de revisión humana. No existe un pago confirmado ni un enlace sandbox; no afirmes que ya se pagó.')
     } else if (row.effect_type === 'payment' && ['prepared', 'recorded'].includes(row.status)) {
       facts.push('- Ya existe un enlace sandbox pendiente para esta prueba. No crees otro salvo que la persona pida explícitamente reemplazarlo.')
     } else if (
@@ -1518,7 +1668,7 @@ export async function cleanupConversationalAgentTestRun({ testRunId, requestedBy
             if (!['cleaned'].includes(result?.status)) {
               throw testError('La cita temporal todavía está pendiente de borrarse en un calendario externo.', 503, 'test_appointment_cleanup_pending')
             }
-          } else if (row.effect_type === 'payment') {
+          } else if (row.effect_type === 'payment' && payload.paymentCreated === true) {
             await cleanupConversationalAgentTestPaymentLink({
               effectId: row.id,
               requestedByUserId,

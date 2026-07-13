@@ -190,6 +190,84 @@ test('agendar normaliza quién termina la cita y el manifest expone ese contrato
   assert.equal(automatic.handoffUserName, '')
 })
 
+test('Mandar enlace sólo queda listo con una URL web http/https válida', () => {
+  const manifestFor = (item) => buildConversationalCapabilityManifest({
+    capabilitiesConfig: { items: [item] }
+  }).find((capability) => capability.id === 'send_link')
+
+  for (const url of ['https://example.test/registro', 'http://localhost:3000/recurso']) {
+    const verified = manifestFor({ id: 'send_link', enabled: true, linkKind: 'verified_goal', url })
+    assert.equal(verified?.ready, true, url)
+
+    const directTrigger = manifestFor({ id: 'send_link', enabled: true, linkKind: 'trigger', url })
+    assert.equal(directTrigger?.ready, true, url)
+  }
+
+  for (const url of ['mailto:ventas@example.test', 'javascript:alert(1)', '/registro', 'https://']) {
+    const verified = manifestFor({ id: 'send_link', enabled: true, linkKind: 'verified_goal', url })
+    assert.equal(verified?.ready, false, url)
+    assert.match(verified?.missingConfiguration.join(' ') || '', /URL web válida/i)
+
+    const directTrigger = manifestFor({ id: 'send_link', enabled: true, linkKind: 'trigger', url })
+    assert.equal(directTrigger?.ready, false, url)
+    assert.match(directTrigger?.missingConfiguration.join(' ') || '', /URL web válida/i)
+  }
+
+  const storedTrigger = manifestFor({
+    id: 'send_link',
+    enabled: true,
+    linkKind: 'trigger',
+    triggerLinkId: 'trigger_link_real'
+  })
+  assert.equal(storedTrigger?.ready, true)
+
+  const dependentManifest = buildConversationalCapabilityManifest({
+    capabilitiesConfig: {
+      items: [
+        {
+          id: 'custom_goal',
+          enabled: true,
+          description: 'Completar el registro',
+          completion: 'send_link'
+        },
+        {
+          id: 'send_link',
+          enabled: true,
+          linkKind: 'verified_goal',
+          url: 'javascript:alert(1)'
+        }
+      ]
+    }
+  })
+  assert.equal(dependentManifest.find((item) => item.id === 'send_link')?.ready, false)
+  assert.equal(dependentManifest.find((item) => item.id === 'custom_goal')?.ready, false)
+
+  const triggerDependentManifest = buildConversationalCapabilityManifest({
+    capabilitiesConfig: {
+      items: [
+        {
+          id: 'custom_goal',
+          enabled: true,
+          description: 'Completar el registro',
+          completion: 'send_link'
+        },
+        {
+          id: 'send_link',
+          enabled: true,
+          linkKind: 'trigger',
+          url: 'https://example.test/registro'
+        }
+      ]
+    }
+  })
+  assert.equal(triggerDependentManifest.find((item) => item.id === 'send_link')?.ready, true)
+  assert.equal(triggerDependentManifest.find((item) => item.id === 'custom_goal')?.ready, false)
+  assert.match(
+    triggerDependentManifest.find((item) => item.id === 'custom_goal')?.missingConfiguration.join(' ') || '',
+    /enlace verificable.*Mandar enlace/i
+  )
+})
+
 test('publicar agenda humana valida que la persona asignada siga activa', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_human_owner_${suffix}`
@@ -800,7 +878,7 @@ test('validación nativa bloquea capacidades incompletas sólo al publicar', () 
       description: 'Llevar a la persona al registro',
       completion: 'send_link'
     })),
-    /activa y configura la capacidad Mandar enlace/i
+    /enlace verificable.*capacidad Mandar enlace/i
   )
   const dependentCustomManifest = buildConversationalCapabilityManifest(config({
     id: 'custom_goal',

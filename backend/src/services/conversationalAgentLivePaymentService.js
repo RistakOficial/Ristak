@@ -160,6 +160,7 @@ function reusablePaymentIdentity(payload = {}) {
     currency,
     channel: cleanString(payload.channel, 40).toLowerCase(),
     paymentPurpose: cleanString(payload.paymentPurpose, 80).toLowerCase(),
+    afterPayment: payload.afterPayment === 'handoff' ? 'handoff' : 'continue',
     productId,
     priceId,
     // Un producto/precio tiene identidad propia. Los cobros directos y anticipos
@@ -236,7 +237,9 @@ function buildReusablePaymentResult({ row, request, payload, gateway } = {}) {
     canonicalBindingEventId: cleanString(row.binding_event_id, 180),
     expirationMinutes: Number(request.expirationMinutes) || null,
     installments: request.installments || { enabled: false, maxInstallments: 0 },
-    afterPayment: payload.afterPayment === 'handoff' ? 'handoff' : 'continue'
+    // Un link reutilizado conserva el contrato durable con el que fue creado.
+    // Nunca dejamos que el borrador actual cambie qué ocurre después de pagar.
+    afterPayment: request.afterPayment === 'handoff' ? 'handoff' : 'continue'
   }
 }
 
@@ -267,6 +270,7 @@ async function inspectReusablePaymentRow({ row, expectedIdentity, gateway, paylo
     cleanString(eventDetail.paymentProvider, 80).toLowerCase() === gateway &&
     cleanString(eventDetail.paymentEnvironment, 40).toLowerCase() === 'live' &&
     cleanString(eventDetail.paymentPurpose, 80).toLowerCase() === expectedIdentity.paymentPurpose &&
+    (eventDetail.afterPayment === 'handoff' ? 'handoff' : 'continue') === expectedIdentity.afterPayment &&
     cleanString(eventDetail.currency, 3).toUpperCase() === rowCurrency &&
     eventAmountMinor === expectedIdentity.amountMinor &&
     externalIdentity &&

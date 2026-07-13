@@ -3302,16 +3302,29 @@ No existe selector, fallback ni ruta de ejecucion del motor anterior. El editor
 deja plantillas utiles por defecto y separa las piezas que el dueño sí controla:
 
 - Estrategia y capacitacion: conocimiento, objetivo, guion y proceso del negocio.
+  Es la autoridad sobre que debe lograr la conversacion, que debe ocurrir antes de
+  una accion y en que momento se puede consultar, agendar, cobrar, enlazar o
+  entregar a una persona.
 - Personalidad: tono, vocabulario, formalidad, humor, emojis y estilo del agente.
-  Si queda vacia, la voz general del negocio funciona como respaldo.
+  No puede cambiar el proceso ni adelantar una accion definida por Estrategia. Si
+  queda vacia, la voz general del negocio funciona como respaldo.
 - Capacidades: agenda, cobro, enlace, traspaso y objetivo propio, cada una con su
-  configuracion operativa.
+  configuracion operativa. Activarlas sólo pone la herramienta a disposicion del
+  modelo cuando esta completa y lista; no inicia un flujo ni ordena usarla.
 
 La zona blindada existe solamente en servidor y no se muestra como un bloque
 editable ni como "Proteccion de Ristak". Se deriva del manifiesto validado de
 `schedule_appointment`, `collect_payment`, `send_link`, `handoff_human` y
 `custom_goal`; nunca se acepta desde el cliente como fuente de permisos ni se
 mezcla con el texto del dueño.
+
+La jerarquia es deliberada y no intercambiable: la zona blindada manda sólo en
+seguridad, permisos, configuracion y hechos reales; Estrategia manda en proceso y
+momento; Personalidad manda en la forma de expresarlo. Si Personalidad contiene
+una instruccion operativa que contradice Estrategia, se ignora esa parte sin
+silenciar ni descartar la respuesta. Ninguna capacidad activa se interpreta como
+intencion del cliente ni como permiso para brincar los pasos definidos por el
+dueño.
 
 Los dos campos editables aceptan el texto completo sin recortes silenciosos y
 pueden abrirse en un editor enfocado grande sin crear una copia temporal del
@@ -3324,13 +3337,23 @@ ejecuta cualquier guardado pendiente al cerrar, probar, publicar o salir.
 
 Cada capacidad se configura por separado y un agente puede tener varias. Agenda
 queda amarrada a un calendario; cobro a un producto/precio real o a un anticipo
-configurado; enlace a una URL segura; traspaso a sus reglas y usuario; objetivo
-propio a una descripcion concreta. Al editar una capacidad activa el agente se
+configurado; enlace a una URL web absoluta y segura con protocolo HTTP(S);
+traspaso a sus reglas y usuario; objetivo propio a una descripcion concreta. Una
+URL ausente, relativa o con otro protocolo deja `send_link` no disponible y su
+tool no se expone al modelo. Al editar una capacidad activa el agente se
 pausa para probarlo antes de volver a publicar. Un borrador apagado puede quedar
 incompleto; al publicar, el backend valida el manifiesto otra vez y consulta la
 realidad operativa antes de persistir el cambio: calendario y usuario activos,
 producto/precio relacionados y cobrables, moneda de la cuenta, monto de
 anticipo y destino HTTP(S) de enlaces directos o triggers.
+
+Activar Agenda y Cobrar al mismo tiempo no convierte cualquier deposito en
+anticipo de cita. Un cobro conserva `purchase` o `deposit` mientras sea
+independiente. Sólo cuando la agenda ya ofrecio un slot real, la persona acepto
+esa oferta y el terminal abrio un intento durable para ese horario, el cobro se
+etiqueta `appointment_deposit`. Si la oferta falla, vence o el slot se ocupa, el
+mismo turno no puede degradar ese intento a un deposito general y cobrarlo de
+todos modos.
 
 Agenda define ademas `bookingOwner`: `ai` hace que la IA revalide, cree y solo
 despues confirme la cita; `human` deja que la misma IA consulte y ofrezca slots
@@ -3340,6 +3363,16 @@ chat a atencion humana y avisa al equipo sin crear ni prometer una cita. Puede
 asignarse un usuario activo concreto o avisarse al equipo sin asignacion. La
 asignacion generica de `handoff_human` no se hereda silenciosamente cuando
 Agenda dice "sin asignar".
+
+`bookingOwner` decide quien confirma cualquier horario nuevo. En modo IA esto
+incluye crear una cita y mover una existente. En modo humano, la IA puede consultar
+la cita actual, buscar disponibilidad y ofrecer un horario nuevo, pero al recibir
+la confirmacion usa la misma terminal `request_human_booking`: revalida el espacio,
+entrega al equipo la cita original y la nueva fecha, y conserva intacto el horario
+vigente hasta que una persona haga el cambio. `reschedule_appointment` ni siquiera
+se expone al modelo en ese modo. Cancelar sigue siendo una operacion independiente
+controlada por `allowCancellation`; la disponibilidad para cambios depende de
+`allowReschedule`.
 
 En la capacidad Cobrar, `collectionMethod` separa dos caminos excluyentes desde
 el primer campo del formulario. `payment_link` usa una pasarela, crea un enlace
@@ -3415,6 +3448,16 @@ dropdowns con casillas. No existen switches maestros ni uno por campo: una lista
 vacia significa que no debe pedirlos, y seleccionar cualquier campo deriva los
 flags `enabled` correspondientes tanto en frontend como en servidor.
 
+Los requisitos de datos no son un cuestionario general ni se preguntan al inicio
+por reflejo. Se aplican justo al borde de una accion terminal que el modelo ya
+decidio completar: confirmar una cita nueva, cobrar, entregar un enlace u objetivo
+o pasar el chat al equipo. No bloquean consultas, ofertas de horario, cancelaciones
+ni la reagenda de una cita existente. Ademas, sólo aplican si esa capacidad esta
+lista y el `scope` del requisito coincide con la accion concreta. La configuracion de titulares distintos o invitados sólo
+entra cuando Agenda esta disponible y el cliente menciona expresamente que la
+cita es para otra persona o que habra invitados. Esa configuracion nunca obliga a
+pedir telefono, correo o nombre adicional al solicitante del hilo.
+
 Sin `dataRequirements` activo, el agente usa la identidad del hilo y no insiste
 por nombre, telefono, correo, apellido ni otra ficha. `save_contact_data` sólo se
 expone cuando esa configuracion autoriza campos, aplica una allowlist en servidor,
@@ -3423,7 +3466,8 @@ solicitante. Si el dueño desactiva la actualizacion de la ficha, la misma tool
 conserva el dato confirmado únicamente durante esa vuelta para completar la
 accion y no escribe el contacto; así un dato obligatorio no entra en un ciclo
 imposible. Los campos marcados `required` se vuelven una precondicion real de
-servidor antes de cita, cobro o cualquier accion con alcance `any_action`; no
+servidor antes de confirmar una cita nueva, cobrar, entregar un enlace u objetivo
+o pasar el chat cuando tienen alcance `any_action`; no
 basta con que el modelo diga que ya los obtuvo. Los opcionales no bloquean y los
 condicionales conservan su condicion explicita para que el modelo los solicite
 cuando corresponda. Un nombre, telefono o correo valido que ya sea distinto no
@@ -3502,8 +3546,11 @@ supriman respuestas,
 `stay_silent`, `discard_conversation` ni `update_closing_context`. La separacion
 en globos es la unica excepcion de posprocesamiento: si el dueño la activa, una
 mini-IA aislada con `gpt-5-nano` recibe solamente la respuesta final visible y
-devuelve cortes estructurados. Las respuestas menores a 120 caracteres salen en
-un solo globo sin otra llamada; las que superan ese umbral exigen de dos a seis.
+devuelve cortes estructurados. El umbral para dividir, numero maximo de globos,
+tamano minimo y maximo, variacion de los cortes y pausas se toman exactamente de
+la configuracion guardada por el dueño; el backend no los reemplaza en silencio
+por los valores de fabrica. Una respuesta menor al umbral elegido sale en un solo
+globo sin otra llamada.
 No recibe historial, contexto del negocio ni tools; no interpreta la intencion
 del cliente, no decide acciones y no puede agendar, cobrar, transferir ni
 suprimir la respuesta. Esta excepcion usa OpenAI aunque el proveedor principal
@@ -3598,10 +3645,17 @@ agente sigue publicado y todavia cumple entrada, salida y alcance. Los handoffs,
 pausas, omisiones y asignaciones manuales no se borran con heuristicas de edad.
 
 Los seguimientos usan el mismo agente principal y el mismo transcript; no
-inventan un mensaje nuevo del contacto ni llaman un analizador aparte. Las tools
-de mutacion quedan fuera en modo seguimiento. Estado, opt-out, ventana del canal,
-mensajes nuevos y numero de intento se comprueban como hechos externos antes de
-enviar.
+inventan un mensaje nuevo del contacto ni llaman un analizador aparte. El modo
+seguimiento es estrictamente de solo lectura: no expone agenda, cobro, enlaces,
+handoff, guardado de datos ni medidas preventivas mutables. Estado, opt-out,
+ventana del canal, mensajes nuevos y numero de intento se comprueban como hechos
+externos antes de enviar. El primer intervalo comienza cuando termino de
+entregarse la ultima respuesta visible del agente, no cuando entro el mensaje del
+cliente. El segundo comienza cuando termino de enviarse el primer seguimiento;
+por eso puede configurarse con una espera menor que el primero. El formulario
+solo exige que la suma de ambas esperas no rebase 23 horas y el runtime vuelve a
+calcular el reloj si aparece otra salida, para no mandar un recordatorio pegado a
+un mensaje mas reciente.
 
 ### Generacion, preview y entrega
 
@@ -3624,8 +3678,10 @@ tools conservan `dryRun=true`: el telefono muestra decisiones y respuestas, pero
 no crea citas, pagos, asignaciones ni notificaciones.
 
 Cada capacidad guarda su propio **Modo test**. Citas sólo autoriza cita o entrega
-humana; Pagos sólo autoriza el link sandbox del cobro configurado. Activar una no
-amplia la otra ni hace que una cita exija credenciales sandbox de pagos. Al
+humana; Pagos autoriza exclusivamente el mecanismo configurado: link sandbox si
+es `payment_link`, o lectura real del adjunto sin crear dinero si es
+`bank_transfer`. Activar una no amplia la otra ni hace que una cita exija
+credenciales sandbox de pagos. Al
 activarlo, el usuario
 elige un contacto existente y el servidor vuelve a cargar la configuracion
 persistida; nunca confia en calendario, usuario, producto, precio, pasarela,
@@ -3676,6 +3732,11 @@ ve la revision revocada antes de mutar.
   recuperar esos recibos aunque se haya perdido la fila local. En HighLevel,
   la prueba sólo reutiliza un contacto ya ligado o una coincidencia exacta y
   única de solo lectura; nunca crea ni vincula una ficha remota para poder probar.
+  Cuando `bookingOwner=human`, el efecto real de prueba valida el horario y
+  notifica al equipo sin crear ni prometer una cita. Si hay `handoffUserId`,
+  tambien prueba la asignacion temporal y restaura al responsable anterior; si
+  esta vacio, la corrida conserva `scheduleAppointment + notifyOwner` y nunca
+  exige ni fabrica `assignUser`.
 - Cobro por link: vuelve a cruzar capacidad, catalogo o monto directo y
   `account_currency`, fuerza credenciales `test` de Stripe, Conekta, Mercado
   Pago, CLIP o Rebill y falla cerrado si no existen. Nunca cae a live. El link
@@ -3683,6 +3744,9 @@ ve la revision revocada antes de mutar.
   frontend lo sondea para reanudar al mismo agente con contexto factual, sin
   fabricar otro mensaje del cliente. A los cinco minutos expira/invalida el
   checkout y elimina o sanea únicamente la fila financiera marcada como test.
+  HighLevel legacy no puede forzar sandbox por conversacion: el control queda
+  visible si una configuracion anterior lo tenia activo para que el dueño pueda
+  apagarlo, pero el tester no abre una corrida ni sondea webhooks para ese caso.
   `payments.conversational_test_effect_id` liga el pago directamente al efecto y
   permite recuperarlo si el proceso cae entre crear el proveedor y cerrar el
   ledger. Mercado Pago no marca la limpieza como exitosa si no pudo confirmar la
@@ -3690,8 +3754,10 @@ ve la revision revocada antes de mutar.
   El webhook sandbox queda ligado al contacto ya autorizado por la corrida y no
   crea, busca ni enriquece otra ficha de contacto.
 - Transferencia/Deposito: no intenta crear un checkout ni consultar credenciales
-  de pasarela. En el tester permite ensayar el envio y analisis del comprobante,
-  pero nunca lo convierte en dinero confirmado.
+  de pasarela. En el tester lee la foto o PDF adjunto con el mismo analizador del
+  runtime, cruza monto y moneda contra el cobro guardado y registra sólo un efecto
+  aislado de `pending_review`: no inserta una transaccion, no crea link, no marca
+  fondos confirmados y su limpieza no intenta borrar un checkout inexistente.
 - Asignacion: cambia de verdad al usuario configurado, manda notificacion/push
   `[PRUEBA]`, conserva al responsable anterior y lo restaura a los cinco minutos.
   La fila del contacto lleva una marca CAS; una reasignacion humana o handoff live
@@ -3704,9 +3770,11 @@ de verdad y no depende de que el navegador permanezca abierto.
 
 ### Herramientas y verdad operativa
 
-La lista de tools se construye desde las capacidades activadas; una
-capacidad apagada no se puede recuperar escribiendo su nombre en el prompt. Las
-tools de lectura consultan negocio, contacto y catalogo real. Cada tool
+La lista de tools se construye sólo con capacidades `enabled` que ademas estan
+`ready` en la configuracion efectiva del servidor. Una capacidad apagada,
+incompleta o ligada a un recurso invalido no se puede recuperar escribiendo su
+nombre en el prompt y ni siquiera se expone como tool al modelo. Las tools de
+lectura consultan negocio, contacto y catalogo real. Cada tool
 valida sus precondiciones y sella en `ctx.actions[].outcome` si el resultado fue
 `ok`, `error` o `simulated`. El estado final usa ese outcome y la base de datos,
 nunca un booleano escrito por el modelo.
@@ -3858,6 +3926,11 @@ nunca un booleano escrito por el modelo.
   misma revalidacion estricta y el mismo slot UTC, pero sella una solicitud humana
   idempotente en lugar de llamar al controller de creacion. Un retry exacto no
   duplica el aviso y un slot ocupado no cambia estado, asignacion ni notificaciones.
+  En ese modo `reschedule_appointment` tampoco se expone: si la persona confirma
+  una oferta `purpose=reschedule`, `request_human_booking` vuelve a comprobar el
+  horario y entrega al equipo el ID de la cita original y el horario solicitado.
+  La cita conserva fecha, estado y participantes anteriores hasta que una persona
+  haga el cambio; el agente nunca afirma que ya fue reagendada.
   `get_contact_appointments` pagina todas las citas futuras activas del contacto
   solicitante en el calendario configurado; cada pagina conserva total,
   `hasMore` y `nextPage`, de modo que una recurrencia posterior no obliga a aceptar
@@ -3914,6 +3987,20 @@ nunca un booleano escrito por el modelo.
   minutos de vencimiento y accion posterior forman parte del hash; el instante
   absoluto de expiracion lo decide una sola vez la corrida ganadora y los retries
   concurrentes o secuenciales reutilizan el valor del resultado/ledger canonico.
+  La accion `afterPayment` queda congelada en esa misma fuente durable y sólo se
+  ejecuta despues de confirmar fondos reales. `continue` reanuda al mismo
+  Agent/Runner con el pago como hecho verificado, sin inventar otro mensaje del
+  cliente; `handoff` cambia de forma deterministica el chat a
+  `human/ready_for_human`, crea su evento y avisa al equipo. El modelo no vuelve a
+  decidir cual de las dos aplicar desde el texto del webhook, y un pago
+  `pending`, sandbox o un comprobante sin aprobar nunca dispara ninguna.
+  Esa accion opera sólo sobre el agente y canal que crearon la fuente durable del
+  cobro. Un webhook tardio de un agente eliminado nunca toma, cierra ni transfiere
+  el estado de su reemplazo. Una pausa, takeover o cierre humano posterior se
+  conserva y no genera un aviso falso de entrega. Si el pago era anticipo y la
+  agenda la termina la IA, el handoff posterior sólo puede ejecutarse despues del
+  cierre durable `appointment_booked`; nunca convierte un estado todavía activo
+  en humano antes de crear la cita.
   Cuando el cobro es el anticipo de una cita, la seleccion abre primero un intento
   durable y la fuente exacta lo reclama antes de llamar al proveedor. El mismo
   mensaje puede reentrar despues de un crash con ese intento ya `collecting` o
@@ -4014,6 +4101,10 @@ nunca un booleano escrito por el modelo.
   un anticipo independiente (`deposit`) aunque no exista agenda: ambos quedan
   pendientes y sólo `approve-transfer-proof` puede convertirlos en pago real y
   completar la compra una vez.
+  Tener Agenda habilitada no cambia ese proposito. El comprobante sólo conserva
+  `appointment_deposit` cuando existe el intento durable de la cita exacta; el
+  analizador y el tester transportan ese proposito de forma estructurada en vez
+  de inferirlo por texto o por la mera presencia de un calendario.
   Si el anticipo aprobado pertenecia a una cita, el runner recibe el pago como
   contexto factual interno. El evento fuente del cobro conserva el ID y snapshot
   exactos de la seleccion durable que existia antes de crear el enlace o registrar
@@ -4067,8 +4158,16 @@ nunca un booleano escrito por el modelo.
   pueden cerrar una meta pendiente. Reutilizan el resumen factual, no levantan
   otra IA y no aplican asignaciones, etiquetas ni campos ajenos a las capacidades
   blindadas.
-- Meta por URL: el enlace visible contiene solo un ID de seguimiento y se puede
-  entregar aunque apunte a una pagina externa generica. La meta queda `pending`:
+- Enlaces y meta por URL: **Mandar enlace** por sí sola entrega la URL segura
+  configurada mediante `send_trigger_link`, sin agregar identidad, crear una meta
+  ni cambiar el chat a humano. **Objetivo propio** usa otra tool fisicamente
+  separada, `send_goal_url`, para preparar el enlace rastreable y crear la meta
+  pendiente. Si ambas capacidades estan activas se exponen ambas tools con
+  contratos distintos: una llamada a `send_trigger_link` nunca puede convertirse
+  globalmente en meta por el simple hecho de que Objetivo propio tambien exista.
+  Sólo cuando **Objetivo propio** esta activo, termina mediante `send_link` y usa
+  un enlace `verified_goal`, el enlace visible contiene un ID de seguimiento. La
+  meta queda `pending`:
   abrir el enlace no prueba una cita ni un pago. El sistema externo debe estar
   conectado a Ristak y confirmar el resultado por la API autenticada
   `POST /api/external/conversational-agent/goals/:goalId/complete`, con API token

@@ -13,6 +13,10 @@ import {
 } from '../src/agents/conversational/tools.js'
 import { buildNativeConversationalInstructions } from '../src/agents/conversational/nativePrompt.js'
 import {
+  buildConversationalCapabilityManifest,
+  normalizeConversationalCapabilitiesConfig
+} from '../src/agents/conversational/nativeRuntimeConfig.js'
+import {
   applyConversationalAgentPreventiveMeasure,
   getActiveConversationalAgentPreventiveMeasure
 } from '../src/services/conversationalAgentSafetyService.js'
@@ -28,6 +32,32 @@ function uniquePhone() {
 }
 
 function buildContext(contactId, fields, { items = [], policy = 'replace_placeholders', dryRun = false } = {}) {
+  const scopes = new Set((Array.isArray(fields) ? fields : []).map((field) => field?.scope || 'any_action'))
+  const inferredItems = []
+  if (scopes.has('appointment')) {
+    inferredItems.push({
+      id: 'schedule_appointment',
+      enabled: true,
+      calendarId: 'calendar-contact-data-test',
+      bookingOwner: 'ai'
+    })
+  }
+  if (scopes.has('payment')) {
+    inferredItems.push({
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'full_payment',
+      chargeType: 'direct',
+      collectionMethod: 'payment_link',
+      gateway: 'stripe',
+      direct: { amount: 100, currency: 'MXN', concept: 'Prueba de datos' },
+      currency: 'MXN'
+    })
+  }
+  if (scopes.has('any_action')) {
+    inferredItems.push({ id: 'handoff_human', enabled: true, rules: '' })
+  }
+  const effectiveItems = items.length ? items : inferredItems
   const capabilitiesConfig = {
     schemaVersion: 2,
     dataRequirements: {
@@ -41,7 +71,7 @@ function buildContext(contactId, fields, { items = [], policy = 'replace_placeho
         maxGuests: 10
       }
     },
-    items
+    items: effectiveItems
   }
   return {
     runtimeMode: 'tool_calling_v2',
@@ -59,17 +89,7 @@ function buildContext(contactId, fields, { items = [], policy = 'replace_placeho
 }
 
 function contactDataPayload(overrides = {}) {
-  return {
-    fullName: null,
-    phone: null,
-    alternatePhone: null,
-    email: null,
-    company: null,
-    address: null,
-    customValues: null,
-    confirmedReplacement: false,
-    ...overrides
-  }
+  return { ...overrides }
 }
 
 function temporarySafetyPolicy() {
@@ -730,13 +750,8 @@ test('save_contact_data sólo guarda campos autorizados y valida teléfono/corre
     }])
     const nameTool = createConversationalTools(nameContext).find((item) => item.name === 'save_contact_data')
     assert.ok(nameTool)
-
-    const unauthorized = await nameTool.invoke(null, JSON.stringify(contactDataPayload({
-      fullName: 'Paty Jiménez',
-      customValues: [{ key: 'vip_secret', value: 'sí' }]
-    })))
-    assert.equal(unauthorized.ok, false)
-    assert.match(unauthorized.error, /no están autorizados/i)
+    assert.deepEqual(Object.keys(nameTool.parameters.properties), ['fullName'])
+    assert.equal(nameTool.parameters.additionalProperties, false)
     assert.equal((await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId])).full_name, 'Usuario de WhatsApp')
 
     const saved = await nameTool.invoke(null, JSON.stringify(contactDataPayload({ fullName: 'Raúl Gómez' })))
@@ -780,6 +795,115 @@ test('save_contact_data no se expone cuando Datos requeridos está apagado', () 
     config: { capabilitiesConfig }
   })
   assert.equal(tools.some((item) => item.name === 'save_contact_data'), false)
+})
+
+test('campos de titular o invitados nunca autorizan save_contact_data del solicitante', () => {
+  const capabilitiesConfig = normalizeConversationalCapabilitiesConfig({
+    dataRequirements: {
+      fields: [],
+      updateContact: { enabled: true, policy: 'replace_placeholders' },
+      participants: {
+        allowPrimaryAttendeeDifferentFromRequester: true,
+        guestFields: ['name', 'phone'],
+        maxGuests: 4
+      }
+    },
+    items: [{
+      id: 'schedule_appointment',
+      enabled: true,
+      calendarId: 'calendar-participants-only',
+      bookingOwner: 'ai'
+    }]
+  })
+  const tools = createConversationalTools({
+    runtimeMode: 'tool_calling_v2',
+    contactId: `contact_participants_only_${randomUUID()}`,
+    dryRun: true,
+    followUpMode: false,
+    actions: [],
+    capabilitiesConfig,
+    config: { id: `agent_participants_only_${randomUUID()}`, capabilitiesConfig }
+  })
+  const prompt = buildNativeConversationalInstructions({
+    promptConfig: {
+      strategyText: 'Antes de ofrecer una cita entiende el motivo de la persona.',
+      personalityText: 'Habla con calidez.'
+    },
+    capabilitiesConfig,
+    capabilityManifest: buildConversationalCapabilityManifest({ capabilitiesConfig })
+  })
+
+  assert.equal(capabilitiesConfig.dataRequirements.enabled, true)
+  assert.equal(capabilitiesConfig.dataRequirements.fields.length, 0)
+  assert.equal(tools.some((item) => item.name === 'save_contact_data'), false)
+  assert.match(prompt, /sólo después de que la persona diga que la cita será para alguien distinto/i)
+  assert.match(prompt, /primaryAttendee=null y guests=\[\]/i)
+  assert.doesNotMatch(prompt, /cuando quien escribe confirme un dato suyo, usa save_contact_data/i)
+})
+
+test('residuos de invitados no afectan otras capacidades cuando agenda está apagada', () => {
+  const capabilitiesConfig = normalizeConversationalCapabilitiesConfig({
+    dataRequirements: {
+      fields: [],
+      participants: { guestFields: ['name', 'phone'], maxGuests: 3 }
+    },
+    items: [{
+      id: 'collect_payment',
+      enabled: true,
+      paymentMode: 'full_payment',
+      chargeType: 'direct',
+      collectionMethod: 'payment_link',
+      gateway: 'stripe',
+      direct: { amount: 500, currency: 'MXN', concept: 'Servicio' },
+      currency: 'MXN'
+    }]
+  })
+  const manifest = buildConversationalCapabilityManifest({ capabilitiesConfig })
+  const prompt = buildNativeConversationalInstructions({ capabilitiesConfig, capabilityManifest: manifest })
+  const tools = createConversationalTools({
+    contactId: `contact_payment_only_${randomUUID()}`,
+    agentId: `agent_payment_only_${randomUUID()}`,
+    dryRun: true,
+    followUpMode: false,
+    actions: [],
+    capabilitiesConfig,
+    config: { capabilitiesConfig }
+  })
+
+  assert.equal(tools.some((item) => item.name === 'save_contact_data'), false)
+  assert.equal(tools.some((item) => item.name === 'create_payment_link'), true)
+  assert.doesNotMatch(prompt, /titular distinto|invitados|primaryAttendee|guests=\[\]/i)
+})
+
+test('scope any_action sólo bloquea el resultado terminal y no una consulta previa', async () => {
+  const contactId = `contact_any_terminal_${randomUUID()}`
+  await db.run(
+    `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+     VALUES (?, 'Cliente sin correo', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, uniquePhone()]
+  )
+  const fields = [{ field: 'email', level: 'required', scope: 'any_action' }]
+  const ctx = buildContext(contactId, fields, { dryRun: true })
+  try {
+    const tools = createConversationalTools(ctx)
+    const profile = await tools.find((item) => item.name === 'get_contact_profile').invoke(null, '{}')
+    const handoff = await tools.find((item) => item.name === 'send_to_human').invoke(null, JSON.stringify({
+      motivo: 'La persona pidió hablar con el equipo',
+      resumen: 'Solicita atención humana.'
+    }))
+    const prompt = buildNativeConversationalInstructions({
+      capabilitiesConfig: ctx.capabilitiesConfig,
+      capabilityManifest: buildConversationalCapabilityManifest({ capabilitiesConfig: ctx.capabilitiesConfig })
+    })
+
+    assert.equal(profile.ok, true)
+    assert.equal(handoff.needsData, true)
+    assert.deepEqual(handoff.requiredFields, [{ field: 'email', label: 'correo' }])
+    assert.match(prompt, /antes de completar una cita nueva, un cobro, una entrega de enlace, un objetivo o un traspaso/i)
+    assert.doesNotMatch(prompt, /antes de ejecutar una acción|antes de cualquier acción/i)
+  } finally {
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
 })
 
 test('un dato obligatorio bloquea el cobro hasta quedar confirmado en la ficha', async () => {
@@ -896,11 +1020,11 @@ test('un booleano del modelo nunca reemplaza una identidad válida distinta', as
   const ctx = buildContext(contactId, fields, { policy: 'confirm_changes' })
   try {
     const saveTool = createConversationalTools(ctx).find((item) => item.name === 'save_contact_data')
+    assert.equal(Object.hasOwn(saveTool.parameters.properties, 'confirmedReplacement'), false)
     const result = await saveTool.invoke(null, JSON.stringify(contactDataPayload({
       fullName: 'Paty Jiménez',
       phone: replacementPhone,
-      email: 'paty@example.com',
-      confirmedReplacement: true
+      email: 'paty@example.com'
     })))
     assert.equal(result.ok, true)
     assert.deepEqual(new Set(result.preservedFields), new Set(['full_name', 'phone', 'email']))
