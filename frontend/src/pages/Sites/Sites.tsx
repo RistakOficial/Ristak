@@ -222,6 +222,7 @@ import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
 // variables/clases por bloque y los helpers de paridad vienen de UNA copia.
 import {
   DEFAULT_THEME as SHARED_DEFAULT_THEME,
+  EMBEDDED_FORM_DEFAULT_THEME,
   appendCalendarEmbedParams,
   blockHasStyleWrapper,
   blockTextContrastBackground,
@@ -1643,8 +1644,7 @@ const EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH = 0
 const EMBEDDED_FORM_VISIBLE_BORDER_COLOR = '#dbe3ef'
 const FORM_PAGE_BORDER_WIDTH_MAX = 80
 const createDefaultEmbeddedFormThemeOverride = (): Partial<SiteTheme> => ({
-  pageBorderWidth: EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH,
-  pageBorderColor: 'transparent'
+  ...EMBEDDED_FORM_DEFAULT_THEME
 })
 const HEADER_PANEL_BLOCK_TYPE: SiteBlockType = 'header_panel'
 const FOOTER_PANEL_BLOCK_TYPE: SiteBlockType = 'footer_panel'
@@ -6606,6 +6606,7 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] =>
 
 const createEmbeddedFormDraftSettings = (siteId: string) => ({
   formSiteId: '',
+  embeddedFullWidth: false,
   embeddedSiteId: undefined,
   embeddedSiteName: undefined,
   embeddedTheme: createDefaultEmbeddedFormThemeOverride(),
@@ -6909,6 +6910,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       settings: blockSettings({
         description: '',
         formSiteId: '',
+        embeddedFullWidth: false,
         ...formCompletionDefaults,
         embeddedTheme: createDefaultEmbeddedFormThemeOverride()
       })

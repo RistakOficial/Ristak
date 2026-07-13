@@ -159,9 +159,15 @@ test('buildEmbeddedFormTheme: el theme del host se filtra al frame', () => {
   })
   assert.equal(sourceTheme.formChoiceStyle, 'pills')
   assert.equal(sourceTheme.backgroundColor, '#123456')
-  // Defaults de embed (borde 0/transparente) aplican en lienzos no importados.
+  // Defaults de embed aplican en lienzos no importados y dejan el inspector y el
+  // render público con el mismo preset desde el primer paint.
+  assert.equal(sourceTheme.pageMaxWidth, EMBEDDED_FORM_DEFAULT_THEME.pageMaxWidth)
+  assert.equal(sourceTheme.pagePadding, EMBEDDED_FORM_DEFAULT_THEME.pagePadding)
+  assert.equal(sourceTheme.pageRadius, EMBEDDED_FORM_DEFAULT_THEME.pageRadius)
   assert.equal(sourceTheme.pageBorderWidth, EMBEDDED_FORM_DEFAULT_THEME.pageBorderWidth)
   assert.equal(sourceTheme.pageBorderColor, EMBEDDED_FORM_DEFAULT_THEME.pageBorderColor)
+  assert.equal(sourceTheme.formContentAlign, EMBEDDED_FORM_DEFAULT_THEME.formContentAlign)
+  assert.equal(sourceTheme.formFieldWidth, EMBEDDED_FORM_DEFAULT_THEME.formFieldWidth)
   // theme = DEFAULT_THEME + cadena cruda.
   assert.equal(theme.accentColor, DEFAULT_THEME.accentColor)
   assert.equal(theme.backgroundColor, '#123456')

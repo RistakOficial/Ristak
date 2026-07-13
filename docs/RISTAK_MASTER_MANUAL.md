@@ -2663,6 +2663,12 @@ diseno/estilo, para no duplicar la misma decision en dos superficies.
 Las acciones de formularios, calendarios, pagos y botones pueden avanzar a la
 siguiente pagina, redirigir a una URL o ir a una pagina especifica del mismo
 proyecto usando el selector de paginas de esa landing.
+Al agregar un formulario nuevo dentro de una landing, el bloque nace con un
+preset visual consistente entre editor y publicado: no se estira a toda la
+franja, queda centrado, usa espacio compacto, ancho angosto, esquinas cuadradas
+y borde fino. Estos valores solo son el punto de partida; el usuario puede
+ajustarlos desde Diseño del formulario. Los formularios guardados que se
+embeben conservan su diseño propio.
 La biblioteca de sitios y formularios permite seleccionar varios elementos con
 checkboxes en vista galeria, lista o tabla y eliminarlos juntos con confirmacion
 destructiva. Los controles masivos de `Todos los visibles` y `Eliminar` aparecen

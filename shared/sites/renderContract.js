@@ -29,8 +29,13 @@ const LARGE_TEXT_BLOCK_TYPES = new Set(['title', 'headline', 'hero', 'cta', 'sub
 const AUTO_DARK_TEXT = '#0f172a'
 const AUTO_LIGHT_TEXT = '#f4f4f6'
 const EMBEDDED_FORM_DEFAULT_THEME = {
-  pageBorderWidth: 0,
-  pageBorderColor: 'transparent'
+  pageMaxWidth: 480,
+  pagePadding: 16,
+  pageRadius: 0,
+  pageBorderWidth: 1,
+  pageBorderColor: '#dbe3ef',
+  formContentAlign: 'center',
+  formFieldWidth: 480
 }
 const FORM_PAGE_BORDER_WIDTH_MAX = 80
 

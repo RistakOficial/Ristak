@@ -116,7 +116,15 @@ export interface PopupSurfaceDefaults {
 }
 
 export declare const DEFAULT_THEME: { accentColor: string; backgroundColor: string; textColor: string }
-export declare const EMBEDDED_FORM_DEFAULT_THEME: { pageBorderWidth: number; pageBorderColor: string }
+export declare const EMBEDDED_FORM_DEFAULT_THEME: {
+  pageMaxWidth: number
+  pagePadding: number
+  pageRadius: number
+  pageBorderWidth: number
+  pageBorderColor: string
+  formContentAlign: 'center'
+  formFieldWidth: number
+}
 export declare const MIN_TEXT_CONTRAST_RATIO: number
 export declare const AUTO_DARK_TEXT: string
 export declare const AUTO_LIGHT_TEXT: string
