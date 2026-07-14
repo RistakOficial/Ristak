@@ -2553,7 +2553,7 @@ export const MetaAdsIntegration: React.FC = () => {
       unlocked: hasManualAccessToken && canEditMetaAssets
     },
     {
-      title: 'Dataset',
+      title: 'Dataset o pixel',
       description: 'Medición web opcional',
       done: hasPixel,
       required: false,
@@ -2582,6 +2582,13 @@ export const MetaAdsIntegration: React.FC = () => {
     void refreshMetaWizardStep(activeStep, { silent: true })
   }, [activeStep, isEditingMetaConfig, showManualConnection, wizardRefreshNonce, shouldShowWizard, isLoading])
 
+  const getMetaAssetDisplayName = (name: string | null | undefined, id: string, fallback: string) => {
+    const cleanName = String(name || '').trim()
+    const normalizedName = cleanName.replace(/^@/, '').replace(/^act_/, '')
+    const normalizedId = String(id || '').trim().replace(/^act_/, '')
+    return cleanName && normalizedName !== normalizedId ? cleanName : fallback
+  }
+
   const getSelectedAdAccountAsset = () => {
     if (!connectedAdAccountId) return null
     const normalizedId = connectedAdAccountId.replace(/^act_/, '')
@@ -2589,9 +2596,10 @@ export const MetaAdsIntegration: React.FC = () => {
       acc.id.replace(/^act_/, '') === normalizedId
     )
     const savedAsset = metaOAuthStatus?.selectedAssets?.adAccount
+    const candidateName = matchingAccount?.name || (savedAsset?.id.replace(/^act_/, '') === normalizedId ? savedAsset.name : '')
     return {
       id: normalizedId,
-      name: matchingAccount?.name || (savedAsset?.id.replace(/^act_/, '') === normalizedId ? savedAsset.name : '') || normalizedId
+      name: getMetaAssetDisplayName(candidateName, normalizedId, 'Cuenta publicitaria seleccionada')
     }
   }
 
@@ -2599,9 +2607,10 @@ export const MetaAdsIntegration: React.FC = () => {
     if (!connectedPixelId) return null
     const matchingPixel = pixels.find(p => p.id === connectedPixelId)
     const savedAsset = metaOAuthStatus?.selectedAssets?.dataset
+    const candidateName = matchingPixel?.name || (savedAsset?.id === connectedPixelId ? savedAsset.name : '')
     return {
       id: connectedPixelId,
-      name: matchingPixel?.name || (savedAsset?.id === connectedPixelId ? savedAsset.name : '') || connectedPixelId
+      name: getMetaAssetDisplayName(candidateName, connectedPixelId, 'Dataset o pixel seleccionado')
     }
   }
 
@@ -2610,9 +2619,10 @@ export const MetaAdsIntegration: React.FC = () => {
     const pageId = connectedPageId
     const matchingPage = pages.find(page => page.id === pageId)
     const savedAsset = metaOAuthStatus?.selectedAssets?.page
+    const candidateName = matchingPage?.name || (savedAsset?.id === pageId ? savedAsset.name : '')
     return {
       id: pageId,
-      name: matchingPage?.name || (savedAsset?.id === pageId ? savedAsset.name : '') || pageId
+      name: getMetaAssetDisplayName(candidateName, pageId, 'Página seleccionada')
     }
   }
 
@@ -2624,11 +2634,14 @@ export const MetaAdsIntegration: React.FC = () => {
     const name = matchingAccount
       ? (matchingAccount.username ? `@${matchingAccount.username}` : matchingAccount.name)
       : (savedAsset?.id === instagramAccountId ? savedAsset.name : '')
-    return { id: instagramAccountId, name: name || instagramAccountId }
+    return {
+      id: instagramAccountId,
+      name: getMetaAssetDisplayName(name, instagramAccountId, 'Cuenta de Instagram seleccionada')
+    }
   }
 
   const formatSelectedAsset = (asset: { id: string; name: string } | null, fallback: string) => (
-    asset ? `${asset.name} (${asset.id})` : fallback
+    asset?.name || fallback
   )
 
   const getSelectedAdAccountLabel = () => formatSelectedAsset(getSelectedAdAccountAsset(), 'Pendiente')
@@ -2638,12 +2651,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const renderConnectedAsset = (asset: { id: string; name: string } | null, fallback: string) => (
     <span className={styles.connectedListValue}>
-      {asset ? (
-        <span className={styles.connectedAssetIdentity}>
-          <span className={styles.connectedAssetName}>{asset.name}</span>
-          <small className={styles.connectedAssetId}>(ID: {asset.id})</small>
-        </span>
-      ) : fallback}
+      {asset ? <span className={styles.connectedAssetName}>{asset.name}</span> : fallback}
     </span>
   )
 
@@ -2668,11 +2676,11 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const renderOAuthSelectValue = (
     asset: { id: string; name: string } | null,
-    fallback: string
+    fallback: string,
+    selectedFallback: string
   ) => (
     <span className={styles.assetSelectValue}>
-      <span>{asset?.name || fallback}</span>
-      {asset ? <small>(ID: {asset.id})</small> : null}
+      <span>{asset ? getMetaAssetDisplayName(asset.name, asset.id, selectedFallback) : fallback}</span>
     </span>
   )
 
@@ -2886,7 +2894,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   <option value="">-- Selecciona una cuenta --</option>
                   {adAccounts.map((account) => (
                     <option key={account.id} value={account.id}>
-                      {account.name} ({account.id}) - {account.currency}
+                      {getMetaAssetDisplayName(account.name, account.id, 'Cuenta publicitaria')}
                     </option>
                   ))}
                 </CustomSelect>
@@ -2910,7 +2918,7 @@ export const MetaAdsIntegration: React.FC = () => {
         <>
           <div className={styles.stepIntro}>
             <span className={styles.stepEyebrow}>Paso 3</span>
-            <h3 className={styles.stepTitle}>Elige el Dataset</h3>
+            <h3 className={styles.stepTitle}>Elige el Dataset o pixel</h3>
             <p className={styles.stepText}>
               Es opcional para reportes de anuncios, pero necesario si quieres activar medición web en el snippet o usar Conversions API.
             </p>
@@ -2921,7 +2929,7 @@ export const MetaAdsIntegration: React.FC = () => {
           ) : (
             <>
               <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
-                <span className={styles.formLabel}>Dataset</span>
+                <span className={styles.formLabel}>Dataset o pixel</span>
                 {credentials.pixelId ? (
                   <div className={styles.filterChip}>
                     <span className={styles.chipText}>{getSelectedPixelLabel()}</span>
@@ -2946,10 +2954,10 @@ export const MetaAdsIntegration: React.FC = () => {
                     }}
                     value={credentials.pixelId || ''}
                   >
-                    <option value="">-- Sin Dataset (opcional) --</option>
+                    <option value="">-- Sin Dataset o pixel (opcional) --</option>
                     {pixels.map((pixel) => (
                       <option key={pixel.id} value={pixel.id}>
-                        {pixel.name} ({pixel.id})
+                        {getMetaAssetDisplayName(pixel.name, pixel.id, 'Dataset o pixel')}
                       </option>
                     ))}
                   </CustomSelect>
@@ -2964,7 +2972,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 )}
               </label>
               <p className={styles.stepHint}>
-                Si no necesitas Dataset por ahora, puedes saltar directo a las páginas de Meta.
+                Si no necesitas Dataset o pixel por ahora, puedes saltar directo a las páginas de Meta.
               </p>
             </>
           )}
@@ -3040,7 +3048,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <option value="">-- Sin Facebook Page por ahora --</option>
                     {pages.map((page) => (
                       <option key={page.id} value={page.id}>
-                        {page.name} ({page.id}){page.category ? ` - ${page.category}` : ''}
+                        {getMetaAssetDisplayName(page.name, page.id, 'Página de Facebook')}
                       </option>
                     ))}
                   </CustomSelect>
@@ -3091,7 +3099,11 @@ export const MetaAdsIntegration: React.FC = () => {
                     <option value="">-- Sin Instagram por ahora --</option>
                     {selectableInstagramAccounts.map((account) => (
                       <option key={account.sourceId} value={account.sourceId}>
-                        {account.username ? `@${account.username}` : account.name} ({account.sourceId})
+                        {getMetaAssetDisplayName(
+                          account.username ? `@${account.username}` : account.name,
+                          account.sourceId,
+                          'Cuenta de Instagram'
+                        )}
                       </option>
                     ))}
                   </CustomSelect>
@@ -3173,7 +3185,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   <div>
                     <h3 className={styles.sectionTitle}>Meta Ads</h3>
                     <p className={styles.sectionDescription}>
-                      Elige la cuenta publicitaria y, si la necesitas, el Dataset de conversiones. Los activos se aplican al guardar; la frecuencia automática se guarda al seleccionarla.
+                      Elige la cuenta publicitaria y, si lo necesitas, el Dataset o pixel. Los activos se aplican al guardar; la frecuencia automática se guarda al seleccionarla.
                     </p>
                   </div>
                   <div className={styles.connectedActions}>
@@ -3221,7 +3233,8 @@ export const MetaAdsIntegration: React.FC = () => {
                             id: selectedOAuthAdAccount.id.replace(/^act_/, ''),
                             name: selectedOAuthAdAccount.name
                           } : null,
-                          'Sin cuenta publicitaria'
+                          'Sin cuenta publicitaria',
+                          'Cuenta publicitaria seleccionada'
                         )}
                         onChange={(event) => updateMetaOAuthAssetDraft({ adAccountId: event.target.value })}
                         disabled={Boolean(savingMetaAssetSection) || Boolean(metaOAuthSession.permissions.missing.length)}
@@ -3230,34 +3243,37 @@ export const MetaAdsIntegration: React.FC = () => {
                         <option value="">Sin cuenta publicitaria</option>
                         {metaOAuthSession.adAccounts.map(account => (
                           <option key={account.id} value={account.id.replace(/^act_/, '')}>
-                            {account.name} ({account.id.replace(/^act_/, '')})
+                            {getMetaAssetDisplayName(account.name, account.id, 'Cuenta publicitaria')}
                           </option>
                         ))}
                       </CustomSelect>
                     ) : renderConnectedAsset(getSelectedAdAccountAsset(), 'Sin cuenta publicitaria')}
                   </div>
                   <div className={styles.connectedListRow}>
-                    <span className={styles.connectedListLabel}>Dataset de conversiones (Opcional)</span>
+                    <span className={styles.connectedListLabel}>Dataset o pixel (Opcional)</span>
                     {isUnifiedOAuthConnected && metaOAuthSession ? (
                       <CustomSelect
                         className={styles.connectedAssetSelect}
                         value={metaOAuthSelection.pixelId || ''}
                         searchable
-                        searchPlaceholder="Buscar Dataset…"
+                        searchPlaceholder="Buscar Dataset o pixel…"
                         selectedContent={renderOAuthSelectValue(
                           selectedOAuthDataset ? { id: selectedOAuthDataset.id, name: selectedOAuthDataset.name } : null,
-                          'Sin Dataset'
+                          'Sin Dataset o pixel',
+                          'Dataset o pixel seleccionado'
                         )}
                         onChange={(event) => updateMetaOAuthAssetDraft({ pixelId: event.target.value })}
                         disabled={!selectedOAuthAdAccount || Boolean(savingMetaAssetSection) || Boolean(metaOAuthSession.permissions.missing.length)}
-                        aria-label="Dataset de conversiones"
+                        aria-label="Dataset o pixel"
                       >
-                        <option value="">Sin Dataset</option>
+                        <option value="">Sin Dataset o pixel</option>
                         {availableOAuthDatasets.map(dataset => (
-                          <option key={dataset.id} value={dataset.id}>{dataset.name} ({dataset.id})</option>
+                          <option key={dataset.id} value={dataset.id}>
+                            {getMetaAssetDisplayName(dataset.name, dataset.id, 'Dataset o pixel')}
+                          </option>
                         ))}
                       </CustomSelect>
-                    ) : renderConnectedAsset(getSelectedPixelAsset(), 'Sin Dataset')}
+                    ) : renderConnectedAsset(getSelectedPixelAsset(), 'Sin Dataset o pixel')}
                   </div>
                   <div className={styles.connectedListRow}>
                     <div className={styles.connectedListCopy}>
@@ -3331,7 +3347,8 @@ export const MetaAdsIntegration: React.FC = () => {
                           searchPlaceholder="Buscar página…"
                           selectedContent={renderOAuthSelectValue(
                             selectedOAuthPage ? { id: selectedOAuthPage.id, name: selectedOAuthPage.name } : null,
-                            'Sin página'
+                            'Sin página',
+                            'Página seleccionada'
                           )}
                           onChange={(event) => updateMetaOAuthAssetDraft({ pageId: event.target.value })}
                           disabled={Boolean(savingMetaAssetSection) || Boolean(metaOAuthSession.permissions.missing.length)}
@@ -3339,7 +3356,9 @@ export const MetaAdsIntegration: React.FC = () => {
                         >
                           <option value="">Sin página</option>
                           {metaOAuthSession.pages.map(page => (
-                            <option key={page.id} value={page.id}>{page.name} ({page.id})</option>
+                            <option key={page.id} value={page.id}>
+                              {getMetaAssetDisplayName(page.name, page.id, 'Página de Facebook')}
+                            </option>
                           ))}
                         </CustomSelect>
                       </label>
@@ -3455,7 +3474,8 @@ export const MetaAdsIntegration: React.FC = () => {
                               id: selectedOAuthInstagram.id,
                               name: selectedOAuthInstagram.username ? `@${selectedOAuthInstagram.username}` : selectedOAuthInstagram.name
                             } : null,
-                            metaOAuthSelection.pageId ? 'Sin Instagram' : 'Elige primero una página'
+                            metaOAuthSelection.pageId ? 'Sin Instagram' : 'Elige primero una página',
+                            'Cuenta de Instagram seleccionada'
                           )}
                           onChange={(event) => updateMetaOAuthAssetDraft({ instagramAccountId: event.target.value })}
                           disabled={Boolean(savingMetaAssetSection) || !metaOAuthSelection.pageId || Boolean(metaOAuthSession.permissions.missing.length)}
@@ -3464,7 +3484,11 @@ export const MetaAdsIntegration: React.FC = () => {
                           <option value="">Sin Instagram</option>
                           {availableOAuthInstagramAccounts.map(account => (
                             <option key={account.id} value={account.id}>
-                              {account.username ? `@${account.username}` : account.name} ({account.id})
+                              {getMetaAssetDisplayName(
+                                account.username ? `@${account.username}` : account.name,
+                                account.id,
+                                'Cuenta de Instagram'
+                              )}
                             </option>
                           ))}
                         </CustomSelect>
@@ -3741,7 +3765,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <div className={styles.connectedExtraRow}>
                       <div>
                         <span className={styles.railSwitchLabel}>Incluir Dataset en snippet</span>
-                        <span className={styles.railSecondaryValue}>Agrega el Dataset ({getSelectedPixelLabel()}) al snippet de Web Tracking de tus sitios.</span>
+                        <span className={styles.railSecondaryValue}>Agrega el Dataset o pixel ({getSelectedPixelLabel()}) al snippet de Web Tracking de tus sitios.</span>
                       </div>
                       <Switch
                         checked={includeMetaPixel === true}

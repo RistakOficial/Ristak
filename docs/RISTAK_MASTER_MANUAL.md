@@ -2447,6 +2447,10 @@ Ristak usa Meta en varias areas:
   `/api/meta/sync/settings`; backend valida la lista y el job sigue apagado si
   no existe una cuenta publicitaria conectada. Cada ejecución conserva guard
   anti-solape y lock distribuido para no duplicar consultas a Meta.
+- En la misma configuración, los selectores y resúmenes de cuenta publicitaria,
+  **Dataset o pixel**, Facebook Page e Instagram muestran únicamente el nombre
+  legible. Los IDs se conservan como valores internos para hablar con Meta, pero
+  no se imprimen en la interfaz ni como subtítulo ni dentro de las opciones.
 - `Rastreo web` mantiene los parametros UTM y la inclusion del Dataset en el
   snippet; no se mezcla con el login ni con los controles sociales.
 - `Dataset Test` conserva su propia pestana; las rutas internas pueden

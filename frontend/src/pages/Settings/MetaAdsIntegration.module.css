@@ -293,33 +293,10 @@
   white-space: nowrap;
 }
 
-.assetSelectValue small {
-  overflow: hidden;
-  color: var(--text-mute);
-  font-size: 11px;
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.connectedAssetIdentity {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  min-width: 0;
-  line-height: 1.25;
-}
-
 .connectedAssetName {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.connectedAssetId {
-  color: var(--text-mute);
-  font-size: 11px;
-  font-weight: 400;
 }
 
 /* Redes sociales: mini-tutorial para pegar el webhook en Meta Developers. */
@@ -1986,8 +1963,7 @@
     min-width: 0;
   }
 
-  .connectedListValue,
-  .connectedAssetIdentity {
+  .connectedListValue {
     align-items: flex-start;
     text-align: left;
   }
