@@ -645,6 +645,292 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
   }
 })
 
+test('cleanup test Google usa el receipt original tras relink, con fila ausente y fallback al provider local', async () => {
+  await initializeMasterKey()
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const googleRequests = []
+  const previousFetch = global.fetch
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_google_cleanup_${suffix}`
+  const currentOwnerCalendarId = `rstk_cal_google_cleanup_owner_${suffix}`
+  const contactId = `rstk_contact_google_cleanup_${suffix}`
+  const agentId = `cagent_google_cleanup_${suffix}`
+  const fixtureIds = []
+  let db = null
+  let googleCalendarService = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@clinica.test'
+    const googleFetch = createGoogleApiFetchMock(googleRequests)
+    global.fetch = (url, options) => String(url).startsWith(baseUrl)
+      ? previousFetch(url, options)
+      : googleFetch(url, options)
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    googleCalendarService = await import('../src/services/googleCalendarService.js')
+    const { cleanupConversationalTestAppointment } = await import(
+      '../src/services/conversationalAppointmentTestCleanupService.js'
+    )
+
+    await googleCalendarService.claimGoogleCalendarOAuthHandoff('google_handoff_test')
+    await localCalendarService.createLocalCalendar({
+      id: calendarId,
+      name: 'Agenda original de pruebas',
+      googleCalendarId: 'ventas@test.com',
+      accessRole: 'owner',
+      googleCalendarSummary: 'Ventas',
+      googleCalendarTimeZone: 'America/Mexico_City'
+    }, { allowGoogleSyncMetadata: true })
+    await db.run(
+      'INSERT INTO contacts (id, full_name, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, 'Contacto cleanup Google']
+    )
+    await db.run(
+      'INSERT INTO conversational_agents (id, name, capabilities_config) VALUES (?, ?, ?)',
+      [agentId, 'Agente cleanup Google', JSON.stringify({ schemaVersion: 3, testMode: { enabled: true }, items: [] })]
+    )
+
+    const createTestFixture = async (label, startTime, endTime) => {
+      const runId = `agent-test-google-cleanup-${label}-${suffix}`
+      const effectId = `effect_google_cleanup_${label}_${suffix}`
+      const appointmentId = `rstk_appt_google_cleanup_${label}_${suffix}`
+      const expiresAt = new Date(Date.now() - 60_000).toISOString()
+      const participants = [
+        { role: 'requester', contactId },
+        { role: 'primary_attendee', contactId }
+      ]
+      await db.run(`
+        INSERT INTO conversational_agent_test_runs (
+          id, agent_id, requested_by_user_id, contact_id, effects_json, status, expires_at
+        ) VALUES (?, ?, '1', ?, ?, 'active', ?)
+      `, [
+        runId,
+        agentId,
+        contactId,
+        JSON.stringify({ enabled: true, scheduleAppointment: true }),
+        new Date(Date.now() + 60_000).toISOString()
+      ])
+      await db.run(`
+        INSERT INTO conversational_agent_test_effects (
+          id, run_id, message_id, effect_type, request_hash, status,
+          payload_json, cleanup_status, claim_token, lease_until_at
+        ) VALUES (?, ?, ?, 'appointment', ?, 'processing', ?, 'pending', ?, ?)
+      `, [
+        effectId,
+        runId,
+        `message_google_cleanup_${label}_${suffix}`,
+        `hash_google_cleanup_${label}_${suffix}`,
+        JSON.stringify({ calendarId, startTime, endTime, bookingOwner: 'ai', participants }),
+        `claim_google_cleanup_${label}_${suffix}`,
+        new Date(Date.now() + 60_000).toISOString()
+      ])
+      const appointment = await localCalendarService.createLocalAppointment({
+        id: appointmentId,
+        calendarId,
+        contactId,
+        title: `Cita test ${label}`,
+        startTime,
+        endTime,
+        participants,
+        isTest: true,
+        testRunId: runId,
+        testEffectId: effectId,
+        testExpiresAt: expiresAt
+      })
+      const synced = await googleCalendarService.syncAppointmentToGoogle(appointment)
+      assert.equal(
+        synced.appointment.googleEventId,
+        googleCalendarService.googleTestEventIdForEffect(effectId)
+      )
+      assert.equal(synced.appointment.googleProviderCalendarId, 'ventas@test.com')
+      await db.run(`
+        UPDATE conversational_agent_test_effects
+        SET status = 'recorded', entity_id = ?, claim_token = NULL, lease_until_at = NULL
+        WHERE id = ?
+      `, [appointmentId, effectId])
+      const receipt = await db.get(`
+        SELECT id, command_json, external_id
+        FROM conversational_appointment_test_provider_receipts
+        WHERE test_effect_id = ? AND provider = 'google'
+      `, [effectId])
+      assert.equal(receipt.external_id, googleCalendarService.googleTestEventIdForEffect(effectId))
+      fixtureIds.push({ runId, effectId, appointmentId, receiptId: receipt.id })
+      return { runId, effectId, appointmentId, receipt }
+    }
+
+    const missingRow = await createTestFixture(
+      'missing',
+      '2030-07-22T15:00:00.000Z',
+      '2030-07-22T16:00:00.000Z'
+    )
+    const providerFallback = await createTestFixture(
+      'fallback',
+      '2030-07-22T17:00:00.000Z',
+      '2030-07-22T18:00:00.000Z'
+    )
+
+    // El receipt no es un comodín para borrar cualquier ID. Incluso con OAuth
+    // válido y provider durable, el evento debe ser el determinista del effect.
+    await db.run(
+      'UPDATE conversational_appointment_test_provider_receipts SET external_id = ? WHERE id = ?',
+      ['evento-arbitrario', missingRow.receipt.id]
+    )
+    const deletesBeforeTamperCheck = googleRequests.filter(request => request.method === 'DELETE').length
+    await assert.rejects(
+      googleCalendarService.deleteConversationalTestGoogleEventFromReceipt({
+        receiptId: missingRow.receipt.id,
+        testEffectId: missingRow.effectId
+      }),
+      error => error?.code === 'test_google_cleanup_event_identity_mismatch'
+    )
+    assert.equal(
+      googleRequests.filter(request => request.method === 'DELETE').length,
+      deletesBeforeTamperCheck
+    )
+    await db.run(
+      'UPDATE conversational_appointment_test_provider_receipts SET external_id = ? WHERE id = ?',
+      [googleCalendarService.googleTestEventIdForEffect(missingRow.effectId), missingRow.receipt.id]
+    )
+
+    // Caso production de caída: el receipt sobrevivió, pero la fila local no.
+    await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [missingRow.appointmentId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [missingRow.appointmentId])
+    // Ventana exacta crash-after-provider/before-complete-effect: el receipt y
+    // su ID determinista ya existen, pero entity_id todavía no alcanzó a quedar.
+    await db.run(
+      'UPDATE conversational_agent_test_effects SET entity_id = NULL WHERE id = ?',
+      [missingRow.effectId]
+    )
+    assert.equal(
+      (await db.get('SELECT entity_id FROM conversational_agent_test_effects WHERE id = ?', [missingRow.effectId])).entity_id,
+      null
+    )
+
+    // Sin provider en receipt ni fila local no cae al calendario global/current:
+    // falla cerrado antes de tocar Google.
+    const missingCommand = JSON.parse(missingRow.receipt.command_json)
+    delete missingCommand.providerCalendarId
+    await db.run(
+      'UPDATE conversational_appointment_test_provider_receipts SET command_json = ? WHERE id = ?',
+      [JSON.stringify(missingCommand), missingRow.receipt.id]
+    )
+    const deletesBeforeMissingProvider = googleRequests.filter(request => request.method === 'DELETE').length
+    await assert.rejects(
+      googleCalendarService.deleteConversationalTestGoogleEventFromReceipt({
+        receiptId: missingRow.receipt.id,
+        testEffectId: missingRow.effectId
+      }),
+      error => error?.code === 'test_google_cleanup_provider_identity_required'
+    )
+    assert.equal(
+      googleRequests.filter(request => request.method === 'DELETE').length,
+      deletesBeforeMissingProvider
+    )
+    missingCommand.providerCalendarId = 'ventas@test.com'
+    await db.run(
+      'UPDATE conversational_appointment_test_provider_receipts SET command_json = ? WHERE id = ?',
+      [JSON.stringify(missingCommand), missingRow.receipt.id]
+    )
+
+    // Simula receipt compatible anterior sin providerCalendarId. La columna de
+    // la cita sigue conservando el provider original y actúa como fallback.
+    const fallbackCommand = JSON.parse(providerFallback.receipt.command_json)
+    delete fallbackCommand.providerCalendarId
+    await db.run(`
+      UPDATE conversational_appointment_test_provider_receipts
+      SET command_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [JSON.stringify(fallbackCommand), providerFallback.receipt.id])
+
+    // La agenda original ahora apunta a Google L2 y otra agenda es la dueña
+    // actual de L1. El owner fence normal bloquearía un DELETE de L1 emitido por
+    // calendarId, pero el receipt debe limpiar exactamente el evento creado allí.
+    const originalCalendarRow = await db.get('SELECT raw_json FROM calendars WHERE id = ?', [calendarId])
+    const relinkedRawJson = JSON.parse(originalCalendarRow.raw_json || '{}')
+    relinkedRawJson.googleCalendarId = 'nuevo-owner@test.com'
+    await db.run(
+      'UPDATE calendars SET raw_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [JSON.stringify(relinkedRawJson), calendarId]
+    )
+    await localCalendarService.createLocalCalendar({
+      id: currentOwnerCalendarId,
+      name: 'Dueño actual de Ventas',
+      googleCalendarId: 'ventas@test.com',
+      accessRole: 'owner'
+    }, { allowGoogleSyncMetadata: true })
+    const currentOwners = (await localCalendarService.listGoogleLinkedLocalCalendars({ includeInactive: true }))
+      .filter(calendar => calendar.googleCalendarId === 'ventas@test.com')
+      .map(calendar => calendar.id)
+    assert.deepEqual(currentOwners, [currentOwnerCalendarId])
+
+    const missingResult = await cleanupConversationalTestAppointment({
+      appointmentId: missingRow.appointmentId,
+      testEffectId: missingRow.effectId
+    })
+    const fallbackResult = await cleanupConversationalTestAppointment({
+      appointmentId: providerFallback.appointmentId,
+      testEffectId: providerFallback.effectId
+    })
+    assert.equal(missingResult.status, 'cleaned')
+    assert.equal(missingResult.alreadyAbsent, true)
+    assert.equal(fallbackResult.status, 'cleaned')
+    assert.equal(fallbackResult.deleted, true)
+
+    for (const fixture of fixtureIds) {
+      const receipt = await db.get(
+        'SELECT cleanup_status FROM conversational_appointment_test_provider_receipts WHERE id = ?',
+        [fixture.receiptId]
+      )
+      const effect = await db.get(
+        'SELECT status, cleanup_status FROM conversational_agent_test_effects WHERE id = ?',
+        [fixture.effectId]
+      )
+      assert.equal(receipt.cleanup_status, 'cleaned')
+      assert.equal(effect.status, 'cleaned')
+      assert.equal(effect.cleanup_status, 'cleaned')
+      assert.equal(await db.get('SELECT id FROM appointments WHERE id = ?', [fixture.appointmentId]), null)
+    }
+
+    const deletePaths = googleRequests
+      .filter(request => request.method === 'DELETE')
+      .map(request => request.path)
+    assert.equal(deletePaths.length, 2)
+    for (const fixture of fixtureIds) {
+      assert.ok(deletePaths.some(path => path.includes(
+        `/calendars/ventas%40test.com/events/${googleCalendarService.googleTestEventIdForEffect(fixture.effectId)}`
+      )))
+    }
+    assert.equal(deletePaths.some(path => path.includes('nuevo-owner%40test.com')), false)
+  } finally {
+    if (db) {
+      for (const fixture of fixtureIds) {
+        await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [fixture.appointmentId]).catch(() => undefined)
+        await db.run('DELETE FROM conversational_appointment_test_provider_receipts WHERE test_effect_id = ?', [fixture.effectId]).catch(() => undefined)
+        await db.run('DELETE FROM appointments WHERE id = ?', [fixture.appointmentId]).catch(() => undefined)
+        await db.run('DELETE FROM conversational_agent_test_effects WHERE id = ?', [fixture.effectId]).catch(() => undefined)
+        await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [fixture.runId]).catch(() => undefined)
+      }
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id IN (?, ?)', [calendarId, currentOwnerCalendarId]).catch(() => undefined)
+    }
+    await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
+    global.fetch = previousFetch
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
+
 test('una respuesta vieja de Google no pisa la edición local y el reintento repara el mismo evento sin duplicarlo', async () => {
   await initializeMasterKey()
   const previousEnv = snapshotEnv()

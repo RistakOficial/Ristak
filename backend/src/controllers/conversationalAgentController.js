@@ -32,6 +32,7 @@ import {
   listRecentConversationalAgentTestRuns,
   normalizeConversationalAgentTestEffects,
   prepareConversationalAgentTestRun,
+  reconcileConversationalAgentPreviewResult,
   recordConversationalAgentPreviewEffects
 } from '../services/conversationalAgentTestService.js'
 import { hasUserAccess } from '../utils/userAccess.js'
@@ -381,6 +382,9 @@ export async function testAgent(req, res) {
     const testEffects = runContext
       ? await recordConversationalAgentPreviewEffects({ runContext, actions: result.actions })
       : []
+    const reconciledResult = runContext
+      ? reconcileConversationalAgentPreviewResult({ result, testEffects })
+      : result
     const paymentLinks = testEffects
       .filter((effect) => effect?.type === 'payment' && /^https?:\/\//i.test(effect?.payload?.paymentUrl || ''))
       .map((effect) => effect.payload.paymentUrl)
@@ -388,15 +392,15 @@ export async function testAgent(req, res) {
     const testPaymentMessages = uniquePaymentLinks.map((url) => `Aquí está el enlace sandbox de esta prueba: ${url}`)
     const visibleResult = testPaymentMessages.length
       ? {
-          ...result,
-          reply: [result.reply, ...testPaymentMessages].filter(Boolean).join('\n\n'),
-          replyParts: [...(Array.isArray(result.replyParts) ? result.replyParts : [result.reply].filter(Boolean)), ...testPaymentMessages],
+          ...reconciledResult,
+          reply: [reconciledResult.reply, ...testPaymentMessages].filter(Boolean).join('\n\n'),
+          replyParts: [...(Array.isArray(reconciledResult.replyParts) ? reconciledResult.replyParts : [reconciledResult.reply].filter(Boolean)), ...testPaymentMessages],
           replyPartDelaysMs: [
-            ...(Array.isArray(result.replyPartDelaysMs) ? result.replyPartDelaysMs : []),
+            ...(Array.isArray(reconciledResult.replyPartDelaysMs) ? reconciledResult.replyPartDelaysMs : []),
             ...testPaymentMessages.map(() => 0)
           ]
         }
-      : result
+      : reconciledResult
     res.json({
       success: true,
       data: {

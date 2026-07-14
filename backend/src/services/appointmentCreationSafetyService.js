@@ -277,6 +277,35 @@ function processingLeaseExpired(row, nowIso) {
   return updatedAt === null || now === null || now - updatedAt >= APPOINTMENT_CREATION_PROCESSING_LEASE_MS
 }
 
+export async function inspectAppointmentCreationRequestRecoveryState(clientRequestId, {
+  nowIso = new Date().toISOString()
+} = {}) {
+  const cleanKey = normalizeAppointmentClientRequestId(clientRequestId)
+  const row = await db.get(
+    `SELECT client_request_id, status, appointment_id, failure_kind, created_at, updated_at
+     FROM appointment_creation_requests WHERE client_request_id = ?`,
+    [cleanKey]
+  )
+  if (!row) {
+    return {
+      exists: false,
+      status: 'missing',
+      appointmentId: null,
+      failureKind: null,
+      processingLeaseExpired: true
+    }
+  }
+  return {
+    exists: true,
+    status: String(row.status || '').trim(),
+    appointmentId: String(row.appointment_id || '').trim() || null,
+    failureKind: String(row.failure_kind || '').trim() || null,
+    processingLeaseExpired: row.status === 'processing'
+      ? processingLeaseExpired(row, nowIso)
+      : true
+  }
+}
+
 async function loadCreationRequestForUpdate(clientRequestId) {
   const lockSuffix = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
   return db.get(

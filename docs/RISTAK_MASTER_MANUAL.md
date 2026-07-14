@@ -3972,6 +3972,24 @@ ve la revision revocada antes de mutar.
 - Agenda: vuelve a comprobar el slot dentro del candado real, crea una cita con
   `is_test=1`, participantes y prefijo visible de prueba, ejecuta sincronizacion
   de calendario y push reales marcados como test, y suprime Meta/CAPI productivo.
+  Si dos sesiones preview del mismo contacto alcanzaron a ofrecer el mismo slot,
+  la primera cita materializada gana. La segunda confirmacion trata esa cita no
+  vinculada a su propia sesion como conflicto definitivo de disponibilidad: no la
+  adopta, no la declara exitosa ni manda el caso a handoff; cierra la oferta
+  vencida, conserva el dia y obliga a consultar otra hora antes de continuar.
+  Aunque ambas respuestas se hayan redactado antes de materializar, el controller
+  reconcilia el texto contra el efecto real bajo candado: sólo el ganador puede
+  devolver confirmacion y cualquier efecto no terminal reemplaza la promesa provisional.
+  Un contender que agota la espera del candado se reporta como `processing`, sin
+  afirmar que la cita existe o que no existe. Si el proceso dueño cayó, el replay
+  retoma la lease sólo después de adquirir ese candado; si la cita ya alcanzó a
+  insertarse, exige la misma identidad durable run/effect/contacto/calendario/slot
+  y vuelve a pasar por el request idempotente. Mientras la lease interna del
+  controller siga fresca, el replay sólo reporta `processing`. Si esa ejecución
+  cayó antes de cerrar providers/checkpoints, no adopta la fila local como éxito:
+  la marca interrumpida y deja que el cleanup retire la cita temporal sin duplicarla.
+  En agenda humana, cita y asignacion se reconcilian por separado para informar
+  resultados parciales verdaderos.
   El despachador de automatizaciones de prueba manda webhooks reales con headers
   `X-Ristak-Test-*`, payload `testMode/ristakTest` e idempotencia; las
   notificaciones y recordatorios llegan como copia interna real al usuario que
@@ -3987,7 +4005,18 @@ ve la revision revocada antes de mutar.
   participantes y payload durables. Los IDs creados en Google o HighLevel se
   guardan inmediatamente en `conversational_appointment_test_provider_receipts`
   antes del upsert local, con fallback y compensacion remota; la limpieza puede
-  recuperar esos recibos aunque se haya perdido la fila local. En HighLevel,
+  recuperar esos recibos aunque se haya perdido la fila local. Al retirar un
+  espejo de Google, el cleanup exige receipt, effect, run e ID de evento
+  determinista coincidentes. `entity_id` también debe coincidir cuando ya existe,
+  pero puede seguir nulo en la ventana crash-after-provider/before-complete-effect;
+  el receipt durable conserva autoridad suficiente para reparar esa caída aunque
+  también se haya perdido la fila local. Usa el calendario remoto original
+  guardado en el comando o, para recibos compatibles anteriores, el provider persistido en la
+  propia cita; nunca cae al owner actual ni al calendario global. Así puede
+  retirar el evento aunque la agenda se haya religado despues, sin convertir el
+  receipt en permiso para borrar IDs arbitrarios. El DELETE es exclusivamente
+  remoto: cita y ledger se cierran juntos en la transaccion propia de la
+  limpieza. En HighLevel,
   la prueba sólo reutiliza un contacto ya ligado o una coincidencia exacta y
   única de solo lectura; nunca crea ni vincula una ficha remota para poder probar.
   Cuando `bookingOwner=human`, el efecto real de prueba valida el horario y

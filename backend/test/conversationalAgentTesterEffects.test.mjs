@@ -12,6 +12,7 @@ import {
   listConversationalAgentTestEffects,
   normalizeConversationalAgentTestEffects,
   prepareConversationalAgentTestRun,
+  reconcileConversationalAgentPreviewResult,
   recordConversationalAgentPreviewEffects,
   setConversationalAgentTestServiceDependenciesForTests
 } from '../src/services/conversationalAgentTestService.js'
@@ -23,7 +24,11 @@ import {
 import { createAppointment as createAppointmentController } from '../src/controllers/calendarsController.js'
 import { createLocalAppointment, upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import { runIdempotentAppointmentCreation } from '../src/services/appointmentCreationSafetyService.js'
-import { createConversationalTools } from '../src/agents/conversational/tools.js'
+import {
+  createConversationalTools,
+  loadConversationalAppointmentOfferDecisionContext,
+  loadConversationalAppointmentSelectionProgressContext
+} from '../src/agents/conversational/tools.js'
 import { runConversationalAgentPreview } from '../src/agents/conversational/runner.js'
 import { getAccountCurrency } from '../src/utils/accountLocale.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
@@ -82,6 +87,116 @@ test('scope y ejecución del preview quedan ligados a usuario, agente, sesión y
   assert.notEqual(firstExecution, secondExecution)
 })
 
+test('la respuesta visible exige efectos terminales y separa agenda, asignación y pago', () => {
+  const paymentAction = {
+    type: 'collect_payment',
+    outcome: { status: 'simulated', paymentUrl: 'https://example.test/sandbox' }
+  }
+  const source = {
+    reply: 'Listo, tu cita quedó confirmada.',
+    replyParts: ['Listo, tu cita quedó confirmada.'],
+    replyPartDelaysMs: [250],
+    actions: [
+      {
+        type: 'book_appointment',
+        outcome: { status: 'simulated', ok: true, materialized: true }
+      },
+      paymentAction
+    ]
+  }
+  const processing = reconcileConversationalAgentPreviewResult({
+    result: source,
+    testEffects: [{
+      type: 'appointment',
+      status: 'processing',
+      code: 'test_mutation_lock_busy',
+      summary: 'Otra petición todavía conserva el candado.'
+    }]
+  })
+  assert.match(processing.reply, /sigue procesándose/i)
+  assert.match(processing.reply, /todavía no puedo confirmarla/i)
+  assert.doesNotMatch(processing.reply, /no se creó|quedó confirmada/i)
+  assert.equal(processing.actions[0].outcome.status, 'pending')
+  assert.equal(processing.actions[0].outcome.appointmentMaterialized, false)
+  assert.strictEqual(processing.actions[1], paymentAction)
+
+  const failed = reconcileConversationalAgentPreviewResult({
+    result: source,
+    testEffects: [{
+      type: 'appointment',
+      status: 'failed',
+      code: 'test_appointment_creation_failed',
+      summary: 'El proveedor no devolvió una confirmación final.'
+    }]
+  })
+  assert.match(failed.reply, /no pude confirmar el resultado/i)
+  assert.match(failed.reply, /no la des por agendada/i)
+  assert.doesNotMatch(failed.reply, /no se creó|quedó confirmada/i)
+  assert.equal(failed.actions[0].outcome.status, 'error')
+  assert.equal(failed.actions[0].outcome.code, 'test_appointment_creation_failed')
+  assert.strictEqual(failed.actions[1], paymentAction)
+
+  const humanAction = {
+    type: 'request_human_booking',
+    outcome: { status: 'simulated', actionCompleted: true },
+    targetUserId: 'user_handoff'
+  }
+  const assignmentWon = reconcileConversationalAgentPreviewResult({
+    result: { ...source, actions: [humanAction, paymentAction] },
+    testEffects: [
+      {
+        type: 'appointment',
+        status: 'failed',
+        code: 'test_slot_no_longer_free',
+        appointmentDateRestored: true,
+        summary: 'El slot se ocupó.'
+      },
+      {
+        id: 'effect_assignment_recorded',
+        type: 'assignment',
+        status: 'recorded',
+        entityId: 'contact_assigned',
+        payload: { assignmentActive: true }
+      }
+    ]
+  })
+  assert.match(assignmentWon.reply, /conservé el día/i)
+  assert.match(assignmentWon.reply, /asignación temporal.*sí quedó registrada/i)
+  assert.equal(assignmentWon.actions[0].outcome.status, 'partial')
+  assert.equal(assignmentWon.actions[0].outcome.appointmentMaterialized, false)
+  assert.equal(assignmentWon.actions[0].outcome.assignmentMaterialized, true)
+  assert.equal(assignmentWon.actions[0].targetUserId, 'user_handoff')
+  assert.strictEqual(assignmentWon.actions[1], paymentAction)
+
+  const appointmentWon = reconcileConversationalAgentPreviewResult({
+    result: { ...source, actions: [humanAction, paymentAction] },
+    testEffects: [
+      {
+        id: 'effect_human_request_recorded',
+        type: 'appointment',
+        status: 'recorded',
+        payload: { safeTestRecord: true, appointmentCreated: false }
+      },
+      {
+        type: 'assignment',
+        status: 'failed',
+        code: 'test_assignment_failed',
+        summary: 'No se pudo completar la asignación.'
+      }
+    ]
+  })
+  assert.match(appointmentWon.reply, /solicitud de cita de prueba sí quedó registrada/i)
+  assert.match(appointmentWon.reply, /no pude completar la asignación/i)
+  assert.equal(appointmentWon.actions[0].outcome.status, 'partial')
+  assert.equal(appointmentWon.actions[0].outcome.appointmentMaterialized, true)
+  assert.equal(appointmentWon.actions[0].outcome.assignmentMaterialized, false)
+  assert.strictEqual(appointmentWon.actions[1], paymentAction)
+
+  assert.deepEqual(processing.replyParts, [processing.reply])
+  assert.deepEqual(processing.replyPartDelaysMs, [])
+  assert.equal(source.reply, 'Listo, tu cita quedó confirmada.', 'la reconciliación no muta el preview original')
+})
+
 test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y materializa una sola cita test', async () => {
   const suffix = randomUUID()
   const agentId = `agent_preview_identity_${suffix}`
@@ -99,6 +214,7 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
   const confirmation = 'Sí, ese horario está bien. Agéndala.'
   let userId = ''
   let testAppointmentControllerCalls = 0
+  let forceOriginalProviderFailure = false
   let realControllerRequest = null
   let realControllerPayload = null
   let previousGoogleConfig = null
@@ -165,6 +281,13 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     setConversationalAgentTestServiceDependenciesForTests({
       createAppointment: async (req, res) => {
         testAppointmentControllerCalls += 1
+        if (forceOriginalProviderFailure) {
+          return res.status(502).json({
+            success: false,
+            code: 'test_appointment_google_mirror_failed',
+            error: 'Google no confirmó el espejo de la cita temporal.'
+          })
+        }
         if (testAppointmentControllerCalls === 1) {
           const payload = {
             calendarId: req.body.calendarId,
@@ -321,6 +444,28 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     ], `message_confirmation_${suffix}`)
     assert.equal(third.result.actions.filter((action) => action.type === 'book_appointment').length, 1)
     assert.doesNotMatch(third.result.reply, /dime la hora|qué hora|hora otra vez/i)
+    const appointmentAction = third.result.actions.find((action) => action.type === 'book_appointment')
+    const abandonedClaim = await beginConversationalAgentTestEffect({
+      testRunId: runId,
+      testMessageId: third.runContext.messageId,
+      requestedByUserId: userId,
+      effectType: 'appointment',
+      request: {
+        calendarId: String(appointmentAction.calendarId ?? '').trim(),
+        startTime: String(appointmentAction.startTime ?? '').trim(),
+        endTime: String(appointmentAction.endTime ?? '').trim(),
+        title: String(appointmentAction.title ?? '').trim(),
+        bookingOwner: 'ai',
+        confirmationEvidence: appointmentAction.confirmationEvidence,
+        participants: Array.isArray(appointmentAction.participants) ? appointmentAction.participants : []
+      }
+    })
+    assert.equal(abandonedClaim.claimed, true)
+    assert.equal(abandonedClaim.effect.status, 'processing')
+
+    // Simula una caída con lease vigente antes de materializar. Al obtener el
+    // advisory lock, el replay sabe que ese dueño ya no existe y retoma el mismo
+    // request idempotente de inmediato, sin confirmar un processing huérfano.
     const materialized = await recordConversationalAgentPreviewEffects({
       runContext: third.runContext,
       actions: third.result.actions
@@ -333,6 +478,10 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     assert.equal(testAppointmentControllerCalls, 2)
     assert.equal(realControllerPayload?.success, true)
     assert.equal(realControllerPayload?.data?.testEffectId, materialized[0].id)
+    assert.equal(Number((await db.get(
+      'SELECT attempt_count FROM conversational_agent_test_effects WHERE id = ?',
+      [materialized[0].id]
+    )).attempt_count), 2)
 
     const controllerReplay = mockResponse()
     await createAppointmentController(realControllerRequest, controllerReplay)
@@ -353,6 +502,51 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
       [contactId]
     )).total), 1)
 
+    // Segunda ventana de caída: el controller sí cerró su request y la cita,
+    // pero el proceso murió antes de cerrar el efecto. El replay reconoce su
+    // propia cita y pasa por el mismo controller idempotente.
+    const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+      testSessionId: runId,
+      requestedByUserId: userId,
+      agentId
+    })
+    const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+    const offerRow = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )
+    const offerDetail = JSON.parse(offerRow.detail_json)
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
+      [JSON.stringify({
+        ...offerDetail,
+        status: 'materializing',
+        materializationEffectId: materialized[0].id,
+        materializationExecutionId: third.runContext.executionId
+      }), offerEventId, offerRow.detail_json]
+    )
+    await db.run(
+      `UPDATE conversational_agent_test_effects
+       SET status = 'processing', entity_id = NULL, claim_token = ?, lease_until_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [`abandoned_${suffix}`, new Date(Date.now() + 9 * 60 * 1000).toISOString(), materialized[0].id]
+    )
+    const resumedAfterCanonicalCreation = await recordConversationalAgentPreviewEffects({
+      runContext: third.runContext,
+      actions: third.result.actions
+    })
+    assert.equal(resumedAfterCanonicalCreation[0].status, 'recorded')
+    assert.equal(resumedAfterCanonicalCreation[0].entityId, materialized[0].entityId)
+    assert.equal(testAppointmentControllerCalls, 3)
+    assert.equal(Number((await db.get(
+      'SELECT attempt_count FROM conversational_agent_test_effects WHERE id = ?',
+      [materialized[0].id]
+    )).attempt_count), 3)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ? AND is_test = 1',
+      [contactId]
+    )).total), 1, 'recuperar una caída después del insert no puede duplicar la cita')
+
     const replay = await recordConversationalAgentPreviewEffects({
       runContext: third.runContext,
       actions: third.result.actions
@@ -362,6 +556,141 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
       'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ? AND is_test = 1',
       [contactId]
     )).total), 1, 'reintentar la confirmación no puede duplicar la cita test')
+
+    // Tercera ventana: la cita local ya existe pero el controller aún conserva
+    // un request processing. Mientras su lease está fresca, el contender sólo
+    // puede decir "sigue procesándose". Vencida la lease, SafetyService marca
+    // el checkpoint interrumpido; no lo adopta como éxito ni duplica la cita.
+    const materializedOfferRow = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )
+    const materializedOfferDetail = JSON.parse(materializedOfferRow.detail_json)
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
+      [JSON.stringify({
+        ...materializedOfferDetail,
+        status: 'materializing',
+        materializationEffectId: materialized[0].id,
+        materializationExecutionId: third.runContext.executionId
+      }), offerEventId, materializedOfferRow.detail_json]
+    )
+    await db.run(
+      `UPDATE appointment_creation_requests
+       SET status = 'processing', processing_token = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE client_request_id = ?`,
+      [`controller_still_running_${suffix}`, `conv-test:${materialized[0].id}`]
+    )
+    await db.run(
+      `UPDATE conversational_agent_test_effects
+       SET status = 'processing', entity_id = NULL, claim_token = ?, lease_until_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [`effect_owner_lost_${suffix}`, new Date(Date.now() + 9 * 60 * 1000).toISOString(), materialized[0].id]
+    )
+    const stillProcessing = await recordConversationalAgentPreviewEffects({
+      runContext: third.runContext,
+      actions: third.result.actions
+    })
+    assert.equal(stillProcessing[0].status, 'processing')
+    assert.equal(testAppointmentControllerCalls, 3, 'el contender no entra al controller con lease fresca')
+    const processingVisible = reconcileConversationalAgentPreviewResult({
+      result: third.result,
+      testEffects: stillProcessing
+    })
+    assert.match(processingVisible.reply, /sigue procesándose/i)
+    assert.doesNotMatch(processingVisible.reply, /quedó agendada|quedó confirmada|no se creó/i)
+
+    await db.run(
+      `UPDATE appointment_creation_requests
+       SET updated_at = '2000-01-01T00:00:00.000Z'
+       WHERE client_request_id = ?`,
+      [`conv-test:${materialized[0].id}`]
+    )
+    const interruptedCheckpoint = await recordConversationalAgentPreviewEffects({
+      runContext: third.runContext,
+      actions: third.result.actions
+    })
+    assert.equal(interruptedCheckpoint[0].status, 'failed')
+    assert.equal(interruptedCheckpoint[0].code, 'test_appointment_checkpoint_interrupted')
+    const interruptedVisible = reconcileConversationalAgentPreviewResult({
+      result: third.result,
+      testEffects: interruptedCheckpoint
+    })
+    assert.match(interruptedVisible.reply, /se interrumpió después de guardar una cita temporal/i)
+    assert.match(interruptedVisible.reply, /no la des por confirmada/i)
+    assert.doesNotMatch(interruptedVisible.reply, /quedó agendada|quedó confirmada/i)
+    const interruptedLedger = await db.get(
+      `SELECT status, failure_kind FROM appointment_creation_requests
+       WHERE client_request_id = ?`,
+      [`conv-test:${materialized[0].id}`]
+    )
+    assert.equal(interruptedLedger.status, 'failed')
+    assert.equal(interruptedLedger.failure_kind, 'test_checkpoint_interrupted')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ? AND is_test = 1',
+      [contactId]
+    )).total), 1, 'el checkpoint interrumpido se limpia después; nunca crea una segunda cita')
+
+    const repeatedInterruptedCheckpoint = await recordConversationalAgentPreviewEffects({
+      runContext: third.runContext,
+      actions: third.result.actions
+    })
+    assert.equal(repeatedInterruptedCheckpoint[0].status, 'failed')
+    assert.equal(repeatedInterruptedCheckpoint[0].code, 'test_appointment_checkpoint_interrupted')
+    const repeatedInterruptedVisible = reconcileConversationalAgentPreviewResult({
+      result: third.result,
+      testEffects: repeatedInterruptedCheckpoint
+    })
+    assert.equal(repeatedInterruptedVisible.reply, interruptedVisible.reply)
+    assert.doesNotMatch(repeatedInterruptedVisible.reply, /horario ya no está disponible|conservé el día/i)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ? AND is_test = 1',
+      [contactId]
+    )).total), 1, 'repetir el mismo sí conserva el error durable y no abre otra cita')
+
+    // El primer fallo de mirror trae el código específico del proveedor y el
+    // replay trae el código canónico. Ambos deben normalizarse desde el ledger
+    // durable a la misma respuesta visible de cleanup.
+    await db.run(
+      `UPDATE appointment_creation_requests
+       SET status = 'failed', processing_token = NULL, error_status = 502,
+           error_retryable = 0, failure_kind = 'test_provider_sync_failed',
+           error_message = 'Google no confirmó el espejo de la cita temporal.',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE client_request_id = ?`,
+      [`conv-test:${materialized[0].id}`]
+    )
+    forceOriginalProviderFailure = true
+    const firstProviderFailure = await recordConversationalAgentPreviewEffects({
+      runContext: third.runContext,
+      actions: third.result.actions
+    })
+    assert.equal(firstProviderFailure[0].status, 'failed')
+    assert.equal(firstProviderFailure[0].code, 'test_appointment_provider_sync_failed')
+    const firstProviderVisible = reconcileConversationalAgentPreviewResult({
+      result: third.result,
+      testEffects: firstProviderFailure
+    })
+    assert.match(firstProviderVisible.reply, /proveedor externo no confirmó/i)
+    assert.match(firstProviderVisible.reply, /retirará automáticamente/i)
+    assert.doesNotMatch(firstProviderVisible.reply, /vuelve a intentarlo|horario ya no está disponible/i)
+
+    forceOriginalProviderFailure = false
+    const replayedProviderFailure = await recordConversationalAgentPreviewEffects({
+      runContext: third.runContext,
+      actions: third.result.actions
+    })
+    assert.equal(replayedProviderFailure[0].status, 'failed')
+    assert.equal(replayedProviderFailure[0].code, 'test_appointment_provider_sync_failed')
+    const replayedProviderVisible = reconcileConversationalAgentPreviewResult({
+      result: third.result,
+      testEffects: replayedProviderFailure
+    })
+    assert.equal(replayedProviderVisible.reply, firstProviderVisible.reply)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ? AND is_test = 1',
+      [contactId]
+    )).total), 1, 'el fallo durable de provider no abre otra cita en ningún retry')
   } finally {
     setConversationalAgentTestServiceDependenciesForTests(null)
     const effectRows = await db.all(
@@ -398,6 +727,326 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     } else {
       await db.run('DELETE FROM app_config WHERE config_key = ?', [googleConfigKey]).catch(() => {})
     }
+  }
+})
+
+test('dos previews del mismo contacto serializan el slot: gana uno y el otro conserva el día para elegir otra hora', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_preview_slot_race_${suffix}`
+  const contactId = `contact_preview_slot_race_${suffix}`
+  const calendarId = `calendar_preview_slot_race_${suffix}`
+  const requestedByUserId = `user_preview_slot_race_${suffix}`
+  const runAId = `session_preview_slot_race_a_${suffix}`
+  const runBId = `session_preview_slot_race_b_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 21 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const slotA = monday.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
+  const slotB = slotA.plus({ hours: 1 })
+  const localDate = slotA.toFormat('yyyy-MM-dd')
+  const capabilitiesConfig = {
+    schemaVersion: 3,
+    items: [{
+      id: 'schedule_appointment',
+      enabled: true,
+      calendarId,
+      allowOverlaps: false,
+      bookingOwner: 'ai',
+      testMode: { enabled: true, cleanupAfterMinutes: 5, notify: false }
+    }]
+  }
+  const config = {
+    id: agentId,
+    runtimeMode: 'tool_calling_v2',
+    capabilitiesConfig
+  }
+  const effects = {
+    enabled: true,
+    scheduleAppointment: true,
+    collectPayment: false,
+    assignUser: false,
+    notifyOwner: false
+  }
+  const acceptInput = {
+    decision: 'accept',
+    nextPreferenceScope: null,
+    reply: null,
+    title: 'Consulta de prueba',
+    notes: null,
+    attendeeName: null,
+    attendeeContext: null,
+    primaryAttendee: null,
+    guests: [],
+    agreedAmount: null
+  }
+
+  const toolNamed = (ctx, name) => {
+    const found = createConversationalTools(ctx).find((item) => item.name === name)
+    assert.ok(found, `Falta la herramienta ${name}`)
+    return found
+  }
+  const prepareRun = (runId, testMessageId) => prepareConversationalAgentTestRun({
+    testRunId: runId,
+    testMessageId,
+    agentId,
+    requestedByUserId,
+    contactId,
+    effects
+  })
+  const previewScopeFor = (runId) => buildConversationalAppointmentPreviewScopeId({
+    testSessionId: runId,
+    requestedByUserId,
+    agentId
+  })
+  const previewContext = ({ runContext, previewScopeId, messages }) => ({
+    runtimeMode: 'tool_calling_v2',
+    contactId,
+    agentId,
+    channel: 'whatsapp',
+    dryRun: true,
+    previewScopeId,
+    executionId: runContext.executionId,
+    virtualContact: runContext.contact,
+    conversationMessages: messages,
+    accountLocale: { currency: 'MXN' },
+    actions: [],
+    config
+  })
+  const offerForRun = async ({ runId, testMessageId, startTime, requestText }) => {
+    const runContext = await prepareRun(runId, testMessageId)
+    const previewScopeId = previewScopeFor(runId)
+    const ctx = previewContext({
+      runContext,
+      previewScopeId,
+      messages: [{ id: runContext.executionId, role: 'user', content: requestText }]
+    })
+    const offered = await toolNamed(ctx, 'offer_appointment_slot').invoke(null, JSON.stringify({
+      startTime,
+      appointmentId: null
+    }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+    assert.equal(offered.simulated, true)
+    return { runContext, previewScopeId, ctx, offered, requestText }
+  }
+  const confirmOffer = async ({ runId, testMessageId, offer, confirmationText = 'Sí, apártalo.' }) => {
+    const runContext = await prepareRun(runId, testMessageId)
+    const ctx = previewContext({
+      runContext,
+      previewScopeId: offer.previewScopeId,
+      messages: [
+        { id: offer.runContext.executionId, role: 'user', content: offer.requestText },
+        { id: `assistant_${testMessageId}`, role: 'assistant', content: offer.offered.visibleReply },
+        { id: runContext.executionId, role: 'user', content: confirmationText }
+      ]
+    })
+    ctx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({ ctx, config })
+    ctx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({ ctx, config })
+    assert.equal(ctx.appointmentOfferDecision?.active, true)
+    const result = await toolNamed(ctx, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptInput))
+    return { runContext, ctx, result }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+       VALUES (?, 'Contacto carrera entre previews', '+526560009999', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: `location_preview_slot_race_${suffix}`,
+      name: 'Agenda carrera entre previews',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      appointmentLimit: 1,
+      allowBookingFor: 365,
+      allowBookingForUnit: 'days',
+      openHours: [{
+        daysOfTheWeek: [1],
+        hours: [{ openHour: 10, openMinute: 0, closeHour: 13, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced', allowGoogleSyncMetadata: true })
+    await db.run(
+      `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+       VALUES (?, 'Agente carrera entre previews', 1, 'tool_calling_v2', ?)`,
+      [agentId, JSON.stringify(capabilitiesConfig)]
+    )
+
+    const offeredA = await offerForRun({
+      runId: runAId,
+      testMessageId: `message_offer_a_${suffix}`,
+      startTime: slotA.toUTC().toISO(),
+      requestText: 'Quiero el lunes a las diez.'
+    })
+    const offeredB = await offerForRun({
+      runId: runBId,
+      testMessageId: `message_offer_b_${suffix}`,
+      startTime: slotA.toUTC().toISO(),
+      requestText: 'Quiero el lunes a las diez.'
+    })
+    assert.notEqual(offeredA.previewScopeId, offeredB.previewScopeId)
+
+    // Las dos conversaciones aceptan antes de que ninguna materialice. Ésta es
+    // la carrera real: ambos previews redactaron éxito provisional, pero sólo
+    // el resultado del efecto bajo candado puede autorizar la respuesta final.
+    const confirmedB = await confirmOffer({
+      runId: runBId,
+      testMessageId: `message_confirm_b_${suffix}`,
+      offer: offeredB
+    })
+    assert.equal(confirmedB.result.ok, true, JSON.stringify(confirmedB.result))
+    const confirmedAInitial = await confirmOffer({
+      runId: runAId,
+      testMessageId: `message_confirm_a_racing_${suffix}`,
+      offer: offeredA
+    })
+    assert.equal(confirmedAInitial.result.ok, true, JSON.stringify(confirmedAInitial.result))
+
+    const raced = await Promise.all([
+      { key: 'a', runId: runAId, offer: offeredA, confirmed: confirmedAInitial },
+      { key: 'b', runId: runBId, offer: offeredB, confirmed: confirmedB }
+    ].map(async (entry) => {
+      const testEffects = await recordConversationalAgentPreviewEffects({
+        runContext: entry.confirmed.runContext,
+        actions: entry.confirmed.ctx.actions
+      })
+      return {
+        ...entry,
+        testEffects,
+        visible: reconcileConversationalAgentPreviewResult({
+          result: {
+            reply: entry.confirmed.result.visibleReply,
+            replyParts: [entry.confirmed.result.visibleReply],
+            replyPartDelaysMs: [0],
+            actions: entry.confirmed.ctx.actions
+          },
+          testEffects
+        })
+      }
+    }))
+    const winner = raced.find((entry) => entry.testEffects[0]?.status === 'recorded')
+    const loser = raced.find((entry) => entry.testEffects[0]?.status === 'failed')
+    assert.ok(winner, JSON.stringify(raced))
+    assert.ok(loser, JSON.stringify(raced))
+    assert.notEqual(winner.key, loser.key)
+    assert.equal(winner.testEffects.length, 1)
+    assert.equal(winner.testEffects[0].payload.startTime, slotA.toUTC().toISO())
+    assert.match(winner.visible.reply, /cita de prueba quedó confirmada/i)
+    assert.equal(loser.testEffects.length, 1)
+    assert.equal(loser.testEffects[0].code, 'test_slot_no_longer_free')
+    assert.equal(loser.testEffects[0].appointmentDateRestored, true, JSON.stringify(loser.testEffects[0]))
+    assert.match(loser.visible.reply, /horario ya no está disponible/i)
+    assert.match(loser.visible.reply, /conservé el día/i)
+    assert.doesNotMatch(loser.visible.reply, /confirmada|equipo lo revise|revisión humana/i)
+    const failedAction = loser.visible.actions.find((action) => action.type === 'book_appointment')
+    assert.equal(failedAction?.outcome?.status, 'error')
+    assert.equal(failedAction?.outcome?.materialized, false)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_test_effects
+       WHERE run_id IN (?, ?) AND status = 'failed'`,
+      [runAId, runBId]
+    )).total), 1)
+
+    const alternateRun = await prepareRun(loser.runId, `message_offer_loser_alternate_${suffix}`)
+    const alternateCtx = previewContext({
+      runContext: alternateRun,
+      previewScopeId: loser.offer.previewScopeId,
+      messages: [{ id: alternateRun.executionId, role: 'user', content: 'Entonces a las once.' }]
+    })
+    alternateCtx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: alternateCtx,
+      config
+    })
+    alternateCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: alternateCtx,
+      config
+    })
+    assert.equal(alternateCtx.appointmentOfferDecision, null)
+    assert.equal(alternateCtx.appointmentSelectionProgress?.selectedDate, localDate)
+    const availability = await toolNamed(alternateCtx, 'get_free_slots').invoke(null, JSON.stringify({
+      startDate: localDate,
+      endDate: localDate,
+      appointmentId: null,
+      weekdays: null,
+      earliestLocalTime: '11:00',
+      latestLocalTime: '11:00',
+      relativeToPreviousOffer: null,
+      progressDateAction: 'keep_selected_date'
+    }))
+    assert.equal(availability.ok, true, JSON.stringify(availability))
+    assert.equal(availability.total, 1, JSON.stringify(availability))
+    assert.equal(availability.slots[0].options[0].startTime, slotB.toUTC().toISO())
+    const alternateOffered = await toolNamed(alternateCtx, 'offer_appointment_slot').invoke(null, JSON.stringify({
+      startTime: availability.slots[0].options[0].startTime,
+      appointmentId: null
+    }))
+    assert.equal(alternateOffered.ok, true, JSON.stringify(alternateOffered))
+
+    const confirmedLoser = await confirmOffer({
+      runId: loser.runId,
+      testMessageId: `message_confirm_loser_alternate_${suffix}`,
+      offer: {
+        runContext: alternateRun,
+        previewScopeId: loser.offer.previewScopeId,
+        offered: alternateOffered,
+        requestText: 'Entonces a las once.'
+      },
+      confirmationText: 'Sí, ése.'
+    })
+    assert.equal(confirmedLoser.result.ok, true, JSON.stringify(confirmedLoser.result))
+    const alternateEffects = await recordConversationalAgentPreviewEffects({
+      runContext: confirmedLoser.runContext,
+      actions: confirmedLoser.ctx.actions
+    })
+    assert.equal(alternateEffects.length, 1, JSON.stringify(alternateEffects))
+    assert.equal(alternateEffects[0].status, 'recorded')
+    assert.equal(alternateEffects[0].payload.startTime, slotB.toUTC().toISO())
+
+    const appointments = await db.all(
+      `SELECT id, start_time FROM appointments
+       WHERE calendar_id = ? AND contact_id = ? AND deleted_at IS NULL
+       ORDER BY start_time`,
+      [calendarId, contactId]
+    )
+    assert.equal(appointments.length, 2)
+    assert.deepEqual(
+      appointments.map((appointment) => new Date(appointment.start_time).toISOString()),
+      [slotA.toUTC().toISO(), slotB.toUTC().toISO()]
+    )
+    const replayAlternate = await recordConversationalAgentPreviewEffects({
+      runContext: confirmedLoser.runContext,
+      actions: confirmedLoser.ctx.actions
+    })
+    assert.equal(replayAlternate[0].id, alternateEffects[0].id)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ? AND deleted_at IS NULL',
+      [calendarId, contactId]
+    )).total), 2, 'el retry no puede duplicar ninguna de las dos citas')
+  } finally {
+    const effectRows = await db.all(
+      'SELECT id FROM conversational_agent_test_effects WHERE run_id IN (?, ?)',
+      [runAId, runBId]
+    ).catch(() => [])
+    for (const effect of effectRows || []) {
+      await db.run(
+        'DELETE FROM appointment_creation_requests WHERE client_request_id = ?',
+        [`conv-test:${effect.id}`]
+      ).catch(() => {})
+    }
+    await db.run(
+      `DELETE FROM internal_notifications
+       WHERE category = 'conversational_agent_test' AND contact_id = ?`,
+      [contactId]
+    ).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_test_effects WHERE run_id IN (?, ?)', [runAId, runBId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_test_runs WHERE id IN (?, ?)', [runAId, runBId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
   }
 })
 

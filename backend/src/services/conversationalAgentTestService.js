@@ -7,6 +7,11 @@ import {
 } from '../agents/conversational/nativeRuntimeConfig.js'
 import { invokeController, toToolResult } from '../agents/invokeController.js'
 import { runBoundedAppointmentControllerRequest } from './appointmentControllerRetryService.js'
+import {
+  TEST_APPOINTMENT_CHECKPOINT_INTERRUPTED_FAILURE_KIND,
+  TEST_APPOINTMENT_PROVIDER_SYNC_FAILURE_KIND,
+  inspectAppointmentCreationRequestRecoveryState
+} from './appointmentCreationSafetyService.js'
 import { createAppointment } from '../controllers/calendarsController.js'
 import {
   cleanupConversationalAgentTestPaymentLink,
@@ -24,6 +29,7 @@ import { getAccountCurrency } from '../utils/accountLocale.js'
 import { logger } from '../utils/logger.js'
 import {
   CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+  CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
   buildConversationalAppointmentPreviewOfferEventId,
   buildConversationalAppointmentPreviewScopeId,
   cleanupConversationalAppointmentPreviewOffers
@@ -37,6 +43,11 @@ const TEST_RUN_TTL_MS = 2 * 60 * 60 * 1000
 // mientras el efecto externo legítimo sigue en vuelo.
 const TEST_EFFECT_LEASE_MS = 10 * 60 * 1000
 const TEST_NOTIFICATION_STALE_MS = 5 * 60 * 1000
+const TEST_APPOINTMENT_EFFECT_LOCK_WAIT_MS = 20 * 1000
+const TEST_APPOINTMENT_EFFECT_LOCK_RETRY_MS = 50
+const TEST_APPOINTMENT_PROGRESS_TTL_MS = 24 * 60 * 60 * 1000
+const TEST_SLOT_NO_LONGER_FREE_CODE = 'test_slot_no_longer_free'
+const TEST_APPOINTMENT_SELECTION_EVENT = 'appointment_slot_selection_verified'
 const TERMINAL_TEST_EFFECT_STATUSES = new Set([
   'recorded',
   'prepared',
@@ -88,6 +99,10 @@ function normalizeIdentifier(value, pattern, label) {
 function toIso(value = Date.now()) {
   const date = value instanceof Date ? value : new Date(value)
   return date.toISOString()
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export function normalizeConversationalAgentTestEffects(value = {}) {
@@ -342,7 +357,8 @@ export async function beginConversationalAgentTestEffect({
   testMessageId,
   requestedByUserId,
   effectType,
-  request
+  request,
+  exclusiveMutationLockHeld = false
 } = {}) {
   const runId = normalizeIdentifier(testRunId, TEST_RUN_ID_PATTERN, 'La sesión de prueba')
   const messageId = normalizeIdentifier(testMessageId, TEST_MESSAGE_ID_PATTERN, 'El mensaje de prueba')
@@ -383,7 +399,28 @@ export async function beginConversationalAgentTestEffect({
   }
 
   const leaseExpired = !effect.lease_until_at || Date.parse(effect.lease_until_at) <= Date.now()
-  if (effect.status === 'processing' && !leaseExpired) {
+  // recordPreviewEffect sólo activa esta recuperación después de adquirir el
+  // advisory lock del agente. Si una fila sigue processing bajo ese candado,
+  // el dueño anterior ya no conserva la exclusión y el request idempotente se
+  // puede reanudar sin esperar diez minutos a que venza la lease. La excepción
+  // es un controller de cita que todavía conserva su propia lease fresca: el
+  // contender no la cancela ni inventa un resultado final mientras ese trabajo
+  // puede seguir cerrando providers/checkpoints.
+  const appointmentRequestState = (
+    exclusiveMutationLockHeld === true &&
+    cleanEffectType === 'appointment' &&
+    effect.status === 'processing'
+  )
+    ? await inspectAppointmentCreationRequestRecoveryState(`conv-test:${effectId}`)
+    : null
+  const appointmentControllerStillProcessing = Boolean(
+    appointmentRequestState?.status === 'processing' &&
+    appointmentRequestState.processingLeaseExpired === false
+  )
+  const recoverAbandonedProcessing = exclusiveMutationLockHeld === true &&
+    effect.status === 'processing' &&
+    !appointmentControllerStillProcessing
+  if (effect.status === 'processing' && !leaseExpired && !recoverAbandonedProcessing) {
     return { claimed: false, reused: false, inProgress: true, effect: publicEffect(effect), run, effects }
   }
 
@@ -393,8 +430,9 @@ export async function beginConversationalAgentTestEffect({
          claim_token = ?, lease_until_at = ?, last_error = NULL,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND request_hash = ?
-       AND (status = 'failed' OR lease_until_at IS NULL OR lease_until_at <= ?)`,
-    [claimToken, leaseUntilAt, effectId, requestHash, toIso()]
+       AND (status = 'failed' OR lease_until_at IS NULL OR lease_until_at <= ?
+            OR (? = 1 AND status = 'processing'))`,
+    [claimToken, leaseUntilAt, effectId, requestHash, toIso(), recoverAbandonedProcessing ? 1 : 0]
   )
   if (mutationCount(claimed) !== 1) {
     effect = await db.get('SELECT * FROM conversational_agent_test_effects WHERE id = ?', [effectId])
@@ -457,7 +495,7 @@ async function loadPersistedCapabilities(run) {
   return parseJson(row.capabilities_config, {})
 }
 
-async function verifyTestAppointmentAction(action, scheduleCapability) {
+async function verifyTestAppointmentAction(action, scheduleCapability, { allowCanonicalReplay = false } = {}) {
   const calendarId = cleanString(action?.calendarId)
   const startTime = cleanString(action?.startTime)
   const start = new Date(startTime)
@@ -513,6 +551,8 @@ async function verifyTestAppointmentAction(action, scheduleCapability) {
     throw testError('Cambió quién termina de agendar. Vuelve a enviar el mensaje para probar la configuración vigente.', 409, 'test_booking_owner_changed')
   }
 
+  if (allowCanonicalReplay) return
+
   const timezone = await getAccountTimezone()
   const windowStart = normalizeDateOnlyInTimezone(
     new Date(start.getTime() - 24 * 60 * 60 * 1000).toISOString(),
@@ -533,6 +573,279 @@ async function verifyTestAppointmentAction(action, scheduleCapability) {
   if (!stillFree) {
     throw testError('Ese horario dejó de estar libre. No se registró la cita de prueba; vuelve a consultar espacios.', 409, 'test_slot_no_longer_free')
   }
+}
+
+async function hasCanonicalTestAppointmentReplay({ effectId, runContext, request } = {}) {
+  const clientRequestId = `conv-test:${cleanString(effectId)}`
+  const requestState = await inspectAppointmentCreationRequestRecoveryState(clientRequestId)
+  const row = await db.get(`
+    SELECT
+      a.id, a.calendar_id, a.contact_id, a.start_time, a.end_time,
+      a.status, a.appointment_status, a.deleted_at, a.is_test,
+      a.test_run_id, a.test_effect_id,
+      r.status AS request_status, r.appointment_id AS request_appointment_id
+    FROM appointments a
+    INNER JOIN appointment_creation_requests r ON r.client_request_id = ?
+    WHERE a.test_effect_id = ?
+    LIMIT 1
+  `, [clientRequestId, cleanString(effectId)])
+  if (!row) return false
+  const durableInterruptedFailure = requestState.status === 'failed' && [
+    TEST_APPOINTMENT_CHECKPOINT_INTERRUPTED_FAILURE_KIND,
+    TEST_APPOINTMENT_PROVIDER_SYNC_FAILURE_KIND
+  ].includes(requestState.failureKind)
+  const requestReadyForReplay = requestState.status === 'completed' || (
+    requestState.status === 'processing' && requestState.processingLeaseExpired === true
+  ) || durableInterruptedFailure
+  const inactive = row.deleted_at || ['cancelled', 'canceled', 'deleted'].includes(
+    cleanString(row.appointment_status || row.status).toLowerCase()
+  )
+  const requestAppointmentId = cleanString(row.request_appointment_id)
+  return Boolean(
+    !inactive &&
+    Number(row.is_test || 0) === 1 &&
+    cleanString(row.test_effect_id) === cleanString(effectId) &&
+    cleanString(row.test_run_id) === cleanString(runContext?.id) &&
+    cleanString(row.contact_id) === cleanString(runContext?.contact?.id) &&
+    cleanString(row.calendar_id) === cleanString(request?.calendarId) &&
+    Math.abs(new Date(row.start_time).getTime() - new Date(request?.startTime).getTime()) < 60_000 &&
+    Math.abs(new Date(row.end_time).getTime() - new Date(request?.endTime).getTime()) < 60_000 &&
+    requestReadyForReplay &&
+    cleanString(row.request_status) === requestState.status &&
+    (!requestAppointmentId || requestAppointmentId === cleanString(row.id))
+  )
+}
+
+async function withConversationalAppointmentTestEffectLock(lockInput, operation) {
+  const deadline = Date.now() + TEST_APPOINTMENT_EFFECT_LOCK_WAIT_MS
+  while (true) {
+    try {
+      return await withConversationalAgentTestMutationLock(lockInput, operation)
+    } catch (error) {
+      if (error?.code !== 'test_mutation_lock_busy' || Date.now() >= deadline) throw error
+      await wait(TEST_APPOINTMENT_EFFECT_LOCK_RETRY_MS)
+    }
+  }
+}
+
+async function restorePreviewAppointmentDateAfterSlotConflict({ runContext, request, effectId } = {}) {
+  const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+    testSessionId: runContext?.id,
+    requestedByUserId: runContext?.requestedByUserId,
+    agentId: runContext?.agent?.id
+  })
+  const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+  const contactId = cleanString(runContext?.contact?.id)
+  const agentId = cleanString(runContext?.agent?.id)
+  const executionId = cleanString(runContext?.executionId)
+  if (!offerEventId || !contactId || !agentId || !executionId) {
+    throw testError(
+      'La prueba perdió la identidad necesaria para conservar la fecha.',
+      409,
+      'test_appointment_restore_identity_missing'
+    )
+  }
+
+  return db.transaction(async () => {
+    const offer = await db.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+      [offerEventId]
+    )
+    const detail = parseJson(offer?.detail_json, {})
+    const acceptedByExecution = cleanString(detail.status) === 'accepted' &&
+      cleanString(detail.acceptedExecutionId) === executionId
+    const materializedByExecution = cleanString(detail.status) === 'materializing' &&
+      cleanString(detail.materializationExecutionId) === executionId &&
+      cleanString(detail.materializationEffectId) === cleanString(effectId)
+    const identityMatches = Boolean(
+      offer?.event_type === CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT &&
+      cleanString(offer?.contact_id) === contactId &&
+      cleanString(offer?.agent_id) === agentId &&
+      cleanString(detail.previewScopeId) === previewScopeId &&
+      cleanString(detail.calendarId) === cleanString(request?.calendarId) &&
+      cleanString(detail.startTime) === cleanString(request?.startTime) &&
+      (acceptedByExecution || materializedByExecution)
+    )
+    if (!identityMatches) {
+      throw testError(
+        'La oferta cambió antes de conservar la fecha del horario perdido.',
+        409,
+        'test_appointment_restore_offer_mismatch'
+      )
+    }
+
+    const selectedDate = normalizeDateOnlyInTimezone(detail.startTime, detail.timezone)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
+      throw testError(
+        'La oferta perdió su fecha de negocio antes de restaurarse.',
+        409,
+        'test_appointment_restore_date_invalid'
+      )
+    }
+    const progressRows = await db.all(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+      [contactId, agentId, CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT]
+    )
+    const progress = (progressRows || []).find((row) => (
+      cleanString(parseJson(row.detail_json, {}).previewScopeId) === previewScopeId
+    ))
+    const progressDetail = parseJson(progress?.detail_json, {})
+    const channel = cleanString(detail.channel).toLowerCase()
+    const progressEventId = channel
+      ? `cae_appointment_progress_${sha256([
+          agentId,
+          contactId,
+          channel,
+          previewScopeId
+        ].join('\u0000')).slice(0, 48)}`
+      : ''
+    const selection = cleanString(detail.selectionEventId)
+      ? await db.get(
+          `SELECT id, contact_id, agent_id, event_type, detail_json
+           FROM conversational_agent_events WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+          [cleanString(detail.selectionEventId)]
+        )
+      : null
+    const selectionDetail = parseJson(selection?.detail_json, {})
+    const selectionMatches = !selection
+      ? !cleanString(detail.selectionEventId)
+      : Boolean(
+          selection.event_type === TEST_APPOINTMENT_SELECTION_EVENT &&
+          cleanString(selection.contact_id) === contactId &&
+          cleanString(selection.agent_id) === agentId &&
+          cleanString(selectionDetail.status) === 'active' &&
+          cleanString(selectionDetail.offerEventId) === offerEventId &&
+          cleanString(selectionDetail.executionId) === executionId
+        )
+    if (
+      !progressEventId ||
+      (progress && (
+        cleanString(progress.id) !== progressEventId ||
+        cleanString(progress.contact_id) !== contactId ||
+        cleanString(progress.agent_id) !== agentId ||
+        cleanString(progressDetail.calendarId) !== cleanString(detail.calendarId)
+      )) ||
+      !selectionMatches
+    ) {
+      throw testError(
+        'La selección aceptada ya no coincide con la oferta que perdió el horario.',
+        409,
+        'test_appointment_restore_selection_mismatch'
+      )
+    }
+
+    const resolvedAt = toIso()
+    const rejectedStartTimes = [...new Set([
+      ...(Array.isArray(detail.rejectedStartTimes) ? detail.rejectedStartTimes : []),
+      cleanString(detail.startTime)
+    ].filter(Boolean))].slice(-64)
+    const nextOfferDetail = {
+      ...detail,
+      status: 'superseded',
+      phase: 'resolved',
+      resolution: TEST_SLOT_NO_LONGER_FREE_CODE,
+      resolvedAt,
+      resolvedExecutionId: executionId,
+      rejectedStartTimes
+    }
+    const nextProgressDetail = {
+      ...progressDetail,
+      schemaVersion: 1,
+      agentId,
+      contactId,
+      channel,
+      previewScopeId,
+      calendarId: cleanString(detail.calendarId),
+      selectedCalendar: cleanString(detail.calendarId),
+      purpose: cleanString(detail.purpose) === 'reschedule' ? 'reschedule' : 'book',
+      appointmentId: cleanString(detail.purpose) === 'reschedule'
+        ? cleanString(detail.appointmentId) || null
+        : null,
+      selectedDate,
+      selectedTime: null,
+      selectedStartTime: null,
+      previouslyShownRanges: [],
+      availabilityCheckedAt: null,
+      availabilityVerificationRequired: false,
+      lastError: { code: TEST_SLOT_NO_LONGER_FREE_CODE, at: resolvedAt },
+      appointmentStatus: 'collecting_time',
+      missingFields: ['time'],
+      selectedTimezone: cleanString(detail.timezone),
+      sourceExecutionId: executionId,
+      updatedAt: resolvedAt,
+      expiresAt: toIso(Date.now() + TEST_APPOINTMENT_PROGRESS_TTL_MS)
+    }
+    const offerUpdate = await db.run(
+      `UPDATE conversational_agent_events SET detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [JSON.stringify(nextOfferDetail), offer.id, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT, offer.detail_json]
+    )
+    if (mutationCount(offerUpdate) !== 1) {
+      throw testError(
+        'La oferta cambió mientras se restauraba su fecha.',
+        409,
+        'test_appointment_restore_offer_race'
+      )
+    }
+    const progressUpdate = progress
+      ? await db.run(
+          `UPDATE conversational_agent_events SET detail_json = ?
+           WHERE id = ? AND event_type = ? AND detail_json = ?`,
+          [
+            JSON.stringify(nextProgressDetail),
+            progress.id,
+            CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
+            progress.detail_json
+          ]
+        )
+      : await db.run(
+          `INSERT INTO conversational_agent_events
+            (id, contact_id, agent_id, event_type, detail_json)
+           VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+          [
+            progressEventId,
+            contactId,
+            agentId,
+            CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
+            JSON.stringify(nextProgressDetail)
+          ]
+        )
+    if (mutationCount(progressUpdate) !== 1) {
+      throw testError(
+        'La fecha de la oferta que perdió el horario cambió antes de restaurarse.',
+        409,
+        'test_appointment_progress_restore_race'
+      )
+    }
+    if (selection) {
+      const selectionUpdate = await db.run(
+        `UPDATE conversational_agent_events SET detail_json = ?
+         WHERE id = ? AND event_type = ? AND detail_json = ?`,
+        [
+          JSON.stringify({
+            ...selectionDetail,
+            status: 'superseded',
+            supersededAt: resolvedAt,
+            supersededReason: TEST_SLOT_NO_LONGER_FREE_CODE
+          }),
+          selection.id,
+          TEST_APPOINTMENT_SELECTION_EVENT,
+          selection.detail_json
+        ]
+      )
+      if (mutationCount(selectionUpdate) !== 1) {
+        throw testError(
+          'La selección aceptada cambió antes de restaurar la fecha del horario perdido.',
+          409,
+          'test_appointment_selection_restore_race'
+        )
+      }
+    }
+    return true
+  })
 }
 
 async function claimPreviewAppointmentOfferForTestEffect({ runContext, request, effectId } = {}) {
@@ -1039,16 +1352,18 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
           startTime: cleanString(action.startTime)
         }
 
-  return withConversationalAgentTestMutationLock({
+  const lockInput = {
     agentId: runContext.agent.id,
     purpose: `test_effect:${runContext.id}:${effectType}`
-  }, async () => {
+  }
+  const materializeEffect = async () => {
     const claim = await beginConversationalAgentTestEffect({
       testRunId: runContext.id,
       testMessageId: runContext.messageId,
       requestedByUserId: runContext.requestedByUserId,
       effectType,
-      request
+      request,
+      exclusiveMutationLockHeld: true
     })
     if (!claim.claimed) {
       if (claim.reused && claim.effect?.id) {
@@ -1111,13 +1426,18 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
       if (effectType === 'appointment') {
         capabilitiesConfig = await assertCurrentTestRunAuthority(claim.run, 'appointment')
         const schedule = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
-        await verifyTestAppointmentAction(action, schedule)
+        const humanBooking = action.type === 'request_human_booking'
+        const canonicalReplay = !humanBooking && await hasCanonicalTestAppointmentReplay({
+          effectId: claim.effect.id,
+          runContext,
+          request
+        })
+        await verifyTestAppointmentAction(action, schedule, { allowCanonicalReplay: canonicalReplay })
         await claimPreviewAppointmentOfferForTestEffect({
           runContext,
           request,
           effectId: claim.effect.id
         })
-        const humanBooking = action.type === 'request_human_booking'
         if (humanBooking) {
           const humanTargetLabel = cleanString(schedule?.handoffUserName)
             ? `a ${cleanString(schedule.handoffUserName)}`
@@ -1168,10 +1488,32 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         })
         const controllerResult = toToolResult(controllerExecution.result)
         if (!controllerResult.ok || !controllerResult.data?.id) {
+          const controllerFailureCode = cleanString(controllerExecution.result?.payload?.code)
+          const controllerStatusCode = Number(controllerResult.statusCode) || 502
+          const slotNoLongerFree = controllerStatusCode === 409 && [
+            'slot_unavailable',
+            'appointment_slot_unavailable'
+          ].includes(controllerFailureCode)
+          // El primer error de mirror conserva el código específico del
+          // provider; los replays usan el código canónico. El ledger durable es
+          // la fuente de verdad para que ambos turnos muestren el mismo estado.
+          const durableRequestState = await inspectAppointmentCreationRequestRecoveryState(
+            `conv-test:${claim.effect.id}`
+          ).catch(() => null)
+          const interruptedCheckpoint = controllerFailureCode === 'test_appointment_checkpoint_interrupted' ||
+            durableRequestState?.failureKind === TEST_APPOINTMENT_CHECKPOINT_INTERRUPTED_FAILURE_KIND
+          const providerSyncFailed = controllerFailureCode === 'test_appointment_provider_sync_failed' ||
+            durableRequestState?.failureKind === TEST_APPOINTMENT_PROVIDER_SYNC_FAILURE_KIND
           throw testError(
             controllerResult.error || 'El calendario no confirmó la cita temporal.',
-            Number(controllerResult.statusCode) || 502,
-            'test_appointment_creation_failed'
+            controllerStatusCode,
+            slotNoLongerFree
+              ? TEST_SLOT_NO_LONGER_FREE_CODE
+              : interruptedCheckpoint
+                ? 'test_appointment_checkpoint_interrupted'
+                : providerSyncFailed
+                  ? 'test_appointment_provider_sync_failed'
+                  : 'test_appointment_creation_failed'
           )
         }
         const appointment = controllerResult.data
@@ -1295,6 +1637,19 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         }
       })
     } catch (error) {
+      if (effectType === 'appointment' && error?.code === TEST_SLOT_NO_LONGER_FREE_CODE) {
+        try {
+          error.appointmentDateRestored = await restorePreviewAppointmentDateAfterSlotConflict({
+            runContext,
+            request,
+            effectId: claim.effect.id
+          })
+        } catch (restoreError) {
+          error.appointmentDateRestored = false
+          error.appointmentDateRestoreError = cleanString(restoreError?.code || restoreError?.message)
+          logger.error(`[Tester agente] No se pudo conservar la fecha después de perder el slot: ${restoreError.message}`)
+        }
+      }
       await failConversationalAgentTestEffect({
         effectId: claim.effect.id,
         claimToken: claim.claimToken,
@@ -1302,7 +1657,10 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
       })
       throw error
     }
-  })
+  }
+  return effectType === 'appointment'
+    ? withConversationalAppointmentTestEffectLock(lockInput, materializeEffect)
+    : withConversationalAgentTestMutationLock(lockInput, materializeEffect)
 }
 
 export async function recordConversationalAgentPreviewEffects({ runContext, actions = [] } = {}) {
@@ -1319,14 +1677,160 @@ export async function recordConversationalAgentPreviewEffects({ runContext, acti
       const recorded = await recordPreviewEffect({ runContext, actions, effectType, capabilitiesConfig })
       if (recorded) results.push(recorded)
     } catch (error) {
+      const effectStillProcessing = cleanString(error?.code) === 'test_mutation_lock_busy'
       results.push({
         type: effectType,
-        status: 'failed',
+        // El timeout del contender no cancela al dueño del advisory lock. Puede
+        // seguir materializando; exponerlo como failed/no-creado sería inventar
+        // un estado final que todavía no conocemos.
+        status: effectStillProcessing ? 'processing' : 'failed',
+        code: cleanString(error?.code) || 'test_effect_failed',
+        statusCode: Number(error?.statusCode) || 500,
+        appointmentDateRestored: error?.appointmentDateRestored === true,
+        appointmentDateRestoreError: cleanString(error?.appointmentDateRestoreError) || null,
         summary: error.message || 'No se pudo registrar esta acción de prueba.'
       })
     }
   }
   return results
+}
+
+/**
+ * El texto del preview sólo puede prometer una cita después de materializar el
+ * efecto real. Si la materialización falla, sustituye cualquier confirmación
+ * redactada por el modelo y marca la acción devuelta como fallida. Pagos y
+ * asignaciones conservan intacto su resultado.
+ */
+export function reconcileConversationalAgentPreviewResult({ result, testEffects = [] } = {}) {
+  const source = result && typeof result === 'object' ? result : {}
+  const effects = Array.isArray(testEffects) ? testEffects : []
+  const sourceActions = Array.isArray(source.actions) ? source.actions : []
+  const appointmentActions = sourceActions.filter((action) => (
+    ['book_appointment', 'request_human_booking'].includes(cleanString(action?.type))
+  ))
+  if (!appointmentActions.length) return source
+
+  const appointmentEffect = effects.find((effect) => cleanString(effect?.type) === 'appointment') || null
+  const assignmentEffect = effects.find((effect) => cleanString(effect?.type) === 'assignment') || null
+  const appointmentStatus = cleanString(appointmentEffect?.status).toLowerCase()
+  const assignmentStatus = cleanString(assignmentEffect?.status).toLowerCase()
+  const humanBooking = appointmentActions.some((action) => cleanString(action?.type) === 'request_human_booking')
+  const appointmentRecorded = appointmentStatus === 'recorded' &&
+    appointmentEffect?.payload?.safeTestRecord === true &&
+    (humanBooking
+      ? appointmentEffect?.payload?.appointmentCreated === false
+      : appointmentEffect?.payload?.appointmentCreated === true && Boolean(cleanString(appointmentEffect?.entityId)))
+  const assignmentRecorded = !assignmentEffect || (
+    assignmentStatus === 'recorded' &&
+    assignmentEffect?.payload?.assignmentActive === true &&
+    Boolean(cleanString(assignmentEffect?.entityId))
+  )
+  if (appointmentRecorded && assignmentRecorded) return source
+
+  const appointmentProcessing = ['processing', 'pending'].includes(appointmentStatus)
+  const assignmentProcessing = Boolean(assignmentEffect) && ['processing', 'pending'].includes(assignmentStatus)
+  const appointmentCleaned = appointmentStatus === 'cleaned'
+  const assignmentCleaned = assignmentStatus === 'cleaned'
+  const slotNoLongerFree = cleanString(appointmentEffect?.code) === TEST_SLOT_NO_LONGER_FREE_CODE
+  const interruptedCheckpoint = cleanString(appointmentEffect?.code) === 'test_appointment_checkpoint_interrupted'
+  const providerSyncFailed = cleanString(appointmentEffect?.code) === 'test_appointment_provider_sync_failed'
+  const restoredDate = appointmentEffect?.appointmentDateRestored === true
+  const appointmentCode = cleanString(appointmentEffect?.code) || (
+    appointmentProcessing
+      ? 'test_appointment_effect_processing'
+      : appointmentCleaned
+        ? 'test_appointment_effect_cleaned'
+        : appointmentEffect
+          ? 'test_appointment_effect_unverified'
+          : 'test_appointment_effect_missing'
+  )
+  const assignmentCode = cleanString(assignmentEffect?.code) || (
+    assignmentProcessing
+      ? 'test_assignment_effect_processing'
+      : assignmentCleaned
+        ? 'test_assignment_effect_cleaned'
+        : 'test_assignment_effect_unverified'
+  )
+
+  let reply
+  if (!appointmentRecorded) {
+    reply = appointmentProcessing
+      ? 'La cita de prueba sigue procesándose. Todavía no puedo confirmarla; espera un momento y vuelve a intentarlo.'
+      : appointmentCleaned
+        ? 'Esa cita de prueba ya terminó su limpieza automática; no hay una cita de prueba activa.'
+        : slotNoLongerFree
+          ? (restoredDate
+              ? 'Ese horario ya no está disponible. Conservé el día; ¿qué otra hora te funciona?'
+              : 'Ese horario ya no está disponible. Dime qué fecha u hora quieres revisar.')
+          : interruptedCheckpoint
+            ? 'La prueba se interrumpió después de guardar una cita temporal. No la des por confirmada; el sistema la retirará automáticamente. Vuelve a probar cuando termine la limpieza.'
+            : providerSyncFailed
+              ? 'El proveedor externo no confirmó todos los efectos de esta cita temporal. No la des por agendada; el sistema la retirará automáticamente.'
+          : 'No pude confirmar el resultado de esa cita de prueba. No la des por agendada; vuelve a intentarlo o revisa la bitácora.'
+    if (assignmentEffect && assignmentRecorded) {
+      reply += ' La asignación temporal del contacto sí quedó registrada.'
+    } else if (assignmentProcessing) {
+      reply += ' La asignación temporal también sigue procesándose.'
+    }
+  } else if (assignmentProcessing) {
+    reply = 'La solicitud de cita de prueba sí quedó registrada, pero la asignación temporal todavía se está procesando.'
+  } else if (assignmentCleaned) {
+    reply = 'La solicitud de cita de prueba ya se procesó y la asignación temporal ya terminó su limpieza automática.'
+  } else {
+    reply = 'La solicitud de cita de prueba sí quedó registrada, pero no pude completar la asignación temporal del contacto.'
+  }
+
+  const actions = sourceActions.map((action) => {
+    const actionType = cleanString(action?.type)
+    if (!['book_appointment', 'request_human_booking'].includes(actionType)) return action
+    const originalOutcome = action?.outcome && typeof action.outcome === 'object' ? action.outcome : {}
+    const sharedAssignmentSucceeded = actionType === 'request_human_booking' && assignmentEffect && assignmentRecorded
+    const appointmentState = appointmentRecorded
+      ? 'recorded'
+      : appointmentProcessing
+        ? 'processing'
+        : appointmentCleaned
+          ? 'cleaned'
+          : 'failed'
+    const assignmentState = !assignmentEffect
+      ? 'not_requested'
+      : assignmentRecorded
+        ? 'recorded'
+        : assignmentProcessing
+          ? 'processing'
+          : assignmentCleaned
+            ? 'cleaned'
+            : 'failed'
+    const partialSuccess = (appointmentRecorded && !assignmentRecorded) || (!appointmentRecorded && sharedAssignmentSucceeded)
+    return {
+      ...action,
+      outcome: {
+        ...originalOutcome,
+        status: partialSuccess
+          ? 'partial'
+          : (appointmentProcessing || assignmentProcessing ? 'pending' : 'error'),
+        ok: false,
+        simulated: false,
+        actionCompleted: partialSuccess,
+        materialized: false,
+        appointmentMaterialized: appointmentRecorded,
+        assignmentMaterialized: assignmentEffect ? assignmentRecorded : false,
+        appointmentEffectStatus: appointmentState,
+        assignmentEffectStatus: assignmentState,
+        code: appointmentRecorded ? assignmentCode : appointmentCode,
+        error: !appointmentRecorded
+          ? (cleanString(appointmentEffect?.summary) || reply)
+          : (cleanString(assignmentEffect?.summary) || reply)
+      }
+    }
+  })
+  return {
+    ...source,
+    reply,
+    replyParts: [reply],
+    replyPartDelaysMs: [],
+    actions
+  }
 }
 
 async function dispatchConversationalAgentTestEffectNotification(effectRow) {

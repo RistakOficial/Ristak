@@ -9231,6 +9231,18 @@ export function createConversationalTools(ctx) {
       if (existing) {
         const existingCommitAuthority = await prepareEarlyTerminalCommitAuthority()
         if (!existingCommitAuthority.authority.ok) return existingCommitAuthority.authority
+        if (!boundExisting && !nativeOverlapsAllowed) {
+          return {
+            ok: false,
+            actionCompleted: false,
+            confirmationRequired: true,
+            invalidSlot: true,
+            appointmentOfferInvalidated: true,
+            appointmentOfferRestoreSameDate: true,
+            code: 'appointment_slot_unavailable',
+            error: 'Ese horario ya está ocupado. No se creó ni se adoptó la cita existente; consulta otro horario del mismo día.'
+          }
+        }
         if (!boundExisting) {
           return {
             ok: false,
