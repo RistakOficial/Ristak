@@ -10,7 +10,7 @@
     "meta:update-version": "node scripts/update-meta-version.mjs",
     "media:migrate-to-bunny": "node scripts/migrate-existing-media-to-bunny.mjs",
     "sync:ghl-catalog": "node scripts/sync-highlevel-endpoint-catalog.mjs ../tmp/highlevel-api-docs src/data/highlevelEndpointCatalog.js",
-    "test": "node --test --test-concurrency=1 test/"
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
   },
   "dependencies": {
     "@openai/agents": "^0.11.6",

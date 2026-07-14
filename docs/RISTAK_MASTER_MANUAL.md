@@ -632,22 +632,32 @@ real cuando termina el POST. Conversación, bandeja y frontend filtran cualquier
 residuo `status` para que una fila antigua vacía no vuelva a aparecer como
 `Mensaje`.
 
-En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece dos conexiones
-separadas: **Conectar con Meta** precarga el Embedded Signup desde el backend del
-tenant, usa la misma pestaña para pasar por el dominio central autorizado y abre
-una sola ventana oficial de Meta con Coexistence; al terminar regresa a
+En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece conexiones
+separadas. **Conectar directo con Meta** precarga Embedded Signup v4 desde el
+backend del tenant. Meta detecta automáticamente el flujo por el número: si ya
+está activo en WhatsApp Business usa Coexistence y conserva la app; si es nuevo
+lo registra directo en Cloud API. Ambos casos usan la
+misma pestaña para pasar por el dominio central autorizado y abren una sola
+ventana oficial de Meta; al terminar regresan a
 `/settings/whatsapp/numbers` sobre el mismo origen donde empezó el usuario, para
 conservar su sesión aunque la instalación tenga dominio personalizado y dominio
 Render. Ese origen viaja firmado y debe coincidir con una de las URLs registradas
 de la instalación; el JSSDK nunca se ejecuta desde el dominio del tenant;
 **YCloud** conserva su formulario de API key. La página intermedia de Installer
 queda sólo como fallback para clientes anteriores. Meta valida el WABA y el
-número, guarda el token cifrado sólo en la base de esa instalación y activa
+número, guarda el token cifrado sólo en
+la base de esa instalación y activa
 `meta_direct`; el broker central enruta webhooks por WABA sin mezclarlos con
 YCloud ni con las sesiones QR/Baileys. Si la entrega final al tenant falla,
 Installer conserva temporalmente el resultado cifrado y una sesión nueva de la
 misma instalación lo retoma sin volver a autorizar ni exponer el token al
 navegador.
+
+Meta exige un sitio web por defecto. La casilla **Mi empresa no cuenta con sitio
+web ni una página de perfil** sólo aparece para Solution Partners Select o
+Premier aprobados para Partner-led Business Verification; no se habilita por
+usar un número nuevo ni desde el frontend. Hasta que Ristak reciba esa
+aprobación, la interfaz debe explicarlo sin prometer que el sitio puede omitirse.
 
 La app se suscribe al WABA durante la conexión. Si Meta directo lleva al menos
 30 minutos sin recibir webhook/relay, el siguiente envío renueva de forma

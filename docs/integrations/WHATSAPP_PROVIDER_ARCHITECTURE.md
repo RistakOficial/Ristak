@@ -267,6 +267,10 @@ tráfico vivo inbound/outbound. Sólo HistorySync puede importarse en paralelo.
 
 ## Reglas de Coexistence
 
+En Embedded Signup v4, Meta activa este flujo automáticamente cuando el usuario
+ingresa un número que ya está activo en la app de WhatsApp Business. Un número
+nuevo sigue el flujo estándar de Cloud API.
+
 1. Un número puede seguir activo en WhatsApp Business y en una API oficial.
 2. `history` es importación, no tráfico nuevo. Se persiste y publica para
    refrescar UI, pero no incrementa no leídos ni dispara push, confirmaciones,
@@ -326,9 +330,12 @@ JSSDK en la app de Meta. La instalación crea un `state` firmado con su licencia
 TTL de 15 minutos; el navegador no recibe tokens ni App Secret.
 
 Installer es dueño de `meta_app_id`, `meta_app_secret`,
-`whatsapp_business_login_config_id` y del webhook central. El JavaScript SDK usa
-`featureType=whatsapp_business_app_onboarding`, recibe el `code` y los IDs de la
-sesión, y el backend central:
+`whatsapp_business_login_config_id`,
+`whatsapp_business_login_config_v4_id` y del webhook central. La clave sin
+sufijo conserva temporalmente el flujo v2; la v4 tiene prioridad y deja que Meta
+detecte Coexistence o Cloud API según el número ingresado. El JavaScript SDK usa
+`featureType=whatsapp_business_app_onboarding` para mantener disponible
+Coexistence. Recibe el `code` y los IDs de la sesión, y el backend central:
 
 1. valida firma, licencia, instalación, dominio y expiración;
 2. canjea el `code` y valida `app_id`, permisos, WABA y Phone Number contra Graph;
@@ -337,6 +344,17 @@ sesión, y el backend central:
 4. activa una ruta exclusiva `waba_id -> installation_id`;
 5. retransmite `object=whatsapp_business_account` por la cola durable existente
    hacia `/api/whatsapp-api/meta/webhook-relay`.
+
+El sitio web es obligatorio por defecto en el portfolio comercial. La casilla
+para declarar que el negocio no tiene sitio ni página de perfil sólo se habilita
+a Solution Partners Select o Premier aprobados para Partner-led Business
+Verification. No depende del número ni puede habilitarse desde Ristak. Si Meta
+aprueba a Ristak, Installer deberá procesar el `account_update` con
+`PARTNER_CLIENT_CERTIFICATION_NEEDED` y certificar al cliente antes de permitir
+el envío de mensajes.
+
+Fuentes de este contrato: [Meta — sitio web opcional](https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/website-optional/)
+y [Meta — Embedded Signup v4](https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/version-4/).
 
 La conexión no se considera operativa sólo porque Meta devolvió un token o
 porque `/{WABA_ID}/subscribed_apps` respondió. Antes de guardar `connected`, el

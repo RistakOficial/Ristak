@@ -9393,9 +9393,10 @@ export async function prepareMetaDirectEmbeddedSignup({ appUrl } = {}) {
     appId: cleanString(session.appId),
     configId: cleanString(session.configId),
     graphVersion: cleanString(session.graphVersion),
+    configVersion: cleanString(session.configVersion) || 'v2',
     featureType: cleanString(session.featureType),
     sessionInfoVersion: cleanString(session.sessionInfoVersion),
-    coexistence: session.coexistence !== false
+    loginExtras: session.loginExtras && typeof session.loginExtras === 'object' ? session.loginExtras : {}
   }
 }
 
@@ -9487,7 +9488,10 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
   await setAppConfig(CONFIG_KEYS.metaWabaId, wabaId)
   await setAppConfig(CONFIG_KEYS.metaPhoneNumberId, phoneNumberId)
   await setAppConfig(CONFIG_KEYS.metaDisplayPhoneNumber, displayPhoneNumber)
-  await setAppConfig(CONFIG_KEYS.metaCoexistenceEnabled, payload.coexistenceEnabled === false ? '0' : '1')
+  await setAppConfig(
+    CONFIG_KEYS.metaCoexistenceEnabled,
+    payload.coexistenceEnabled === true ? '1' : payload.coexistenceEnabled === false ? '0' : ''
+  )
   await setAppConfig(CONFIG_KEYS.metaWebhookMode, 'installer_relay')
   await setAppConfig(CONFIG_KEYS.metaInstallerWebhookUrl, cleanString(payload.installerWebhookUrl || payload.installer_webhook_url))
   await setAppConfig(CONFIG_KEYS.metaInstallerOAuthCallbackUrl, cleanString(payload.installerOAuthCallbackUrl || payload.installer_oauth_callback_url))

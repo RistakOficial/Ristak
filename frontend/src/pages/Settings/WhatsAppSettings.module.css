@@ -539,6 +539,53 @@
   cursor: not-allowed;
 }
 
+.metaSignupModes {
+  display: grid;
+  border-top: 1px solid var(--border);
+}
+
+.metaSignupMode {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 220px);
+  align-items: center;
+  gap: 18px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.metaSignupModeCopy {
+  display: grid;
+  gap: 5px;
+}
+
+.metaSignupModeCopy strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.metaSignupModeCopy span {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.metaSignupMode > button {
+  width: 100%;
+}
+
+.metaSignupNote {
+  margin: 12px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.metaSignupNote strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .connectionDivider {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -841,6 +888,11 @@
 }
 
 @media (max-width: 760px) {
+  .metaSignupMode {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
   .header,
   .toolbar {
     align-items: stretch;
