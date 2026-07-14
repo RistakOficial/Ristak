@@ -124,6 +124,25 @@ Los detectores deben ser conservadores:
 - No hagas llamadas de red dentro del detector. El detector sólo decide si el
   cron debe existir, no si el proveedor está saludable.
 
+## Intervalos Configurables
+
+- Si el usuario puede cambiar la frecuencia, el valor debe persistirse en la
+  base de datos y validarse en backend. No debe depender de una variable de
+  entorno ni quedarse sólo en estado del frontend.
+- Al cambiar una frecuencia, reprograma el job activo sin reiniciar el backend
+  mediante `syncRegisteredIntegrationCronsForProvider(provider, {
+  restartActive: true })`. El runtime vuelve a evaluar la conexión antes de
+  arrancarlo; cambiar la frecuencia nunca debe encender una integración
+  desconectada.
+- El arranque del job puede ser asíncrono para leer su configuración. El runtime
+  espera `start()` y `stop()` antes de publicar el estado activo.
+- Meta Ads guarda su frecuencia en
+  `app_config.meta_ads_sync_interval_minutes`. El default es 60 minutos y la UI
+  ofrece 5, 10, 15 y 30 minutos; 1, 2, 3, 6 y 12 horas; y 1 día. Backend rechaza
+  valores fuera de esas opciones. El timer se reprograma en caliente y cada tick
+  usa un lock distribuido para no duplicar consultas durante deploys o con más
+  de una instancia.
+
 ## Tests Mínimos
 
 Cada integración nueva con cron debe cubrir:

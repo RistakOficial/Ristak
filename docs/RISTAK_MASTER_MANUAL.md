@@ -2435,7 +2435,15 @@ Ristak usa Meta en varias areas:
 - Contrato completo, permisos y checklist de revision:
   `docs/META_OAUTH.md`.
 
-- Meta Ads config y sync.
+- Meta Ads config y sync. En `Configuracion > Meta > Meta Ads`, el dropdown
+  **Actualizar datos de anuncios** permite elegir 5, 10, 15 o 30 minutos; 1, 2,
+  3, 6 o 12 horas; o 1 día. El default para instalaciones sin configuración es
+  una hora. La selección se guarda inmediatamente en
+  `app_config.meta_ads_sync_interval_minutes` y reprograma el job activo sin
+  reiniciar el backend. Los endpoints canónicos son `GET` y `PUT`
+  `/api/meta/sync/settings`; backend valida la lista y el job sigue apagado si
+  no existe una cuenta publicitaria conectada. Cada ejecución conserva guard
+  anti-solape y lock distribuido para no duplicar consultas a Meta.
 - `Rastreo web` mantiene los parametros UTM y la inclusion del Dataset en el
   snippet; no se mezcla con el login ni con los controles sociales.
 - `Dataset Test` conserva su propia pestana; las rutas internas pueden

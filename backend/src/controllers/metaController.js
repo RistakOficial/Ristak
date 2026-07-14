@@ -60,6 +60,14 @@ import {
   disconnectMetaOAuthConnection,
   replaceMetaOAuthWithManualConnection
 } from '../services/metaOAuthService.js';
+import {
+  DEFAULT_META_ADS_SYNC_INTERVAL_MINUTES,
+  MAX_META_ADS_SYNC_INTERVAL_MINUTES,
+  META_ADS_SYNC_INTERVAL_OPTIONS,
+  MIN_META_ADS_SYNC_INTERVAL_MINUTES,
+  getMetaAdsSyncIntervalMinutes,
+  saveMetaAdsSyncIntervalMinutes
+} from '../services/metaAdsSyncSettingsService.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -949,6 +957,52 @@ export const getConfig = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener la configuración de Meta'
+    });
+  }
+};
+
+export const getSyncSettings = async (req, res) => {
+  try {
+    const intervalMinutes = await getMetaAdsSyncIntervalMinutes();
+    res.json({
+      success: true,
+      data: {
+        intervalMinutes,
+        defaultIntervalMinutes: DEFAULT_META_ADS_SYNC_INTERVAL_MINUTES,
+        minIntervalMinutes: MIN_META_ADS_SYNC_INTERVAL_MINUTES,
+        maxIntervalMinutes: MAX_META_ADS_SYNC_INTERVAL_MINUTES,
+        options: META_ADS_SYNC_INTERVAL_OPTIONS
+      }
+    });
+  } catch (error) {
+    logger.error(`Error en getSyncSettings: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener la frecuencia de sincronización de Meta Ads'
+    });
+  }
+};
+
+export const updateSyncSettings = async (req, res) => {
+  try {
+    const intervalMinutes = await saveMetaAdsSyncIntervalMinutes(req.body?.intervalMinutes);
+    await syncRegisteredIntegrationCronsForProvider('meta-ads', {
+      reason: 'meta-ads-sync-interval-updated',
+      restartActive: true
+    });
+
+    res.json({
+      success: true,
+      data: { intervalMinutes },
+      message: 'Frecuencia de sincronización de Meta Ads actualizada'
+    });
+  } catch (error) {
+    logger.error(`Error en updateSyncSettings: ${error.message}`);
+    res.status(error.status || 500).json({
+      success: false,
+      error: error.status === 400
+        ? error.message
+        : 'Error al guardar la frecuencia de sincronización de Meta Ads'
     });
   }
 };

@@ -302,8 +302,8 @@ test('runtime de crons de integración enciende una vez, apaga y no revienta si 
     label: 'Runtime Cron Gate',
     provider: 'test',
     isEnabled: () => enabled,
-    start: () => { starts += 1 },
-    stop: () => { stops += 1 }
+    start: async () => { starts += 1 },
+    stop: async () => { stops += 1 }
   })
 
   assert.deepEqual(await syncIntegrationCron(name, { reason: 'initial-test' }), {
@@ -319,10 +319,17 @@ test('runtime de crons de integración enciende una vez, apaga y no revienta si 
   assert.equal((await syncIntegrationCron(name, { reason: 'enable-test-again' })).active, true)
   assert.equal(starts, 1)
 
+  assert.equal((await syncIntegrationCron(name, {
+    reason: 'interval-updated',
+    restartActive: true
+  })).active, true)
+  assert.equal(starts, 2)
+  assert.equal(stops, 1)
+
   enabled = false
   assert.equal((await syncIntegrationCron(name, { reason: 'disable-test' })).active, false)
   assert.equal((await syncIntegrationCron(name, { reason: 'disable-test-again' })).active, false)
-  assert.equal(stops, 1)
+  assert.equal(stops, 2)
 
   const throwingName = uniqueId('runtime_cron_gate_throw')
   registerIntegrationCron({

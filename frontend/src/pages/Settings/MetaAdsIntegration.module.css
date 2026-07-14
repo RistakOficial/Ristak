@@ -238,6 +238,22 @@
   font-weight: 500;
 }
 
+.connectedListCopy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.connectedListDescription {
+  max-width: 540px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 .connectedListValue {
   display: inline-flex;
   align-items: center;

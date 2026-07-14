@@ -63,6 +63,14 @@ export interface ConnectedSocialProfile {
   updatedAt?: string
 }
 
+export interface MetaAdsSyncSettings {
+  intervalMinutes: number
+  defaultIntervalMinutes: number
+  minIntervalMinutes: number
+  maxIntervalMinutes: number
+  options: number[]
+}
+
 export interface AdSet {
   id: string
   name: string
@@ -450,6 +458,14 @@ class CampaignsService {
     } catch (error) {
       return { success: false, configured: false, config: null }
     }
+  }
+
+  async getMetaAdsSyncSettings(): Promise<MetaAdsSyncSettings> {
+    return apiClient.get<MetaAdsSyncSettings>('/meta/sync/settings')
+  }
+
+  async updateMetaAdsSyncSettings(intervalMinutes: number): Promise<{ intervalMinutes: number }> {
+    return apiClient.put<{ intervalMinutes: number }>('/meta/sync/settings', { intervalMinutes })
   }
 
   async fetchAdAccounts(accessToken = ''): Promise<{

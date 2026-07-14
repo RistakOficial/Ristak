@@ -118,6 +118,16 @@ const metaConnectedTabs: Array<{ id: MetaConnectedTab; label: string; icon: Reac
   { id: 'pruebas', label: 'Dataset Test', icon: <FlaskConical size={16} /> }
 ]
 
+const defaultMetaAdsSyncIntervalOptions = [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440]
+const formatMetaAdsSyncIntervalOption = (intervalMinutes: number) => {
+  if (intervalMinutes === 1440) return 'Cada día'
+  if (intervalMinutes >= 60) {
+    const hours = intervalMinutes / 60
+    return hours === 1 ? 'Cada hora' : `Cada ${hours} horas`
+  }
+  return `Cada ${intervalMinutes} minutos`
+}
+
 const MASKED_SECRET_PREFIX = '***'
 const SECRET_MASK_FILL = '*'.repeat(180)
 const metaStepSlugs = ['token', 'ad-account', 'pixel', 'pages'] as const
@@ -503,6 +513,10 @@ export const MetaAdsIntegration: React.FC = () => {
   const [savedInstagramAccountId, setSavedInstagramAccountId] = useState('')
   const [isSyncingSnippet, setIsSyncingSnippet] = useState(false)
   const [isSyncingMetaAds, setIsSyncingMetaAds] = useState(false)
+  const [metaAdsSyncIntervalMinutes, setMetaAdsSyncIntervalMinutes] = useState(60)
+  const [metaAdsSyncIntervalOptions, setMetaAdsSyncIntervalOptions] = useState(defaultMetaAdsSyncIntervalOptions)
+  const [isLoadingMetaAdsSyncSettings, setIsLoadingMetaAdsSyncSettings] = useState(true)
+  const [isSavingMetaAdsSyncSettings, setIsSavingMetaAdsSyncSettings] = useState(false)
   const [isEditingMetaConfig, setIsEditingMetaConfig] = useState(false)
   const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false)
   const [isDisconnectingMeta, setIsDisconnectingMeta] = useState(false)
@@ -613,7 +627,7 @@ export const MetaAdsIntegration: React.FC = () => {
     : ''
 
   useEffect(() => {
-    loadCredentials()
+    void Promise.all([loadCredentials(), loadMetaAdsSyncSettings()])
   }, [])
 
   useEffect(() => {
@@ -1160,6 +1174,23 @@ export const MetaAdsIntegration: React.FC = () => {
     } catch {
     } finally {
       if (loadVersion === credentialsLoadVersion.current) setIsLoading(false)
+    }
+  }
+
+  const loadMetaAdsSyncSettings = async () => {
+    setIsLoadingMetaAdsSyncSettings(true)
+    try {
+      const settings = await campaignsService.getMetaAdsSyncSettings()
+      const options = Array.isArray(settings.options)
+        ? settings.options.filter(option => Number.isInteger(option))
+        : []
+      setMetaAdsSyncIntervalOptions(options.length ? options : defaultMetaAdsSyncIntervalOptions)
+      setMetaAdsSyncIntervalMinutes(Number(settings.intervalMinutes) || 60)
+    } catch {
+      setMetaAdsSyncIntervalOptions(defaultMetaAdsSyncIntervalOptions)
+      setMetaAdsSyncIntervalMinutes(60)
+    } finally {
+      setIsLoadingMetaAdsSyncSettings(false)
     }
   }
 
@@ -2415,6 +2446,34 @@ export const MetaAdsIntegration: React.FC = () => {
     void syncMetaAds()
   }
 
+  const handleMetaAdsSyncIntervalChange = async (nextValue: string) => {
+    const nextIntervalMinutes = Number(nextValue)
+    if (!Number.isInteger(nextIntervalMinutes) || nextIntervalMinutes === metaAdsSyncIntervalMinutes) return
+
+    const previousIntervalMinutes = metaAdsSyncIntervalMinutes
+    setMetaAdsSyncIntervalMinutes(nextIntervalMinutes)
+    setIsSavingMetaAdsSyncSettings(true)
+    try {
+      const savedSettings = await campaignsService.updateMetaAdsSyncSettings(nextIntervalMinutes)
+      const savedIntervalMinutes = Number(savedSettings.intervalMinutes) || previousIntervalMinutes
+      setMetaAdsSyncIntervalMinutes(savedIntervalMinutes)
+      showToast(
+        'success',
+        'Frecuencia actualizada',
+        `Ristak actualizará los datos de anuncios ${formatMetaAdsSyncIntervalOption(savedIntervalMinutes).toLowerCase()}.`
+      )
+    } catch (error) {
+      setMetaAdsSyncIntervalMinutes(previousIntervalMinutes)
+      showToast(
+        'error',
+        'No se pudo guardar la frecuencia',
+        error instanceof Error ? error.message : 'Inténtalo de nuevo.'
+      )
+    } finally {
+      setIsSavingMetaAdsSyncSettings(false)
+    }
+  }
+
   const isUnifiedOAuthConnected = isLegacyOAuthConnection
   const connectedAdAccountId = metaOAuthStatus?.selected?.adAccountId || credentials.adAccountId
   const connectedPixelId = metaOAuthStatus?.selected?.pixelId || credentials.pixelId
@@ -3113,7 +3172,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   <div>
                     <h3 className={styles.sectionTitle}>Meta Ads</h3>
                     <p className={styles.sectionDescription}>
-                      Elige la cuenta publicitaria y, si la necesitas, el Dataset de conversiones. Los cambios se aplican al guardar.
+                      Elige la cuenta publicitaria y, si la necesitas, el Dataset de conversiones. Los activos se aplican al guardar; la frecuencia automática se guarda al seleccionarla.
                     </p>
                   </div>
                   <div className={styles.connectedActions}>
@@ -3198,6 +3257,27 @@ export const MetaAdsIntegration: React.FC = () => {
                         ))}
                       </CustomSelect>
                     ) : renderConnectedAsset(getSelectedPixelAsset(), 'Sin Dataset')}
+                  </div>
+                  <div className={styles.connectedListRow}>
+                    <div className={styles.connectedListCopy}>
+                      <span className={styles.connectedListLabel}>Actualizar datos de anuncios</span>
+                      <span className={styles.connectedListDescription}>
+                        Ristak consultará Meta automáticamente con esta frecuencia (mínimo 5 minutos, máximo 1 día).
+                      </span>
+                    </div>
+                    <CustomSelect
+                      className={styles.connectedAssetSelect}
+                      value={String(metaAdsSyncIntervalMinutes)}
+                      onChange={(event) => void handleMetaAdsSyncIntervalChange(event.target.value)}
+                      disabled={isLoadingMetaAdsSyncSettings || isSavingMetaAdsSyncSettings}
+                      aria-label="Frecuencia de actualización de datos de anuncios"
+                    >
+                      {metaAdsSyncIntervalOptions.map(intervalMinutes => (
+                        <option key={intervalMinutes} value={intervalMinutes}>
+                          {formatMetaAdsSyncIntervalOption(intervalMinutes)}
+                        </option>
+                      ))}
+                    </CustomSelect>
                   </div>
                 </div>
 

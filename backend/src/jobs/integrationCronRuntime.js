@@ -40,7 +40,7 @@ export function getIntegrationCronState() {
   }))
 }
 
-export async function syncIntegrationCron(name, { reason = 'sync' } = {}) {
+export async function syncIntegrationCron(name, { reason = 'sync', restartActive = false } = {}) {
   const entry = registry.get(cleanString(name))
   if (!entry) return null
 
@@ -51,9 +51,19 @@ export async function syncIntegrationCron(name, { reason = 'sync' } = {}) {
     logger.warn(`[Crons integraciones] No se pudo evaluar ${entry.label}: ${error.message}`)
   }
 
+  if (enabled && entry.active && restartActive) {
+    try {
+      await entry.stop()
+      entry.active = false
+      logger.info(`[Crons integraciones] ${entry.label} reprogramando (${reason})`)
+    } catch (error) {
+      logger.warn(`[Crons integraciones] No se pudo reprogramar ${entry.label}: ${error.message}`)
+    }
+  }
+
   if (enabled && !entry.active) {
     try {
-      const started = entry.start()
+      const started = await entry.start()
       entry.active = started !== false
       if (entry.active) {
         logger.info(`[Crons integraciones] ${entry.label} activado (${reason})`)
@@ -66,7 +76,7 @@ export async function syncIntegrationCron(name, { reason = 'sync' } = {}) {
     }
   } else if (!enabled && entry.active) {
     try {
-      entry.stop()
+      await entry.stop()
     } catch (error) {
       logger.warn(`[Crons integraciones] No se pudo apagar ${entry.label}: ${error.message}`)
     }

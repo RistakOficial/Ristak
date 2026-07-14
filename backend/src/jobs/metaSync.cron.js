@@ -4,10 +4,17 @@ import { refreshConnectedSocialProfileBlocks } from '../services/metaSocialProfi
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { canRunBackgroundJob } from '../services/licenseService.js'
+import { withCronLock } from '../utils/cronLock.js'
+import {
+  DEFAULT_META_ADS_SYNC_INTERVAL_MINUTES,
+  formatMetaAdsSyncInterval,
+  getMetaAdsSyncIntervalMinutes
+} from '../services/metaAdsSyncSettingsService.js'
 
 /**
- * Cron job para actualizar ads recientes cada hora
- * Se ejecuta tanto en desarrollo como en producción
+ * Job configurable para actualizar anuncios recientes.
+ * Se ejecuta tanto en desarrollo como en producción y sólo existe cuando la
+ * integración de Meta Ads está conectada (integrationCronRegistry).
  */
 // (META-006) Guards anti-solape intra-proceso: si un tick anterior aún corre
 // (una corrida tardó más que el intervalo, o el solape de un deploy zero-downtime
@@ -17,29 +24,27 @@ let metaAdsSyncRunning = false
 let metaSocialRefreshRunning = false
 let metaAdsSyncTask = null
 let metaSocialRefreshTask = null
+let activeMetaAdsSyncIntervalMinutes = DEFAULT_META_ADS_SYNC_INTERVAL_MINUTES
 
-export function startMetaAdsSyncCron() {
-  if (metaAdsSyncTask) return
-  logger.info('Iniciando cron job de Meta Ads (cada hora)')
+async function runMetaAdsSyncTick(intervalMinutes) {
+  if (isDeployShutdownStarted()) return
+  try {
+    if (!(await canRunBackgroundJob('meta_ads'))) return
+  } catch (error) {
+    logger.warn(`No se pudo validar el plan antes de sincronizar Meta Ads: ${error.message}`)
+    return
+  }
 
-  // Ejecutar cada hora en punto.
-  metaAdsSyncTask = cron.schedule('0 * * * *', async () => {
-    if (isDeployShutdownStarted()) return
-    try {
-      if (!(await canRunBackgroundJob('meta_ads'))) return
-    } catch (error) {
-      logger.warn(`No se pudo validar el plan antes de sincronizar Meta Ads: ${error.message}`)
-      return
-    }
-    // (META-006) Claim intra-proceso antes de actuar.
-    if (metaAdsSyncRunning) {
-      logger.warn('Actualización automática de Meta Ads saltada: ya hay un tick en curso')
-      return
-    }
-    metaAdsSyncRunning = true
-    logger.info('Ejecutando actualización automática de Meta Ads...')
-    try {
-      await trackDeployDrainWork('cron:meta-ads-sync', async () => {
+  if (metaAdsSyncRunning) {
+    logger.warn('Actualización automática de Meta Ads saltada: ya hay un tick en curso')
+    return
+  }
+
+  metaAdsSyncRunning = true
+  logger.info('Ejecutando actualización automática de Meta Ads...')
+  try {
+    await trackDeployDrainWork('cron:meta-ads-sync', async () => {
+      const { ran } = await withCronLock('meta-ads-sync', intervalMinutes * 60 * 1000, async () => {
         const result = await updateRecentAds()
         if (result.success) {
           logger.success(`Actualización automática completada: ${result.count} ads actualizados`)
@@ -47,19 +52,36 @@ export function startMetaAdsSyncCron() {
           logger.warn('Actualización automática saltada:', result.message)
         }
       })
-    } catch (error) {
-      logger.error('Error en actualización automática de Meta Ads:', error.message)
-    } finally {
-      metaAdsSyncRunning = false // (META-006)
-    }
-  })
+      if (!ran) {
+        logger.info('Actualización automática de Meta Ads omitida: otra instancia tiene el lock')
+      }
+    })
+  } catch (error) {
+    logger.error('Error en actualización automática de Meta Ads:', error.message)
+  } finally {
+    metaAdsSyncRunning = false
+  }
+}
 
-  logger.success('Cron job de Meta Ads configurado (cada hora en punto)')
+export async function startMetaAdsSyncCron() {
+  if (metaAdsSyncTask) return
+  activeMetaAdsSyncIntervalMinutes = await getMetaAdsSyncIntervalMinutes()
+  const intervalLabel = formatMetaAdsSyncInterval(activeMetaAdsSyncIntervalMinutes)
+  logger.info(`Iniciando sincronización automática de Meta Ads (${intervalLabel})`)
+
+  metaAdsSyncTask = setInterval(() => {
+    runMetaAdsSyncTick(activeMetaAdsSyncIntervalMinutes).catch(error => {
+      logger.error('Error no manejado en sincronización automática de Meta Ads:', error.message)
+    })
+  }, activeMetaAdsSyncIntervalMinutes * 60 * 1000)
+  metaAdsSyncTask.unref?.()
+
+  logger.success(`Sincronización automática de Meta Ads configurada (${intervalLabel})`)
 }
 
 export function stopMetaAdsSyncCron() {
-  metaAdsSyncTask?.stop()
-  metaAdsSyncTask?.destroy?.()
+  if (!metaAdsSyncTask) return
+  clearInterval(metaAdsSyncTask)
   metaAdsSyncTask = null
 }
 

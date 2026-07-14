@@ -2,6 +2,8 @@ import express from 'express'
 import {
   saveConfig,
   getConfig,
+  getSyncSettings,
+  updateSyncSettings,
   revealMetaToken,
   getMetaWebhookInfo,
   syncAds,
@@ -77,6 +79,8 @@ router.post('/oauth/disconnect', disconnectMetaOAuth)
 // Configuración
 router.post('/config', saveConfig)
 router.get('/config', getConfig)
+router.get('/sync/settings', getSyncSettings)
+router.put('/sync/settings', updateSyncSettings)
 router.delete('/config', deleteMetaConfig)
 router.get('/config/reveal/access_token', revealMetaToken)
 router.get('/webhook-info', getMetaWebhookInfo)
