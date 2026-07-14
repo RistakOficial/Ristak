@@ -14357,11 +14357,15 @@ export const PhoneChat: React.FC = () => {
       )
       appointmentCreateIntentRef.current = requestIntent
 
-      await calendarsService.createAppointment({
+      const created = await calendarsService.createAppointment({
         ...appointmentData,
         clientRequestId: requestIntent.clientRequestId
       }, accessToken || undefined)
       appointmentCreateIntentRef.current = null
+
+      if (created?.syncStatus === 'error') {
+        showToast('warning', 'Cita guardada en Ristak', 'HighLevel quedó pendiente y Ristak volverá a intentarlo automáticamente.')
+      }
 
       if (wideSidebarMode === 'appointment') {
         setWideSidebarMode('chats')

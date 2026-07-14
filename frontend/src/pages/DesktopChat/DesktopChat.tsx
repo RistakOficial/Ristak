@@ -94,7 +94,7 @@ import {
 } from '@/utils/chatMessageReconciliation'
 import apiClient from '@/services/apiClient'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
-import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
+import { calendarsService, type Calendar, type CalendarEvent, type CreateAppointmentPayload } from '@/services/calendarsService'
 import {
   conversationalAgentService,
   type ConversationAgentState,
@@ -5759,7 +5759,7 @@ export const DesktopChat: React.FC = () => {
   }, [activeContact, contactInfoData, locationId, selectedCalendar, timezone])
 
   const handleSaveAppointment = async (
-    eventIdOrPayload: string | (Partial<CalendarEvent> & { strictAvailabilityCheck?: true }),
+    eventIdOrPayload: string | CreateAppointmentPayload,
     updates?: Partial<CalendarEvent>
   ) => {
     if (typeof eventIdOrPayload === 'string') {
@@ -5772,10 +5772,14 @@ export const DesktopChat: React.FC = () => {
       return
     }
 
-    await calendarsService.createAppointment(eventIdOrPayload, accessToken || undefined)
+    const created = await calendarsService.createAppointment(eventIdOrPayload, accessToken || undefined)
     setAppointmentOpen(false)
     setEditingAppointmentEvent(null)
-    showToast('success', 'Cita agendada', 'La cita quedó guardada para este contacto.')
+    if (created?.syncStatus === 'error') {
+      showToast('warning', 'Cita guardada en Ristak', 'HighLevel quedó pendiente y Ristak volverá a intentarlo automáticamente.')
+    } else {
+      showToast('success', 'Cita agendada', 'La cita quedó guardada para este contacto.')
+    }
     if (activeContactId) await loadConversation(activeContactId)
   }
 

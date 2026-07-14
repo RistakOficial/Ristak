@@ -1662,6 +1662,16 @@ Reglas base:
   el contrato anterior. Los deep links de cita de Android esperan primero un
   bootstrap utilizable de `account_timezone` y calendarios para no consumir el
   enlace con contexto fallback.
+- Toda alta normal por web, chat, calendario móvil, app nativa, iOS o API
+  autenticada debe mandar un `calendarId` local válido. El backend rechaza la
+  solicitud antes del INSERT cuando falta, porque una cita huérfana no puede
+  respetar disponibilidad ni determinar su espejo externo. Si HighLevel está
+  conectado, la misma alta confirma primero la cita canónica en Ristak e intenta
+  de inmediato crear su espejo en el calendario remoto ligado. Un fallo remoto
+  no borra ni duplica la cita local: la respuesta vuelve con `syncStatus=error`,
+  las superficies muestran que HighLevel quedó pendiente y el reconciliador
+  reintenta después. El formulario público conserva el mismo contrato local más
+  espejo usando el calendario resuelto por su URL.
 - Las creaciones locales desde calendario publico, admin o agente disparan los
   eventos `appointment-booked` y `appointment-status` del motor de
   Automatizaciones despues de persistir la cita. Los cambios de estado desde

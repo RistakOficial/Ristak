@@ -10,6 +10,7 @@ struct AppointmentFormView: View {
     let onSaved: (CalendarAppointment) -> Void
 
     @State private var showGuestPicker = false
+    @State private var pendingSavedAppointment: CalendarAppointment?
 
     var body: some View {
         Form {
@@ -53,7 +54,12 @@ struct AppointmentFormView: View {
                     Task { await attemptSave(ignoringConflicts: true) }
                 }
             } else {
-                Button("Entendido", role: .cancel) {}
+                Button("Entendido", role: .cancel) {
+                    if let saved = pendingSavedAppointment {
+                        pendingSavedAppointment = nil
+                        onSaved(saved)
+                    }
+                }
             }
         } message: { alert in
             Text(alert.message)
@@ -70,7 +76,15 @@ struct AppointmentFormView: View {
 
     private func attemptSave(ignoringConflicts: Bool = false) async {
         if let saved = await model.save(ignoringConflicts: ignoringConflicts) {
-            onSaved(saved)
+            if saved.syncStatus?.lowercased() == "error" {
+                pendingSavedAppointment = saved
+                model.alert = AppointmentFormViewModel.FormAlert(
+                    title: "Cita guardada en Ristak",
+                    message: "HighLevel quedó pendiente de sincronización y Ristak volverá a intentarlo automáticamente."
+                )
+            } else {
+                onSaved(saved)
+            }
         }
     }
 

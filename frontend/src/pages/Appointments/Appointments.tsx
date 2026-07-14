@@ -1019,7 +1019,11 @@ export const Appointments: React.FC = () => {
           setUpcomingEvents(current => [created, ...current.filter(event => event.id !== created.id)]);
         }
       }
-      showToast('success', 'Cita programada', accessToken ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak.');
+      if (created?.syncStatus === 'error') {
+        showToast('warning', 'Cita guardada en Ristak', 'HighLevel quedó pendiente y Ristak volverá a intentarlo automáticamente.');
+      } else {
+        showToast('success', 'Cita programada', accessToken ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak.');
+      }
       closeCreateModal();
       await loadEvents();
       await loadUpcomingEvents();

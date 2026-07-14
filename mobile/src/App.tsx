@@ -9168,10 +9168,6 @@ function CalendarSection({
           scheduleMode,
         }),
       };
-      if (appointmentMode === 'create') {
-        payload.calendarId = calendarId;
-        payload.contactId = draft.contactId;
-      }
       if (draft.assignedUserId) {
         payload.assignedUserId = draft.assignedUserId;
       }
@@ -9180,7 +9176,12 @@ function CalendarSection({
         if (!draft.eventId) throw new Error('La cita no tiene ID.');
         await api.updateAppointment(draft.eventId, payload);
       } else {
-        const signature = JSON.stringify(payload);
+        const createPayload = {
+          ...payload,
+          calendarId,
+          contactId: draft.contactId,
+        };
+        const signature = JSON.stringify(createPayload);
         const existingIntent = appointmentCreateIntentRef.current;
         const createIntent = existingIntent?.signature === signature
           ? existingIntent
@@ -9189,8 +9190,14 @@ function CalendarSection({
               clientRequestId: createNativeMutationId('native-appointment', draft.contactId || calendarId),
             };
         appointmentCreateIntentRef.current = createIntent;
-        await api.createAppointment(payload, createIntent.clientRequestId);
+        const createdAppointment = await api.createAppointment(createPayload, createIntent.clientRequestId);
         appointmentCreateIntentRef.current = null;
+        if (String(createdAppointment.syncStatus || createdAppointment.sync_status || '').trim().toLowerCase() === 'error') {
+          Alert.alert(
+            'Cita guardada en Ristak',
+            'HighLevel quedó pendiente de sincronización y Ristak volverá a intentarlo automáticamente.',
+          );
+        }
       }
       closeSheet();
       setSelectedEvent(null);
@@ -23675,8 +23682,23 @@ function NativeConversationScreen({
     if (!acquireConversationActionLock(appointmentActionKey)) return;
     setAppointmentBusy(true);
     try {
+      const [configResponse, calendarsResponse] = await Promise.all([
+        api.getConfig(['default_calendar_id']),
+        api.getCalendars(),
+      ]);
+      const configValues = unwrapConfigValues(configResponse);
+      const defaultCalendarId = String(configValues.default_calendar_id || '').trim();
+      const availableCalendars = unwrapCalendars(calendarsResponse).filter(calendarIsActive);
+      const appointmentCalendar = availableCalendars.find(
+        (calendar) => getCalendarKey(calendar) === defaultCalendarId,
+      ) || availableCalendars[0];
+      const appointmentCalendarId = getCalendarKey(appointmentCalendar);
+      if (!appointmentCalendarId) {
+        throw new Error('No hay un calendario activo para guardar la cita.');
+      }
       const bookedAt = new Date().toISOString();
       const payload = {
+        calendarId: appointmentCalendarId,
         title,
         contactId: contact.id,
         contactName: getContactName(contact),
@@ -23699,7 +23721,7 @@ function NativeConversationScreen({
             clientRequestId: createNativeMutationId('native-appointment-chat', contact.id),
           };
       quickAppointmentIntentRef.current = intent;
-      await api.createAppointment(payload, intent.clientRequestId);
+      const createdAppointment = await api.createAppointment(payload, intent.clientRequestId);
       quickAppointmentIntentRef.current = null;
       const appointmentLabel = formatSchedulePreviewLabel(startTime, timezone);
       setLocalActivityMarkers((current) => mergeConversationActivityMarkers(current, [{
@@ -23716,6 +23738,16 @@ function NativeConversationScreen({
       });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       closeSheet();
+      const highLevelPending = Boolean(integrationsStatus?.highlevel?.connected) && (
+        String(createdAppointment.ghlAppointmentId || createdAppointment.ghl_appointment_id || '').trim() === ''
+        || String(createdAppointment.syncStatus || createdAppointment.sync_status || '').trim().toLowerCase() !== 'synced'
+      );
+      if (highLevelPending) {
+        Alert.alert(
+          'Cita guardada en Ristak',
+          'HighLevel quedó pendiente de sincronización y Ristak volverá a intentarlo automáticamente.',
+        );
+      }
       onContactPatch(contact.id, { hasAppointments: true, nextAppointmentDate: startTime });
       onRefreshChats();
       requestAnimationFrame(() => scrollConversationToLatest(true));

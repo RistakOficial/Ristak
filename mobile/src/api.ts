@@ -1391,7 +1391,7 @@ export class RistakApiClient {
     });
   }
 
-  createAppointment(appointmentData: Record<string, unknown>, clientRequestId?: string) {
+  createAppointment(appointmentData: Record<string, unknown> & { calendarId: string }, clientRequestId?: string) {
     return this.request<CalendarEventItem>('/calendars/appointments', {
       method: 'POST',
       body: JSON.stringify({

@@ -40,6 +40,27 @@ app.use('/api/calendars', calendarsRoutes)
 
 El orden importa: rutas específicas como `/events` y `/block-slots` van antes de `/:id`.
 
+## Contrato Canónico De Alta
+
+`POST /api/calendars/appointments` exige `calendarId`; si falta responde `400`
+con `code=appointment_calendar_required` antes de crear cualquier fila. Todas las
+superficies internas deben usar esta ruta y mandar el ID del calendario local
+seleccionado o predeterminado.
+
+La cita se confirma primero en `appointments`. Cuando HighLevel está configurado,
+el controller intenta enseguida crear el espejo usando `calendars.ghl_calendar_id`:
+
+- Éxito: conserva el ID local como canónico, guarda `ghl_appointment_id` y deja
+  `sync_status=synced`.
+- Fallo o calendario todavía sin vínculo remoto: conserva la cita local, deja
+  `sync_status=error`, devuelve ese estado a la superficie y permite que
+  `syncLocalAppointmentsToHighLevel` concilie/reintente sin repetir POST a ciegas.
+- HighLevel desconectado: la cita local sigue siendo válida y queda pendiente.
+
+La ruta pública resuelve el calendario desde el slug y aplica el mismo contrato
+local más espejo. Las importaciones de citas que ya nacieron en HighLevel son
+conciliación entrante, no una nueva alta, y no deben volver a publicarse.
+
 ## Calendarios Publicos Y Contactos
 
 El endpoint `POST /api/calendars/public/:slug/appointments` crea citas desde la
@@ -204,7 +225,7 @@ Para que la sincronización con HighLevel funcione:
 
 ## Errores Comunes
 
-- 400 desde controller: faltan `locationId`, `accessToken`, `startTime`, etc.
+- 400 desde controller: falta `calendarId`, `startTime` u otro dato obligatorio.
 - 401/403 desde HighLevel: token inválido o scopes insuficientes.
 - 404: calendario/evento inexistente.
 - 429: rate limit de HighLevel.

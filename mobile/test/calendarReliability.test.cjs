@@ -103,9 +103,9 @@ test('cada formulario móvil conserva la llave de cita durante timeout y reinten
 
   assert.match(appSource, /onSave\(draft, scheduleMode\)/);
   assert.match(appSource, /\.\.\.getAppointmentAvailabilityRequestFields\(\{\s+formMode: appointmentMode,\s+scheduleMode,\s+\}\)/);
-  assert.match(apiSource, /createAppointment\(appointmentData: Record<string, unknown>, clientRequestId\?: string\)/);
+  assert.match(apiSource, /createAppointment\(appointmentData: Record<string, unknown> & \{ calendarId: string \}, clientRequestId\?: string\)/);
   assert.match(apiSource, /\.\.\.\(clientRequestId \? \{ clientRequestId \} : \{\}\)/);
-  assert.match(appSource, /appointmentCreateIntentRef\.current = createIntent;\s+await api\.createAppointment\(payload, createIntent\.clientRequestId\)/);
+  assert.match(appSource, /const createPayload = \{[\s\S]*?calendarId,[\s\S]*?contactId: draft\.contactId,[\s\S]*?appointmentCreateIntentRef\.current = createIntent;\s+const createdAppointment = await api\.createAppointment\(createPayload, createIntent\.clientRequestId\)/);
   assert.match(appSource, /const createAppointmentForContact = async \(\) => \{[\s\S]*?getAppointmentAvailabilityRequestFields\(\{\s+formMode: 'create',\s+scheduleMode: 'custom',\s+\}\)[\s\S]*?await api\.createAppointment\(payload, intent\.clientRequestId\)/);
-  assert.match(appSource, /quickAppointmentIntentRef\.current = intent;\s+await api\.createAppointment\(payload, intent\.clientRequestId\)/);
+  assert.match(appSource, /quickAppointmentIntentRef\.current = intent;\s+const createdAppointment = await api\.createAppointment\(payload, intent\.clientRequestId\)/);
 });

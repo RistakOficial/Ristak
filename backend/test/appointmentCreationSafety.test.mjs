@@ -769,6 +769,7 @@ test('el endpoint de calendario integra la llave y no repite la cita local', asy
   const key = uniqueKey('appointment_endpoint')
   const body = {
     clientRequestId: key,
+    calendarId: `calendar_endpoint_${Date.now()}`,
     title: 'Cita móvil idempotente',
     startTime: '2026-07-12T15:00:00.000Z',
     endTime: '2026-07-12T16:00:00.000Z',
@@ -796,6 +797,29 @@ test('el endpoint de calendario integra la llave y no repite la cita local', asy
     if (appointmentId) await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
     await cleanup(key)
   }
+})
+
+test('el endpoint rechaza una cita sin calendario antes de crear el registro local', async () => {
+  const title = `Cita sin calendario ${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const response = createResponse()
+
+  await createAppointmentController({
+    body: {
+      title,
+      startTime: '2099-07-12T15:00:00.000Z',
+      endTime: '2099-07-12T16:00:00.000Z',
+      appointmentStatus: 'confirmed',
+      timeZone: 'UTC'
+    }
+  }, response)
+
+  assert.equal(response.statusCode, 400)
+  assert.equal(response.body?.success, false)
+  assert.equal(response.body?.code, 'appointment_calendar_required')
+  assert.equal(
+    await db.get('SELECT COUNT(*) AS total FROM appointments WHERE title = ?', [title]).then(row => Number(row.total)),
+    0
+  )
 })
 
 test('el endpoint conversacional v2 falla cerrado si el calendario configurado no existe', async () => {

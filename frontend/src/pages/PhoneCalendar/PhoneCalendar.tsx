@@ -1530,12 +1530,15 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       )
       appointmentCreateIntentRef.current = requestIntent
 
-      await calendarsService.createAppointment({
+      const created = await calendarsService.createAppointment({
         ...appointmentData,
         clientRequestId: requestIntent.clientRequestId
       }, accessToken || undefined)
       appointmentCreateIntentRef.current = null
       setIsCreateModalOpen(false)
+      if (created?.syncStatus === 'error') {
+        showToast('warning', 'Cita guardada en Ristak', 'HighLevel quedó pendiente y Ristak volverá a intentarlo automáticamente.')
+      }
       await loadEvents()
     } catch {
       showToast('error', 'No se pudo agendar', 'Intenta otra vez en unos minutos.')

@@ -173,7 +173,10 @@ async function getSavedHighLevelConfig() {
 }
 
 function isHighLevelConfigured(config = {}) {
-  return Boolean(cleanString(config?.location_id) && cleanString(config?.api_token));
+  return Boolean(
+    cleanString(config?.location_id || config?.locationId) &&
+    cleanString(config?.api_token || config?.accessToken)
+  );
 }
 
 async function getHighLevelContext(req, source = {}) {
@@ -2069,8 +2072,12 @@ export async function createPublicAppointment(req, res) {
       });
     });
 
-    if (context.locationId && context.accessToken && calendar.ghlCalendarId) {
+    if (isHighLevelConfigured(context)) {
+      let highLevelAppointmentWriteStarted = false;
       try {
+        if (!calendar.ghlCalendarId) {
+          throw new Error(`El calendario ${calendar.id} todavía no tiene ID de HighLevel; la cita local queda pendiente de sincronización`);
+        }
         const ghlContactId = await localCalendarService.ensureHighLevelContactForAppointment(
           new GHLClient(context.accessToken, context.locationId),
           { ...appointment, contactId }
@@ -2082,6 +2089,7 @@ export async function createPublicAppointment(req, res) {
           remoteContactId,
           locationId: context.locationId
         });
+        highLevelAppointmentWriteStarted = true;
         const remote = await calendarService.createAppointment({
           calendarId: calendar.ghlCalendarId,
           contactId: remoteContactId,
@@ -2102,6 +2110,19 @@ export async function createPublicAppointment(req, res) {
         );
       } catch (error) {
         if (error?.code === 'appointment_provider_response_stale') {
+          appointment = await localCalendarService.getLocalAppointment(appointment.id) || appointment;
+        } else {
+          const mirrorErrorMessage = highLevelAppointmentWriteStarted && highLevelMirrorWriteOutcomeIsAmbiguous(error)
+            ? `${HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER} ${error.message}`
+            : error.message;
+          await markAppointmentMirrorSyncError({
+            appointmentId: appointment.id,
+            provider: 'highlevel',
+            message: mirrorErrorMessage,
+            expectedAppointment: appointment
+          }).catch((markError) => {
+            logger.error(`[Calendars Controller] No se pudo marcar el fallo del espejo GHL de la cita pública ${appointment.id}: ${markError.message}`);
+          });
           appointment = await localCalendarService.getLocalAppointment(appointment.id) || appointment;
         }
         logger.warn(`[Calendars Controller] Cita publica guardada local, sync GHL pendiente: ${error.message}`);
@@ -2540,11 +2561,19 @@ export async function createAppointment(req, res) {
       });
     }
     const context = await getHighLevelContext(req, { locationId, accessToken });
+    const requestedCalendarId = cleanString(appointmentData.calendarId || appointmentData.calendar_id);
+    if (!requestedCalendarId) {
+      return res.status(400).json({
+        success: false,
+        code: 'appointment_calendar_required',
+        error: 'Selecciona un calendario para guardar la cita local y sincronizarla con las integraciones conectadas.'
+      });
+    }
     const createdAppointment = await runIdempotentAppointmentCreation({
       clientRequestId: clientRequestId || legacyClientRequestId,
       payload: strictAvailabilityCheck
         ? {
-            calendarId: appointmentData.calendarId || appointmentData.calendar_id || null,
+            calendarId: requestedCalendarId,
             contactId: appointmentData.contactId || appointmentData.contact_id || null,
             startTime: appointmentData.startTime || appointmentData.start_time || null,
             endTime: appointmentData.endTime || appointmentData.end_time || null,
@@ -2555,7 +2584,7 @@ export async function createAppointment(req, res) {
             locationId: context.locationId || null
           },
       create: async () => {
-    const localCalendar = await localCalendarService.getLocalCalendar(appointmentData.calendarId || appointmentData.calendar_id);
+    const localCalendar = await localCalendarService.getLocalCalendar(requestedCalendarId);
     if (strictAvailabilityCheck && !localCalendar) {
       const calendarError = new Error('El calendario configurado no existe o ya no está disponible. No se creó la cita.');
       calendarError.status = 404;
@@ -2591,7 +2620,7 @@ export async function createAppointment(req, res) {
     // salvo que venga una bandera explícita para forzar (ignoreAppointmentConflicts).
     const forceDoubleBooking = appointmentData.ignoreAppointmentConflicts === true
       || appointmentData.confirmDoubleBooking === true;
-    const localCalendarId = localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id;
+    const localCalendarId = localCalendar?.id || requestedCalendarId;
     const createLocalWithAvailability = async () => {
       // Orden único para evitar ciclos con una reagenda concurrente en Postgres:
       // primero el advisory del calendario y después los locks semánticos del
@@ -2670,7 +2699,7 @@ export async function createAppointment(req, res) {
 
       const localAppointment = await localCalendarService.createLocalAppointment({
         ...localAppointmentData,
-        calendarId: localCalendar?.id || appointmentData.calendarId,
+        calendarId: localCalendar?.id || requestedCalendarId,
         locationId: context.locationId
       }, {
         locationId: context.locationId,
@@ -2710,7 +2739,7 @@ export async function createAppointment(req, res) {
       ? await db.transaction(createLocalWithAvailability)
       : await createLocalWithAvailability();
 
-    if (context.locationId && context.accessToken && (localCalendar?.ghlCalendarId || !localCalendar)) {
+    if (isHighLevelConfigured(context)) {
       let highLevelAppointmentWriteStarted = false;
       try {
         const localContactId = appointment.contactId || appointmentData.contactId || appointmentData.contact_id;
@@ -2724,7 +2753,10 @@ export async function createAppointment(req, res) {
               highLevelClient,
               { ...appointment, contactId: localContactId }
             );
-        const remoteCalendarId = localCalendar?.ghlCalendarId || appointmentData.calendarId;
+        const remoteCalendarId = localCalendar?.ghlCalendarId || (!localCalendar ? requestedCalendarId : '');
+        if (!remoteCalendarId) {
+          throw new Error(`El calendario ${localCalendar?.id || requestedCalendarId} todavía no tiene ID de HighLevel; la cita local queda pendiente de sincronización`);
+        }
         const remoteContactId = ghlContactId || localContactId || localAppointmentData.contactId || localAppointmentData.contact_id;
         const remotePayload = {
           ...localAppointmentData,
@@ -2784,6 +2816,7 @@ export async function createAppointment(req, res) {
           }).catch((markError) => {
             logger.error(`[Calendars Controller] No se pudo marcar el fallo del espejo GHL de la cita ${appointment?.id}: ${markError.message}`);
           });
+          appointment = await localCalendarService.getLocalAppointment(appointment.id) || appointment;
           if (appointment?.isTest) throw error;
           logger.warn(`[Calendars Controller] Cita local confirmada; espejo GHL pendiente/error: ${mirrorErrorMessage}`);
         }

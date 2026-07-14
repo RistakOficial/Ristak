@@ -80,7 +80,9 @@ Eliminar cita:
 calendarsService.deleteEvent(eventId, accessToken)
 ```
 
-`AppointmentModal` maneja contacto, usuario asignado, título, estado, fechas, ubicación y notas.
+`AppointmentModal` maneja contacto, usuario asignado, título, estado, fechas,
+ubicación y notas. Al crear siempre incluye el `calendarId` seleccionado; el
+backend rechaza una alta sin calendario antes de guardar una cita huérfana.
 Al crear una cita, el modo `Por defecto` manda una validación estricta para que
 la hora pertenezca al horario semanal y cumpla las reglas del calendario. El modo
 `Personalizado` conserva la captura manual como override explícito. Editar una
@@ -92,6 +94,11 @@ backend y ejecuta un refetch canónico para respetar normalización de fechas,
 webhooks y sincronización externa. Después de eliminar, quita la fila confirmada
 de eventos y próximas citas inmediatamente y revalida ambas colecciones. Ninguno
 de estos flujos requiere recargar la página.
+
+Cuando la respuesta trae `syncStatus=error`, la cita ya quedó guardada en Ristak,
+pero HighLevel sigue pendiente. `/appointments`, DesktopChat, PhoneCalendar y
+PhoneChat deben mostrar esa advertencia y cerrar el formulario sin invitar al
+usuario a crear otra cita; el backend se encarga del reintento seguro.
 
 ## Flujos De Horarios Bloqueados
 
