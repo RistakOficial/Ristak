@@ -4,6 +4,7 @@ import { fileTypeFromBuffer } from 'file-type'
 import sharp from 'sharp'
 import { promises as fs } from 'fs'
 import { createReadStream } from 'fs'
+import { Transform } from 'node:stream'
 import { dirname, extname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { db } from '../config/database.js'
@@ -11,6 +12,10 @@ import { logger } from '../utils/logger.js'
 import { compressMediaBuffer } from './mediaCompressionService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { DEFAULT_TIMEZONE, businessTodayDateOnly, getAccountTimezone } from '../utils/dateUtils.js'
+import {
+  assertSafeOutboundMediaUrl,
+  createSafeOutboundMediaHttpsAgent
+} from './outboundMediaReferenceService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -4018,6 +4023,232 @@ export async function getMediaAssetFile(assetId, variant = '') {
   }
 
   throw errorWithStatus('El archivo no tiene un objeto descargable disponible.', 404, 'media_file_missing')
+}
+
+function mediaDownloadRangeError(totalSize = null, message = 'El rango de descarga no es válido.') {
+  const error = errorWithStatus(message, 416, 'media_download_range_invalid')
+  if (Number.isSafeInteger(totalSize) && totalSize >= 0) error.contentRange = `bytes */${totalSize}`
+  return error
+}
+
+function parseMediaDownloadRange(value = '', totalSize = null) {
+  const raw = cleanString(value)
+  if (!raw) return null
+  if (raw.includes(',')) throw mediaDownloadRangeError(totalSize, 'Solo se permite un rango por descarga.')
+
+  const match = raw.match(/^bytes=(\d*)-(\d*)$/i)
+  if (!match || (!match[1] && !match[2])) throw mediaDownloadRangeError(totalSize)
+
+  const hasKnownTotal = Number.isSafeInteger(totalSize) && totalSize >= 0
+  const total = hasKnownTotal ? totalSize : 0
+  const parsePart = (part) => {
+    if (!part) return null
+    const parsed = Number(part)
+    if (!Number.isSafeInteger(parsed) || parsed < 0) throw mediaDownloadRangeError(totalSize)
+    return parsed
+  }
+  const requestedStart = parsePart(match[1])
+  const requestedEnd = parsePart(match[2])
+
+  if (!hasKnownTotal) return { header: raw }
+  if (total === 0) throw mediaDownloadRangeError(total)
+
+  let start
+  let end
+  if (requestedStart === null) {
+    if (!requestedEnd) throw mediaDownloadRangeError(total)
+    start = Math.max(0, total - requestedEnd)
+    end = total - 1
+  } else {
+    start = requestedStart
+    end = requestedEnd === null ? total - 1 : Math.min(requestedEnd, total - 1)
+  }
+
+  if (start >= total || end < start) throw mediaDownloadRangeError(total)
+  return {
+    start,
+    end,
+    length: end - start + 1,
+    header: `bytes=${start}-${end}`
+  }
+}
+
+function buildManagedBunnyDownloadUrl(asset = {}) {
+  if (asset.storageProvider === 'bunny_stream') {
+    throw errorWithStatus(
+      'Este video todavía no tiene un archivo de Storage descargable.',
+      409,
+      'bunny_stream_binary_unavailable'
+    )
+  }
+  if (asset.storageProvider !== 'bunny' || !asset.bunnyPath || !asset.cdnBaseUrl) {
+    throw errorWithStatus(
+      'Este archivo no tiene un objeto de Storage disponible para descarga pública.',
+      409,
+      'media_download_object_unavailable'
+    )
+  }
+
+  const baseUrl = normalizeBaseUrl(asset.cdnBaseUrl)
+  let parsedBase
+  try {
+    parsedBase = new URL(baseUrl)
+  } catch {
+    throw errorWithStatus('La URL de Storage del archivo no es válida.', 409, 'media_download_url_invalid')
+  }
+  if (parsedBase.protocol !== 'https:' || parsedBase.username || parsedBase.password) {
+    throw errorWithStatus('La URL de Storage del archivo no es segura.', 409, 'media_download_url_invalid')
+  }
+
+  const encodedPath = cleanString(asset.bunnyPath)
+    .replace(/^\/+/, '')
+    .split('/')
+    .map(segment => encodeURIComponent(segment))
+    .join('/')
+  return `${baseUrl.replace(/\/+$/, '')}/${encodedPath}`
+}
+
+export async function getMediaAssetDownloadFile(assetId, options = {}) {
+  const asset = await getMediaAsset(assetId)
+  if (options.requirePublic && (!asset.isPublic || asset.status !== 'ready')) {
+    throw errorWithStatus('Archivo multimedia no encontrado.', 404, 'media_not_found')
+  }
+
+  const method = cleanString(options.method).toUpperCase() === 'HEAD' ? 'HEAD' : 'GET'
+  const filename = asset.originalFilename || asset.storedFilename || asset.id
+  const metadata = asset.metadata || {}
+  if (metadata.localPath) {
+    let stats
+    try {
+      stats = await fs.stat(metadata.localPath)
+    } catch {
+      throw errorWithStatus('El archivo local ya no está disponible.', 404, 'media_file_missing')
+    }
+    if (!stats.isFile()) throw errorWithStatus('El archivo local ya no está disponible.', 404, 'media_file_missing')
+
+    const range = parseMediaDownloadRange(options.range, stats.size)
+    const statusCode = range ? 206 : 200
+    return {
+      stream: method === 'HEAD'
+        ? null
+        : createReadStream(metadata.localPath, range ? { start: range.start, end: range.end } : undefined),
+      statusCode,
+      contentType: asset.mimeType || 'application/octet-stream',
+      contentLength: range ? range.length : stats.size,
+      contentRange: range ? `bytes ${range.start}-${range.end}/${stats.size}` : '',
+      acceptRanges: 'bytes',
+      filename,
+      cleanup: null
+    }
+  }
+
+  const downloadUrl = await assertSafeOutboundMediaUrl(buildManagedBunnyDownloadUrl(asset))
+  const range = parseMediaDownloadRange(options.range, null)
+  const controller = new AbortController()
+  const agent = createSafeOutboundMediaHttpsAgent()
+  const abortFromRequest = () => controller.abort(options.signal?.reason)
+  if (options.signal?.aborted) abortFromRequest()
+  else options.signal?.addEventListener?.('abort', abortFromRequest, { once: true })
+
+  const headerTimeout = setTimeout(() => controller.abort(new Error('Storage tardó demasiado en iniciar la descarga.')), 30_000)
+  let response
+  try {
+    response = await fetch(downloadUrl, {
+      method,
+      headers: {
+        'Accept-Encoding': 'identity',
+        ...(range?.header ? { Range: range.header } : {})
+      },
+      redirect: 'manual',
+      signal: controller.signal,
+      agent,
+      compress: false
+    })
+  } catch (error) {
+    clearTimeout(headerTimeout)
+    agent.destroy()
+    options.signal?.removeEventListener?.('abort', abortFromRequest)
+    if (options.signal?.aborted) throw errorWithStatus('La descarga fue cancelada.', 499, 'media_download_cancelled')
+    throw errorWithStatus(
+      error?.name === 'AbortError' ? 'Storage tardó demasiado en iniciar la descarga.' : 'No se pudo abrir el archivo en Storage.',
+      error?.name === 'AbortError' ? 504 : 502,
+      'media_download_failed'
+    )
+  }
+  clearTimeout(headerTimeout)
+
+  const cleanup = () => {
+    options.signal?.removeEventListener?.('abort', abortFromRequest)
+    response.body?.destroy?.()
+    if (!controller.signal.aborted) controller.abort()
+    agent.destroy()
+  }
+
+  if (response.status === 416) {
+    const contentRange = cleanString(response.headers.get('content-range'))
+    cleanup()
+    const error = mediaDownloadRangeError(null)
+    if (contentRange) error.contentRange = contentRange
+    throw error
+  }
+  if (![200, 206].includes(response.status) || (method !== 'HEAD' && !response.body)) {
+    const status = response.status
+    cleanup()
+    throw errorWithStatus(`Storage no pudo entregar el archivo (${status}).`, 502, 'media_download_failed')
+  }
+
+  const contentEncoding = cleanString(response.headers.get('content-encoding')).toLowerCase()
+  if (contentEncoding && contentEncoding !== 'identity') {
+    cleanup()
+    throw errorWithStatus('Storage respondió con una codificación inesperada.', 502, 'media_download_encoding_invalid')
+  }
+
+  const rawContentLength = response.headers.get('content-length')
+  const parsedContentLength = rawContentLength !== null && /^\d+$/.test(rawContentLength)
+    ? Number(rawContentLength)
+    : undefined
+  const contentLength = Number.isSafeInteger(parsedContentLength) && parsedContentLength >= 0
+    ? parsedContentLength
+    : undefined
+  const sourceStream = method === 'HEAD' ? null : response.body
+  let stream = null
+  let idleTimer = null
+  let sourceErrorHandler = null
+  if (sourceStream) {
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => controller.abort(new Error('Storage dejó de transmitir la descarga.')), 60_000)
+    }
+    stream = new Transform({
+      transform(chunk, encoding, callback) {
+        resetIdleTimer()
+        callback(null, chunk)
+      }
+    })
+    sourceErrorHandler = (error) => stream.destroy(error)
+    sourceStream.once('error', sourceErrorHandler)
+    resetIdleTimer()
+    sourceStream.pipe(stream)
+    stream.once('close', () => { if (idleTimer) clearTimeout(idleTimer) })
+  }
+  return {
+    stream,
+    statusCode: response.status,
+    contentType: cleanString(response.headers.get('content-type')) || asset.mimeType || 'application/octet-stream',
+    contentLength,
+    contentRange: cleanString(response.headers.get('content-range')),
+    acceptRanges: cleanString(response.headers.get('accept-ranges')) || 'bytes',
+    filename,
+    cleanup: () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      if (sourceStream && stream) {
+        sourceStream.unpipe(stream)
+        if (sourceErrorHandler) sourceStream.off('error', sourceErrorHandler)
+        if (!stream.destroyed) stream.destroy()
+      }
+      cleanup()
+    }
+  }
 }
 
 export async function getMediaAssetBuffer(assetId) {

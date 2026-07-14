@@ -30,6 +30,7 @@ import {
   createMediaUploadRequestHashes,
   runIdempotentMediaUpload
 } from '../services/mediaUploadSafetyService.js'
+import { attachmentDisposition, safeHeaderFilename } from '../utils/contentDisposition.js'
 
 const MAX_ARCHIVE_DOWNLOAD_ITEMS = Number(process.env.MEDIA_MAX_ARCHIVE_DOWNLOAD_ITEMS || 500)
 
@@ -49,15 +50,6 @@ function sendError(res, error, fallback = 'Error procesando almacenamiento multi
   })
 }
 
-function safeHeaderFilename(value = '', fallback = 'media') {
-  const filename = String(value || fallback)
-    .split(/[\\/]/)
-    .pop()
-    ?.replace(/[\r\n"]/g, '')
-    .trim()
-  return filename || fallback
-}
-
 function voiceNoteTransportFilename(assetId = '') {
   // Esta ruta la consume Meta, no es una descarga con el nombre original.
   // Si el usuario subió un MP3 que después convertimos a OGG/Opus, conservar
@@ -65,12 +57,6 @@ function voiceNoteTransportFilename(assetId = '') {
   // bytes como application/octet-stream (131053).
   const safeAssetId = cleanString(assetId).replace(/[^a-zA-Z0-9_.-]+/g, '-') || 'audio'
   return `ristak-voice-${safeAssetId}.ogg`
-}
-
-function attachmentDisposition(filename) {
-  const safe = safeHeaderFilename(filename)
-  const ascii = safe.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_')
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`
 }
 
 function ensureZipFilename(value = '') {

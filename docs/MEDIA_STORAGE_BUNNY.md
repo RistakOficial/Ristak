@@ -164,7 +164,35 @@ another account.
   Other modules do not sync to Stream automatically.
 - Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
 - Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
-- Imported HTML Sites do not persist Bunny/Storage URLs as their editable content contract. `public_site_content_assets` maps a stable per-site `asset_key` to the current `media_asset_id`; HTML uses `data-rstk-asset-id` or `data-rstk-background-asset-id`, and the public renderer resolves the current ready/public asset. Replacing an image or file changes the binding without changing the HTML key.
+- Imported HTML Sites are code-first: pasting complete HTML or uploading an
+  HTML/ZIP creates the site/pages and detects media slots before any Media asset
+  is selected. `data-rstk-asset-id` and `data-rstk-background-asset-id` declare
+  pending, associable slots for images, backgrounds, audio and downloadable
+  files; physical Bunny/Storage URLs never become the editable contract.
+  `public_site_content_assets` maps each stable, site-wide `asset_key` to the
+  current `media_asset_id`. Replacing the selected file changes the binding
+  without changing HTML. Reusing one key anywhere in the same site intentionally
+  reuses the same asset; independent zones need different keys.
+  Download slots declared on `<a>` can bind any Media type, including images,
+  audio, video, PDFs and archives. Ristak only lists resolvable HTML targets as
+  slots, silently saves a dirty code draft before opening Media, and suppresses
+  stale bindings when the HTML changes a key to an incompatible media type.
+  The picker loads the library in 250-asset pages and keeps loading available
+  while a local search has no match, so large Media libraries do not block the
+  modal or hide later results.
+  Published download links use the stable same-origin content route with
+  `?download=1`; backend sets `Content-Disposition: attachment` and streams local
+  or Bunny Storage bytes, forwarding HTTP ranges for resumable large downloads.
+  The route is `no-store` because a stable key can be rebound. A legacy
+  Stream-only video creates its Storage mirror during the authenticated binding
+  operation; anonymous download requests never trigger that work or proxy the
+  Stream player HTML. The physical CDN URL is never written into the
+  downloadable anchor.
+- Premium imported-HTML video uses a native slot such as
+  `<div data-rstk-native-element="video" data-rstk-native-id="video-01"></div>`.
+  This preserves the complete Sites player configuration and the Storage preview
+  / Stream live split. A code-owned `<video>` is kept only as HTML/legacy media
+  and does not gain the native player's customization contract.
 - Editor, canvas and preview-session always use the Bunny Storage URL with the
   customizable Ristak player. They never mount the Bunny Stream iframe, so
   editing and preview playback cannot inflate real Stream views. Published/live

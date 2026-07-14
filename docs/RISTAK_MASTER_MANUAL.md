@@ -2844,22 +2844,84 @@ zona con `data-rstk-native-element="form|calendar|payment|video"` y
 `data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
 a bloques reales del sitio:
 
-El HTML importado es una superficie cerrada, no un editor visual alterno. El
-usuario puede reemplazar el HTML/ZIP completo o pedirle al asistente que devuelva
-el HTML completo modificado; no edita copy, imagenes, botones, campos o secciones
-desde el preview. El codigo se muestra en modo solo lectura y el preview solo
-permite seleccionar slots funcionales de Ristak.
+El HTML importado es una superficie cerrada y code-first, no un editor visual
+alterno. Al crear la pagina, el usuario pega el documento HTML completo o sube
+un archivo HTML/ZIP; Ristak crea automaticamente el sitio y sus paginas, abre el
+editor y detecta los campos, slots multimedia y elementos nativos declarados en
+el codigo. Reemplazar el HTML/ZIP o guardar codigo pegado vuelve a ejecutar la
+deteccion. El usuario tambien puede pedirle al asistente que devuelva el HTML
+completo modificado. El codigo de cada pagina se puede pegar y editar
+directamente; el preview no modifica copy, imagenes, botones, campos o secciones
+por si solo y solo permite seleccionar slots funcionales de Ristak.
 
-El Panel de contenido permanece visible aunque no exista ningun slot. Desde ese
-panel se suben o eligen archivos de Media, se preparan instrucciones para agregar
-un elemento nativo o HTML con IA y se configuran los slots detectados. Los
-archivos conectados usan `public_site_content_assets`: `asset_key` es el alias
-estable que vive en el HTML y `media_asset_id` apunta al archivo fisico actual.
-Para imagen/medio se usa `data-rstk-asset-id="clave"`; para fondos,
-`data-rstk-background-asset-id="clave"`. Reemplazar el archivo actualiza el
-binding sin tocar la clave ni regenerar el HTML. El renderer resuelve la clave
-server-side y la ruta publica estable es
+El Panel de contenido muestra lo que ya declaro el HTML; no existe una accion
+"Agregar al HTML" ni un flujo que obligue a subir multimedia antes de escribir
+el codigo. Un `data-rstk-asset-id` o `data-rstk-background-asset-id` con clave no
+vacia declara inmediatamente un slot asociable, aunque todavia no tenga archivo
+y aparezca como pendiente. Desde esa fila el usuario elige o sube el recurso de
+Media que corresponde. Al asociarlo, `public_site_content_assets` guarda
+`asset_key` como alias estable y `media_asset_id` como archivo fisico actual.
+Reemplazar el archivo actualiza el binding sin tocar la clave ni regenerar el
+HTML. El renderer resuelve la clave server-side y la ruta publica estable es
 `/api/sites/public/content-assets/:siteId/:assetKey`.
+
+Si una zona multimedia, un campo o un slot nativo existe solo en el borrador
+activo, la accion de asociarlo guarda primero el codigo de forma silenciosa y
+continua solo si ese guardado termino bien. El selector no cierra ni anuncia una
+asociacion hasta que backend la confirma. Los guardados automaticos se agrupan
+por clave y pasan por una sola cola por sitio para que cambios rapidos o dos
+zonas simultaneas no creen duplicados ni apliquen respuestas fuera de orden. El
+panel se aisla por `site.id`, por lo que un timer o respuesta de un sitio anterior
+no puede escribir ni repintar el sitio que se abrio despues. Si coincide con el
+guardado global del sitio, ambas rutas comparten la misma compuerta: Guardar o
+Publicar espera la cola nativa que ya este en vuelo, y un slot que llegue despues
+se aplaza hasta que termine el guardado global. Solo ese slot aplazado se
+reintenta. Antes de confirmar Guardar o Publicar tambien se vacian de inmediato
+los autosaves que sigan dentro del debounce de 450 ms y cualquier draft nativo
+pendiente. Dos intenciones globales concurrentes se encolan; una publicacion no
+se descarta porque haya empezado antes un guardado silencioso. Las respuestas de
+preview se validan contra sitio, pagina y request vigente para no pintar una
+pagina anterior despues de cambiar de paso.
+
+El selector de Media carga hasta 250 archivos por pagina y ofrece `Cargar mas`
+sin bloquear la primera vista. Si la busqueda local aun no encuentra una
+coincidencia, conserva la opcion `Buscar en mas archivos`; eliminar un archivo
+recarga la primera pagina para no saltarse elementos por el cambio de offsets.
+
+El contrato canonico para contenido asociable es:
+
+- Imagen: `<img data-rstk-asset-id="imagen-01" data-rstk-label="Imagen principal" alt="">`.
+- Fondo: `<section data-rstk-background-asset-id="fondo-01" data-rstk-label="Fondo principal">`.
+- Audio: `<audio data-rstk-asset-id="audio-01" data-rstk-label="Audio principal" controls></audio>`.
+- PDF, ZIP o cualquier multimedia descargable: `<a data-rstk-asset-id="descarga-01" data-rstk-label="Archivo descargable" download>Descargar</a>`. El selector permite cualquier tipo de Media para este caso.
+
+Los descargables nunca apuntan directamente al CDN: el renderer coloca una URL
+same-origin con `?download=1`, fuerza `Content-Disposition: attachment` y
+transmite el archivo en streaming. En Bunny propaga rangos HTTP para que una
+descarga grande se pueda reanudar sin cargar el archivo completo en memoria. La
+ruta responde `no-store` porque una misma clave puede apuntar a otro archivo
+después de una reasociación. Un video antiguo que solo vive en Bunny Stream debe
+crear su espejo binario de Storage durante la asociación autenticada; la visita
+pública nunca dispara esa preparación ni intenta descargar el HTML del player.
+
+Un `data-rstk-asset-id` solo declara una zona cuando Ristak puede escribirla de
+verdad: `href` en `<a>`; `src` en `<img>`, `<audio>`, `<video>`, `<source>`,
+`<track>`, `<iframe>` o `<input type="image">`; y `poster` en `<video>` cuando
+se declara `data-rstk-asset-target="poster"`. Para fondos se usa exclusivamente
+`data-rstk-background-asset-id`. Poner la clave en un `<div>`, `<picture>` u
+otro tag sin destino compatible no crea una zona fantasma en el panel.
+El `iframe` sin `src` que generaba el editor anterior se conserva únicamente
+cuando tiene una clave estable válida; el sanitizador elimina cualquier otro
+`iframe` vacío o inseguro y el binding legacy completa su `src` al renderizar.
+
+Las claves de `public_site_content_assets` son globales al sitio, no a una sola
+pagina. Repetir `imagen-01` en una o varias paginas reutiliza intencionalmente el
+mismo archivo. Si dos zonas deben poder asociarse por separado, el HTML debe
+usar claves distintas, idealmente con contexto de pagina, por ejemplo
+`landing-imagen-01` y `gracias-imagen-01`.
+Si una clave ya asociada cambia de tipo en el HTML, por ejemplo de imagen a
+audio, el editor la marca para reasociar y el renderer no inyecta el archivo
+incompatible anterior.
 
 Los slots nativos que Ristak renderiza (`form`, `calendar` con
 `data-rstk-native-render="ristak"`, `payment` y `video`) deben ser huecos
@@ -2939,11 +3001,17 @@ arranca con estado "Mantener oculto", el render importado marca el target con
 parpadeos entre preview y sitio publicado.
 
 En el editor HTML importado, el Panel de contenido ocupa el inspector derecho y
-administra multimedia, formularios, calendarios, pagos y videos con los mismos
-controles del editor visual. No aparecen popovers sobre textos, imagenes,
-botones, campos o secciones. El panel puede preparar una instruccion para que la
-IA agregue un elemento en modo nativo o HTML; pago siempre queda en modo nativo
-porque la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
+administra los slots multimedia, formularios, calendarios, pagos y videos que el
+codigo ya contiene. No aparecen popovers sobre textos, imagenes, botones, campos
+o secciones, ni controles para insertar elementos nuevos en el HTML. Imagenes,
+fondos, audio y descargables se asocian desde su fila detectada. Para un video
+premium y personalizable, el HTML debe reservar
+`<div data-rstk-native-element="video" data-rstk-native-id="video-01" data-rstk-label="Video principal"></div>`;
+usar un `<video>` HTML propio lo deja bajo control del codigo y no sustituye el
+player nativo. El slot nativo conserva la misma fuente/subida, diseno del frame,
+boton de play, colores, controles, acciones por tiempo, formulario de video y
+eventos Meta/CAPI del editor visual. Pago tambien permanece siempre nativo porque
+la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
 guardar, la previsualizacion usa el render del backend de la pagina activa para
 mostrar los elementos nativos ya montados tal como se veran en vivo; las
 respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
