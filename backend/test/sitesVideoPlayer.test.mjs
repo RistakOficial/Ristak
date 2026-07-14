@@ -1399,7 +1399,7 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
   }
 })
 
-test('editor preview keeps an unmapped Bunny Stream video playable in its iframe', async () => {
+test('editor preview never loads an unmapped Bunny Stream iframe', async () => {
   const streamVideoId = `stream-preview-fallback-${Date.now()}`
   const embedUrl = `https://iframe.mediadelivery.net/embed/123456/${streamVideoId}`
   const previewHtml = await renderPublicSiteHtml(baseSite({ mediaUrl: embedUrl }), {
@@ -1408,13 +1408,13 @@ test('editor preview keeps an unmapped Bunny Stream video playable in its iframe
     preview: true
   })
 
-  assert.match(previewHtml, /class="[^"]*\brstk-video-stream-frame\b[^"]*"/)
-  assert.match(previewHtml, new RegExp(`data-rstk-stream-action-frame src="${escapeRegExp(embedUrl)}"`))
-  assert.doesNotMatch(previewHtml, /Video disponible en el sitio publicado/)
+  assert.match(previewHtml, /data-rstk-preview-stream-disabled="true"/)
+  assert.match(previewHtml, /Preparando vista previa del video/)
+  assert.doesNotMatch(previewHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}`))
   assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
 })
 
-test('direct Bunny Stream assets stay in an iframe across preview and live renders', async () => {
+test('legacy Stream-only assets stay disabled in preview and remain playable in live render', async () => {
   const assetId = `site_direct_stream_${Date.now()}`
   const streamVideoId = `stream-${assetId}`
   const embedUrl = `https://iframe.mediadelivery.net/embed/123456/${streamVideoId}`
@@ -1455,14 +1455,15 @@ test('direct Bunny Stream assets stay in an iframe across preview and live rende
       preview: false
     })
 
-    for (const html of [previewHtml, liveHtml]) {
-      assert.match(html, /class="[^"]*\brstk-video-stream-frame\b[^"]*"/)
-      assert.match(html, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}`))
-      assert.doesNotMatch(html, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}`))
-      assert.doesNotMatch(html, /class="[^"]*\brstk-video-player\b/)
-    }
-
+    assert.match(previewHtml, /data-rstk-preview-stream-disabled="true"/)
+    assert.match(previewHtml, /Preparando vista previa del video/)
+    assert.doesNotMatch(previewHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}`))
     assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
+
+    assert.match(liveHtml, /class="[^"]*\brstk-video-stream-frame\b[^"]*"/)
+    assert.match(liveHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}`))
+    assert.doesNotMatch(liveHtml, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}`))
+    assert.doesNotMatch(liveHtml, /class="[^"]*\brstk-video-player\b/)
     assert.match(liveHtml, /data-rstk-video-track="true"/)
     assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
     assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${escapeRegExp(assetId)}"`))

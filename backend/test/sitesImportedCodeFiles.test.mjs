@@ -307,7 +307,7 @@ test('imported HTML preview rewrites Bunny Stream embeds to storage video', asyn
   }
 })
 
-test('imported HTML preview keeps direct Bunny Stream assets in their iframe', async () => {
+test('imported HTML preview disables direct Bunny Stream assets until Storage exists', async () => {
   const {
     createImportedSiteFromHtml,
     deleteSite,
@@ -361,16 +361,17 @@ test('imported HTML preview keeps direct Bunny Stream assets in their iframe', a
       preview: true
     })
 
-    assert.match(previewHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}"`))
+    assert.match(previewHtml, /data-rstk-preview-stream-disabled="true"/)
+    assert.match(previewHtml, /Preparando vista previa del video/)
+    assert.doesNotMatch(previewHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}"`))
     assert.doesNotMatch(previewHtml, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}"`))
-    assert.doesNotMatch(previewHtml, /Video disponible en el sitio publicado/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
 })
 
-test('imported Media video bindings render direct Bunny Stream assets as iframes', async () => {
+test('imported Media video bindings disable Stream in preview and keep its iframe live', async () => {
   const {
     createImportedSiteFromHtml,
     deleteSite,
@@ -437,10 +438,10 @@ test('imported Media video bindings render direct Bunny Stream assets as iframes
       preview: false
     })
 
-    for (const rendered of [previewHtml, liveHtml]) {
-      assert.match(rendered, new RegExp(`<iframe[^>]+data-rstk-asset-id="${assetKey}"[^>]+src="${escapeRegExp(embedUrl)}"`))
-      assert.doesNotMatch(rendered, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}"`))
-    }
+    assert.match(previewHtml, /data-rstk-preview-stream-disabled="true"/)
+    assert.doesNotMatch(previewHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}"`))
+    assert.match(liveHtml, new RegExp(`<iframe[^>]+data-rstk-asset-id="${assetKey}"[^>]+src="${escapeRegExp(embedUrl)}"`))
+    assert.doesNotMatch(liveHtml, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}"`))
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)

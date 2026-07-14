@@ -156,29 +156,31 @@ another account.
 - Failed compression keeps the original so uploads do not die only because FFmpeg is missing.
 - New videos selected from Sites, imported site assets and Forms
   (`module=sites`, `module=forms`, `module=landing`) are uploaded directly and
-  resumably to Bunny Stream. Legacy assets can still be copied from Bunny
-  Storage to Stream through the compatibility/sync path. Other modules do not
-  sync to Stream automatically.
+  resumably to Bunny Stream. Before the asset becomes `ready`, backend streams
+  Bunny Stream's authenticated original into Bunny Storage without buffering
+  the full file in RAM. This creates the separate editor/preview source while
+  preserving the resumable browser-to-Stream upload. Legacy assets can still be
+  copied from Bunny Storage to Stream through the compatibility/sync path.
+  Other modules do not sync to Stream automatically.
 - Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
 - Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
 - Imported HTML Sites do not persist Bunny/Storage URLs as their editable content contract. `public_site_content_assets` maps a stable per-site `asset_key` to the current `media_asset_id`; HTML uses `data-rstk-asset-id` or `data-rstk-background-asset-id`, and the public renderer resolves the current ready/public asset. Replacing an image or file changes the binding without changing the HTML key.
-- New configurable Site videos use the Bunny Stream embed in the editor, preview
-  and published pages after finalization. The editor paints that iframe
-  immediately; if a ready Storage mirror is available it may use the mirror for
-  the native player controls and switch to the Stream iframe for live rendering.
-  If the mirror lookup is delayed or unavailable, the Stream iframe remains the
-  preview fallback instead of leaving a blank/placeholder block. Legacy
-  Storage-backed videos keep their existing Storage preview and switch to Stream
-  when metadata is ready. Video actions are bridged through Player.js in the
-  live iframe.
-- A direct TUS Stream asset has `storage_provider='bunny_stream'` and its
-  `public_url` is an embeddable player page, not a video byte URL. Editor,
-  preview-session, no-track and published renderers must keep that URL in an
-  `<iframe>`; assigning it to `<video src>` produces a black, unplayable player.
-  Ristak may render `<video>` only for a real direct file/playlist URL (for
-  example `.mp4`, `.mov`, `.webm`, `.m3u8` or the Ristak media file route).
-  Imported HTML follows the same rule: its Stream iframe is replaced by a native
-  video only when a genuine Storage mirror exists; otherwise the iframe stays.
+- Editor, canvas and preview-session always use the Bunny Storage URL with the
+  customizable Ristak player. They never mount the Bunny Stream iframe, so
+  editing and preview playback cannot inflate real Stream views. Published/live
+  pages switch the same asset to its Bunny Stream iframe and apply the saved
+  frame settings; video actions and live analytics use that Stream surface.
+- During a direct TUS upload the temporary asset has
+  `storage_provider='bunny_stream'` and an iframe `public_url`. Finalization must
+  validate the TUS byte count, confirm the original in Stream, copy that original
+  to Storage, and only then change the row to `storage_provider='bunny'`, a real
+  `bunny_path` and a direct Storage `public_url`. The Stream identity remains in
+  `metadata_json.stream` for live rendering and analytics.
+- A legacy Stream-only row must never be used as `<video src>` and must not fall
+  back to its Stream iframe in editor/no-track mode. It shows a preparation state
+  until `POST /api/media/assets/:id/stream/sync` creates the missing Storage
+  mirror. The same rule applies to imported HTML previews; live rendering can
+  continue using Stream while the repair is pending.
 
 ## App media explorer
 

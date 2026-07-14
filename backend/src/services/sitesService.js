@@ -15710,6 +15710,10 @@ function getStreamMetadataForVideoUrl(videoUrl, context = {}) {
   return stream || getBunnyStreamMetadataFromUrl(videoUrl)
 }
 
+function renderDisabledStreamPreview() {
+  return `<div class="rstk-media rstk-media-empty" data-rstk-preview-stream-disabled="true"><span class="rstk-play">${RSTK_ICONS.play}</span>Preparando vista previa del video</div>`
+}
+
 function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context = {}) {
   const videoId = getBunnyStreamVideoIdFromUrl(videoUrl)
   if (!context.noTrack || !videoId) return ''
@@ -15723,14 +15727,7 @@ function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context =
       getMediaAssetStreamMetadata(asset)
     )
   }
-  // A Stream embed can be previewed without a mapped Storage mirror. Keep
-  // tracking disabled in preview, but render the real iframe instead of a
-  // dead placeholder so manually pasted and newly finalized videos remain
-  // visible while the asset index catches up.
-  return renderBunnyStreamIframe(videoUrl, block, {
-    enabled: false,
-    stream: getBunnyStreamMetadataFromUrl(videoUrl)
-  }, settings, context)
+  return renderDisabledStreamPreview()
 }
 
 function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, context = {}, stream = null) {
@@ -15740,15 +15737,14 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     || getMediaAssetStreamMetadata(asset)
     || getBunnyStreamMetadataFromUrl(asset.publicUrl)
 
-  // Legacy assets may have a real Storage file that keeps Ristak's native
-  // preview controls. A direct Stream upload has no such file: publicUrl is an
-  // HTML embed page and must never be assigned to <video src>.
-  if (context.noTrack && directVideoUrl) {
-    return renderVideoPlayer(directVideoUrl, block, settings, {
-      noTrack: false,
-      tracking: { enabled: false, asset, stream: resolvedStream, provider: 'html5_video' },
-      context
-    })
+  if (context.noTrack) {
+    return directVideoUrl
+      ? renderVideoPlayer(directVideoUrl, block, settings, {
+          noTrack: false,
+          tracking: { enabled: false, asset, stream: resolvedStream, provider: 'html5_video' },
+          context
+        })
+      : renderDisabledStreamPreview()
   }
 
   if (resolvedStream?.videoId && resolvedStream?.libraryId) {
@@ -15801,6 +15797,10 @@ function renderImportedNoTrackVideoFromAsset(asset) {
   return `<video src="${escapeHtml(src)}" controls playsinline preload="metadata" data-rstk-preview-storage-video="true" style="width:100%;height:100%;min-height:220px;aspect-ratio:16/9;display:block;background:#000;border:0;border-radius:inherit;object-fit:cover;"></video>`
 }
 
+function renderImportedDisabledStreamPreview() {
+  return '<div data-rstk-preview-stream-disabled="true" style="width:100%;min-height:220px;aspect-ratio:16/9;display:grid;place-items:center;background:#000;border:0;border-radius:inherit;color:#fff;font:600 14px &quot;Inter&quot;,Arial,sans-serif;">Preparando vista previa del video</div>'
+}
+
 async function rewriteImportedBunnyStreamPlayersForNoTrack(html = '') {
   const videoIds = collectBunnyStreamVideoIdsFromHtml(html)
   if (!videoIds.length) return html
@@ -15818,7 +15818,7 @@ async function rewriteImportedBunnyStreamPlayersForNoTrack(html = '') {
     if (!videoId) return match
 
     const storageMarkup = renderImportedNoTrackVideoFromAsset(assetsByVideoId.get(videoId))
-    return storageMarkup || match
+    return storageMarkup || renderImportedDisabledStreamPreview()
   })
 }
 

@@ -1367,6 +1367,13 @@ async function getBunnyStreamVideo(config, videoId) {
   )
 }
 
+async function getBunnyStreamVideoPlayData(config, videoId) {
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/${encodeURIComponent(videoId)}/play`
+  )
+}
+
 async function updateBunnyStreamVideo(config, { videoId, title, collectionId } = {}) {
   if (!videoId) return null
   return await bunnyStreamRequest(
@@ -1615,6 +1622,34 @@ async function uploadFileToBunny({ config, objectPath, filePath, size, mimeType 
   }
 
   logger.info(`[MediaStorage] Subida (streaming) a Bunny completada: ${objectPath}`)
+}
+
+// Copia un stream remoto a Bunny Storage sin cargar el video completo en RAM ni
+// escribir otro temporal en disco. El Content-Length es obligatorio para evitar
+// que Bunny acepte una transferencia parcial como si fuera un objeto válido.
+async function uploadReadableStreamToBunny({ config, objectPath, stream, size, mimeType }) {
+  if (!isReadableStream(stream) || !Number.isSafeInteger(size) || size <= 0) {
+    throw errorWithStatus('La copia de video a Storage no tiene un stream o tamaño válido.', 502, 'bunny_stream_storage_mirror_invalid')
+  }
+
+  logger.info(`[MediaStorage] Copia Stream -> Storage iniciada: ${objectPath} (${size} bytes)`)
+  const response = await fetch(bunnyObjectUrl(config, objectPath), {
+    method: 'PUT',
+    headers: {
+      AccessKey: config.bunnyStorageApiKey,
+      'Content-Type': mimeType || 'application/octet-stream',
+      'Content-Length': String(size)
+    },
+    body: stream,
+    signal: AbortSignal.timeout(bunnyFileUploadTimeoutMs(size))
+  })
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw errorWithStatus(`Bunny rechazó la copia a Storage (${response.status}): ${detail.slice(0, 180) || response.statusText}`, 502, 'bunny_upload_failed')
+  }
+
+  logger.info(`[MediaStorage] Copia Stream -> Storage completada: ${objectPath}`)
 }
 
 // Lee solo los primeros bytes del archivo para detectar su tipo real sin cargarlo entero.
@@ -2024,6 +2059,241 @@ async function getBunnyStreamTusUploadStatus(config, videoId, value) {
   return { length, offset }
 }
 
+function bunnyStreamOriginalDeliveryUrl(playData = {}, videoId = '', config = {}) {
+  const explicitOriginalUrl = cleanString(playData.originalUrl)
+  const playlistUrl = cleanString(playData.videoPlaylistUrl)
+  const rawUrl = explicitOriginalUrl || playlistUrl
+  if (!rawUrl) return ''
+
+  let sourceUrl
+  let streamApiUrl
+  try {
+    sourceUrl = new URL(rawUrl)
+    streamApiUrl = new URL(bunnyStreamBaseUrl(config))
+    if (!explicitOriginalUrl) {
+      sourceUrl.pathname = sourceUrl.pathname.replace(/\/[^/]*$/, '/original')
+    }
+  } catch {
+    return ''
+  }
+
+  // Producción siempre debe descargar por HTTPS. El mismo origen HTTP del API
+  // configurado se permite únicamente para el servidor falso de pruebas.
+  if (sourceUrl.protocol !== 'https:' && sourceUrl.origin !== streamApiUrl.origin) return ''
+  const pathSegments = sourceUrl.pathname.split('/').filter(Boolean).map(segment => {
+    try { return decodeURIComponent(segment) } catch { return segment }
+  })
+  if (!pathSegments.includes(cleanString(videoId))) return ''
+  return sourceUrl.toString()
+}
+
+async function fetchBunnyStreamOriginalForStorage(config, asset, videoId) {
+  const playData = await getBunnyStreamVideoPlayData(config, videoId)
+  const sourceUrl = bunnyStreamOriginalDeliveryUrl(playData, videoId, config)
+  if (!sourceUrl) {
+    throw errorWithStatus(
+      'Bunny todavía no publica el original necesario para crear la vista previa de Storage.',
+      409,
+      'bunny_stream_upload_not_complete'
+    )
+  }
+
+  const libraryId = cleanString(asset.metadata?.stream?.libraryId || config.bunnyStreamLibraryId)
+  const referer = `https://iframe.mediadelivery.net/embed/${encodeURIComponent(libraryId)}/${encodeURIComponent(videoId)}`
+  let lastStatus = 0
+  let lastDetail = ''
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await fetch(sourceUrl, {
+      headers: {
+        Accept: 'video/*,application/octet-stream;q=0.9,*/*;q=0.1',
+        Referer: referer,
+        'User-Agent': 'Ristak-MediaStorage/1.0'
+      },
+      signal: AbortSignal.timeout(bunnyFileUploadTimeoutMs(asset.sizeOriginal))
+    })
+    lastStatus = response.status
+
+    if (response.ok && response.body) {
+      const contentLength = Number(response.headers.get('content-length'))
+      const expectedSize = numberValue(asset.sizeOriginal)
+      if (!Number.isSafeInteger(contentLength) || contentLength <= 0) {
+        response.body.destroy?.()
+        throw errorWithStatus('Bunny no informó el tamaño del original para copiarlo a Storage.', 502, 'bunny_stream_original_size_missing')
+      }
+      if (expectedSize > 0 && contentLength !== expectedSize) {
+        response.body.destroy?.()
+        throw errorWithStatus(
+          'Bunny todavía no expone el original completo para la vista previa de Storage.',
+          409,
+          'bunny_stream_upload_not_complete'
+        )
+      }
+      return {
+        stream: response.body,
+        size: contentLength,
+        mimeType: storageMimeType(response.headers.get('content-type') || asset.mimeType) || asset.mimeType
+      }
+    }
+
+    lastDetail = await response.text().catch(() => '')
+    if (![404, 409, 425, 429].includes(response.status) || attempt === 4) break
+    await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)))
+  }
+
+  if ([404, 409, 425, 429].includes(lastStatus)) {
+    throw errorWithStatus(
+      'Bunny todavía está preparando el original para la vista previa de Storage.',
+      409,
+      'bunny_stream_upload_not_complete'
+    )
+  }
+  throw errorWithStatus(
+    `Bunny no permitió copiar el original a Storage (HTTP ${lastStatus || 'desconocido'}): ${cleanString(lastDetail).slice(0, 140)}`,
+    502,
+    'bunny_stream_original_fetch_failed'
+  )
+}
+
+async function ensureBunnyStreamStorageMirrorUnlocked(assetId, context = {}) {
+  let asset = await getMediaAsset(assetId)
+  if (asset.storageProvider === 'bunny' && asset.bunnyPath && asset.publicUrl) return asset
+  if (asset.storageProvider !== 'bunny_stream') {
+    throw errorWithStatus('Este video no requiere una copia de Stream a Storage.', 409, 'bunny_stream_storage_mirror_not_applicable')
+  }
+
+  const config = context.config || await getStorageRuntimeConfig()
+  if (config.provider !== 'bunny' || !config.bunnyConfigured) {
+    throw errorWithStatus(
+      'Bunny Storage no está listo para crear la vista previa separada del video.',
+      503,
+      'bunny_stream_resumable_unavailable'
+    )
+  }
+
+  const streamMetadata = asset.metadata?.stream || {}
+  const videoId = cleanString(streamMetadata.videoId)
+  const libraryId = cleanString(streamMetadata.libraryId)
+  if (!videoId || libraryId !== cleanString(config.bunnyStreamLibraryId)) {
+    throw errorWithStatus('El video de Stream no coincide con la librería configurada.', 409, 'bunny_stream_video_mismatch')
+  }
+
+  const clientAccount = context.clientAccount || await resolveClientAccountContext({
+    ...context,
+    businessId: asset.businessId,
+    metadata: asset.metadata
+  })
+  const module = normalizeModule(context.module || asset.module)
+  const moduleEntityId = context.moduleEntityId === undefined || context.moduleEntityId === null
+    ? asset.moduleEntityId
+    : cleanString(context.moduleEntityId)
+  const extension = extensionForMime(asset.mimeType, asset.originalFilename)
+  const storedFilename = `${asset.id}-${filenameBase(asset.originalFilename)}.${extension}`
+  const dateKey = await getMediaStorageDateKey()
+  const objectPath = buildObjectPath({
+    businessId: asset.businessId,
+    clientAccount,
+    mediaType: 'video',
+    module,
+    id: asset.id,
+    filename: asset.originalFilename,
+    extension,
+    dateKey
+  })
+  const publicUrl = bunnyPublicUrl(config, objectPath)
+  const original = await fetchBunnyStreamOriginalForStorage(config, asset, videoId)
+  const mirrorMimeType = mimeBase(original.mimeType).startsWith('video/') ? original.mimeType : asset.mimeType
+
+  try {
+    await uploadReadableStreamToBunny({
+      config,
+      objectPath,
+      stream: original.stream,
+      size: original.size,
+      mimeType: mirrorMimeType
+    })
+
+    const mirroredAsset = {
+      ...asset,
+      bunnyPath: objectPath,
+      publicUrl,
+      mimeType: mirrorMimeType,
+      storageProvider: 'bunny'
+    }
+    const nextStream = {
+      ...streamMetadata,
+      source: {
+        ...(streamMetadata.source || {}),
+        ...bunnyStreamSourceForAsset(mirroredAsset, { module, moduleEntityId }, clientAccount)
+      }
+    }
+    const nextMetadata = {
+      ...(asset.metadata || {}),
+      storageStatus: config.storageStatus,
+      stream: nextStream,
+      directUpload: {
+        ...(asset.metadata?.directUpload || {}),
+        storageMirror: {
+          provider: 'bunny',
+          state: 'ready',
+          source: 'bunny_stream_original',
+          sizeBytes: original.size,
+          mirroredAt: nowIso()
+        }
+      }
+    }
+
+    await db.run(
+      `UPDATE media_assets
+       SET stored_filename = ?, bunny_path = ?, public_url = ?,
+           private_url = CASE WHEN is_public = 1 THEN NULL ELSE ? END,
+           mime_type = ?, extension = ?, size_processed = ?,
+           storage_provider = 'bunny', storage_zone = ?, cdn_base_url = ?,
+           metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND deleted_at IS NULL`,
+      [
+        storedFilename,
+        objectPath,
+        publicUrl,
+        publicUrl,
+        mirrorMimeType,
+        extension,
+        original.size,
+        config.bunnyStorageZone,
+        config.bunnyCdnBaseUrl,
+        JSON.stringify(nextMetadata),
+        asset.id
+      ]
+    )
+    await ensureAccountReadme(config, clientAccount)
+    asset = await getMediaAsset(asset.id)
+    logger.info(`[MediaStorage] Vista previa Storage creada desde Stream: ${asset.id} -> ${objectPath}`)
+    return asset
+  } catch (error) {
+    await deleteFromBunny({ config, objectPath }).catch(() => undefined)
+    throw error
+  }
+}
+
+async function ensureBunnyStreamStorageMirror(assetId, context = {}) {
+  const lockName = `media:stream-storage:${cleanString(assetId)}`
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      return await db.withAdvisoryLock(
+        lockName,
+        () => ensureBunnyStreamStorageMirrorUnlocked(assetId, context)
+      )
+    } catch (error) {
+      if (error?.code !== 'DATABASE_ADVISORY_LOCK_BUSY') throw error
+      if (attempt === 19) {
+        throw errorWithStatus('La vista previa de Storage ya se está preparando.', 409, 'media_upload_in_progress')
+      }
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+  }
+  throw errorWithStatus('No se pudo preparar la vista previa de Storage.', 409, 'media_upload_in_progress')
+}
+
 function assertResumableAssetMatches(asset, { sizeBytes, mimeType, module, clientUploadId }) {
   const assetUploadId = cleanString(asset.metadata?.clientUploadId || asset.metadata?.directUpload?.clientUploadId)
   if (
@@ -2100,9 +2370,14 @@ async function prepareBunnyStreamResumableUploadUnlocked(input = {}) {
   if (!config.storageEnabled) {
     throw errorWithStatus('El almacenamiento multimedia está deshabilitado.', 503, 'storage_disabled')
   }
-  if (!config.bunnyStreamEnabled || !config.bunnyStreamConfigured) {
+  if (
+    config.provider !== 'bunny' ||
+    !config.bunnyConfigured ||
+    !config.bunnyStreamEnabled ||
+    !config.bunnyStreamConfigured
+  ) {
     throw errorWithStatus(
-      'Bunny Stream no está listo para subida resumible; usa la ruta compatible.',
+      'Bunny Storage y Stream deben estar listos para la subida resumible; usa la ruta compatible.',
       503,
       'bunny_stream_resumable_unavailable'
     )
@@ -2266,12 +2541,16 @@ export async function prepareBunnyStreamResumableUpload(input = {}) {
 }
 
 export async function finalizeBunnyStreamResumableUpload(assetId, context = {}) {
-  const asset = await getMediaAsset(assetId)
+  let asset = await getMediaAsset(assetId)
   const module = normalizeModule(context.module || asset.module)
   if (normalizeBusinessId(context.businessId) !== normalizeBusinessId(asset.businessId) || module !== normalizeModule(asset.module)) {
     throw errorWithStatus('La subida no pertenece a esta cuenta o superficie.', 403, 'media_upload_scope_mismatch')
   }
-  if (asset.status === 'ready') return asset
+  if (asset.status === 'ready') {
+    return asset.storageProvider === 'bunny_stream'
+      ? await ensureBunnyStreamStorageMirror(asset.id, { ...context, module })
+      : asset
+  }
   if (asset.status !== 'uploading' || asset.metadata?.directUpload?.protocol !== 'tus') {
     throw errorWithStatus('Este archivo no tiene una subida resumible pendiente.', 409, 'media_upload_not_pending')
   }
@@ -2314,12 +2593,19 @@ export async function finalizeBunnyStreamResumableUpload(assetId, context = {}) 
     throw errorWithStatus('Bunny todavía no confirma que recibió el video completo.', 409, 'bunny_stream_upload_not_complete')
   }
 
+  asset = await ensureBunnyStreamStorageMirror(asset.id, {
+    ...context,
+    config,
+    module,
+    clientAccount: stream.clientAccount
+  })
   const normalizedVideo = normalizeBunnyStreamVideo(video)
+  const mirroredStream = asset.metadata?.stream || stream
   const nextStream = {
-    ...stream,
+    ...mirroredStream,
     syncStatus: 'uploaded',
     syncedAt: nowIso(),
-    video: normalizedVideo || stream.video || null
+    video: normalizedVideo || mirroredStream.video || null
   }
   const nextMetadata = {
     ...(asset.metadata || {}),
@@ -3752,7 +4038,7 @@ export async function getMediaAssetDataUrl(assetId) {
 }
 
 export async function syncMediaAssetBunnyStream(assetId, context = {}) {
-  const asset = await getMediaAsset(assetId)
+  let asset = await getMediaAsset(assetId)
   const usageContext = bunnyStreamUsageContext(asset, context)
   const clientAccount = await resolveClientAccountContext({
     ...context,
@@ -3764,6 +4050,15 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
   }
 
   const config = await getStorageRuntimeConfig()
+  if (asset.storageProvider === 'bunny_stream') {
+    asset = await ensureBunnyStreamStorageMirror(asset.id, {
+      ...context,
+      config,
+      module: usageContext.module,
+      moduleEntityId: usageContext.moduleEntityId,
+      clientAccount
+    })
+  }
   const currentStream = asset.metadata?.stream || {}
   const currentVideoId = cleanString(currentStream.videoId)
   let stream

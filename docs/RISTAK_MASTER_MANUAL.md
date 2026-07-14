@@ -2821,24 +2821,26 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   campos, reglas de completado, diseno y submit publico del bloque nativo; el
   HTML externo solo reserva la zona donde se monta el reproductor.
   Un video nuevo se prepara en backend y se sube directo a Bunny Stream con TUS
-  resumible y firma temporal; la API key nunca llega al navegador. Editor,
-  preview y publicado usan el iframe de Stream después de finalizar; el editor
-  lo pinta de inmediato y solo cambia a un espejo de Storage si existe para
-  conservar los controles nativos configurables. Si el espejo tarda o no existe,
-  el iframe de Stream se mantiene como respaldo visible. En una subida TUS
-  directa, `media_assets.public_url` contiene la página embebible de Stream, no
-  un archivo de video: editor, preview-session, preview sin tracking y publicado
-  deben renderizarla como `<iframe>` y jamás pasarla a `<video src>`. El player
-  HTML5 solo se usa cuando la URL apunta realmente a un archivo/playlist directo
-  o a la ruta de archivo de Media. El mismo contrato aplica al HTML importado:
-  solo cambia su iframe por un `<video>` si hay un espejo directo de Storage. En
-  el canvas, el primer click selecciona el bloque de video y, una vez
-  seleccionado, el iframe recibe interacción para reproducir, pausar y operar
-  sus controles sin volver interactivos los demás embeds del editor.
-  Al cerrar
-  la sesión, backend valida la URL TUS, el tamaño reservado y que Bunny haya
-  recibido todos los bytes antes de marcar el asset listo; estados de error de
-  Stream nunca se convierten en éxito y liberan inmediatamente asset/video/cuota.
+  resumible y firma temporal; la API key nunca llega al navegador. Al finalizar,
+  backend descarga el original autenticado desde Stream y lo transmite a Bunny
+  Storage sin cargarlo completo en memoria. El asset queda listo solamente
+  cuando existen las dos superficies: Storage para editor/preview y Stream para
+  publicado/en vivo.
+  Editor, canvas y preview-session usan exclusivamente la URL de Storage con el
+  reproductor personalizable de Ristak; nunca montan el iframe de Stream y por
+  eso sus reproducciones no contaminan las analíticas reales. Publicado/en vivo
+  cambia al iframe de Stream y conserva la configuración guardada del frame.
+  Un asset legacy que solo vive en Stream muestra `Preparando vista previa del
+  video` en editor hasta que la sincronización crea su espejo de Storage; jamás
+  usa la página iframe como `<video src>` ni carga Stream como fallback no-track.
+  El mismo contrato aplica al HTML importado. En el canvas, el primer click
+  selecciona el bloque y, una vez seleccionado, el reproductor recibe interacción
+  para reproducir, pausar y operar sus controles sin volver interactivos los
+  demás embeds del editor.
+  Al cerrar la sesión, backend valida la URL TUS, el tamaño reservado, el total
+  recibido por Bunny y que el original copiado a Storage tenga exactamente el
+  mismo tamaño antes de marcar el asset listo; estados de error de Stream nunca
+  se convierten en éxito y liberan inmediatamente asset/video/cuota.
   Cancelar elimina la reserva y el video
   pendiente, y las sesiones abandonadas de más de siete días se limpian al
   siguiente intento de subida. Los videos
@@ -3279,13 +3281,16 @@ Capacidades:
 - Bunny Storage para archivos.
 - Bunny Stream para video.
 - Subida TUS directa y resumible para videos de Sites/Forms, en chunks, sin que
-  el archivo atraviese el proceso Render ni exponga la API key.
+  el upload inicial atraviese el proceso Render ni exponga la API key.
 - Preparacion/finalizacion idempotente en `media_assets`: reserva cuota mientras
   sube y queda `ready` solo después de verificar por TUS el tamaño y avance que
-  Bunny recibió, además de confirmar el original en Stream.
-- En assets TUS directos, `public_url` es el iframe de Bunny Stream. No es una
-  fuente compatible con `<video>`; las superficies de Sites la montan como
-  iframe y reservan el reproductor HTML5 para archivos o playlists directos.
+  Bunny recibió, confirmar el original en Stream y transmitir ese original a
+  Bunny Storage con el mismo número de bytes.
+- Mientras sube, un TUS directo vive temporalmente como `bunny_stream`; al
+  finalizar queda como `bunny`, con `bunny_path` y `public_url` de Storage. La
+  identidad Stream permanece en metadata para el render publicado y analíticas.
+- La sincronización de Stream también repara assets TUS antiguos que quedaron
+  sin Storage, sin crear otro video ni cargar el archivo completo en memoria.
 - Candado distribuido por negocio para que dos preparaciones simultáneas no
   creen videos duplicados ni compitan por la misma cuota; cancelar, un fallo
   terminal de Stream y el TTL de siete días limpian reservas abandonadas.

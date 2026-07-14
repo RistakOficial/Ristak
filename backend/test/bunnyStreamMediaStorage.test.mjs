@@ -80,7 +80,8 @@ async function createBunnyMockServer() {
   let streamVideoTitle = 'Hero video (sites) site_1'
   let streamVideoCollectionId = ''
   let streamVideoStatus = 4
-  let tusUploadLength = 24 * 1024 * 1024
+  const streamOriginalBuffer = Buffer.from('fake original video bytes from Bunny Stream')
+  let tusUploadLength = streamOriginalBuffer.length
   let tusUploadOffset = tusUploadLength
 
   const server = http.createServer(async (req, res) => {
@@ -282,6 +283,37 @@ async function createBunnyMockServer() {
         return
       }
 
+      if (path === '/stream/library/123/videos/stream-video-1/play' && req.method === 'GET') {
+        requests.push({ kind: 'stream-get-play-data', accessKey: req.headers.accesskey })
+        sendJson(res, 200, {
+          video: {
+            videoLibraryId: 123,
+            guid: 'stream-video-1',
+            status: streamVideoStatus,
+            availableResolutions: '360p,720p',
+            hasMP4Fallback: true,
+            hasOriginal: true
+          },
+          videoPlaylistUrl: `${baseUrl}/stream-delivery/stream-video-1/playlist.m3u8`,
+          originalUrl: null,
+          isPlayable: true
+        })
+        return
+      }
+
+      if (path === '/stream-delivery/stream-video-1/original' && req.method === 'GET') {
+        requests.push({
+          kind: 'stream-original-download',
+          referer: req.headers.referer,
+          userAgent: req.headers['user-agent']
+        })
+        res.statusCode = 200
+        res.setHeader('Content-Type', 'video/mp4')
+        res.setHeader('Content-Length', String(streamOriginalBuffer.length))
+        res.end(streamOriginalBuffer)
+        return
+      }
+
       if (path === '/stream/library/123/statistics' && req.method === 'GET') {
         requests.push({
           kind: 'stream-statistics',
@@ -352,6 +384,7 @@ async function createBunnyMockServer() {
     setStreamVideoStatus: (status) => {
       streamVideoStatus = status
     },
+    streamOriginalBuffer,
     close: () => {
       server.closeAllConnections?.()
       server.close()
@@ -507,7 +540,7 @@ test('Bunny Stream se prepara automaticamente al arrancar con API key de cuenta'
   }
 })
 
-test('videos de Sites preparan TUS directo, reusan la sesión y finalizan sin pasar por Render', async () => {
+test('videos de Sites usan TUS para Stream y crean su espejo original en Storage antes de quedar listos', async () => {
   const previousEnv = snapshotEnv()
   const bunny = await createBunnyMockServer()
   let db = null
@@ -527,7 +560,7 @@ test('videos de Sites preparan TUS directo, reusan la sesión y finalizan sin pa
     const input = {
       filename: 'video-grande.mp4',
       mimeType: 'video/mp4',
-      size: 24 * 1024 * 1024,
+      size: bunny.streamOriginalBuffer.length,
       lastModified: 1_784_000_000_000,
       module: 'sites',
       moduleEntityId: 'site_tus',
@@ -584,11 +617,24 @@ test('videos de Sites preparan TUS directo, reusan la sesión y finalizan sin pa
       uploadUrl: `${bunny.baseUrl}/tusupload/session-1`
     })
     assert.equal(finalized.status, 'ready')
-    assert.equal(finalized.storageProvider, 'bunny_stream')
+    assert.equal(finalized.storageProvider, 'bunny')
+    assert.match(finalized.bunnyPath, /^accounts\/loc_tus\/sites\//)
+    assert.match(finalized.publicUrl, new RegExp(`^${bunny.baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\/cdn\/accounts\/loc_tus\/sites\/`))
     assert.equal(finalized.metadata.directUpload.state, 'completed')
+    assert.equal(finalized.metadata.directUpload.storageMirror.provider, 'bunny')
+    assert.equal(finalized.metadata.directUpload.storageMirror.source, 'bunny_stream_original')
     assert.equal(finalized.metadata.stream.syncStatus, 'uploaded')
+    assert.equal(finalized.metadata.stream.source.storagePath, finalized.bunnyPath)
+    assert.equal(finalized.metadata.stream.source.storagePublicUrl, finalized.publicUrl)
     assert.equal(bunny.requests.filter(request => request.kind === 'tus-head').length, 2)
-    assert.match(finalized.publicUrl, /^https:\/\/iframe\.mediadelivery\.net\/embed\/123\/stream-video-1$/)
+    assert.equal(bunny.requests.filter(request => request.kind === 'stream-get-play-data').length, 1)
+    assert.equal(bunny.requests.filter(request => request.kind === 'stream-original-download').length, 1)
+    assert.equal(
+      bunny.requests.find(request => request.kind === 'stream-original-download')?.referer,
+      'https://iframe.mediadelivery.net/embed/123/stream-video-1'
+    )
+    const storageUpload = bunny.requests.find(request => request.kind === 'storage-upload' && request.path.includes(prepared.asset.id))
+    assert.equal(storageUpload?.bytes, bunny.streamOriginalBuffer.length)
 
     const completedReplay = await mediaStorageService.prepareBunnyStreamResumableUpload(input)
     assert.equal(completedReplay.completed, true)
@@ -646,6 +692,76 @@ test('videos de Sites preparan TUS directo, reusan la sesión y finalizan sin pa
     }
     for (const assetId of extraMediaAssetIds) {
       await db?.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+    }
+    bunny.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('sincronizar un asset TUS antiguo repara su copia faltante de Storage sin crear otro video Stream', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+  let db = null
+  const assetId = `legacy_tus_${Date.now()}`
+
+  try {
+    configureBunnyEnv(bunny.baseUrl)
+    const [mediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'grabacion.mp4', 'grabacion.mp4', NULL, ?, 'video/mp4', 'video', 'mp4', ?, ?, ?, 'ready', 'bunny_stream', 'sites', 'site_legacy_tus', 1, ?)`,
+      [
+        assetId,
+        'https://iframe.mediadelivery.net/embed/123/stream-video-1',
+        bunny.streamOriginalBuffer.length,
+        bunny.streamOriginalBuffer.length,
+        bunny.streamOriginalBuffer.length,
+        JSON.stringify({
+          clientAccount: { id: 'loc_repair', rootPath: 'accounts/loc_repair' },
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123',
+            collectionId: 'collection-sites-forms',
+            videoId: 'stream-video-1',
+            source: { storagePath: '', storagePublicUrl: '' }
+          },
+          directUpload: { protocol: 'tus', provider: 'bunny_stream', state: 'completed' }
+        })
+      ]
+    )
+
+    const repaired = await mediaStorageService.syncMediaAssetBunnyStream(assetId, {
+      businessId: 'default',
+      module: 'sites',
+      clientAccountId: 'loc_repair'
+    })
+
+    assert.equal(repaired.storageProvider, 'bunny')
+    assert.match(repaired.bunnyPath, /^accounts\/loc_repair\/sites\//)
+    assert.equal(repaired.metadata.stream.videoId, 'stream-video-1')
+    assert.equal(repaired.metadata.stream.syncStatus, 'synced')
+    assert.equal(repaired.metadata.stream.source.storagePath, repaired.bunnyPath)
+    assert.equal(repaired.metadata.directUpload.storageMirror.source, 'bunny_stream_original')
+    assert.equal(bunny.requests.filter(request => request.kind === 'stream-create-video').length, 0)
+    assert.equal(bunny.requests.filter(request => request.kind === 'stream-original-download').length, 1)
+    assert.equal(bunny.requests.filter(request => request.kind === 'storage-upload' && request.path.includes(assetId)).length, 1)
+  } finally {
+    if (db) {
+      const mediaStorageService = await import('../src/services/mediaStorageService.js')
+      await mediaStorageService.softDeleteMediaAsset(assetId).catch(() => undefined)
+      await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+      mediaStorageService.resetCentralStorageConfigCache()
     }
     bunny.close()
     restoreEnv(previousEnv)

@@ -35169,29 +35169,6 @@ const VideoPlayerPreview: React.FC<{
   )
 }
 
-const BunnyStreamIframePreview: React.FC<{
-  embedUrl: string
-  label?: string
-  settings: Record<string, unknown>
-}> = ({ embedUrl, label, settings }) => (
-  <div
-    className={`rstk-video rstk-video-embed-frame rstk-video-${normalizeVideoOrientation(settings)}`}
-    style={buildVideoFrameStyleVars(settings) as React.CSSProperties}
-    data-rstk-selection-surface="true"
-    data-rstk-video-preview="true"
-    data-rstk-video-provider="bunny_stream"
-  >
-    <iframe
-      src={appendEditorNoTrackParam(embedUrl)}
-      title={label || 'Video'}
-      loading="eager"
-      allow={DEFAULT_EMBED_ALLOW}
-      allowFullScreen
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-    />
-  </div>
-)
-
 const BunnyStreamStoragePreview: React.FC<{
   embedUrl: string
   label?: string
@@ -35207,10 +35184,12 @@ const BunnyStreamStoragePreview: React.FC<{
 }> = ({ embedUrl, label, site, settings, videoFormGateQuestions = [], showVideoFormGatePreview = false, videoFormGateEditor, forms = [], calendars = [], editable = false, selected = false }) => {
   const streamVideoId = useMemo(() => getBunnyStreamVideoIdFromUrl(embedUrl), [embedUrl])
   const [storageUrl, setStorageUrl] = useState('')
+  const [resolved, setResolved] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setStorageUrl('')
+    setResolved(false)
 
     const findStorageUrl = (assets: MediaAsset[]) => {
       const storageAsset = assets.find(asset => getMediaStreamVideoId(asset) === streamVideoId)
@@ -35238,6 +35217,9 @@ const BunnyStreamStoragePreview: React.FC<{
       .catch(() => {
         if (!cancelled) setStorageUrl('')
       })
+      .finally(() => {
+        if (!cancelled) setResolved(true)
+      })
 
     return () => {
       cancelled = true
@@ -35262,10 +35244,15 @@ const BunnyStreamStoragePreview: React.FC<{
     )
   }
 
-  // El iframe queda como fallback inmediato. Así el preview no desaparece
-  // mientras la cuenta termina de resolver el asset espejo de Storage y,
-  // si ese espejo no existe, el usuario sigue viendo el Stream real.
-  return <BunnyStreamIframePreview embedUrl={embedUrl} label={label} settings={settings} />
+  // El editor nunca monta Stream: las reproducciones de edición no deben entrar
+  // en sus analíticas. Cuando falta el espejo, esperamos la copia de Storage en
+  // vez de saltarnos el reproductor personalizado con el iframe del proveedor.
+  return (
+    <div className="rstk-media rstk-media-empty" data-rstk-selection-surface="true" data-rstk-preview-stream-disabled="true">
+      <span className="rstk-play"><Play size={22} /></span>
+      {resolved ? 'Preparando vista previa del video' : 'Preparando video'}
+    </div>
+  )
 }
 
 // Paridad embeds #8/#9/#10: el canvas embebe el WIDGET REAL de reservas (el
