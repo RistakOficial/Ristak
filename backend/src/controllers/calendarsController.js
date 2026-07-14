@@ -887,7 +887,12 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate }) {
     addDateOnlyDays(startDate, -2),
     addDateOnlyDays(endDate, 2),
     businessTimezone,
-    { allowDefaultOpenHours: false }
+    {
+      allowDefaultOpenHours: false,
+      // La URL pública siempre representa el modo Por defecto: un solo
+      // compromiso por espacio, aunque el espejo GHL anuncie más capacidad.
+      appointmentLimit: 1
+    }
   );
 }
 
@@ -2049,7 +2054,9 @@ export async function createPublicAppointment(req, res) {
         publicAppointmentData.endTime,
         {
           enforceCalendarRules: true,
-          timezone: businessTimezone
+          timezone: businessTimezone,
+          // La reserva pública nunca es un override personalizado.
+          appointmentLimit: 1
         }
       );
       if (!availability.available) {
@@ -2276,9 +2283,15 @@ export async function getFreeSlots(req, res) {
     const { startDate, endDate, timezone } = req.query;
     const internalAvailability = req[INTERNAL_CONTROLLER_CONTEXT] || {};
     const requireVerifiedExternalAvailability = internalAvailability.requireVerifiedExternalAvailability === true;
-    const availabilityOptions = internalAvailability.availabilityOptions && typeof internalAvailability.availabilityOptions === 'object'
+    const requestedAvailabilityOptions = internalAvailability.availabilityOptions && typeof internalAvailability.availabilityOptions === 'object'
       ? internalAvailability.availabilityOptions
       : {};
+    // El GET protegido alimenta por defecto los selectores normales de horario.
+    // Sólo el contexto interno del agente puede pedir explícitamente ignorar
+    // conflictos cuando su configuración verificada permite empalmes.
+    const availabilityOptions = requestedAvailabilityOptions.ignoreAppointmentConflicts === true
+      ? requestedAvailabilityOptions
+      : { ...requestedAvailabilityOptions, appointmentLimit: 1 };
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -2531,6 +2544,8 @@ export async function createAppointment(req, res) {
       : null;
     const strictAvailabilityCheck = appointmentData.strictAvailabilityCheck === true
       || appointmentData.source === 'conversational_agent_v2';
+    const forceDoubleBooking = appointmentData.ignoreAppointmentConflicts === true
+      || appointmentData.confirmDoubleBooking === true;
     const strictConflictOverrideAuthorized = (
       strictAvailabilityCheck
       && internalAppointmentContext.conversationalAgentAppointment === true
@@ -2585,7 +2600,7 @@ export async function createAppointment(req, res) {
           },
       create: async () => {
     const localCalendar = await localCalendarService.getLocalCalendar(requestedCalendarId);
-    if (strictAvailabilityCheck && !localCalendar) {
+    if ((strictAvailabilityCheck || forceDoubleBooking) && !localCalendar) {
       const calendarError = new Error('El calendario configurado no existe o ya no está disponible. No se creó la cita.');
       calendarError.status = 404;
       calendarError.code = 'calendar_not_found';
@@ -2615,17 +2630,15 @@ export async function createAppointment(req, res) {
       notes: renderedTemplates.notes
     };
 
-    // (APT-001) Validar disponibilidad del slot antes de crear: evita doble-booking
-    // silencioso desde el modal admin. Si el slot ya alcanzó su límite respondemos 409,
-    // salvo que venga una bandera explícita para forzar (ignoreAppointmentConflicts).
-    const forceDoubleBooking = appointmentData.ignoreAppointmentConflicts === true
-      || appointmentData.confirmDoubleBooking === true;
+    // (APT-001) Siempre validamos el rango y los bloqueos dentro del mismo candado.
+    // El modo personalizado sólo puede ignorar conflictos con otras citas; jamás
+    // puede saltarse un bloqueo explícito ni convertir el modo estricto en sobreagenda.
     const localCalendarId = localCalendar?.id || requestedCalendarId;
     const createLocalWithAvailability = async () => {
       // Orden único para evitar ciclos con una reagenda concurrente en Postgres:
       // primero el advisory del calendario y después los locks semánticos del
       // agente/oferta/calendario que toma el authority fence.
-      if ((!forceDoubleBooking || strictAvailabilityCheck) && localCalendarId) {
+      if (localCalendarId) {
         await lockCalendarAppointmentCreation(localCalendarId);
       }
       if (conversationalAppointmentAuthorityFence) {
@@ -2656,9 +2669,10 @@ export async function createAppointment(req, res) {
           database: db
         });
       }
-      if ((!forceDoubleBooking || strictAvailabilityCheck) && localCalendarId) {
-        // Legacy conserva el contrato fail-open del modal. El runtime conversacional v2
-        // falla cerrado: si no podemos comprobar el horario real, no inventamos una cita.
+      if (localCalendarId) {
+        // El alta legacy ordinaria conserva su contrato fail-open. El modo estricto y
+        // el override personalizado fallan cerrado: si no podemos comprobar bloqueos
+        // y rango, no inventamos una cita.
         let availability = { available: true };
         try {
           availability = await localCalendarService.checkSlotAvailability(
@@ -2668,16 +2682,21 @@ export async function createAppointment(req, res) {
             strictAvailabilityCheck
               ? {
                   enforceCalendarRules: true,
-                  // Una bandera del payload nunca basta para sobreagendar en modo
-                  // estricto. El único override válido viene del contexto interno
-                  // del agente después de leer su `allowOverlaps` configurado.
+                  // Los flags del payload jamás autorizan el empalme estricto.
+                  // Sólo el contexto interno del agente puede hacerlo después
+                  // de comprobar su capacidad `allowOverlaps` configurada.
                   ignoreAppointmentConflicts: strictConflictOverrideAuthorized,
+                  ...(strictConflictOverrideAuthorized ? {} : { appointmentLimit: 1 }),
                   timezone: localAppointmentData.timeZone || localAppointmentData.timezone
                 }
-              : {}
+              : {
+                  // Personalizado puede empalmar citas, pero checkSlotAvailability
+                  // aún valida rango y blocked_slots antes del INSERT.
+                  ignoreAppointmentConflicts: forceDoubleBooking
+                }
           );
         } catch (error) {
-          if (strictAvailabilityCheck) {
+          if (strictAvailabilityCheck || forceDoubleBooking) {
             const availabilityError = new Error('No se pudo comprobar que el horario siga disponible. No se creó la cita.');
             availabilityError.status = 503;
             availabilityError.code = 'availability_check_failed';
@@ -2733,9 +2752,7 @@ export async function createAppointment(req, res) {
       return localAppointment;
     };
 
-    let appointment = localCalendarId && (
-      !forceDoubleBooking || depositFenceProvided || terminalAuthorityProvided || strictAvailabilityCheck
-    )
+    let appointment = localCalendarId
       ? await db.transaction(createLocalWithAvailability)
       : await createLocalWithAvailability();
 
@@ -3029,13 +3046,20 @@ export async function updateAppointment(req, res) {
     // después del commit local y, si falla, `sync_status=pending` conserva la
     // edición para el reconciliador existente.
     if ((strictAvailabilityCheck || strictLifecycleMutation || cancellationMutationRequested) && existing) {
-      const requestedStart = updateData.startTime || updateData.start_time;
-      const requestedEnd = updateData.endTime || updateData.end_time;
-      const startChanged = requestedStart && (
-        new Date(requestedStart).getTime() !== new Date(existing.startTime || existing.start_time).getTime()
+      const requestedStartInput = updateData.startTime || updateData.start_time;
+      const requestedEndInput = updateData.endTime || updateData.end_time;
+      const existingStart = existing.startTime || existing.start_time;
+      const existingEnd = existing.endTime || existing.end_time;
+      const requestedStart = requestedStartInput || existingStart;
+      const requestedEnd = requestedEndInput || existingEnd;
+      const startChanged = requestedStartInput && (
+        new Date(requestedStartInput).getTime() !== new Date(existingStart).getTime()
+      );
+      const endChanged = requestedEndInput && (
+        new Date(requestedEndInput).getTime() !== new Date(existingEnd).getTime()
       );
       const cancelRequested = strictLifecycleMutation === 'cancel' || cancellationMutationRequested;
-      const rescheduleRequested = strictLifecycleMutation === 'reschedule' || startChanged;
+      const rescheduleRequested = strictLifecycleMutation === 'reschedule' || startChanged || endChanged;
       if (cancelRequested || rescheduleRequested) {
         const calendarId = existing.calendarId || existing.calendar_id;
         const startMs = requestedStart ? new Date(requestedStart).getTime() : NaN;
@@ -3135,6 +3159,7 @@ export async function updateAppointment(req, res) {
               ...(strictAvailabilityCheck
                 ? {
                     enforceCalendarRules: true,
+                    ...(strictConflictOverrideAuthorized ? {} : { appointmentLimit: 1 }),
                     timezone: updateData.timeZone || updateData.timezone || current.timeZone || current.time_zone
                   }
                 : {})

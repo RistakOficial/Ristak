@@ -17,7 +17,7 @@ test('las superficies de chat mandan un calendario al endpoint canónico de cita
   )
   assert.match(
     desktopChat,
-    /calendarsService\.createAppointment\(eventIdOrPayload, accessToken \|\| undefined\)/
+    /const calendarId = String\(eventIdOrPayload\.calendarId \|\| selectedCalendar\?\.id \|\| ''\)\.trim\(\)[\s\S]*?calendarsService\.createAppointment\(\{\s*\.\.\.eventIdOrPayload,\s*calendarId\s*\}, accessToken \|\| undefined\)/
   )
   assert.match(
     nativeMobile,

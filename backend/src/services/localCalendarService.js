@@ -6616,7 +6616,14 @@ export async function checkSlotAvailability(calendarId, startTime, endTime, opti
   const blockedOverlaps = await getOverlappingLocalBlockedSlots(
     calendarId,
     slotStartMs - buffers.before * 60 * 1000,
-    slotEndMs + buffers.after * 60 * 1000
+    slotEndMs + buffers.after * 60 * 1000,
+    {
+      // Los flujos que prometen disponibilidad real (Por defecto y
+      // Personalizado) jamás deben asumir que no hay ausencias cuando la
+      // lectura de blocked_slots falló. Sólo el alta legacy conserva el
+      // comportamiento fail-open de compatibilidad.
+      failClosed: enforceCalendarRules || options.ignoreAppointmentConflicts === true
+    }
   )
   if (blockedOverlaps.length > 0) {
     return { available: false, limit, overlapping, blocked: true, reason: 'blocked' }
@@ -6632,7 +6639,12 @@ export async function checkSlotAvailability(calendarId, startTime, endTime, opti
 }
 
 // (APT-004) Bloqueos de horario NATIVOS (calendarios Ristak/Google, no solo HighLevel).
-async function getOverlappingLocalBlockedSlots(calendarId, slotStartMs, slotEndMs) {
+async function getOverlappingLocalBlockedSlots(
+  calendarId,
+  slotStartMs,
+  slotEndMs,
+  { failClosed = false } = {}
+) {
   if (!Number.isFinite(slotStartMs) || !Number.isFinite(slotEndMs)) return []
   let rows = []
   try {
@@ -6641,7 +6653,9 @@ async function getOverlappingLocalBlockedSlots(calendarId, slotStartMs, slotEndM
       [calendarId]
     )
   } catch (error) {
-    // Fail-open: si la tabla aún no existe (migración pendiente), no bloquear el agendado.
+    if (failClosed) throw error
+    // Compatibilidad legacy: si la tabla aún no existe (migración pendiente),
+    // el alta ordinaria conserva su comportamiento histórico.
     return []
   }
   return rows.filter(b => overlaps(

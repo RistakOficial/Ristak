@@ -95,7 +95,10 @@ export const getFreeSlotsTool = tool({
     ))
     const timezone = await getAccountTimezone()
     const slots = await getLocalFreeSlots(calendarId, startDate, endDate, timezone, {
-      allowDefaultOpenHours: false
+      allowDefaultOpenHours: false,
+      // Esta herramienta siempre agenda con strictAvailabilityCheck; la oferta
+      // debe usar el mismo contrato de un solo compromiso por espacio.
+      appointmentLimit: 1
     })
     const availableDays = (Array.isArray(slots) ? slots : [])
       .filter((day) => Array.isArray(day?.slots) && day.slots.length > 0)

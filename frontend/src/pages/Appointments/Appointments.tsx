@@ -1000,6 +1000,8 @@ export const Appointments: React.FC = () => {
     address: string;
     timeZone: string;
     contactId?: string;
+    strictAvailabilityCheck?: true;
+    ignoreAppointmentConflicts?: true;
   }) => {
     if (!selectedCalendar) return;
 

@@ -1513,6 +1513,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     timeZone: string
     contactId?: string
     strictAvailabilityCheck?: true
+    ignoreAppointmentConflicts?: true
   }) => {
     if (!selectedCalendar) return
 

@@ -51,15 +51,15 @@ enum CalendarsService {
         try await APIClient.shared.get("/api/calendars/events/\(id)")
     }
 
-    /// `POST /api/calendars/appointments`. 409 `slot_unavailable` si el slot
-    /// ya no tiene cupo (detectar con `error.isSlotUnavailable`; reintentar
-    /// con `ignoreAppointmentConflicts: true` para sobreagendar).
+    /// `POST /api/calendars/appointments`. Por defecto responde 409
+    /// `slot_unavailable` si el slot ya no tiene cupo. Personalizado manda
+    /// `ignoreAppointmentConflicts: true` desde el primer intento.
     static func createAppointment(_ draft: AppointmentDraftRequest) async throws -> CalendarAppointment {
         try await APIClient.shared.post("/api/calendars/appointments", body: draft)
     }
 
-    /// `PUT /api/calendars/appointments/:id` (parcial). OJO: el PUT NO valida
-    /// choques de horario (doc 07 gap 3).
+    /// `PUT /api/calendars/appointments/:id` (parcial). El PUT legacy ordinario
+    /// no valida choques; una reagenda con `strictAvailabilityCheck` sí lo hace.
     static func updateAppointment(id: String, _ draft: AppointmentDraftRequest) async throws -> CalendarAppointment {
         try await APIClient.shared.put("/api/calendars/appointments/\(id)", body: draft)
     }

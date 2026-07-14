@@ -1106,6 +1106,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
         if (scheduleMode === 'default') {
           payload.strictAvailabilityCheck = true;
+        } else {
+          payload.ignoreAppointmentConflicts = true;
         }
 
         // Agregar assignedUserId si está seleccionado

@@ -11191,7 +11191,8 @@ export const PhoneChat: React.FC = () => {
         notes: guestsNotes,
         address: appointmentCalendarAddress.trim(),
         timeZone: timezone,
-        contactId: contact.id
+        contactId: contact.id,
+        ignoreAppointmentConflicts: true
       })
     } catch {
       setAppointmentCalendarError('No se pudo agendar. Intenta otra vez.')
@@ -14335,6 +14336,7 @@ export const PhoneChat: React.FC = () => {
     timeZone: string
     contactId?: string
     strictAvailabilityCheck?: true
+    ignoreAppointmentConflicts?: true
   }) => {
     const isCalendarActionAppointment = Boolean(wideAppointmentDefaults)
     const calendarForAppointment = appointmentSheetCalendar || selectedCalendar

@@ -1575,16 +1575,26 @@ Reglas base:
   Datos` reúne el enlace público, formulario y acción posterior al agendado.
 - El mismo horario semanal gobierna `free-slots`, URL pública, calendarios
   embebidos/Sites, agente conversacional y los modales web, Android e iOS cuando
-  usan el modo `Por defecto`. El modo `Personalizado` es el override intencional
-  para capturar una hora manual y no debe heredar esa restricción.
+  usan el modo `Por defecto`. Ese modo siempre exige un espacio sin otra cita y
+  no acepta banderas de sobreagenda enviadas por el cliente, aunque lleguen
+  mezcladas en la solicitud. Tampoco hereda un cupo mayor de
+  `appoinmentPerSlot` desde un espejo HighLevel: URL pública, Sites, pagos y
+  selectores normales conservan cupo uno. La única excepción es el agente
+  conversacional cuando su configuración interna verificable tiene
+  `allowOverlaps=true`.
+  El modo `Personalizado` es el override intencional para capturar una hora
+  manual y sí puede empalmar otra cita; no puede atravesar una ausencia o
+  `blocked_slot` explícito ni crear un rango inválido.
 - Los rangos del horario semanal son horas de pared de la zona del negocio. Una
   zona elegida por el visitante sólo cambia cómo se muestran los mismos instantes;
   no desplaza el horario ni se usa para calcular qué espacios existen.
-- Toda reserva pública vuelve a validar, dentro del candado/transacción del
-  calendario, horario semanal, ventana, cupo diario, buffers, bloqueos y choques
-  justo antes del INSERT. Dos solicitudes simultáneas al mismo espacio no pueden
-  terminar en dos citas. Los flujos con cobro aplican esa validación cuando
-  finalmente intentan crear la cita; el pago pendiente no reserva el espacio.
+- Toda creación usa el candado/transacción del calendario, incluida una captura
+  `Personalizado` que permita empalmar otra cita. Toda reserva pública vuelve a
+  validar dentro de ese candado el calendario, horario semanal, ventana, cupo
+  diario, buffers, bloqueos y choques justo antes del INSERT. Dos solicitudes
+  simultáneas al mismo espacio no pueden terminar en dos citas. Los flujos con
+  cobro aplican esa validación cuando finalmente intentan crear la cita; el pago
+  pendiente no reserva el espacio.
 - Los calendarios espejados desde HighLevel siguen siendo calendarios locales
   utilizables aunque HighLevel se desconecte. Sus URLs publicas, disponibilidad
   y bookings deben resolverse contra la DB de Ristak; las citas nuevas,

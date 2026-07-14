@@ -84,10 +84,11 @@ calendarsService.deleteEvent(eventId, accessToken)
 ubicación y notas. Al crear siempre incluye el `calendarId` seleccionado; el
 backend rechaza una alta sin calendario antes de guardar una cita huérfana.
 Al crear una cita, el modo `Por defecto` manda una validación estricta para que
-la hora pertenezca al horario semanal y cumpla las reglas del calendario. El modo
-`Personalizado` conserva la captura manual como override explícito. Editar una
-cita mantiene el contrato anterior y no convierte silenciosamente una hora
-existente en una reserva nueva.
+la hora pertenezca al horario semanal, cumpla las reglas del calendario y jamás
+empalme otra cita. El modo `Personalizado` manda el override explícito desde el
+primer intento y sí permite empalmar otra cita, pero conserva el rechazo de
+ausencias y horarios bloqueados. Editar una cita mantiene el contrato anterior y
+no convierte silenciosamente una hora existente en una reserva nueva.
 
 Después de crear o editar, la vista aplica únicamente la respuesta confirmada por
 backend y ejecuta un refetch canónico para respetar normalización de fechas,

@@ -2,9 +2,17 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
-import { createAppointment as createAppointmentController } from '../src/controllers/calendarsController.js'
+import {
+  createAppointment as createAppointmentController,
+  updateAppointment as updateAppointmentController
+} from '../src/controllers/calendarsController.js'
 import { runIdempotentAppointmentCreation } from '../src/services/appointmentCreationSafetyService.js'
-import { createLocalAppointment, upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import { INTERNAL_CONTROLLER_CONTEXT } from '../src/agents/invokeController.js'
+import {
+  createLocalAppointment,
+  createLocalBlockedSlot,
+  upsertLocalCalendar
+} from '../src/services/localCalendarService.js'
 
 function uniqueKey(label) {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}_123456`
@@ -854,7 +862,7 @@ test('el endpoint conversacional v2 falla cerrado si el calendario configurado n
   }
 })
 
-test('el candado estricto no permite sobreagendar aunque el payload también pida forzar', async () => {
+test('los flags admin no fuerzan el modo estricto y sólo allowOverlaps interno autoriza el empalme', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
   const calendarId = `calendar_strict_wins_${suffix}`
   const startTime = '2099-07-22T15:00:00.000Z'
@@ -865,6 +873,8 @@ test('el candado estricto no permite sobreagendar aunque el payload también pid
       id: calendarId,
       name: 'Agenda con candado estricto',
       source: 'ristak',
+      ghlCalendarId: `ghl_${calendarId}`,
+      appoinmentPerSlot: 5,
       allowBookingFor: 36500,
       allowBookingForUnit: 'days',
       openHours: [{
@@ -884,11 +894,12 @@ test('el candado estricto no permite sobreagendar aunque el payload también pid
     await createAppointmentController({
       body: {
         calendarId,
-        title: 'Intento de sobreagenda contradictorio',
+        title: 'Intento admin de sobreagenda contradictorio',
         startTime,
         endTime,
         strictAvailabilityCheck: true,
-        ignoreAppointmentConflicts: true
+        ignoreAppointmentConflicts: true,
+        confirmDoubleBooking: true
       }
     }, response)
 
@@ -899,8 +910,252 @@ test('el candado estricto no permite sobreagendar aunque el payload también pid
       [calendarId]
     )
     assert.equal(Number(stored?.total || 0), 1)
+
+    const authorizedResponse = createResponse()
+    await createAppointmentController({
+      [INTERNAL_CONTROLLER_CONTEXT]: {
+        conversationalAgentAppointment: true,
+        allowAppointmentOverlaps: true
+      },
+      body: {
+        calendarId,
+        title: 'Empalme autorizado por capacidad interna del agente',
+        startTime,
+        endTime,
+        strictAvailabilityCheck: true,
+        source: 'conversational_agent_v2',
+        ignoreAppointmentConflicts: true,
+        confirmDoubleBooking: true
+      }
+    }, authorizedResponse)
+
+    assert.equal(authorizedResponse.statusCode, 201, JSON.stringify(authorizedResponse.body))
+    const afterAuthorized = await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
+      [calendarId]
+    )
+    assert.equal(Number(afterAuthorized?.total || 0), 2)
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('una reagenda estricta tampoco hereda el cupo mayor del espejo GHL', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const calendarId = `calendar_strict_reschedule_${suffix}`
+  const originalStart = '2099-07-22T13:00:00.000Z'
+  const originalEnd = '2099-07-22T13:30:00.000Z'
+  const occupiedStart = '2099-07-22T13:30:00.000Z'
+  const occupiedEnd = '2099-07-22T14:00:00.000Z'
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda estricta para reagendar',
+      source: 'ristak',
+      ghlCalendarId: `ghl_${calendarId}`,
+      slotDuration: 60,
+      slotInterval: 60,
+      appoinmentPerSlot: 5,
+      allowBookingFor: 36500,
+      allowBookingForUnit: 'days',
+      openHours: [{
+        daysOfTheWeek: [0, 1, 2, 3, 4, 5, 6],
+        hours: [{ openHour: 0, openMinute: 0, closeHour: 24, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    const movable = await createLocalAppointment({
+      calendarId,
+      title: 'Cita que se intenta mover',
+      startTime: originalStart,
+      endTime: originalEnd,
+      appointmentStatus: 'confirmed'
+    })
+    await createLocalAppointment({
+      calendarId,
+      title: 'Cita que ya ocupa el destino',
+      startTime: occupiedStart,
+      endTime: occupiedEnd,
+      appointmentStatus: 'confirmed'
+    })
+
+    const response = createResponse()
+    await updateAppointmentController({
+      params: { id: movable.id },
+      body: {
+        // Cambiar sólo el final debe activar la validación. El rango resultante
+        // dura exactamente 60 minutos y choca con la segunda cita; por eso esta
+        // prueba demuestra cupo/overlap, no un rechazo por duración.
+        endTime: occupiedEnd,
+        strictAvailabilityCheck: true,
+        ignoreAppointmentConflicts: true
+      }
+    }, response)
+
+    assert.equal(response.statusCode, 409)
+    assert.equal(response.body?.code, 'slot_unavailable')
+    assert.equal(response.body?.data?.reason, 'slot_conflict')
+    const unchanged = await db.get(
+      'SELECT start_time, end_time FROM appointments WHERE id = ?',
+      [movable.id]
+    )
+    assert.equal(unchanged?.start_time, originalStart)
+    assert.equal(unchanged?.end_time, originalEnd)
+
+    const authorizedResponse = createResponse()
+    await updateAppointmentController({
+      params: { id: movable.id },
+      [INTERNAL_CONTROLLER_CONTEXT]: {
+        conversationalAgentAppointment: true,
+        allowAppointmentOverlaps: true
+      },
+      body: {
+        endTime: occupiedEnd,
+        strictAvailabilityCheck: true,
+        ignoreAppointmentConflicts: true
+      }
+    }, authorizedResponse)
+
+    assert.equal(authorizedResponse.statusCode, 200, JSON.stringify(authorizedResponse.body))
+    const authorized = await db.get(
+      'SELECT start_time, end_time FROM appointments WHERE id = ?',
+      [movable.id]
+    )
+    assert.equal(authorized?.start_time, originalStart)
+    assert.equal(authorized?.end_time, occupiedEnd)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('personalizado empalma citas, pero respeta bloqueos explícitos y rangos válidos', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const calendarId = `calendar_custom_overlap_${suffix}`
+  const overlapStart = '2099-07-23T15:00:00.000Z'
+  const overlapEnd = '2099-07-23T16:00:00.000Z'
+  const blockedStart = '2099-07-23T17:00:00.000Z'
+  const blockedEnd = '2099-07-23T18:00:00.000Z'
+
+  try {
+    const missingCalendarResponse = createResponse()
+    await createAppointmentController({
+      body: {
+        calendarId: `missing_custom_calendar_${suffix}`,
+        title: 'Personalizado sin calendario',
+        startTime: overlapStart,
+        endTime: overlapEnd,
+        ignoreAppointmentConflicts: true
+      }
+    }, missingCalendarResponse)
+    assert.equal(missingCalendarResponse.statusCode, 404)
+    assert.equal(missingCalendarResponse.body?.code, 'calendar_not_found')
+
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda personalizada con bloqueos',
+      source: 'ristak',
+      openHours: [],
+      availabilityScheduleConfigured: true
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await createLocalAppointment({
+      calendarId,
+      title: 'Cita existente',
+      startTime: overlapStart,
+      endTime: overlapEnd,
+      appointmentStatus: 'confirmed'
+    })
+
+    const overlapResponse = createResponse()
+    await createAppointmentController({
+      body: {
+        calendarId,
+        title: 'Cita personalizada empalmada',
+        startTime: overlapStart,
+        endTime: overlapEnd,
+        ignoreAppointmentConflicts: true
+      }
+    }, overlapResponse)
+
+    assert.equal(overlapResponse.statusCode, 201, JSON.stringify(overlapResponse.body))
+    assert.equal(
+      await db.get(
+        'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND start_time = ?',
+        [calendarId, overlapStart]
+      ).then(row => Number(row.total)),
+      2
+    )
+
+    await createLocalBlockedSlot({
+      calendarId,
+      startTime: blockedStart,
+      endTime: blockedEnd,
+      title: 'Ausencia explícita'
+    })
+    const blockedResponse = createResponse()
+    await createAppointmentController({
+      body: {
+        calendarId,
+        title: 'No debe atravesar la ausencia',
+        startTime: blockedStart,
+        endTime: blockedEnd,
+        ignoreAppointmentConflicts: true
+      }
+    }, blockedResponse)
+
+    assert.equal(blockedResponse.statusCode, 409)
+    assert.equal(blockedResponse.body?.code, 'slot_unavailable')
+    assert.equal(blockedResponse.body?.data?.reason, 'blocked')
+
+    const invalidResponse = createResponse()
+    await createAppointmentController({
+      body: {
+        calendarId,
+        title: 'No debe aceptar un rango invertido',
+        startTime: blockedEnd,
+        endTime: blockedStart,
+        ignoreAppointmentConflicts: true
+      }
+    }, invalidResponse)
+
+    assert.equal(invalidResponse.statusCode, 409)
+    assert.equal(invalidResponse.body?.code, 'slot_unavailable')
+    assert.equal(invalidResponse.body?.data?.reason, 'invalid_slot')
+
+    const originalDbAll = db.all
+    try {
+      db.all = async (sql, params = []) => {
+        if (String(sql).includes('FROM blocked_slots')) {
+          throw new Error('fallo simulado leyendo ausencias')
+        }
+        return originalDbAll.call(db, sql, params)
+      }
+      const unreadableBlocksResponse = createResponse()
+      await createAppointmentController({
+        body: {
+          calendarId,
+          title: 'No debe asumir que no hay ausencias',
+          startTime: '2099-07-23T19:00:00.000Z',
+          endTime: '2099-07-23T20:00:00.000Z',
+          ignoreAppointmentConflicts: true
+        }
+      }, unreadableBlocksResponse)
+
+      assert.equal(unreadableBlocksResponse.statusCode, 503)
+      assert.equal(unreadableBlocksResponse.body?.code, 'availability_check_failed')
+    } finally {
+      db.all = originalDbAll
+    }
+
+    assert.equal(
+      await db.get('SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?', [calendarId])
+        .then(row => Number(row.total)),
+      2
+    )
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM blocked_slots WHERE calendar_id = ?', [calendarId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
   }
 })

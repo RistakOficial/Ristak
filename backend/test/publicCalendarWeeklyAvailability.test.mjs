@@ -6,9 +6,14 @@ import { DateTime } from 'luxon'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
   createPublicAppointment,
+  getFreeSlots,
   getPublicFreeSlots
 } from '../src/controllers/calendarsController.js'
-import { createLocalCalendar } from '../src/services/localCalendarService.js'
+import { INTERNAL_CONTROLLER_CONTEXT } from '../src/agents/invokeController.js'
+import {
+  createLocalAppointment,
+  createLocalCalendar
+} from '../src/services/localCalendarService.js'
 import {
   ACCOUNT_TIMEZONE_CONFIG_KEY,
   invalidateTimezoneCache
@@ -73,7 +78,7 @@ function nextTuesdayInBusinessTimezone() {
   return base.plus({ days: (2 - base.weekday + 7) % 7 })
 }
 
-async function createWeeklyFixture(label) {
+async function createWeeklyFixture(label, { appointmentLimit = 1 } = {}) {
   const suffix = randomUUID()
   const businessDay = nextTuesdayInBusinessTimezone()
   const slug = `public-weekly-${label}-${suffix}`
@@ -85,7 +90,8 @@ async function createWeeklyFixture(label) {
     slotDurationUnit: 'mins',
     slotInterval: 60,
     slotIntervalUnit: 'mins',
-    appoinmentPerSlot: 1,
+    appoinmentPerSlot: appointmentLimit,
+    ghlCalendarId: appointmentLimit > 1 ? `ghl-public-weekly-${suffix}` : null,
     allowBookingAfter: 0,
     allowBookingAfterUnit: 'hours',
     allowBookingFor: 365,
@@ -229,8 +235,87 @@ test('la URL pública no acepta una hora casi igual a un slot antes de iniciar c
   assert.equal(contact, null)
 })
 
+test('las superficies por defecto fijan cupo 1 aunque el espejo GHL permita más citas', async (t) => {
+  const fixture = await createWeeklyFixture('default-capacity', { appointmentLimit: 5 })
+  t.after(() => cleanupWeeklyFixture(fixture))
+  const start = fixture.businessDay.set({ hour: 13 })
+  const startMs = start.toMillis()
+
+  await createLocalAppointment({
+    calendarId: fixture.calendarId,
+    title: 'Cita existente con cupo remoto mayor',
+    startTime: start.toISO(),
+    endTime: start.plus({ hours: 1 }).toISO(),
+    appointmentStatus: 'confirmed'
+  })
+
+  const publicSlotsResponse = createJsonResponse()
+  await getPublicFreeSlots(createPublicRequest(fixture.slug, {
+    query: {
+      startDate: fixture.dateKey,
+      endDate: fixture.dateKey,
+      timezone: VISITOR_TIMEZONE
+    }
+  }), publicSlotsResponse)
+
+  assert.equal(publicSlotsResponse.statusCode, 200)
+  const publicSlots = (publicSlotsResponse.body?.data || []).flatMap(day => day?.slots || [])
+  assert.equal(publicSlots.some(slot => new Date(slot).getTime() === startMs), false)
+
+  const protectedSlotsResponse = createJsonResponse()
+  await getFreeSlots({
+    params: { id: fixture.calendarId },
+    query: {
+      startDate: fixture.dateKey,
+      endDate: fixture.dateKey,
+      timezone: BUSINESS_TIMEZONE
+    }
+  }, protectedSlotsResponse)
+
+  assert.equal(protectedSlotsResponse.statusCode, 200)
+  const protectedSlots = (protectedSlotsResponse.body?.data || []).flatMap(day => day?.slots || [])
+  assert.equal(protectedSlots.some(slot => new Date(slot).getTime() === startMs), false)
+
+  const agentOverlapResponse = createJsonResponse()
+  await getFreeSlots({
+    [INTERNAL_CONTROLLER_CONTEXT]: {
+      availabilityOptions: {
+        allowDefaultOpenHours: false,
+        ignoreAppointmentConflicts: true
+      }
+    },
+    params: { id: fixture.calendarId },
+    query: {
+      startDate: fixture.dateKey,
+      endDate: fixture.dateKey,
+      timezone: BUSINESS_TIMEZONE
+    }
+  }, agentOverlapResponse)
+
+  assert.equal(agentOverlapResponse.statusCode, 200)
+  const agentSlots = (agentOverlapResponse.body?.data || []).flatMap(day => day?.slots || [])
+  assert.equal(agentSlots.some(slot => new Date(slot).getTime() === startMs), true)
+
+  const bookingResponse = createJsonResponse()
+  await createPublicAppointment(createPublicRequest(fixture.slug, {
+    body: publicBookingBody(fixture, {
+      start,
+      email: `public-weekly-capacity-${randomUUID()}@example.test`,
+      name: 'Intento Público Empalmado',
+      phone: '6565559214'
+    })
+  }), bookingResponse)
+
+  assert.equal(bookingResponse.statusCode, 409)
+  const stored = await db.get(
+    'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
+    [fixture.calendarId]
+  )
+  assert.equal(Number(stored?.total || 0), 1)
+})
+
 test('dos POST públicos concurrentes al mismo slot dejan una sola cita', async (t) => {
-  const fixture = await createWeeklyFixture('race')
+  const fixture = await createWeeklyFixture('race', { appointmentLimit: 5 })
   t.after(() => cleanupWeeklyFixture(fixture))
   const start = fixture.businessDay.set({ hour: 13 })
   const firstResponse = createJsonResponse()

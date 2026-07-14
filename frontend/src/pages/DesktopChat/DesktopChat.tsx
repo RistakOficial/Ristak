@@ -5772,7 +5772,15 @@ export const DesktopChat: React.FC = () => {
       return
     }
 
-    const created = await calendarsService.createAppointment(eventIdOrPayload, accessToken || undefined)
+    const calendarId = String(eventIdOrPayload.calendarId || selectedCalendar?.id || '').trim()
+    if (!calendarId) {
+      showToast('error', 'Calendario requerido', 'Selecciona un calendario activo antes de agendar la cita.')
+      return
+    }
+    const created = await calendarsService.createAppointment({
+      ...eventIdOrPayload,
+      calendarId
+    }, accessToken || undefined)
     setAppointmentOpen(false)
     setEditingAppointmentEvent(null)
     if (created?.syncStatus === 'error') {

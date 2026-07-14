@@ -251,6 +251,7 @@ export interface CreateAppointmentPayload extends Partial<CalendarEvent> {
   clientRequestId?: string;
   client_request_id?: string;
   strictAvailabilityCheck?: true;
+  ignoreAppointmentConflicts?: true;
   [key: string]: unknown;
 }
 

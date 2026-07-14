@@ -121,11 +121,20 @@ Reglas del contrato:
 - Las horas se interpretan en `account_timezone`; el `timezone` del visitante
   sólo sirve para presentar los instantes ya calculados.
 - URL pública, Sites, agente conversacional y creación admin/móvil en modo
-  `Por defecto` consumen esta misma disponibilidad. El modo `Personalizado`
-  conserva su override manual.
+  `Por defecto` consumen esta misma disponibilidad. `Por defecto` nunca permite
+  otra cita empalmada por una bandera enviada por el cliente, incluso si el
+  payload la mezcla con el candado estricto. Sólo el agente conversacional puede
+  hacerlo cuando el contexto interno demuestra `allowOverlaps=true`. El modo
+  `Personalizado` manda el override manual para ignorar exclusivamente conflictos
+  con otras citas; los `blocked_slots`, ausencias y rangos inválidos siguen
+  rechazándose.
 - La creación pública realiza la comprobación final dentro de la transacción y
   el candado del calendario. Además del horario aplica ventana de reserva,
-  límites diarios/por espacio, buffers, bloqueos y citas existentes.
+  límite estricto de una cita por espacio, cupo diario, buffers, bloqueos y
+  citas existentes. Un `appoinmentPerSlot` mayor importado desde HighLevel no
+  amplía el cupo de URL pública, Sites, pagos ni selectores `Por defecto`.
+- La creación admin personalizada también conserva la transacción y el candado:
+  permitir un empalme no autoriza saltarse la protección de concurrencia.
 
 ## Funciones Del Servicio
 

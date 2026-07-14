@@ -68,7 +68,7 @@ test('rechaza un slot de otra fecha o que ya desaparecio de disponibilidad', () 
   }), false);
 });
 
-test('crea con candado de disponibilidad solo desde un horario libre', () => {
+test('por defecto bloquea sobreagenda y personalizado la autoriza al crear', () => {
   assert.deepEqual(getAppointmentAvailabilityRequestFields({
     formMode: 'create',
     scheduleMode: 'default',
@@ -77,10 +77,14 @@ test('crea con candado de disponibilidad solo desde un horario libre', () => {
   assert.deepEqual(getAppointmentAvailabilityRequestFields({
     formMode: 'create',
     scheduleMode: 'custom',
-  }), {});
+  }), { ignoreAppointmentConflicts: true });
   assert.deepEqual(getAppointmentAvailabilityRequestFields({
     formMode: 'edit',
     scheduleMode: 'default',
+  }), {});
+  assert.deepEqual(getAppointmentAvailabilityRequestFields({
+    formMode: 'edit',
+    scheduleMode: 'custom',
   }), {});
 });
 
