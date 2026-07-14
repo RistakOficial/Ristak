@@ -187,6 +187,7 @@ export const WebTracking: React.FC = () => {
               <label className={trackStyles.domainField}>
                 <span>Dominio personalizado</span>
                 <input
+                  className={styles.input}
                   type="text"
                   inputMode="url"
                   autoCapitalize="none"
