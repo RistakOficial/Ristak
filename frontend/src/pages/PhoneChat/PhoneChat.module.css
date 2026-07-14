@@ -1263,12 +1263,61 @@
   pointer-events: none;
 }
 
-.avatarAgentBadge svg {
+.avatarAgentBadge[data-agent-badge-state="active"] {
+  background: var(--phone-chat-accent);
+}
+
+.avatarAgentBadge[data-agent-badge-state="paused"] {
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--phone-chat-text) 18%, transparent);
+}
+
+.avatarAgentBadge > svg {
   display: block;
   stroke-width: 2.7;
 }
 
-.phoneChatPage[data-phone-chat-tone="dark"] .avatarAgentBadge {
+.avatarAgentPauseMarker,
+.agentRobotPauseMarker {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+  box-shadow: 0 0 0 2px var(--phone-chat-bg);
+}
+
+.avatarAgentPauseMarker {
+  right: -5px;
+  bottom: -4px;
+  width: 12px;
+  height: 12px;
+}
+
+.avatarAgentPauseMarker svg {
+  width: 7px;
+  height: 7px;
+  stroke-width: 3;
+}
+
+.agentRobotPauseMarker {
+  right: -2px;
+  bottom: -2px;
+  z-index: 4;
+  width: 17px;
+  height: 17px;
+}
+
+.agentRobotPauseMarker svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 3;
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .avatarAgentBadge[data-agent-badge-state="attention"] {
   border-color: var(--phone-chat-bg);
   color: #450a0a;
   background: #fecaca;
@@ -11076,6 +11125,7 @@
 }
 
 .agentBotButtonIdle {
+  position: relative;
   color: #6b7280;
   background: color-mix(in srgb, var(--phone-chat-surface-soft) 86%, #9ca3af 14%);
   filter: grayscale(1);

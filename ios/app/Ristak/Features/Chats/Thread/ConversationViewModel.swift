@@ -2400,9 +2400,13 @@ final class ConversationViewModel {
         assignedAgentStates.contains { $0.status.lowercased() == "active" }
     }
 
+    var agentControllerPaused: Bool {
+        !agentControllerActive && assignedAgentStates.contains { $0.isPausedAssignment }
+    }
+
     /// Estado con señal de cierre pendiente (para el banner "objetivo cumplido").
     var agentSignalState: ConversationAgentState? {
-        assignedAgentStates.first { $0.hasPendingSignal }
+        agentStates.first { $0.referencesExistingAgent && $0.hasPendingSignal }
     }
 
     /// Reemplaza el estado devuelto por el backend en la lista (autoritativo, sin

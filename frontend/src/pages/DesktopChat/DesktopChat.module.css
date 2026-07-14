@@ -643,9 +643,8 @@
 }
 
 .chatRowAgentAssigned .avatarAgentBadge {
-  background: var(--neg);
   color: var(--on-accent);
-  box-shadow: 0 0 0 2px var(--surface), 0 5px 12px color-mix(in srgb, var(--neg) 22%, transparent);
+  box-shadow: 0 0 0 2px var(--surface), var(--shadow-xs);
 }
 
 .archiveRowIcon {
@@ -961,10 +960,39 @@
   pointer-events: none;
 }
 
-.avatarAgentBadge svg {
+.avatarAgentBadge[data-agent-badge-state="active"] {
+  background: var(--accent);
+}
+
+.avatarAgentBadge[data-agent-badge-state="paused"] {
+  background: var(--warn);
+}
+
+.avatarAgentBadge > svg {
   width: 11px;
   height: 11px;
   stroke-width: 2.7;
+}
+
+.avatarAgentPauseMarker {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+  color: var(--on-accent);
+  background: var(--warn);
+}
+
+.avatarAgentPauseMarker svg {
+  width: 7px;
+  height: 7px;
+  stroke-width: 3;
 }
 
 .conversationPanel {
@@ -3025,6 +3053,27 @@
 .agentComposerButton:disabled {
   cursor: wait;
   opacity: 0.5;
+}
+
+.agentComposerPauseMarker {
+  position: absolute;
+  right: -1px;
+  bottom: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+  color: var(--on-accent);
+  background: var(--warn);
+}
+
+.agentComposerPauseMarker svg {
+  width: 9px;
+  height: 9px;
+  stroke-width: 3;
 }
 
 .sendButton {

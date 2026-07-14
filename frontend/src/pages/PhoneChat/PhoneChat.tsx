@@ -170,6 +170,11 @@ import {
   getKnownConversationalModel,
   type ConversationalAIProviderId
 } from '@/constants/conversationalAIProviders'
+import {
+  getAssignedConversationAgentStates,
+  getConversationAgentAssignmentStatus,
+  type ConversationAgentAssignmentStatus
+} from '@/utils/conversationAgentAssignment'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { subscribeToChatLiveEvents, reportViewing } from '@/services/chatLiveEventsService'
@@ -429,6 +434,7 @@ type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'l
 type PhoneChatFilterManagerMode = 'list' | 'editor'
 type PhoneChatCustomFilterMatchMode = 'all' | 'any'
 type AIAgentHubStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
+type AgentAvatarBadgeState = ConversationAgentAssignmentStatus | 'attention'
 type TemplateMode = 'choice' | 'send' | 'create'
 type TemplatePickIntent = 'send' | 'schedule'
 type ChatSettingsSection = 'appearance' | 'templates' | 'notifications' | 'agent' | 'chats' | 'display' | null
@@ -7090,9 +7096,9 @@ export const PhoneChat: React.FC = () => {
       const states = agentStateLists[activeContact.id] || []
       const knownStates = states.filter((state) => isStateForKnownConversationAgent(state, knownAgentIdSet))
       const fallbackState = agentStates[activeContact.id]
-      return knownStates.length
+      return getAssignedConversationAgentStates(knownStates.length
         ? knownStates
-        : (isStateForKnownConversationAgent(fallbackState, knownAgentIdSet) ? [fallbackState] : [])
+        : (isStateForKnownConversationAgent(fallbackState, knownAgentIdSet) ? [fallbackState] : []))
     },
     [activeContact?.id, agentStateLists, agentStates, knownAgentIdSet]
   )
@@ -7108,22 +7114,15 @@ export const PhoneChat: React.FC = () => {
     return `${activeManualAgentStates.length} agentes conversacionales`
   }, [activeManualAgentStates, agentDefs])
   const activeConversationAgentState = activeContact?.id
-    ? selectPrimaryAgentState(activeContactAgentStates) || (
-      isStateForKnownConversationAgent(agentStates[activeContact.id], knownAgentIdSet)
-        ? agentStates[activeContact.id]
-        : null
-    )
+    ? selectPrimaryAgentState(activeContactAgentStates)
     : null
-  const activeConversationAgentStatus = activeConversationAgentState?.status || 'active'
+  const activeConversationAgentStatus = activeConversationAgentState?.status || ''
   const activeConversationAgentActive = Boolean(agentEnabled && activeContact && activeConversationAgentStatus === 'active')
+  const activeConversationAgentPaused = Boolean(agentEnabled && activeContact && activeConversationAgentStatus === 'paused')
   const activeConversationAgentLabel = ({
     active: 'Agente leyendo este chat',
-    paused: 'Agente pausado 24 horas',
-    human: 'Tomado por humano',
-    skipped: 'Chatbot omitido',
-    completed: 'Objetivo cumplido',
-    discarded: 'Chat descartado'
-  } as Record<string, string>)[activeConversationAgentStatus] || 'Agente conversacional'
+    paused: 'Agente asignado y pausado 24 horas'
+  } as Record<string, string>)[activeConversationAgentStatus] || 'Asignar agente conversacional'
 
   useEffect(() => {
     if (chatFilter === 'agent') {
@@ -14558,7 +14557,10 @@ export const PhoneChat: React.FC = () => {
     return <PhoneMessageChannelIcon channel={kind} variant="asset" size={22} className={styles.channelIconGlyph} />
   }
 
-  const renderAvatar = (contact: Contact, options: { showChannelBadge?: boolean; showAgentBadge?: boolean } = {}) => {
+  const renderAvatar = (
+    contact: Contact,
+    options: { showChannelBadge?: boolean; agentBadgeState?: AgentAvatarBadgeState | null; agentBadgeLabel?: string } = {}
+  ) => {
     const photoUrl = getContactProfilePhoto(contact as Partial<Contact> & Record<string, unknown>)
     const chatContact = contact as ChatContact
     const avatarChannelClass = getAvatarChannelClass(chatContact)
@@ -14578,13 +14580,19 @@ export const PhoneChat: React.FC = () => {
             {renderChannelBadgeIcon(channelBadge.kind)}
           </span>
         )}
-        {options.showAgentBadge && (
+        {options.agentBadgeState && (
           <span
             className={styles.avatarAgentBadge}
-            title="Necesita acción del agente"
-            aria-label="Necesita acción del agente"
+            data-agent-badge-state={options.agentBadgeState}
+            title={options.agentBadgeLabel || 'Chat asignado al agente'}
+            aria-label={options.agentBadgeLabel || 'Chat asignado al agente'}
           >
-            <Bot size={11} />
+            {options.agentBadgeState === 'attention' ? <CircleAlert size={11} /> : <Bot size={11} />}
+            {options.agentBadgeState === 'paused' ? (
+              <span className={styles.avatarAgentPauseMarker} aria-hidden="true">
+                <Pause size={7} />
+              </span>
+            ) : null}
           </span>
         )}
       </span>
@@ -14644,6 +14652,13 @@ export const PhoneChat: React.FC = () => {
     const isPinned = pinnedChatIdSet.has(contact.id)
     const agentState = source === 'chat' && agentEnabled ? agentStates[contact.id] || null : null
     const isAgentActionChat = Boolean(agentState?.signal && agentState.signal !== 'discarded')
+    const assignmentStatus = getConversationAgentAssignmentStatus(agentState)
+    const agentBadgeState: AgentAvatarBadgeState | null = assignmentStatus || (isAgentActionChat ? 'attention' : null)
+    const agentBadgeLabel = assignmentStatus === 'paused'
+      ? 'Agente asignado y pausado'
+      : assignmentStatus === 'active'
+        ? isAgentActionChat ? 'Agente asignado y necesita atención' : 'Agente asignado y activo'
+        : 'Necesita atención humana'
     const canSelectChat = source === 'chat' && contact.id !== AI_AGENT_CHAT_ID
     const isSelectedChat = canSelectChat && selectedChatIdSet.has(contact.id)
     const isActiveChat = isWideChatDevice && activeContactId === contact.id
@@ -14656,7 +14671,7 @@ export const PhoneChat: React.FC = () => {
             {isSelectedChat && <Check size={17} />}
           </span>
         )}
-        {renderAvatar(contact, { showChannelBadge: source === 'chat', showAgentBadge: isAgentActionChat })}
+        {renderAvatar(contact, { showChannelBadge: source === 'chat', agentBadgeState, agentBadgeLabel })}
         <span className={styles.chatMain}>
           <strong>{contactDisplayName}</strong>
           <small>{subtitle}</small>
@@ -14802,6 +14817,7 @@ export const PhoneChat: React.FC = () => {
   const renderAgentHubChatButton = (contact: ChatContact) => {
     const agentState = agentStates[contact.id]
     const hasAgentHistory = hasAIAgentHubHistory(agentState)
+    const assignmentStatus = getConversationAgentAssignmentStatus(agentState)
     const agentStatusLabel = hasAgentHistory
       ? getAIAgentHubStatusLabel(agentState)
       : aiAgentHubStatusFilter === 'unassigned'
@@ -14827,7 +14843,11 @@ export const PhoneChat: React.FC = () => {
           handleSelectContact(contact, { returnTarget: 'aiAgentHub' })
         }}
       >
-        {renderAvatar(contact, { showChannelBadge: true, showAgentBadge: hasAgentHistory })}
+        {renderAvatar(contact, {
+          showChannelBadge: true,
+          agentBadgeState: assignmentStatus,
+          agentBadgeLabel: assignmentStatus === 'paused' ? 'Agente asignado y pausado' : 'Agente asignado y activo'
+        })}
         <span className={styles.chatMain}>
           <strong>{getContactName(contact)}</strong>
           <small>{subtitle}</small>
@@ -15051,7 +15071,7 @@ export const PhoneChat: React.FC = () => {
             }}
           />
 
-          <section className={styles.aiAgentHubChatList} aria-label="Chats tomados por el agente">
+          <section className={styles.aiAgentHubChatList} aria-label="Actividad de chats del agente">
             {agentHubChatRows.length ? (
               agentHubChatRows.map((contact) => renderAgentHubChatButton(contact))
             ) : (
@@ -19879,9 +19899,10 @@ export const PhoneChat: React.FC = () => {
 
 	    const isMuted = mutedChatIdSet.has(chatActionContact.id)
 	    const showingAgentControls = chatMoreMode === 'agentControls'
-	    const contactAgentStates = (agentStateLists[chatActionContact.id] || [])
+	    const contactAgentStates = getAssignedConversationAgentStates(agentStateLists[chatActionContact.id] || [])
 	      .filter((state) => state.agentId && knownAgentIdSet.has(state.agentId))
 	    const fallbackAgentState = isStateForKnownConversationAgent(agentStates[chatActionContact.id], knownAgentIdSet)
+	      && getConversationAgentAssignmentStatus(agentStates[chatActionContact.id])
 	      ? agentStates[chatActionContact.id]
 	      : null
 	    const agentState = selectPrimaryAgentState(contactAgentStates) || fallbackAgentState
@@ -22447,12 +22468,14 @@ export const PhoneChat: React.FC = () => {
     className = '',
     label,
     onClick,
+    paused = false,
     robotSize = 42
   }: {
     active: boolean
     className?: string
     label: string
     onClick: () => void
+    paused?: boolean
     robotSize?: number
   }) => (
     <button
@@ -22463,6 +22486,11 @@ export const PhoneChat: React.FC = () => {
       title={label}
     >
       {renderAgentRobotGlyph(active, 'compact', robotSize)}
+      {paused ? (
+        <span className={styles.agentRobotPauseMarker} aria-hidden="true">
+          <Pause size={11} />
+        </span>
+      ) : null}
     </button>
   )
 
@@ -22874,6 +22902,7 @@ export const PhoneChat: React.FC = () => {
                         className: `${styles.conversationAgentButton} ${conversationAgentDropdownOpen ? styles.conversationAgentButtonOpen : ''}`,
                         label: activeConversationAgentLabel,
                         onClick: () => openConversationAgentControls(activeContact),
+                        paused: activeConversationAgentPaused,
                         robotSize: 40
                       })}
                       {renderConversationAgentDropdown()}
@@ -22883,6 +22912,7 @@ export const PhoneChat: React.FC = () => {
                     className: styles.conversationAgentButton,
                     label: activeConversationAgentLabel,
                     onClick: () => openConversationAgentControls(activeContact),
+                    paused: activeConversationAgentPaused,
                     robotSize: 40
                   })
                 )}

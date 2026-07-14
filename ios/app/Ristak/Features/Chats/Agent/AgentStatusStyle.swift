@@ -78,6 +78,7 @@ enum AgentStatusStyle {
 struct AgentBotGlyph: View {
     var color: Color = RistakTheme.accent
     var size: CGFloat = 20
+    var paused = false
 
     var body: some View {
         let headW = size * 0.9
@@ -109,6 +110,22 @@ struct AgentBotGlyph: View {
             .offset(y: -size * 0.02)
         }
         .frame(width: size, height: size)
+        .overlay(alignment: .bottomTrailing) {
+            if paused {
+                ZStack {
+                    Circle()
+                        .fill(RistakTheme.warn)
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: max(5, size * 0.24), weight: .bold))
+                        .foregroundStyle(RistakTheme.onAccent)
+                }
+                .frame(width: max(10, size * 0.48), height: max(10, size * 0.48))
+                .overlay {
+                    Circle().stroke(RistakTheme.bg, lineWidth: 1.5)
+                }
+                .offset(x: size * 0.2, y: size * 0.2)
+            }
+        }
         .accessibilityHidden(true)
     }
 }

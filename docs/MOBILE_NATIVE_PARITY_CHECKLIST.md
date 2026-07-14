@@ -293,9 +293,13 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     reloj para programar cuando hay texto, camara cuando esta vacio, preview de
     respuesta, tira de fotos preparadas y boton enviar/mic visual. El `+` abre
     sheet con tomar foto, elegir foto, cita, pagos, programar, etiqueta y mas
-    acciones; cuando el chat tiene agente asignado, los controles del agente
-    aparecen arriba para pausar, tomar, omitir, reactivar o continuar segun el
-    estado, y pueden limpiar avisos del agente con `clear_signal`.
+    acciones; cuando el chat tiene agente realmente asignado (`active` o
+    `paused`), los controles del agente aparecen arriba para pausar, tomar,
+    omitir o continuar. Un estado `paused` muestra robot + pausa; `human`,
+    `skipped`, `completed` y `discarded` salen de esos controles y no dejan el
+    robot visible. Para devolverlos al agente se usa la asignacion explicita.
+    Una senal terminal pendiente se conserva como alerta humana, nunca como bot.
+    Los estados asignados pueden limpiar avisos con `clear_signal`.
     Enviar manualmente con agente activo abre confirmacion para pausar 24h y
     enviar, quitar del agente y enviar o cancelar. Falta voice note real,
     ubicacion, sugerencia IA, plantillas, picker avanzado de fecha/hora y

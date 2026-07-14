@@ -1345,15 +1345,19 @@ agente y enviar, o cancelar. El boton `+` de la conversacion debe priorizar los
 controles del agente arriba del sheet cuando haya estado de agente asignado, con
 acciones rapidas para pausar, tomar/continuar u omitir segun el estado. Ademas,
 la conversacion Android debe exponer un control visible del agente en el header:
-boton compacto con `Bot`/alerta, banner solo cuando el agente pide atencion o no
-esta activo, y sheet dedicado `Agente conversacional`. Ese sheet debe usar las
-mismas acciones que `/movil` e `ios/app`: `pause`, `take_over`, `skip`,
-`resume` para estados pausados, `activate` para reactivar estados omitidos o
-humanos, y `clear_signal` para marcar avisos como vistos. En `/movil`/`ios/app`
-y `mobile/`, los banners y acciones de agente deben contar solo estados cuyo
-`agent_id` pertenezca a un agente configurado actualmente; los estados historicos
-o cacheados de agentes eliminados no deben mostrarse como "agentes asignados" ni
-habilitar acciones. El hub del agente en `/movil` e `ios/app` no debe exponer un
+boton compacto con `Bot`/alerta y sheet dedicado `Agente conversacional`. Solo
+`active` y `paused` son estados asignados: `paused` mantiene el robot con una
+marca de pausa y permite `resume`; `human`, `skipped`, `completed` y `discarded`
+son historial terminal, por lo que salen de controles/listas de asignados y no
+pueden dejar un robot visible en el avatar, banner o header. Para devolver uno de
+esos chats al agente se usa el flujo explicito de asignacion (`activate`), no un
+control que finja que el agente sigue ligado. Una senal terminal pendiente puede
+seguir mostrandose como alerta humana y descartarse, siempre sin robot. En
+`/movil`, `ios/app` y `mobile/`,
+los banners y acciones tambien deben exigir que el `agent_id` pertenezca a un
+agente configurado actualmente; los estados historicos o cacheados de agentes
+eliminados no deben mostrarse como "agentes asignados" ni habilitar acciones. El
+hub del agente en `/movil` e `ios/app` no debe exponer un
 control "Todos"/"Apagar todos": el usuario controla solo el agente individual
 seleccionado. No existe una segunda llave global que pueda impedir su activacion. El
 hub global de Android también se abre desde el botón de robot en la esquina
@@ -1363,7 +1367,8 @@ encenderlo o pausarlo individualmente, reiniciar sus contactos omitidos y editar
 su configuracion nativa sin salir del celular. Encenderlo publica directamente ese
 agente; no hay un switch oculto ni una reversa secundaria. El editor compacto
 guarda el prompt editable y muestra las capacidades blindadas activas. Dentro de
-una conversación con agente asignado, el robot vive dentro de
+una conversación con agente asignado, el robot —con pausa superpuesta cuando el
+estado es `paused`— vive dentro de
 la cápsula de acciones del header inmediatamente a la izquierda del calendario
 y abre el control por contacto; no debe duplicarse fuera de esa cápsula.
 

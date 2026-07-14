@@ -124,6 +124,11 @@ import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, get
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
+import {
+  getAssignedConversationAgentStates,
+  getConversationAgentAssignmentStatus,
+  type ConversationAgentAssignmentStatus
+} from '@/utils/conversationAgentAssignment'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
 import {
   buildChatActivityMarkers,
@@ -159,6 +164,7 @@ type ContactIdentityField = 'name' | 'email' | 'phone'
 type ManualAgentInterruptionAction = 'pause' | 'skip'
 type ManualAgentSendOptions = { skipAgentInterruptionConfirm?: boolean }
 type DesktopMessageReactionChannel = 'whatsapp_api' | 'whatsapp_qr' | 'messenger' | 'instagram'
+type AgentAvatarBadgeState = ConversationAgentAssignmentStatus | 'attention'
 
 const RISTAK_AD_ID_PATTERN = /\brstkad_id\s*=\s*(\d+)!/i
 
@@ -4067,7 +4073,9 @@ export const DesktopChat: React.FC = () => {
     () => {
       if (!activeContact?.id) return []
       const states = agentStateLists[activeContact.id] || []
-      return states.length ? states : (conversationAgentState ? [conversationAgentState] : [])
+      return getAssignedConversationAgentStates(
+        states.length ? states : (conversationAgentState ? [conversationAgentState] : [])
+      )
     },
     [activeContact?.id, agentStateLists, conversationAgentState]
   )
@@ -4075,6 +4083,8 @@ export const DesktopChat: React.FC = () => {
     () => activeContactAgentStates.filter((state) => state.agentId && state.status === 'active'),
     [activeContactAgentStates]
   )
+  const conversationAgentPaused = activeManualAgentStates.length === 0
+    && activeContactAgentStates.some((state) => state.status === 'paused')
   const manualAgentSendLabel = useMemo(() => {
     if (activeManualAgentStates.length === 1) {
       const state = activeManualAgentStates[0]
@@ -7713,7 +7723,16 @@ export const DesktopChat: React.FC = () => {
         aria-expanded={agentComposerMenuOpen}
         title={conversationAgentActive ? 'Chatbot activo' : 'Asignar chatbot'}
       >
-        {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
+        {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : (
+          <>
+            <AgentRobot size={30} active={conversationAgentActive} />
+            {conversationAgentPaused ? (
+              <span className={styles.agentComposerPauseMarker} aria-hidden="true">
+                <Pause size={9} />
+              </span>
+            ) : null}
+          </>
+        )}
       </button>
       {renderComposerAgentMenu()}
     </div>
@@ -7733,7 +7752,7 @@ export const DesktopChat: React.FC = () => {
   const renderAvatar = (
     contact: DesktopChatContact | Contact | null,
     size: 'sm' | 'md' = 'md',
-    options: { showChannelBadge?: boolean; showAgentBadge?: boolean; agentBadgeLabel?: string } = {}
+    options: { showChannelBadge?: boolean; agentBadgeState?: AgentAvatarBadgeState | null; agentBadgeLabel?: string } = {}
   ) => {
     const photo = getContactProfilePhoto(contact)
     const initials = getContactInitials(contact)
@@ -7757,9 +7776,19 @@ export const DesktopChat: React.FC = () => {
             {renderChannelBadgeIcon(channelBadge.kind, size)}
           </span>
         ) : null}
-        {options.showAgentBadge ? (
-          <span className={styles.avatarAgentBadge} title={options.agentBadgeLabel || 'Chat del bot'} aria-label={options.agentBadgeLabel || 'Chat del bot'}>
-            <Bot size={10} />
+        {options.agentBadgeState ? (
+          <span
+            className={styles.avatarAgentBadge}
+            data-agent-badge-state={options.agentBadgeState}
+            title={options.agentBadgeLabel || 'Chat asignado al agente'}
+            aria-label={options.agentBadgeLabel || 'Chat asignado al agente'}
+          >
+            {options.agentBadgeState === 'attention' ? <CircleAlert size={10} /> : <Bot size={10} />}
+            {options.agentBadgeState === 'paused' ? (
+              <span className={styles.avatarAgentPauseMarker} aria-hidden="true">
+                <Pause size={7} />
+              </span>
+            ) : null}
           </span>
         ) : null}
       </ContactAvatar>
@@ -8472,9 +8501,9 @@ export const DesktopChat: React.FC = () => {
               size="sm"
               className={`${styles.agentInboxButton} ${agentAssignedViewOpen ? styles.agentInboxButtonActive : ''}`}
               onClick={handleToggleAgentAssignedView}
-              aria-label={agentAssignedViewOpen ? 'Cerrar vista de conversaciones asignadas al bot' : 'Ver conversaciones asignadas al bot'}
+              aria-label={agentAssignedViewOpen ? 'Cerrar actividad del agente' : 'Ver actividad del agente'}
               aria-pressed={agentAssignedViewOpen}
-              title={agentAssignedViewOpen ? 'Cerrar chats del bot' : 'Conversaciones asignadas al bot'}
+              title={agentAssignedViewOpen ? 'Cerrar actividad del agente' : 'Actividad del agente'}
             >
               <AgentRobot size={42} active={conversationAgentEnabled} label="Chatbot" />
             </Button>
@@ -8849,6 +8878,7 @@ export const DesktopChat: React.FC = () => {
                   const active = contact.id === activeContactId
                   const unread = Number(contact.unreadCount || 0)
                   const agentState = agentStates[contact.id]
+                  const assignmentStatus = getConversationAgentAssignmentStatus(agentState)
                   return (
                     <div
                       key={`agent-${contact.id}`}
@@ -8865,7 +8895,15 @@ export const DesktopChat: React.FC = () => {
                       }}
                     >
                       {renderChatSelectionControl(contact)}
-                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: true, agentBadgeLabel: 'Necesita acción del agente' })}
+                      {renderAvatar(contact, 'sm', {
+                        showChannelBadge: true,
+                        agentBadgeState: assignmentStatus || 'attention',
+                        agentBadgeLabel: assignmentStatus === 'paused'
+                          ? 'Agente asignado y pausado'
+                          : assignmentStatus === 'active'
+                            ? 'Agente asignado y necesita atención'
+                            : 'Necesita atención humana'
+                      })}
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
@@ -8890,8 +8928,8 @@ export const DesktopChat: React.FC = () => {
                   const agentState = agentStates[contact.id]
                   const isAgentHistoryChat = hasAgentInboxHistory(agentState)
                   const isAgentActionChat = Boolean(agentState?.signal && agentState?.signal !== 'discarded')
-                  const isAgentActiveChat = isAgentHistoryChat && agentState?.status === 'active' && agentState?.signal !== 'discarded'
-                  const showAgentBadge = (agentAssignedViewOpen && isAgentHistoryChat) || isAgentActionChat || isAgentActiveChat
+                  const assignmentStatus = getConversationAgentAssignmentStatus(agentState)
+                  const agentBadgeState: AgentAvatarBadgeState | null = assignmentStatus || (isAgentActionChat ? 'attention' : null)
                   const agentStatusLabel = agentAssignedViewOpen
                     ? isAgentHistoryChat
                       ? getAgentInboxStatusLabel(agentState)
@@ -8899,13 +8937,11 @@ export const DesktopChat: React.FC = () => {
                         ? 'No asignado'
                         : ''
                     : ''
-                  const agentBadgeLabel = agentAssignedViewOpen
-                    ? agentStatusLabel
-                      ? `Chat del bot: ${agentStatusLabel}`
-                      : 'Chat del bot'
-                    : isAgentActionChat
-                      ? 'Necesita acción del agente'
-                      : 'Bot activo en este chat'
+                  const agentBadgeLabel = assignmentStatus === 'paused'
+                    ? 'Agente asignado y pausado'
+                    : assignmentStatus === 'active'
+                      ? isAgentActionChat ? 'Agente asignado y necesita atención' : 'Agente asignado y activo'
+                      : 'Necesita atención humana'
                   return (
                     <div
                       key={contact.id}
@@ -8922,7 +8958,7 @@ export const DesktopChat: React.FC = () => {
                       }}
                     >
                       {renderChatSelectionControl(contact)}
-                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge, agentBadgeLabel })}
+                      {renderAvatar(contact, 'sm', { showChannelBadge: true, agentBadgeState, agentBadgeLabel })}
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>

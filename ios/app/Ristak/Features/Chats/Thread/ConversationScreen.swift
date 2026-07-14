@@ -432,15 +432,16 @@ struct ConversationScreen: View {
     private var headerToolActions: some View {
         if viewModel.hasAgentControls {
             // Botcito del agente conversacional: prendido (acento) cuando algún
-            // agente atiende activamente este chat; apagado (tenue) si está
-            // pausado/tomado/omitido. Abre el modal de controles/protección del
-            // agente. Va a la IZQUIERDA del botón de info del contacto.
+            // agente atiende activamente este chat; si sigue asignado pero está
+            // pausado conserva el robot y agrega la marca de pausa. Los estados
+            // humanos/omitidos/terminales ya no montan este control.
             Button {
                 viewModel.agentControlsPresented = true
             } label: {
                 AgentBotGlyph(
                     color: viewModel.agentControllerActive ? RistakTheme.accent : RistakTheme.textDim,
-                    size: 22
+                    size: 22,
+                    paused: viewModel.agentControllerPaused
                 )
             }
             .accessibilityLabel("Controles del agente")

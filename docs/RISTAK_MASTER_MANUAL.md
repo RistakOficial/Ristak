@@ -3702,6 +3702,19 @@ error o lease vencido permite reintentar el mismo mensaje. La recuperacion de
 pendientes pagina todos los claims fallidos/vencidos, sin un tope global que
 abandone conversaciones viejas.
 
+El contrato de asignacion visible es mas estricto que el historial: solo
+`active` y `paused` significan que el agente sigue asignado al chat. `human`,
+`skipped`, `completed` y `discarded` conservan trazabilidad para metricas y
+auditoria, pero el agente ya salio de la conversacion. Web, `/movil`, Android e
+iOS deben excluir esos estados terminales de listas, contadores y controles que
+afirman una asignacion actual, y nunca pintarles el robot en el avatar o header.
+Las bandejas historicas `Omitidos` y `Meta cumplida` pueden conservarlos con su
+estado textual, pero no deben presentarlos como si el bot siguiera ahi. Una
+asignacion `paused` conserva el robot y agrega una marca de pausa para comunicar
+que sigue ligada al agente aunque no este respondiendo. Si un estado terminal
+conserva una senal pendiente para el humano, la interfaz puede mostrar la alerta
+y permitir descartarla, pero esa alerta no cuenta como asignacion ni usa robot.
+
 Una conversacion `completed` solo se reabre con un inbound nuevo cuando el mismo
 agente sigue publicado y todavia cumple entrada, salida y alcance. Los handoffs,
 pausas, omisiones y asignaciones manuales no se borran con heuristicas de edad.
@@ -4447,11 +4460,13 @@ los controles del agente al inicio cuando haya estado de agente asignado.
 La bandeja Android expone el Hub del agente conversacional desde el robot de la
 esquina superior izquierda, con control individual para encender/pausar,
 reiniciar omisiones y editar la configuracion principal. Dentro de un chat con
-agente asignado, el robot vive a la izquierda del calendario en la capsula del
-header y abre los controles por contacto (`pause`, `take_over`, `skip`,
-`resume`/`activate` y `clear_signal`). No existe un runtime global que pueda
-bloquear al agente: la app controla directamente cada agente individual y no
-presenta `Apagar todos`.
+agente asignado (`active` o `paused`), el robot vive a la izquierda del
+calendario en la capsula del header y abre los controles por contacto (`pause`,
+`take_over`, `skip`, `resume` y `clear_signal`). Si esta pausado, el mismo robot
+muestra una marca de pausa. Un takeover, omision o cierre terminal retira ese
+control; reingresar el chat al agente requiere una asignacion explicita. No
+existe un runtime global que pueda bloquear al agente: la app controla
+directamente cada agente individual y no presenta `Apagar todos`.
 
 La pantalla de analiticas nativa debe mantenerse alineada con
 `PhoneAnalytics`: periodos `30d`/`60d`/`180d`/`year`/`custom`, 8 KPIs, grafica

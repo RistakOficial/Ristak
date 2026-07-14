@@ -297,6 +297,7 @@ type NativeColorPalette = {
   accentSoft: string;
   primary: string;
   success: string;
+  warning: string;
   danger: string;
   dangerSoft: string;
   meta: string;
@@ -315,6 +316,7 @@ const DARK_COLORS: NativeColorPalette = {
   accentSoft: 'rgba(118,118,128,0.24)',
   primary: '#636366',
   success: '#18b66f',
+  warning: '#f59e0b',
   danger: '#ff5d6c',
   dangerSoft: '#6f2030',
   meta: '#c7c7cc',
@@ -336,6 +338,7 @@ const LIGHT_COLORS: NativeColorPalette = {
   accentSoft: 'rgba(118,118,128,0.12)',
   primary: '#1d1d1f',
   success: '#18b66f',
+  warning: '#d97706',
   danger: '#e5485d',
   dangerSoft: '#ffe4e8',
   meta: '#6e6e73',
@@ -16091,8 +16094,11 @@ function NativeConversationAgentSheet({
   onClose: () => void;
 }) {
   const primaryState = selectPrimaryAgentState(agentStates);
-  const hasSignal = hasPendingAgentSignal(primaryState);
-  const hasRows = hasConversationAgentControls(agentStates, agentLoading);
+  const signalState = getPendingConversationAgentSignalState(agentStates);
+  const displayedState = signalState || primaryState;
+  const hasSignal = Boolean(signalState);
+  const hasAssignedRows = hasConversationAgentControls(agentStates, agentLoading);
+  const hasContent = hasAssignedRows || hasSignal;
   return (
     <BottomActionSheet
       closing={closing}
@@ -16103,14 +16109,28 @@ function NativeConversationAgentSheet({
     >
       <View style={styles.agentControlSummary}>
         <View style={[styles.agentControlSummaryIcon, hasSignal && styles.agentControlSummaryIconAlert]}>
-          {hasSignal ? <CircleAlert size={19} color={COLORS.white} strokeWidth={2.6} /> : <Bot size={19} color={COLORS.text} strokeWidth={2.25} />}
+          {hasSignal ? (
+            <CircleAlert size={19} color={COLORS.white} strokeWidth={2.6} />
+          ) : (
+            <ConversationAgentAssignmentIcon paused={isPausedAgentStatus(displayedState?.status)} size={19} />
+          )}
         </View>
         <View style={styles.agentControlSummaryCopy}>
-          <Text style={styles.agentControlSummaryTitle}>{getAgentStatusTitle(primaryState)}</Text>
-          <Text style={styles.agentControlSummaryText}>{getAgentStatusDescription(primaryState)}</Text>
+          <Text style={styles.agentControlSummaryTitle}>{getAgentStatusTitle(displayedState)}</Text>
+          <Text style={styles.agentControlSummaryText}>{getAgentStatusDescription(displayedState)}</Text>
         </View>
       </View>
       <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
+        {signalState && !isAssignedConversationAgentState(signalState) ? (
+          <SheetActionRow
+            Icon={CheckCircle2}
+            title="Marcar aviso como visto"
+            subtitle={signalState.signalSummary || signalState.signalReason || 'Limpia la alerta del agente en este chat.'}
+            busy={agentBusyAction === 'clear_signal'}
+            disabled={agentLoading || Boolean(agentBusyAction)}
+            onPress={() => onAgentAction(contact, 'clear_signal', signalState)}
+          />
+        ) : null}
         <ConversationAgentActionRows
           agentBusyAction={agentBusyAction}
           agentLoading={agentLoading}
@@ -16119,7 +16139,7 @@ function NativeConversationAgentSheet({
           onAgentAction={onAgentAction}
           sectionLabel="Controles"
         />
-        {!hasRows && !agentLoading ? (
+        {!hasContent && !agentLoading ? (
           <Text style={styles.agentControlEmpty}>Este chat todavía no tiene agente asignado.</Text>
         ) : null}
       </ScrollView>
@@ -20342,12 +20362,18 @@ function getResumeAgentAction(state?: ConversationAgentState | null): AgentActio
 }
 
 function isAssignedConversationAgentState(state?: ConversationAgentState | null) {
-  return Boolean(String(state?.agentId || '').trim());
+  const status = getAgentStateStatus(state);
+  return Boolean(String(state?.agentId || '').trim() && (status === 'active' || status === 'paused'));
 }
 
 function getAssignedConversationAgentStates(states?: ConversationAgentState[]) {
   if (!Array.isArray(states) || !states.length) return [];
   return states.filter(isAssignedConversationAgentState);
+}
+
+function getPendingConversationAgentSignalState(states?: ConversationAgentState[]) {
+  if (!Array.isArray(states) || !states.length) return null;
+  return states.find((state) => String(state.agentId || '').trim() && hasPendingAgentSignal(state)) || null;
 }
 
 function selectPrimaryAgentState(states?: ConversationAgentState[]) {
@@ -20428,6 +20454,28 @@ function upsertConversationAgentState(states: ConversationAgentState[], nextStat
 
 function isInactiveAgentStatus(status?: string | null) {
   return ['paused', 'human', 'skipped', 'completed', 'discarded'].includes(String(status || '').toLowerCase());
+}
+
+function ConversationAgentAssignmentIcon({
+  color = COLORS.text,
+  paused = false,
+  size = 20,
+}: {
+  color?: string;
+  paused?: boolean;
+  size?: number;
+}) {
+  const markerSize = Math.max(11, Math.round(size * 0.62));
+  return (
+    <View style={[styles.conversationAgentGlyph, { width: size + 5, height: size + 5 }]}>
+      <Bot size={size} color={color} strokeWidth={2.25} />
+      {paused ? (
+        <View style={[styles.conversationAgentPauseMarker, { width: markerSize, height: markerSize, borderRadius: markerSize / 2 }]}>
+          <Pause size={Math.max(7, Math.round(markerSize * 0.62))} color={COLORS.white} strokeWidth={3} />
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 function ChannelBadgeIcon({ color = COLORS.white, kind, size = 15 }: { color?: string; kind: ChannelBadgeKind; size?: number }) {
@@ -22513,11 +22561,9 @@ function NativeConversationScreen({
   const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
   const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
   const primaryAgentState = useMemo(() => selectPrimaryAgentState(agentStates), [agentStates]);
-  const agentSignalState = useMemo(() => (
-    getControllableConversationAgentStates(agentStates).find((state) => hasPendingAgentSignal(state)) || null
-  ), [agentStates]);
+  const agentSignalState = useMemo(() => getPendingConversationAgentSignalState(agentStates), [agentStates]);
   const agentNoticeState = agentSignalState || ((primaryAgentState && getAgentStateStatus(primaryAgentState) !== 'active') ? primaryAgentState : null);
-  const agentControlsAvailable = hasConversationAgentControls(agentStates, agentLoading);
+  const agentControlsAvailable = hasConversationAgentControls(agentStates, agentLoading) || Boolean(agentSignalState);
   const activeManualAgentStates = useMemo(() => getActiveConversationAgentStates(agentStates), [agentStates]);
   const manualAgentPromptStates = manualAgentSendPrompt || activeManualAgentStates;
   const manualAgentSendLabel = useMemo(() => getManualAgentSendLabel(manualAgentPromptStates), [manualAgentPromptStates]);
@@ -23988,7 +24034,7 @@ function NativeConversationScreen({
                 ) : agentSignalState ? (
                   <CircleAlert size={20} color={COLORS.white} strokeWidth={2.6} />
                 ) : (
-                  <Bot size={20} color={COLORS.text} strokeWidth={2.2} />
+                  <ConversationAgentAssignmentIcon paused={isPausedAgentStatus(primaryAgentState?.status)} size={20} />
                 )}
                 {agentSignalState ? <View style={styles.conversationAgentSignalDot} /> : null}
               </Pressable>
@@ -24013,7 +24059,11 @@ function NativeConversationScreen({
           style={({ pressed }) => [styles.conversationAgentNotice, pressed && styles.pressed]}
         >
           <View style={[styles.conversationAgentNoticeIcon, hasPendingAgentSignal(agentNoticeState) && styles.conversationAgentNoticeIconAlert]}>
-            {hasPendingAgentSignal(agentNoticeState) ? <CircleAlert size={17} color={COLORS.white} strokeWidth={2.55} /> : <Bot size={17} color={COLORS.text} strokeWidth={2.25} />}
+            {hasPendingAgentSignal(agentNoticeState) ? (
+              <CircleAlert size={17} color={COLORS.white} strokeWidth={2.55} />
+            ) : (
+              <ConversationAgentAssignmentIcon paused={isPausedAgentStatus(agentNoticeState.status)} size={17} />
+            )}
           </View>
           <View style={styles.conversationAgentNoticeCopy}>
             <Text numberOfLines={1} style={styles.conversationAgentNoticeTitle}>{getAgentStatusTitle(agentNoticeState)}</Text>
@@ -31584,6 +31634,22 @@ function createAppStyles() {
   },
   agentControlSummaryIconAlert: {
     backgroundColor: COLORS.danger,
+  },
+  conversationAgentGlyph: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+  },
+  conversationAgentPauseMarker: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.warning,
+    borderWidth: 1.5,
+    borderColor: COLORS.panel,
   },
   agentControlSummaryCopy: {
     flex: 1,
