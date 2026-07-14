@@ -795,7 +795,7 @@ export const MetaAdsIntegration: React.FC = () => {
       account.id.replace(/^act_/, '') === String(session.defaults.adAccountId || '').replace(/^act_/, '')
     ))
     const selectedAdAccount = defaultAdAccount || null
-    const selectedPixel = session.datasets.find(pixel => pixel.id === session.defaults.pixelId) || null
+    const selectedPixel = selectedAdAccount?.pixels.find(pixel => pixel.id === session.defaults.pixelId) || null
 
     const businessId = selectedPixel?.businessId || selectedAdAccount?.businessId || session.defaults.businessId || ''
     const selectedPage = session.pages.find(page => page.id === session.defaults.pageId) || null
@@ -830,7 +830,7 @@ export const MetaAdsIntegration: React.FC = () => {
     const selectedAdAccount = session.adAccounts.find(account => (
       account.id.replace(/^act_/, '') === String(next.adAccountId || '').replace(/^act_/, '')
     ))
-    const selectedDataset = session.datasets.find(dataset => dataset.id === next.pixelId)
+    const selectedDataset = selectedAdAccount?.pixels.find(dataset => dataset.id === next.pixelId)
     const selectedPage = session.pages.find(page => page.id === next.pageId)
     const instagramIsLinked = selectedPage?.instagramAccounts.some(account => account.id === next.instagramAccountId)
 
@@ -882,7 +882,7 @@ export const MetaAdsIntegration: React.FC = () => {
       const selectedAdAccount = nextSession.adAccounts.find(account => (
         account.id.replace(/^act_/, '') === String(result.selected.adAccountId || '').replace(/^act_/, '')
       )) || null
-      const selectedDataset = nextSession.datasets.find(dataset => dataset.id === result.selected.pixelId) || null
+      const selectedDataset = selectedAdAccount?.pixels.find(dataset => dataset.id === result.selected.pixelId) || null
       const selectedPage = nextSession.pages.find(page => page.id === nextPageId) || null
       const selectedInstagram = selectedPage?.instagramAccounts.find(account => account.id === nextInstagramAccountId) || null
 
@@ -2650,7 +2650,8 @@ export const MetaAdsIntegration: React.FC = () => {
   const selectedOAuthAdAccount = metaOAuthSession?.adAccounts.find(account => (
     account.id.replace(/^act_/, '') === String(metaOAuthSelection.adAccountId || '').replace(/^act_/, '')
   )) || null
-  const selectedOAuthDataset = metaOAuthSession?.datasets.find(dataset => dataset.id === metaOAuthSelection.pixelId) || null
+  const availableOAuthDatasets = selectedOAuthAdAccount?.pixels || []
+  const selectedOAuthDataset = availableOAuthDatasets.find(dataset => dataset.id === metaOAuthSelection.pixelId) || null
   const selectedOAuthPage = metaOAuthSession?.pages.find(page => page.id === metaOAuthSelection.pageId) || null
   const availableOAuthInstagramAccounts = selectedOAuthPage?.instagramAccounts || []
   const selectedOAuthInstagram = availableOAuthInstagramAccounts.find(account => (
@@ -3248,11 +3249,11 @@ export const MetaAdsIntegration: React.FC = () => {
                           'Sin Dataset'
                         )}
                         onChange={(event) => updateMetaOAuthAssetDraft({ pixelId: event.target.value })}
-                        disabled={Boolean(savingMetaAssetSection) || Boolean(metaOAuthSession.permissions.missing.length)}
+                        disabled={!selectedOAuthAdAccount || Boolean(savingMetaAssetSection) || Boolean(metaOAuthSession.permissions.missing.length)}
                         aria-label="Dataset de conversiones"
                       >
                         <option value="">Sin Dataset</option>
-                        {metaOAuthSession.datasets.map(dataset => (
+                        {availableOAuthDatasets.map(dataset => (
                           <option key={dataset.id} value={dataset.id}>{dataset.name} ({dataset.id})</option>
                         ))}
                       </CustomSelect>

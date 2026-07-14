@@ -133,7 +133,22 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
           instagram_business_account: { id: 'ig-1', username: 'demo' }
         }],
         ad_accounts: [{ id: 'act_123', name: 'Ads', business_id: 'business-1' }],
-        pixels: [{ id: 'pixel-1', name: 'Pixel', business_id: 'business-1' }],
+        pixels: [
+          {
+            id: 'pixel-1',
+            name: 'Pixel',
+            ad_account_id: '123',
+            ad_account_ids: ['123'],
+            business_id: 'business-1'
+          },
+          {
+            id: 'pixel-other-account',
+            name: 'Pixel de otra cuenta',
+            ad_account_id: '999',
+            ad_account_ids: ['999'],
+            business_id: 'business-1'
+          }
+        ],
         instagram_accounts: [{ id: 'ig-1', page_id: 'page-1', username: 'demo' }]
       }
     }
@@ -288,10 +303,21 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     const pendingRow = await db.get('SELECT payload_encrypted FROM meta_oauth_pending_sessions WHERE id = ?', [completed.sessionId])
     assert.equal(pendingRow.payload_encrypted.includes('oauth-bisu-token'), false)
 
+    await assert.rejects(
+      () => finalizeMetaOAuthConnection({
+        sessionId: completed.sessionId,
+        adAccountId: '123',
+        pixelId: 'pixel-other-account',
+        publicBaseUrl: 'https://tenant.test'
+      }),
+      error => error.code === 'META_OAUTH_PIXEL_INVALID'
+    )
+
     datasetTasks = []
     await assert.rejects(
       () => finalizeMetaOAuthConnection({
         sessionId: completed.sessionId,
+        adAccountId: '123',
         pixelId: 'pixel-1',
         publicBaseUrl: 'https://tenant.test'
       }),
@@ -627,7 +653,13 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
           instagram_business_account: { id: 'ig-user', username: 'user_demo' }
         }],
         ad_accounts: [{ id: '777', name: 'Ads User', business_id: 'business-ads' }],
-        pixels: [{ id: 'pixel-user', name: 'Dataset User', business_id: 'business-dataset' }],
+        pixels: [{
+          id: 'pixel-user',
+          name: 'Dataset User',
+          ad_account_id: '777',
+          ad_account_ids: ['777'],
+          business_id: 'business-dataset'
+        }],
         instagram_accounts: [{ id: 'ig-user', page_id: 'page-user', username: 'user_demo' }]
       }
     }
@@ -700,7 +732,9 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
     assert.deepEqual(completed.datasets, [{
       id: 'pixel-user',
       name: 'Dataset User',
-      businessId: 'business-dataset'
+      businessId: 'business-dataset',
+      adAccountIds: ['777'],
+      adAccountId: '777'
     }])
     assert.equal(graphCalls.includes('/me'), false)
     assert.equal(graphCalls.includes('/me/accounts'), false)

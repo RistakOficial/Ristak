@@ -51,6 +51,7 @@ export interface MetaOAuthPixel {
   name: string
   businessId?: string
   adAccountId?: string
+  adAccountIds?: string[]
 }
 
 export interface MetaOAuthInstagramAccount {

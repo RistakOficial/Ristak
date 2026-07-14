@@ -2409,10 +2409,13 @@ Ristak usa Meta en varias areas:
   pulsar Guardar manda un único `finalize` para la seccion correspondiente.
   Instagram exige una Page enlazada. Si Meta devuelve tareas de Page, Ristak
   exige `ANALYZE`, `MESSAGING` y `MODERATE`.
-- El Dataset se descubre por `/act_<AD_ACCOUNT_ID>/adspixels` y tambien por
-  `/{BUSINESS_ID}/owned_pixels|client_pixels`. En BISU, Installer y Ristak
-  exigen `UPLOAD` en `assigned_users`; en USER, Ristak confia en la allowlist
-  firmada que Installer ya valido y no agrega otra llamada a Graph al cambiar el
+- El Dataset se descubre exclusivamente por la relación autoritativa
+  `/act_<AD_ACCOUNT_ID>/adspixels`. `owned_pixels|client_pixels` representan el
+  inventario completo del portafolio y no alimentan el selector. La UI muestra
+  sólo los Datasets conectados a la cuenta elegida y limpia una selección
+  incompatible al cambiar de cuenta. En BISU, Installer y Ristak exigen
+  `UPLOAD` en `assigned_users`; en USER, Ristak confia en la allowlist firmada
+  que Installer ya valido y no agrega otra llamada a Graph al cambiar el
   dropdown. No manda un evento automatico durante el login.
 - Ristak prepara `subscribed_apps`, Page token/proof, configuracion Ads/Dataset
   y ruta del broker antes de promocionar. Una confirmacion central con fallo

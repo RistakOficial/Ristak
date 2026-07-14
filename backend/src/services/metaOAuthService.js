@@ -294,6 +294,42 @@ function mergeById(primary = [], fallback = []) {
   return [...byId.values()]
 }
 
+function datasetAdAccountIds(dataset = {}, fallbackAdAccountId = '') {
+  return [...new Set([
+    ...(Array.isArray(dataset?.adAccountIds) ? dataset.adAccountIds : []),
+    ...(Array.isArray(dataset?.ad_account_ids) ? dataset.ad_account_ids : []),
+    dataset?.adAccountId,
+    dataset?.ad_account_id,
+    fallbackAdAccountId
+  ].map(normalizeAdAccountId).filter(Boolean))]
+}
+
+function datasetMatchesAdAccount(dataset = {}, adAccountId = '') {
+  const normalizedId = normalizeAdAccountId(adAccountId)
+  return Boolean(normalizedId && datasetAdAccountIds(dataset).includes(normalizedId))
+}
+
+function mergeDatasetsById(primary = [], fallback = []) {
+  const byId = new Map()
+  for (const item of [...fallback, ...primary]) {
+    const id = cleanString(item?.id)
+    if (!id) continue
+    const current = byId.get(id) || {}
+    const adAccountIds = [...new Set([
+      ...datasetAdAccountIds(current),
+      ...datasetAdAccountIds(item)
+    ])]
+    byId.set(id, {
+      ...current,
+      ...item,
+      id,
+      ...(adAccountIds.length ? { adAccountIds } : {}),
+      ...(adAccountIds.length === 1 ? { adAccountId: adAccountIds[0] } : { adAccountId: undefined })
+    })
+  }
+  return [...byId.values()]
+}
+
 function enrichAuthorizedAssets(authorized = [], live = [], normalizeId = value => cleanString(value)) {
   const liveById = new Map(live.map(item => [normalizeId(item?.id), item]).filter(([id]) => id))
   return authorized.flatMap(item => {
@@ -322,14 +358,13 @@ function normalizeHintAssets(value = {}) {
     const businessId = cleanString(
       pixel?.business_id || pixel?.businessId || fallback.businessId
     )
-    const adAccountId = normalizeAdAccountId(
-      pixel?.ad_account_id || pixel?.adAccountId || fallback.adAccountId
-    )
+    const adAccountIds = datasetAdAccountIds(pixel, fallback.adAccountId)
     return {
       id,
       name: cleanString(pixel?.name) || id,
       ...(businessId ? { businessId } : {}),
-      ...(adAccountId ? { adAccountId } : {})
+      ...(adAccountIds.length ? { adAccountIds } : {}),
+      ...(adAccountIds.length === 1 ? { adAccountId: adAccountIds[0] } : {})
     }
   }
   const nestedDatasets = rawAdAccounts.flatMap(account => {
@@ -338,7 +373,7 @@ function normalizeHintAssets(value = {}) {
     return (Array.isArray(account?.pixels) ? account.pixels : [])
       .map(pixel => normalizeDataset(pixel, { adAccountId: accountId, businessId }))
   })
-  const datasets = mergeById(
+  const datasets = mergeDatasetsById(
     flatPixels.map(pixel => normalizeDataset(pixel)),
     nestedDatasets
   ).filter(pixel => pixel.id)
@@ -346,8 +381,7 @@ function normalizeHintAssets(value = {}) {
   const adAccounts = adAccountBases.map(account => {
     const accountId = normalizeAdAccountId(account.id)
     const accountPixels = datasets.filter(pixel => {
-      if (pixel.adAccountId) return normalizeAdAccountId(pixel.adAccountId) === accountId
-      return Boolean(pixel.businessId && account.businessId && pixel.businessId === account.businessId)
+      return datasetMatchesAdAccount(pixel, accountId)
     }).map(pixel => ({
       id: pixel.id,
       name: pixel.name,
@@ -545,35 +579,6 @@ async function discoverAdAccounts({ token, appSecretProof = '', userId, systemUs
   return []
 }
 
-async function discoverBusinessPixels({ token, appSecretProof = '', businessIds = [] }) {
-  const rows = await Promise.all([...new Set(businessIds.map(cleanString).filter(Boolean))].map(async businessId => {
-    const [owned, client] = await Promise.all([
-      graphCollection(`${encodeURIComponent(businessId)}/owned_pixels`, {
-        token,
-        appSecretProof,
-        fields: 'id,name'
-      }).catch(error => {
-        logger.warn(`Meta OAuth no devolvió Datasets propios para ${businessId}: ${error.message}`)
-        return []
-      }),
-      graphCollection(`${encodeURIComponent(businessId)}/client_pixels`, {
-        token,
-        appSecretProof,
-        fields: 'id,name'
-      }).catch(error => {
-        logger.warn(`Meta OAuth no devolvió Datasets compartidos para ${businessId}: ${error.message}`)
-        return []
-      })
-    ])
-    return mergeById(owned, client).map(pixel => ({
-      id: cleanString(pixel?.id),
-      name: cleanString(pixel?.name),
-      businessId
-    }))
-  }))
-  return mergeById(rows.flat(), [])
-}
-
 /** Descubrimiento local: el Installer entrega el token, no la selección final. */
 export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integrationKind = '' } = {}) {
   const accessToken = cleanString(token)
@@ -676,17 +681,6 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
     normalizeAdAccountId
   )
 
-  const businessPixels = splitKind === 'social'
-    ? []
-    : await discoverBusinessPixels({
-        token: accessToken,
-        appSecretProof,
-        businessIds: [
-          ...hintAssets.businesses.map(item => item.id),
-          ...rawAdAccounts.map(account => account.businessId)
-        ]
-      })
-
   const adAccounts = await Promise.all(rawAdAccounts.map(async account => {
     const graphId = graphAdAccountId(account.id)
     const discoveredPixels = await graphCollection(`${graphId}/adspixels`, {
@@ -697,31 +691,23 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
       logger.warn(`Meta OAuth no devolvió pixels para ${graphId}: ${error.message}`)
       return []
     })
-    const accountBusinessId = cleanString(account.businessId) || (
-      hintAssets.businesses.length === 1 ? cleanString(hintAssets.businesses[0]?.id) : ''
-    )
-    const discoveredForBusiness = accountBusinessId
-      ? businessPixels.filter(pixel => pixel.businessId === accountBusinessId)
-      : []
     return {
       ...account,
       id: graphId,
       pixels: enrichAuthorizedAssets(
         account.pixels,
-        mergeById(
-          discoveredPixels.map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) })),
-          discoveredForBusiness
-        )
+        discoveredPixels.map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) }))
       )
     }
   }))
-  const datasets = mergeById(
+  const datasets = mergeDatasetsById(
     adAccounts.flatMap(account => (account.pixels || []).map(pixel => ({
       ...pixel,
       adAccountId: normalizeAdAccountId(account.id),
+      adAccountIds: [normalizeAdAccountId(account.id)],
       businessId: cleanString(pixel.businessId || account.businessId)
     }))),
-    businessPixels
+    []
   )
 
   const livePages = pagesRaw.map(page => {
@@ -1245,7 +1231,7 @@ function summarizeSelectedMetaAssets(config = null, authorized = null) {
   const adAccount = (inventory.adAccounts || []).find(item => (
     normalizeAdAccountId(item?.id) === selected.adAccountId
   )) || null
-  const dataset = (inventory.datasets || []).find(item => cleanString(item?.id) === selected.pixelId) || null
+  const dataset = (adAccount?.pixels || []).find(item => cleanString(item?.id) === selected.pixelId) || null
   const page = (inventory.pages || []).find(item => cleanString(item?.id) === selected.pageId) || null
   const instagram = (page?.instagramAccounts || []).find(item => (
     cleanString(item?.id) === selected.instagramAccountId
@@ -1395,7 +1381,7 @@ function chooseAutomaticMetaSelection(discovered, pageSecrets = {}, previousConf
   const adAccount = discovered.adAccounts.find(item => normalizeAdAccountId(item.id) === previousAdAccountId)
     || null
   const previousPixelId = preservePreviousSelection ? cleanString(previousConfig?.pixel_id) : ''
-  const dataset = discovered.datasets.find(item => cleanString(item.id) === previousPixelId) || null
+  const dataset = (adAccount?.pixels || []).find(item => cleanString(item.id) === previousPixelId) || null
   const businessId = cleanString(
     dataset?.businessId || adAccount?.businessId || page?.businessId || discovered.defaults?.businessId
   )
@@ -1558,18 +1544,9 @@ function validateSelection(payload, selection = {}) {
     : null
   if (requestedAdId && !adAccount) throw metaOAuthError('La cuenta publicitaria no pertenece a esta autorización.', 400, 'META_OAUTH_AD_ACCOUNT_INVALID')
 
-  const authorizedDatasets = mergeById(
-    Array.isArray(payload.datasets) ? payload.datasets : [],
-    (Array.isArray(payload.adAccounts) ? payload.adAccounts : []).flatMap(account => (
-      (Array.isArray(account?.pixels) ? account.pixels : []).map(pixel => ({
-        ...pixel,
-        adAccountId: normalizeAdAccountId(account?.id),
-        businessId: cleanString(pixel?.businessId || account?.businessId)
-      }))
-    ))
-  )
   const pixel = pixelId
-    ? authorizedDatasets.find(item => cleanString(item?.id) === pixelId)
+    ? (Array.isArray(adAccount?.pixels) ? adAccount.pixels : [])
+        .find(item => cleanString(item?.id) === pixelId)
     : null
   if (pixelId && !pixel) {
     throw metaOAuthError('El Dataset no pertenece a esta autorización.', 400, 'META_OAUTH_PIXEL_INVALID')
