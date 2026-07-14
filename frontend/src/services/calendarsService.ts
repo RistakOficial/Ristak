@@ -383,7 +383,8 @@ export const calendarsService = {
   async getCalendars(
     locationId?: string | null,
     accessToken?: string | null,
-    sourcePreference?: 'combined' | 'ristak' | 'ghl' | 'google'
+    sourcePreference?: 'combined' | 'ristak' | 'ghl' | 'google',
+    options: { throwOnError?: boolean } = {}
   ): Promise<Calendar[]> {
     try {
       const data = await apiClient.get<Calendar[]>('/calendars', {
@@ -395,6 +396,7 @@ export const calendarsService = {
       });
       return Array.isArray(data) ? data : [];
     } catch (error) {
+      if (options.throwOnError) throw error;
       return [];
     }
   },

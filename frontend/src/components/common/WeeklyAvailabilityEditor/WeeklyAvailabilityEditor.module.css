@@ -90,6 +90,24 @@
   color: var(--neg);
 }
 
+.copyMenu {
+  width: min(228px, calc(100vw - 24px));
+  max-height: min(520px, var(--radix-dropdown-menu-content-available-height));
+  overflow-y: auto;
+}
+
+.copyMenuTitle {
+  padding: 8px 10px 5px;
+  color: var(--text-mute);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.copyMenuActions {
+  padding: 6px 8px 4px;
+  border-top: 1px solid var(--border);
+}
+
 @media (max-width: 760px) {
   .dayRow {
     grid-template-columns: minmax(0, 1fr);

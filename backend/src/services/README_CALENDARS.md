@@ -118,6 +118,11 @@ Reglas del contrato:
 - El fallback lunes a viernes 09:00–17:00 existe sólo para registros legacy sin
   la marca de configuración. La migración 049 materializa ese horario y los
   calendarios nuevos también lo guardan de forma explícita.
+- Un PUT que incluye `openHours` reemplaza siempre el horario local, incluso si
+  el calendario conserva `sync_status=pending` o `error`. Sólo una escritura que
+  omite `openHours` puede preservar el valor anterior. La protección separada
+  contra espejos viejos de HighLevel sigue evitando que una respuesta remota sin
+  acuse de escritura pise una edición local pendiente.
 - Las horas se interpretan en `account_timezone`; el `timezone` del visitante
   sólo sirve para presentar los instantes ya calculados.
 - URL pública, Sites, agente conversacional y creación admin/móvil en modo

@@ -1583,6 +1583,14 @@ Reglas base:
   `Eventos` y `Estilos y diseños`. `Disponibilidad` contiene primero el editor
   semanal y debajo duración, cadencia, reglas y espacios entre citas. `URL y
   Datos` reúne el enlace público, formulario y acción posterior al agendado.
+- Cada hora del editor semanal se elige en un menú de tres columnas
+  (hora, minuto y AM/PM). La selección sólo cambia el rango al pulsar
+  `De acuerdo`; cerrar el menú o usar Escape descarta el borrador. El botón de
+  copiar abre un selector de varios días, mantiene marcado y bloqueado el día
+  origen y copia todos sus rangos únicamente al pulsar `Aplicar`.
+- Al guardar, la UI adopta primero el calendario canónico devuelto por el PUT y
+  después espera la recarga del listado. Una respuesta vieja o un GET fallido no
+  debe volver a pintar el horario anterior ni convertir el listado en vacío.
 - El mismo horario semanal gobierna `free-slots`, URL pública, calendarios
   embebidos/Sites, agente conversacional y los modales web, Android e iOS cuando
   usan el modo `Por defecto`. Ese modo siempre exige un espacio sin otra cita y
@@ -1612,7 +1620,10 @@ Reglas base:
   `pending_delete` y se empujan a HighLevel cuando la integracion vuelva a
   conectarse. Mientras una edición local está `pending` o `error`, un refresh
   entrante de HighLevel no puede pisar su `openHours`; primero se reintenta el
-  cambio local y sólo después el espejo vuelve a quedar `synced`.
+  cambio local y sólo después el espejo vuelve a quedar `synced`. Ese estado
+  pendiente no bloquea una edición local posterior: si un PUT trae `openHours`
+  explícito, reemplaza el horario guardado; el horario anterior sólo se conserva
+  cuando la escritura realmente omite el campo.
 - Si HighLevel ya esta desconectado, un calendario espejado de HighLevel puede
   eliminarse de Ristak como copia local junto con sus citas locales asociadas.
   Mientras HighLevel siga configurado, el borrado local queda bloqueado porque

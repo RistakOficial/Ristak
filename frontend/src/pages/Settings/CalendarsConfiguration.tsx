@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -322,6 +322,18 @@ const normalizeCalendarAvailabilityForEditing = (calendar: CalendarType): Calend
   openHours: weeklyAvailabilityToOpenHours(openHoursToWeeklyAvailability(calendar.openHours, {
     fallbackToDefault: calendar.availabilityScheduleConfigured !== true
   }))
+})
+
+const normalizeCalendarForConfiguration = (
+  calendar: CalendarType,
+  allowCustomForm: boolean
+): CalendarType => ({
+  ...calendar,
+  bookingForm: normalizeCalendarBookingForm(calendar.bookingForm, { allowCustomForm }),
+  bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+  bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
+  bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
+  customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
 })
 const CALENDAR_TEMPLATE_EXTRA_CATEGORIES = [
   { id: 'calendar', label: 'Calendario' }
@@ -833,6 +845,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
   // Estados locales
   const [calendars, setCalendars] = useState<CalendarType[]>([])
+  const calendarLoadRequestRef = useRef(0)
   const [loadingCalendars, setLoadingCalendars] = useState(true)
   const [activeView, setActiveView] = useState<CalendarSettingsView>(routeState.view)
   const [googleIntegration, setGoogleIntegration] = useState<GoogleCalendarIntegrationStatus | null>(null)
@@ -1070,24 +1083,29 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [loadingCalendars, calendars, defaultCalendarId, setDefaultCalendarId])
 
   const loadCalendars = async () => {
+    const requestId = calendarLoadRequestRef.current + 1
+    calendarLoadRequestRef.current = requestId
     try {
       setLoadingCalendars(true)
-      const data = await calendarsService.getCalendars(locationId, accessToken)
-      const normalizedCalendars = data.map(calendar => ({
-        ...calendar,
-        bookingForm: normalizeCalendarBookingForm(calendar.bookingForm, { allowCustomForm: hasCalendarCustomFormsAccess }),
-        bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
-        bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
-        bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
-        customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
-      }))
+      const data = await calendarsService.getCalendars(
+        locationId,
+        accessToken,
+        undefined,
+        { throwOnError: true }
+      )
+      const normalizedCalendars = data.map(calendar => (
+        normalizeCalendarForConfiguration(calendar, hasCalendarCustomFormsAccess)
+      ))
+      if (requestId !== calendarLoadRequestRef.current) return normalizedCalendars
       setCalendars(normalizedCalendars)
       return normalizedCalendars
     } catch (error: any) {
-      showToast('error', 'Error al cargar calendarios', error.message)
+      if (requestId === calendarLoadRequestRef.current) {
+        showToast('error', 'Error al cargar calendarios', error.message)
+      }
       return []
     } finally {
-      setLoadingCalendars(false)
+      if (requestId === calendarLoadRequestRef.current) setLoadingCalendars(false)
     }
   }
 
@@ -1784,11 +1802,28 @@ export const CalendarsConfiguration: React.FC = () => {
         updateData.availabilityType = selectedCalendar.availabilityType
       }
 
-      await calendarsService.updateCalendar(selectedCalendar.id, updateData, accessToken || undefined)
+      let savedCalendar = await calendarsService.updateCalendar(
+        selectedCalendar.id,
+        updateData,
+        accessToken || undefined
+      )
+      if (!savedCalendar) throw new Error('Ristak no confirmó el calendario guardado.')
 
       if (googleSyncChanged) {
-        await calendarsService.updateCalendarGoogleSync(selectedCalendar.id, nextGoogleCalendarId)
+        const googleLinkedCalendar = await calendarsService.updateCalendarGoogleSync(
+          selectedCalendar.id,
+          nextGoogleCalendarId
+        )
+        if (googleLinkedCalendar) savedCalendar = googleLinkedCalendar
       }
+
+      const normalizedSavedCalendar = normalizeCalendarForConfiguration(
+        savedCalendar,
+        hasCalendarCustomFormsAccess
+      )
+      setCalendars(current => current.map(calendar => (
+        calendar.id === selectedCalendar.id ? normalizedSavedCalendar : calendar
+      )))
 
       const syncMessage = googleSyncChanged
         ? nextGoogleCalendarId
@@ -1799,7 +1834,7 @@ export const CalendarsConfiguration: React.FC = () => {
           : 'Los cambios quedaron guardados en Ristak y pendientes de sync'
       showToast('success', 'Configuración de calendario actualizada', syncMessage)
       handleCloseCalendarEditor()
-      loadCalendars() // Recargar calendarios para ver cambios
+      await loadCalendars()
     } catch (error: any) {
       showToast('error', 'Error al actualizar calendario', error.message)
     } finally {

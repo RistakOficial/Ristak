@@ -215,6 +215,17 @@ El wizard usa ocho pasos: `Detalles`, `Disponibilidad`, `URL y Datos`, `Cobro`,
 `Disponibilidad` reúne el horario semanal, duración, cadencia, reglas y buffers;
 `URL y Datos` reúne enlace público, formulario y acción final.
 
+En el editor semanal, cada control de hora abre columnas separadas para hora,
+minuto y AM/PM. El valor se confirma con `De acuerdo`; Escape o cerrar el menú
+descarta el cambio temporal. `Copiar horarios` abre un menú de selección múltiple
+para elegir días destino y `Aplicar` clona todos los rangos del día origen sin
+alterar los días no seleccionados.
+
+El guardado incorpora inmediatamente la respuesta canónica del PUT y luego
+espera una recarga estricta del listado. Las recargas anteriores se ignoran y un
+GET fallido conserva la última lista válida, por lo que cerrar y reabrir el modal
+debe mostrar exactamente el horario persistido.
+
 Si no hay calendarios de atribución configurados, backend usa todos como fallback.
 
 ## Notas Técnicas

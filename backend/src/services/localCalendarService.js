@@ -1661,12 +1661,9 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
 
   // Respuestas de espejos externos pueden omitir `openHours`. Esa omisión no
   // autoriza a borrar la agenda semanal que el negocio configuró en Ristak.
-  const pendingLocalAvailability = pendingLocalWrite
-    && (
-      Number(existingById.availability_schedule_configured) === 1
-      || normalizeOpenHours(existingById.open_hours).length > 0
-    )
-  if (existingById && (!hasExplicitCalendarOpenHours(raw) || pendingLocalAvailability)) {
+  // Una escritura explícita sí debe reemplazarla aunque el calendario siga
+  // pendiente de sincronizar; ese es el estado normal de un calendario Ristak.
+  if (existingById && !hasExplicitCalendarOpenHours(raw)) {
     normalized.openHours = normalizeOpenHours(existingById.open_hours)
     normalized.availabilityScheduleConfigured = (
       Number(existingById.availability_schedule_configured) === 1

@@ -9,6 +9,7 @@ import {
   getLocalCalendar,
   getLocalFreeSlots,
   normalizeCalendarOpenHoursForWrite,
+  updateLocalCalendar,
   upsertLocalCalendar
 } from '../src/services/localCalendarService.js'
 
@@ -202,6 +203,71 @@ test('openHours vacío explícito permanece cerrado y no recupera el fallback le
     const reloaded = await getLocalCalendar(calendarId)
     assert.deepEqual(reloaded.openHours, [])
     assert.equal(reloaded.availabilityScheduleConfigured, true)
+  } finally {
+    await deleteCalendar(calendarId)
+  }
+})
+
+test('una edición explícita persiste y genera slots aunque el calendario siga pendiente', async () => {
+  const calendarId = `rstk_cal_weekly_pending_update_${randomUUID()}`
+  const baseDay = DateTime.utc().plus({ days: 30 }).startOf('day')
+  const nextTuesday = baseDay.plus({ days: (2 - baseDay.weekday + 7) % 7 })
+  const nextMonday = nextTuesday.minus({ days: 1 })
+  const copiedRanges = [
+    { openHour: 13, openMinute: 5, closeHour: 14, closeMinute: 35 },
+    { openHour: 16, openMinute: 10, closeHour: 17, closeMinute: 10 }
+  ]
+  const expectedAvailability = normalizeCalendarOpenHoursForWrite([2, 4, 6].map(day => ({
+    daysOfTheWeek: [day],
+    hours: copiedRanges
+  })))
+
+  try {
+    const created = await createLocalCalendar({
+      id: calendarId,
+      name: 'Agenda pendiente que sí acepta ediciones',
+      allowBookingFor: 365,
+      allowBookingForUnit: 'days',
+      slotDuration: 30,
+      slotInterval: 30
+    })
+    assert.equal(created.syncStatus, 'pending')
+
+    const updated = await updateLocalCalendar(calendarId, {
+      openHours: expectedAvailability,
+      availabilityScheduleConfigured: true
+    })
+    assert.deepEqual(updated.openHours, expectedAvailability)
+    assert.equal(updated.availabilityScheduleConfigured, true)
+
+    const stored = await db.get(
+      'SELECT open_hours, availability_schedule_configured FROM calendars WHERE id = ?',
+      [calendarId]
+    )
+    assert.deepEqual(JSON.parse(stored.open_hours), expectedAvailability)
+    assert.equal(Number(stored.availability_schedule_configured), 1)
+
+    const reloaded = await getLocalCalendar(calendarId)
+    assert.deepEqual(reloaded.openHours, expectedAvailability)
+
+    const availableTuesday = await getLocalFreeSlots(
+      calendarId,
+      nextTuesday.toISODate(),
+      nextTuesday.toISODate(),
+      'UTC'
+    )
+    const availableTimes = (availableTuesday[0]?.slots || []).map(slot => (
+      DateTime.fromISO(slot, { setZone: true }).setZone('UTC').toFormat('HH:mm')
+    ))
+    assert.deepEqual(availableTimes, ['13:05', '13:35', '14:05', '16:10', '16:40'])
+
+    const closedMonday = await getLocalFreeSlots(
+      calendarId,
+      nextMonday.toISODate(),
+      nextMonday.toISODate(),
+      'UTC'
+    )
+    assert.deepEqual(closedMonday[0]?.slots || [], [])
   } finally {
     await deleteCalendar(calendarId)
   }
