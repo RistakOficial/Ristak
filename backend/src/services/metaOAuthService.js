@@ -261,8 +261,26 @@ async function graphJson(pathOrUrl, { token, appSecretProof = '', fields = '', q
   }
   const data = await response.json().catch(() => ({}))
   if (!response.ok || data?.error) {
+    const graphCode = Number(data?.error?.code || 0)
+    if (graphCode === 190) {
+      const error = metaOAuthError(
+        'Tu sesión de Meta dejó de ser válida. Vuelve a conectar Facebook para renovar el acceso.',
+        401,
+        'META_OAUTH_REAUTH_REQUIRED'
+      )
+      error.graph = {
+        code: graphCode,
+        subcode: Number(data?.error?.error_subcode || 0) || null
+      }
+      throw error
+    }
     const message = data?.error?.message || `Meta Graph respondió ${response.status}`
-    throw metaOAuthError(message, response.status >= 400 ? response.status : 502, 'META_GRAPH_ERROR')
+    const error = metaOAuthError(message, response.status >= 400 ? response.status : 502, 'META_GRAPH_ERROR')
+    error.graph = {
+      code: graphCode || null,
+      subcode: Number(data?.error?.error_subcode || 0) || null
+    }
+    throw error
   }
   return data
 }
@@ -283,6 +301,25 @@ async function graphCollection(path, { token, appSecretProof = '', fields = '', 
     page += 1
   }
   return rows
+}
+
+async function mapWithConcurrency(items, limit, task) {
+  const source = [...items]
+  if (!source.length) return []
+  const results = new Array(source.length)
+  let cursor = 0
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, Number(limit) || 1), source.length) },
+    async () => {
+      while (cursor < source.length) {
+        const index = cursor
+        cursor += 1
+        results[index] = await task(source[index], index)
+      }
+    }
+  )
+  await Promise.all(workers)
+  return results
 }
 
 function mergeById(primary = [], fallback = []) {
@@ -328,6 +365,10 @@ function mergeDatasetsById(primary = [], fallback = []) {
     })
   }
   return [...byId.values()]
+}
+
+function rethrowMetaReauthorization(error) {
+  if (error?.code === 'META_OAUTH_REAUTH_REQUIRED') throw error
 }
 
 function enrichAuthorizedAssets(authorized = [], live = [], normalizeId = value => cleanString(value)) {
@@ -454,8 +495,8 @@ function normalizeHintAssets(value = {}) {
   }
 }
 
-function discoverMetaOAuthAssetsFromVerifiedHandoff(handoffMeta = {}) {
-  const hintAssets = normalizeHintAssets(handoffMeta.assets)
+async function discoverMetaOAuthAssetsFromVerifiedHandoff(handoffMeta = {}) {
+  let hintAssets = normalizeHintAssets(handoffMeta.assets)
   const connectionMode = resolveMetaOAuthConnectionMode(handoffMeta)
   const userId = cleanString(handoffMeta.user_id || handoffMeta.userId)
   if (!userId) {
@@ -472,6 +513,20 @@ function discoverMetaOAuthAssetsFromVerifiedHandoff(handoffMeta = {}) {
     handoffMeta.client_business_id || handoffMeta.clientBusinessId ||
     handoffMeta.business_id || handoffMeta.businessId
   )
+  const hasUnscopedDatasets = hintAssets.datasets.some(dataset => !datasetAdAccountIds(dataset).length)
+  if (hasUnscopedDatasets && hintAssets.adAccounts.length) {
+    const resolved = await resolveAuthorizedDatasetRelations({
+      adAccounts: hintAssets.adAccounts,
+      authorizedDatasets: hintAssets.datasets,
+      token: cleanString(handoffMeta.access_token || handoffMeta.accessToken),
+      appSecretProof: cleanString(handoffMeta.appsecret_proof || handoffMeta.appSecretProof)
+    })
+    hintAssets = {
+      ...hintAssets,
+      adAccounts: resolved.adAccounts,
+      datasets: resolved.datasets
+    }
+  }
 
   return {
     connectionMode,
@@ -538,6 +593,7 @@ async function discoverPages({ token, appSecretProof = '', userId, systemUser = 
       })
       if (pages.length || systemUser) return pages
     } catch (error) {
+      rethrowMetaReauthorization(error)
       logger.warn(`Meta OAuth no devolvió assigned_pages: ${error.message}`)
       if (systemUser) return []
     }
@@ -546,10 +602,12 @@ async function discoverPages({ token, appSecretProof = '', userId, systemUser = 
     const pages = await graphCollection('me/accounts', { token, appSecretProof, fields: richFields })
     if (pages.length) return pages
   } catch (error) {
+    rethrowMetaReauthorization(error)
     logger.warn(`Meta OAuth no devolvió páginas por me/accounts: ${error.message}`)
   }
   return graphCollection('me/accounts', { token, appSecretProof, fields: fallbackFields })
     .catch(error => {
+      rethrowMetaReauthorization(error)
       logger.warn(`Meta OAuth no devolvió páginas con fields básicos: ${error.message}`)
       return []
     })
@@ -566,6 +624,7 @@ async function discoverAdAccounts({ token, appSecretProof = '', userId, systemUs
       })
       if (accounts.length || systemUser) return accounts
     } catch (error) {
+      rethrowMetaReauthorization(error)
       logger.warn(`Meta OAuth no devolvió assigned_ad_accounts: ${error.message}`)
       if (systemUser) return []
     }
@@ -574,9 +633,200 @@ async function discoverAdAccounts({ token, appSecretProof = '', userId, systemUs
     const accounts = await graphCollection('me/adaccounts', { token, appSecretProof, fields })
     if (accounts.length) return accounts
   } catch (error) {
+    rethrowMetaReauthorization(error)
     logger.warn(`Meta OAuth no devolvió cuentas por me/adaccounts: ${error.message}`)
   }
   return []
+}
+
+async function optionalGraphCollection(path, options, label) {
+  try {
+    return await graphCollection(path, options)
+  } catch (error) {
+    rethrowMetaReauthorization(error)
+    logger.warn(`Meta OAuth no devolvió ${label}: ${error.message}`)
+    return []
+  }
+}
+
+function mapGraphDataset(dataset = {}, fallbackBusinessId = '') {
+  const id = cleanString(dataset?.id || dataset?.dataset_id)
+  const ownerAdAccountId = normalizeAdAccountId(
+    dataset?.owner_ad_account?.account_id || dataset?.owner_ad_account?.id
+  )
+  const businessId = cleanString(
+    dataset?.owner_business?.id || dataset?.business_id || dataset?.businessId || fallbackBusinessId
+  )
+  return {
+    id,
+    name: cleanString(dataset?.name) || id,
+    ...(businessId ? { businessId } : {}),
+    ...(ownerAdAccountId ? { adAccountIds: [ownerAdAccountId], adAccountId: ownerAdAccountId } : {})
+  }
+}
+
+async function listModernBusinessDatasets(businessId, { token, appSecretProof = '' } = {}) {
+  const id = cleanString(businessId)
+  if (!id) return []
+  const common = { token, appSecretProof }
+  const [modern, ownedPixels, clientPixels] = await Promise.all([
+    optionalGraphCollection(`${encodeURIComponent(id)}/ads_dataset`, {
+      ...common,
+      fields: 'id,dataset_id,name,owner_ad_account{id,account_id},owner_business{id,name}'
+    }, `Datasets modernos para ${id}`),
+    optionalGraphCollection(`${encodeURIComponent(id)}/owned_pixels`, {
+      ...common,
+      fields: 'id,name'
+    }, `pixels propios para ${id}`),
+    optionalGraphCollection(`${encodeURIComponent(id)}/client_pixels`, {
+      ...common,
+      fields: 'id,name'
+    }, `pixels compartidos para ${id}`)
+  ])
+  return mergeDatasetsById([
+    ...modern.map(item => mapGraphDataset(item, id)),
+    ...ownedPixels.map(item => mapGraphDataset(item, id)),
+    ...clientPixels.map(item => mapGraphDataset(item, id))
+  ], [])
+}
+
+async function resolveDatasetAccountEdges(dataset, {
+  token,
+  appSecretProof = '',
+  allowedAdAccountIds = new Set()
+} = {}) {
+  const datasetId = cleanString(dataset?.id)
+  if (!datasetId) return dataset
+  let adAccountIds = datasetAdAccountIds(dataset)
+  const hasAllowedAccount = () => adAccountIds.some(id => allowedAdAccountIds.has(id))
+
+  if (!hasAllowedAccount()) {
+    const linked = await optionalGraphCollection(`${encodeURIComponent(datasetId)}/adaccounts`, {
+      token,
+      appSecretProof,
+      fields: 'id,account_id,name'
+    }, `cuentas enlazadas al Dataset ${datasetId}`)
+    adAccountIds = [...new Set([
+      ...adAccountIds,
+      ...linked.map(account => normalizeAdAccountId(account?.account_id || account?.id)).filter(Boolean)
+    ])]
+  }
+  if (!hasAllowedAccount()) {
+    const shared = await optionalGraphCollection(`${encodeURIComponent(datasetId)}/shared_accounts`, {
+      token,
+      appSecretProof,
+      fields: 'id,account_id,name'
+    }, `cuentas compartidas del Dataset ${datasetId}`)
+    adAccountIds = [...new Set([
+      ...adAccountIds,
+      ...shared.map(account => normalizeAdAccountId(account?.account_id || account?.id)).filter(Boolean)
+    ])]
+  }
+
+  return {
+    ...dataset,
+    ...(adAccountIds.length ? { adAccountIds } : {}),
+    ...(adAccountIds.length === 1 ? { adAccountId: adAccountIds[0] } : { adAccountId: undefined })
+  }
+}
+
+async function resolveAuthorizedDatasetRelations({
+  adAccounts = [],
+  authorizedDatasets = [],
+  token,
+  appSecretProof = ''
+} = {}) {
+  const allowedAdAccountIds = new Set(
+    adAccounts.map(account => normalizeAdAccountId(account?.id)).filter(Boolean)
+  )
+  if (!cleanString(token) || !allowedAdAccountIds.size) {
+    return { adAccounts, datasets: [] }
+  }
+
+  const authorizedById = new Map(
+    authorizedDatasets.map(dataset => [cleanString(dataset?.id), dataset]).filter(([id]) => id)
+  )
+  let resolvedDatasets = authorizedDatasets.filter(dataset => (
+    datasetAdAccountIds(dataset).some(id => allowedAdAccountIds.has(id))
+  ))
+
+  const directRows = await Promise.all(adAccounts.map(async account => {
+    const accountId = normalizeAdAccountId(account?.id)
+    const live = await optionalGraphCollection(`${graphAdAccountId(accountId)}/adspixels`, {
+      token,
+      appSecretProof,
+      fields: 'id,name'
+    }, `pixels para ${graphAdAccountId(accountId)}`)
+    return live.flatMap(dataset => {
+      const authorized = authorizedById.get(cleanString(dataset?.id))
+      if (!authorized) return []
+      return [{
+        ...authorized,
+        ...mapGraphDataset(dataset, authorized.businessId || account?.businessId),
+        adAccountIds: [accountId],
+        adAccountId: accountId
+      }]
+    })
+  }))
+  resolvedDatasets = mergeDatasetsById(directRows.flat(), resolvedDatasets)
+
+  const resolvedIds = new Set(resolvedDatasets.map(dataset => cleanString(dataset?.id)).filter(Boolean))
+  const unresolvedAuthorized = authorizedDatasets
+    .filter(dataset => !resolvedIds.has(cleanString(dataset?.id)))
+  let liveBusinessById = new Map()
+  if (unresolvedAuthorized.length) {
+    const businessIds = [...new Set(
+      adAccounts.map(account => cleanString(account?.businessId)).filter(Boolean)
+    )]
+    const businessRows = await Promise.all(
+      businessIds.map(businessId => listModernBusinessDatasets(businessId, { token, appSecretProof }))
+    )
+    liveBusinessById = new Map(
+      businessRows.flat().map(dataset => [cleanString(dataset?.id), dataset]).filter(([id]) => id)
+    )
+  }
+  const unresolved = unresolvedAuthorized
+    .map(dataset => ({ ...dataset, ...(liveBusinessById.get(cleanString(dataset?.id)) || {}) }))
+
+  const reverseResolved = await mapWithConcurrency(unresolved, 6, dataset => (
+    resolveDatasetAccountEdges(dataset, { token, appSecretProof, allowedAdAccountIds })
+  ))
+  resolvedDatasets = mergeDatasetsById(
+    reverseResolved.filter(dataset => (
+      datasetAdAccountIds(dataset).some(id => allowedAdAccountIds.has(id))
+    )),
+    resolvedDatasets
+  )
+
+  const scopedDatasets = resolvedDatasets.filter(dataset => (
+    datasetAdAccountIds(dataset).some(id => allowedAdAccountIds.has(id))
+  ))
+  return {
+    datasets: scopedDatasets,
+    adAccounts: adAccounts.map(account => {
+      const originalById = new Map(
+        (Array.isArray(account?.pixels) ? account.pixels : [])
+          .map(dataset => [cleanString(dataset?.id), dataset])
+          .filter(([id]) => id)
+      )
+      return {
+        ...account,
+        pixels: scopedDatasets
+          .filter(dataset => datasetMatchesAdAccount(dataset, account.id))
+          .map(dataset => {
+            const original = originalById.get(cleanString(dataset?.id))
+            const businessId = original
+              ? cleanString(original?.businessId)
+              : cleanString(dataset?.businessId)
+            return {
+              id: dataset.id,
+              name: dataset.name,
+              ...(businessId ? { businessId } : {})
+            }
+          })
+      }
+    })
+  }
 }
 
 /** Descubrimiento local: el Installer entrega el token, no la selección final. */
@@ -599,6 +849,7 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
     identity = await graphJson(hintedUserId, { token: accessToken, appSecretProof, fields: 'id,name' })
       .then(value => ({ ...identity, ...value }))
       .catch(error => {
+        rethrowMetaReauthorization(error)
         logger.warn(`Meta OAuth no devolvió la identidad explícita ${hintedUserId}: ${error.message}`)
         return identity
       })
@@ -613,12 +864,14 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
     systemUser
       ? Promise.resolve([])
       : graphCollection('me/permissions', { token: accessToken, appSecretProof }).catch(error => {
+        rethrowMetaReauthorization(error)
         logger.warn(`Meta OAuth no devolvió permisos locales: ${error.message}`)
         return []
       }),
     splitKind || systemUser
       ? Promise.resolve([])
       : graphCollection('me/businesses', { token: accessToken, appSecretProof, fields: 'id,name' }).catch(error => {
+        rethrowMetaReauthorization(error)
         logger.warn(`Meta OAuth no devolvió portafolios: ${error.message}`)
         return []
       }),
@@ -681,34 +934,16 @@ export async function discoverMetaOAuthAssets({ token, handoffMeta = {}, integra
     normalizeAdAccountId
   )
 
-  const adAccounts = await Promise.all(rawAdAccounts.map(async account => {
-    const graphId = graphAdAccountId(account.id)
-    const discoveredPixels = await graphCollection(`${graphId}/adspixels`, {
-      token: accessToken,
-      appSecretProof,
-      fields: 'id,name'
-    }).catch(error => {
-      logger.warn(`Meta OAuth no devolvió pixels para ${graphId}: ${error.message}`)
-      return []
-    })
-    return {
-      ...account,
-      id: graphId,
-      pixels: enrichAuthorizedAssets(
-        account.pixels,
-        discoveredPixels.map(pixel => ({ id: cleanString(pixel?.id), name: cleanString(pixel?.name) }))
-      )
-    }
-  }))
-  const datasets = mergeDatasetsById(
-    adAccounts.flatMap(account => (account.pixels || []).map(pixel => ({
-      ...pixel,
-      adAccountId: normalizeAdAccountId(account.id),
-      adAccountIds: [normalizeAdAccountId(account.id)],
-      businessId: cleanString(pixel.businessId || account.businessId)
-    }))),
-    []
-  )
+  const datasetResolution = splitKind === 'social'
+    ? { adAccounts: rawAdAccounts.map(account => ({ ...account, pixels: [] })), datasets: [] }
+    : await resolveAuthorizedDatasetRelations({
+        adAccounts: rawAdAccounts,
+        authorizedDatasets: hintAssets.datasets,
+        token: accessToken,
+        appSecretProof
+      })
+  const adAccounts = datasetResolution.adAccounts
+  const datasets = datasetResolution.datasets
 
   const livePages = pagesRaw.map(page => {
     const pageId = cleanString(page?.id)
@@ -1424,7 +1659,7 @@ export async function prepareMetaOAuthConnection({
   // la allowlist autorizada durante el callback. Repetir /me y todos los edges
   // aquí desperdicia cuota y, peor, puede consumir el handoff único antes de
   // guardar la sesión si Meta responde temporalmente con error #4.
-  const discovered = discoverMetaOAuthAssetsFromVerifiedHandoff(handoffMeta)
+  const discovered = await discoverMetaOAuthAssetsFromVerifiedHandoff(handoffMeta)
   if (discovered.permissions.missing.length) {
     throw metaOAuthError(
       `Meta no concedió todos los permisos requeridos: ${discovered.permissions.missing.join(', ')}`,
