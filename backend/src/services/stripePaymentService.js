@@ -2,6 +2,7 @@ import Stripe from 'stripe'
 import { db, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
+import { isPaymentPlanScheduleFullyPaid } from '../utils/paymentPlanStatus.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
@@ -3932,6 +3933,13 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
   const startDate = flow.first_payment_date || visibleInstallments[0]?.due_date || flow.created_at
   const nextRunAt = nextInstallment?.due_date || flow.first_payment_date || flow.created_at
   const itemCount = (Number(flow.first_payment_amount || 0) > 0 ? 1 : 0) + visibleInstallments.length
+  const mirrorStatus = isPaymentPlanScheduleFullyPaid({
+    firstPaymentAmount: flow.first_payment_amount,
+    firstPaymentStatus: flow.first_payment_status,
+    installments: visibleInstallments
+  })
+    ? 'completed'
+    : getStripePlanMirrorStatus(flow)
   const scheduleJson = {
     provider: 'stripe',
     flowId: cleanFlowId,
@@ -4020,7 +4028,7 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
       flow.contact_phone || null,
       flow.concept || 'Plan de pagos',
       flow.concept || 'Plan de pagos',
-      getStripePlanMirrorStatus(flow),
+      mirrorStatus,
       Number(flow.total_amount || 0),
       flow.currency || DEFAULT_CURRENCY,
       flow.concept || 'Plan de pagos',

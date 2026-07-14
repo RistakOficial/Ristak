@@ -1,13 +1,19 @@
 import { logger } from '../utils/logger.js'
 import { createSession, getRecentSessions, getVisitorIdentityExpression, linkVisitorToContact, getSessionsByDateRange, getSessionMetricsByDateRange } from '../services/trackingService.js'
 import { recordVideoPlaybackEvent } from '../services/videoTrackingService.js'
-import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
+import { databaseDialect, getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
 import { getMetaConfig } from '../services/metaAdsService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { resolveDateRangeWithGHLTimezone, sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
-import { getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js'
-import { fetchAppointmentsForContacts, fetchPaymentsForContacts, getGroupExpression } from '../services/analyticsService.js'
+import { getGroupExpression } from '../services/analyticsService.js'
 import { getMessageAnalyticsSummary, getWhatsAppApiAnalyticsSummary } from '../services/originDistributionService.js'
+import {
+  buildTrackingSearchDocumentExpression,
+  getTrackingAnalyticsSummary,
+  searchTrackingSessions
+} from '../services/trackingAnalyticsService.js'
+import { invalidateTrackingAnalyticsCache } from '../services/trackingAnalyticsCache.js'
+import { isTrackingVisitorProjectionReady } from '../services/trackingVisitorProjectionService.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { getNoTrackReason } from '../utils/noTracking.js'
 import {
@@ -25,7 +31,7 @@ import {
 } from '../services/metaParameterManagerService.js'
 import fetch from 'node-fetch'
 
-const isPostgres = Boolean(process.env.DATABASE_URL)
+const isPostgres = databaseDialect === 'postgres'
 const TRACKING_SNIPPET_VERSION = '13' // Incrementar cuando cambies el código del snippet
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
   .map(status => `'${String(status).replace(/'/g, "''")}'`)
@@ -46,13 +52,16 @@ const INACTIVE_APPOINTMENT_STATUSES = [
 const INACTIVE_APPOINTMENT_STATUS_SQL = INACTIVE_APPOINTMENT_STATUSES
   .map(status => `'${status}'`)
   .join(', ')
-const ATTENDED_APPOINTMENT_STATUS_SQL = [
+const ATTENDED_APPOINTMENT_STATUSES = [
   'show',
   'showed',
   'completed',
   'complete',
   'attended'
-].map(status => `'${status}'`).join(', ')
+]
+const ATTENDED_APPOINTMENT_STATUS_SQL = ATTENDED_APPOINTMENT_STATUSES
+  .map(status => `'${status}'`)
+  .join(', ')
 const CONTACT_CONVERSION_LIST_TYPES = new Set([
   'registrations',
   'prospects',
@@ -60,6 +69,108 @@ const CONTACT_CONVERSION_LIST_TYPES = new Set([
   'attendances',
   'customers'
 ])
+const TRACKING_DRILLDOWN_DEFAULT_LIMIT = 50
+const TRACKING_DRILLDOWN_MAX_LIMIT = 100
+const TRACKING_DRILLDOWN_MAX_SEARCH_LENGTH = 160
+const LEGACY_TRACKING_SESSIONS_MAX_LIMIT = 200
+const LEGACY_TRACKING_SESSIONS_MAX_OFFSET = 5_000
+
+function trackingDrilldownRequestError(message) {
+  const error = new Error(message)
+  error.status = 400
+  return error
+}
+
+function normalizeTrackingDrilldownLimit(value) {
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return TRACKING_DRILLDOWN_DEFAULT_LIMIT
+  return Math.min(parsed, TRACKING_DRILLDOWN_MAX_LIMIT)
+}
+
+function normalizeTrackingDrilldownSearch(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .trim()
+    .slice(0, TRACKING_DRILLDOWN_MAX_SEARCH_LENGTH)
+}
+
+function trackingDrilldownCursorValue(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString()
+  return String(value || '').trim()
+}
+
+function encodeTrackingDrilldownCursor(kind, row) {
+  const createdAt = trackingDrilldownCursorValue(row?.cursor_at || row?.created_at)
+  const id = String(row?.cursor_row_id || row?.session_row_id || row?.id || '').trim()
+  if (!createdAt || !id) return null
+  const mode = String(row?.cursor_mode || '').trim()
+
+  return Buffer.from(JSON.stringify({ v: 2, kind, createdAt, id, ...(mode ? { mode } : {}) }), 'utf8').toString('base64url')
+}
+
+function decodeTrackingDrilldownCursor(value, expectedKind) {
+  const clean = String(value || '').trim()
+  if (!clean) return null
+  if (clean.length > 2048) throw trackingDrilldownRequestError('Cursor inválido')
+
+  try {
+    const parsed = JSON.parse(Buffer.from(clean, 'base64url').toString('utf8'))
+    const createdAt = String(parsed?.createdAt || '').trim()
+    const id = String(parsed?.id || '').trim()
+    if (![1, 2].includes(parsed?.v) || parsed?.kind !== expectedKind || !createdAt || !id) {
+      throw new Error('invalid cursor payload')
+    }
+    if (createdAt.length > 100 || id.length > 300) throw new Error('cursor fields too long')
+    if (!Number.isFinite(Date.parse(createdAt))) throw new Error('invalid cursor timestamp')
+    const mode = parsed?.v === 1 ? 'legacy-created' : String(parsed?.mode || '').trim()
+    if (mode && !['legacy-created', 'legacy-started', 'projection-started', 'projection-created', 'contact-created'].includes(mode)) {
+      throw new Error('invalid cursor mode')
+    }
+    if (expectedKind === 'tracking-visitors' && isPostgres && mode !== 'contact-created' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      throw new Error('invalid visitor cursor id')
+    }
+    return { createdAt, id, mode }
+  } catch {
+    throw trackingDrilldownRequestError('Cursor inválido')
+  }
+}
+
+function appendTrackingDrilldownSearch(conditions, params, search, expressions) {
+  if (!search) return
+  const pattern = trackingDrilldownSearchPattern(search)
+  conditions.push(`(${expressions.map(expression => `LOWER(COALESCE(CAST(${expression} AS TEXT), '')) LIKE ? ESCAPE '!'`).join(' OR ')})`)
+  params.push(...expressions.map(() => pattern))
+}
+
+function trackingDrilldownSearchPattern(search) {
+  const escapedSearch = String(search || '')
+    .toLocaleLowerCase('es-MX')
+    .replace(/!/g, '!!')
+    .replace(/%/g, '!%')
+    .replace(/_/g, '!_')
+  return `%${escapedSearch}%`
+}
+
+function trackingContactSearchDocumentExpression(alias = 'c') {
+  return `LOWER(
+    COALESCE(${alias}.full_name, '') || ' ' ||
+    COALESCE(${alias}.email, '') || ' ' ||
+    COALESCE(${alias}.phone, '') || ' ' ||
+    ${alias}.id
+  )`
+}
+
+function trackingSessionTimestampExpression(alias = 's') {
+  if (isPostgres) return `${alias}.started_at`
+  return `CASE
+    WHEN typeof(${alias}.started_at) IN ('integer', 'real')
+      AND ABS(CAST(${alias}.started_at AS REAL)) >= 100000000000
+      THEN strftime('%Y-%m-%dT%H:%M:%fZ', CAST(${alias}.started_at AS REAL) / 1000.0, 'unixepoch')
+    WHEN typeof(${alias}.started_at) IN ('integer', 'real')
+      THEN strftime('%Y-%m-%dT%H:%M:%fZ', CAST(${alias}.started_at AS REAL), 'unixepoch')
+    ELSE strftime('%Y-%m-%dT%H:%M:%fZ', ${alias}.started_at)
+  END`
+}
 
 function validPaymentPredicate(alias = 'p') {
   const prefix = alias ? `${alias}.` : ''
@@ -126,6 +237,87 @@ function getContactConversionListCondition(type) {
     default:
       return ''
   }
+}
+
+async function fetchBoundedAppointmentsForContacts(contactIds, limitPerContact = 5) {
+  if (!contactIds.length) return new Map()
+
+  const placeholders = contactIds.map(() => '?').join(', ')
+  const rows = await db.all(`
+    WITH ranked_appointments AS (
+      SELECT
+        a.id,
+        a.contact_id,
+        a.title,
+        COALESCE(a.appointment_status, a.status) as status,
+        a.start_time,
+        ROW_NUMBER() OVER (
+          PARTITION BY a.contact_id
+          ORDER BY a.start_time DESC, a.id DESC
+        ) as appointment_rank,
+        COUNT(*) OVER (PARTITION BY a.contact_id) as appointment_total,
+        MAX(CASE
+          WHEN LOWER(COALESCE(a.appointment_status, a.status, '')) IN (${ATTENDED_APPOINTMENT_STATUS_SQL}) THEN 1
+          ELSE 0
+        END) OVER (PARTITION BY a.contact_id) as has_attended_appointment
+      FROM appointments a
+      WHERE a.contact_id IN (${placeholders})
+    )
+    SELECT *
+    FROM ranked_appointments
+    WHERE appointment_rank <= ?
+    ORDER BY contact_id, start_time DESC, id DESC
+  `, [...contactIds, limitPerContact])
+
+  const result = new Map()
+  for (const contactId of contactIds) {
+    result.set(String(contactId), {
+      appointments: [],
+      total: 0,
+      hasAttendedAppointment: false
+    })
+  }
+
+  for (const row of rows) {
+    const key = String(row.contact_id)
+    const current = result.get(key) || {
+      appointments: [],
+      total: 0,
+      hasAttendedAppointment: false
+    }
+    current.appointments.push({
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      start_time: row.start_time
+    })
+    current.total = Number(row.appointment_total || 0)
+    current.hasAttendedAppointment = Boolean(Number(row.has_attended_appointment || 0))
+    result.set(key, current)
+  }
+
+  return result
+}
+
+async function fetchPaymentSummariesForContacts(contactIds) {
+  if (!contactIds.length) return new Map()
+
+  const placeholders = contactIds.map(() => '?').join(', ')
+  const rows = await db.all(`
+    SELECT
+      p.contact_id,
+      COALESCE(SUM(p.amount), 0) as ltv,
+      COUNT(*) as purchases
+    FROM payments p
+    WHERE p.contact_id IN (${placeholders})
+      AND ${validPaymentPredicate('p')}
+    GROUP BY p.contact_id
+  `, contactIds)
+
+  return new Map(rows.map(row => [String(row.contact_id), {
+    ltv: Number(row.ltv || 0),
+    purchases: Number(row.purchases || 0)
+  }]))
 }
 
 function timestampLocalExpression(column, timezone = 'UTC') {
@@ -1192,23 +1384,34 @@ export async function linkVisitorToContactHandler(req, res) {
 /**
  * Obtiene sesiones con soporte para paginación infinita
  * GET /api/tracking/sessions?offset=0&limit=50
- * GET /api/tracking/sessions?start=YYYY-MM-DD&end=YYYY-MM-DD (sin paginación)
+ * GET /api/tracking/sessions?start=YYYY-MM-DD&end=YYYY-MM-DD&limit=50&offset=0
  * GET /api/tracking/sessions?start=YYYY-MM-DD&end=YYYY-MM-DD&summary=1
  */
 export async function getSessionsHandler(req, res) {
   try {
-    const limit = parseInt(req.query.limit, 10) || 50
-    const offset = parseInt(req.query.offset, 10) || 0
+    const requestedLimit = Number.parseInt(req.query.limit, 10)
+    const requestedOffset = Number.parseInt(req.query.offset, 10)
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 50
+    const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0 ? requestedOffset : 0
     const { start, end, payload, summary } = req.query
 
     logger.info(`📊 GET /api/tracking/sessions - start: ${start}, end: ${end}, limit: ${limit}, offset: ${offset}`)
 
-    if (limit > 1000) {
+    if (limit > LEGACY_TRACKING_SESSIONS_MAX_LIMIT) {
       logger.warn(`⚠️ Limit demasiado alto: ${limit}`)
-      return res.status(400).json({ error: 'Limit too high (max 1000)' })
+      return res.status(400).json({ error: `Limit too high (max ${LEGACY_TRACKING_SESSIONS_MAX_LIMIT})` })
     }
 
-    // Si hay fechas, usar filtro de rango (sin paginación, para Analytics)
+    if (offset > LEGACY_TRACKING_SESSIONS_MAX_OFFSET) {
+      logger.warn(`⚠️ Offset legacy demasiado profundo: ${offset}`)
+      return res.status(400).json({
+        error: `Offset too high (max ${LEGACY_TRACKING_SESSIONS_MAX_OFFSET}); use /api/tracking/sessions/search with cursor`
+      })
+    }
+
+    // El resumen es agregado; el detalle legacy por rango también queda acotado.
+    // La tabla moderna usa /sessions/search con cursor, pero ningún consumidor
+    // antiguo debe poder materializar cientos de miles de eventos por accidente.
     if (start && end) {
       if (summary === '1' || summary === 'true') {
         const metrics = await getSessionMetricsByDateRange(start, end)
@@ -1216,7 +1419,7 @@ export async function getSessionsHandler(req, res) {
       }
 
       logger.info(`🔍 Buscando sesiones entre ${start} y ${end}`)
-      const sessions = await getSessionsByDateRange(start, end, { payload })
+      const sessions = await getSessionsByDateRange(start, end, { payload, limit, offset })
       logger.info(`✅ Encontradas ${sessions.length} sesiones`)
       return res.json(sessions)
     }
@@ -1257,6 +1460,58 @@ export async function getSessionsHandler(req, res) {
       error: 'Internal server error',
       message: error.message,
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    })
+  }
+}
+
+/**
+ * Devuelve únicamente agregados acotados para la pantalla de Analíticas.
+ * POST /api/tracking/analytics/summary
+ */
+export async function getTrackingAnalyticsSummaryHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const data = await getTrackingAnalyticsSummary({
+      start: body.start,
+      end: body.end,
+      groupBy: body.groupBy,
+      filters: body.filters
+    })
+
+    res.json({ success: true, data })
+  } catch (error) {
+    const status = Number(error?.status) || 500
+    logger.error(`Error obteniendo resumen acotado de tracking: ${error.message}`)
+    res.status(status).json({
+      error: status < 500 ? error.message : 'Internal server error'
+    })
+  }
+}
+
+/**
+ * Busca sesiones con paginación keyset; nunca calcula COUNT(*) ni devuelve el
+ * histórico completo al navegador.
+ * POST /api/tracking/sessions/search
+ */
+export async function searchTrackingSessionsHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const data = await searchTrackingSessions({
+      start: body.start,
+      end: body.end,
+      filters: body.filters,
+      q: body.q,
+      column: body.column,
+      cursor: body.cursor,
+      limit: body.limit
+    })
+
+    res.json({ success: true, data })
+  } catch (error) {
+    const status = Number(error?.status) || 500
+    logger.error(`Error buscando sesiones de tracking: ${error.message}`)
+    res.status(status).json({
+      error: status < 500 ? error.message : 'Internal server error'
     })
   }
 }
@@ -1342,6 +1597,7 @@ export async function updateSessionHandler(req, res) {
     `
 
     await db.run(updateQuery, updateValues)
+    invalidateTrackingAnalyticsCache()
 
     // Obtener sesión actualizada
     const updatedSession = await db.get('SELECT * FROM sessions WHERE id = $1 LIMIT 1', [id])
@@ -1385,6 +1641,7 @@ export async function deleteSessionsHandler(req, res) {
 
     // En PostgreSQL, result.changes no está disponible, usar rowCount
     const deletedCount = result.changes || result.rowCount || 0
+    if (deletedCount > 0) invalidateTrackingAnalyticsCache()
 
     logger.info(`✅ ${deletedCount} sesiones eliminadas exitosamente`)
 
@@ -1895,224 +2152,592 @@ export async function getVisitorsByPeriod(req, res) {
  */
 export async function getVisitorsList(req, res) {
   try {
-    const { startDate, endDate, ad_id, campaign_id, adset_id, scope } = req.query
+    const {
+      startDate,
+      endDate,
+      ad_id,
+      campaign_id,
+      adset_id,
+      scope,
+      cursor,
+      limit,
+      search,
+      q
+    } = req.query || {}
 
     if (!startDate || !endDate) {
       return res.status(400).json({ error: 'startDate y endDate son requeridos' })
     }
 
-    // Usar timezone de HighLevel para consistencia con Dashboard
+    const pageLimit = normalizeTrackingDrilldownLimit(limit)
+    const decodedCursor = decodeTrackingDrilldownCursor(cursor, 'tracking-visitors')
+    const normalizedSearch = normalizeTrackingDrilldownSearch(search ?? q)
+    if (normalizedSearch && normalizedSearch.length < 3) {
+      return res.json({
+        success: true,
+        data: [],
+        pagination: {
+          limit: pageLimit,
+          hasNext: false,
+          hasMore: false,
+          nextCursor: null,
+          searchMinLength: 3
+        }
+      })
+    }
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
 
-    logger.info(`Obteniendo lista de visitantes - rango: ${range.startUtc} -> ${range.endUtc}, scope: ${scope}, ad_id: ${ad_id}, campaign_id: ${campaign_id}, adset_id: ${adset_id}`)
+    logger.info(`Obteniendo página de visitantes - rango: ${range.startUtc} -> ${range.endUtc}, scope: ${scope}, limit: ${pageLimit}`)
 
-    // Determinar lógica de atribución (MISMA LÓGICA QUE buildReportMetrics)
+    const rangeStartUtcDateTime = range.startZoned?.toUTC()
+    const rangeEndExclusiveUtcDateTime = range.endZoned?.plus({ milliseconds: 1 }).toUTC()
+    const endExclusiveUtc = rangeEndExclusiveUtcDateTime
+      ? rangeEndExclusiveUtcDateTime.toISO({ suppressMilliseconds: false })
+      : range.endUtc
+    const projectionQuarterAligned = Boolean(
+      rangeStartUtcDateTime &&
+      rangeEndExclusiveUtcDateTime &&
+      rangeStartUtcDateTime.minute % 15 === 0 &&
+      rangeEndExclusiveUtcDateTime.minute % 15 === 0 &&
+      rangeStartUtcDateTime.second === 0 &&
+      rangeEndExclusiveUtcDateTime.second === 0 &&
+      rangeStartUtcDateTime.millisecond === 0 &&
+      rangeEndExclusiveUtcDateTime.millisecond === 0
+    )
+    const startUtcDay = rangeStartUtcDateTime?.startOf('day')
+    const firstFullUtcDay = startUtcDay && rangeStartUtcDateTime.toMillis() === startUtcDay.toMillis()
+      ? startUtcDay
+      : startUtcDay?.plus({ days: 1 })
+    const fullUtcDaysEnd = rangeEndExclusiveUtcDateTime?.startOf('day')
+    const firstFullUtcDayIso = firstFullUtcDay?.toISO({ suppressMilliseconds: false })
+    const fullUtcDaysEndIso = fullUtcDaysEnd?.toISO({ suppressMilliseconds: false })
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
-
-    // Obtener filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters()
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
-
-    // Construir WHERE clause
-    let conditions, params, paramCount
+    const visitorIdentityExpression = getVisitorIdentityExpression('s')
+    const visitorSelect = `
+      s.visitor_id,
+      s.session_id,
+      s.contact_id,
+      s.created_at,
+      s.page_url,
+      s.referrer_url,
+      s.utm_source,
+      s.utm_medium,
+      s.utm_campaign,
+      s.utm_term,
+      s.utm_content,
+      s.gclid,
+      s.fbclid,
+      s.device_type,
+      s.browser,
+      s.os,
+      s.language,
+      s.ad_id,
+      s.ad_name,
+      s.adset_id,
+      s.adset_name,
+      s.campaign_id,
+      s.campaign_name,
+      s.msclkid,
+      s.ttclid,
+      s.timezone,
+      s.geo_country,
+      s.geo_region,
+      s.geo_city,
+      c.full_name as contact_name,
+      c.email as contact_email,
+      c.phone as contact_phone,
+      c.total_paid as contact_ltv,
+      c.purchases_count as contact_purchases
+    `
+    let query
+    let pageParams
 
     if (useContactAttribution) {
-      // Vista "Último toque" / "Último toque desde anuncio": Filtrar por fecha de creación del contacto
-      // Solo visitantes que SE CONVIRTIERON en contacto (tienen contact_id)
-      conditions = ['c.created_at >= $1', 'c.created_at <= $2', 's.contact_id IS NOT NULL']
-      params = [range.startUtc, range.endUtc]
-      paramCount = 2
-
-      // Filtrar contactos ocultos
-      if (hiddenCondition) {
-        conditions.push(hiddenCondition)
+      if (decodedCursor && decodedCursor.mode !== 'contact-created') {
+        throw trackingDrilldownRequestError('El cursor ya no corresponde a esta vista; vuelve a la primera página')
       }
 
-      // Si es "campaigns", filtrar por ad_id (último toque desde anuncio)
+      const contactConditions = ['c.created_at >= ?', 'c.created_at < ?']
+      const contactParams = [range.startUtc, endExclusiveUtc]
+      if (hiddenCondition) contactConditions.push(hiddenCondition)
       if (isAttributed) {
-        conditions.push('c.attribution_ad_id IS NOT NULL')
-        conditions.push(`EXISTS (
+        contactConditions.push('c.attribution_ad_id IS NOT NULL')
+        contactConditions.push(`EXISTS (
           SELECT 1 FROM meta_ads ma
           WHERE ma.ad_id = c.attribution_ad_id
             AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone)}
         )`)
       }
+
+      const cursorCondition = decodedCursor ? 'AND (c.created_at, c.id) < (?, ?)' : ''
+      const cursorParams = decodedCursor ? [decodedCursor.createdAt, decodedCursor.id] : []
+      if (normalizedSearch) {
+        const pattern = trackingDrilldownSearchPattern(normalizedSearch)
+        const sessionSearchHits = isPostgres
+          ? `
+            session_search_hits AS MATERIALIZED (
+              SELECT DISTINCT ON (s.contact_id)
+                s.contact_id,
+                c.created_at AS contact_created_at,
+                s.id AS session_row_id
+              FROM sessions s
+              INNER JOIN contacts c ON c.id = s.contact_id
+              WHERE s.contact_id IS NOT NULL
+                AND ${buildTrackingSearchDocumentExpression('s')} LIKE ? ESCAPE '!'
+                AND ${contactConditions.join(' AND ')}
+                ${cursorCondition}
+              ORDER BY s.contact_id, s.created_at DESC, s.id DESC
+            )
+          `
+          : `
+            session_search_candidates AS (
+              SELECT
+                s.contact_id,
+                c.created_at AS contact_created_at,
+                s.id AS session_row_id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY s.contact_id
+                  ORDER BY s.created_at DESC, s.id DESC
+                ) AS contact_session_rank
+              FROM sessions s
+              INNER JOIN contacts c ON c.id = s.contact_id
+              WHERE s.contact_id IS NOT NULL
+                AND ${buildTrackingSearchDocumentExpression('s')} LIKE ? ESCAPE '!'
+                AND ${contactConditions.join(' AND ')}
+                ${cursorCondition}
+            ),
+            session_search_hits AS (
+              SELECT contact_id, contact_created_at, session_row_id
+              FROM session_search_candidates
+              WHERE contact_session_rank = 1
+            )
+          `
+
+        query = `
+          WITH contact_search_hits AS MATERIALIZED (
+            SELECT c.id, c.created_at
+            FROM contacts c
+            WHERE ${trackingContactSearchDocumentExpression('c')} LIKE ? ESCAPE '!'
+              AND ${contactConditions.join(' AND ')}
+              ${cursorCondition}
+          ),
+          contact_search_candidates AS (
+            SELECT
+              contact_hit.id AS contact_id,
+              contact_hit.created_at AS contact_created_at,
+              (
+                SELECT candidate.id
+                FROM sessions candidate
+                WHERE candidate.contact_id = contact_hit.id
+                ORDER BY candidate.created_at DESC, candidate.id DESC
+                LIMIT 1
+              ) AS session_row_id
+            FROM contact_search_hits contact_hit
+          ),
+          ${sessionSearchHits},
+          search_candidates AS (
+            SELECT contact_id, contact_created_at, session_row_id
+            FROM contact_search_candidates
+            WHERE session_row_id IS NOT NULL
+            UNION ALL
+            SELECT
+              session_hit.contact_id,
+              session_hit.contact_created_at,
+              session_hit.session_row_id
+            FROM session_search_hits session_hit
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM contact_search_hits contact_hit
+              WHERE contact_hit.id = session_hit.contact_id
+            )
+          ),
+          paged_contacts AS (
+            SELECT contact_id, contact_created_at, session_row_id
+            FROM search_candidates
+            ORDER BY contact_created_at DESC, contact_id DESC
+            LIMIT ?
+          )
+          SELECT
+            ${visitorIdentityExpression} as visitor_key,
+            s.id as session_row_id,
+            c.id as cursor_row_id,
+            c.created_at as cursor_at,
+            'contact-created' as cursor_mode,
+            ${visitorSelect}
+          FROM paged_contacts page
+          INNER JOIN contacts c ON c.id = page.contact_id
+          INNER JOIN sessions s ON s.id = page.session_row_id
+          ORDER BY page.contact_created_at DESC, page.contact_id DESC
+        `
+        pageParams = [
+          pattern,
+          ...contactParams,
+          ...cursorParams,
+          pattern,
+          ...contactParams,
+          ...cursorParams,
+          pageLimit + 1
+        ]
+      } else {
+        query = `
+          SELECT
+            ${visitorIdentityExpression} as visitor_key,
+            s.id as session_row_id,
+            c.id as cursor_row_id,
+            c.created_at as cursor_at,
+            'contact-created' as cursor_mode,
+            ${visitorSelect}
+          FROM contacts c
+          INNER JOIN sessions s ON s.id = (
+            SELECT candidate.id
+            FROM sessions candidate
+            WHERE candidate.contact_id = c.id
+            ORDER BY candidate.created_at DESC, candidate.id DESC
+            LIMIT 1
+          )
+          WHERE ${contactConditions.join(' AND ')}
+            ${cursorCondition}
+          ORDER BY c.created_at DESC, c.id DESC
+          LIMIT ?
+        `
+        pageParams = [...contactParams, ...cursorParams, pageLimit + 1]
+      }
     } else {
-      // Vista "Todos": Filtrar por fecha de la sesión (started_at)
-      conditions = ['s.started_at >= $1', 's.started_at <= $2']
-      params = [range.startUtc, range.endUtc]
-      paramCount = 2
-    }
+      if (decodedCursor?.mode === 'contact-created' || decodedCursor?.mode === 'projection-created') {
+        throw trackingDrilldownRequestError('El cursor ya no corresponde a esta vista; vuelve a la primera página')
+      }
 
-    // Filtros opcionales por campaña/adset/ad (solo para vista "Todos")
-    if (!useContactAttribution) {
+      let projectionScopeType = 'all'
+      let projectionScopeId = ''
       if (ad_id) {
-        paramCount++
-        conditions.push(`s.ad_id = $${paramCount}`)
-        params.push(ad_id)
+        projectionScopeType = 'ad'
+        projectionScopeId = String(ad_id)
       } else if (adset_id) {
-        paramCount++
-        conditions.push(`s.adset_id = $${paramCount}`)
-        params.push(adset_id)
+        projectionScopeType = 'adset'
+        projectionScopeId = String(adset_id)
       } else if (campaign_id) {
-        paramCount++
-        conditions.push(`s.campaign_id = $${paramCount}`)
-        params.push(campaign_id)
+        projectionScopeType = 'campaign'
+        projectionScopeId = String(campaign_id)
       }
-    }
 
-    const visitorIdentityExpression = getVisitorIdentityExpression('s')
-
-    // Obtener visitantes únicos con sus datos de sesión más recientes
-    const query = `
-      WITH ranked_visitors AS (
-        SELECT
-          ${visitorIdentityExpression} as visitor_key,
-          s.visitor_id,
-          s.session_id,
-          s.contact_id,
-          s.created_at,
-          s.page_url,
-          s.referrer_url,
-          s.utm_source,
-          s.utm_medium,
-          s.utm_campaign,
-          s.utm_term,
-          s.utm_content,
-          s.gclid,
-          s.fbclid,
-          s.device_type,
-          s.browser,
-          s.os,
-          s.language,
-          s.ad_id,
-          s.ad_name,
-          c.full_name as contact_name,
-          c.email as contact_email,
-          c.phone as contact_phone,
-          c.total_paid as contact_ltv,
-          c.purchases_count as contact_purchases,
-          CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db,
-          ROW_NUMBER() OVER (
-            PARTITION BY ${visitorIdentityExpression}
-            ORDER BY s.created_at DESC
-          ) as visitor_rank
-        FROM sessions s
-        LEFT JOIN contacts c ON s.contact_id = c.id
-        LEFT JOIN (
-          SELECT DISTINCT contact_id
-          FROM appointments
-          WHERE contact_id IS NOT NULL
-        ) a ON a.contact_id = c.id
-        WHERE ${conditions.join(' AND ')}
-      )
-      SELECT *
-      FROM ranked_visitors
-      WHERE visitor_rank = 1
-        AND visitor_key IS NOT NULL
-      ORDER BY created_at DESC
-    `
-
-    const visitors = await db.all(query, params)
-
-    // Verificar citas usando lógica híbrida (DB + API) para contactos sin citas en DB
-    const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
-    const contactsWithAppointments = new Set()
-    const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
-      config?.location_id,
-      config?.api_token
-    )
-
-    // Agregar contactos que ya tienen citas en DB
-    visitors.forEach(v => {
-      if (v.contact_id && v.has_appointment_db === 1) {
-        contactsWithAppointments.add(v.contact_id)
-      }
-    })
-
-    // Verificar contactos sin citas en DB usando API de HighLevel
-    const contactsToCheck = visitors
-      .filter(v => v.contact_id && v.has_appointment_db === 0)
-      .map(v => ({ id: v.contact_id }))
-      // Remover duplicados
-      .filter((contact, index, self) =>
-        index === self.findIndex(c => c.id === contact.id)
-      )
-
-    if (config && config.api_token && contactsToCheck.length > 0) {
-      logger.info(`[VISITANTES MODAL] Verificando ${contactsToCheck.length} contactos sin citas en DB...`)
-
-      // Batch de 50 contactos simultáneos
-      const batchSize = 50
-
-      for (let i = 0; i < contactsToCheck.length; i += batchSize) {
-        const batch = contactsToCheck.slice(i, i + batchSize)
-
-        const appointmentChecks = await Promise.all(
-          batch.map(async (contact) => {
-            try {
-              const response = await fetch(
-                `https://services.leadconnectorhq.com/contacts/${contact.id}/appointments`,
-                {
-                  headers: {
-                    'Authorization': `Bearer ${config.api_token}`,
-                    'Version': '2021-07-28'
-                  }
-                }
-              )
-
-              if (response.ok) {
-                const data = await response.json()
-                if (data.events && data.events.length > 0) {
-                  logger.info(`[VISITANTES MODAL] Contacto ${contact.id} tiene ${data.events.length} citas en HighLevel`)
-
-                  // Guardar en DB para cache futuro
-                  for (const event of data.events) {
-                    await db.run(`
-                      INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time)
-                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                      ON CONFLICT(id) DO UPDATE SET
-                        status = excluded.status,
-                        start_time = excluded.start_time,
-                        end_time = excluded.end_time
-                    `, [
-                      event.id,
-                      contact.id,
-                      event.calendarId || '',
-                      event.locationId || config.location_id,
-                      event.title || '',
-                      event.status || 'scheduled',
-                      event.startTime || '',
-                      event.endTime || ''
-                    ]).catch(err => {
-                      logger.error(`Error guardando cita ${event.id}:`, err)
-                    })
-                  }
-
-                  return { contactId: contact.id, hasAppointments: true }
-                }
-              }
-              return { contactId: contact.id, hasAppointments: false }
-            } catch (error) {
-              logger.error(`Error verificando citas para contacto ${contact.id}:`, error)
-              return { contactId: contact.id, hasAppointments: false }
-            }
-          })
-        )
-
-        // Actualizar el set con los contactos que tienen citas
-        appointmentChecks.forEach(result => {
-          if (result.hasAppointments) {
-            contactsWithAppointments.add(result.contactId)
-          }
+      const projectionReady = !normalizedSearch &&
+        projectionQuarterAligned &&
+        !['legacy-created', 'legacy-started'].includes(decodedCursor?.mode) &&
+        await isTrackingVisitorProjectionReady({
+          startUtc: range.startUtc,
+          endExclusiveUtc,
+          scopeType: projectionScopeType,
+          scopeId: projectionScopeId
         })
+      if (projectionReady) {
+        const buildProjectionBranch = (bucketKind) => {
+          const conditions = [
+            'current.scope_type = ?',
+            'current.scope_id = ?',
+            'current.bucket_kind = ?',
+            'current.latest_at >= ?',
+            'current.latest_at < ?'
+          ]
+          const params = [
+            projectionScopeType,
+            projectionScopeId,
+            bucketKind,
+            range.startUtc,
+            endExclusiveUtc
+          ]
+
+          if (bucketKind === 'day') {
+            conditions.push('current.bucket_start >= ?', 'current.bucket_start < ?')
+            params.push(firstFullUtcDayIso, fullUtcDaysEndIso)
+          } else {
+            conditions.push(
+              'current.bucket_start >= ?',
+              'current.bucket_start < ?',
+              'NOT (current.bucket_start >= ? AND current.bucket_start < ?)'
+            )
+            params.push(range.startUtc, endExclusiveUtc, firstFullUtcDayIso, fullUtcDaysEndIso)
+          }
+
+          if (decodedCursor) {
+            conditions.push('(current.latest_at, current.session_row_id) < (?, ?)')
+            params.push(decodedCursor.createdAt, decodedCursor.id)
+          }
+          conditions.push(`NOT EXISTS (
+            SELECT 1
+            FROM tracking_visitor_latest newer_day
+            WHERE newer_day.scope_type = current.scope_type
+              AND newer_day.scope_id = current.scope_id
+              AND newer_day.bucket_kind = 'day'
+              AND newer_day.visitor_key = current.visitor_key
+              AND newer_day.latest_at >= ?
+              AND newer_day.latest_at < ?
+              AND newer_day.bucket_start >= ?
+              AND newer_day.bucket_start < ?
+              AND (newer_day.latest_at, newer_day.session_row_id) >
+                  (current.latest_at, current.session_row_id)
+          )`)
+          params.push(range.startUtc, endExclusiveUtc, firstFullUtcDayIso, fullUtcDaysEndIso)
+          conditions.push(`NOT EXISTS (
+            SELECT 1
+            FROM tracking_visitor_latest newer_quarter
+            WHERE newer_quarter.scope_type = current.scope_type
+              AND newer_quarter.scope_id = current.scope_id
+              AND newer_quarter.bucket_kind = 'quarter'
+              AND newer_quarter.visitor_key = current.visitor_key
+              AND newer_quarter.latest_at >= ?
+              AND newer_quarter.latest_at < ?
+              AND newer_quarter.bucket_start >= ?
+              AND newer_quarter.bucket_start < ?
+              AND NOT (newer_quarter.bucket_start >= ? AND newer_quarter.bucket_start < ?)
+              AND (newer_quarter.latest_at, newer_quarter.session_row_id) >
+                  (current.latest_at, current.session_row_id)
+          )`)
+          params.push(
+            range.startUtc,
+            endExclusiveUtc,
+            range.startUtc,
+            endExclusiveUtc,
+            firstFullUtcDayIso,
+            fullUtcDaysEndIso
+          )
+          params.push(pageLimit + 1)
+
+          return {
+            sql: `
+              SELECT current.visitor_key, current.session_row_id, current.latest_at
+              FROM tracking_visitor_latest current
+              WHERE ${conditions.join(' AND ')}
+              ORDER BY current.latest_at DESC, current.session_row_id DESC
+              LIMIT ?
+            `,
+            params
+          }
+        }
+
+        const dayBranch = buildProjectionBranch('day')
+        const quarterBranch = buildProjectionBranch('quarter')
+        query = `
+          WITH day_page AS (
+            ${dayBranch.sql}
+          ), quarter_page AS (
+            ${quarterBranch.sql}
+          ), projected_page AS (
+            SELECT * FROM day_page
+            UNION ALL
+            SELECT * FROM quarter_page
+          )
+          SELECT
+            page.visitor_key,
+            page.session_row_id,
+            page.latest_at as cursor_at,
+            'projection-started' as cursor_mode,
+            ${visitorSelect}
+          FROM projected_page page
+          INNER JOIN sessions s ON s.id = page.session_row_id
+          LEFT JOIN contacts c ON s.contact_id = c.id
+          ORDER BY page.latest_at DESC, page.session_row_id DESC
+          LIMIT ?
+        `
+        pageParams = [...dayBranch.params, ...quarterBranch.params, pageLimit + 1]
+      } else {
+        // Rolling deploy, backfill o rango histórico con offset sub-15-minutos:
+        // exactitud primero. La ventana legacy nunca es el camino estable.
+        const sessionStartedAtExpression = trackingSessionTimestampExpression('s')
+        const conditions = [`${sessionStartedAtExpression} >= ?`, `${sessionStartedAtExpression} < ?`]
+        const params = [range.startUtc, endExclusiveUtc]
+        if (ad_id) {
+          conditions.push('s.ad_id = ?')
+          params.push(ad_id)
+        } else if (adset_id) {
+          conditions.push('s.adset_id = ?')
+          params.push(adset_id)
+        } else if (campaign_id) {
+          conditions.push('s.campaign_id = ?')
+          params.push(campaign_id)
+        }
+        if (normalizedSearch) {
+          // Las búsquedas de sesión y contacto viven en índices GIN distintos.
+          // Separarlas evita el OR entre tablas que obligaba a escanear todo el
+          // rango y conserva la semántica histórica: una visita vieja que hace
+          // match sigue encontrándose, aunque exista otra visita más reciente.
+          const pattern = trackingDrilldownSearchPattern(normalizedSearch)
+          const identityNotNull = `${visitorIdentityExpression} IS NOT NULL`
+          const searchCandidateCtes = isPostgres
+            ? `
+              session_matches AS MATERIALIZED (
+                SELECT DISTINCT ON (${visitorIdentityExpression})
+                  ${visitorIdentityExpression} AS visitor_key,
+                  s.id AS session_row_id,
+                  ${sessionStartedAtExpression} AS cursor_at
+                FROM sessions s
+                WHERE ${conditions.join(' AND ')}
+                  AND ${identityNotNull}
+                  AND ${buildTrackingSearchDocumentExpression('s')} LIKE ? ESCAPE '!'
+                ORDER BY ${visitorIdentityExpression}, ${sessionStartedAtExpression} DESC, s.id DESC
+              ),
+              matching_contacts AS MATERIALIZED (
+                SELECT c.id
+                FROM contacts c
+                WHERE c.deleted_at IS NULL
+                  AND ${trackingContactSearchDocumentExpression('c')} LIKE ? ESCAPE '!'
+              ),
+              contact_matches AS MATERIALIZED (
+                SELECT DISTINCT ON (${visitorIdentityExpression})
+                  ${visitorIdentityExpression} AS visitor_key,
+                  s.id AS session_row_id,
+                  ${sessionStartedAtExpression} AS cursor_at
+                FROM sessions s
+                INNER JOIN matching_contacts matched_contact ON matched_contact.id = s.contact_id
+                WHERE ${conditions.join(' AND ')}
+                  AND ${identityNotNull}
+                ORDER BY ${visitorIdentityExpression}, ${sessionStartedAtExpression} DESC, s.id DESC
+              )
+            `
+            : `
+              session_match_candidates AS (
+                SELECT
+                  ${visitorIdentityExpression} AS visitor_key,
+                  s.id AS session_row_id,
+                  ${sessionStartedAtExpression} AS cursor_at,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY ${visitorIdentityExpression}
+                    ORDER BY ${sessionStartedAtExpression} DESC, s.id DESC
+                  ) AS match_rank
+                FROM sessions s
+                WHERE ${conditions.join(' AND ')}
+                  AND ${identityNotNull}
+                  AND ${buildTrackingSearchDocumentExpression('s')} LIKE ? ESCAPE '!'
+              ),
+              session_matches AS (
+                SELECT visitor_key, session_row_id, cursor_at
+                FROM session_match_candidates
+                WHERE match_rank = 1
+              ),
+              matching_contacts AS (
+                SELECT c.id
+                FROM contacts c
+                WHERE c.deleted_at IS NULL
+                  AND ${trackingContactSearchDocumentExpression('c')} LIKE ? ESCAPE '!'
+              ),
+              contact_match_candidates AS (
+                SELECT
+                  ${visitorIdentityExpression} AS visitor_key,
+                  s.id AS session_row_id,
+                  ${sessionStartedAtExpression} AS cursor_at,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY ${visitorIdentityExpression}
+                    ORDER BY ${sessionStartedAtExpression} DESC, s.id DESC
+                  ) AS match_rank
+                FROM sessions s
+                INNER JOIN matching_contacts matched_contact ON matched_contact.id = s.contact_id
+                WHERE ${conditions.join(' AND ')}
+                  AND ${identityNotNull}
+              ),
+              contact_matches AS (
+                SELECT visitor_key, session_row_id, cursor_at
+                FROM contact_match_candidates
+                WHERE match_rank = 1
+              )
+            `
+          const pageConditions = ['match_rank = 1']
+          pageParams = [...params, pattern, pattern, ...params]
+          if (decodedCursor) {
+            pageConditions.push('(cursor_at, session_row_id) < (?, ?)')
+            pageParams.push(decodedCursor.createdAt, decodedCursor.id)
+          }
+          pageParams.push(pageLimit + 1)
+
+          query = `
+            WITH ${searchCandidateCtes},
+            matched_visitor_candidates AS (
+              SELECT visitor_key, session_row_id, cursor_at FROM session_matches
+              UNION ALL
+              SELECT visitor_key, session_row_id, cursor_at FROM contact_matches
+            ),
+            ranked_matches AS (
+              SELECT
+                visitor_key,
+                session_row_id,
+                cursor_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY visitor_key
+                  ORDER BY cursor_at DESC, session_row_id DESC
+                ) AS match_rank
+              FROM matched_visitor_candidates
+            ),
+            matched_page AS (
+              SELECT visitor_key, session_row_id, cursor_at
+              FROM ranked_matches
+              WHERE ${pageConditions.join(' AND ')}
+              ORDER BY cursor_at DESC, session_row_id DESC
+              LIMIT ?
+            )
+            SELECT
+              page.visitor_key,
+              page.session_row_id,
+              page.cursor_at,
+              'legacy-started' AS cursor_mode,
+              ${visitorSelect}
+            FROM matched_page page
+            INNER JOIN sessions s ON s.id = page.session_row_id
+            LEFT JOIN contacts c ON c.id = s.contact_id
+            ORDER BY page.cursor_at DESC, page.session_row_id DESC
+          `
+        } else {
+          const pageConditions = ['visitor_rank = 1', 'visitor_key IS NOT NULL']
+          pageParams = [...params]
+          if (decodedCursor) {
+            pageConditions.push('(cursor_at, session_row_id) < (?, ?)')
+            pageParams.push(decodedCursor.createdAt, decodedCursor.id)
+          }
+          pageParams.push(pageLimit + 1)
+
+          query = `
+            WITH ranked_visitors AS (
+              SELECT
+                ${visitorIdentityExpression} as visitor_key,
+                s.id as session_row_id,
+                ${sessionStartedAtExpression} as cursor_at,
+                'legacy-started' as cursor_mode,
+                ${visitorSelect},
+                ROW_NUMBER() OVER (
+                  PARTITION BY ${visitorIdentityExpression}
+                  ORDER BY ${sessionStartedAtExpression} DESC, s.id DESC
+                ) as visitor_rank
+              FROM sessions s
+              LEFT JOIN contacts c ON s.contact_id = c.id
+              WHERE ${conditions.join(' AND ')}
+            )
+            SELECT *
+            FROM ranked_visitors
+            WHERE ${pageConditions.join(' AND ')}
+            ORDER BY cursor_at DESC, session_row_id DESC
+            LIMIT ?
+          `
+        }
       }
     }
 
-    logger.info(`Visitantes obtenidos: ${visitors.length} visitantes únicos`)
+    const candidateVisitors = await db.all(query, pageParams)
+    const hasNext = candidateVisitors.length > pageLimit
+    const visitors = hasNext ? candidateVisitors.slice(0, pageLimit) : candidateVisitors
+    const contactIds = [...new Set(visitors.map(visitor => visitor.contact_id).filter(Boolean).map(String))]
+    const attendancePlaceholders = contactIds.map(() => '?').join(', ')
+    const [appointmentsMap, attendanceRows] = await Promise.all([
+      fetchBoundedAppointmentsForContacts(contactIds),
+      contactIds.length > 0
+        ? db.all(`
+            SELECT DISTINCT contact_id
+            FROM appointment_attendance_signals
+            WHERE contact_id IN (${attendancePlaceholders})
+          `, contactIds)
+        : []
+    ])
+    const contactsWithAttendanceSignals = new Set(attendanceRows.map(row => String(row.contact_id)))
 
-    // Función helper para capitalizar nombres
     const capitalizeName = (name) => {
       if (!name) return name
       return name
@@ -2121,9 +2746,15 @@ export async function getVisitorsList(req, res) {
         .join(' ')
     }
 
-    // Formatear datos
     const formattedVisitors = visitors.map(v => {
-      const hasAttendedAppointment = v.contact_id ? contactsWithAttendances.has(v.contact_id) : false
+      const appointmentSummary = v.contact_id
+        ? appointmentsMap.get(String(v.contact_id)) || { appointments: [], total: 0, hasAttendedAppointment: false }
+        : { appointments: [], total: 0, hasAttendedAppointment: false }
+      const appointments = appointmentSummary.appointments
+      const hasAttendedAppointment = Boolean(v.contact_id) && (
+        contactsWithAttendanceSignals.has(String(v.contact_id)) ||
+        appointmentSummary.hasAttendedAppointment
+      )
 
       return {
         visitorId: v.visitor_id,
@@ -2132,6 +2763,7 @@ export async function getVisitorsList(req, res) {
         createdAt: v.created_at,
         firstVisit: v.created_at, // Alias para compatibilidad con el frontend
         pageUrl: v.page_url,
+        landingUrl: v.page_url,
         referrerUrl: v.referrer_url,
         utmSource: v.utm_source,
         utmMedium: v.utm_medium,
@@ -2140,13 +2772,22 @@ export async function getVisitorsList(req, res) {
         utmContent: v.utm_content,
         gclid: v.gclid,
         fbclid: v.fbclid,
+        msclkid: v.msclkid,
+        ttclid: v.ttclid,
         deviceType: v.device_type,
         browser: v.browser,
         os: v.os,
         language: v.language,
+        timezone: v.timezone,
+        country: v.geo_country,
+        region: v.geo_region,
+        city: v.geo_city,
         adId: v.ad_id,
         adName: v.ad_name,
-        // Datos del contacto (si está identificado)
+        adsetId: v.adset_id,
+        adsetName: v.adset_name,
+        campaignId: v.campaign_id,
+        campaignName: v.campaign_name,
         contact: v.contact_id ? {
           id: v.contact_id,
           name: capitalizeName(v.contact_name),
@@ -2155,17 +2796,30 @@ export async function getVisitorsList(req, res) {
           ltv: parseFloat(v.contact_ltv) || 0,
           purchases: parseInt(v.contact_purchases) || 0,
           hasAttendedAppointment,
-          appointments: contactsWithAppointments.has(v.contact_id)
-            ? [{ dummy: true, status: hasAttendedAppointment ? 'showed' : undefined }]
-            : []
+          appointments,
+          appointmentsTotal: appointmentSummary.total,
+          appointmentsTruncated: appointmentSummary.total > appointments.length
         } : null
       }
     })
 
-    res.json({ success: true, data: formattedVisitors })
+    logger.info(`Página de visitantes obtenida: ${formattedVisitors.length} visitantes; hasNext=${hasNext}`)
+
+    res.json({
+      success: true,
+      data: formattedVisitors,
+      pagination: {
+        limit: pageLimit,
+        hasNext,
+        hasMore: hasNext,
+        nextCursor: hasNext ? encodeTrackingDrilldownCursor('tracking-visitors', visitors[visitors.length - 1]) : null
+      }
+    })
   } catch (error) {
-    logger.error('Error obteniendo lista de visitantes:', error)
-    res.status(500).json({ error: 'Internal server error' })
+    const status = Number(error?.status) || 500
+    if (status < 500) logger.warn(`Solicitud de visitantes rechazada: ${error.message}`)
+    else logger.error('Error obteniendo lista de visitantes:', error)
+    res.status(status).json({ error: status < 500 ? error.message : 'Internal server error' })
   }
 }
 
@@ -2385,7 +3039,15 @@ export async function getMessagesSummary(req, res) {
  */
 export async function getContactConversionsList(req, res) {
   try {
-    const { start, end, type = 'registrations' } = req.query
+    const {
+      start,
+      end,
+      type = 'registrations',
+      cursor,
+      limit,
+      search,
+      q
+    } = req.query || {}
     const normalizedType = String(type || 'registrations')
 
     if (!start || !end) {
@@ -2396,6 +3058,10 @@ export async function getContactConversionsList(req, res) {
       return res.status(400).json({ error: 'type inválido' })
     }
 
+    const pageLimit = normalizeTrackingDrilldownLimit(limit)
+    const decodedCursor = decodeTrackingDrilldownCursor(cursor, 'contact-conversions')
+    const normalizedSearch = normalizeTrackingDrilldownSearch(search ?? q)
+
     const startDate = parseIsoDateToUtc(start)
     const endDate = parseIsoDateToUtc(end)
 
@@ -2403,7 +3069,7 @@ export async function getContactConversionsList(req, res) {
       return res.status(400).json({ error: 'Formato de fecha inválido' })
     }
 
-    logger.info(`Obteniendo lista de conversiones (${normalizedType}): ${start} a ${end}`)
+    logger.info(`Obteniendo página de conversiones (${normalizedType}): ${start} a ${end}; limit=${pageLimit}`)
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate: start, endDate: end })
     const contactCreatedDate = timestampDateExpression('c.created_at', range.appliedTimezone)
@@ -2424,6 +3090,22 @@ export async function getContactConversionsList(req, res) {
       conditions.push(typeCondition)
     }
 
+    const params = [start, end]
+    appendTrackingDrilldownSearch(conditions, params, normalizedSearch, [
+      'c.id',
+      'c.full_name',
+      'c.email',
+      'c.phone',
+      'c.source',
+      'c.attribution_ad_id',
+      'c.attribution_ad_name'
+    ])
+    if (decodedCursor) {
+      conditions.push('(c.created_at, c.id) < (?, ?)')
+      params.push(decodedCursor.createdAt, decodedCursor.id)
+    }
+    params.push(pageLimit + 1)
+
     const query = `
       SELECT
         c.id,
@@ -2436,52 +3118,43 @@ export async function getContactConversionsList(req, res) {
         c.source,
         CASE WHEN ${customerCondition} THEN 1 ELSE 0 END as is_customer,
         CASE WHEN ${appointmentCondition} THEN 1 ELSE 0 END as has_appointment,
-        CASE WHEN ${attendanceCondition} THEN 1 ELSE 0 END as has_attendance,
-        COALESCE((
-          SELECT SUM(p.amount)
-          FROM payments p
-          WHERE p.contact_id = c.id
-            AND ${validPaymentPredicate('p')}
-        ), 0) as valid_ltv,
-        COALESCE((
-          SELECT COUNT(*)
-          FROM payments p
-          WHERE p.contact_id = c.id
-            AND ${validPaymentPredicate('p')}
-        ), 0) as valid_purchases,
-        MAX(meta_ads.campaign_id) as campaign_id,
-        MAX(meta_ads.campaign_name) as campaign_name,
-        MAX(meta_ads.adset_id) as adset_id,
-        MAX(meta_ads.adset_name) as adset_name,
-        MAX(meta_ads.ad_name) as meta_ad_name
+        CASE WHEN ${attendanceCondition} THEN 1 ELSE 0 END as has_attendance
       FROM contacts c
-      LEFT JOIN meta_ads ON meta_ads.ad_id = c.attribution_ad_id
       WHERE ${conditions.join(' AND ')}
-      GROUP BY
-        c.id,
-        c.full_name,
-        c.email,
-        c.phone,
-        c.created_at,
-        c.attribution_ad_id,
-        c.attribution_ad_name,
-        c.source
-      ORDER BY c.created_at DESC
+      ORDER BY c.created_at DESC, c.id DESC
+      LIMIT ?
     `
 
-    const rows = await db.all(query, [start, end])
+    const candidateRows = await db.all(query, params)
+    const hasNext = candidateRows.length > pageLimit
+    const rows = hasNext ? candidateRows.slice(0, pageLimit) : candidateRows
     const contactIds = rows.map(row => row.id).filter(Boolean)
-    const [paymentsMap, appointmentsMap] = await Promise.all([
-      fetchPaymentsForContacts(contactIds),
-      // El conteo de Analytics (getContactConversionsByDate) NO filtra por calendario de
-      // atribución, así que el detalle del modal tampoco debe hacerlo: mostramos TODAS las citas
-      // del contacto para mantener la paridad número↔modal.
-      fetchAppointmentsForContacts(contactIds, { respectAttributionCalendars: false })
+    const contactPlaceholders = contactIds.map(() => '?').join(', ')
+    const [paymentSummaries, metaRows] = await Promise.all([
+      fetchPaymentSummariesForContacts(contactIds),
+      contactIds.length > 0
+        ? db.all(`
+            SELECT
+              c.id as contact_id,
+              MAX(meta_ads.campaign_id) as campaign_id,
+              MAX(meta_ads.campaign_name) as campaign_name,
+              MAX(meta_ads.adset_id) as adset_id,
+              MAX(meta_ads.adset_name) as adset_name,
+              MAX(meta_ads.ad_name) as meta_ad_name
+            FROM contacts c
+            LEFT JOIN meta_ads ON meta_ads.ad_id = c.attribution_ad_id
+            WHERE c.id IN (${contactPlaceholders})
+            GROUP BY c.id
+          `, contactIds)
+        : []
     ])
+    const metaByContactId = new Map(metaRows.map(row => [String(row.contact_id), row]))
 
     const contacts = rows.map(row => {
-      const ltv = Number(row.valid_ltv || 0)
-      const purchases = Number(row.valid_purchases || 0)
+      const paymentSummary = paymentSummaries.get(String(row.id)) || { ltv: 0, purchases: 0 }
+      const ltv = paymentSummary.ltv
+      const purchases = paymentSummary.purchases
+      const meta = metaByContactId.get(String(row.id)) || {}
 
       return {
         id: row.id,
@@ -2492,25 +3165,25 @@ export async function getContactConversionsList(req, res) {
         ltv,
         purchases,
         attributed: Boolean(row.attribution_ad_id),
-        payments: paymentsMap.get(row.id) || [],
-        appointments: appointmentsMap.get(row.id) || [],
+        payments: [],
+        appointments: [],
         source: row.source || null,
-        ad_name: row.meta_ad_name || row.attribution_ad_name || null,
+        ad_name: meta.meta_ad_name || row.attribution_ad_name || null,
         ad_id: row.attribution_ad_id || null,
-        campaign_id: row.campaign_id || null,
-        campaign_name: row.campaign_name || null,
-        adset_id: row.adset_id || null,
-        adset_name: row.adset_name || null,
-        metaAttribution: row.attribution_ad_id && (row.meta_ad_name || row.campaign_name || row.adset_name)
+        campaign_id: meta.campaign_id || null,
+        campaign_name: meta.campaign_name || null,
+        adset_id: meta.adset_id || null,
+        adset_name: meta.adset_name || null,
+        metaAttribution: row.attribution_ad_id && (meta.meta_ad_name || meta.campaign_name || meta.adset_name)
           ? {
               source: 'meta_ads',
               matchType: 'ad_id',
-              campaignId: row.campaign_id || null,
-              campaignName: row.campaign_name || null,
-              adsetId: row.adset_id || null,
-              adsetName: row.adset_name || null,
+              campaignId: meta.campaign_id || null,
+              campaignName: meta.campaign_name || null,
+              adsetId: meta.adset_id || null,
+              adsetName: meta.adset_name || null,
               adId: row.attribution_ad_id || null,
-              adName: row.meta_ad_name || row.attribution_ad_name || null
+              adName: meta.meta_ad_name || row.attribution_ad_name || null
             }
           : null,
         lifetimeLtv: ltv,
@@ -2526,11 +3199,19 @@ export async function getContactConversionsList(req, res) {
       success: true,
       data: {
         contacts,
-        range: { start, end }
+        range: { start, end },
+        pagination: {
+          limit: pageLimit,
+          hasNext,
+          hasMore: hasNext,
+          nextCursor: hasNext ? encodeTrackingDrilldownCursor('contact-conversions', rows[rows.length - 1]) : null
+        }
       }
     })
   } catch (error) {
-    logger.error('Error obteniendo lista de conversiones por contacto:', error)
-    res.status(500).json({ error: 'Internal server error' })
+    const status = Number(error?.status) || 500
+    if (status < 500) logger.warn(`Solicitud de conversiones rechazada: ${error.message}`)
+    else logger.error('Error obteniendo lista de conversiones por contacto:', error)
+    res.status(status).json({ error: status < 500 ? error.message : 'Internal server error' })
   }
 }

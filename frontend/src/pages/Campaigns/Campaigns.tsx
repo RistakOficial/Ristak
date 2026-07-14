@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, DateRangePicker, Table, Icon, ContactDetailsModal, VisitorDetailsModal, PageContainer, PageHeader, ViewSelector, AreaChart, Loading, TabList } from '@/components/common'
+import { Button, Card, DateRangePicker, Table, Icon, PageContainer, PageHeader, ViewSelector, AreaChart, Loading, TabList } from '@/components/common'
+import { KpiCard } from '@/components/common/KpiCard/KpiCard'
+import { ContactDetailsModal } from '@/components/common/ContactDetailsModal/ContactDetailsModal'
+import { VisitorDetailsModal } from '@/components/common/VisitorDetailsModal/VisitorDetailsModal'
 import type { Column } from '@/components/common'
 import {
   AlertCircle,
@@ -22,8 +25,14 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatCurrency, formatRoas, formatDateToISO, formatEndDateToISO, normalizeDateInputToLocalDate, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
-import { campaignsService, type CampaignContact } from '@/services/campaignsService'
+import {
+  campaignsService,
+  type CampaignContact,
+  type CampaignPerformanceItem,
+  type CampaignPerformanceLevel
+} from '@/services/campaignsService'
 import { reportsService, type CampaignsReport } from '@/services/reportsService'
+import { contactsService } from '@/services/contactsService'
 import { useAppConfig, useMetaTimezone, useUrlDateRangeSync } from '@/hooks'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import styles from './Campaigns.module.css'
@@ -82,6 +91,12 @@ interface AdSetData {
   cpm?: number
   ads?: AdData[]
   isExpanded?: boolean
+  childCount?: number
+  hasChildren?: boolean
+  childrenLoaded?: boolean
+  childrenLoading?: boolean
+  childrenPage?: number
+  childrenHasMore?: boolean
 }
 
 interface CampaignData {
@@ -104,9 +119,51 @@ interface CampaignData {
   adsets?: AdSetData[]
   adSets?: AdSetData[]  // Keep both for compatibility
   isExpanded?: boolean
+  childCount?: number
+  hasChildren?: boolean
+  childrenLoaded?: boolean
+  childrenLoading?: boolean
+  childrenPage?: number
+  childrenHasMore?: boolean
 }
 
 type ChartView = 'revenue' | 'leads' | 'appointments' | 'visitors'
+
+interface VisitorsModalPageState {
+  page: number
+  cursor: string | null
+  cursorHistory: Array<string | null>
+  search: string
+  hasNext: boolean
+  nextCursor: string | null
+}
+
+interface ContactsModalPageState {
+  page: number
+  cursor: string | null
+  cursorHistory: Array<string | null>
+  search: string
+  hasNext: boolean
+  nextCursor: string | null
+}
+
+const emptyContactsModalPageState: ContactsModalPageState = {
+  page: 1,
+  cursor: null,
+  cursorHistory: [],
+  search: '',
+  hasNext: false,
+  nextCursor: null
+}
+
+const emptyVisitorsModalPageState: VisitorsModalPageState = {
+  page: 1,
+  cursor: null,
+  cursorHistory: [],
+  search: '',
+  hasNext: false,
+  nextCursor: null
+}
 type CampaignTableView = 'classic' | 'adsets' | 'ads'
 type CampaignWinnersCategory = 'campaigns' | 'adsets' | 'ads'
 type CampaignSearchLevel = 'campaign' | 'adset' | 'ad'
@@ -197,6 +254,12 @@ const parseAnalyticsFlag = (value: unknown) => {
 const getCampaignTableRowKey = (item: any) =>
   `${item.level}_${item.id}_${item.campaignId || ''}_${item.adSetId || ''}`
 
+function mergeCampaignChildren<T extends { id: string }>(current: T[] = [], incoming: T[] = []): T[] {
+  const merged = new Map(current.map(item => [String(item.id), item]))
+  incoming.forEach(item => merged.set(String(item.id), item))
+  return Array.from(merged.values())
+}
+
 const getCampaignSearchRowKey = (
   level: CampaignSearchLevel,
   ids: { campaignId: string; adsetId?: string | null; adId?: string | null }
@@ -272,8 +335,22 @@ export const Campaigns: React.FC = () => {
   const [timezoneWarningDismissed, setTimezoneWarningDismissed] = useAppConfig<boolean>('timezone_warning_dismissed', false)
 
   const [campaigns, setCampaigns] = useState<CampaignData[]>([])
+  const [flatEntities, setFlatEntities] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [overviewLoading, setOverviewLoading] = useState(true)
   const [hasLoadedCampaigns, setHasLoadedCampaigns] = useState(false)
+  const [campaignPage, setCampaignPage] = useState(1)
+  const [campaignPageInfo, setCampaignPageInfo] = useState({
+    page: 1,
+    pageSize: 50,
+    totalItems: 0,
+    totalPages: 1,
+    hasMore: false
+  })
+  const [campaignSearchInput, setCampaignSearchInput] = useState('')
+  const [campaignSearch, setCampaignSearch] = useState('')
+  const [campaignSortBy, setCampaignSortBy] = useState<string | null>('lastActiveDate')
+  const [campaignSortOrder, setCampaignSortOrder] = useState<'asc' | 'desc'>('desc')
   const [syncStatus, setSyncStatus] = useState<any>(null)
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set())
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
@@ -297,6 +374,9 @@ export const Campaigns: React.FC = () => {
   const [modalError, setModalError] = useState<string | null>(null)
   const [modalTitle, setModalTitle] = useState('')
   const [selectedModalItem, setSelectedModalItem] = useState<any>(null)
+  const [contactsModalPage, setContactsModalPage] = useState<ContactsModalPageState>(emptyContactsModalPageState)
+  const contactsModalRequestRef = React.useRef(0)
+  const contactsModalAbortRef = React.useRef<AbortController | null>(null)
 
   // Estados para modal de visitantes
   const [isVisitorsModalOpen, setIsVisitorsModalOpen] = useState(false)
@@ -304,6 +384,8 @@ export const Campaigns: React.FC = () => {
   const [visitorsModalLoading, setVisitorsModalLoading] = useState(false)
   const [visitorsModalTitle, setVisitorsModalTitle] = useState('')
   const [selectedVisitorItem, setSelectedVisitorItem] = useState<any>(null)
+  const [visitorsModalPage, setVisitorsModalPage] = useState<VisitorsModalPageState>(emptyVisitorsModalPageState)
+  const visitorsModalRequestRef = React.useRef(0)
   const [selectedCreative, setSelectedCreative] = useState<CreativePreviewData | null>(null)
   const [creativePreviewHtml, setCreativePreviewHtml] = useState<string | null>(null)
   const [creativePreviewLoading, setCreativePreviewLoading] = useState(false)
@@ -312,6 +394,11 @@ export const Campaigns: React.FC = () => {
   const [highlightedRowKey, setHighlightedRowKey] = useState<string | null>(null)
   const handledOpenCampaignRef = React.useRef<string | null>(null)
   const adjustedCampaignRangeRef = React.useRef<string | null>(null)
+  const entityRequestRef = React.useRef(0)
+  const overviewRequestRef = React.useRef(0)
+  const campaignChildrenRequestRef = React.useRef(new Map<string, number>())
+  const adSetChildrenRequestRef = React.useRef(new Map<string, number>())
+  const childrenRequestSequenceRef = React.useRef(0)
 
   useUrlDateRangeSync({
     dateRange,
@@ -504,170 +591,169 @@ export const Campaigns: React.FC = () => {
     })
   }, [timezoneInfo])
 
-  const fetchCampaigns = useCallback(async () => {
+  const activeEntityLevel: CampaignPerformanceLevel = viewMode === 'winners'
+    ? (winnersCategory === 'campaigns' ? 'campaign' : winnersCategory === 'adsets' ? 'adset' : 'ad')
+    : (campaignTableView === 'classic' ? 'campaign' : campaignTableView === 'adsets' ? 'adset' : 'ad')
+  const entityContextKey = [
+    formatDateToISO(dateRange.start),
+    formatEndDateToISO(dateRange.end),
+    activeEntityLevel,
+    campaignPage,
+    campaignSearch,
+    campaignSortBy || '',
+    campaignSortOrder,
+    viewMode,
+    analyticsEnabled ? 'analytics' : 'no-analytics',
+    visitorSource
+  ].join('|')
+  const entityContextRef = React.useRef(entityContextKey)
+  entityContextRef.current = entityContextKey
+
+  const fetchCampaignEntities = useCallback(async () => {
+    const requestId = ++entityRequestRef.current
+    setLoading(true)
+
     try {
-      setLoading(true)
       const startDate = formatDateToISO(dateRange.start)
-      const endDate = formatEndDateToISO(dateRange.end) // Incluir día completo hasta 23:59:59
-
-      const summaryPromise = reportsService
-        .getCampaignsReport({ from: startDate, to: endDate })
-        .catch(() => null as CampaignsReport | null)
-
-      const includeTrackingVisitors = analyticsEnabled && visitorSource === 'tracking'
-
-      // Visitantes por nivel (ad/adset/campaña) ya deduplicados en el backend. Se
-      // lanza en paralelo con el resto, pero se resuelve aparte para conservar el tipado.
-      const visitorsPromise = includeTrackingVisitors
-        ? fetch(`/api/tracking/visitors-by-ad?startDate=${startDate}&endDate=${endDate}`)
-            .then(res => res.json())
-            .then((data: any) => ({
-              byAd: data.data || {},
-              byAdset: data.byAdset || {},
-              byCampaign: data.byCampaign || {}
-            }))
-            .catch(() => ({ byAd: {}, byAdset: {}, byCampaign: {} }))
-        : Promise.resolve({ byAd: {}, byAdset: {}, byCampaign: {} })
-
-      const [campaignsData, spendData, summaryReport] = await Promise.all([
-        campaignsService.getCampaigns(startDate, endDate),
-        campaignsService.getSpendOverTime(startDate, endDate),
-        summaryPromise
-      ])
-      const visitorsRaw = await visitorsPromise
-      const visitorsByAd = includeTrackingVisitors ? (visitorsRaw.byAd || {}) : {}
-      const visitorsByAdset = includeTrackingVisitors ? (visitorsRaw.byAdset || {}) : {}
-      const visitorsByCampaign = includeTrackingVisitors ? (visitorsRaw.byCampaign || {}) : {}
-
-      // Transform the data to match our interface
-      const transformedData = campaignsData.map((campaign: CampaignData) => {
-        if (includeTrackingVisitors) {
-          // Nivel ANUNCIO: únicos por ad (coincide con el modal filtrado por ad_id).
-          campaign.adsets?.forEach((adset: any) => {
-            adset.ads?.forEach((ad: any) => {
-              const adVisitorData = visitorsByAd[ad.id]
-              ad.visitors = adVisitorData ? adVisitorData.uniqueVisitors : 0
-            })
-            // Nivel ADSET: DISTINCT real sobre todo el adset (no la suma de sus ads),
-            // igual que el modal. Evita contar 2 veces a quien tocó varios anuncios.
-            adset.visitors = visitorsByAdset[adset.id] || 0
-          })
-        }
-
-        // Nivel CAMPAÑA: DISTINCT real sobre toda la campaña, espejo del modal.
-        const campaignVisitors = includeTrackingVisitors ? (visitorsByCampaign[campaign.id] || 0) : 0
-
-        const adsets = (campaign.adsets || []).map((adset: any) => ({
-          ...adset,
-          appointments: adset.appointments || 0,
-          attendances: adset.attendances || 0,
-          ads: (adset.ads || []).map((ad: any) => ({
-            ...ad,
-            appointments: ad.appointments || 0,
-            attendances: ad.attendances || 0
-          }))
-        }))
-
-        return {
-          ...campaign,
-          platform: 'Meta', // All campaigns from Meta
-          adSets: adsets, // Map adsets to adSets for compatibility
-          adsets, // Keep both for compatibility
-          visitors: campaignVisitors,
-          revenue: campaign.revenue || 0,
-          sales: campaign.sales || 0,
-          leads: campaign.leads || 0,
-          appointments: campaign.appointments || 0,
-          attendances: campaign.attendances || 0,
-          roas: campaign.roas || (campaign.revenue && campaign.spend ? campaign.revenue / campaign.spend : 0)
-        }
+      const endDate = formatEndDateToISO(dateRange.end)
+      const winnersSort = viewMode === 'winners'
+      const requestedSortBy = winnersSort && campaignSortBy === 'lastActiveDate'
+        ? 'revenue'
+        : campaignSortBy
+      const response = await campaignsService.getCampaignPerformancePage({
+        startDate,
+        endDate,
+        level: activeEntityLevel,
+        page: campaignPage,
+        pageSize: 50,
+        search: campaignSearch,
+        sortBy: requestedSortBy,
+        sortOrder: winnersSort && requestedSortBy === 'revenue' ? 'desc' : campaignSortOrder,
+        includeVisitors: analyticsEnabled && visitorSource === 'tracking',
+        onlyWithResults: winnersSort
       })
 
-      // Ordenar campañas de más reciente a más vieja (por ID descendente)
-      const sortedData = transformedData.sort((a: CampaignData, b: CampaignData) => {
-        // Los IDs de Meta son números grandes como strings
-        const idA = parseInt(a.id) || 0
-        const idB = parseInt(b.id) || 0
-        return idB - idA // Descendente: más reciente primero
-      })
+      if (requestId !== entityRequestRef.current) return
 
-      setCampaigns(sortedData)
-      setCampaignSummary(summaryReport?.summary ?? null)
+      const items = (response.items || []).map((item: CampaignPerformanceItem, index) => ({
+        ...item,
+        level: activeEntityLevel,
+        platform: 'Meta',
+        rank: ((response.pagination.page - 1) * response.pagination.pageSize) + index + 1,
+        childrenLoaded: false,
+        childrenLoading: false,
+        childrenPage: 0,
+        childrenHasMore: Boolean(item.hasChildren)
+      }))
 
-      // Calcular rango en días
-      const rangeInDays = Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24))
+      if (activeEntityLevel === 'campaign' && viewMode === 'campaigns') {
+        setCampaigns(items as CampaignData[])
+        setFlatEntities([])
+      } else {
+        setFlatEntities(items)
+      }
+      setCampaignPageInfo(response.pagination)
+      if (response.pagination.page !== campaignPage) setCampaignPage(response.pagination.page)
+    } catch {
+      if (requestId !== entityRequestRef.current) return
+      if (activeEntityLevel === 'campaign' && viewMode === 'campaigns') setCampaigns([])
+      else setFlatEntities([])
+      setCampaignPageInfo({ page: 1, pageSize: 50, totalItems: 0, totalPages: 1, hasMore: false })
+    } finally {
+      if (requestId === entityRequestRef.current) {
+        setLoading(false)
+        setHasLoadedCampaigns(true)
+      }
+    }
+  }, [
+    activeEntityLevel,
+    analyticsEnabled,
+    campaignPage,
+    campaignSearch,
+    campaignSortBy,
+    campaignSortOrder,
+    dateRange.end,
+    dateRange.start,
+    viewMode,
+    visitorSource
+  ])
 
-      // Procesar datos de revenue usando la función simplificada
-      const processedRevenueData = groupAndFormatChartData(
-        spendData || [],
-        rangeInDays,
-        timezoneInfo.adjustMetaDateToLocal
-      )
-      setRevenueData(processedRevenueData)
+  const fetchCampaignOverview = useCallback(async () => {
+    const requestId = ++overviewRequestRef.current
+    setOverviewLoading(true)
+    const startDate = formatDateToISO(dateRange.start)
+    const endDate = formatEndDateToISO(dateRange.end)
+    const rangeInDays = Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24))
 
-      // Fetch funnel metrics
-      const funnelMetricsRaw = await campaignsService.getFunnelMetrics(startDate, endDate)
+    const [summaryReport, spendData] = await Promise.all([
+      reportsService.getCampaignsReport({ from: startDate, to: endDate }).catch(() => null as CampaignsReport | null),
+      campaignsService.getSpendOverTime(startDate, endDate).catch(() => [])
+    ])
 
-      // Procesar datos de leads
-      const leadsChartData = (funnelMetricsRaw || []).map((item: any) => ({
+    if (requestId !== overviewRequestRef.current) return
+    setCampaignSummary(summaryReport?.summary ?? null)
+    setRevenueData(groupAndFormatChartData(
+      spendData || [],
+      rangeInDays,
+      timezoneInfo.adjustMetaDateToLocal
+    ))
+    setOverviewLoading(false)
+
+    const funnelMetricsRaw = await campaignsService.getFunnelMetrics(startDate, endDate).catch(() => [])
+    if (requestId !== overviewRequestRef.current) return
+
+    setLeadsData(groupAndFormatChartData(
+      (funnelMetricsRaw || []).map((item: any) => ({
         label: item.label,
         value: item.leads || 0,
         value2: item.appointments || 0
-      }))
-      const processedLeadsData = groupAndFormatChartData(
-        leadsChartData,
-        rangeInDays,
-        timezoneInfo.adjustMetaDateToLocal
-      )
-      setLeadsData(processedLeadsData)
-
-      // Procesar datos de citas
-      const appointmentsChartData = (funnelMetricsRaw || []).map((item: any) => ({
+      })),
+      rangeInDays,
+      timezoneInfo.adjustMetaDateToLocal
+    ))
+    setAppointmentsData(groupAndFormatChartData(
+      (funnelMetricsRaw || []).map((item: any) => ({
         label: item.label,
         value: item.appointments || 0,
         value2: item.sales || 0
-      }))
-      const processedAppointmentsData = groupAndFormatChartData(
-        appointmentsChartData,
-        rangeInDays,
-        timezoneInfo.adjustMetaDateToLocal
-      )
-      setAppointmentsData(processedAppointmentsData)
-
-      // Procesar datos de visitantes (solo si está habilitado)
-      if (analyticsEnabled) {
-        const visitorsChartData = (funnelMetricsRaw || []).map((item: any) => ({
-          label: item.label,
-          value: item.visitors || 0,
-          value2: item.leads || 0
-        }))
-        const processedVisitorsData = groupAndFormatChartData(
-          visitorsChartData,
+      })),
+      rangeInDays,
+      timezoneInfo.adjustMetaDateToLocal
+    ))
+    setVisitorsData(analyticsEnabled
+      ? groupAndFormatChartData(
+          (funnelMetricsRaw || []).map((item: any) => ({
+            label: item.label,
+            value: item.visitors || 0,
+            value2: item.leads || 0
+          })),
           rangeInDays,
           timezoneInfo.adjustMetaDateToLocal
         )
-        setVisitorsData(processedVisitorsData)
-      } else {
-        setVisitorsData([])
-      }
-    } catch {
-      // Don't fall back to mock data - show empty state
-      setCampaigns([])
-      setCampaignSummary(null)
-      setRevenueData([])
-      setLeadsData([])
-      setAppointmentsData([])
-      setVisitorsData([])
-    } finally {
-      setLoading(false)
-      setHasLoadedCampaigns(true)
-    }
-  }, [analyticsEnabled, dateRange.end, dateRange.start, visitorSource, timezoneInfo, groupAndFormatChartData])
+      : [])
+  }, [analyticsEnabled, dateRange.end, dateRange.start, groupAndFormatChartData, timezoneInfo.adjustMetaDateToLocal])
 
-  // Fetch campaigns on mount and when date range or visitor source changes
   useEffect(() => {
-    fetchCampaigns()
-  }, [fetchCampaigns])
+    const timeout = window.setTimeout(() => {
+      setCampaignSearch(campaignSearchInput.trim())
+      setCampaignPage(1)
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [campaignSearchInput])
+
+  useEffect(() => {
+    setCampaignPage(1)
+    setExpandedCampaigns(new Set())
+    setExpandedAdSets(new Set())
+  }, [activeEntityLevel, dateRange.end, dateRange.start, viewMode])
+
+  useEffect(() => {
+    fetchCampaignEntities()
+  }, [fetchCampaignEntities])
+
+  useEffect(() => {
+    fetchCampaignOverview()
+  }, [fetchCampaignOverview])
 
   useEffect(() => {
     if (!selectedCreative) return
@@ -833,14 +919,10 @@ export const Campaigns: React.FC = () => {
 
       // Si no hay status o no está corriendo
       if (!status || !status.running) {
-        // Si había una sincronización corriendo y ahora terminó
-        setSyncStatus((prevStatus: any) => {
-          if (prevStatus?.running) {
-            fetchCampaigns()
-            return null
-          }
-          return prevStatus
-        })
+        if (syncStatus?.running) {
+          void Promise.all([fetchCampaignEntities(), fetchCampaignOverview()])
+        }
+        setSyncStatus(null)
         return
       }
 
@@ -849,7 +931,7 @@ export const Campaigns: React.FC = () => {
     } catch (error) {
       // Silenciar errores de polling
     }
-  }, [fetchCampaigns])
+  }, [fetchCampaignEntities, fetchCampaignOverview, syncStatus?.running])
 
   // Poll del estado de sincronización: rápido solo mientras hay una sync
   // corriendo; de lo contrario un respaldo lento para detectar syncs nuevas.
@@ -866,7 +948,54 @@ export const Campaigns: React.FC = () => {
     }
   }, [checkSyncStatus, syncRunning])
 
-  const handleOpenContactsModal = useCallback(async (item: any, type: 'interesados' | 'sales' | 'appointments' | 'attendances') => {
+  const loadCampaignContactsModalPage = useCallback(async (
+    item: any,
+    type: 'interesados' | 'sales' | 'appointments' | 'attendances',
+    { cursor, cursorHistory, page, search }: Pick<ContactsModalPageState, 'cursor' | 'cursorHistory' | 'page' | 'search'>
+  ) => {
+    contactsModalAbortRef.current?.abort()
+    const controller = new AbortController()
+    contactsModalAbortRef.current = controller
+    const requestId = contactsModalRequestRef.current + 1
+    contactsModalRequestRef.current = requestId
+    setModalLoading(true)
+    setModalError(null)
+
+    const params: any = {
+      type,
+      startDate: formatDateToISO(dateRange.start),
+      endDate: formatEndDateToISO(dateRange.end),
+      cursor,
+      search,
+      limit: 50
+    }
+    if (item.level === 'campaign') params.campaign_id = item.id
+    else if (item.level === 'adset') params.adset_id = item.id
+    else if (item.level === 'ad') params.ad_id = item.id
+
+    try {
+      const result = await campaignsService.getContactsPage(params, controller.signal)
+      if (contactsModalRequestRef.current !== requestId) return
+
+      setModalContacts(result.contacts)
+      setContactsModalPage({
+        page,
+        cursor,
+        cursorHistory,
+        search,
+        hasNext: result.pagination.hasNext,
+        nextCursor: result.pagination.nextCursor
+      })
+    } catch (error) {
+      if (controller.signal.aborted || contactsModalRequestRef.current !== requestId) return
+      setModalContacts([])
+      setModalError('No se pudieron cargar los contactos. Intenta de nuevo.')
+    } finally {
+      if (contactsModalRequestRef.current === requestId) setModalLoading(false)
+    }
+  }, [dateRange])
+
+  const handleOpenContactsModal = useCallback((item: any, type: 'interesados' | 'sales' | 'appointments' | 'attendances') => {
     const typeLabel = type === 'interesados'
       ? labels.leads
       : type === 'sales'
@@ -882,115 +1011,116 @@ export const Campaigns: React.FC = () => {
     setModalContacts([])
     setModalError(null)
     setSelectedModalItem(item)
+    setContactsModalPage(emptyContactsModalPageState)
+    void loadCampaignContactsModalPage(item, type, {
+      cursor: null,
+      cursorHistory: [],
+      page: 1,
+      search: ''
+    })
+  }, [labels, loadCampaignContactsModalPage])
 
-    try {
-      const startDate = formatDateToISO(dateRange.start)
-      const endDate = formatEndDateToISO(dateRange.end) // Incluir día completo
-
-      const params: any = {
-        type,
-        startDate,
-        endDate
-      }
-
-      if (item.level === 'campaign') {
-        params.campaign_id = item.id
-      } else if (item.level === 'adset') {
-        params.adset_id = item.id
-      } else if (item.level === 'ad') {
-        params.ad_id = item.id
-      }
-
-      const contacts = await campaignsService.getContactsByType(params)
-      setModalContacts(contacts)
-    } catch {
-      setModalContacts([])
-      setModalError('No se pudieron cargar los contactos. Intenta de nuevo.')
-    } finally {
-      setModalLoading(false)
-    }
-  }, [dateRange, labels])
-
-  // Limpiar datos del modal cuando cambian las fechas
+  // Si el rango cambia con el modal abierto, reinicia el cursor: uno emitido para
+  // el rango anterior no se puede reutilizar en el nuevo conjunto de resultados.
   useEffect(() => {
-    if (isModalOpen) {
-      setModalContacts([]) // Limpiar datos anteriores
-      setModalError(null)
-      // Si el modal está abierto, recargar los datos con las nuevas fechas
-      if (selectedModalItem) {
-        const loadModalData = async () => {
-          setModalLoading(true)
-          try {
-            const startDate = formatDateToISO(dateRange.start)
-            const endDate = formatEndDateToISO(dateRange.end)
-
-            const params: any = {
-              startDate,
-              endDate,
-              type: modalType
-            }
-
-            if (selectedModalItem.level === 'campaign') {
-              params.campaign_id = selectedModalItem.id
-            } else if (selectedModalItem.level === 'adset') {
-              params.adset_id = selectedModalItem.id
-            } else if (selectedModalItem.level === 'ad') {
-              params.ad_id = selectedModalItem.id
-            }
-
-            const contacts = await campaignsService.getContactsByType(params)
-            setModalContacts(contacts)
-          } catch {
-            setModalContacts([])
-            setModalError('No se pudieron cargar los contactos. Intenta de nuevo.')
-          } finally {
-            setModalLoading(false)
-          }
-        }
-        loadModalData()
-      }
-    }
+    if (!isModalOpen || !selectedModalItem) return
+    setModalContacts([])
+    void loadCampaignContactsModalPage(selectedModalItem, modalType, {
+      cursor: null,
+      cursorHistory: [],
+      page: 1,
+      search: contactsModalPage.search
+    })
   }, [dateRange]) // Solo reaccionar a cambios de fecha
 
-  // Limpiar datos del modal de visitantes cuando cambian las fechas
-  useEffect(() => {
-    if (!analyticsEnabled) return
+  useEffect(() => () => contactsModalAbortRef.current?.abort(), [])
 
-    if (isVisitorsModalOpen) {
-      setModalVisitors([]) // Limpiar datos anteriores
-      // Si el modal está abierto, recargar los datos con las nuevas fechas
-      if (selectedVisitorItem) {
-        const loadVisitorsData = async () => {
-          setVisitorsModalLoading(true)
-          try {
-            const startDate = formatDateToISO(dateRange.start)
-            const endDate = formatEndDateToISO(dateRange.end)
-
-            const params: any = {
-              startDate,
-              endDate
-            }
-
-            if (selectedVisitorItem.level === 'campaign') {
-              params.campaign_id = selectedVisitorItem.id
-            } else if (selectedVisitorItem.level === 'adset') {
-              params.adset_id = selectedVisitorItem.id
-            } else if (selectedVisitorItem.level === 'ad') {
-              params.ad_id = selectedVisitorItem.id
-            }
-
-            const visitors = await campaignsService.getVisitorsList(params)
-            setModalVisitors(visitors)
-          } catch (error) {
-            setModalVisitors([])
-          } finally {
-            setVisitorsModalLoading(false)
-          }
-        }
-        loadVisitorsData()
-      }
+  const handleCampaignContactsPageChange = useCallback((direction: 'next' | 'previous') => {
+    if (!selectedModalItem) return
+    if (direction === 'next') {
+      if (!contactsModalPage.hasNext || !contactsModalPage.nextCursor) return
+      void loadCampaignContactsModalPage(selectedModalItem, modalType, {
+        cursor: contactsModalPage.nextCursor,
+        cursorHistory: [...contactsModalPage.cursorHistory, contactsModalPage.cursor],
+        page: contactsModalPage.page + 1,
+        search: contactsModalPage.search
+      })
+      return
     }
-  }, [analyticsEnabled, dateRange])
+
+    if (contactsModalPage.page <= 1) return
+    const previousCursor = contactsModalPage.cursorHistory[contactsModalPage.cursorHistory.length - 1] ?? null
+    void loadCampaignContactsModalPage(selectedModalItem, modalType, {
+      cursor: previousCursor,
+      cursorHistory: contactsModalPage.cursorHistory.slice(0, -1),
+      page: contactsModalPage.page - 1,
+      search: contactsModalPage.search
+    })
+  }, [contactsModalPage, loadCampaignContactsModalPage, modalType, selectedModalItem])
+
+  const handleCampaignContactsSearch = useCallback((search: string) => {
+    if (!selectedModalItem || search === contactsModalPage.search) return
+    void loadCampaignContactsModalPage(selectedModalItem, modalType, {
+      cursor: null,
+      cursorHistory: [],
+      page: 1,
+      search
+    })
+  }, [contactsModalPage.search, loadCampaignContactsModalPage, modalType, selectedModalItem])
+
+  const hydrateCampaignContact = useCallback(async (contact: { id: string }) => {
+    const detail = await contactsService.getContactDetails(contact.id, {
+      warmProfilePictures: false,
+      refreshExternalAppointments: false
+    })
+    return {
+      ...detail,
+      created_at: detail.createdAt,
+      hasShowedAppointment: detail.hasShowedAppointment,
+      hasAttendedAppointment: detail.hasAttendedAppointment
+    }
+  }, [])
+
+  const loadVisitorsModalPage = useCallback(async (
+    item: any,
+    { cursor, cursorHistory, page, search }: Pick<VisitorsModalPageState, 'cursor' | 'cursorHistory' | 'page' | 'search'>
+  ) => {
+    const requestId = visitorsModalRequestRef.current + 1
+    visitorsModalRequestRef.current = requestId
+    setVisitorsModalLoading(true)
+
+    const params: any = {
+      startDate: formatDateToISO(dateRange.start),
+      endDate: formatEndDateToISO(dateRange.end),
+      cursor,
+      search,
+      limit: 50
+    }
+    if (item.level === 'campaign') params.campaign_id = item.id
+    else if (item.level === 'adset') params.adset_id = item.id
+    else if (item.level === 'ad') params.ad_id = item.id
+
+    const result = await campaignsService.getVisitorsPage(params)
+    if (visitorsModalRequestRef.current !== requestId) return
+
+    setModalVisitors(result.items)
+    setVisitorsModalPage({
+      page,
+      cursor,
+      cursorHistory,
+      search,
+      hasNext: result.pagination.hasNext,
+      nextCursor: result.pagination.nextCursor
+    })
+    setVisitorsModalLoading(false)
+  }, [dateRange.end, dateRange.start])
+
+  useEffect(() => {
+    if (!analyticsEnabled || !isVisitorsModalOpen || !selectedVisitorItem) return
+    setModalVisitors([])
+    setVisitorsModalPage(emptyVisitorsModalPageState)
+    void loadVisitorsModalPage(selectedVisitorItem, { cursor: null, cursorHistory: [], page: 1, search: '' })
+  }, [analyticsEnabled, isVisitorsModalOpen, loadVisitorsModalPage, selectedVisitorItem])
 
   const handleOpenVisitorsModal = useCallback(async (item: any) => {
     if (!analyticsEnabled) return
@@ -999,88 +1129,216 @@ export const Campaigns: React.FC = () => {
     setIsVisitorsModalOpen(true)
     setVisitorsModalTitle(`Visitantes - ${item.name}`)
     setModalVisitors([])
-    setSelectedVisitorItem(item) // Guardar el item seleccionado
+    setSelectedVisitorItem(item)
+    setVisitorsModalPage(emptyVisitorsModalPageState)
+  }, [analyticsEnabled])
+
+  const handleVisitorsModalPageChange = useCallback((direction: 'next' | 'previous') => {
+    if (!selectedVisitorItem) return
+    if (direction === 'next') {
+      if (!visitorsModalPage.hasNext || !visitorsModalPage.nextCursor) return
+      void loadVisitorsModalPage(selectedVisitorItem, {
+        cursor: visitorsModalPage.nextCursor,
+        cursorHistory: [...visitorsModalPage.cursorHistory, visitorsModalPage.cursor],
+        page: visitorsModalPage.page + 1,
+        search: visitorsModalPage.search
+      })
+      return
+    }
+
+    if (visitorsModalPage.page <= 1) return
+    const previousCursor = visitorsModalPage.cursorHistory[visitorsModalPage.cursorHistory.length - 1] ?? null
+    void loadVisitorsModalPage(selectedVisitorItem, {
+      cursor: previousCursor,
+      cursorHistory: visitorsModalPage.cursorHistory.slice(0, -1),
+      page: visitorsModalPage.page - 1,
+      search: visitorsModalPage.search
+    })
+  }, [loadVisitorsModalPage, selectedVisitorItem, visitorsModalPage])
+
+  const handleVisitorsModalSearch = useCallback((search: string) => {
+    if (!selectedVisitorItem) return
+    if (search === visitorsModalPage.search) return
+    void loadVisitorsModalPage(selectedVisitorItem, { cursor: null, cursorHistory: [], page: 1, search })
+  }, [loadVisitorsModalPage, selectedVisitorItem, visitorsModalPage.search])
+
+  const loadCampaignAdSetsPage = useCallback(async (campaignId: string, page: number) => {
+    const id = String(campaignId)
+    const requestId = ++childrenRequestSequenceRef.current
+    const entityRequestVersion = entityRequestRef.current
+    const requestContextKey = entityContextKey
+    campaignChildrenRequestRef.current.set(id, requestId)
+    const isCurrentRequest = () => (
+      campaignChildrenRequestRef.current.get(id) === requestId &&
+      entityRequestRef.current === entityRequestVersion &&
+      entityContextRef.current === requestContextKey
+    )
+    setCampaigns(previous => previous.map(item => String(item.id) === id
+      ? { ...item, childrenLoading: true }
+      : item))
 
     try {
-      const startDate = formatDateToISO(dateRange.start)
-      const endDate = formatEndDateToISO(dateRange.end)
-
-      const params: any = {
-        startDate,
-        endDate
-      }
-
-      if (item.level === 'campaign') {
-        params.campaign_id = item.id
-      } else if (item.level === 'adset') {
-        params.adset_id = item.id
-      } else if (item.level === 'ad') {
-        params.ad_id = item.id
-      }
-
-      const queryString = new URLSearchParams(params).toString()
-      const response = await fetch(`/api/tracking/visitors?${queryString}`)
-      const data = await response.json()
-
-      if (data.success) {
-        setModalVisitors(data.data || [])
-      } else {
-        setModalVisitors([])
-      }
-    } catch {
-      setModalVisitors([])
-    } finally {
-      setVisitorsModalLoading(false)
-    }
-  }, [analyticsEnabled, dateRange])
-
-  const toggleCampaign = useCallback((campaignId: string) => {
-    // Asegurar que el ID sea string
-    const id = String(campaignId)
-
-    setExpandedCampaigns(prev => {
-      const newSet = new Set(prev)
-
-      if (newSet.has(id)) {
-        // Colapsar campaña
-        newSet.delete(id)
-
-        // También colapsar todos sus AdSets
-        const campaign = campaigns.find(c => String(c.id) === id)
-        if (campaign?.adsets && Array.isArray(campaign.adsets)) {
-          setExpandedAdSets(prevAdSets => {
-            const newAdSets = new Set(prevAdSets)
-            campaign.adsets?.forEach((adSet: any) => {
-              newAdSets.delete(String(adSet.id))
-            })
-            return newAdSets
-          })
+      const response = await campaignsService.getCampaignPerformancePage({
+        startDate: formatDateToISO(dateRange.start),
+        endDate: formatEndDateToISO(dateRange.end),
+        level: 'adset',
+        campaignId: id,
+        page,
+        pageSize: 200,
+        sortBy: 'lastActiveDate',
+        sortOrder: 'desc',
+        includeVisitors: analyticsEnabled && visitorSource === 'tracking'
+      })
+      if (!isCurrentRequest()) return response
+      const incoming = response.items.map(item => ({
+        ...item,
+        campaignId: id,
+        ads: [],
+        childrenLoaded: false,
+        childrenLoading: false,
+        childrenPage: 0,
+        childrenHasMore: Boolean(item.hasChildren)
+      })) as AdSetData[]
+      setCampaigns(previous => previous.map(item => {
+        if (String(item.id) !== id) return item
+        const adsets = mergeCampaignChildren(item.adsets || item.adSets || [], incoming)
+        return {
+          ...item,
+          adsets,
+          adSets: adsets,
+          childrenLoaded: true,
+          childrenLoading: false,
+          childrenPage: response.pagination.page,
+          childrenHasMore: response.pagination.hasMore
         }
-      } else {
-        // Expandir campaña
-        newSet.add(id)
+      }))
+      return response
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setCampaigns(previous => previous.map(item => String(item.id) === id
+          ? { ...item, childrenLoading: false }
+          : item))
       }
+      throw error
+    } finally {
+      if (campaignChildrenRequestRef.current.get(id) === requestId) {
+        campaignChildrenRequestRef.current.delete(id)
+      }
+    }
+  }, [analyticsEnabled, dateRange.end, dateRange.start, entityContextKey, visitorSource])
 
-      return newSet
-    })
-  }, [campaigns])
-
-  const toggleAdSet = useCallback((adSetId: string) => {
-    // Asegurar que el ID sea string
+  const loadAdSetAdsPage = useCallback(async (adSetId: string, campaignId: string, page: number) => {
     const id = String(adSetId)
+    const parentId = String(campaignId)
+    const requestKey = `${parentId}:${id}`
+    const requestId = ++childrenRequestSequenceRef.current
+    const entityRequestVersion = entityRequestRef.current
+    const requestContextKey = entityContextKey
+    adSetChildrenRequestRef.current.set(requestKey, requestId)
+    const isCurrentRequest = () => (
+      adSetChildrenRequestRef.current.get(requestKey) === requestId &&
+      entityRequestRef.current === entityRequestVersion &&
+      entityContextRef.current === requestContextKey
+    )
+    setCampaigns(previous => previous.map(campaign => String(campaign.id) !== parentId
+      ? campaign
+      : {
+          ...campaign,
+          adsets: campaign.adsets?.map(item => String(item.id) === id ? { ...item, childrenLoading: true } : item),
+          adSets: campaign.adSets?.map(item => String(item.id) === id ? { ...item, childrenLoading: true } : item)
+        }))
 
-    setExpandedAdSets(prev => {
-      const newSet = new Set(prev)
-
-      if (newSet.has(id)) {
-        newSet.delete(id)
-      } else {
-        newSet.add(id)
+    try {
+      const response = await campaignsService.getCampaignPerformancePage({
+        startDate: formatDateToISO(dateRange.start),
+        endDate: formatEndDateToISO(dateRange.end),
+        level: 'ad',
+        adsetId: id,
+        page,
+        pageSize: 200,
+        sortBy: 'lastActiveDate',
+        sortOrder: 'desc',
+        includeVisitors: analyticsEnabled && visitorSource === 'tracking'
+      })
+      if (!isCurrentRequest()) return response
+      const incoming = response.items.map(item => ({ ...item })) as AdData[]
+      const mergeAdSets = (items: AdSetData[] | undefined) => items?.map(item => {
+        if (String(item.id) !== id) return item
+        return {
+          ...item,
+          ads: mergeCampaignChildren(item.ads || [], incoming),
+          childrenLoaded: true,
+          childrenLoading: false,
+          childrenPage: response.pagination.page,
+          childrenHasMore: response.pagination.hasMore
+        }
+      })
+      setCampaigns(previous => previous.map(campaign => String(campaign.id) !== parentId
+        ? campaign
+        : { ...campaign, adsets: mergeAdSets(campaign.adsets), adSets: mergeAdSets(campaign.adSets) }))
+      return response
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setCampaigns(previous => previous.map(campaign => String(campaign.id) !== parentId
+          ? campaign
+          : {
+              ...campaign,
+              adsets: campaign.adsets?.map(item => String(item.id) === id ? { ...item, childrenLoading: false } : item),
+              adSets: campaign.adSets?.map(item => String(item.id) === id ? { ...item, childrenLoading: false } : item)
+            }))
       }
+      throw error
+    } finally {
+      if (adSetChildrenRequestRef.current.get(requestKey) === requestId) {
+        adSetChildrenRequestRef.current.delete(requestKey)
+      }
+    }
+  }, [analyticsEnabled, dateRange.end, dateRange.start, entityContextKey, visitorSource])
 
-      return newSet
-    })
-  }, [])
+  const toggleCampaign = useCallback(async (campaignId: string) => {
+    const id = String(campaignId)
+    const campaign = campaigns.find(item => String(item.id) === id)
+
+    if (expandedCampaigns.has(id)) {
+      setExpandedCampaigns(previous => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
+      if (campaign?.adsets) {
+        setExpandedAdSets(previous => {
+          const next = new Set(previous)
+          campaign.adsets?.forEach(adset => next.delete(String(adset.id)))
+          return next
+        })
+      }
+      return
+    }
+
+    setExpandedCampaigns(previous => new Set(previous).add(id))
+    if (!campaign?.hasChildren || campaign.childrenLoaded || campaign.childrenLoading) return
+    await loadCampaignAdSetsPage(id, 1).catch(() => undefined)
+  }, [campaigns, expandedCampaigns, loadCampaignAdSetsPage])
+
+  const toggleAdSet = useCallback(async (adSetId: string, campaignId?: string) => {
+    const id = String(adSetId)
+    const parentId = String(campaignId || '')
+
+    if (expandedAdSets.has(id)) {
+      setExpandedAdSets(previous => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
+      return
+    }
+
+    setExpandedAdSets(previous => new Set(previous).add(id))
+    const parent = campaigns.find(item => String(item.id) === parentId)
+    const adset = parent?.adsets?.find(item => String(item.id) === id)
+    if (!adset?.hasChildren || adset.childrenLoaded || adset.childrenLoading) return
+    await loadAdSetAdsPage(id, parentId, 1).catch(() => undefined)
+  }, [campaigns, expandedAdSets, loadAdSetAdsPage])
 
   useEffect(() => {
     const routeTarget = routeState.routeTarget
@@ -1136,6 +1394,44 @@ export const Campaigns: React.FC = () => {
           end: monthRange.end,
           preset: 'custom'
         })
+        return
+      }
+    }
+
+    // Las rutas profundas llegan desde búsqueda global. Con jerarquía lazy,
+    // primero ubicamos la campaña y luego pedimos únicamente sus descendientes.
+    if (!matchingCampaign) {
+      if (loading) return
+      if (campaignSearch !== String(campaignId)) {
+        setCampaignSearchInput(String(campaignId))
+        return
+      }
+    } else if ((level === 'adset' || level === 'ad') && !matchingAdSet) {
+      const cleanCampaignId = String(campaignId)
+      setExpandedCampaigns(previous => previous.has(cleanCampaignId)
+        ? previous
+        : new Set(previous).add(cleanCampaignId))
+      if (matchingCampaign.childrenLoading) return
+      if (!matchingCampaign.childrenLoaded) {
+        void loadCampaignAdSetsPage(cleanCampaignId, 1).catch(() => undefined)
+        return
+      }
+      if (matchingCampaign.childrenHasMore) {
+        void loadCampaignAdSetsPage(cleanCampaignId, (matchingCampaign.childrenPage || 1) + 1).catch(() => undefined)
+        return
+      }
+    } else if (level === 'ad' && matchingAdSet && !matchingAd) {
+      const cleanAdSetId = String(matchingAdSet.id)
+      setExpandedAdSets(previous => previous.has(cleanAdSetId)
+        ? previous
+        : new Set(previous).add(cleanAdSetId))
+      if (matchingAdSet.childrenLoading) return
+      if (!matchingAdSet.childrenLoaded) {
+        void loadAdSetAdsPage(cleanAdSetId, String(campaignId), 1).catch(() => undefined)
+        return
+      }
+      if (matchingAdSet.childrenHasMore) {
+        void loadAdSetAdsPage(cleanAdSetId, String(campaignId), (matchingAdSet.childrenPage || 1) + 1).catch(() => undefined)
         return
       }
     }
@@ -1197,7 +1493,20 @@ export const Campaigns: React.FC = () => {
     nextParams.delete('adId')
     nextParams.delete('date')
     setSearchParams(nextParams, { replace: true })
-  }, [campaigns, dateRange, loading, routeState.routeTarget, searchParams, setDateRange, setSearchParams])
+  }, [
+    campaignSearch,
+    campaigns,
+    dateRange,
+    expandedAdSets,
+    expandedCampaigns,
+    loading,
+    routeState.routeTarget,
+    searchParams,
+    setDateRange,
+    setSearchParams,
+    loadAdSetAdsPage,
+    loadCampaignAdSetsPage
+  ])
 
   useEffect(() => {
     if (!highlightedRowKey) return
@@ -1218,105 +1527,13 @@ export const Campaigns: React.FC = () => {
     }
   }, [highlightedRowKey])
 
-  // Lista plana de ads ganadores: ordenados por revenue → sales → appointments → attendances → leads
-  const sortWinners = React.useCallback((items: any[]) => {
-    return [...items]
-      .filter(item =>
-        (item.revenue || 0) > 0 ||
-        (item.sales || 0) > 0 ||
-        (item.appointments || 0) > 0 ||
-        (item.attendances || 0) > 0 ||
-        (item.leads || 0) > 0
-      )
-      .sort((a, b) => {
-        const ar = a.revenue || 0, br = b.revenue || 0
-        if (br !== ar) return br - ar
-        const asa = a.sales || 0, bsa = b.sales || 0
-        if (bsa !== asa) return bsa - asa
-        const ap = a.appointments || 0, bp = b.appointments || 0
-        if (bp !== ap) return bp - ap
-        const aa = a.attendances || 0, ba = b.attendances || 0
-        if (ba !== aa) return ba - aa
-        const al = a.leads || 0, bl = b.leads || 0
-        return bl - al
-      })
-      .map((item, index) => ({ ...item, rank: index + 1 }))
-  }, [])
-
-  const winnersCampaigns = React.useMemo(() => {
-    const items = campaigns.map(campaign => ({
-      ...campaign,
-      id: String(campaign.id),
-      level: 'campaign' as const,
-      platform: campaign.platform,
-      revenue: campaign.revenue || 0,
-      sales: campaign.sales || 0,
-      appointments: (campaign as any).appointments || 0,
-      attendances: (campaign as any).attendances || 0,
-      leads: campaign.leads || 0,
-      spend: campaign.spend || 0
-    }))
-    return sortWinners(items)
-  }, [campaigns, sortWinners])
-
-  const winnersAdSets = React.useMemo(() => {
-    const items: any[] = []
-    campaigns.forEach(campaign => {
-      const adSetsData = campaign.adsets || campaign.adSets || []
-      adSetsData.forEach((adSet: any) => {
-        items.push({
-          ...adSet,
-          id: String(adSet.id),
-          level: 'adset',
-          campaignId: String(campaign.id),
-          campaignName: campaign.name,
-          platform: campaign.platform,
-          revenue: adSet.revenue || 0,
-          sales: adSet.sales || 0,
-          appointments: adSet.appointments || 0,
-          attendances: adSet.attendances || 0,
-          leads: adSet.leads || 0,
-          spend: adSet.spend || 0
-        })
-      })
-    })
-    return sortWinners(items)
-  }, [campaigns, sortWinners])
-
-  const winnersAds = React.useMemo(() => {
-    const items: any[] = []
-    campaigns.forEach(campaign => {
-      const adSetsData = campaign.adsets || campaign.adSets || []
-      adSetsData.forEach((adSet: any) => {
-        const adsData = adSet.ads || []
-        adsData.forEach((ad: any) => {
-          items.push({
-            ...ad,
-            id: String(ad.id),
-            level: 'ad',
-            campaignId: String(campaign.id),
-            campaignName: campaign.name,
-            adSetId: String(adSet.id),
-            adSetName: adSet.name,
-            platform: campaign.platform,
-            revenue: ad.revenue || 0,
-            sales: ad.sales || 0,
-            appointments: ad.appointments || 0,
-            attendances: ad.attendances || 0,
-            leads: ad.leads || 0,
-            spend: ad.spend || 0
-          })
-        })
-      })
-    })
-    return sortWinners(items)
-  }, [campaigns, sortWinners])
-
-  const winnersActiveData = winnersCategory === 'campaigns'
-    ? winnersCampaigns
-    : winnersCategory === 'adsets'
-      ? winnersAdSets
-      : winnersAds
+  const winnersActiveData = flatEntities.filter(item =>
+    (item.revenue || 0) > 0 ||
+    (item.sales || 0) > 0 ||
+    (item.appointments || 0) > 0 ||
+    (item.attendances || 0) > 0 ||
+    (item.leads || 0) > 0
+  )
 
   const getCreativePreviewData = React.useCallback((item: any): CreativePreviewData | null => {
     if (item.level !== 'ad') return null
@@ -1598,7 +1815,7 @@ export const Campaigns: React.FC = () => {
         ...campaign,
         id: campaignId, // Asegurar que el ID sea string
         level: 'campaign',
-        hasChildren: adSetsData.length > 0,
+        hasChildren: Boolean(campaign.hasChildren || adSetsData.length > 0),
         isExpanded: isExpanded,
         showPlaceholder: isExpanded && adSetsData.length > 0
       })
@@ -1616,7 +1833,7 @@ export const Campaigns: React.FC = () => {
             id: adSetId, // Asegurar que el ID sea string
             level: 'adset',
             campaignId: campaignId,
-            hasChildren: adsData.length > 0,
+            hasChildren: Boolean(adSet.hasChildren || adsData.length > 0),
             isExpanded: adSetExpanded,
             showPlaceholder: adSetExpanded && adsData.length > 0
           })
@@ -1635,7 +1852,36 @@ export const Campaigns: React.FC = () => {
               })
             })
           }
+
+          if (adSetExpanded && adSet.childrenHasMore) {
+            flatData.push({
+              id: `load-more-ads-${adSetId}`,
+              level: 'load-more',
+              name: 'Cargar más anuncios',
+              isLoadMore: true,
+              loadMoreKind: 'ads',
+              campaignId,
+              adSetId,
+              loading: Boolean(adSet.childrenLoading),
+              nextPage: (adSet.childrenPage || 1) + 1,
+              hasChildren: false
+            })
+          }
         })
+
+        if (campaign.childrenHasMore) {
+          flatData.push({
+            id: `load-more-adsets-${campaignId}`,
+            level: 'load-more',
+            name: 'Cargar más conjuntos',
+            isLoadMore: true,
+            loadMoreKind: 'adsets',
+            campaignId,
+            loading: Boolean(campaign.childrenLoading),
+            nextPage: (campaign.childrenPage || 1) + 1,
+            hasChildren: false
+          })
+        }
       }
     })
 
@@ -1643,6 +1889,10 @@ export const Campaigns: React.FC = () => {
   }
 
   const getFlatAdSetsData = () => {
+    if (campaignTableView === 'adsets') {
+      return flatEntities
+    }
+
     const flatData: any[] = []
 
     if (!campaigns || campaigns.length === 0) {
@@ -1672,6 +1922,10 @@ export const Campaigns: React.FC = () => {
   }
 
   const getFlatAdsData = () => {
+    if (campaignTableView === 'ads') {
+      return flatEntities
+    }
+
     const flatData: any[] = []
 
     if (!campaigns || campaigns.length === 0) {
@@ -1717,7 +1971,7 @@ export const Campaigns: React.FC = () => {
     }
 
     return getClassicCampaignTableData()
-  }, [campaignTableView, campaigns, expandedCampaigns, expandedAdSets])
+  }, [campaignTableView, campaigns, expandedCampaigns, expandedAdSets, flatEntities])
 
   const campaignTableSearchPlaceholder = campaignTableView === 'classic'
     ? 'Buscar campañas, conjuntos o anuncios...'
@@ -1744,6 +1998,33 @@ export const Campaigns: React.FC = () => {
       fixed: true,
       visible: true,
       render: (value, item) => {
+        if (item.isLoadMore) {
+          const loadNextPage = (event: React.MouseEvent) => {
+            event.stopPropagation()
+            if (item.loadMoreKind === 'adsets') {
+              void loadCampaignAdSetsPage(String(item.campaignId), Number(item.nextPage) || 1)
+              return
+            }
+            void loadAdSetAdsPage(
+              String(item.adSetId),
+              String(item.campaignId),
+              Number(item.nextPage) || 1
+            )
+          }
+
+          return (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              loading={Boolean(item.loading)}
+              onClick={loadNextPage}
+            >
+              {value}
+            </Button>
+          )
+        }
+
         const isFlatView = Boolean(item.isFlatView)
         const indentStyle = {
           paddingLeft: isFlatView
@@ -1759,7 +2040,7 @@ export const Campaigns: React.FC = () => {
           if (item.level === 'campaign') {
             toggleCampaign(item.id)
           } else if (item.level === 'adset') {
-            toggleAdSet(item.id)
+            toggleAdSet(item.id, item.campaignId)
           }
         }
 
@@ -2247,6 +2528,7 @@ export const Campaigns: React.FC = () => {
   }, [campaignSummary, calculateDelta])
 
   const campaignsRefreshing = loading && hasLoadedCampaigns
+  const campaignOverviewRefreshing = overviewLoading
 
   if (loading && !hasLoadedCampaigns) {
     return <Loading message="Cargando campañas..." page="campaigns" />
@@ -2381,7 +2663,7 @@ export const Campaigns: React.FC = () => {
             value={formatCurrency(totals.revenue)}
             delta={campaignDeltas.revenue}
             deltaLabel="vs periodo anterior"
-            loading={campaignsRefreshing}
+            loading={campaignOverviewRefreshing}
             icon={<DollarSign size={20} />}
           />
           <KpiCard
@@ -2389,7 +2671,7 @@ export const Campaigns: React.FC = () => {
             value={formatCurrency(totals.spend)}
             delta={campaignDeltas.spend}
             deltaLabel="vs periodo anterior"
-            loading={campaignsRefreshing}
+            loading={campaignOverviewRefreshing}
             icon={<Megaphone size={20} />}
           />
           <KpiCard
@@ -2397,7 +2679,7 @@ export const Campaigns: React.FC = () => {
             value={formatRoas(avgRoas)}
             delta={campaignDeltas.roas}
             deltaLabel="vs periodo anterior"
-            loading={campaignsRefreshing}
+            loading={campaignOverviewRefreshing}
             icon={<TrendingUp size={20} />}
           />
           <KpiCard
@@ -2405,7 +2687,7 @@ export const Campaigns: React.FC = () => {
             value={totals.sales.toString()}
             delta={campaignDeltas.sales}
             deltaLabel="vs periodo anterior"
-            loading={campaignsRefreshing}
+            loading={campaignOverviewRefreshing}
             icon={<Target size={20} />}
           />
           <KpiCard
@@ -2413,7 +2695,7 @@ export const Campaigns: React.FC = () => {
             value={totals.leads.toString()}
             delta={campaignDeltas.leads}
             deltaLabel="vs periodo anterior"
-            loading={campaignsRefreshing}
+            loading={campaignOverviewRefreshing}
             icon={<Users size={20} />}
           />
         </div>
@@ -2450,7 +2732,7 @@ export const Campaigns: React.FC = () => {
               </div>
             </div>
             <div style={{ height: 340 }}>
-              {campaignsRefreshing ? (
+              {campaignOverviewRefreshing ? (
                 <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando campañas">
                   {[52, 76, 58, 86, 64, 72, 48].map((height, index) => (
                     <span
@@ -2513,7 +2795,23 @@ export const Campaigns: React.FC = () => {
               searchable={true}
               searchPlaceholder={`Buscar ${winnersCategory === 'campaigns' ? 'campañas' : winnersCategory === 'adsets' ? 'conjuntos' : 'anuncios'}...`}
               paginated={true}
-              pageSize={50}
+              pageSize={campaignPageInfo.pageSize}
+              serverSideSearch={true}
+              searchTerm={campaignSearchInput}
+              onSearchTermChange={setCampaignSearchInput}
+              serverSidePagination={true}
+              currentPage={campaignPageInfo.page}
+              totalItems={campaignPageInfo.totalItems}
+              totalPages={campaignPageInfo.totalPages}
+              onPageChange={setCampaignPage}
+              serverSideSort={true}
+              sortBy={campaignSortBy === 'lastActiveDate' ? 'revenue' : campaignSortBy}
+              sortOrder={campaignSortBy === 'lastActiveDate' ? 'desc' : campaignSortOrder}
+              onSortChange={(sortBy, sortOrder) => {
+                setCampaignSortBy(sortBy)
+                setCampaignSortOrder(sortOrder)
+                setCampaignPage(1)
+              }}
               tableId={`campaigns_winners_${winnersCategory}`}
             />
           </Card>
@@ -2530,7 +2828,27 @@ export const Campaigns: React.FC = () => {
             searchable={true}
             searchPlaceholder={campaignTableSearchPlaceholder}
             paginated={true}
-            pageSize={50}
+            pageSize={campaignPageInfo.pageSize}
+            serverSideSearch={true}
+            searchTerm={campaignSearchInput}
+            onSearchTermChange={setCampaignSearchInput}
+            serverSidePagination={true}
+            currentPage={campaignPageInfo.page}
+            totalItems={campaignPageInfo.totalItems}
+            totalPages={campaignPageInfo.totalPages}
+            onPageChange={(nextPage) => {
+              setExpandedCampaigns(new Set())
+              setExpandedAdSets(new Set())
+              setCampaignPage(nextPage)
+            }}
+            serverSideSort={true}
+            sortBy={campaignSortBy}
+            sortOrder={campaignSortOrder}
+            onSortChange={(sortBy, sortOrder) => {
+              setCampaignSortBy(sortBy)
+              setCampaignSortOrder(sortOrder)
+              setCampaignPage(1)
+            }}
             filters={campaignTableTabs}
             activeFilter={campaignTableView}
             onFilterChange={handleCampaignTableViewChange}
@@ -2546,23 +2864,35 @@ export const Campaigns: React.FC = () => {
       <ContactDetailsModal
         isOpen={isModalOpen}
         onClose={() => {
+          contactsModalAbortRef.current?.abort()
+          contactsModalRequestRef.current += 1
           setIsModalOpen(false)
           setSelectedModalItem(null)
           setModalError(null)
+          setContactsModalPage(emptyContactsModalPageState)
         }}
         title={modalTitle}
         subtitle={modalError || (modalContacts.length === 0
           ? 'Sin datos para este periodo'
-          : `${modalContacts.length} ${modalType === 'interesados'
-            ? labels.leads.toLowerCase()
-            : modalType === 'sales'
-              ? labels.customers.toLowerCase()
-              : modalType === 'attendances'
-                ? 'asistencias'
-                : 'citas'}`)}
+          : `Página ${contactsModalPage.page}`)}
         data={modalContacts}
         loading={modalLoading}
         type={modalType}
+        totalCount={Number(
+          modalType === 'interesados'
+            ? selectedModalItem?.leads
+            : modalType === 'sales'
+              ? selectedModalItem?.sales
+              : modalType === 'attendances'
+                ? selectedModalItem?.attendances
+                : selectedModalItem?.appointments
+        ) || modalContacts.length}
+        currentPage={contactsModalPage.page}
+        hasNextPage={contactsModalPage.hasNext}
+        hasPreviousPage={contactsModalPage.page > 1}
+        onPageChange={handleCampaignContactsPageChange}
+        onSearchChange={handleCampaignContactsSearch}
+        onSelectContact={hydrateCampaignContact}
       />
 
       {/* Modal de visitantes */}
@@ -2574,6 +2904,11 @@ export const Campaigns: React.FC = () => {
           subtitle={visitorsModalTitle}
           data={modalVisitors}
           loading={visitorsModalLoading}
+          currentPage={visitorsModalPage.page}
+          hasNextPage={visitorsModalPage.hasNext}
+          hasPreviousPage={visitorsModalPage.page > 1}
+          onPageChange={handleVisitorsModalPageChange}
+          onSearchChange={handleVisitorsModalSearch}
         />
       )}
 

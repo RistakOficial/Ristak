@@ -498,6 +498,21 @@
   padding: 16px;
 }
 
+.paginationBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 0 2px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.paginationBar > div {
+  display: flex;
+  gap: 8px;
+}
+
 .marqueeBox {
   position: absolute;
   z-index: 5;
@@ -807,6 +822,14 @@
   gap: 4px;
   overflow-y: auto;
   padding: 2px;
+}
+
+.moveFoldersLoading {
+  display: flex;
+  min-height: 88px;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
 }
 
 .moveFolderOption {

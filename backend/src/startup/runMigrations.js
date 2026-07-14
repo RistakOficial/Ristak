@@ -18,12 +18,29 @@ const migrationsDir = join(__dirname, '../../migrations/versioned')
 
 const ALREADY_EXISTS = /already exists|duplicate column|duplicate key|exists/i
 const POSTGRES_ONLY_MIGRATION_SUFFIX = '.postgres.sql'
+const SQLITE_ONLY_MIGRATION_SUFFIX = '.sqlite.sql'
+const VERSIONED_MIGRATION_LOCK_NAME = 'versioned-migrations'
+const VERSIONED_MIGRATION_LOCK_WAIT_MS = 15 * 60_000
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 export function migrationRunsForDialect(file, dialect = databaseDialect) {
-  if (String(file || '').endsWith(POSTGRES_ONLY_MIGRATION_SUFFIX)) {
+  const migrationName = String(file || '')
+  if (migrationName.endsWith(POSTGRES_ONLY_MIGRATION_SUFFIX)) {
     return dialect === 'postgres'
   }
+  if (migrationName.endsWith(SQLITE_ONLY_MIGRATION_SUFFIX)) {
+    return dialect === 'sqlite'
+  }
   return true
+}
+
+function migrationDialectLabel(file) {
+  return String(file || '').endsWith(SQLITE_ONLY_MIGRATION_SUFFIX)
+    ? 'SQLite'
+    : 'PostgreSQL'
 }
 
 /**
@@ -34,7 +51,7 @@ export function migrationRunsForDialect(file, dialect = databaseDialect) {
  *  - aplicación previa manual de un cambio: igual, se marca aplicada y se sigue.
  * Funciona en SQLite (dev) y PostgreSQL (prod) usando la abstracción db.
  */
-export async function runVersionedMigrations({
+async function runVersionedMigrationsUnlocked({
   database = db,
   dialect = databaseDialect,
   directory = migrationsDir
@@ -63,7 +80,7 @@ export async function runVersionedMigrations({
     if (applied.has(file)) continue
 
     if (!migrationRunsForDialect(file, dialect)) {
-      logger.info(`[Migraciones] Omitiendo ${file}: sólo aplica a PostgreSQL.`)
+      logger.info(`[Migraciones] Omitiendo ${file}: sólo aplica a ${migrationDialectLabel(file)}.`)
       await database.run('INSERT INTO schema_migrations (name) VALUES (?) ON CONFLICT DO NOTHING', [file])
       applied.add(file)
       skipped += 1
@@ -93,4 +110,47 @@ export async function runVersionedMigrations({
   if (count > 0) logger.success(`[Migraciones] ${count} migración(es) versionada(s) aplicada(s).`)
   else logger.info('[Migraciones] Esquema versionado al día.')
   return { applied: count, skipped }
+}
+
+export async function runVersionedMigrations(options = {}) {
+  const database = options.database || db
+  const dialect = options.dialect || databaseDialect
+
+  // Las cadenas PostgreSQL pueden abarcar varios archivos y procedimientos que
+  // hacen COMMIT por lote. Un lock de sesion serializa la cadena completa sin
+  // envolver CREATE INDEX CONCURRENTLY ni CALL en una transaccion.
+  if (dialect !== 'postgres' || typeof database.withAdvisoryLock !== 'function') {
+    return runVersionedMigrationsUnlocked({ ...options, database, dialect })
+  }
+
+  const startedAt = Date.now()
+  let waitLogged = false
+  while (true) {
+    let callbackStarted = false
+    try {
+      return await database.withAdvisoryLock(VERSIONED_MIGRATION_LOCK_NAME, async (lockedDatabase) => {
+        callbackStarted = true
+        return runVersionedMigrationsUnlocked({
+          ...options,
+          database: lockedDatabase || database,
+          dialect
+        })
+      })
+    } catch (error) {
+      // Si el callback ya empezo, el error pertenece a una migracion y jamas se
+      // reintenta toda la cadena. Solo esperamos el try-lock ocupado al entrar.
+      if (error?.code !== 'DATABASE_ADVISORY_LOCK_BUSY' || callbackStarted) throw error
+      if (Date.now() - startedAt >= VERSIONED_MIGRATION_LOCK_WAIT_MS) {
+        throw Object.assign(
+          new Error('Otra instancia no liberó a tiempo el candado de migraciones versionadas.'),
+          { code: 'VERSIONED_MIGRATION_LOCK_TIMEOUT' }
+        )
+      }
+      if (!waitLogged) {
+        waitLogged = true
+        logger.info('[Migraciones] Otra instancia está migrando; este arranque esperará el mismo resultado.')
+      }
+      await sleep(500)
+    }
+  }
 }

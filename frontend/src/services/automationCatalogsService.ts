@@ -12,6 +12,11 @@ import { triggerLinksService } from './triggerLinksService'
 import { userAccessService } from './userAccessService'
 import { productsService, type ProductItem } from './productsService'
 import { automationsService } from './automationsService'
+import {
+  getAuthScopedCacheRevision,
+  registerAuthScopedCacheInvalidator,
+  syncAuthScopedCachePrincipal
+} from './authPrincipalCache'
 
 /**
  * Catálogos de datos reales del CRM para los selectores del editor de
@@ -182,6 +187,7 @@ async function loadForms(): Promise<CatalogOption[]> {
 const formFieldCache = new Map<string, Promise<CatalogOption[]>>()
 
 export function getFormFieldCatalog(formId: string): Promise<CatalogOption[]> {
+  syncAuthScopedCachePrincipal()
   const cleanFormId = String(formId || '').trim()
   if (!cleanFormId) return Promise.resolve([])
   if (!formFieldCache.has(cleanFormId)) {
@@ -195,7 +201,9 @@ export function getFormFieldCatalog(formId: string): Promise<CatalogOption[]> {
         }))
         .filter((option) => option.value))
       .catch(() => {
-        formFieldCache.delete(cleanFormId)
+        if (formFieldCache.get(cleanFormId) === promise) {
+          formFieldCache.delete(cleanFormId)
+        }
         return []
       })
     formFieldCache.set(cleanFormId, promise)
@@ -220,7 +228,10 @@ const AUTOMATION_STATUS_META: Record<string, string> = {
 }
 
 async function loadAutomations(): Promise<CatalogOption[]> {
-  const overview = await automationsService.getOverview({ suppressFeatureNotAvailableToast: true })
+  const overview = await automationsService.getOverview({
+    suppressFeatureNotAvailableToast: true,
+    limit: 100
+  })
   return (overview?.automations || [])
     .map((automation) => ({
       value: automation.id,
@@ -343,13 +354,16 @@ let rawTemplatesCache: WhatsAppApiTemplate[] | null = null
 let rawTemplatesPromise: Promise<WhatsAppApiTemplate[]> | null = null
 
 async function loadRawWhatsAppTemplates(): Promise<WhatsAppApiTemplate[]> {
+  syncAuthScopedCachePrincipal()
   if (rawTemplatesCache) return rawTemplatesCache
   if (!rawTemplatesPromise) {
-    rawTemplatesPromise = apiClient
+    const requestPrincipalRevision = getAuthScopedCacheRevision()
+    const promise = apiClient
       .get<WhatsAppApiTemplatesResponse>('/automations/catalogs/whatsapp-templates', {
         params: { status: 'APPROVED' }
       })
       .then(async (response) => {
+        if (requestPrincipalRevision !== getAuthScopedCacheRevision()) return []
         let items = response.items || []
         if (items.length === 0) {
           // Tabla local sin sincronizar: trae las plantillas desde YCloud
@@ -363,14 +377,15 @@ async function loadRawWhatsAppTemplates(): Promise<WhatsAppApiTemplate[]> {
         if (items.length > 0) {
           rawTemplatesCache = items
         } else {
-          rawTemplatesPromise = null
+          if (rawTemplatesPromise === promise) rawTemplatesPromise = null
         }
         return items
       })
       .catch(() => {
-        rawTemplatesPromise = null
+        if (rawTemplatesPromise === promise) rawTemplatesPromise = null
         return []
       })
+    rawTemplatesPromise = promise
   }
   return rawTemplatesPromise
 }
@@ -439,16 +454,17 @@ const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
 const cache = new Map<CatalogKind, Promise<CatalogOption[]>>()
 
 export function getCatalog(kind: CatalogKind): Promise<CatalogOption[]> {
+  syncAuthScopedCachePrincipal()
   if (!cache.has(kind)) {
     const promise = loaders[kind]()
       .then((loaded) => {
         if (kind === 'whatsappTemplates' && loaded.length === 0) {
-          cache.delete(kind)
+          if (cache.get(kind) === promise) cache.delete(kind)
         }
         return loaded
       })
       .catch(() => {
-        cache.delete(kind)
+        if (cache.get(kind) === promise) cache.delete(kind)
         return fallbacks[kind] || []
       })
     cache.set(kind, promise)
@@ -463,3 +479,5 @@ export function resetCatalogCache() {
   rawTemplatesCache = null
   rawTemplatesPromise = null
 }
+
+registerAuthScopedCacheInvalidator(resetCatalogCache)

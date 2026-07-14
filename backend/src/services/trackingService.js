@@ -1,4 +1,4 @@
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { linkVideoVisitorToContact, unifyVideoPlaybackVisitorIds } from './videoTrackingService.js'
@@ -11,6 +11,7 @@ import {
   buildFallbackVisitorIdFromSession,
   isTrustedTrackingVisitorId
 } from '../utils/trackingVisitorIdentity.js'
+import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import fetch from 'node-fetch'
 
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
@@ -36,6 +37,167 @@ const ATTENDED_APPOINTMENT_STATUS_SQL = [
   'complete',
   'attended'
 ].map(status => `'${status}'`).join(', ')
+const TRACKING_HISTORY_LINK_BATCH_SIZE = 200
+
+const yieldToEventLoop = () => new Promise(resolve => setImmediate(resolve))
+
+async function linkSessionHistoryInBatches({ visitorId, contactId, fullName, email }) {
+  let updated = 0
+  let batches = 0
+
+  while (true) {
+    // Cada statement tiene su propio commit. Esto evita encadenar decenas de
+    // miles de versiones sobre las mismas cabezas day/quarter de la proyección.
+    const result = await db.run(`
+      UPDATE sessions
+      SET contact_id = ?, full_name = ?, email = ?
+      WHERE id IN (
+        SELECT id
+        FROM sessions
+        WHERE visitor_id = ?
+          AND contact_id IS NULL
+        ORDER BY started_at DESC, id DESC
+        LIMIT ?
+      )
+        AND visitor_id = ?
+        AND contact_id IS NULL
+    `, [
+      contactId,
+      fullName,
+      email,
+      visitorId,
+      TRACKING_HISTORY_LINK_BATCH_SIZE,
+      visitorId
+    ])
+    const changes = Number(result?.changes || 0)
+    if (changes === 0) break
+
+    updated += changes
+    batches += 1
+    if (changes < TRACKING_HISTORY_LINK_BATCH_SIZE) break
+    await yieldToEventLoop()
+  }
+
+  return { updated, batches }
+}
+
+async function linkPostgresSessionHistoryAtomically({ visitorId, contactId, fullName, email }) {
+  const oldVisitorKey = `visitor:${visitorId}`
+  const newVisitorKey = `contact:${contactId}`
+
+  return db.transaction(async transaction => {
+    // Flag local a esta transacción/conexión: el BEFORE trigger sigue calculando
+    // visitor_key; sólo evitamos miles de reparaciones AFTER row-by-row.
+    await transaction.get(`
+      SELECT set_config('ristak.skip_tracking_visitor_projection', 'on', true) AS projection_mode
+    `)
+
+    const result = await transaction.run(`
+      UPDATE sessions
+      SET contact_id = ?, full_name = ?, email = ?
+      WHERE visitor_id = ? AND contact_id IS NULL
+    `, [contactId, fullName, email, visitorId])
+    const updated = Number(result?.changes || 0)
+    if (updated === 0) return { updated: 0, batches: 0 }
+
+    // Rehacer sólo las identidades afectadas dentro del mismo commit. Ante
+    // cualquier error, sesiones y proyección regresan juntas.
+    await transaction.run(`
+      DELETE FROM tracking_visitor_latest
+      WHERE visitor_key IN (?, ?)
+    `, [oldVisitorKey, newVisitorKey])
+
+    await transaction.run(`
+      WITH scoped_sessions AS (
+        SELECT
+          scopes.scope_type,
+          scopes.scope_id,
+          buckets.bucket_kind,
+          buckets.bucket_start,
+          source.visitor_key,
+          source.id AS session_row_id,
+          source.started_at AS latest_at
+        FROM sessions source
+        CROSS JOIN LATERAL (
+          VALUES
+            ('all'::text, ''::text),
+            ('campaign'::text, source.campaign_id),
+            ('adset'::text, source.adset_id),
+            ('ad'::text, source.ad_id)
+        ) scopes(scope_type, scope_id)
+        CROSS JOIN LATERAL (
+          VALUES
+            (
+              'day'::text,
+              date_trunc('day', source.started_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+            ),
+            (
+              'quarter'::text,
+              (
+                date_trunc('hour', source.started_at AT TIME ZONE 'UTC')
+                  + ((EXTRACT(MINUTE FROM source.started_at AT TIME ZONE 'UTC')::INTEGER / 15) * INTERVAL '15 minutes')
+              ) AT TIME ZONE 'UTC'
+            )
+        ) buckets(bucket_kind, bucket_start)
+        WHERE source.visitor_key IN (?, ?)
+          AND source.started_at IS NOT NULL
+          AND (scopes.scope_type = 'all' OR COALESCE(scopes.scope_id, '') != '')
+      ), latest_scoped_sessions AS (
+        SELECT DISTINCT ON (
+          scope_type,
+          scope_id,
+          bucket_kind,
+          bucket_start,
+          visitor_key
+        )
+          scope_type,
+          scope_id,
+          bucket_kind,
+          bucket_start,
+          visitor_key,
+          session_row_id,
+          latest_at
+        FROM scoped_sessions
+        ORDER BY
+          scope_type,
+          scope_id,
+          bucket_kind,
+          bucket_start,
+          visitor_key,
+          latest_at DESC,
+          session_row_id DESC
+      )
+      INSERT INTO tracking_visitor_latest (
+        scope_type,
+        scope_id,
+        bucket_kind,
+        bucket_start,
+        visitor_key,
+        session_row_id,
+        latest_at,
+        updated_at
+      )
+      SELECT
+        scope_type,
+        scope_id,
+        bucket_kind,
+        bucket_start,
+        visitor_key,
+        session_row_id,
+        latest_at,
+        CURRENT_TIMESTAMP
+      FROM latest_scoped_sessions
+      ON CONFLICT (scope_type, scope_id, bucket_kind, bucket_start, visitor_key) DO UPDATE SET
+        session_row_id = EXCLUDED.session_row_id,
+        latest_at = EXCLUDED.latest_at,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE (EXCLUDED.latest_at, EXCLUDED.session_row_id) >
+            (tracking_visitor_latest.latest_at, tracking_visitor_latest.session_row_id)
+    `, [oldVisitorKey, newVisitorKey])
+
+    return { updated, batches: 1 }
+  })
+}
 
 function validPaymentPredicate(alias = 'p') {
   const prefix = alias ? `${alias}.` : ''
@@ -607,6 +769,8 @@ export async function createSession(sessionData) {
     // tercero queda contenido en este bloque.
     resolveSessionGeoInBackground({ sessionId: session_id, startedAt, ip })
 
+    invalidateTrackingAnalyticsCache()
+
     return { success: true }
   } catch (error) {
     logger.error('Error creando registro de tracking:', error)
@@ -669,15 +833,23 @@ export async function linkVisitorToContact(visitor_id, contact_id, full_name) {
     const contact = await db.get('SELECT email FROM contacts WHERE id = ?', [contact_id])
     const email = contact?.email || null
 
-    // 1. Actualizar TODOS los registros de sessions que tienen este visitor_id
-    // para agregarles el contact_id, full_name y email
-    const result = await db.run(`
-      UPDATE sessions
-      SET contact_id = ?, full_name = ?, email = ?
-      WHERE visitor_id = ? AND contact_id IS NULL
-    `, [contact_id, full_name, email, visitor_id])
+    // 1. PostgreSQL reconstruye la proyección una sola vez y atómicamente;
+    // SQLite usa commits acotados que dejan respirar otras solicitudes.
+    const historyResult = databaseDialect === 'postgres'
+      ? await linkPostgresSessionHistoryAtomically({
+          visitorId: visitor_id,
+          contactId: contact_id,
+          fullName: full_name,
+          email
+        })
+      : await linkSessionHistoryInBatches({
+          visitorId: visitor_id,
+          contactId: contact_id,
+          fullName: full_name,
+          email
+        })
 
-    logger.info(`Vinculados ${result.changes} registros históricos de visitor ${visitor_id} a contact ${contact_id}`)
+    logger.info(`Vinculados ${historyResult.updated} registros históricos de visitor ${visitor_id} a contact ${contact_id} en ${historyResult.batches} lote(s)`)
 
     // 2. Actualizar la tabla contacts para guardar el visitor_id
     await db.run(`
@@ -693,7 +865,14 @@ export async function linkVisitorToContact(visitor_id, contact_id, full_name) {
       logger.info(`Vinculadas ${videoResult.sessionsUpdated} reproducciones de video de visitor ${visitor_id} a contact ${contact_id}`)
     }
 
-    return { success: true, updated: result.changes, videoUpdated: videoResult.sessionsUpdated }
+    if (historyResult.updated > 0) invalidateTrackingAnalyticsCache()
+
+    return {
+      success: true,
+      updated: historyResult.updated,
+      batches: historyResult.batches,
+      videoUpdated: videoResult.sessionsUpdated
+    }
   } catch (error) {
     logger.error('Error vinculando visitor a contact:', error)
     throw error
@@ -846,6 +1025,10 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
     logger.info(`🕐 Timezone range: ${range.startUtc} → ${range.endUtc}`)
 
     const compactForAnalytics = options.payload === 'analytics'
+    const requestedLimit = Number.parseInt(String(options.limit || ''), 10)
+    const requestedOffset = Number.parseInt(String(options.offset || ''), 10)
+    const pageLimit = Math.min(200, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 50))
+    const pageOffset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0)
     const selectColumns = compactForAnalytics
       ? `
         s.id,
@@ -1008,9 +1191,10 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
       FROM sessions s
       LEFT JOIN contacts c ON s.contact_id = c.id
       WHERE s.started_at >= ? AND s.started_at <= ?
-      ORDER BY s.started_at DESC
+      ORDER BY s.started_at DESC, s.id DESC
+      LIMIT ? OFFSET ?
     `
-    params = [range.startUtc, range.endUtc]
+    params = [range.startUtc, range.endUtc, pageLimit, pageOffset]
 
     logger.info(`🔄 Ejecutando query con params: ${JSON.stringify(params)}`)
     const sessions = await db.all(query, params)
@@ -1120,6 +1304,8 @@ export async function unifyVisitorIds(contactId) {
       SET visitor_id = ?
       WHERE id = ?
     `, [canonicalVisitorId, contactId])
+
+    if (Number(result.changes || 0) > 0) invalidateTrackingAnalyticsCache()
 
     logger.info(`✅ Contacto ${contactId} → visitor_id unificado: ${canonicalVisitorId}`)
 

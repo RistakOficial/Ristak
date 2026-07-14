@@ -106,6 +106,43 @@ test('WhatsApp origin distribution attributes ad-backed contacts to Meta Ads bef
   }
 })
 
+test('WhatsApp origin keeps the first source per identity instead of counting one conversation twice', async () => {
+  const marker = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const contactId = `origin_${marker}_first_source`
+  const phone = `+52158000${marker.slice(-5)}1`
+  const range = {
+    startUtc: '2099-06-01T00:00:00.000Z',
+    endUtc: '2099-06-30T23:59:59.999Z',
+    appliedTimezone: 'UTC'
+  }
+
+  await cleanup(marker)
+  try {
+    await insertContact({ id: contactId, phone })
+    await insertInboundMessage({
+      id: `origin_${marker}_first`,
+      contactId,
+      phone,
+      timestamp: '2099-06-10T18:00:00.000Z'
+    })
+    await insertInboundMessage({
+      id: `origin_${marker}_later_ad`,
+      contactId,
+      phone,
+      sourceId: `meta_ad_${marker}`,
+      timestamp: '2099-06-10T19:00:00.000Z'
+    })
+
+    const breakdown = await getWhatsAppApiSourceBreakdown(range, { limit: 10 })
+    const byName = new Map(breakdown.map(item => [item.name, item.value]))
+    assert.equal(byName.get('WhatsApp'), 1)
+    assert.equal(byName.get('Meta Ads') || 0, 0)
+    assert.equal(breakdown.reduce((sum, item) => sum + item.value, 0), 1)
+  } finally {
+    await cleanup(marker)
+  }
+})
+
 test('WhatsApp analytics summary returns card metrics and trend for the selected range', async () => {
   const marker = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const adContactId = `origin_${marker}_ad_summary`
@@ -280,6 +317,14 @@ test('message analytics summary combines WhatsApp, Messenger, Instagram and Emai
     })
     assert.equal(filtered.metrics.inboundMessages, 1)
     assert.equal(filtered.metrics.conversations, 1)
+
+    const filteredBySource = await getMessageAnalyticsSummary(range, {
+      groupBy: 'month',
+      filters: { sources: ['meta ads'] }
+    })
+    assert.equal(filteredBySource.metrics.inboundMessages, 1)
+    assert.equal(filteredBySource.metrics.conversations, 1)
+    assert.equal(filteredBySource.metrics.contacts, 1)
   } finally {
     await cleanup(marker)
   }

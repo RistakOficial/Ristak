@@ -1,4 +1,5 @@
-const CACHE_NAME = 'ristak-branding-v30'
+const CACHE_NAME = 'ristak-branding-v31'
+const HASHED_ASSET_PATH_PATTERN = /^\/assets\/(?:.+\/)?[^/]+-[A-Za-z0-9_-]{8,}\.[^/]+$/
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
 const LATEST_NOTIFICATION_TAG = 'ristak-latest-notification'
@@ -110,37 +111,102 @@ self.addEventListener('message', (event) => {
   }
 })
 
+function staticAssetUnavailable(status = 504, statusText = 'Static asset unavailable') {
+  return new Response('', { status, statusText })
+}
+
+function isUnexpectedHtmlAssetResponse(response) {
+  return (response.headers.get('content-type') || '').toLowerCase().includes('text/html')
+}
+
+async function cacheResponse(request, response) {
+  if (response.status !== 200 || new URL(request.url).origin !== self.location.origin) return
+  try {
+    const cache = await caches.open(CACHE_NAME)
+    await cache.put(request, response.clone())
+  } catch {
+    // Una cuota llena no debe convertir una respuesta de red válida en un error.
+  }
+}
+
+async function matchCachedResponse(request) {
+  try {
+    const cache = await caches.open(CACHE_NAME)
+    return await cache.match(request)
+  } catch {
+    return undefined
+  }
+}
+
+async function cacheFirstHashedAsset(request) {
+  const cached = await matchCachedResponse(request)
+  if (cached) return { response: cached, shouldCache: false }
+
+  try {
+    const response = await fetch(request)
+    if (isUnexpectedHtmlAssetResponse(response)) {
+      return { response: staticAssetUnavailable(404, 'Static asset not found'), shouldCache: false }
+    }
+    return { response, shouldCache: true }
+  } catch {
+    return { response: staticAssetUnavailable(), shouldCache: false }
+  }
+}
+
+async function networkFirstRequest(request, { isAppAsset = false, isNavigationRequest = false } = {}) {
+  try {
+    const response = await fetch(request)
+    if (isAppAsset && isUnexpectedHtmlAssetResponse(response)) {
+      return { response: staticAssetUnavailable(404, 'Static asset not found'), shouldCache: false }
+    }
+    return { response, shouldCache: true }
+  } catch {
+    const cached = await matchCachedResponse(request)
+    if (cached) return { response: cached, shouldCache: false }
+    if (isAppAsset) return { response: staticAssetUnavailable(), shouldCache: false }
+    if (isNavigationRequest) {
+      return {
+        response: (await matchCachedResponse('/')) || staticAssetUnavailable(),
+        shouldCache: false
+      }
+    }
+    return {
+      response: new Response('', { status: 504, statusText: 'Network unavailable' }),
+      shouldCache: false
+    }
+  }
+}
+
+function respondWithoutBlockingOnCache(event, request, responseTask) {
+  event.respondWith(responseTask.then(result => result.response))
+  event.waitUntil(
+    responseTask
+      .then(result => result.shouldCache ? cacheResponse(request, result.response) : undefined)
+      .catch(() => undefined)
+  )
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request
   const requestUrl = new URL(request.url)
   const isAppAsset = requestUrl.origin === self.location.origin && requestUrl.pathname.startsWith('/assets/')
+  const isHashedAppAsset = isAppAsset && HASHED_ASSET_PATH_PATTERN.test(requestUrl.pathname)
   const isNavigationRequest = request.mode === 'navigate'
 
   if (request.method !== 'GET') return
   if (requestUrl.pathname.startsWith('/api/')) return
 
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        const contentType = response.headers.get('content-type') || ''
+  if (isHashedAppAsset) {
+    respondWithoutBlockingOnCache(event, request, cacheFirstHashedAsset(request))
+    return
+  }
 
-        if (isAppAsset && contentType.includes('text/html')) {
-          return new Response('', { status: 404, statusText: 'Static asset not found' })
-        }
-
-        if (response.ok && requestUrl.origin === self.location.origin) {
-          const copy = response.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => undefined)
-        }
-
-        return response
-      })
-      .catch(() => caches.match(request).then((cached) => {
-        if (cached) return cached
-        if (isAppAsset) return new Response('', { status: 504, statusText: 'Static asset unavailable' })
-        if (isNavigationRequest) return caches.match('/')
-        return new Response('', { status: 504, statusText: 'Network unavailable' })
-      }))
+  // La navegación busca siempre el HTML más reciente; el cache solo es respaldo
+  // offline. Recursos sin hash también revalidan por red para no quedar obsoletos.
+  respondWithoutBlockingOnCache(
+    event,
+    request,
+    networkFirstRequest(request, { isAppAsset, isNavigationRequest })
   )
 })
 

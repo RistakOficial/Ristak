@@ -8,6 +8,7 @@ import { apiUrl, clearRuntimeApiBaseUrl, getRuntimeApiBaseUrl, getRuntimeTenant,
 import { mobileAppService } from '@/services/mobileAppService'
 import { resolveAndStoreMobileTenant } from '@/services/mobileTenantService'
 import { PHONE_APP_HOME_PATH, PHONE_APP_TENANT_PATH, getPostAuthRedirectPath, isPhoneAppPath, type RedirectLocation } from '@/utils/phoneAccess'
+import { prefetchRouteModule } from '@/routing/routeModules'
 import styles from './Login.module.css'
 
 type LoginLocationState = {
@@ -106,6 +107,7 @@ export const Login: React.FC = () => {
     }
 
     setIsLoading(true)
+    void prefetchRouteModule(redirectPath).catch(() => undefined)
 
     const isMobileRuntime = isPhoneLogin && isNativeAppRuntime()
 

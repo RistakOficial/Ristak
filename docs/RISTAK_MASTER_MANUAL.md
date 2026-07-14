@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-12.
+Ultima consolidacion: 2026-07-14.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -179,6 +179,266 @@ HighLevel, Google Calendar, OpenAI o una pasarela revalida el snapshot y repinta
 onboarding, permisos operativos y selectores dependientes sin recargar la ruta.
 Las respuestas anteriores a una revalidacion mas nueva se descartan. Al cerrar
 sesion se limpia tambien este snapshot para no heredar conexiones de otra sesion.
+
+### Contrato transversal de rendimiento
+
+La navegacion del CRM debe conservar el shell montado y cargar cada modulo por
+separado. `frontend/src/routing/routeModules.tsx` es el registro canonico de
+chunks para rutas desktop, moviles y publicas. El sidebar inicia la descarga al
+detectar intencion real de navegar: el pointer exige 150 ms de permanencia y se
+cancela al salir, mientras foco, touch y pointer-down son inmediatos. El chunk
+pesado de Sites solo se calienta en tiempo ocioso, despues de estabilizar la ruta,
+con permiso del usuario y sin ahorro de datos ni conexiones 2G. Configuracion hace
+lo mismo con cada panel interno y navega directamente al primero permitido. Los
+redirects de login/inicio precargan su destino, y el panel del asistente AI queda
+en un chunk separado del shell. No se permite volver a importar todas las
+paginas de forma estatica desde `App.tsx` ni bloquear el contenido completo con
+un loader global mientras existan requests de una ruta. Las esperas inevitables
+deben aparecer dentro de la zona que aun no tiene datos, conservando navegacion,
+header y contenido anterior utilizable.
+
+`frontend/src/services/authFetch.ts` comparte peticiones GET autenticadas
+identicas en vuelo y conserva snapshots JSON breves: 15 segundos para lecturas
+normales y 60 segundos para configuracion/integraciones. El cache es LRU, tiene
+un maximo de 120 respuestas, nunca guarda una respuesta mayor a 1 MB e impone
+12 MB como presupuesto total para que 120 respuestas grandes no agoten la
+memoria. La llave incluye un fingerprint no reversible de todos los
+headers que alteran alcance (sin guardar tokens ni secrets en texto). Streams,
+health, descargas, cuerpos binarios de Media, previews, paginas masivas, requests
+con `AbortSignal` y fuentes vivas quedan fuera. Esos binarios tampoco entran al
+dedupe en vuelo: clonar un stream grande podria retener el archivo completo en
+memoria. Una mutacion exitosa invalida los snapshots; los POST
+que son consultas declaradas, como los resumenes de Analytics, no cuentan como
+mutacion. Los eventos SSE de Chat y Pagos tambien invalidan antes de revalidar la
+pantalla. Un registro central invalida tambien los caches especializados de
+integraciones, tracking, etiquetas y automatizaciones al cambiar de cuenta y
+descarta cualquier promesa de la cuenta anterior que termine tarde. El snapshot
+persistido de integraciones no guarda el access token de HighLevel.
+
+En produccion el backend comprime JSON, JavaScript, CSS y SVG mayores a 1 KB sin
+bufferizar SSE ni recomprimir binarios. Los assets Vite con hash se entregan con
+cache inmutable de un ano; `index.html`, manifests y `sw.js` siempre revalidan.
+El service worker usa cache-first solamente para assets versionados y
+network-first para navegacion y archivos sin hash. Un cache lleno nunca debe
+convertir una respuesta de red valida en error.
+
+Reglas de datos para cualquier modulo nuevo o refactorizado:
+
+- Una lista no descarga una tabla completa para paginar, buscar, ordenar o
+  mostrar cinco filas. Debe pedir una pagina acotada al servidor.
+- En tablas que crecen continuamente se prefiere cursor estable sobre
+  `offset + COUNT(*)`. El cursor debe incluir un desempate unico.
+- KPIs, graficas y facets se calculan en backend y viajan como agregados; no se
+  reconstruyen recorriendo eventos crudos en el navegador.
+- Un GET de pantalla no debe sincronizar Stripe, HighLevel, Google, Meta ni otro
+  proveedor. Primero responde con el estado local; la sincronizacion externa es
+  una accion/job independiente.
+- Las respuestas viejas se cancelan o descartan por secuencia cuando cambia el
+  rango, filtro, busqueda o ruta. El contenido anterior puede conservarse como
+  snapshot mientras llega la revalidacion.
+- Los rangos siguen `docs/DATE_TIME_GUIDELINES.md`: dias del negocio en su zona
+  horaria e instantes persistidos/consultados en UTC.
+
+Analytics usa dos contratos protegidos por `analytics` + `web_analytics`:
+
+- `POST /api/tracking/analytics/summary`: recibe `start`, `end`, `groupBy` y
+  filtros. Devuelve metricas actual/anterior, tendencias, series, distribuciones
+  y facets; nunca filas de `sessions`. Autoagrupa rangos grandes para no superar
+  400 puntos y limita cada facet a 25 opciones.
+- `POST /api/tracking/sessions/search`: devuelve entre 20 y 100 filas angostas,
+  `hasMore` y un cursor opaco basado en `started_at + id`. No calcula total. La
+  tabla pide 50 y mantiene como maximo 100 filas en memoria/DOM, con busqueda
+  server-side y cancelacion de requests anteriores. El filtro de etapa de
+  conversion avanza por chunks de 500, con cursor, y corta a 10,000 candidatos
+  por request para conservar latencia/memoria predecibles.
+
+La jerarquia publicitaria de tracking se agrega en SQL como
+`utm_source -> utm_campaign -> utm_medium -> utm_content`, cuenta identidades
+unicas y conserva los IDs UTM crudos para filtros. El payload se poda a 8
+plataformas, 8 campanas por plataforma, 5 conjuntos por campana, 5 anuncios por
+conjunto y 750 nodos globales. Las etiquetas URL-encoded se decodifican sin
+alterar esos IDs. El resumen multicanal de mensajes tambien agrega WhatsApp,
+Meta y correo en SQL; no materializa historiales crudos y limita sus opciones de
+filtro a 50.
+
+Los indices aditivos del contrato viven en
+`backend/migrations/versioned/050_tracking_performance_indexes.sqlite.sql` y
+`051_message_analytics_indexes.sqlite.sql` para SQLite. PostgreSQL aplica las
+migraciones concurrentes `050a` a `051d`, habilita `pg_trgm` en `052` y crea el
+GIN de busqueda en `053`; cada `CREATE INDEX CONCURRENTLY` vive en su propia
+migracion para no bloquear despliegues ni quedar dentro de una transaccion. Si
+el volumen exige rollups o proyecciones incrementales, se implementan detras de
+los mismos endpoints agregados: no se vuelve a exponer el historico al frontend.
+
+El Dashboard obtiene sus tres listas recientes desde
+`GET /api/dashboard/operational-snapshot`. Esa respuesta consulta solo la base
+local, entrega como maximo cinco pagos, cinco contactos y cinco citas, y no
+contacta proveedores. El funnel tiene un solo owner de carga para no duplicar la
+misma consulta al montar. Pagos usa exactamente las exclusiones de la lista de
+Transacciones (estados no publicables, flujos internos y pruebas). La frescura
+externa depende de los crons registrados de HighLevel/Google y del sync al
+conectar; el GET del Dashboard nunca sacrifica latencia esperando un proveedor.
+Origenes, funnel, citas, asistencias y fuentes de trafico se agregan en SQL por
+rango y zona de la cuenta; no recorren contactos, citas o sesiones completas en
+Node ni hacen fallback a HighLevel durante la navegacion. Las graficas devuelven
+solo buckets y top 10. Los indices locales de este contrato viven en `063*`.
+
+Contactos confia en los flags de cita/asistencia calculados por su endpoint
+paginado; no descarga anos de calendarios para pintar veinte filas. La busqueda
+de Chat escritorio entrega la primera pagina de inmediato y pagina resultados
+al hacer scroll, en lugar de recorrer toda la cuenta antes de mostrar algo. La
+app movil solo carga los datos de la seccion activa y sus listas de pagos,
+contactos y conversaciones permanecen acotadas. En Calendario, los eventos
+visibles se publican sin esperar las metricas mensuales; si estas fallan se
+conserva el ultimo resumen valido.
+
+Publicidad usa `GET /api/meta/campaigns/page`: devuelve 50 entidades por
+default, permite hasta 100 principales y hasta 200 hijos por expansion. La
+busqueda, el orden y la paginacion ocurren en backend; conjuntos y anuncios se
+cargan solo al expandir. Los visitantes se agregan en SQL para las entidades de
+la pagina y el navegador no vuelve a descargar contactos o visitantes masivos.
+El orden por resultados/ROAS conserva exactitud global antes de paginar. El
+contrato legacy queda acotado y solo incluye la jerarquia completa con una
+solicitud explicita. Los indices de este contrato viven en las migraciones
+`054*`. El drill-down de contactos usa cursor estable, busqueda remota y DTOs
+ligeros; pagos, citas y perfil se hidratan solo al seleccionar una persona.
+
+Reportes devuelve listas de contactos con cursor estable `created_at + id`, 50
+filas por default y 100 como maximo. La busqueda es remota, el conteo de interfaz
+se corta en `10,000+` y la fila solo contiene el resumen necesario; pagos,
+citas, sesiones y perfil completo se consultan por ID al seleccionar un
+contacto. Suscripciones pagina 20 filas por default (100 maximo), filtra y
+ordena en SQL, mientras sus KPIs se calculan con un agregado global separado.
+Los eventos vivos solo revalidan la pagina visible; hablar con una pasarela es
+una accion explicita. Los indices compartidos de Reportes/Suscripciones viven en
+`060*`.
+
+La tabla principal de Reportes agrega contactos, citas, asistencias, primera
+compra, pagos, anuncios y visitantes directamente en SQL. Como maximo ejecuta
+dos consultas agregadas concurrentes por request para no agotar el pool. En
+SQLite normaliza timestamps legacy numericos/texto y genera los cambios reales
+de offset IANA con Luxon para que el dia del negocio siga siendo correcto al
+cruzar horario de verano; la identidad usa primero la proyeccion canonica
+`contact_phone_numbers` y deja la limpieza recursiva exacta solo como fallback
+legacy. La primera compra parte de candidatos del rango y comprueba que no exista
+un pago anterior, apoyada por los indices parciales `064*`; no agrupa todo el
+historico de pagos en cada apertura. El modal de transacciones pagina 50 filas
+con cursor `date + id`, busca en servidor y obtiene su resumen global por
+separado; sus indices viven en `066*`. Reportes no repite una segunda consulta
+de visitantes despues de recibir el agregado principal.
+
+Pagos mantiene contratos server-side en todas sus listas crecientes. Productos
+pagina y busca en backend, calcula el resumen global en SQL y carga los precios
+de la pagina con un solo `IN`, no con una consulta por producto. Planes de pago
+pagina, busca, ordena y obtiene facets/resumen desde el espejo local; una
+actualizacion normal no bloquea la vista esperando Stripe, Conekta o HighLevel.
+Sus indices viven en `061*`. Transacciones conserva su paginacion de servidor y
+los eventos SSE invalidan snapshots antes de revalidar.
+
+El listado de planes siempre lee el espejo local. HighLevel se actualiza por
+`highlevelPaymentPlansMirror.cron.js`, registrado como cron de integracion: solo
+corre cuando HighLevel esta conectado, pagina hasta 300 schedules por tick,
+guarda checkpoint, usa lease distribuido y hace upsert idempotente sin borrar por
+ausencia. Arranca cinco segundos despues de habilitarse y luego cada diez
+minutos; desconectar HighLevel lo apaga sin reiniciar el backend. Ningun GET de
+planes espera ese proveedor.
+
+Sites abre su biblioteca con una pagina acotada y cursor, obtiene metricas de
+formularios/tracking en un solo lote y carga el documento completo solo al
+abrir, editar o ejecutar una accion sobre un sitio. El endpoint legacy queda
+capado, los detalles limitan submissions y el indice de biblioteca vive en
+`055*`. La carga incremental debe conservar el contenido ya visible y no volver
+a hidratar cada tarjeta con requests independientes.
+
+La videoteca de Sites usa `/api/sites/video-assets` con paginas de 50 y cursor
+`created_at + id` para los modulos `sites/forms`. Un preview de Bunny busca solo
+su `streamVideoId`, nunca descarga la videoteca para localizar un archivo. El
+dashboard agregado de reproducciones filtra en SQL todos los Sites publicados
+por tipo y modo de pagina, aunque la biblioteca visual solo tenga cargada su
+primera ventana. Elegir un origen reduce el agregado a ese site y el detalle de
+un video consulta solo su asset. El JOIN paginado adjunta a cada video el ID y
+nombre ligero de su origen; por eso los labels, el selector y el ranking siguen
+siendo correctos aunque ese Site no aparezca en la primera pagina de la
+biblioteca. El summary y las series conservan alcance
+global, pero el desglose `byAssetId` se limita a los primeros 100 videos
+cargados y `bySiteId` queda apagado salvo opt-in; nunca se serializa un mapa de
+toda la cuenta. Los indices de pagina y reproduccion por site/asset viven en
+`068*`.
+
+Los selectores de dominios y formularios usan vistas ligeras dedicadas y
+recorren paginas acotadas; no descargan submissions/tracking ni hacen un
+`getSite` por opcion. El detalle del formulario se pide solo al guardar cuando
+se necesita validar una colision de pago.
+
+Automatizaciones lista summaries sin el grafo del flujo, pagina por cursor,
+busca/filtra en SQL y consulta el detalle solo al abrir. Las referencias externas
+se validan despues del primer paint y unicamente para la pagina visible. Su cache
+LRU se invalida por principal y mutaciones; los indices de libreria viven en
+`062*`. Los eventos del CRM consultan `automation_trigger_index` por tipo y
+endpoint en vez de descargar y parsear todos los grafos publicados; ese contrato
+durable se instala con `090*`.
+
+La biblioteca de Media pagina 50 assets por `created_at + id`, busca en servidor
+y usa `folder_path` indexado (`065*`). La primera pagina no calcula facets ni
+espera un `GROUP BY` de carpetas: devuelve `facets=[]` y el arbol llega despues
+por `/api/media/folders`, con proteccion contra respuestas viejas. Ese endpoint
+lee contadores exactos por carpeta mantenidos por triggers (`067f/g*`), no
+recorre todos los assets. Uso, conteos por tipo y modulo salen de contadores
+incrementales (`067c/d*`): un GET no vuelve a sumar `media_assets`, crear una
+cuota ni escribir timestamps. El picker de Sites comparte ese contrato.
+
+Mover, borrar o descargar conserva `businessId`, `mediaType` y `status` del
+filtro visible; los IDs explicitos se revalidan contra ese alcance. Mover usa el
+endpoint por lote, transmite archivos remotos sin crear un buffer completo y no
+recalcula cuota porque la ruta no cambia bytes. Sin una cola de background, una
+seleccion mayor a 2,000 archivos se rechaza antes de mutar con un error claro en
+vez de dejar una request indefinida. Las descargas individuales y ZIP son
+streams; el ZIP valida tamaño antes de leer, corta a 512 MB, consume archivos de
+uno en uno y no arma el archivo completo en RAM. El backfill PostgreSQL de
+carpetas corre por lotes de 2,000 con commits intermedios, y el indice global por
+tipo permite el orden keyset aun sin filtro de status. No existe un
+`listAllAssets` en el camino de render.
+
+Las mutaciones que requieren mover o borrar objetos remotos se rechazan antes de
+tocar datos si exceden 25 archivos, 64 MB por archivo, 256 MB totales o el
+presupuesto sincrono de 60 segundos. El lookup de Bunny Stream usa la columna
+`stream_video_id`, alcance por negocio/modulo e indice `069*`; el backfill legacy
+es por lotes y nunca vuelve a buscar el ID dentro de todo `metadata_json`.
+
+Los modales crecientes de tracking tambien son paginados. Visitantes y
+conversiones aceptan cursor y busqueda remota, devuelven 50 filas por default y
+100 como maximo, y nunca piden historiales de HighLevel. Visitantes limita a las
+cinco citas locales mas recientes por contacto e indica si hay mas; conversiones
+calcula LTV/conteo con un agregado por la pagina y carga pagos, citas y perfil de
+una sola persona cuando se selecciona.
+
+La pagina normal de visitantes no vuelve a ordenar todo `sessions`. La
+proyeccion durable v3 `tracking_visitor_latest` conserva, por identidad y scope,
+la visita mas reciente de cada dia UTC y de cada cuarto de hora UTC. La consulta
+combina dias completos con los cuartos de hora de los bordes para respetar con
+exactitud el dia de la zona del negocio, elimina identidades dominadas y aplica
+cursor antes de hidratar las 50 filas. Los triggers mantienen inserts, updates y
+deletes; el backfill `080*` avanza newest-first por lotes, puede ser retomado por
+varias instancias y habilita la proyeccion por rango solo cuando ese rango ya esta
+completo. Durante un rolling deploy, un rango pendiente o un offset historico no
+alineado a 15 minutos, el endpoint conserva el SQL exacto legacy.
+
+Vincular miles de visitas a un contacto no ejecuta miles de reparaciones del
+rollup en PostgreSQL: una transaccion local actualiza el historial y reconstruye
+de forma set-based solamente las dos identidades afectadas; cualquier error hace
+rollback de sesiones y proyeccion juntas. SQLite usa lotes acotados para no
+bloquear su unica conexion. La busqueda exige al menos tres caracteres y separa
+los GIN de sesiones y contactos antes de unir candidatos, de modo que una visita
+historica que coincide siga apareciendo sin convertir el filtro en un `OR`
+correlacionado sobre todo el historico.
+
+`GET /api/integrations/status` resuelve en paralelo las configuraciones locales
+de HighLevel, Meta, WhatsApp, OpenAI, Google Calendar y pasarelas. Navegar nunca
+verifica proveedores externos ni expone el token de HighLevel al navegador; una
+verificacion remota requiere `verify=true` y solo se usa en diagnostico o
+reconexion explicitos. Los endpoints de Calendario obtienen la credencial
+guardada dentro del backend cuando necesitan sincronizar, sin depender de que
+el frontend transporte el secret.
 
 ### Inicializacion de cuentas
 
@@ -3156,6 +3416,32 @@ Automations incluye:
 El motor principal vive en `backend/src/services/automationEngine.js`.
 Los cambios de fechas/delays deben obedecer `DATE_TIME_GUIDELINES.md`.
 Los crons de integraciones externas deben obedecer `INTEGRATION_CRON_RULES.md`.
+
+El camino caliente de eventos usa el indice durable
+`automation_trigger_index (event_type, endpoint_id, automation_id)`, mantenido
+por `automationTriggerIndexService.js`. Publicar o republicar reemplaza en la
+misma transaccion las llaves derivadas de `published_flow`; pausar, archivar o
+eliminar retira las llaves productivas, y guardar un borrador solo actualiza el
+lookup de su muestra de webhook sin cambiar el contrato vivo. Un flujo puede
+tener varios disparadores y un tipo puede mapear a varios eventos reales; por
+ejemplo, `trigger-contact-updated` tambien participa en eventos de etiquetas,
+citas y pagos porque el motor vuelve a evaluar sus filtros antes de inscribir.
+La compuerta de licencia `canRunAutomationFlow` se conserva despues del lookup.
+
+Los webhooks entrantes productivos siempre hacen match exacto por `endpoint_id`:
+un endpoint vacio no es comodin. La captura de muestra del editor usa una llave
+interna separada derivada del `flow` editable, por lo que tampoco necesita
+recorrer todas las automatizaciones. Al instalar `090*`,
+`automation_trigger_index_state` coordina un bootstrap por lotes de 100 con
+candado distribuido, `index_version` y yields entre lotes. Cambiar el mapeo de
+disparadores exige subir esa version; una version vieja borra y reconstruye el
+indice antes de volver a `ready`. Corre en segundo plano y no bloquea el
+healthcheck; mientras no llega a `ready`, el runtime conserva temporalmente la
+lectura legacy para no perder eventos. Esperas de respuesta, clics y
+reanudaciones ya conocen sus `automation_id` y cargan solo esos flujos
+publicados. La captura de muestra bloquea y vuelve a leer el borrador antes de
+escribir; luego actualiza `flow` e indice en la misma transaccion para no pisar
+un endpoint guardado al mismo tiempo.
 
 Los disparadores del nodo inicial son opcionales. Una automatizacion publicada
 puede funcionar como secuencia manual o externa y arrancar desde contactos,

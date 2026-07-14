@@ -508,7 +508,15 @@ export const PhonePayments: React.FC = () => {
       }
 
       try {
-        const transactions = await transactionsService.getTransactions(startDate, endDate)
+        const transactions = await transactionsService.getTransactionsPage({
+          startDate,
+          endDate,
+          page: 1,
+          limit: 80,
+          statuses: ['paid', 'partial'],
+          sortBy: 'date',
+          sortOrder: 'DESC'
+        }).then(result => result.transactions)
 
         if (cancelled) return
 

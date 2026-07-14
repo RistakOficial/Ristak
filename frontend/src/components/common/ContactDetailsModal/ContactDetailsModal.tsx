@@ -1,32 +1,33 @@
 import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { CheckCheck, CircleAlert, Clock, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
 import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
+import { Badge, type BadgeVariant } from '../Badge/Badge'
+import { Button } from '../Button/Button'
+import { ChatMessageSurface } from '../ChatMessageSurface/ChatMessageSurface'
+import { ContactAvatar } from '../ContactAvatar/ContactAvatar'
+import { ContactCustomFieldsPanel } from '../ContactCustomFieldsPanel/ContactCustomFieldsPanel'
+import { ContactJourney } from '../ContactJourney/ContactJourney'
+import { ContactPhoneSelector } from '../ContactPhoneSelector/ContactPhoneSelector'
+import { CustomSelect } from '../CustomSelect/CustomSelect'
 import {
-  Modal,
-  Icon,
-  Badge,
-  Button,
-  ChatMessageSurface,
-  ContactAvatar,
-  ContactCustomFieldsPanel,
-  ContactPhoneSelector,
-  CustomSelect,
-  EmailRichTextEditor,
   EmailChatMessageBubble,
-  InlineEditableText,
-  Switch,
-  TagPicker,
-  WhatsAppFormattedText,
   buildEmailChatMessageData,
-  emailHtmlToPlainText,
   hasEmailChatMessageContent,
+  type EmailChatMessageData
+} from '../EmailChatMessageBubble/EmailChatMessageBubble'
+import {
+  EmailRichTextEditor,
+  emailHtmlToPlainText,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
-  type BadgeVariant,
-  type EmailChatMessageData,
   type EmailRichTextVariable
-} from '@/components/common'
-import { ContactJourney } from '@/components/common/ContactJourney'
+} from '../EmailRichTextEditor/EmailRichTextEditor'
+import { Icon } from '../Icon/Icon'
+import { InlineEditableText } from '../InlineEditableText/InlineEditableText'
+import { Modal } from '../Modal/Modal'
+import { Switch } from '../Switch/Switch'
+import { TagPicker } from '../TagPicker/TagPicker'
+import { WhatsAppFormattedText } from '../WhatsAppFormattedText/WhatsAppFormattedText'
 import automationsService, {
   type AutomationSummary,
   type ContactAutomationActivity,
@@ -202,6 +203,15 @@ interface ContactDetailsModalProps {
   onUpdateTags?: (contactId: string, tagIds: string[]) => Promise<string[] | void>
   whatsappPhoneNumbers?: WhatsAppPhoneOption[]
   onUpdatePreferredWhatsAppPhoneNumber?: (contactId: string, phoneNumberId: string) => Promise<Partial<ContactDetail> | void>
+  totalCount?: number
+  totalCountIsCapped?: boolean
+  currentPage?: number
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
+  onPageChange?: (direction: 'next' | 'previous') => void
+  onSearchChange?: (search: string) => void
+  onSelectContact?: (contact: ContactDetail) => Promise<Partial<ContactDetail> | void>
+  totalValue?: number | null
 }
 
 type ContactIdentityField = 'name' | 'email' | 'phone'
@@ -711,12 +721,22 @@ export function ContactDetailsModal({
   onUpdateContact,
   onUpdateTags,
   whatsappPhoneNumbers = [],
-  onUpdatePreferredWhatsAppPhoneNumber
+  onUpdatePreferredWhatsAppPhoneNumber,
+  totalCount,
+  totalCountIsCapped = false,
+  currentPage = 1,
+  hasNextPage = false,
+  hasPreviousPage = false,
+  onPageChange,
+  onSearchChange,
+  onSelectContact,
+  totalValue
 }: ContactDetailsModalProps) {
   const { user } = useAuth()
   const hasEmailAccess = hasLicenseFeature(user, ['email'])
   const hasAutomationsAccess = hasLicenseFeature(user, ['automations'])
   const [selectedContact, setSelectedContact] = useState<ContactDetail | null>(null)
+  const selectedContactLoadRevisionRef = useRef(0)
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [chatMessages, setChatMessages] = useState<ContactChatMessage[]>([])
@@ -812,6 +832,34 @@ export function ContactDetailsModal({
       setSavingPrimaryPhone(null)
     }
   }, [isOpen, data, timezone])
+
+  useEffect(() => {
+    if (!isOpen || !onSearchChange) return
+    const timer = window.setTimeout(() => onSearchChange(searchQuery.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [isOpen, onSearchChange, searchQuery])
+
+  useEffect(() => {
+    if (!isOpen || !selectedContact || !onSelectContact) return
+    const revision = selectedContactLoadRevisionRef.current + 1
+    selectedContactLoadRevisionRef.current = revision
+    const contactId = selectedContact.id
+
+    void onSelectContact(selectedContact)
+      .then((detail) => {
+        if (!detail || selectedContactLoadRevisionRef.current !== revision) return
+        setSelectedContact((current) => current?.id === contactId ? { ...current, ...detail } : current)
+      })
+      .catch(() => {
+        // El DTO ligero sigue siendo utilizable aunque el detalle falle.
+      })
+
+    return () => {
+      if (selectedContactLoadRevisionRef.current === revision) {
+        selectedContactLoadRevisionRef.current += 1
+      }
+    }
+  }, [isOpen, onSelectContact, selectedContact?.id])
 
   useEffect(() => {
     setPaymentsExpanded(false)
@@ -953,6 +1001,7 @@ export function ContactDetailsModal({
 
   // Filtrar contactos según búsqueda
   const filteredData = useMemo(() => {
+    if (onSearchChange) return data
     if (!preparedContactSearch.normalized) return data
 
     return data.filter((contact, index) =>
@@ -961,7 +1010,7 @@ export function ContactDetailsModal({
         preparedContactSearch
       )
     )
-  }, [contactSearchIndexes, data, preparedContactSearch])
+  }, [contactSearchIndexes, data, onSearchChange, preparedContactSearch])
 
   const loadAutomationData = useCallback(async (options: { silent?: boolean } = {}) => {
     const contactId = selectedContact?.id
@@ -974,7 +1023,7 @@ export function ContactDetailsModal({
     try {
       const [activity, overview] = await Promise.all([
         automationsService.getContactActivity(contactId),
-        automationsService.getOverview()
+        automationsService.getOverview({ status: 'published', limit: 100 })
       ])
       setAutomationActivity(activity)
       setAutomationCatalog(overview.automations)
@@ -2000,12 +2049,15 @@ export function ContactDetailsModal({
     )
   }
 
+  const resolvedTotalCount = totalCount ?? data.length
+  const hasSingleResult = resolvedTotalCount === 1 && !onPageChange
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title=""
-      size={data.length === 1 ? 'xl' : 'lg'}
+      size={hasSingleResult ? 'xl' : 'lg'}
       showCloseButton={false}
       flushContent
     >
@@ -2018,11 +2070,11 @@ export function ContactDetailsModal({
                 <h3 className={styles.title}>{title}</h3>
                 <div className={styles.stats}>
                   <span className={styles.statItem}>
-                    {data.length} {data.length === 1 ? 'elemento' : 'elementos'}
+                    {totalCountIsCapped ? `${resolvedTotalCount}+` : resolvedTotalCount} {hasSingleResult ? 'elemento' : 'elementos'}
                   </span>
-                  {type === 'sales' && data.some(d => (d.ltv || 0) > 0) && (
+                  {type === 'sales' && (totalValue !== null) && (totalValue !== undefined || data.some(d => (d.ltv || 0) > 0)) && (
                     <span className={styles.statValue}>
-                      Total: {formatCurrency(data.reduce((sum, d) => sum + (d.ltv || 0), 0))}
+                      Total: {formatCurrency(totalValue ?? data.reduce((sum, d) => sum + (d.ltv || 0), 0))}
                     </span>
                   )}
                 </div>
@@ -2036,11 +2088,11 @@ export function ContactDetailsModal({
         </div>
 
         {/* Main content */}
-        <div className={`${styles.mainContent} ${selectedContact && data.length === 1 ? styles.mainContentWithChat : ''}`}>
+        <div className={`${styles.mainContent} ${selectedContact && hasSingleResult ? styles.mainContentWithChat : ''}`}>
           {/* Left panel - Lista de contactos.
               Con un solo contacto no tiene sentido el buscador ni la lista:
               se oculta y la ficha ocupa todo el ancho. */}
-          {data.length !== 1 && (
+          {!hasSingleResult && (
           <div className={selectedContact ? styles.leftPanel : styles.leftPanelFull}>
             {/* Search bar */}
             <div className={styles.searchContainer}>
@@ -2121,11 +2173,35 @@ export function ContactDetailsModal({
             </div>
 
             {/* Footer */}
-            {data.length > 0 && (
+            {(data.length > 0 || (onPageChange && (hasPreviousPage || hasNextPage))) && (
               <div className={styles.footer}>
                 <span>
-                  Mostrando {filteredData.length} de {data.length}
+                  {onPageChange
+                    ? `Mostrando ${filteredData.length} en página ${currentPage}`
+                    : `Mostrando ${filteredData.length} de ${data.length}`}
                 </span>
+                {onPageChange && (
+                  <div className={styles.footerPagination}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!hasPreviousPage || loading}
+                      onClick={() => onPageChange('previous')}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!hasNextPage || loading}
+                      onClick={() => onPageChange('next')}
+                    >
+                      Siguiente
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2134,7 +2210,7 @@ export function ContactDetailsModal({
           {/* Right panel - Detalles del contacto */}
           {selectedContact && (
             <>
-              <div className={`${styles.rightPanel} ${data.length === 1 ? styles.singleContactInfoPanel : ''}`}>
+              <div className={`${styles.rightPanel} ${hasSingleResult ? styles.singleContactInfoPanel : ''}`}>
                 {/* Contact header */}
                 <div className={styles.contactHeader}>
                   {renderContactAvatar(selectedContact, styles.contactHeaderAvatar)}
@@ -2761,7 +2837,7 @@ export function ContactDetailsModal({
                 </div>
               </div>
               </div>
-              {data.length === 1 ? renderContactChatPanel() : null}
+              {hasSingleResult ? renderContactChatPanel() : null}
             </>
           )}
         </div>

@@ -199,6 +199,8 @@ interface TableProps<T> {
   currentPage?: number
   totalItems?: number
   totalPages?: number
+  cursorPagination?: boolean
+  hasNextPage?: boolean
   onPageChange?: (nextPage: number) => void
   serverSideSort?: boolean
   sortBy?: string | null
@@ -240,6 +242,8 @@ export function Table<T extends Record<string, any>>({
   currentPage: controlledCurrentPage,
   totalItems: controlledTotalItems,
   totalPages: controlledTotalPages,
+  cursorPagination = false,
+  hasNextPage = false,
   onPageChange,
   serverSideSort = false,
   sortBy: controlledSortBy,
@@ -505,7 +509,9 @@ export function Table<T extends Record<string, any>>({
     ? Math.max(Number(controlledTotalItems) || 0, 0)
     : filteredData.length
   const totalPages = serverSidePagination
-    ? Math.max(Number(controlledTotalPages) || Math.ceil(totalItemCount / pageSize), 1)
+    ? cursorPagination
+      ? Math.max(resolvedCurrentPage + (hasNextPage ? 1 : 0), 1)
+      : Math.max(Number(controlledTotalPages) || Math.ceil(totalItemCount / pageSize), 1)
     : Math.ceil(filteredData.length / pageSize)
   const totalVisibleColumns = visibleColumns.length + (rowSelection ? 1 : 0)
   const selectedKeySet = useMemo(() => new Set(rowSelection?.selectedKeys ?? []), [rowSelection?.selectedKeys])
@@ -945,7 +951,11 @@ export function Table<T extends Record<string, any>>({
           </button>
 
           <div className={styles.pageNumbers}>
-            {Array.from({ length: Math.min(9, totalPages) }, (_, i) => {
+            {cursorPagination ? (
+              <span className={`${styles.pageNumber} ${styles.active}`} aria-current="page">
+                {resolvedCurrentPage}
+              </span>
+            ) : Array.from({ length: Math.min(9, totalPages) }, (_, i) => {
               let pageNum
               if (totalPages <= 9) {
                 // Mostrar todas las páginas si hay 9 o menos
@@ -975,16 +985,18 @@ export function Table<T extends Record<string, any>>({
 
           <button
             className={styles.pageButton}
-            disabled={resolvedCurrentPage === totalPages}
+            disabled={cursorPagination ? !hasNextPage : resolvedCurrentPage === totalPages}
             onClick={() => handlePageChange(resolvedCurrentPage + 1)}
           >
             <ChevronRight size={16} />
           </button>
 
           <span className={styles.pageInfo}>
-            {totalItemCount === 0
-              ? '0 de 0'
-              : `${((resolvedCurrentPage - 1) * pageSize) + 1} - ${Math.min(resolvedCurrentPage * pageSize, totalItemCount)} de ${totalItemCount}`}
+            {cursorPagination
+              ? `${paginatedData.length} ${paginatedData.length === 1 ? 'registro' : 'registros'} en esta página`
+              : totalItemCount === 0
+                ? '0 de 0'
+                : `${((resolvedCurrentPage - 1) * pageSize) + 1} - ${Math.min(resolvedCurrentPage * pageSize, totalItemCount)} de ${totalItemCount}`}
           </span>
         </div>
       )}

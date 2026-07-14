@@ -1,0 +1,2 @@
+ALTER TABLE media_assets
+  ADD COLUMN IF NOT EXISTS folder_path TEXT NOT NULL DEFAULT '';

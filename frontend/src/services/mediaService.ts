@@ -9,6 +9,7 @@ export interface MediaAsset {
   originalFilename?: string
   storedFilename?: string
   bunnyPath?: string
+  folderPath?: string
   publicUrl: string
   privateUrl?: string
   mimeType: string
@@ -57,8 +58,61 @@ export interface ListMediaAssetsInput {
   module?: string
   mediaType?: string
   status?: string
+  search?: string
+  folderPath?: string | null
+  recursive?: boolean
   limit?: number
-  offset?: number
+  cursor?: string | null
+  includeMeta?: boolean
+  includeFolders?: boolean
+}
+
+export interface MediaPageInfo {
+  limit: number
+  hasMore: boolean
+  nextCursor: string | null
+}
+
+export interface MediaFolderSummary {
+  path: string
+  name: string
+  filesCount: number
+  sizeBytes: number
+}
+
+export interface MediaLibrarySummary {
+  totalItems: number
+  totalBytes: number
+}
+
+export interface MediaLibraryFacet {
+  mediaType: string
+  itemsCount: number
+  sizeBytes: number
+}
+
+export interface MediaAssetPage {
+  items: MediaAsset[]
+  pageInfo: MediaPageInfo
+  summary: MediaLibrarySummary | null
+  facets: MediaLibraryFacet[]
+  folders: MediaFolderSummary[]
+  folderPageInfo: MediaPageInfo
+}
+
+export interface ListMediaFoldersInput {
+  businessId?: string
+  parentPath?: string
+  module?: string
+  mediaType?: string
+  status?: string
+  limit?: number
+  cursor?: string | null
+}
+
+export interface MediaFolderPage {
+  items: MediaFolderSummary[]
+  pageInfo: MediaPageInfo
 }
 
 export interface MediaDownloadEntry {
@@ -113,6 +167,20 @@ interface ResumableVideoUploadPreparation {
 export interface MediaMoveEntry {
   id: string
   targetFolderPath?: string
+}
+
+export interface MediaSelectionInput {
+  assetIds?: string[]
+  folderPaths?: string[]
+  mediaType?: string
+  status?: string
+}
+
+export interface MediaSelectionOperationResult {
+  operation: string
+  attempted: number
+  affected: number
+  failed: number
 }
 
 export interface StreamChartPoint {
@@ -777,25 +845,27 @@ export const mediaService = {
     if (input.module) params.module = input.module
     if (input.mediaType) params.mediaType = input.mediaType
     if (input.status) params.status = input.status
+    if (input.search) params.search = input.search
+    if (input.folderPath !== null && input.folderPath !== undefined) params.path = input.folderPath
+    if (input.recursive !== undefined) params.recursive = input.recursive ? 'true' : 'false'
     if (input.limit) params.limit = String(input.limit)
-    if (input.offset) params.offset = String(input.offset)
+    if (input.cursor) params.cursor = input.cursor
+    if (input.includeMeta !== undefined) params.includeMeta = input.includeMeta ? 'true' : 'false'
+    if (input.includeFolders !== undefined) params.includeFolders = input.includeFolders ? 'true' : 'false'
 
-    return apiClient.get<MediaAsset[]>('/media/assets', { params })
+    return apiClient.get<MediaAssetPage>('/media/assets', { params })
   },
 
-  async listAllAssets(input: Omit<ListMediaAssetsInput, 'limit' | 'offset'> = {}) {
-    const pageSize = 250
-    const assets: MediaAsset[] = []
-    let offset = 0
-
-    while (true) {
-      const page = await this.listAssets({ ...input, limit: pageSize, offset })
-      assets.push(...page)
-      if (page.length < pageSize) break
-      offset += pageSize
-    }
-
-    return assets
+  listFolders(input: ListMediaFoldersInput = {}) {
+    const params: Record<string, string> = {}
+    if (input.businessId) params.businessId = input.businessId
+    if (input.parentPath !== undefined) params.parentPath = input.parentPath
+    if (input.module) params.module = input.module
+    if (input.mediaType) params.mediaType = input.mediaType
+    if (input.status) params.status = input.status
+    if (input.limit) params.limit = String(input.limit)
+    if (input.cursor) params.cursor = input.cursor
+    return apiClient.get<MediaFolderPage>('/media/folders', { params })
   },
 
   deleteAsset(assetId: string) {
@@ -810,13 +880,19 @@ export const mediaService = {
     )
   },
 
-  downloadAssetsArchive(entries: MediaDownloadEntry[], filename = 'media.zip') {
+  downloadAssetsArchive(
+    selection: MediaDownloadEntry[] | (MediaSelectionInput & { entries?: MediaDownloadEntry[] }),
+    filename = 'media.zip'
+  ) {
+    const body = Array.isArray(selection)
+      ? { entries: selection, filename }
+      : { ...selection, filename }
     return downloadFromApi(
       '/media/assets/download',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries, filename })
+        body: JSON.stringify(body)
       },
       filename
     )
@@ -827,6 +903,17 @@ export const mediaService = {
       entries,
       targetFolderPath
     })
+  },
+
+  moveSelection(selection: MediaSelectionInput, targetFolderPath = '') {
+    return apiClient.post<MediaSelectionOperationResult>('/media/assets/move-selection', {
+      ...selection,
+      targetFolderPath
+    })
+  },
+
+  deleteSelection(selection: MediaSelectionInput) {
+    return apiClient.delete<MediaSelectionOperationResult>('/media/assets/selection', selection)
   },
 
   syncAssetStream(assetId: string, input: {

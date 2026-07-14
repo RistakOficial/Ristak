@@ -8,41 +8,47 @@ import { TimezoneProvider } from '@/contexts/TimezoneContext'
 import { LabelsProvider } from '@/contexts/LabelsContext'
 import { usePhoneTheme, usePhoneWakeLock } from '@/hooks'
 import { AppShell } from '@/components/layout/AppShell'
-import { Dashboard } from '@/pages/Dashboard'
-import { DesktopChat } from '@/pages/DesktopChat'
-import { Initialization } from '@/pages/Initialization'
 import { useInitialization } from '@/contexts/InitializationContext'
-import { Reports } from '@/pages/Reports'
-import { Campaigns } from '@/pages/Campaigns'
-import { PaymentProducts, PaymentSubscriptions, Transactions } from '@/pages/Transactions'
-import { Contacts } from '@/pages/Contacts'
-import { Settings } from '@/pages/Settings'
-import { APIDocumentation } from '@/pages/Settings/APIDocumentation'
-import { AIAgent } from '@/pages/AIAgent'
-import { Appointments } from '@/pages/Appointments'
-import { Analytics } from '@/pages/Analytics'
-import { Sites } from '@/pages/Sites'
-import { Automations } from '@/pages/Automations'
-import { MDPProgram } from '@/pages/MDPProgram'
-import { PhoneAgentChat } from '@/pages/PhoneAgentChat'
-import { PhoneApp } from '@/pages/PhoneApp'
-import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
-import { PhoneCalendar } from '@/pages/PhoneCalendar'
-import { PhoneChat } from '@/pages/PhoneChat'
-import { PhonePayments } from '@/pages/PhonePayments'
-import { PhoneSettings } from '@/pages/PhoneSettings'
-import { PublicPayment, PublicPaymentGatewayReturn } from '@/pages/PublicPayment'
-import { Login } from '@/pages/Login'
-import { Setup } from '@/pages/Login/Setup'
-import { LicenseBlocked } from '@/pages/Login/LicenseBlocked'
-import { Sso } from '@/pages/Login/Sso'
-import ResetPassword from '@/pages/Login/ResetPassword'
+import {
+  LazyAIAgent,
+  LazyAPIDocumentation,
+  LazyAnalytics,
+  LazyAppointments,
+  LazyAutomations,
+  LazyCampaigns,
+  LazyContacts,
+  LazyDashboard,
+  LazyDesktopChat,
+  LazyInitialization,
+  LazyLicenseBlocked,
+  LazyLogin,
+  LazyMDPProgram,
+  LazyMobileTenantSetup,
+  LazyPaymentProducts,
+  LazyPaymentSubscriptions,
+  LazyPhoneAgentChat,
+  LazyPhoneAnalytics,
+  LazyPhoneApp,
+  LazyPhoneCalendar,
+  LazyPhoneChat,
+  LazyPhonePayments,
+  LazyPhoneSettings,
+  LazyPublicPayment,
+  LazyPublicPaymentGatewayReturn,
+  LazyReports,
+  LazyResetPassword,
+  LazySettings,
+  LazySetup,
+  LazySites,
+  LazySso,
+  LazyTransactions,
+  prefetchRouteModule
+} from '@/routing/routeModules'
 import { ToastContainer } from '@/components/common/Toast'
 import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
 import { AppStartupLoader } from '@/components/common/AppStartupLoader'
 import { MobileNotificationOnboarding } from '@/components/phone/MobileNotificationOnboarding'
-import { MobileTenantSetup } from '@/components/phone/MobileTenantSetup'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { mobileAppService } from '@/services/mobileAppService'
 import {
@@ -225,6 +231,16 @@ const RouteStartupLoader: React.FC<{ pathname: string; message?: string }> = ({ 
     : <AppStartupLoader message={message || 'Cargando'} />
 )
 
+const RouteModuleSuspense: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const location = useLocation()
+
+  return (
+    <React.Suspense fallback={<RouteStartupLoader pathname={location.pathname} message="Abriendo módulo" />}>
+      {children}
+    </React.Suspense>
+  )
+}
+
 // Componente para la ruta de setup (primera vez)
 const SetupRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, needsSetup, isLoading } = useAuth()
@@ -294,16 +310,22 @@ const MdpProgramRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
 const HomeRedirect: React.FC = () => {
   const { loading, isInitialized } = useInitialization()
   const { user } = useAuth()
+  const destination = !isInitialized && user?.role === 'admin'
+    ? '/initialization'
+    : hasModuleAccess(user, 'dashboard', 'read')
+      ? '/dashboard'
+      : getFirstAllowedAppPath(user)
+
+  React.useEffect(() => {
+    if (loading) return
+    void prefetchRouteModule(destination).catch(() => undefined)
+  }, [destination, loading])
 
   if (loading) {
     return <AppStartupLoader compact />
   }
 
-  if (!isInitialized && user?.role === 'admin') {
-    return <Navigate to="/initialization" replace />
-  }
-
-  return <Navigate to={hasModuleAccess(user, 'dashboard', 'read') ? '/dashboard' : getFirstAllowedAppPath(user)} replace />
+  return <Navigate to={destination} replace />
 }
 
 const PhoneRouteEffects: React.FC = () => {
@@ -786,23 +808,24 @@ const AppWithNotifications: React.FC = () => {
         <NativeIosMobileRouteGate />
         <CellphoneRouteGate />
         <TabletViewPreferenceGate />
-        <Routes>
-          <Route path="/setup" element={<SetupRoute><Setup /></SetupRoute>} />
-          <Route path="/license-blocked" element={<LicenseBlocked />} />
-          <Route path="/sso" element={<Sso />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/pay/success" element={<PublicPaymentGatewayReturn />} />
-          <Route path="/pay/:publicPaymentId" element={<PublicPayment />} />
-          <Route path={PHONE_APP_TENANT_PATH} element={<MobileTenantSetup />} />
-          <Route path={PHONE_APP_LOGIN_PATH} element={<Login />} />
+        <RouteModuleSuspense>
+          <Routes>
+          <Route path="/setup" element={<SetupRoute><LazySetup /></SetupRoute>} />
+          <Route path="/license-blocked" element={<LazyLicenseBlocked />} />
+          <Route path="/sso" element={<LazySso />} />
+          <Route path="/login" element={<LazyLogin />} />
+          <Route path="/reset-password" element={<LazyResetPassword />} />
+          <Route path="/pay/success" element={<LazyPublicPaymentGatewayReturn />} />
+          <Route path="/pay/:publicPaymentId" element={<LazyPublicPayment />} />
+          <Route path={PHONE_APP_TENANT_PATH} element={<LazyMobileTenantSetup />} />
+          <Route path={PHONE_APP_LOGIN_PATH} element={<LazyLogin />} />
           <Route path="/phone/*" element={<LegacyPhoneRouteRedirect />} />
           <Route
             path={PHONE_APP_HOME_PATH}
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="chat">
-                  <PhoneChat />
+                  <LazyPhoneChat />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -820,7 +843,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="ai_agent">
-                  <PhoneAgentChat />
+                  <LazyPhoneAgentChat />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -830,7 +853,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="ai_agent">
-                  <PhoneAgentChat />
+                  <LazyPhoneAgentChat />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -840,7 +863,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="ai_agent">
-                  <PhoneAgentChat />
+                  <LazyPhoneAgentChat />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -858,7 +881,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="payments">
-                  <PhonePayments />
+                  <LazyPhonePayments />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -868,7 +891,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="dashboard">
-                  <PhoneAnalytics />
+                  <LazyPhoneAnalytics />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -878,7 +901,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="settings_mobile">
-                  <PhoneSettings />
+                  <LazyPhoneSettings />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -888,7 +911,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="appointments">
-                  <PhoneCalendar />
+                  <LazyPhoneCalendar />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -898,7 +921,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="appointments">
-                  <PhoneCalendar />
+                  <LazyPhoneCalendar />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -907,7 +930,7 @@ const AppWithNotifications: React.FC = () => {
             path={`${PHONE_APP_PREFIX}/:section`}
             element={
               <ProtectedRoute>
-                <PhoneApp />
+                <LazyPhoneApp />
               </ProtectedRoute>
             }
           />
@@ -916,7 +939,7 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="settings_api_access">
-                  <APIDocumentation />
+                  <LazyAPIDocumentation />
                 </AccessRoute>
               </ProtectedRoute>
             }
@@ -930,26 +953,27 @@ const AppWithNotifications: React.FC = () => {
             }
           >
             <Route index element={<HomeRedirect />} />
-            <Route path="initialization/*" element={<AccessRoute moduleKey="settings_integrations"><Initialization /></AccessRoute>} />
-            <Route path="dashboard/*" element={<AccessRoute moduleKey="dashboard"><Dashboard /></AccessRoute>} />
-            <Route path="chat/*" element={<AccessRoute moduleKey="chat"><DesktopChat /></AccessRoute>} />
-            <Route path="reports/*" element={<AccessRoute moduleKey="reports"><Reports /></AccessRoute>} />
-            <Route path="campaigns/*" element={<AccessRoute moduleKey="campaigns"><Campaigns /></AccessRoute>} />
-            <Route path="transactions/payment-plans/*" element={<AccessRoute moduleKey="payments" featureKeys={['payment_plans']}><Transactions /></AccessRoute>} />
-            <Route path="transactions/subscriptions/*" element={<AccessRoute moduleKey="payments" featureKeys={['subscriptions']}><PaymentSubscriptions /></AccessRoute>} />
-            <Route path="transactions/products/*" element={<AccessRoute moduleKey="payments"><PaymentProducts /></AccessRoute>} />
-            <Route path="transactions/*" element={<AccessRoute moduleKey="payments"><Transactions /></AccessRoute>} />
-            <Route path="contacts/*" element={<AccessRoute moduleKey="contacts"><Contacts /></AccessRoute>} />
-            <Route path="appointments/*" element={<AccessRoute moduleKey="appointments"><Appointments /></AccessRoute>} />
-            <Route path="sites/*" element={<AccessRoute moduleKey="sites"><Sites /></AccessRoute>} />
-            <Route path="automations/*" element={<AccessRoute moduleKey="automations"><Automations /></AccessRoute>} />
-            <Route path="analytics/*" element={<AccessRoute moduleKey="analytics"><Analytics /></AccessRoute>} />
-            <Route path="ai-agent/*" element={<AccessRoute moduleKey="ai_agent"><AIAgent /></AccessRoute>} />
-            <Route path="mdp-program/*" element={<MdpProgramRoute><MDPProgram /></MdpProgramRoute>} />
-            <Route path="settings/*" element={<Settings />} />
+            <Route path="initialization/*" element={<AccessRoute moduleKey="settings_integrations"><LazyInitialization /></AccessRoute>} />
+            <Route path="dashboard/*" element={<AccessRoute moduleKey="dashboard"><LazyDashboard /></AccessRoute>} />
+            <Route path="chat/*" element={<AccessRoute moduleKey="chat"><LazyDesktopChat /></AccessRoute>} />
+            <Route path="reports/*" element={<AccessRoute moduleKey="reports"><LazyReports /></AccessRoute>} />
+            <Route path="campaigns/*" element={<AccessRoute moduleKey="campaigns"><LazyCampaigns /></AccessRoute>} />
+            <Route path="transactions/payment-plans/*" element={<AccessRoute moduleKey="payments" featureKeys={['payment_plans']}><LazyTransactions /></AccessRoute>} />
+            <Route path="transactions/subscriptions/*" element={<AccessRoute moduleKey="payments" featureKeys={['subscriptions']}><LazyPaymentSubscriptions /></AccessRoute>} />
+            <Route path="transactions/products/*" element={<AccessRoute moduleKey="payments"><LazyPaymentProducts /></AccessRoute>} />
+            <Route path="transactions/*" element={<AccessRoute moduleKey="payments"><LazyTransactions /></AccessRoute>} />
+            <Route path="contacts/*" element={<AccessRoute moduleKey="contacts"><LazyContacts /></AccessRoute>} />
+            <Route path="appointments/*" element={<AccessRoute moduleKey="appointments"><LazyAppointments /></AccessRoute>} />
+            <Route path="sites/*" element={<AccessRoute moduleKey="sites"><LazySites /></AccessRoute>} />
+            <Route path="automations/*" element={<AccessRoute moduleKey="automations"><LazyAutomations /></AccessRoute>} />
+            <Route path="analytics/*" element={<AccessRoute moduleKey="analytics"><LazyAnalytics /></AccessRoute>} />
+            <Route path="ai-agent/*" element={<AccessRoute moduleKey="ai_agent"><LazyAIAgent /></AccessRoute>} />
+            <Route path="mdp-program/*" element={<MdpProgramRoute><LazyMDPProgram /></MdpProgramRoute>} />
+            <Route path="settings/*" element={<LazySettings />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
-        </Routes>
+          </Routes>
+        </RouteModuleSuspense>
         <MobileNotificationOnboarding />
       </BrowserRouter>
       <StorageAlert />

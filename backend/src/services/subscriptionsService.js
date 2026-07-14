@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
@@ -45,6 +46,7 @@ import {
   normalizeToUtcIso
 } from '../utils/dateUtils.js'
 import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
+import { getCachedPaymentListSummary } from './paymentListSummaryCacheService.js'
 
 const SUBSCRIPTION_PREFIX = 'rstk_sub'
 const DEFAULT_CURRENCY = 'MXN'
@@ -52,9 +54,6 @@ const DEFAULT_INTERVAL = 'monthly'
 const DEFAULT_STATUS = 'active'
 const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 
-const ACTIVE_STATUSES = new Set(['active', 'trialing'])
-const PAUSED_STATUSES = new Set(['paused'])
-const PAST_DUE_STATUSES = new Set(['past_due', 'incomplete'])
 const PUBLIC_PAYMENT_LINK_METHODS = new Set(['stripe_link', 'stripe_payment_link', 'conekta_link', 'conekta_payment_link'])
 const UNSUPPORTED_CLIP_SUBSCRIPTION_METHODS = new Set(['clip', 'clip_link', 'clip_payment_link', 'clip_card'])
 const MERCADOPAGO_LEGACY_LINK_METHODS = new Set(['mercadopago_checkout', 'mercadopago_payment_link'])
@@ -290,17 +289,6 @@ function assertClipIsNotUsedForSubscription(row = {}) {
   throw error
 }
 
-function calculateMrr(row) {
-  const amount = normalizeAmount(row.amount)
-  const count = normalizeIntervalCount(row.interval_count)
-  const interval = normalizeInterval(row.interval_type)
-
-  if (interval === 'daily') return amount * (365 / 12) / count
-  if (interval === 'weekly') return amount * (52 / 12) / count
-  if (interval === 'yearly') return amount / (12 * count)
-  return amount / count
-}
-
 function getContactName(row = {}) {
   const contact = row || {}
   const joined = [contact.first_name, contact.last_name].map(cleanString).filter(Boolean).join(' ')
@@ -404,26 +392,6 @@ function rowToApi(row = {}) {
     raw,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
-  }
-}
-
-function buildSummary(rows = []) {
-  const visibleRows = rows.filter((row) => row.status !== 'deleted')
-  const activeRows = visibleRows.filter((row) => ACTIVE_STATUSES.has(row.status))
-  const pausedRows = visibleRows.filter((row) => PAUSED_STATUSES.has(row.status))
-  const pastDueRows = visibleRows.filter((row) => PAST_DUE_STATUSES.has(row.status))
-  const monthlyRevenue = activeRows.reduce((sum, row) => sum + calculateMrr(row), 0)
-  const nextRow = visibleRows
-    .filter((row) => row.next_run_at && !['cancelled', 'paused'].includes(row.status))
-    .sort((a, b) => new Date(a.next_run_at).getTime() - new Date(b.next_run_at).getTime())[0]
-
-  return {
-    total: visibleRows.length,
-    active: activeRows.length,
-    paused: pausedRows.length,
-    pastDue: pastDueRows.length,
-    monthlyRevenue: Math.round(monthlyRevenue * 100) / 100,
-    nextRunAt: nextRow?.next_run_at || null
   }
 }
 
@@ -1144,36 +1112,269 @@ async function syncRebillSubscriptionUpdateIfNeeded(row, existing = {}, payload 
   return applyRebillSubscriptionToRow(row, rebillSubscription)
 }
 
-export async function listSubscriptions({ status, refresh = false } = {}) {
+const SUBSCRIPTION_LIST_DEFAULT_LIMIT = 20
+const SUBSCRIPTION_LIST_MAX_LIMIT = 100
+
+function subscriptionListCursorError(message = 'Cursor de suscripciones inválido') {
+  const error = new Error(message)
+  error.status = 400
+  return error
+}
+
+function subscriptionCursorValue(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString()
+  return value === null || value === undefined ? '' : value
+}
+
+function subscriptionCursorScope({ status, search, sortBy, sortOrder }) {
+  return createHash('sha256').update(JSON.stringify({
+    status: cleanString(status).toLowerCase(),
+    search: cleanString(search).toLowerCase().slice(0, 200),
+    sortBy,
+    sortOrder
+  })).digest('base64url')
+}
+
+function encodeSubscriptionCursor(row, cursorContext) {
+  if (!row?.id || row.cursor_tie_value === null || row.cursor_tie_value === undefined) return null
+  return Buffer.from(JSON.stringify({
+    v: 1,
+    scope: subscriptionCursorScope(cursorContext),
+    nullRank: Number(row.cursor_null_rank || 0),
+    sortValue: subscriptionCursorValue(row.cursor_sort_value),
+    tieValue: subscriptionCursorValue(row.cursor_tie_value),
+    id: String(row.id)
+  }), 'utf8').toString('base64url')
+}
+
+function decodeSubscriptionCursor(value, cursorContext) {
+  const clean = cleanString(value)
+  if (!clean) return null
+  if (clean.length > 2048) throw subscriptionListCursorError()
+  try {
+    const parsed = JSON.parse(Buffer.from(clean, 'base64url').toString('utf8'))
+    if (
+      parsed?.v !== 1 || parsed?.scope !== subscriptionCursorScope(cursorContext) ||
+      ![0, 1].includes(Number(parsed?.nullRank)) || !cleanString(parsed?.tieValue) || !cleanString(parsed?.id)
+    ) throw new Error('invalid cursor payload')
+    return {
+      nullRank: Number(parsed.nullRank),
+      sortValue: parsed.sortValue,
+      tieValue: parsed.tieValue,
+      id: cleanString(parsed.id)
+    }
+  } catch {
+    throw subscriptionListCursorError()
+  }
+}
+
+function normalizeSubscriptionListLimit(value) {
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return SUBSCRIPTION_LIST_DEFAULT_LIMIT
+  return Math.min(parsed, SUBSCRIPTION_LIST_MAX_LIMIT)
+}
+
+function normalizeSubscriptionListPage(value) {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+}
+
+function buildSubscriptionStatusCondition(status, params) {
+  const cleanStatus = cleanString(status).toLowerCase()
+  if (!cleanStatus || cleanStatus === 'all') return ''
+
+  if (cleanStatus === 'active') {
+    params.push('active', 'trialing')
+    return 'LOWER(status) IN (?, ?)'
+  }
+
+  if (cleanStatus === 'past_due') {
+    params.push('past_due', 'incomplete')
+    return 'LOWER(status) IN (?, ?)'
+  }
+
+  params.push(cleanStatus)
+  return 'LOWER(status) = ?'
+}
+
+function buildSubscriptionSearchCondition(search, params) {
+  const cleanSearch = cleanString(search).toLowerCase().slice(0, 200)
+  if (!cleanSearch) return ''
+
+  const pattern = `%${cleanSearch}%`
+  params.push(pattern)
+  return `LOWER(
+    COALESCE(id, '') || ' ' ||
+    COALESCE(name, '') || ' ' ||
+    COALESCE(description, '') || ' ' ||
+    COALESCE(contact_name, '') || ' ' ||
+    COALESCE(contact_email, '') || ' ' ||
+    COALESCE(contact_phone, '') || ' ' ||
+    COALESCE(payment_provider, '') || ' ' ||
+    COALESCE(payment_method, '')
+  ) LIKE ?`
+}
+
+const SUBSCRIPTION_SORT_COLUMNS = Object.freeze({
+  name: 'name',
+  contactName: 'contact_name',
+  status: 'status',
+  amount: 'amount',
+  intervalType: 'interval_type',
+  nextRunAt: 'next_run_at',
+  paymentMethod: 'payment_method',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
+})
+
+function appendSubscriptionCursorCondition(where, params, cursor, sortColumn, sortOrder) {
+  if (!cursor) return
+  const nullRank = `CASE WHEN ${sortColumn} IS NULL THEN 1 ELSE 0 END`
+  const tieValue = 'COALESCE(updated_at, created_at)'
+  const operator = sortOrder === 'ASC' ? '>' : '<'
+
+  if (cursor.nullRank === 0) {
+    where.push(`(${nullRank}, ${sortColumn}, ${tieValue}, id) ${operator} (?, ?, ?, ?)`)
+    params.push(
+      cursor.nullRank,
+      cursor.sortValue,
+      cursor.tieValue,
+      cursor.id
+    )
+    return
+  }
+
+  where.push(`(${nullRank}, ${tieValue}, id) ${operator} (?, ?, ?)`)
+  params.push(
+    cursor.nullRank,
+    cursor.tieValue,
+    cursor.id
+  )
+}
+
+async function getSubscriptionsSummary() {
+  const row = await db.get(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN LOWER(status) IN ('active', 'trialing') THEN 1 ELSE 0 END) AS active,
+      SUM(CASE WHEN LOWER(status) = 'paused' THEN 1 ELSE 0 END) AS paused,
+      SUM(CASE WHEN LOWER(status) IN ('past_due', 'incomplete') THEN 1 ELSE 0 END) AS past_due,
+      SUM(CASE
+        WHEN LOWER(status) NOT IN ('active', 'trialing') THEN 0
+        WHEN LOWER(COALESCE(interval_type, 'monthly')) = 'daily'
+          THEN COALESCE(amount, 0) * 365.0 / 12.0 / CASE WHEN COALESCE(interval_count, 0) > 0 THEN interval_count ELSE 1 END
+        WHEN LOWER(COALESCE(interval_type, 'monthly')) = 'weekly'
+          THEN COALESCE(amount, 0) * 52.0 / 12.0 / CASE WHEN COALESCE(interval_count, 0) > 0 THEN interval_count ELSE 1 END
+        WHEN LOWER(COALESCE(interval_type, 'monthly')) = 'yearly'
+          THEN COALESCE(amount, 0) / 12.0 / CASE WHEN COALESCE(interval_count, 0) > 0 THEN interval_count ELSE 1 END
+        ELSE COALESCE(amount, 0) / CASE WHEN COALESCE(interval_count, 0) > 0 THEN interval_count ELSE 1 END
+      END) AS monthly_revenue,
+      MIN(CASE
+        WHEN next_run_at IS NOT NULL AND LOWER(COALESCE(status, '')) NOT IN ('cancelled', 'paused')
+          THEN next_run_at
+        ELSE NULL
+      END) AS next_run_at
+    FROM subscriptions
+    WHERE COALESCE(status, '') <> 'deleted'
+  `)
+
+  return {
+    total: Number(row?.total || 0),
+    active: Number(row?.active || 0),
+    paused: Number(row?.paused || 0),
+    pastDue: Number(row?.past_due || 0),
+    monthlyRevenue: Math.round(Number(row?.monthly_revenue || 0) * 100) / 100,
+    nextRunAt: row?.next_run_at || null
+  }
+}
+
+export async function listSubscriptions({
+  status,
+  search,
+  page = 1,
+  cursor,
+  limit = SUBSCRIPTION_LIST_DEFAULT_LIMIT,
+  sortBy = 'nextRunAt',
+  sortOrder = 'asc',
+  refresh = false
+} = {}) {
   if (refresh) {
     await syncPendingMercadoPagoSubscriptions().catch((error) => {
       logger.warn(`No se pudieron sincronizar suscripciones pendientes de Mercado Pago: ${error.message}`)
     })
   }
 
-  const cleanStatus = cleanString(status).toLowerCase()
+  const pageNumber = normalizeSubscriptionListPage(page)
+  const limitNumber = normalizeSubscriptionListLimit(limit)
+  if (pageNumber > 1 && !cleanString(cursor)) {
+    throw subscriptionListCursorError('Las páginas posteriores requieren cursor')
+  }
   const params = []
   const where = ["COALESCE(status, '') <> 'deleted'"]
 
-  if (cleanStatus && cleanStatus !== 'all') {
-    where.push('status = ?')
-    params.push(cleanStatus)
-  }
+  const statusCondition = buildSubscriptionStatusCondition(status, params)
+  if (statusCondition) where.push(statusCondition)
+  const searchCondition = buildSubscriptionSearchCondition(search, params)
+  if (searchCondition) where.push(searchCondition)
 
-  const rows = await db.all(
-    `SELECT *
-     FROM subscriptions
-     WHERE ${where.join(' AND ')}
-     ORDER BY
-       CASE WHEN next_run_at IS NULL THEN 1 ELSE 0 END,
-       next_run_at ASC,
-       updated_at DESC`,
-    params
+  const requestedSortColumn = SUBSCRIPTION_SORT_COLUMNS[cleanString(sortBy)] || SUBSCRIPTION_SORT_COLUMNS.nextRunAt
+  const requestedSortOrder = cleanString(sortOrder).toLowerCase() === 'desc' ? 'DESC' : 'ASC'
+  const normalizedSortBy = Object.hasOwn(SUBSCRIPTION_SORT_COLUMNS, cleanString(sortBy))
+    ? cleanString(sortBy)
+    : 'nextRunAt'
+  const cursorContext = {
+    status,
+    search,
+    sortBy: normalizedSortBy,
+    sortOrder: requestedSortOrder
+  }
+  const decodedCursor = decodeSubscriptionCursor(cursor, cursorContext)
+  appendSubscriptionCursorCondition(where, params, decodedCursor, requestedSortColumn, requestedSortOrder)
+  const nullRank = `CASE WHEN ${requestedSortColumn} IS NULL THEN 1 ELSE 0 END`
+  const tieValue = 'COALESCE(updated_at, created_at)'
+
+  const [candidateRows, summary] = await Promise.all([
+    db.all(
+      `SELECT *,
+         ${nullRank} AS cursor_null_rank,
+         ${requestedSortColumn} AS cursor_sort_value,
+         ${tieValue} AS cursor_tie_value
+       FROM subscriptions
+       WHERE ${where.join(' AND ')}
+       ORDER BY
+         ${nullRank} ${requestedSortOrder},
+         ${requestedSortColumn} ${requestedSortOrder},
+         ${tieValue} ${requestedSortOrder},
+         id ${requestedSortOrder}
+       LIMIT ?`,
+      [...params, limitNumber + 1]
+    ),
+    getCachedPaymentListSummary('subscriptions', getSubscriptionsSummary)
+  ])
+
+  const hasNext = candidateRows.length > limitNumber
+  const rows = hasNext ? candidateRows.slice(0, limitNumber) : candidateRows
+  const nextCursor = hasNext
+    ? encodeSubscriptionCursor(rows[rows.length - 1], cursorContext)
+    : null
+  const hasFilters = Boolean(
+    cleanString(search) || (cleanString(status) && cleanString(status).toLowerCase() !== 'all')
   )
+  const total = hasFilters ? null : Number(summary.total || 0)
+  const totalPages = total === null ? null : Math.max(1, Math.ceil(total / limitNumber))
 
   return {
     subscriptions: rows.map(rowToApi),
-    summary: buildSummary(rows)
+    summary,
+    pagination: {
+      page: pageNumber,
+      limit: limitNumber,
+      total,
+      totalPages,
+      hasNext,
+      hasPrev: Boolean(decodedCursor),
+      nextCursor
+    }
   }
 }
 

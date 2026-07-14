@@ -8,6 +8,8 @@ import {
   syncVisitorToHighLevel,
   linkVisitorToContactHandler,
   getSessionsHandler,
+  getTrackingAnalyticsSummaryHandler,
+  searchTrackingSessionsHandler,
   getSessionHandler,
   updateSessionHandler,
   deleteSessionsHandler,
@@ -57,6 +59,7 @@ const requireWebAnalyticsFeature = requireFeature('web_analytics')
 
 // CRUD de sesiones
 router.get('/sessions', requireWebAnalyticsFeature, getSessionsHandler)
+router.post('/sessions/search', requireWebAnalyticsFeature, searchTrackingSessionsHandler)
 router.get('/sessions/:id', requireWebAnalyticsFeature, getSessionHandler)
 router.put('/sessions/:id', requireWebAnalyticsFeature, updateSessionHandler)
 router.delete('/sessions', requireWebAnalyticsFeature, deleteSessionsHandler)
@@ -71,6 +74,9 @@ router.post('/analytics-preference', requireWebAnalyticsFeature, setAnalyticsPre
 
 // Preferencia de fuente de visitantes
 router.post('/visitor-source-preference', requireWebAnalyticsFeature, setVisitorSourcePreference)
+
+// Contrato agregado y acotado para Analíticas (no devuelve eventos crudos).
+router.post('/analytics/summary', requireWebAnalyticsFeature, getTrackingAnalyticsSummaryHandler)
 
 // Obtener visitantes por ad_id desde sessions
 router.get('/visitors-by-ad', requireWebAnalyticsFeature, getVisitorsByAd)

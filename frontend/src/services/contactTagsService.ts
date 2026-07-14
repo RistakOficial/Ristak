@@ -1,4 +1,9 @@
 import apiClient from './apiClient'
+import {
+  getAuthScopedCacheRevision,
+  registerAuthScopedCacheInvalidator,
+  syncAuthScopedCachePrincipal
+} from './authPrincipalCache'
 
 /**
  * Etiquetas de contactos. Cada etiqueta tiene un ID estable (es lo que se
@@ -78,7 +83,10 @@ function invalidateCaches() {
   pendingSystemLoad = null
 }
 
+registerAuthScopedCacheInvalidator(invalidateCaches)
+
 function cachedTagByValue(value: string, includeSystem = true): ContactTag | undefined {
+  syncAuthScopedCachePrincipal()
   const clean = String(value || '').trim()
   if (!clean) return undefined
   const lists = includeSystem
@@ -111,6 +119,8 @@ async function refreshAfterMutation() {
 export const contactTagsService = {
   /** Lista con caché compartida. Por defecto devuelve sólo etiquetas del usuario. */
   async getTags(options?: GetTagsOptions): Promise<ContactTag[]> {
+    syncAuthScopedCachePrincipal()
+    const requestPrincipalRevision = getAuthScopedCacheRevision()
     const { forceRefresh, includeSystem } = normalizeGetTagsOptions(options)
     const cached = cacheFor(includeSystem)
     if (cached && !forceRefresh) return cached
@@ -120,12 +130,14 @@ export const contactTagsService = {
         .get<ContactTag[]>('/contact-tags', includeSystem ? { params: { includeSystem: 'true' } } : undefined)
         .then((tags) => {
           const list = Array.isArray(tags) ? tags : []
-          notify(includeSystem, list)
+          if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
+            notify(includeSystem, list)
+          }
           return list
         })
         .finally(() => {
-          if (includeSystem) pendingSystemLoad = null
-          else pendingUserLoad = null
+          if (includeSystem && pendingSystemLoad === request) pendingSystemLoad = null
+          else if (!includeSystem && pendingUserLoad === request) pendingUserLoad = null
         })
       if (includeSystem) pendingSystemLoad = request
       else pendingUserLoad = request
@@ -134,9 +146,13 @@ export const contactTagsService = {
   },
 
   async getTagsWithUsage(): Promise<ContactTag[]> {
+    syncAuthScopedCachePrincipal()
+    const requestPrincipalRevision = getAuthScopedCacheRevision()
     const tags = await apiClient.get<ContactTag[]>('/contact-tags', { params: { includeUsage: 'true' } })
     const list = Array.isArray(tags) ? tags : []
-    notify(false, list)
+    if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
+      notify(false, list)
+    }
     return list
   },
 
@@ -146,13 +162,17 @@ export const contactTagsService = {
 
   /** Etiquetas (con conteo de uso) + carpetas en una sola llamada */
   async getCatalog(options: { includeSystem?: boolean } = {}): Promise<ContactTagsCatalog> {
+    syncAuthScopedCachePrincipal()
+    const requestPrincipalRevision = getAuthScopedCacheRevision()
     const includeSystem = Boolean(options.includeSystem)
     const catalog = await apiClient.get<ContactTagsCatalog>(
       '/contact-tags/catalog',
       includeSystem ? { params: { includeSystem: 'true' } } : undefined
     )
     const tags = Array.isArray(catalog?.tags) ? catalog.tags : []
-    notify(includeSystem, tags)
+    if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
+      notify(includeSystem, tags)
+    }
     return { tags, folders: Array.isArray(catalog?.folders) ? catalog.folders : [] }
   },
 

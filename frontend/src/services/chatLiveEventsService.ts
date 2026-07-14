@@ -1,4 +1,5 @@
 import { apiUrl } from './apiBaseUrl'
+import { invalidateRistakApiReadCache } from './authFetch'
 
 export interface ChatLiveMessageEvent {
   type: 'chat_message'
@@ -96,6 +97,7 @@ function dispatchFrame(frame: string, options: SubscribeOptions) {
   try {
     const payload = JSON.parse(parsed.data)
     if (payload?.type === 'chat_message' && typeof payload.contactId === 'string' && payload.contactId.trim()) {
+      invalidateRistakApiReadCache()
       options.onMessage(payload as ChatLiveMessageEvent)
     }
   } catch (error) {

@@ -1,4 +1,10 @@
 import apiClient from './apiClient'
+import { invalidateTrackingAnalyticsSummaryCache } from './analyticsService'
+import { apiUrl } from './apiBaseUrl'
+import {
+  registerAuthScopedCacheInvalidator,
+  syncAuthScopedCachePrincipal
+} from './authPrincipalCache'
 
 export interface TrackingSession {
   // IDs principales
@@ -144,6 +150,49 @@ export interface SessionsResponse {
   hasMore: boolean
 }
 
+export type TrackingSessionsFilters = Record<string, string[]>
+
+export interface TrackingSessionsSearchInput {
+  start: string
+  end: string
+  filters?: TrackingSessionsFilters
+  q?: string
+  column?: string
+  cursor?: string | null
+  limit?: number
+}
+
+export interface TrackingSessionsSearchResponse {
+  items: TrackingSession[]
+  limit: number
+  hasMore: boolean
+  nextCursor: string | null
+}
+
+export interface CursorPagePagination {
+  limit: number
+  hasNext: boolean
+  hasMore: boolean
+  nextCursor: string | null
+}
+
+export interface CursorPage<T> {
+  items: T[]
+  pagination: CursorPagePagination
+}
+
+export interface TrackingVisitorsPageInput {
+  startDate: string
+  endDate: string
+  scope?: 'all' | 'attribution' | 'campaigns' | 'attributed'
+  campaign_id?: string
+  adset_id?: string
+  ad_id?: string
+  cursor?: string | null
+  search?: string
+  limit?: number
+}
+
 /**
  * Obtiene las sesiones recientes de tracking (legacy - sin paginación)
  */
@@ -161,6 +210,84 @@ async function getSessionsPaginated(offset: number = 0, limit: number = 50): Pro
 }
 
 /**
+ * Busca sesiones con cursor estable y una respuesta acotada. Este contrato no
+ * solicita COUNT: la tabla puede recorrer millones de filas sin pagar un
+ * conteo global en cada búsqueda.
+ */
+async function searchSessions(
+  input: TrackingSessionsSearchInput,
+  options: { signal?: AbortSignal } = {}
+): Promise<TrackingSessionsSearchResponse> {
+  const limit = Math.min(100, Math.max(20, Math.trunc(input.limit ?? 50)))
+
+  return apiClient.post<TrackingSessionsSearchResponse>(
+    '/api/tracking/sessions/search',
+    {
+      start: input.start,
+      end: input.end,
+      filters: input.filters ?? {},
+      q: input.q?.trim() ?? '',
+      column: input.column || 'all',
+      cursor: input.cursor ?? null,
+      limit
+    },
+    { signal: options.signal }
+  )
+}
+
+/**
+ * Drill-down acotado de visitantes. Se usa fetch crudo porque el contrato legacy
+ * conserva `data` como arreglo y publica la metadata de cursor al mismo nivel.
+ */
+async function getVisitorsPage<T = Record<string, unknown>>(
+  input: TrackingVisitorsPageInput,
+  options: { signal?: AbortSignal } = {}
+): Promise<CursorPage<T>> {
+  const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)))
+  const params = new URLSearchParams({
+    startDate: input.startDate,
+    endDate: input.endDate,
+    limit: String(limit)
+  })
+  if (input.scope) params.set('scope', input.scope)
+  if (input.campaign_id) params.set('campaign_id', input.campaign_id)
+  if (input.adset_id) params.set('adset_id', input.adset_id)
+  if (input.ad_id) params.set('ad_id', input.ad_id)
+  if (input.cursor) params.set('cursor', input.cursor)
+  if (input.search?.trim()) params.set('search', input.search.trim())
+
+  const response = await fetch(apiUrl(`/api/tracking/visitors?${params.toString()}`), {
+    signal: options.signal
+  })
+  const payload = await response.json().catch(() => null) as {
+    error?: string
+    data?: T[] | { items?: T[]; pagination?: Partial<CursorPagePagination> }
+    pagination?: Partial<CursorPagePagination>
+  } | null
+  if (!response.ok) throw new Error(payload?.error || 'No se pudieron cargar los visitantes')
+
+  const items = Array.isArray(payload?.data)
+    ? payload.data
+    : Array.isArray(payload?.data?.items)
+      ? payload.data.items
+      : []
+  const pagination = payload?.pagination || (!Array.isArray(payload?.data) ? payload?.data?.pagination : null) || {}
+  const hasNext = Boolean(pagination.hasNext ?? pagination.hasMore)
+
+  return {
+    items,
+    pagination: {
+      limit: Number(pagination.limit) || limit,
+      hasNext,
+      hasMore: hasNext,
+      nextCursor: typeof pagination.nextCursor === 'string' && pagination.nextCursor
+        ? pagination.nextCursor
+        : null
+    }
+  }
+}
+
+/**
  * Obtiene una sesión específica
  */
 async function getSessionById(sessionId: string): Promise<TrackingSession> {
@@ -174,18 +301,25 @@ async function getSessionById(sessionId: string): Promise<TrackingSession> {
 const TRACKING_CONFIG_TTL_MS = 60_000
 let trackingConfigCache: { promise: Promise<TrackingConfig>; fetchedAt: number } | null = null
 
+function invalidateTrackingConfigCache() {
+  trackingConfigCache = null
+}
+
+registerAuthScopedCacheInvalidator(invalidateTrackingConfigCache)
+
 /**
  * Obtiene la configuración automática del tracking
  */
 function getTrackingConfig(options: { forceRefresh?: boolean } = {}): Promise<TrackingConfig> {
+  syncAuthScopedCachePrincipal()
   const now = Date.now()
   if (!options.forceRefresh && trackingConfigCache && now - trackingConfigCache.fetchedAt < TRACKING_CONFIG_TTL_MS) {
     return trackingConfigCache.promise
   }
 
-  const promise = apiClient.get<TrackingConfig>('/api/tracking/config').catch(error => {
+  const promise: Promise<TrackingConfig> = apiClient.get<TrackingConfig>('/api/tracking/config').catch(error => {
     // No cachear errores para permitir reintentos
-    trackingConfigCache = null
+    if (trackingConfigCache?.promise === promise) trackingConfigCache = null
     throw error
   })
 
@@ -218,6 +352,7 @@ async function configureTracking(): Promise<{ success: boolean; message: string;
  */
 async function updateSession(id: string, updates: Partial<TrackingSession>): Promise<TrackingSession> {
   const response = await apiClient.put<{ session: TrackingSession }>(`/api/tracking/sessions/${id}`, updates)
+  invalidateTrackingAnalyticsSummaryCache()
   return response.session
 }
 
@@ -226,12 +361,15 @@ async function updateSession(id: string, updates: Partial<TrackingSession>): Pro
  */
 async function deleteSessions(ids: string[]): Promise<{ deletedCount: number }> {
   const response = await apiClient.delete<{ deletedCount: number }>('/api/tracking/sessions', { ids })
+  invalidateTrackingAnalyticsSummaryCache()
   return response
 }
 
 export const trackingService = {
   getSessions,
   getSessionsPaginated,
+  searchSessions,
+  getVisitorsPage,
   getSessionById,
   updateSession,
   deleteSessions,

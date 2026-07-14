@@ -1,4 +1,10 @@
 import { apiUrl } from './apiBaseUrl'
+import {
+  getAuthScopedCachePrincipalFingerprint,
+  getAuthScopedCacheRevision,
+  registerAuthScopedCacheInvalidator,
+  syncAuthScopedCachePrincipal
+} from './authPrincipalCache'
 
 export interface HighLevelStatus {
   configured: boolean
@@ -89,14 +95,13 @@ export interface IntegrationsStatus {
 }
 
 // El estado de integraciones se consulta desde muchos componentes al montar
-// (AuthContext, useHighLevelConnected, modales...). Cada llamada al backend
-// verifica el token contra la API de HighLevel, así que se comparte una sola
-// petición con TTL corto.
+// (AuthContext, useHighLevelConnected, modales...). Es un snapshot local y se
+// comparte para que cada superficie no repita la misma lectura al backend.
 const STATUS_TTL_MS = 60_000
 const STATUS_SNAPSHOT_KEY = 'ristak_integrations_status_snapshot_v1'
 const STATUS_SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 let statusCache: { promise: Promise<IntegrationsStatus>; fetchedAt: number } | null = null
-let statusSnapshot: { data: IntegrationsStatus; savedAt: number } | null = null
+let statusSnapshot: { data: IntegrationsStatus; savedAt: number; principal: string } | null = null
 let statusSnapshotInitialized = false
 let statusRequestVersion = 0
 const statusListeners = new Set<() => void>()
@@ -110,6 +115,10 @@ function getStorage() {
   }
 }
 
+function currentPrincipalFingerprint() {
+  return getAuthScopedCachePrincipalFingerprint()
+}
+
 function readStoredStatusSnapshot() {
   const storage = getStorage()
   if (!storage) return null
@@ -118,8 +127,14 @@ function readStoredStatusSnapshot() {
   if (!raw) return null
 
   try {
-    const parsed = JSON.parse(raw) as Partial<{ data: IntegrationsStatus; savedAt: number }>
-    if (!parsed || typeof parsed !== 'object' || !parsed.data || typeof parsed.savedAt !== 'number') {
+    const parsed = JSON.parse(raw) as Partial<{ data: IntegrationsStatus; savedAt: number; principal: string }>
+    if (
+      !parsed
+      || typeof parsed !== 'object'
+      || !parsed.data
+      || typeof parsed.savedAt !== 'number'
+      || parsed.principal !== currentPrincipalFingerprint()
+    ) {
       storage.removeItem(STATUS_SNAPSHOT_KEY)
       return null
     }
@@ -130,7 +145,8 @@ function readStoredStatusSnapshot() {
 
     return {
       data: parsed.data,
-      savedAt: parsed.savedAt
+      savedAt: parsed.savedAt,
+      principal: parsed.principal
     }
   } catch {
     storage.removeItem(STATUS_SNAPSHOT_KEY)
@@ -141,7 +157,8 @@ function readStoredStatusSnapshot() {
 function writeStatusSnapshot(data: IntegrationsStatus) {
   const snapshot = {
     data,
-    savedAt: Date.now()
+    savedAt: Date.now(),
+    principal: currentPrincipalFingerprint()
   }
   statusSnapshot = snapshot
   statusSnapshotInitialized = true
@@ -149,7 +166,16 @@ function writeStatusSnapshot(data: IntegrationsStatus) {
   const storage = getStorage()
   if (storage) {
     try {
-      storage.setItem(STATUS_SNAPSHOT_KEY, JSON.stringify(snapshot))
+      // El snapshot persistente acelera el primer paint, pero jamás conserva el
+      // token de HighLevel. La revalidación autenticada rellena ese dato sólo
+      // en memoria cuando una superficie realmente lo necesita.
+      storage.setItem(STATUS_SNAPSHOT_KEY, JSON.stringify({
+        ...snapshot,
+        data: {
+          ...data,
+          highlevel: { ...data.highlevel, accessToken: null }
+        }
+      }))
     } catch {
       // El estado en memoria sigue disponible para este runtime aunque storage falle.
     }
@@ -165,6 +191,7 @@ function ensureStatusSnapshotInitialized() {
 }
 
 export function readCachedIntegrationsStatus(): IntegrationsStatus | null {
+  syncAuthScopedCachePrincipal()
   ensureStatusSnapshotInitialized()
 
   if (statusSnapshot && Date.now() - statusSnapshot.savedAt <= STATUS_SNAPSHOT_MAX_AGE_MS) {
@@ -180,12 +207,15 @@ export function getIntegrationsStatusSnapshot(): IntegrationsStatus | null {
 }
 
 export function subscribeIntegrationsStatus(listener: () => void): () => void {
+  syncAuthScopedCachePrincipal()
   ensureStatusSnapshotInitialized()
   statusListeners.add(listener)
   return () => statusListeners.delete(listener)
 }
 
 export function getIntegrationsStatus(options: { forceRefresh?: boolean } = {}): Promise<IntegrationsStatus> {
+  syncAuthScopedCachePrincipal()
+  const requestPrincipalRevision = getAuthScopedCacheRevision()
   const now = Date.now()
   if (!options.forceRefresh && statusCache && now - statusCache.fetchedAt < STATUS_TTL_MS) {
     return statusCache.promise
@@ -198,7 +228,10 @@ export function getIntegrationsStatus(options: { forceRefresh?: boolean } = {}):
         throw new Error('No se pudo obtener el estado de integraciones')
       }
       const data = await response.json() as IntegrationsStatus
-      if (requestVersion === statusRequestVersion) {
+      if (
+        requestVersion === statusRequestVersion
+        && requestPrincipalRevision === getAuthScopedCacheRevision()
+      ) {
         writeStatusSnapshot(data)
       }
       return data
@@ -244,3 +277,5 @@ export function clearIntegrationsStatus() {
   getStorage()?.removeItem(STATUS_SNAPSHOT_KEY)
   statusListeners.forEach(listener => listener())
 }
+
+registerAuthScopedCacheInvalidator(clearIntegrationsStatus)

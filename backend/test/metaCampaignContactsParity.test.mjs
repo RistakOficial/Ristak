@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
 import { db } from '../src/config/database.js'
-import { getCampaigns, getContactsByType } from '../src/controllers/metaController.js'
+import { getCampaigns, getCampaignsPage, getContactsByType } from '../src/controllers/metaController.js'
 import { invalidateTimezoneCache } from '../src/utils/dateUtils.js'
 
 function createResponse() {
@@ -46,20 +46,18 @@ async function restoreRows(table, rows) {
   }
 }
 
-test('getContactsByType no combina DISTINCT con el orden calculado que PostgreSQL rechaza', () => {
-  const source = readFileSync(new URL('../src/controllers/metaController.js', import.meta.url), 'utf8')
-  const handlerStart = source.indexOf('export const getContactsByType = async')
-  const queryStart = source.indexOf('let contactsQuery = `', handlerStart)
-  const queryEnd = source.indexOf('const contactsParams =', queryStart)
+test('getContactsByType delega a una página local, estable y acotada', () => {
+  const controller = readFileSync(new URL('../src/controllers/metaController.js', import.meta.url), 'utf8')
+  const service = readFileSync(new URL('../src/services/campaignContactsPaginationService.js', import.meta.url), 'utf8')
+  const handlerStart = controller.indexOf('export const getContactsByType = async')
+  const handlerEnd = controller.indexOf('/**\n * Verifica el estado del token', handlerStart)
+  const handler = controller.slice(handlerStart, handlerEnd)
 
-  assert.ok(handlerStart >= 0 && queryStart >= 0 && queryEnd > queryStart, 'no se encontro la consulta de getContactsByType')
-
-  const contactsQuerySource = source.slice(queryStart, queryEnd)
-  assert.doesNotMatch(
-    contactsQuerySource,
-    /SELECT\s+DISTINCT\b[\s\S]*ORDER BY\s+\$\{timestampSortExpression\('c\.created_at'\)\}/i,
-    'PostgreSQL exige que una expresion de ORDER BY aparezca en SELECT cuando se usa DISTINCT; el GROUP BY ya deduplica estas filas'
-  )
+  assert.match(handler, /listCampaignContactsPage/)
+  assert.doesNotMatch(handler, /getContactsWithAppointmentsHybrid|getContactsWithShowedAppointmentsHybrid|api_token|fetch\(/)
+  assert.match(service, /ROW_NUMBER\(\) OVER/)
+  assert.match(service, /ORDER BY \$\{createdAtSort\} DESC, id DESC[\s\S]*LIMIT \?/)
+  assert.match(service, /MAX_PAGE_LIMIT = 100/)
 })
 
 test('Publicidad mantiene paridad entre sus cifras y el modal en campaña, conjunto y anuncio', async () => {
@@ -154,7 +152,11 @@ test('Publicidad mantiene paridad entre sus cifras y el modal en campaña, conju
       ]
     )
 
-    const campaigns = await callController(getCampaigns, { startDate: date, endDate: date })
+    const campaigns = await callController(getCampaigns, {
+      startDate: date,
+      endDate: date,
+      includeHierarchy: 'full'
+    })
     const campaign = campaigns.find(item => item.id === campaignId)
     const adset = campaign?.adsets?.find(item => item.id === adsetId)
     const ad = adset?.ads?.find(item => item.id === adId)
@@ -162,6 +164,46 @@ test('Publicidad mantiene paridad entre sus cifras y el modal en campaña, conju
     assert.ok(campaign, 'la campaña fixture debe aparecer en la tabla')
     assert.ok(adset, 'el conjunto fixture debe aparecer en la tabla')
     assert.ok(ad, 'el anuncio fixture debe aparecer en la tabla')
+
+    const campaignPage = await callController(getCampaignsPage, {
+      startDate: date,
+      endDate: date,
+      level: 'campaign',
+      page: '1',
+      pageSize: '50'
+    })
+    const pagedCampaign = campaignPage.items.find(item => item.id === campaignId)
+    assert.ok(pagedCampaign, 'el contrato paginado debe incluir la campaña fixture')
+    assert.equal(pagedCampaign.leads, 1)
+    assert.equal(pagedCampaign.sales, 1)
+    assert.equal(pagedCampaign.appointments, 1)
+    assert.equal(pagedCampaign.attendances, 1)
+    assert.equal(pagedCampaign.revenue, 250)
+    assert.equal(pagedCampaign.hasChildren, true)
+    assert.deepEqual(pagedCampaign.adsets, [], 'el resumen no debe incrustar toda la jerarquía')
+
+    const adsetPage = await callController(getCampaignsPage, {
+      startDate: date,
+      endDate: date,
+      level: 'adset',
+      campaignId,
+      pageSize: '200'
+    })
+    const pagedAdset = adsetPage.items.find(item => item.id === adsetId)
+    assert.ok(pagedAdset, 'el conjunto debe cargarse bajo demanda')
+    assert.equal(pagedAdset.leads, 1)
+    assert.deepEqual(pagedAdset.ads, [], 'el conjunto tampoco debe incrustar anuncios')
+
+    const adPage = await callController(getCampaignsPage, {
+      startDate: date,
+      endDate: date,
+      level: 'ad',
+      adsetId,
+      pageSize: '200'
+    })
+    const pagedAd = adPage.items.find(item => item.id === adId)
+    assert.ok(pagedAd, 'el anuncio debe cargarse bajo demanda')
+    assert.equal(pagedAd.leads, 1)
 
     const levels = [
       { label: 'campaña', filter: { campaign_id: campaignId }, row: campaign },
@@ -193,9 +235,10 @@ test('Publicidad mantiene paridad entre sus cifras y el modal en campaña, conju
         )
         assert.equal(contacts[0]?.id, contactId)
 
-        if (metric.type === 'appointments') {
-          assert.deepEqual(contacts[0]?.appointments?.map(item => item.id), [appointmentId])
-        }
+        assert.equal('payments' in contacts[0], false)
+        assert.equal('appointments' in contacts[0], false)
+        assert.equal('firstSession' in contacts[0], false)
+        if (metric.type === 'appointments') assert.equal(contacts[0]?.hasAppointments, true)
       }
     }
   } finally {

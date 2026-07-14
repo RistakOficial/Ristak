@@ -774,7 +774,15 @@ export async function listLocalPrices(productId) {
   return rows.map(priceRowToApi)
 }
 
-export async function listLocalProducts({ limit = 100, offset = 0, query = '', includePrices = true, includeInactive = false } = {}) {
+export async function listLocalProducts({
+  limit = 100,
+  offset = 0,
+  query = '',
+  includePrices = true,
+  includeInactive = false,
+  sortBy = 'name',
+  sortOrder = 'asc'
+} = {}) {
   const safeLimit = Math.min(250, Math.max(1, Number(limit) || 100))
   const safeOffset = Math.max(0, Number(offset) || 0)
   const params = []
@@ -786,28 +794,92 @@ export async function listLocalProducts({ limit = 100, offset = 0, query = '', i
 
   const cleanQuery = cleanString(query)
   if (cleanQuery) {
-    where.push(`LOWER(COALESCE(name, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(ghl_product_id, '') || ' ' || COALESCE(id, '')) LIKE LOWER(?)`)
+    where.push(`(
+      LOWER(COALESCE(name, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(ghl_product_id, '') || ' ' || COALESCE(id, '')) LIKE LOWER(?)
+      OR EXISTS (
+        SELECT 1 FROM product_prices search_price
+        WHERE search_price.product_id = products.id
+          AND LOWER(COALESCE(search_price.name, '') || ' ' || COALESCE(search_price.sku, '')) LIKE LOWER(?)
+      )
+    )`)
+    params.push(`%${cleanQuery}%`)
     params.push(`%${cleanQuery}%`)
   }
 
-  params.push(safeLimit, safeOffset)
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  const totalRow = await db.get(
+    `SELECT COUNT(*) AS total FROM products ${whereClause}`,
+    params
+  )
+  const summaryWhere = includeInactive ? '' : 'WHERE COALESCE(p.is_active, 1) != 0'
+  const summary = await db.get(`
+    SELECT
+      COUNT(*) AS total,
+      COALESCE(SUM(COALESCE(price_stats.price_count, 0)), 0) AS total_prices,
+      COALESCE(SUM(CASE WHEN COALESCE(price_stats.has_sku, 0) = 1 THEN 1 ELSE 0 END), 0) AS with_sku,
+      COALESCE(SUM(CASE WHEN COALESCE(price_stats.has_positive_price, 0) = 0 THEN 1 ELSE 0 END), 0) AS without_price
+    FROM products p
+    LEFT JOIN (
+      SELECT
+        product_id,
+        COUNT(*) AS price_count,
+        MAX(CASE WHEN TRIM(COALESCE(sku, '')) != '' THEN 1 ELSE 0 END) AS has_sku,
+        MAX(CASE WHEN COALESCE(amount, 0) > 0 THEN 1 ELSE 0 END) AS has_positive_price
+      FROM product_prices
+      GROUP BY product_id
+    ) price_stats ON price_stats.product_id = p.id
+    ${summaryWhere}
+  `)
+
+  const sortColumns = {
+    name: 'name',
+    productType: 'product_type',
+    source: 'source',
+    createdAt: 'created_at',
+    updatedAt: 'updated_at'
+  }
+  const sortColumn = sortColumns[sortBy] || sortColumns.name
+  const direction = String(sortOrder).toLowerCase() === 'desc' ? 'DESC' : 'ASC'
+  const pageParams = [...params, safeLimit, safeOffset]
 
   const rows = await db.all(
     `SELECT *
      FROM products
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY name ASC
+     ${whereClause}
+     ORDER BY ${sortColumn} ${direction}, id ${direction}
      LIMIT ? OFFSET ?`,
-    params
+    pageParams
   )
 
-  const products = []
-  for (const row of rows) {
-    const prices = includePrices ? await listLocalPrices(row.id) : undefined
-    products.push(productRowToApi(row, prices))
+  const pricesByProductId = new Map()
+  if (includePrices && rows.length > 0) {
+    const productIds = rows.map(row => row.id)
+    const priceRows = await db.all(
+      `SELECT * FROM product_prices
+       WHERE product_id IN (${productIds.map(() => '?').join(', ')})
+       ORDER BY product_id ASC, name ASC, amount ASC`,
+      productIds
+    )
+    for (const priceRow of priceRows) {
+      const prices = pricesByProductId.get(priceRow.product_id) || []
+      prices.push(priceRowToApi(priceRow))
+      pricesByProductId.set(priceRow.product_id, prices)
+    }
   }
 
-  return { products, total: products.length }
+  return {
+    products: rows.map(row => productRowToApi(
+      row,
+      includePrices ? (pricesByProductId.get(row.id) || []) : undefined
+    )),
+    total: Number(totalRow?.total || 0),
+    summary: {
+      total: Number(summary?.total || 0),
+      totalPrices: Number(summary?.total_prices || 0),
+      withSku: Number(summary?.with_sku || 0),
+      withoutPrice: Number(summary?.without_price || 0)
+    }
+  }
 }
 
 async function markLocalProductSyncError(productId, error) {

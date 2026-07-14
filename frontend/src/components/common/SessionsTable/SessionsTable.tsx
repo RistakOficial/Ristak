@@ -1,87 +1,145 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '../Button/Button'
 import { CustomSelect } from '../CustomSelect/CustomSelect'
 import { RefreshCw, Maximize2, Minimize2, Search, Edit, Trash2, X, Check } from 'lucide-react'
-import { trackingService, TrackingSession, SessionsResponse } from '@/services/trackingService'
+import {
+  trackingService,
+  TrackingSession,
+  TrackingSessionsFilters
+} from '@/services/trackingService'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import styles from './SessionsTable.module.css'
 
-interface SessionsTableProps {
-  className?: string
-  filteredSessions?: TrackingSession[] // Sesiones ya filtradas desde parent (Analytics)
-  useExternalData?: boolean // Si true, usa filteredSessions en vez de cargar propias
+export interface SessionsTableRange {
+  start: string
+  end: string
 }
 
-const SESSION_SEARCH_KEYS = [
-  'session_id',
-  'visitor_id',
-  'contact_id',
-  'full_name',
-  'email',
-  'event_name',
-  'started_at',
-  'page_url',
-  'referrer_url',
-  'utm_source',
-  'utm_medium',
-  'utm_campaign',
-  'utm_term',
-  'utm_content',
-  'gclid',
-  'fbclid',
-  'fbc',
-  'fbp',
-  'wbraid',
-  'gbraid',
-  'msclkid',
-  'ttclid',
-  'channel',
-  'source_platform',
-  'campaign_id',
-  'adset_id',
-  'ad_group_id',
-  'ad_id',
-  'campaign_name',
-  'adset_name',
-  'ad_group_name',
-  'ad_name',
-  'placement',
-  'site_source_name',
-  'network',
-  'match_type',
-  'keyword',
-  'search_query',
-  'creative_id',
-  'ad_position',
-  'ip',
-  'user_agent',
-  'device_type',
-  'os',
-  'browser',
-  'browser_version',
-  'language',
-  'timezone',
-  'geo_country',
-  'geo_region',
-  'geo_city'
-] as const
+export interface SessionsTableProps {
+  className?: string
+  range: SessionsTableRange
+  filters?: TrackingSessionsFilters
+  onSessionsChanged?: () => void
+}
+
+const PAGE_SIZE = 50
+const SEARCH_DEBOUNCE_MS = 300
+
+const isAbortError = (error: unknown) => (
+  error instanceof Error && error.name === 'AbortError'
+)
+
+interface ResizableHeaderProps {
+  columnKey: string
+  label: string
+  width: number
+  onResize: (key: string, width: number) => void
+}
+
+const ResizableHeader = React.memo<ResizableHeaderProps>(({ columnKey, label, width, onResize }) => {
+  const [isResizing, setIsResizing] = useState(false)
+  const [currentWidth, setCurrentWidth] = useState(width)
+  const startXRef = useRef(0)
+  const startWidthRef = useRef(0)
+
+  const handleMouseDown = (event: React.MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsResizing(true)
+    startXRef.current = event.clientX
+    startWidthRef.current = width
+    setCurrentWidth(width)
+  }
+
+  useEffect(() => {
+    if (!isResizing) return
+
+    const handleMouseMove = (event: MouseEvent) => {
+      event.preventDefault()
+      setCurrentWidth(Math.max(80, startWidthRef.current + event.clientX - startXRef.current))
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      onResize(columnKey, currentWidth)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove, { passive: false })
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [columnKey, currentWidth, isResizing, onResize])
+
+  const displayWidth = isResizing ? currentWidth : width
+  return (
+    <th
+      style={{
+        padding: '12px 8px',
+        textAlign: 'left',
+        fontWeight: 600,
+        borderBottom: '1px solid var(--design-table-border, var(--color-border))',
+        width: `${displayWidth}px`,
+        minWidth: `${displayWidth}px`,
+        maxWidth: `${displayWidth}px`,
+        position: 'relative',
+        userSelect: 'none',
+        backgroundColor: 'var(--design-table-head-bg, var(--color-surface))'
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {label}
+        </span>
+        <div
+          onMouseDown={handleMouseDown}
+          style={{
+            width: '8px',
+            height: '100%',
+            position: 'absolute',
+            right: '-4px',
+            top: 0,
+            cursor: 'col-resize',
+            backgroundColor: isResizing ? 'var(--color-primary)' : 'transparent',
+            transition: isResizing ? 'none' : 'background-color 0.2s',
+            zIndex: 10
+          }}
+          onMouseEnter={(event) => {
+            if (!isResizing) {
+              event.currentTarget.style.backgroundColor = 'var(--design-table-border, var(--color-border))'
+            }
+          }}
+          onMouseLeave={(event) => {
+            if (!isResizing) event.currentTarget.style.backgroundColor = 'transparent'
+          }}
+        />
+      </div>
+    </th>
+  )
+})
+
+ResizableHeader.displayName = 'ResizableHeader'
 
 export const SessionsTable: React.FC<SessionsTableProps> = ({
   className,
-  filteredSessions = [],
-  useExternalData = false
+  range,
+  filters = {},
+  onSessionsChanged
 }) => {
   const { formatLocalDateTime } = useTimezone()
   const { showToast, showConfirm } = useNotification()
 
   const [sessions, setSessions] = useState<TrackingSession[]>([])
+  const [compactSessions, setCompactSessions] = useState<TrackingSession[]>([])
   const [loadingSessions, setLoadingSessions] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [total, setTotal] = useState(0)
-  const [hasMore, setHasMore] = useState(true)
+  const [hasMore, setHasMore] = useState(false)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [pageCursor, setPageCursor] = useState<string | null>(null)
+  const [cursorHistory, setCursorHistory] = useState<Array<string | null>>([])
 
   // Estados para selección
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -91,135 +149,164 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
   // Estados para vista expandida
   const [isExpanded, setIsExpanded] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [searchColumn, setSearchColumn] = useState<string>('all')
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
   const DEFAULT_COLUMN_WIDTH = 150
 
-  // Ref para detectar scroll infinito
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const observerRef = useRef<IntersectionObserver | null>(null)
-  const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
-
-  // Si usa datos externos, actualizar sessions cuando cambien filteredSessions
-  useEffect(() => {
-    if (useExternalData) {
-      setSessions(filteredSessions)
-      setTotal(filteredSessions.length)
-      setHasMore(false) // No hay paginación con datos externos
-    }
-  }, [useExternalData, filteredSessions])
+  const activeRequestRef = useRef<AbortController | null>(null)
+  const requestSequenceRef = useRef(0)
+  const loadingMoreRef = useRef(false)
+  const filtersKey = JSON.stringify(filters)
 
   useEffect(() => {
-    if (!useExternalData) {
-      loadInitialSessions()
-    }
-  }, [useExternalData])
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim())
+    }, SEARCH_DEBOUNCE_MS)
 
-  // Configurar Intersection Observer para scroll infinito
-  useEffect(() => {
-    if (!isExpanded || useExternalData) return // Solo en vista expandida y sin datos externos
+    return () => window.clearTimeout(timeoutId)
+  }, [searchQuery])
 
-    const options = {
-      root: scrollContainerRef.current,
-      rootMargin: '200px', // Cargar cuando esté a 200px del final
-      threshold: 0.1
-    }
+  const loadInitialSessions = useCallback(async (silent = false) => {
+    const requestId = ++requestSequenceRef.current
+    activeRequestRef.current?.abort()
+    const controller = new AbortController()
+    activeRequestRef.current = controller
+    loadingMoreRef.current = false
+    setLoadingMore(false)
+    if (!silent) setLoadingSessions(true)
 
-    observerRef.current = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && hasMore && !loadingMore) {
-        loadMoreSessions()
-      }
-    }, options)
-
-    if (loadMoreTriggerRef.current) {
-      observerRef.current.observe(loadMoreTriggerRef.current)
-    }
-
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect()
-      }
-    }
-  }, [isExpanded, hasMore, loadingMore, sessions.length])
-
-  const loadInitialSessions = async () => {
-    setLoadingSessions(true)
     try {
-      const response: SessionsResponse = await trackingService.getSessionsPaginated(0, 50)
-      setSessions(response.sessions)
-      setTotal(response.total)
+      const response = await trackingService.searchSessions({
+        start: range.start,
+        end: range.end,
+        filters,
+        q: debouncedSearchQuery,
+        column: searchColumn,
+        cursor: null,
+        limit: PAGE_SIZE
+      }, { signal: controller.signal })
+
+      if (requestId !== requestSequenceRef.current) return
+      const firstPage = response.items.slice(0, PAGE_SIZE)
+      setSessions(firstPage)
+      if (!debouncedSearchQuery && searchColumn === 'all') {
+        setCompactSessions(firstPage)
+      }
       setHasMore(response.hasMore)
+      setNextCursor(response.nextCursor)
+      setPageCursor(null)
+      setCursorHistory([])
+      setSelectedIds(new Set())
     } catch (error) {
-      showToast('error', 'Error', 'No se pudieron cargar las sesiones')
+      if (!isAbortError(error) && requestId === requestSequenceRef.current) {
+        showToast('error', 'Error', 'No se pudieron cargar las sesiones')
+      }
     } finally {
-      setLoadingSessions(false)
+      if (requestId === requestSequenceRef.current) {
+        setLoadingSessions(false)
+      }
     }
-  }
+  }, [
+    debouncedSearchQuery,
+    filtersKey,
+    range.end,
+    range.start,
+    searchColumn,
+    showToast
+  ])
 
-  const loadMoreSessions = async () => {
-    if (loadingMore || !hasMore) return
+  useEffect(() => {
+    void loadInitialSessions()
+  }, [loadInitialSessions])
 
+  useEffect(() => () => {
+    requestSequenceRef.current += 1
+    activeRequestRef.current?.abort()
+  }, [])
+
+  const loadSessionsPage = useCallback(async (
+    cursor: string | null,
+    history: Array<string | null>
+  ) => {
+    if (loadingMoreRef.current) return
+
+    loadingMoreRef.current = true
     setLoadingMore(true)
+    const requestId = ++requestSequenceRef.current
+    activeRequestRef.current?.abort()
+    const controller = new AbortController()
+    activeRequestRef.current = controller
+
     try {
-      const offset = sessions.length
-      const response: SessionsResponse = await trackingService.getSessionsPaginated(offset, 50)
+      const response = await trackingService.searchSessions({
+        start: range.start,
+        end: range.end,
+        filters,
+        q: debouncedSearchQuery,
+        column: searchColumn,
+        cursor,
+        limit: PAGE_SIZE
+      }, { signal: controller.signal })
 
-      setSessions(prev => [...prev, ...response.sessions])
+      if (requestId !== requestSequenceRef.current) return
+      setSessions(response.items.slice(0, PAGE_SIZE))
+      setSelectedIds(new Set())
       setHasMore(response.hasMore)
+      setNextCursor(response.nextCursor)
+      setPageCursor(cursor)
+      setCursorHistory(history)
     } catch (error) {
-      showToast('error', 'Error', 'No se pudieron cargar más sesiones')
-    } finally {
-      setLoadingMore(false)
-    }
-  }
-
-  const preparedSessionSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
-  const sessionSearchIndexes = useMemo(() => {
-    return sessions.map((session: any) => ({
-      all: buildSearchIndex(SESSION_SEARCH_KEYS.map(key => session[key])),
-      columns: SESSION_SEARCH_KEYS.reduce<Record<string, ReturnType<typeof buildSearchIndex>>>((acc, key) => {
-        acc[key] = buildSearchIndex(session[key])
-        return acc
-      }, {})
-    }))
-  }, [sessions])
-
-  // Filtrar sesiones por búsqueda
-  const searchFilteredSessions = useMemo(() => {
-    if (!preparedSessionSearch.normalized) return sessions
-
-    return sessions.filter((session: any, index) => {
-      const searchIndexes = sessionSearchIndexes[index]
-      if (!searchIndexes) return false
-
-      // Si busca en columna específica
-      if (searchColumn !== 'all') {
-        return searchIndexIncludes(
-          searchIndexes.columns[searchColumn] ?? buildSearchIndex(session[searchColumn]),
-          preparedSessionSearch
-        )
+      if (!isAbortError(error) && requestId === requestSequenceRef.current) {
+        showToast('error', 'Error', 'No se pudo cargar esta página de sesiones')
       }
+    } finally {
+      if (requestId === requestSequenceRef.current) {
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      }
+    }
+  }, [
+    debouncedSearchQuery,
+    filtersKey,
+    range.end,
+    range.start,
+    searchColumn,
+    showToast
+  ])
 
-      // Si busca en todas las columnas
-      return searchIndexIncludes(searchIndexes.all, preparedSessionSearch)
-    })
-  }, [sessions, preparedSessionSearch, searchColumn, sessionSearchIndexes])
+  const loadNextPage = useCallback(() => {
+    if (!hasMore || !nextCursor || loadingMoreRef.current) return
+    void loadSessionsPage(nextCursor, [...cursorHistory, pageCursor])
+  }, [cursorHistory, hasMore, loadSessionsPage, nextCursor, pageCursor])
+
+  const loadPreviousPage = useCallback(() => {
+    if (!cursorHistory.length || loadingMoreRef.current) return
+    const previousCursor = cursorHistory[cursorHistory.length - 1] ?? null
+    void loadSessionsPage(previousCursor, cursorHistory.slice(0, -1))
+  }, [cursorHistory, loadSessionsPage])
 
   const handleToggleExpanded = () => {
     setIsExpanded(prev => !prev)
-    if (!isExpanded) {
+    if (isExpanded) {
+      const queryWillReset = Boolean(searchQuery || debouncedSearchQuery || searchColumn !== 'all')
       setSearchQuery('')
+      setDebouncedSearchQuery('')
       setSearchColumn('all')
+      if (!queryWillReset && (pageCursor || cursorHistory.length)) {
+        void loadInitialSessions(true)
+      }
+    } else {
       setSelectedIds(new Set())
     }
   }
 
-  const handleColumnResize = (columnKey: string, newWidth: number) => {
+  const handleColumnResize = useCallback((columnKey: string, newWidth: number) => {
     setColumnWidths(prev => ({
       ...prev,
       [columnKey]: Math.max(80, newWidth)
     }))
-  }
+  }, [])
 
   const getColumnWidth = (columnKey: string) => {
     return columnWidths[columnKey] || DEFAULT_COLUMN_WIDTH
@@ -228,7 +315,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
   // Manejo de selección
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(searchFilteredSessions.map(s => s.id)))
+      setSelectedIds(new Set(sessions.map(session => session.id)))
     } else {
       setSelectedIds(new Set())
     }
@@ -246,18 +333,19 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
     })
   }
 
-  const handleEditSelected = () => {
+  const handleEditSelected = async () => {
     if (selectedIds.size !== 1) {
       showToast('warning', 'Atención', 'Selecciona exactamente una sesión para editar')
       return
     }
 
     const sessionId = Array.from(selectedIds)[0]
-    const session = sessions.find(s => s.id === sessionId)
-
-    if (session) {
-      setEditingSession(session)
+    try {
+      const fullSession = await trackingService.getSessionById(sessionId)
+      setEditingSession(fullSession)
       setIsEditModalOpen(true)
+    } catch {
+      showToast('error', 'Error', 'No se pudo cargar la sesión para editar')
     }
   }
 
@@ -267,17 +355,17 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
       return
     }
 
+    const idsToDelete = Array.from(selectedIds)
     showConfirm(
       'Eliminar sesiones',
       `Se eliminarán ${selectedIds.size} sesión(es) de tracking de forma permanente. Esta acción no se puede deshacer.`,
       async () => {
         try {
-          await trackingService.deleteSessions(Array.from(selectedIds))
-          showToast('success', 'Éxito', `${selectedIds.size} sesión(es) eliminadas correctamente`)
-
-          // Actualizar lista
-          setSessions(prev => prev.filter(s => !selectedIds.has(s.id)))
+          await trackingService.deleteSessions(idsToDelete)
+          showToast('success', 'Éxito', `${idsToDelete.length} sesión(es) eliminadas correctamente`)
           setSelectedIds(new Set())
+          await loadInitialSessions(true)
+          onSessionsChanged?.()
         } catch (error) {
           showToast('error', 'Error', 'No se pudieron eliminar las sesiones')
         }
@@ -293,113 +381,17 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
     if (!editingSession) return
 
     try {
-      const updatedSession = await trackingService.updateSession(editingSession.id, updates)
-
-      // Actualizar en la lista
-      setSessions(prev => prev.map(s => s.id === updatedSession.id ? updatedSession : s))
+      await trackingService.updateSession(editingSession.id, updates)
+      onSessionsChanged?.()
 
       showToast('success', 'Éxito', 'Sesión actualizada correctamente')
       setIsEditModalOpen(false)
       setEditingSession(null)
       setSelectedIds(new Set())
+      await loadInitialSessions(true)
     } catch (error) {
       showToast('error', 'Error', 'No se pudo actualizar la sesión')
     }
-  }
-
-  // Componente para header resizable
-  const ResizableHeader: React.FC<{
-    columnKey: string
-    label: string
-    width: number
-    onResize: (key: string, width: number) => void
-  }> = ({ columnKey, label, width, onResize }) => {
-    const [isResizing, setIsResizing] = useState(false)
-    const [currentWidth, setCurrentWidth] = useState(width)
-    const startXRef = React.useRef(0)
-    const startWidthRef = React.useRef(0)
-
-    const handleMouseDown = (e: React.MouseEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      setIsResizing(true)
-      startXRef.current = e.clientX
-      startWidthRef.current = width
-      setCurrentWidth(width)
-    }
-
-    useEffect(() => {
-      if (!isResizing) return
-
-      const handleMouseMove = (e: MouseEvent) => {
-        e.preventDefault()
-        const diff = e.clientX - startXRef.current
-        const newWidth = Math.max(80, startWidthRef.current + diff)
-        setCurrentWidth(newWidth)
-      }
-
-      const handleMouseUp = () => {
-        setIsResizing(false)
-        onResize(columnKey, currentWidth)
-      }
-
-      document.addEventListener('mousemove', handleMouseMove, { passive: false })
-      document.addEventListener('mouseup', handleMouseUp)
-
-      return () => {
-        document.removeEventListener('mousemove', handleMouseMove)
-        document.removeEventListener('mouseup', handleMouseUp)
-      }
-    }, [isResizing, columnKey, onResize, currentWidth])
-
-    const displayWidth = isResizing ? currentWidth : width
-
-    return (
-      <th
-        style={{
-          padding: '12px 8px',
-          textAlign: 'left',
-          fontWeight: 600,
-          borderBottom: '1px solid var(--design-table-border, var(--color-border))',
-          width: `${displayWidth}px`,
-          minWidth: `${displayWidth}px`,
-          maxWidth: `${displayWidth}px`,
-          position: 'relative',
-          userSelect: 'none',
-          backgroundColor: 'var(--design-table-head-bg, var(--color-surface))'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {label}
-          </span>
-          <div
-            onMouseDown={handleMouseDown}
-            style={{
-              width: '8px',
-              height: '100%',
-              position: 'absolute',
-              right: '-4px',
-              top: 0,
-              cursor: 'col-resize',
-              backgroundColor: isResizing ? 'var(--color-primary)' : 'transparent',
-              transition: isResizing ? 'none' : 'background-color 0.2s',
-              zIndex: 10
-            }}
-            onMouseEnter={(e) => {
-              if (!isResizing) {
-                e.currentTarget.style.backgroundColor = 'var(--design-table-border, var(--color-border))'
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!isResizing) {
-                e.currentTarget.style.backgroundColor = 'transparent'
-              }
-            }}
-          />
-        </div>
-      </th>
-    )
   }
 
   // Definir las columnas
@@ -415,56 +407,28 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
     { key: 'site_name', label: 'Site' },
     { key: 'site_type', label: 'Site Type' },
     { key: 'form_site_name', label: 'Form' },
-    { key: 'public_page_title', label: 'Public Page' },
     { key: 'conversion_type', label: 'Conversion Type' },
-    { key: 'submission_id', label: 'Submission ID' },
     { key: 'page_url', label: 'Page URL' },
     { key: 'referrer_url', label: 'Referrer URL' },
     { key: 'utm_source', label: 'UTM Source' },
     { key: 'utm_medium', label: 'UTM Medium' },
     { key: 'utm_campaign', label: 'UTM Campaign' },
-    { key: 'utm_term', label: 'UTM Term' },
     { key: 'utm_content', label: 'UTM Content' },
-    { key: 'gclid', label: 'GCLID' },
-    { key: 'fbclid', label: 'FBCLID' },
-    { key: 'fbc', label: 'FBC' },
-    { key: 'fbp', label: 'FBP' },
-    { key: 'wbraid', label: 'WBRAID' },
-    { key: 'gbraid', label: 'GBRAID' },
-    { key: 'msclkid', label: 'MSCLKID' },
-    { key: 'ttclid', label: 'TTCLID' },
     { key: 'channel', label: 'Channel' },
     { key: 'source_platform', label: 'Source Platform' },
     { key: 'campaign_id', label: 'Campaign ID' },
     { key: 'adset_id', label: 'Adset ID' },
     { key: 'ad_group_id', label: 'Ad Group ID' },
     { key: 'ad_id', label: 'Ad ID' },
-    { key: 'campaign_name', label: 'Campaign Name' },
-    { key: 'adset_name', label: 'Adset Name' },
-    { key: 'ad_group_name', label: 'Ad Group Name' },
-    { key: 'ad_name', label: 'Ad Name' },
     { key: 'placement', label: 'Placement' },
-    { key: 'site_source_name', label: 'Site Source Name' },
-    { key: 'network', label: 'Network' },
-    { key: 'match_type', label: 'Match Type' },
-    { key: 'keyword', label: 'Keyword' },
-    { key: 'search_query', label: 'Search Query' },
-    { key: 'creative_id', label: 'Creative ID' },
-    { key: 'ad_position', label: 'Ad Position' },
-    { key: 'ip', label: 'IP' },
-    { key: 'user_agent', label: 'User Agent' },
     { key: 'device_type', label: 'Device Type' },
     { key: 'os', label: 'OS' },
     { key: 'browser', label: 'Browser' },
-    { key: 'browser_version', label: 'Browser Version' },
-    { key: 'language', label: 'Language' },
-    { key: 'timezone', label: 'Timezone' },
     { key: 'geo_country', label: 'Country' },
-    { key: 'geo_region', label: 'Region' },
     { key: 'geo_city', label: 'City' }
   ]
 
-  const allSelected = searchFilteredSessions.length > 0 && searchFilteredSessions.every(s => selectedIds.has(s.id))
+  const allSelected = sessions.length > 0 && sessions.every(session => selectedIds.has(session.id))
   const someSelected = selectedIds.size > 0 && !allSelected
 
   return (
@@ -474,7 +438,6 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
         <div className={styles.sectionHeader}>
           <h3 className={styles.sectionTitle}>
             Eventos de Tracking
-            {total > 0 && <span style={{ fontWeight: 400, color: 'var(--color-text-secondary)', marginLeft: '8px' }}>({total} total)</span>}
           </h3>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <Button
@@ -486,28 +449,23 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
               <Maximize2 size={16} />
               Expandir
             </Button>
-            {!useExternalData && (
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={loadInitialSessions}
-                disabled={loadingSessions}
-                aria-label={loadingSessions ? 'Cargando sesiones' : 'Actualizar sesiones'}
-              >
-                <RefreshCw size={16} className={loadingSessions ? styles.spinIcon : ''} />
-                {!loadingSessions && 'Actualizar'}
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="small"
+              onClick={() => void loadInitialSessions(false)}
+              disabled={loadingSessions}
+              aria-label={loadingSessions ? 'Cargando sesiones' : 'Actualizar sesiones'}
+            >
+              <RefreshCw size={16} className={loadingSessions ? styles.spinIcon : ''} />
+              {!loadingSessions && 'Actualizar'}
+            </Button>
           </div>
         </div>
 
-        {sessions.length > 0 ? (
+        {compactSessions.length > 0 ? (
           <div className={styles.tableContainer} style={{ overflowX: 'auto' }}>
             <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
-              {useExternalData
-                ? `Mostrando ${sessions.length} ${sessions.length === 1 ? 'sesión filtrada' : 'sesiones filtradas'}. Haz clic en "Expandir" para ver todas.`
-                : `Mostrando las primeras ${sessions.length} sesiones. Haz clic en "Expandir" para ver todas, editar y eliminar.`
-              }
+              Mostrando hasta {Math.min(10, compactSessions.length)} eventos cargados del rango. Haz clic en "Expandir" para buscar, editar y eliminar.
             </p>
             <table className={styles.table} data-ristak-table-element>
               <thead>
@@ -521,7 +479,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {sessions.slice(0, 10).map((session) => (
+                {compactSessions.slice(0, 10).map((session) => (
                   <tr key={session.id}>
                     <td style={{ padding: '12px 8px', fontSize: '0.875rem' }}>
                       {session.started_at ? formatLocalDateTime(new Date(session.started_at)) : '-'}
@@ -545,6 +503,11 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                 ))}
               </tbody>
             </table>
+          </div>
+        ) : loadingSessions ? (
+          <div className={styles.emptyState} aria-live="polite">
+            <RefreshCw size={18} className={styles.spinIcon} aria-hidden="true" />
+            <p>Cargando eventos…</p>
           </div>
         ) : (
           <div className={styles.emptyState}>
@@ -582,7 +545,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
             <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>
               Eventos de Tracking - Vista Completa
               <span style={{ fontWeight: 400, color: 'var(--color-text-secondary)', marginLeft: '12px' }}>
-                ({total} total)
+                ({sessions.length} cargadas)
               </span>
             </h2>
             <Button
@@ -620,6 +583,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                   <option value="visitor_id">Visitor ID</option>
                   <option value="contact_id">Contact ID</option>
                   <option value="full_name">Full Name</option>
+                  <option value="email">Email</option>
                   <option value="event_name">Event Name</option>
                 </optgroup>
                 <optgroup label="URLs">
@@ -630,26 +594,22 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                   <option value="utm_source">UTM Source</option>
                   <option value="utm_medium">UTM Medium</option>
                   <option value="utm_campaign">UTM Campaign</option>
-                  <option value="utm_term">UTM Term</option>
                   <option value="utm_content">UTM Content</option>
-                </optgroup>
-                <optgroup label="Click IDs">
-                  <option value="gclid">GCLID</option>
-                  <option value="fbclid">FBCLID</option>
-                  <option value="fbc">FBC</option>
-                  <option value="fbp">FBP</option>
                 </optgroup>
                 <optgroup label="Campaña">
                   <option value="source_platform">Source Platform</option>
-                  <option value="campaign_name">Campaign Name</option>
-                  <option value="ad_name">Ad Name</option>
+                  <option value="campaign_id">Campaign ID</option>
+                  <option value="adset_id">Adset ID</option>
+                  <option value="ad_id">Ad ID</option>
                   <option value="channel">Channel</option>
                 </optgroup>
                 <optgroup label="Device & Browser">
-                  <option value="ip">IP</option>
                   <option value="device_type">Device Type</option>
                   <option value="os">OS</option>
                   <option value="browser">Browser</option>
+                </optgroup>
+                <optgroup label="Sites">
+                  <option value="site_name">Site</option>
                 </optgroup>
                 <optgroup label="Geo">
                   <option value="geo_country">Country</option>
@@ -688,13 +648,13 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
               </div>
             </div>
             <span style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
-              {searchFilteredSessions.length} {searchFilteredSessions.length === 1 ? 'sesión' : 'sesiones'} {searchQuery.trim() && `(filtradas de ${sessions.length})`}
+              {sessions.length} {sessions.length === 1 ? 'sesión cargada' : 'sesiones cargadas'}
+              {searchQuery.trim() && ' para esta búsqueda'}
             </span>
           </div>
 
-          {/* Tabla expandida con scroll infinito */}
+          {/* Tabla expandida con ventana acotada */}
           <div
-            ref={scrollContainerRef}
             style={{
               flex: 1,
               overflow: 'auto',
@@ -753,7 +713,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {searchFilteredSessions.map((session: any, rowIndex: number) => {
+                  {sessions.map((session: any, rowIndex: number) => {
                     const isSelected = selectedIds.has(session.id)
 
                     const getCellValue = (key: string) => {
@@ -788,7 +748,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
 
                     return (
                       <tr
-                        key={`${session.session_id}-${rowIndex}`}
+                        key={session.id || `${session.session_id}-${rowIndex}`}
                         style={{
                           borderBottom: '1px solid var(--design-table-border, var(--color-border))',
                           backgroundColor: isSelected ? 'var(--color-primary-50)' : 'transparent'
@@ -831,12 +791,10 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                 </tbody>
               </table>
 
-              {/* Trigger para scroll infinito (solo si NO usa datos externos) */}
-              {!useExternalData && hasMore && (
+              {(cursorHistory.length > 0 || hasMore) && (
                 <div
-                  ref={loadMoreTriggerRef}
                   style={{
-                    height: '100px',
+                    minHeight: '88px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -844,15 +802,30 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                     color: 'var(--color-text-secondary)'
                   }}
                 >
-                  {loadingMore ? (
-                    <RefreshCw size={16} className={styles.spinIcon} aria-hidden="true" />
-                  ) : (
-                    'Desplázate hacia abajo para cargar más'
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="small"
+                    onClick={loadPreviousPage}
+                    disabled={loadingMore || cursorHistory.length === 0}
+                    aria-label="Cargar página anterior de sesiones"
+                  >
+                    Anterior
+                  </Button>
+                  <span>Página {cursorHistory.length + 1}</span>
+                  <Button
+                    variant="ghost"
+                    size="small"
+                    onClick={loadNextPage}
+                    disabled={loadingMore || !hasMore || !nextCursor}
+                    aria-label={loadingMore ? 'Cargando página de sesiones' : 'Cargar página siguiente de sesiones'}
+                  >
+                    {loadingMore && <RefreshCw size={16} className={styles.spinIcon} aria-hidden="true" />}
+                    {loadingMore ? 'Cargando…' : 'Siguiente'}
+                  </Button>
                 </div>
               )}
 
-              {!useExternalData && !hasMore && sessions.length > 0 && (
+              {!hasMore && cursorHistory.length === 0 && sessions.length > 0 && (
                 <div style={{
                   padding: '20px',
                   textAlign: 'center',

@@ -140,7 +140,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   useEffect(() => {
     if (!hasAutomationsAccess || !automationOpen) return
     setAutomationsLoading(true)
-    automationsService.getOverview()
+    automationsService.getOverview({ status: 'published', limit: 100 })
       .then((overview) => {
         const published = overview.automations.filter((automation) => automation.status === 'published')
         setAutomations(published)

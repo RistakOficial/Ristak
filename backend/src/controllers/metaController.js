@@ -35,7 +35,6 @@ import {
 } from '../services/highlevelSyncService.js';
 import { getConnectedMetaSocialProfiles } from '../services/metaSocialProfilesService.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
-import { parseContactCustomFields } from '../utils/contactCustomFields.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
 import {
@@ -68,6 +67,11 @@ import {
   getMetaAdsSyncIntervalMinutes,
   saveMetaAdsSyncIntervalMinutes
 } from '../services/metaAdsSyncSettingsService.js';
+import {
+  getCampaignPerformancePage,
+  invalidateCampaignPerformanceCache
+} from '../services/campaignPerformanceService.js';
+import { listCampaignContactsPage } from '../services/campaignContactsPaginationService.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -106,6 +110,8 @@ function startMetaAdsSyncAfterConnection(reason = 'meta-connected') {
       logger.warn(`Meta Ads: no se pudo actualizar el rango reciente automáticamente: ${recentResult.error || recentResult.message || 'error desconocido'}`);
       return;
     }
+
+    invalidateCampaignPerformanceCache();
 
     logger.info(`Meta Ads: actualización reciente automática lista (${recentResult.count || 0} filas). Iniciando histórico desde ${historicalStartDate}`);
 
@@ -1951,6 +1957,7 @@ export const updateRecent = async (req, res) => {
       });
     }
 
+    invalidateCampaignPerformanceCache();
     const startDateStr = buildMetaAdsHistoricalSyncStartDate();
 
     logger.info(`Actualización reciente completada. Iniciando sincronización histórica de Meta Ads (35 meses) desde: ${startDateStr}`);
@@ -1978,7 +1985,7 @@ export const updateRecent = async (req, res) => {
 /**
  * Obtiene campañas con sus adsets y ads en estructura jerárquica
  */
-export const getCampaigns = async (req, res) => {
+export const getCampaignsLegacyHierarchy = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
@@ -2325,6 +2332,87 @@ export const getCampaigns = async (req, res) => {
 };
 
 /**
+ * Contrato paginado de Publicidad. Devuelve un solo nivel por request y calcula
+ * contactos/visitantes dentro de SQL; no materializa el universo ni arma un IN
+ * proporcional al tamaño de la cuenta.
+ */
+export const getCampaignsPage = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren startDate y endDate'
+      });
+    }
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const data = await getCampaignPerformancePage({
+      range,
+      level: req.query.level,
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+      search: req.query.search,
+      sortBy: req.query.sortBy,
+      sortOrder: req.query.sortOrder,
+      campaignId: req.query.campaignId,
+      adsetId: req.query.adsetId,
+      includeVisitors: ['1', 'true', 'yes'].includes(String(req.query.includeVisitors || '').toLowerCase()),
+      onlyWithResults: ['1', 'true', 'yes'].includes(String(req.query.onlyWithResults || '').toLowerCase())
+    });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    logger.error(`Error en getCampaignsPage: ${error.message}`);
+    res.status(status).json({
+      success: false,
+      error: status < 500 ? error.message : 'Error al obtener campañas'
+    });
+  }
+};
+
+/**
+ * Compatibilidad del endpoint histórico. Por default conserva el array de
+ * campañas, pero ya no incrusta toda la jerarquía. Un consumidor legacy puede
+ * pedir temporalmente `includeHierarchy=full` mientras migra al contrato page.
+ */
+export const getCampaigns = async (req, res) => {
+  if (String(req.query.includeHierarchy || '').toLowerCase() === 'full') {
+    return getCampaignsLegacyHierarchy(req, res);
+  }
+
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' });
+    }
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const data = await getCampaignPerformancePage({
+      range,
+      level: 'campaign',
+      page: 1,
+      pageSize: req.query.pageSize || 80,
+      sortBy: req.query.sortBy || 'lastActiveDate',
+      sortOrder: req.query.sortOrder || 'desc',
+      includeVisitors: false
+    });
+
+    res.set?.('Deprecation', 'true');
+    res.set?.('Link', '</api/meta/campaigns/page>; rel="successor-version"');
+    return res.json({ success: true, data: data.items });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    logger.error(`Error en getCampaigns compatible: ${error.message}`);
+    return res.status(status).json({
+      success: false,
+      error: status < 500 ? error.message : 'Error al obtener campañas'
+    });
+  }
+};
+
+/**
  * Obtiene gastos agrupados por período (para gráficas)
  */
 export const getSpendOverTime = async (req, res) => {
@@ -2495,331 +2583,57 @@ export const getSyncStatus = async (req, res) => {
  */
 export const getContactsByType = async (req, res) => {
   try {
-    const { type, startDate, endDate, campaign_id, adset_id, ad_id } = req.query;
+    const result = await listCampaignContactsPage({
+      type: req.query.type,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      campaignId: req.query.campaign_id,
+      adsetId: req.query.adset_id,
+      adId: req.query.ad_id,
+      search: req.query.search,
+      cursor: req.query.cursor,
+      limit: req.query.limit
+    });
+    const range = {
+      start: result.range.startUtc,
+      end: result.range.endUtc,
+      timezone: result.range.appliedTimezone,
+      filtered: result.range.isFiltered
+    };
+    const paginated = ['1', 'true', 'yes'].includes(String(req.query.paginated || '').toLowerCase());
 
-    if (!type || !startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requieren type, startDate y endDate'
-      });
-    }
+    logger.info(`Página local de contactos de campaña (${req.query.type}): ${result.contacts.length} registros`);
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
-
-    if (!range.startZoned || !range.endZoned) {
-      return res.status(400).json({
-        success: false,
-        error: 'Rango de fechas inválido'
-      });
-    }
-
-    const adsStart = range.startZoned.toISODate();
-    const adsEnd = range.endZoned.toISODate();
-
-    let adIdsList = [];
-
-    // Obtener los ad_ids relevantes basándose en el filtro
-    // IMPORTANTE: Filtrar por rango de fechas para que coincida con los números de la tabla
-    if (ad_id) {
-      // Si se especifica un ad_id directamente, usarlo
-      adIdsList = [ad_id];
-    } else if (adset_id) {
-      // Obtener ads del adset que tienen actividad en el rango de fechas
-      const adIdsQuery = `
-        SELECT DISTINCT ad_id
-        FROM meta_ads
-        WHERE adset_id = ?
-        AND date >= ?
-        AND date <= ?
-      `;
-      const adIds = await db.all(adIdsQuery, [adset_id, adsStart, adsEnd]);
-      adIdsList = adIds.map(row => row.ad_id);
-    } else if (campaign_id) {
-      // Obtener ads de la campaña que tienen actividad en el rango de fechas
-      const adIdsQuery = `
-        SELECT DISTINCT ad_id
-        FROM meta_ads
-        WHERE campaign_id = ?
-        AND date >= ?
-        AND date <= ?
-      `;
-      const adIds = await db.all(adIdsQuery, [campaign_id, adsStart, adsEnd]);
-      adIdsList = adIds.map(row => row.ad_id);
-    } else {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere al menos campaign_id, adset_id o ad_id'
-      });
-    }
-
-    if (adIdsList.length === 0) {
+    if (paginated) {
       return res.json({
         success: true,
-        data: []
+        data: {
+          contacts: result.contacts,
+          summary: result.summary,
+          pagination: result.pagination,
+          range
+        }
       });
     }
 
-    // Construir query de contactos (sin JOIN de appointments, ahora usamos método optimizado)
-    // IMPORTANTE: Validar que attribution_ad_id exista en meta_ads con fecha coincidente
-    const hiddenFilters = await getHiddenContactFilters();
-    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
-    const contactMetaSameDay = metaSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone);
-    const contactMetaSameDayForExists = metaSameLocalDayCondition('ma2.date', 'c.created_at', range.appliedTimezone);
-
-    const placeholders = adIdsList.map(() => '?').join(',');
-    let contactsQuery = `
-      SELECT
-        c.id,
-        c.full_name,
-        c.email,
-        c.phone,
-        c.attribution_ad_id,
-        c.attribution_ad_name,
-        c.total_paid,
-        c.purchases_count,
-        c.custom_fields,
-        c.created_at,
-        MAX(ma.campaign_name) as campaign_name,
-        MAX(ma.adset_name) as adset_name,
-        MAX(ma.ad_name) as ad_name
-      FROM contacts c
-      LEFT JOIN meta_ads ma ON ma.ad_id = c.attribution_ad_id AND ${contactMetaSameDay}
-      WHERE c.attribution_ad_id IN (${placeholders})
-      AND c.created_at >= ?
-      AND c.created_at <= ?
-      AND EXISTS (
-        SELECT 1 FROM meta_ads ma2
-        WHERE ma2.ad_id = c.attribution_ad_id
-          AND ${contactMetaSameDayForExists}
-      )
-      ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
-    `;
-
-    if (type === 'sales') {
-      contactsQuery += ' AND purchases_count > 0';
-    }
-
-    contactsQuery += `
-      GROUP BY c.id,
-               c.full_name,
-               c.email,
-               c.phone,
-               c.attribution_ad_id,
-               c.attribution_ad_name,
-               c.total_paid,
-               c.purchases_count,
-               c.custom_fields,
-               c.created_at
-      ORDER BY ${timestampSortExpression('c.created_at')} DESC, c.id DESC
-    `;
-
-    const contactsParams = [...adIdsList, range.startUtc, range.endUtc];
-    let contacts = await db.all(contactsQuery, contactsParams);
-
-    // Si type === 'appointments' o 'attendances', filtrar usando híbrido DB + API
-    if (type === 'appointments' || type === 'attendances') {
-      const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-      const attributionCalendarIds = await getAttributionCalendarIds();
-      const contactIdsWithMetric = type === 'attendances'
-        ? await getContactsWithShowedAppointmentsHybrid(config?.location_id, config?.api_token, attributionCalendarIds)
-        : await getContactsWithAppointmentsHybrid(config?.location_id, config?.api_token, attributionCalendarIds);
-
-      logger.info(`📊 Filtrando ${contacts.length} contactos por ${type} (${contactIdsWithMetric.size} encontrados - híbrido DB + API)`);
-
-      contacts = contacts.filter(c => contactIdsWithMetric.has(c.id));
-    }
-
-    // (MET-CONSIST) Colapsar por PERSONA (email>teléfono>id) para igualar el número de la
-    // celda, que cuenta por buildContactKey (getCampaigns). Sin esto, dos registros de la
-    // misma persona (mismo email/teléfono) salían como 2 filas mientras la celda mostraba 1.
-    // El ORDER BY (created_at DESC, id DESC) del query ya define el representante más reciente.
-    const seenContactKeys = new Set();
-    contacts = contacts.filter(contact => {
-      const key = buildContactKey({ email: contact.email, phone: contact.phone, contact_id: contact.id })
-        ?? `id::${contact.id}`;
-      if (seenContactKeys.has(key)) return false;
-      seenContactKeys.add(key);
-      return true;
-    });
-
-    const contactIds = contacts.map(contact => contact.id).filter(Boolean);
-
-    let paymentsMap = new Map();
-    let appointmentsMap = new Map();
-    let firstSessionMap = new Map();
-    let contactsWithAttendances = new Set();
-
-    if (contactIds.length > 0) {
-      const placeholders = contactIds.map(() => '?').join(',');
-      const attendanceConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-      const attributionCalendarIds = await getAttributionCalendarIds();
-      contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
-        attendanceConfig?.location_id,
-        attendanceConfig?.api_token,
-        attributionCalendarIds
-      );
-
-      // IMPORTANTE: NO filtrar pagos por rango de fechas
-      // El modal debe mostrar TODOS los pagos del cliente, independientemente del rango seleccionado
-      // El filtro de fechas solo aplica para determinar QUÉ contactos mostrar, no sus pagos completos
-      const paymentsQuery = `
-        SELECT
-          id,
-          contact_id,
-          amount,
-          status,
-          payment_mode,
-          date
-        FROM payments
-        WHERE contact_id IN (${placeholders})
-        ORDER BY ${timestampSortExpression('date')} DESC, ${timestampSortExpression('created_at')} DESC, id DESC
-      `;
-
-      const paymentRows = await db.all(paymentsQuery, contactIds);
-
-      paymentsMap = paymentRows.reduce((map, payment) => {
-        const list = map.get(payment.contact_id) || [];
-        list.push({
-          id: payment.id,
-          amount: Number(payment.amount || 0),
-          status: payment.status,
-          payment_mode: payment.payment_mode || 'live',
-          date: payment.date
-        });
-        map.set(payment.contact_id, list);
-        return map;
-      }, new Map());
-
-      // Obtener TODAS las citas de estos contactos (sin filtrar por rango de fechas)
-      const appointmentsQuery = `
-        SELECT
-          id,
-          contact_id,
-          title,
-          start_time,
-          end_time,
-          status,
-          appointment_status
-        FROM appointments
-        WHERE contact_id IN (${placeholders})
-        ORDER BY ${timestampSortExpression('start_time')} DESC, id DESC
-      `;
-
-      const appointmentRows = await db.all(appointmentsQuery, contactIds);
-
-      appointmentsMap = appointmentRows.reduce((map, appointment) => {
-        const list = map.get(appointment.contact_id) || [];
-        list.push({
-          id: appointment.id,
-          title: appointment.title,
-          start_time: appointment.start_time,
-          end_time: appointment.end_time,
-          status: appointment.appointment_status || appointment.status
-        });
-        map.set(appointment.contact_id, list);
-        return map;
-      }, new Map());
-
-      // Obtener primera sesión (primera atribución) de cada contacto
-      const firstSessionsQuery = `
-        SELECT
-          s1.contact_id,
-          s1.started_at,
-          s1.page_url,
-          s1.referrer_url,
-          s1.utm_source,
-          s1.utm_medium,
-          s1.utm_campaign,
-          s1.utm_content,
-          s1.utm_term,
-          s1.source_platform,
-          s1.site_source_name,
-          s1.campaign_name,
-          s1.ad_name,
-          s1.ad_id,
-          s1.device_type,
-          s1.browser,
-          s1.geo_city,
-          s1.geo_region,
-          s1.geo_country
-        FROM sessions s1
-        INNER JOIN (
-          SELECT contact_id, MIN(started_at) as first_started_at
-          FROM sessions
-          WHERE contact_id IN (${placeholders})
-          GROUP BY contact_id
-        ) s2 ON s1.contact_id = s2.contact_id AND s1.started_at = s2.first_started_at
-      `;
-
-      const firstSessionRows = await db.all(firstSessionsQuery, contactIds);
-
-      firstSessionMap = firstSessionRows.reduce((map, session) => {
-        map.set(session.contact_id, {
-          started_at: session.started_at,
-          page_url: session.page_url,
-          referrer_url: session.referrer_url,
-          utm_source: session.utm_source,
-          utm_medium: session.utm_medium,
-          utm_campaign: session.utm_campaign,
-          utm_content: session.utm_content,
-          utm_term: session.utm_term,
-          source_platform: session.source_platform,
-          site_source_name: session.site_source_name,
-          campaign_name: session.campaign_name,
-          ad_name: session.ad_name,
-          ad_id: session.ad_id,
-          device_type: session.device_type,
-          browser: session.browser,
-          geo_city: session.geo_city,
-          geo_region: session.geo_region,
-          geo_country: session.geo_country
-        });
-        return map;
-      }, new Map());
-    }
-
-    const mappedContacts = contacts.map(contact => {
-      const payments = paymentsMap.get(contact.id) || [];
-      const appointments = appointmentsMap.get(contact.id) || [];
-      const firstSession = firstSessionMap.get(contact.id) || null;
-      // CRÍTICO: Solo sumar pagos exitosos, NO incluir refunded/cancelled
-      const validStatuses = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'];
-      const totalFromPayments = payments
-        .filter(payment => validStatuses.includes(payment.status?.toLowerCase()) && payment.payment_mode !== 'test')
-        .reduce((sum, payment) => sum + payment.amount, 0);
-      const totalPaid = contact.total_paid ? Number(contact.total_paid) : totalFromPayments;
-
-      return {
-        id: contact.id,
-        name: contact.full_name || '',
-        email: contact.email || '',
-        phone: contact.phone || '',
-        created_at: contact.created_at,
-        ltv: totalPaid,
-        ad_id: contact.attribution_ad_id,
-        ad_name: contact.ad_name || contact.attribution_ad_name,
-        campaign_name: contact.campaign_name,
-        adset_name: contact.adset_name,
-        is_sale: contact.purchases_count > 0,
-        hasShowedAppointment: contactsWithAttendances.has(contact.id),
-        hasAttendedAppointment: contactsWithAttendances.has(contact.id),
-        payments: payments,
-        appointments: appointments,
-        firstSession: firstSession,
-        customFields: parseContactCustomFields(contact.custom_fields)
-      };
-    });
-
-    res.json({
+    // Compatibilidad con consumidores que todavía esperan `data: []`. Sigue siendo
+    // una sola página local y el servicio aplica default 50 / máximo 100.
+    res.set?.('Deprecation', 'true');
+    res.set?.('Link', '</api/meta/contacts?paginated=true>; rel="successor-version"');
+    return res.json({
       success: true,
-      data: mappedContacts
+      data: result.contacts,
+      summary: result.summary,
+      pagination: result.pagination,
+      range
     });
 
   } catch (error) {
     logger.error(`Error en getContactsByType: ${error.message}`);
-    res.status(500).json({
+    const status = Number(error?.status) || 500;
+    res.status(status).json({
       success: false,
-      error: 'Error al obtener contactos'
+      error: status < 500 ? error.message : 'Error al obtener contactos'
     });
   }
 };

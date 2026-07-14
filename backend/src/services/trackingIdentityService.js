@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { isTrustedTrackingVisitorId } from '../utils/trackingVisitorIdentity.js'
+import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 
 const AUTO_LINK_CONFIDENCE = 90
 const CANDIDATE_CONFIDENCE = 70
@@ -654,6 +655,8 @@ export async function linkRelatedTrackingToContact({
       videoSessionsUpdated += videoSessionsResult.changes || 0
     }
   }
+
+  if (sessionsUpdated > 0) invalidateTrackingAnalyticsCache()
 
   return { sessionsUpdated, videoSessionsUpdated, videoEventsUpdated }
 }

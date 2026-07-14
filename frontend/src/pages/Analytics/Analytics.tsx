@@ -9,7 +9,6 @@ import {
   PageContainer,
   PageHeader,
   Card,
-  KpiCard,
   DateRangePicker,
   ViewSelector,
   TabList,
@@ -17,27 +16,30 @@ import {
   AreaChart,
   TreeFilter,
   OriginDistributionCard,
-  SessionsTable,
-  Loading,
-  ContactDetailsModal
+  SessionsTable
 } from '../../components/common'
+import { KpiCard } from '../../components/common/KpiCard/KpiCard'
+import { ContactDetailsModal } from '../../components/common/ContactDetailsModal/ContactDetailsModal'
 import { Eye, Users, UserCheck, Target, Smartphone, Monitor, Tablet, Globe, Minus, Plus, MessageCircle } from 'lucide-react'
 import { FaFacebook, FaGoogle, FaInstagram, FaTiktok, FaTwitter, FaLinkedin, FaMicrosoft, FaChrome, FaFirefox, FaSafari, FaEdge, FaOpera, FaWindows, FaAndroid, FaLinux } from 'react-icons/fa'
 import { SiMacos, SiIos } from 'react-icons/si'
 import {
-  getSessionsByDateRange,
-  getSessionMetricsByDateRange,
-  getContactsByDate,
   getContactConversionsByDate,
   getContactConversionContacts,
   getMessageAnalyticsSummary,
+  getTrackingAnalyticsSummary,
+  peekTrackingAnalyticsSummary,
   type ContactsByDate,
   type ContactConversionListType,
   type ContactConversionsByDate,
-  type MessageAnalyticsSummary
+  type MessageAnalyticsSummary,
+  type TrackingAnalyticsFacetItem,
+  type TrackingAnalyticsSummary,
+  type TrackingAnalyticsSummaryInput
 } from '../../services/analyticsService'
 import { trackingService, type TrackingSession } from '../../services/trackingService'
 import type { ContactListItem } from '../../services/reportsService'
+import { contactsService } from '../../services/contactsService'
 import { formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '../../utils/timezone'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
@@ -336,6 +338,17 @@ type AnalyticsContactModalState = {
   type: ContactModalType
   contacts: ContactListItem[]
   loading: boolean
+  listType: ContactConversionListType
+  range: { from: string; to: string } | null
+  cursor: string | null
+  cursorHistory: Array<string | null>
+  page: number
+  search: string
+  pagination: {
+    limit: number
+    hasNext: boolean
+    nextCursor: string | null
+  }
 }
 
 const emptyContactModalState: AnalyticsContactModalState = {
@@ -344,7 +357,14 @@ const emptyContactModalState: AnalyticsContactModalState = {
   subtitle: '',
   type: 'interesados',
   contacts: [],
-  loading: false
+  loading: false,
+  listType: 'registrations',
+  range: null,
+  cursor: null,
+  cursorHistory: [],
+  page: 1,
+  search: '',
+  pagination: { limit: 50, hasNext: false, nextCursor: null }
 }
 
 const ANALYTICS_CHART_COLORS = {
@@ -475,6 +495,58 @@ const getMessageFilterData = (summary?: MessageAnalyticsSummary | null) => ({
 
 const hasAvailableFilterOptions = (data: Record<string, unknown>) =>
   Object.values(data).some(value => Array.isArray(value) && value.length > 0)
+
+const toNamedFacet = (items: TrackingAnalyticsFacetItem[] = []) => (
+  items.map(item => ({ name: item.value, count: item.count }))
+)
+
+const toValuedFacet = (items: TrackingAnalyticsFacetItem[] = []) => (
+  items.map(item => ({ value: item.value, name: item.label || item.value, count: item.count }))
+)
+
+const buildTrackingFilterData = (
+  summary: TrackingAnalyticsSummary | null,
+  conversionFilters: Array<{ stage: ConversionStage; label: string }>
+) => {
+  const facets = summary?.facets || {}
+  const conversionCounts = new Map((facets.conversions || []).map(item => [item.value, item.count]))
+
+  return {
+    pages: (facets.pages || []).map(item => ({ page: item.value, count: item.count })),
+    campaigns: toNamedFacet(facets.campaigns),
+    adsets: toNamedFacet(facets.adsets),
+    ads: toNamedFacet(facets.ads),
+    sources: toNamedFacet(facets.sources),
+    devices: toNamedFacet(facets.devices),
+    browsers: toNamedFacet(facets.browsers),
+    os: toNamedFacet(facets.os),
+    placements: toNamedFacet(facets.placements),
+    trafficChannels: toValuedFacet(facets.trafficChannels),
+    trackingSources: toValuedFacet(facets.trackingSources),
+    siteTypes: toValuedFacet(facets.siteTypes),
+    nativeSites: toValuedFacet(facets.nativeSites),
+    nativeForms: toValuedFacet(facets.nativeForms),
+    nativeConversions: toValuedFacet(facets.nativeConversions),
+    conversions: conversionFilters.map(item => ({
+      stage: item.stage,
+      name: item.label,
+      count: conversionCounts.get(item.stage) || 0
+    })),
+    adsHierarchy: Array.isArray(facets.adsHierarchy) ? facets.adsHierarchy : []
+  }
+}
+
+const toDistributionStats = (
+  items: TrackingAnalyticsFacetItem[] = [],
+  uniqueVisitors = 0
+) => {
+  const denominator = Math.max(uniqueVisitors, 1)
+  return items.slice(0, 5).map(item => ({
+    name: item.label || item.value,
+    users: item.count,
+    percentage: ((item.count / denominator) * 100).toFixed(1)
+  }))
+}
 
 const getNativeFormId = (session: Session) => {
   if (session.form_site_id) return session.form_site_id
@@ -1179,7 +1251,12 @@ const Analytics: React.FC = () => {
   const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
   const [loading, setLoading] = useState(false)
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
-  const [webTrackingConfigured, setWebTrackingConfigured] = useState(false)
+  const [messageLoading, setMessageLoading] = useState(false)
+  const [hasLoadedMessageAnalytics, setHasLoadedMessageAnalytics] = useState(false)
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null)
+  const [analyticsRetryKey, setAnalyticsRetryKey] = useState(0)
+  const [hasWebAnalyticsSnapshot, setHasWebAnalyticsSnapshot] = useState(false)
+  const [webTrackingConfigured, setWebTrackingConfigured] = useState(hasWebAnalyticsAccess)
   const [messageAnalytics, setMessageAnalytics] = useState<MessageAnalyticsSummary | null>(null)
 
   const leadLabel = appLabels.lead?.trim() || 'Prospecto'
@@ -1200,15 +1277,20 @@ const Analytics: React.FC = () => {
 
   // Estado para filtros
   const [selectedFilters, setSelectedFilters] = useUrlFilterState('filters')
-  const [availableFilterData, setAvailableFilterData] = useState<any>({})
-  const [allSessions, setAllSessions] = useState<Session[]>([])
-  const [sessions, setSessions] = useState<Session[]>([])
+  const [webFilterData, setWebFilterData] = useState<Record<string, unknown>>({})
+  const [messageFilterData, setMessageFilterData] = useState<Record<string, unknown>>({})
+  const availableFilterData = React.useMemo(
+    () => ({ ...webFilterData, ...messageFilterData }),
+    [messageFilterData, webFilterData]
+  )
 
   // Estado para visualizaciones
   const [dailyTraffic, setDailyTraffic] = useState<TrafficPoint[]>([])
   const [dailyConversions, setDailyConversions] = useState<any[]>([])
-  const [contactConversionsByDate, setContactConversionsByDate] = useState<ContactConversionsByDate[]>([])
+  const [sessionTrendSeries, setSessionTrendSeries] = useState<SessionTrendPoint[]>([])
+  const [conversionTrendSeries, setConversionTrendSeries] = useState<ConversionTrendPoint[]>([])
   const [contactModalState, setContactModalState] = useState<AnalyticsContactModalState>(emptyContactModalState)
+  const contactModalRequestRef = React.useRef(0)
   const [platformsData, setPlatformsData] = useState<any[]>([])
   const [placementsData, setPlacementsData] = useState<any[]>([])
   const [devicesData, setDevicesData] = useState<any[]>([])
@@ -1220,6 +1302,9 @@ const Analytics: React.FC = () => {
   const [yearRange, setYearRange] = useState(routeYearRange)
   const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>(routeState.mainChart)
   const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>(routeState.conversionChart)
+  const handleTrackingSessionsChanged = useCallback(() => {
+    setAnalyticsRetryKey(current => current + 1)
+  }, [])
 
   const navigateAnalyticsView = useCallback((next?: {
     viewType?: ViewType
@@ -1258,9 +1343,6 @@ const Analytics: React.FC = () => {
     setDateRange,
     enabled: viewType === 'day' || (viewType === 'month' && monthPreset === 'custom')
   })
-
-  // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
-  const [originalRegistros, setOriginalRegistros] = useState<number>(0)
 
   const [metrics, setMetrics] = useState<Metrics>({
     pageViews: 0,
@@ -1312,608 +1394,174 @@ const Analytics: React.FC = () => {
     [messageSummaryFilters]
   )
 
-  // Cargar datos cuando cambie el rango de fechas
+  const webSummaryFilters = React.useMemo<Record<string, string[]>>(() => (
+    Object.fromEntries(
+      Object.entries(selectedFilters).filter(([field, values]) => (
+        !isMessageFilterField(field) && values.length > 0
+      ))
+    )
+  ), [selectedFilters])
+  const webSummaryFilterKey = React.useMemo(
+    () => JSON.stringify(webSummaryFilters),
+    [webSummaryFilters]
+  )
+  const analyticsSummaryInput = React.useMemo<TrackingAnalyticsSummaryInput>(() => ({
+    start: apiRange.from,
+    end: apiRange.to,
+    groupBy: viewType,
+    filters: webSummaryFilters
+  }), [apiRange.from, apiRange.to, viewType, webSummaryFilterKey])
+  const analyticsRequestIdRef = React.useRef(0)
+  const messageAnalyticsRequestIdRef = React.useRef(0)
+
+  // El navegador recibe agregados acotados; nunca el historial crudo de tracking.
   useEffect(() => {
+    const controller = new AbortController()
+    const requestId = ++analyticsRequestIdRef.current
+    const cachedSummary = hasWebAnalyticsAccess
+      ? peekTrackingAnalyticsSummary(analyticsSummaryInput)
+      : null
+    setLoading(!cachedSummary)
+
+    const isCurrentRequest = () => (
+      !controller.signal.aborted && analyticsRequestIdRef.current === requestId
+    )
+
+    const applyTrackingSummary = (
+      summary: TrackingAnalyticsSummary,
+      trackingConfig: Awaited<ReturnType<typeof trackingService.getTrackingConfig>> | null
+    ) => {
+      const groupBy = summary.range.groupBy
+      const range = { from: summary.range.start, to: summary.range.end }
+      const current = summary.metrics.current
+      const trends = summary.metrics.trends
+
+      const trafficSeries = completeSessionTrendPeriods(
+        summary.trafficSeries.map(point => ({
+          label: formatPeriodLabel(point.period, groupBy),
+          ...getPeriodPointMeta(point.period, groupBy),
+          pageViews: point.pageViews,
+          uniqueVisitors: point.uniqueVisitors,
+          uniqueSessions: point.uniqueSessions,
+          identifiedContacts: point.identifiedContacts,
+          returningVisitors: point.returningUsers
+        })),
+        groupBy,
+        range
+      )
+      const conversionSeries = completeConversionTrendPeriods(
+        summary.conversionSeries.map(point => ({
+          label: formatPeriodLabel(point.period, groupBy),
+          ...getPeriodPointMeta(point.period, groupBy),
+          registrations: point.registrations,
+          prospects: point.prospects,
+          appointments: point.appointments,
+          attendances: point.attendances,
+          customers: point.customers
+        })),
+        groupBy,
+        range
+      )
+
+      setMetrics({
+        pageViews: current.pageViews,
+        uniqueVisitors: current.uniqueVisitors,
+        registros: current.registrations,
+        conversionRate: current.conversionRate,
+        returningUsers: current.returningUsers,
+        avgPagePerSession: current.avgPagePerSession,
+        trends: {
+          pageViews: trends.pageViews,
+          uniqueVisitors: trends.uniqueVisitors,
+          registros: trends.registrations,
+          conversionRate: trends.conversionRate,
+          returningUsers: trends.returningUsers,
+          avgPagePerSession: trends.avgPagePerSession
+        }
+      })
+      setSessionTrendSeries(trafficSeries)
+      setConversionTrendSeries(conversionSeries)
+      setDailyTraffic(trafficSeries.map(point => ({
+        label: point.label,
+        value: point.pageViews,
+        value2: point.uniqueVisitors,
+        periodKey: point.periodKey,
+        periodStart: point.periodStart,
+        periodEnd: point.periodEnd
+      })))
+      setDailyConversions(conversionSeries.map(point => ({
+        label: point.label,
+        value: point.registrations,
+        value2: 0,
+        periodKey: point.periodKey,
+        periodStart: point.periodStart,
+        periodEnd: point.periodEnd
+      })))
+
+      const distributions = summary.distributions || {}
+      setPlatformsData(toDistributionStats(distributions.sources, current.uniqueVisitors))
+      setPlacementsData(toDistributionStats(distributions.placements, current.uniqueVisitors))
+      setDevicesData(toDistributionStats(distributions.devices, current.uniqueVisitors))
+      setOsData(toDistributionStats(distributions.os, current.uniqueVisitors))
+      setBrowserData(toDistributionStats(distributions.browsers, current.uniqueVisitors))
+      setTopVisitors((distributions.topVisitors || []).slice(0, 5).map(item => {
+        const visitorId = item.value || item.label
+        return {
+          id: visitorId.length > 24 ? `${visitorId.slice(0, 24)}...` : visitorId,
+          requests: item.count
+        }
+      }))
+      setWebFilterData(buildTrackingFilterData(summary, conversionFilters))
+      setHasWebAnalyticsSnapshot(true)
+      setWebTrackingConfigured(Boolean(
+        trackingConfig?.isConfigured ||
+        trackingConfig?.hasPublicSites ||
+        current.pageViews > 0 ||
+        current.uniqueVisitors > 0
+      ))
+    }
+
+    // Stale-while-revalidate real: el snapshot tiene que pintarse antes de
+    // arrancar la revalidación. Leerlo únicamente para ocultar el loader dejaba
+    // visibles las métricas del rango anterior bajo las fechas nuevas.
+    if (cachedSummary) {
+      setAnalyticsError(null)
+      applyTrackingSummary(cachedSummary, null)
+      setHasLoadedAnalytics(true)
+    }
+
     const fetchAnalytics = async () => {
-      setLoading(true)
       try {
-        // No agregar +1 día aquí, el backend ya lo maneja con INTERVAL '1 day'
-        const startDate = apiRange.from
-        const endDate = apiRange.to
+        const summaryPromise = hasWebAnalyticsAccess
+          ? getTrackingAnalyticsSummary(analyticsSummaryInput, {
+              signal: controller.signal,
+              forceRefresh: Boolean(cachedSummary)
+            })
+          : Promise.resolve(null)
+        const fallbackConversionsPromise = hasWebAnalyticsAccess
+          ? Promise.resolve([] as ContactConversionsByDate[])
+          : getContactConversionsByDate(apiRange.from, apiRange.to).catch(() => [] as ContactConversionsByDate[])
 
-        // Calcular período anterior para comparación
-        const msPerDay = 24 * 60 * 60 * 1000
-        const currentStart = parseLocalDateString(startDate)
-        const currentEnd = parseLocalDateString(endDate)
-        const periodLength = Math.round((currentEnd.getTime() - currentStart.getTime()) / msPerDay)
-        const previousEnd = new Date(currentStart)
-        previousEnd.setDate(previousEnd.getDate() - 1)
-        const previousStart = new Date(previousEnd)
-        previousStart.setDate(previousStart.getDate() - periodLength)
-
-        const prevStartDate = formatDateToISO(previousStart)
-        const prevEndDate = formatDateToISO(previousEnd)
-
-        // Fetch datos del período actual y anterior
-        const [
-          currentSessions,
-          prevSessionMetrics,
-          contactsData,
-          prevContactsData,
-          contactConversionRows,
-          trackingConfig,
-          messageSummary
-        ] = await Promise.all([
-          hasWebAnalyticsAccess ? getSessionsByDateRange(startDate, endDate, { payload: 'analytics' }) : Promise.resolve([] as Session[]),
+        const [summary, fallbackConversions, trackingConfig] = await Promise.all([
+          summaryPromise,
+          fallbackConversionsPromise,
           hasWebAnalyticsAccess
-            ? getSessionMetricsByDateRange(prevStartDate, prevEndDate)
-            : Promise.resolve({ pageViews: 0, uniqueVisitors: 0, uniqueSessions: 0, returningUsers: 0 }),
-          hasWebAnalyticsAccess ? getContactsByDate(startDate, endDate) : Promise.resolve([] as ContactsByDate[]),
-          hasWebAnalyticsAccess ? getContactsByDate(prevStartDate, prevEndDate) : Promise.resolve([] as ContactsByDate[]),
-          getContactConversionsByDate(startDate, endDate),
-          hasWebAnalyticsAccess ? trackingService.getTrackingConfig().catch(() => null) : Promise.resolve(null),
-          getMessageAnalyticsSummary(startDate, endDate, viewType, messageSummaryFilters).catch(() => null)
+            ? trackingService.getTrackingConfig().catch(() => null)
+            : Promise.resolve(null)
         ])
 
-        setWebTrackingConfigured(hasWebAnalyticsAccess && Boolean(
-          trackingConfig?.isConfigured ||
-          trackingConfig?.hasPublicSites ||
-          currentSessions.length > 0
-        ))
-        setMessageAnalytics(messageSummary)
-        setContactConversionsByDate(contactConversionRows || [])
+        if (!isCurrentRequest()) return
+        setAnalyticsError(null)
 
-        if (currentSessions.length > 0) {
-          const currentViewSessions = currentSessions.filter(isTrackingViewEvent)
-          // Calcular métricas principales
-          const uniqueVids = new Set(currentViewSessions.map((s: Session) => s.visitor_id)).size
-
-          const totalPageViews = currentViewSessions.length
-
-          // Contar sesiones únicas (por session_id)
-          const uniqueSessionIds = new Set(currentViewSessions.map((s: Session) => s.session_id)).size
-
-          // Registros = contactos con visitor_id creados en el período (con fallback a array vacío)
-          const registros = (contactsData || []).reduce((sum, item) => sum + item.count, 0)
-
-          // Guardar valor ORIGINAL para restaurar al quitar filtros
-          setOriginalRegistros(registros)
-
-          const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
-
-          // Usuarios recurrentes: contar visitor_ids que tienen múltiples session_ids diferentes
-          const visitorSessionMap: { [key: string]: Set<string> } = {}
-          currentViewSessions.forEach((s: Session) => {
-            if (!visitorSessionMap[s.visitor_id]) {
-              visitorSessionMap[s.visitor_id] = new Set()
-            }
-            visitorSessionMap[s.visitor_id].add(s.session_id)
-          })
-          const returningUsers = Object.values(visitorSessionMap).filter(sessions => sessions.size > 1).length
-
-          // Páginas por sesión = total de page_views / número de sesiones únicas
-          const avgPagePerSession = uniqueSessionIds > 0 ?
-            (totalPageViews / uniqueSessionIds) : 0
-
-          // Calcular métricas del período anterior para trends
-          const prevUniqueVids = prevSessionMetrics.uniqueVisitors
-          const prevTotalPageViews = prevSessionMetrics.pageViews
-          const prevUniqueSessionIds = prevSessionMetrics.uniqueSessions
-          const prevRegistros = (prevContactsData || []).reduce((sum, item) => sum + item.count, 0)
-          const prevConversionRate = prevUniqueVids > 0 ? ((prevRegistros / prevUniqueVids) * 100) : 0
-
-          const prevReturningUsers = prevSessionMetrics.returningUsers
-          const prevAvgPagePerSession = prevUniqueSessionIds > 0 ?
-            (prevTotalPageViews / prevUniqueSessionIds) : 0
-
-          // Calcular trends
-          const calculateTrend = (current: number, previous: number) => {
-            if (previous === 0) return current > 0 ? 100 : 0
-            return ((current - previous) / Math.abs(previous)) * 100
-          }
-
-          setMetrics({
-            pageViews: totalPageViews,
-            uniqueVisitors: uniqueVids,
-            registros,
-            conversionRate,
-            returningUsers,
-            avgPagePerSession,
-            trends: {
-              pageViews: calculateTrend(totalPageViews, prevTotalPageViews),
-              uniqueVisitors: calculateTrend(uniqueVids, prevUniqueVids),
-              registros: calculateTrend(registros, prevRegistros),
-              conversionRate: calculateTrend(conversionRate, prevConversionRate),
-              returningUsers: calculateTrend(returningUsers, prevReturningUsers),
-              avgPagePerSession: calculateTrend(avgPagePerSession, prevAvgPagePerSession)
-            }
-          })
-
-          // Preparar datos para gráfico de tráfico por período
-          setDailyTraffic(completeTrafficPeriods(
-            buildTrafficChartData(
-              currentSessions,
-              viewType,
-              convertToLocalTime
-            ),
+        if (summary) {
+          applyTrackingSummary(summary, trackingConfig)
+        } else if (!hasWebAnalyticsAccess) {
+          const fallbackSeries = completeConversionTrendPeriods(
+            aggregateContactConversionsByPeriod(fallbackConversions, viewType),
             viewType,
-            { from: startDate, to: endDate }
-          ))
-
-          // Gráfico de conversiones (registros reales de contactos por fecha de creación)
-          const conversionChartData = aggregateContactsByPeriod(contactsData || [], viewType)
-            .map(item => ({
-              label: formatPeriodLabel(item.period, viewType),
-              value: item.count,
-              value2: 0,
-              periodKey: item.periodKey,
-              periodStart: item.periodStart,
-              periodEnd: item.periodEnd
-            }))
-
-          setDailyConversions(completeTrafficPeriods(conversionChartData, viewType, { from: startDate, to: endDate }))
-
-          // Guardar todas las sesiones y sesiones filtradas (ordenadas de más reciente a más vieja)
-          const sortedSessions = [...currentSessions].sort((a, b) => {
-            const dateA = parseTimestamp(a.started_at)?.getTime() ?? 0
-            const dateB = parseTimestamp(b.started_at)?.getTime() ?? 0
-            return dateB - dateA // DESC: más reciente primero
-          })
-          setAllSessions(sortedSessions)
-          setSessions(sortedSessions)
-
-          // Recopilar datos disponibles para el TreeFilter
-          const filterData: any = {
-            pages: [],
-            campaigns: [],
-            ads: [],
-            sources: [],
-            devices: [],
-            browsers: [],
-            os: [],
-            placements: [],
-            conversions: [],
-            trafficChannels: [],
-            trackingSources: [],
-            ...getMessageFilterData(messageSummary),
-            siteTypes: [],
-            nativeSites: [],
-            nativeForms: [],
-            nativeConversions: []
-          }
-
-          // Páginas
-          const pageMap: { [key: string]: number } = {}
-          currentSessions.forEach((session: Session) => {
-            if (!isTrackingViewEvent(session)) return
-
-            if (session.page_url) {
-              const urlPath = session.page_url.split('?')[0]
-              const pageName = urlPath.split('/').pop() || 'home'
-              pageMap[pageName] = (pageMap[pageName] || 0) + 1
-            }
-          })
-
-          filterData.pages = Object.entries(pageMap)
-            .map(([page, count]) => ({ page, count }))
-            .sort((a, b) => b.count - a.count)
-
-          // JERARQUÍA DE ANUNCIOS: Platform → Campaign → Adset → Ad
-          interface AdHierarchy {
-            platform: string
-            platform_id: string
-            visitors: Set<string>
-            campaigns: Map<string, {
-              id: string
-              name: string
-              visitors: Set<string>
-              adsets: Map<string, {
-                id: string
-                name: string
-                visitors: Set<string>
-                ads: Map<string, {
-                  id: string
-                  name: string
-                  visitors: Set<string>
-                }>
-              }>
-            }>
-          }
-
-          const adsHierarchyMap = new Map<string, AdHierarchy>()
-
-          // Sources, etc. - Contar VISITANTES ÚNICOS por fuente
-          const campaignsMap: { [key: string]: Set<string> } = {}
-          const adsMap: { [key: string]: Set<string> } = {}
-          const sourcesMap: { [key: string]: Set<string> } = {}
-          const devicesMap: { [key: string]: Set<string> } = {}
-          const browsersMap: { [key: string]: Set<string> } = {}
-          const osMap: { [key: string]: Set<string> } = {}
-          const placementsMap: { [key: string]: Set<string> } = {}
-          const trafficChannelsMap: { [key: string]: Set<string> } = {}
-          const trackingSourceMap: { [key: string]: Set<string> } = {}
-          const siteTypesMap: { [key: string]: Set<string> } = {}
-          const nativeSitesMap: { [key: string]: { name: string; visitors: Set<string> } } = {}
-          const nativeFormsMap: { [key: string]: { name: string; visitors: Set<string> } } = {}
-          const nativeConversionsMap: { [key: string]: { name: string; conversions: Set<string> } } = {}
-          const conversionsMap = CONVERSION_STAGES.reduce<Record<ConversionStage, Set<string>>>((acc, stage) => {
-            acc[stage] = new Set()
-            return acc
-          }, {} as Record<ConversionStage, Set<string>>)
-
-          currentSessions.forEach((session: Session) => {
-            const visitorId = session.visitor_id
-            const conversionStage = getSessionConversionStage(session)
-            const trackingSource = getTrackingSourceValue(session)
-            const trafficChannel = normalizeTrafficChannelValue(session.channel)
-
-            if (!trafficChannelsMap[trafficChannel]) trafficChannelsMap[trafficChannel] = new Set()
-            trafficChannelsMap[trafficChannel].add(visitorId)
-
-            if (!trackingSourceMap[trackingSource]) trackingSourceMap[trackingSource] = new Set()
-            trackingSourceMap[trackingSource].add(visitorId)
-
-            if (isNativeSiteSession(session)) {
-              const siteType = session.site_type || 'unknown'
-              if (!siteTypesMap[siteType]) siteTypesMap[siteType] = new Set()
-              siteTypesMap[siteType].add(visitorId)
-
-              if (session.site_id) {
-                if (!nativeSitesMap[session.site_id]) {
-                  nativeSitesMap[session.site_id] = {
-                    name: session.site_name || session.site_slug || 'Site sin nombre',
-                    visitors: new Set()
-                  }
-                }
-                nativeSitesMap[session.site_id].visitors.add(visitorId)
-              }
-
-              const formId = getNativeFormId(session)
-              if (formId) {
-                if (!nativeFormsMap[formId]) {
-                  nativeFormsMap[formId] = {
-                    name: getNativeFormName(session) || 'Formulario sin nombre',
-                    visitors: new Set()
-                  }
-                }
-                nativeFormsMap[formId].visitors.add(visitorId)
-              }
-
-              const nativeConversionValue = getNativeConversionFilterValue(session)
-              if (nativeConversionValue) {
-                const conversionKey = session.submission_id || session.contact_id || visitorId
-                const label = nativeConversionValue.startsWith('form:')
-                  ? `Formulario: ${getNativeFormName(session) || session.site_name || 'Sin nombre'}`
-                  : `Landing: ${session.site_name || session.site_slug || 'Sin nombre'}`
-                if (!nativeConversionsMap[nativeConversionValue]) {
-                  nativeConversionsMap[nativeConversionValue] = {
-                    name: label,
-                    conversions: new Set()
-                  }
-                }
-                nativeConversionsMap[nativeConversionValue].conversions.add(conversionKey)
-              }
-            }
-
-            if (conversionStage) {
-              conversionsMap[conversionStage].add(visitorId)
-            }
-
-            // Construir jerarquía de anuncios usando UTMs (más confiable que campos específicos)
-            // Requerimos al menos utm_source y utm_campaign para construir la jerarquía
-            if (session.utm_source && session.utm_campaign) {
-              // Normalizar plataforma desde utm_source (esto agrupa fb, facebook, Facebook)
-              const platform = normalizeTrafficSource({
-                referrer_url: session.referrer_url,
-                site_source_name: session.site_source_name,
-                utm_source: session.utm_source,
-                source_platform: session.source_platform
-              })
-              // Usar plataforma normalizada como ID para evitar duplicados
-              const platformId = platform.toLowerCase()
-
-              // Obtener o crear entrada de plataforma
-              if (!adsHierarchyMap.has(platformId)) {
-                adsHierarchyMap.set(platformId, {
-                  platform,
-                  platform_id: platformId,
-                  visitors: new Set(),
-                  campaigns: new Map()
-                })
-              }
-              const platformNode = adsHierarchyMap.get(platformId)!
-              platformNode.visitors.add(visitorId)
-
-              // Obtener o crear campaña (decodificar para evitar formato +++)
-              const campaignId = decodeAdName(session.utm_campaign)
-              if (!platformNode.campaigns.has(campaignId)) {
-                platformNode.campaigns.set(campaignId, {
-                  id: campaignId,
-                  name: campaignId, // Ya está decodificado
-                  visitors: new Set(),
-                  adsets: new Map()
-                })
-              }
-              const campaignNode = platformNode.campaigns.get(campaignId)!
-              campaignNode.visitors.add(visitorId)
-
-              // Obtener o crear adset desde utm_medium (decodificar ID también)
-              const adsetId = session.utm_medium && session.utm_medium !== 'null' && session.utm_medium !== 'undefined'
-                ? decodeAdName(session.utm_medium)
-                : 'sin_conjunto'
-
-              if (!campaignNode.adsets.has(adsetId)) {
-                const displayName = session.utm_medium && session.utm_medium !== 'null' && session.utm_medium !== 'undefined'
-                  ? adsetId // Ya está decodificado
-                  : '(Sin conjunto de anuncios)'
-
-                campaignNode.adsets.set(adsetId, {
-                  id: adsetId,
-                  name: displayName,
-                  visitors: new Set(),
-                  ads: new Map()
-                })
-              }
-              const adsetNode = campaignNode.adsets.get(adsetId)!
-              adsetNode.visitors.add(visitorId)
-
-              // Obtener o crear anuncio desde utm_content (decodificar ID también)
-              const adId = session.utm_content && session.utm_content !== 'null' && session.utm_content !== 'undefined'
-                ? decodeAdName(session.utm_content)
-                : 'sin_anuncio'
-
-              if (!adsetNode.ads.has(adId)) {
-                const displayName = session.utm_content && session.utm_content !== 'null' && session.utm_content !== 'undefined'
-                  ? adId // Ya está decodificado
-                  : '(Sin nombre de anuncio)'
-
-                adsetNode.ads.set(adId, {
-                  id: adId,
-                  name: displayName,
-                  visitors: new Set()
-                })
-              }
-              const adNode = adsetNode.ads.get(adId)!
-              adNode.visitors.add(visitorId)
-            }
-
-            // Mantener mapeo plano para compatibilidad con TreeFilter antiguo
-            if (session.utm_campaign) {
-              if (!campaignsMap[session.utm_campaign]) campaignsMap[session.utm_campaign] = new Set()
-              campaignsMap[session.utm_campaign].add(visitorId)
-            }
-            if (session.utm_content) {
-              if (!adsMap[session.utm_content]) adsMap[session.utm_content] = new Set()
-              adsMap[session.utm_content].add(visitorId)
-            }
-            // Normalizar fuente con prioridad: referrer_url → site_source_name → utm_source → source_platform
-            const normalized = normalizeTrafficSource({
-              referrer_url: session.referrer_url,
-              site_source_name: session.site_source_name,
-              utm_source: session.utm_source,
-              source_platform: session.source_platform
-            })
-            if (normalized && normalized !== 'Desconocido' && normalized !== 'Otro') {
-              if (!sourcesMap[normalized]) sourcesMap[normalized] = new Set()
-              sourcesMap[normalized].add(visitorId)
-            }
-            if (session.device_type) {
-              if (!devicesMap[session.device_type]) devicesMap[session.device_type] = new Set()
-              devicesMap[session.device_type].add(visitorId)
-            }
-            if (session.browser) {
-              if (!browsersMap[session.browser]) browsersMap[session.browser] = new Set()
-              browsersMap[session.browser].add(visitorId)
-            }
-            if (session.os) {
-              if (!osMap[session.os]) osMap[session.os] = new Set()
-              osMap[session.os].add(visitorId)
-            }
-            if (session.placement) {
-              const formatted = formatPlacementName(session.placement)
-              if (!placementsMap[formatted]) placementsMap[formatted] = new Set()
-              placementsMap[formatted].add(visitorId)
-            }
-          })
-
-          filterData.campaigns = Object.entries(campaignsMap)
-            .map(([name, visitorSet]) => ({ name: formatUrlParameter(name), count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.ads = Object.entries(adsMap)
-            .map(([name, visitorSet]) => ({ name: formatUrlParameter(name), count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.sources = Object.entries(sourcesMap)
-            .map(([name, visitorSet]) => ({ name, count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.devices = Object.entries(devicesMap)
-            .map(([name, visitorSet]) => ({ name, count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.browsers = Object.entries(browsersMap)
-            .map(([name, visitorSet]) => ({ name, count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.os = Object.entries(osMap)
-            .map(([name, visitorSet]) => ({ name, count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.placements = Object.entries(placementsMap)
-            .map(([name, visitorSet]) => ({ name, count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.trafficChannels = Object.entries(trafficChannelsMap)
-            .map(([value, visitorSet]) => ({ value, name: getTrafficChannelLabel(value), count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.trackingSources = Object.entries(trackingSourceMap)
-            .map(([value, visitorSet]) => ({ value, name: getTrackingSourceLabel(value), count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.siteTypes = Object.entries(siteTypesMap)
-            .map(([value, visitorSet]) => ({ value, name: getSiteTypeLabel(value), count: visitorSet.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.nativeSites = Object.entries(nativeSitesMap)
-            .map(([value, item]) => ({ value, name: item.name, count: item.visitors.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.nativeForms = Object.entries(nativeFormsMap)
-            .map(([value, item]) => ({ value, name: item.name, count: item.visitors.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.nativeConversions = Object.entries(nativeConversionsMap)
-            .map(([value, item]) => ({ value, name: item.name, count: item.conversions.size }))
-            .sort((a, b) => b.count - a.count)
-
-          filterData.conversions = conversionFilters.map(item => ({
-            stage: item.stage,
-            name: item.label,
-            count: conversionsMap[item.stage].size
-          }))
-
-          // Convertir jerarquía de anuncios a formato compatible con TreeFilter
-          filterData.adsHierarchy = Array.from(adsHierarchyMap.values()).map(platformNode => ({
-            platform: platformNode.platform,
-            platform_id: platformNode.platform_id,
-            count: platformNode.visitors.size,
-            campaigns: Array.from(platformNode.campaigns.values()).map(campaignNode => ({
-              id: campaignNode.id,
-              name: campaignNode.name,
-              count: campaignNode.visitors.size,
-              adsets: Array.from(campaignNode.adsets.values()).map(adsetNode => ({
-                id: adsetNode.id,
-                name: adsetNode.name,
-                count: adsetNode.visitors.size,
-                ads: Array.from(adsetNode.ads.values()).map(adNode => ({
-                  id: adNode.id,
-                  name: adNode.name,
-                  count: adNode.visitors.size
-                })).sort((a, b) => b.count - a.count)
-              })).sort((a, b) => b.count - a.count)
-            })).sort((a, b) => b.count - a.count)
-          })).sort((a, b) => b.count - a.count)
-
-          setAvailableFilterData(filterData)
-
-          // Calcular stats para las cards - VISITANTES ÚNICOS
-          const chartPercentageDenominator = Math.max(uniqueVids, 1)
-          const browsersForChart: { [key: string]: Set<string> } = {}
-          currentViewSessions.forEach((session: Session) => {
-            const browser = session.browser || 'Desconocido'
-            if (!browsersForChart[browser]) browsersForChart[browser] = new Set()
-            browsersForChart[browser].add(session.visitor_id)
-          })
-          const browserStats = Object.entries(browsersForChart)
-            .map(([browser, visitorSet]) => ({
-              name: browser,
-              users: visitorSet.size,
-              percentage: ((visitorSet.size / chartPercentageDenominator) * 100).toFixed(1)
-            }))
-            .sort((a, b) => b.users - a.users)
-            .slice(0, 5)
-          setBrowserData(browserStats)
-
-          const platformsForChart: { [key: string]: Set<string> } = {}
-          currentViewSessions.forEach((session: Session) => {
-            // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
-            const platform = normalizeTrafficSource({
-              referrer_url: session.referrer_url,
-              site_source_name: session.site_source_name,
-              utm_source: session.utm_source,
-              source_platform: session.source_platform
-            })
-            if (!platformsForChart[platform]) platformsForChart[platform] = new Set()
-            platformsForChart[platform].add(session.visitor_id)
-          })
-          const platformStats = Object.entries(platformsForChart)
-            .map(([platform, visitorSet]) => ({
-              name: platform,
-              users: visitorSet.size,
-              percentage: ((visitorSet.size / chartPercentageDenominator) * 100).toFixed(1)
-            }))
-            .sort((a, b) => b.users - a.users)
-            .slice(0, 5)
-          setPlatformsData(platformStats)
-
-          // Calcular placements para "Top de ubicaciones" (Facebook Feed, Instagram Reels, etc.) - VISITANTES ÚNICOS
-          const placementsForChart: { [key: string]: Set<string> } = {}
-          currentViewSessions.forEach((session: Session) => {
-            const rawPlacement = session.placement || 'Sin ubicación'
-            const placement = formatPlacementName(rawPlacement)
-            if (!placementsForChart[placement]) placementsForChart[placement] = new Set()
-            placementsForChart[placement].add(session.visitor_id)
-          })
-          const placementStats = Object.entries(placementsForChart)
-            .map(([placement, visitorSet]) => ({
-              name: placement,
-              users: visitorSet.size,
-              percentage: ((visitorSet.size / chartPercentageDenominator) * 100).toFixed(1)
-            }))
-            .sort((a, b) => b.users - a.users)
-            .slice(0, 5)
-          setPlacementsData(placementStats)
-
-          const devicesForChart: { [key: string]: Set<string> } = {}
-          currentViewSessions.forEach((session: Session) => {
-            const device = session.device_type || 'Desconocido'
-            if (!devicesForChart[device]) devicesForChart[device] = new Set()
-            devicesForChart[device].add(session.visitor_id)
-          })
-          const deviceStats = Object.entries(devicesForChart)
-            .map(([device, visitorSet]) => ({
-              name: device,
-              users: visitorSet.size,
-              percentage: ((visitorSet.size / chartPercentageDenominator) * 100).toFixed(1)
-            }))
-            .sort((a, b) => b.users - a.users)
-            .slice(0, 5)
-          setDevicesData(deviceStats)
-
-          const operatingSystemsForChart: { [key: string]: Set<string> } = {}
-          currentViewSessions.forEach((session: Session) => {
-            const os = session.os || 'Desconocido'
-            if (!operatingSystemsForChart[os]) operatingSystemsForChart[os] = new Set()
-            operatingSystemsForChart[os].add(session.visitor_id)
-          })
-          const osStats = Object.entries(operatingSystemsForChart)
-            .map(([os, visitorSet]) => ({
-              name: os,
-              users: visitorSet.size,
-              percentage: ((visitorSet.size / chartPercentageDenominator) * 100).toFixed(1)
-            }))
-            .sort((a, b) => b.users - a.users)
-            .slice(0, 5)
-          setOsData(osStats)
-
-          // Calcular top visitors (visitantes con más requests)
-          const visitorCounts: { [key: string]: number } = {}
-          currentViewSessions.forEach((s: Session) => {
-            visitorCounts[s.visitor_id] = (visitorCounts[s.visitor_id] || 0) + 1
-          })
-          const topVisitorsList = Object.entries(visitorCounts)
-            .sort(([, a], [, b]) => b - a)
-            .slice(0, 5)
-            .map(([visitorId, count]) => ({
-              id: visitorId.substring(0, 24) + '...',
-              requests: count
-            }))
-          setTopVisitors(topVisitorsList)
-        } else {
-          // Reset si no hay datos
-          const messageFilterData = getMessageFilterData(messageSummary)
-          setOriginalRegistros(0)
-          setAllSessions([])
-          setSessions([])
-          setAvailableFilterData(hasAvailableFilterOptions(messageFilterData) ? messageFilterData : {})
-          setPlatformsData([])
-          setPlacementsData([])
-          setDevicesData([])
-          setOsData([])
-          setBrowserData([])
-          setTopVisitors([])
+            { from: apiRange.from, to: apiRange.to }
+          )
+          setWebTrackingConfigured(false)
           setMetrics({
             pageViews: 0,
             uniqueVisitors: 0,
@@ -1930,368 +1578,95 @@ const Analytics: React.FC = () => {
               avgPagePerSession: 0
             }
           })
-          setDailyTraffic(completeTrafficPeriods([], viewType, { from: startDate, to: endDate }))
-          setDailyConversions(completeTrafficPeriods([], viewType, { from: startDate, to: endDate }))
-          setContactConversionsByDate(contactConversionRows || [])
+          setDailyTraffic([])
+          setDailyConversions(fallbackSeries.map(point => ({
+            label: point.label,
+            value: point.registrations,
+            value2: 0,
+            periodKey: point.periodKey,
+            periodStart: point.periodStart,
+            periodEnd: point.periodEnd
+          })))
+          setSessionTrendSeries([])
+          setConversionTrendSeries(fallbackSeries)
+          setPlatformsData([])
+          setPlacementsData([])
+          setDevicesData([])
+          setOsData([])
+          setBrowserData([])
+          setTopVisitors([])
+          setWebFilterData({})
         }
-      } catch {
-        setWebTrackingConfigured(false)
-        setMessageAnalytics(null)
-        setContactConversionsByDate([])
+      } catch (error) {
+        if (!isCurrentRequest()) return
+        console.error('No se pudo cargar el resumen web de Analíticas:', error)
+        setAnalyticsError('No pudimos cargar el tráfico del sitio. Tus datos no se reemplazaron por ceros; puedes reintentar sin salir de esta página.')
       } finally {
-        setLoading(false)
-        setHasLoadedAnalytics(true)
+        if (isCurrentRequest()) {
+          setLoading(false)
+          setHasLoadedAnalytics(true)
+        }
       }
     }
 
-    fetchAnalytics()
-  }, [apiRange.from, apiRange.to, viewType, convertToLocalTime, conversionFilters, hasWebAnalyticsAccess, messageSummaryFilterKey, messageSummaryFilters])
+    void fetchAnalytics()
 
-  // Efecto para filtrar sesiones cuando cambian los filtros seleccionados
+    return () => {
+      controller.abort()
+    }
+  }, [
+    analyticsSummaryInput,
+    analyticsRetryKey,
+    apiRange.from,
+    apiRange.to,
+    conversionFilters,
+    hasWebAnalyticsAccess,
+    viewType
+  ])
+
+  // Mensajes se resuelve en paralelo y nunca frena las métricas web.
   useEffect(() => {
-    if (Object.keys(selectedFilters).length === 0) {
-      setSessions(allSessions)
-    } else {
-      const filtered = allSessions.filter((session: Session) => {
-        for (const [field, values] of Object.entries(selectedFilters)) {
-          if (values.length === 0) continue
-          if (isMessageFilterField(field)) continue
+    let cancelled = false
+    const requestId = ++messageAnalyticsRequestIdRef.current
+    setMessageLoading(true)
 
-          let fieldMatch = false
+    const fetchMessageAnalytics = async () => {
+      try {
+        const summary = await getMessageAnalyticsSummary(
+          apiRange.from,
+          apiRange.to,
+          viewType,
+          messageSummaryFilters
+        )
 
-          for (const value of values) {
-            switch (field) {
-              case 'landing_url':  // TreeFilter usa 'landing_url' para páginas
-              case 'page_url':     // Mantener compatibilidad
-                if (session.page_url) {
-                  const urlPath = session.page_url.split('?')[0]
-                  const pageName = urlPath.split('/').pop() || 'home'
-                  if (pageName === value) fieldMatch = true
-                }
-                break
-              case 'utm_campaign':
-                // Decodificar para comparar correctamente (evitar formato +++)
-                const decodedCampaign = decodeAdName(session.utm_campaign)
-                if (decodedCampaign === value) fieldMatch = true
-                break
-              case 'utm_medium':
-                // Decodificar para comparar correctamente (evitar formato +++)
-                const decodedMedium = session.utm_medium ? decodeAdName(session.utm_medium) : ''
-                if (decodedMedium === value) fieldMatch = true
-                break
-              case 'utm_content':
-                // Decodificar para comparar correctamente (evitar formato +++)
-                const decodedContent = session.utm_content ? decodeAdName(session.utm_content) : ''
-                if (decodedContent === value) fieldMatch = true
-                break
-              case 'utm_source':
-                // Normalizar fuente con todas las prioridades para match correcto
-                const normalizedSource = normalizeTrafficSource({
-                  referrer_url: session.referrer_url,
-                  site_source_name: session.site_source_name,
-                  utm_source: session.utm_source,
-                  source_platform: session.source_platform
-                })
-                if (normalizedSource.toLowerCase() === value.toLowerCase()) fieldMatch = true
-                break
-              case 'device_type':
-                if (session.device_type === value) fieldMatch = true
-                break
-              case 'browser':
-                if (session.browser === value) fieldMatch = true
-                break
-              case 'os':
-                if (session.os === value) fieldMatch = true
-                break
-              case 'placement':
-                const placementFormatted = formatPlacementName(session.placement || '')
-                if (placementFormatted === value) fieldMatch = true
-                break
-              case 'ad_platform':
-                const sessionPlatform = (session.source_platform || '').toLowerCase()
-                if (sessionPlatform === value) fieldMatch = true
-                break
-              case 'campaign_id':
-                if (session.campaign_id === value) fieldMatch = true
-                break
-              case 'adset_id':
-                const sessionAdsetId = session.adset_id || session.ad_group_id
-                if (sessionAdsetId === value) fieldMatch = true
-                break
-              case 'ad_id':
-                if (session.ad_id === value) fieldMatch = true
-                break
-              case 'conversion_stage':
-                if (getSessionConversionStage(session) === value) fieldMatch = true
-                break
-              case 'tracking_source':
-                if (getTrackingSourceValue(session) === value) fieldMatch = true
-                break
-              case 'channel':
-                if (normalizeTrafficChannelValue(session.channel) === value) fieldMatch = true
-                break
-              case 'site_type':
-                if ((session.site_type || 'unknown') === value) fieldMatch = true
-                break
-              case 'site_id':
-                if (session.site_id === value) fieldMatch = true
-                break
-              case 'form_site_id':
-                if (getNativeFormId(session) === value) fieldMatch = true
-                break
-              case 'native_conversion_source':
-                if (getNativeConversionFilterValue(session) === value) fieldMatch = true
-                break
-            }
-          }
-
-          if (!fieldMatch) return false
+        if (cancelled || messageAnalyticsRequestIdRef.current !== requestId) return
+        setMessageAnalytics(summary)
+        const nextFilterData = getMessageFilterData(summary)
+        setMessageFilterData(hasAvailableFilterOptions(nextFilterData) ? nextFilterData : {})
+      } catch (error) {
+        if (cancelled || messageAnalyticsRequestIdRef.current !== requestId) return
+        console.error('No se pudo cargar el resumen de mensajes de Analíticas:', error)
+        // Conserva el último snapshot de mensajes ante fallos transitorios.
+      } finally {
+        if (!cancelled && messageAnalyticsRequestIdRef.current === requestId) {
+          setMessageLoading(false)
+          setHasLoadedMessageAnalytics(true)
         }
-
-        return true
-      })
-
-      // Ordenar sesiones filtradas de más reciente a más vieja
-      const sortedFiltered = [...filtered].sort((a, b) => {
-        const dateA = parseTimestamp(a.started_at)?.getTime() ?? 0
-        const dateB = parseTimestamp(b.started_at)?.getTime() ?? 0
-        return dateB - dateA // DESC: más reciente primero
-      })
-      setSessions(sortedFiltered)
-    }
-  }, [selectedFilters, allSessions])
-
-  // Efecto para recalcular visualizaciones cuando cambien las sesiones filtradas
-  useEffect(() => {
-    // No hacer nada si allSessions está vacío (aún no se han cargado los datos iniciales)
-    if (allSessions.length === 0) {
-      return
-    }
-
-    // Detectar si hay filtros activos
-    const hasActiveFilters = hasSelectedWebFilters(selectedFilters)
-
-    // BUG FIX: Si no hay filtros activos, usar allSessions en vez de sessions
-    const sessionsToProcess = hasActiveFilters ? sessions : allSessions
-
-    if (sessionsToProcess.length === 0) {
-      // Si no hay sesiones filtradas, resetear solo métricas de sesiones.
-      setMetrics(prev => ({
-        pageViews: 0,
-        uniqueVisitors: 0,
-        registros: hasActiveFilters ? 0 : prev.registros, // Si hay filtro y no hay datos = 0
-        conversionRate: 0,
-        returningUsers: 0,
-        avgPagePerSession: 0,
-        trends: prev.trends // Mantener trends originales
-      }))
-      setDailyTraffic([])
-      setDailyConversions([])
-      return
-    }
-
-    const viewSessionsToProcess = sessionsToProcess.filter(isTrackingViewEvent)
-
-    // Recalcular KPIs principales con las sesiones filtradas
-    const uniqueVids = new Set(viewSessionsToProcess.map((s: Session) => s.visitor_id)).size
-    const totalPageViews = viewSessionsToProcess.length
-
-    // Contar sesiones únicas (por session_id)
-    const uniqueSessionIds = new Set(viewSessionsToProcess.map((s: Session) => s.session_id)).size
-
-    // Registros = contactos únicos que aparecen en las sesiones filtradas
-    const sesionesConContacto = sessionsToProcess.filter((s: Session) => {
-      if (!s.contact_id || !s.contact_created_at) return false
-
-      const startedDate = parseTimestamp(s.started_at)
-      const contactCreatedDate = parseTimestamp(s.contact_created_at)
-
-      if (!startedDate || !contactCreatedDate) return false
-
-      return startedDate >= contactCreatedDate
-    })
-
-    const registrosEnSesiones = new Set(
-      sesionesConContacto.map((s: Session) => s.contact_id)
-    ).size
-
-    // Si hay filtros activos, usar registrosEnSesiones; si no, usar valor original guardado
-    const registrosValue = hasActiveFilters ? registrosEnSesiones : originalRegistros
-
-    const conversionRate = uniqueVids > 0 ? ((registrosValue / uniqueVids) * 100) : 0
-
-    // Usuarios recurrentes: contar visitor_ids que tienen múltiples session_ids diferentes
-    const visitorSessionMap: { [key: string]: Set<string> } = {}
-    viewSessionsToProcess.forEach((s: Session) => {
-      if (!visitorSessionMap[s.visitor_id]) {
-        visitorSessionMap[s.visitor_id] = new Set()
       }
-      visitorSessionMap[s.visitor_id].add(s.session_id)
-    })
-    const returningUsers = Object.values(visitorSessionMap).filter(sessionSet => sessionSet.size > 1).length
-
-    // Páginas por sesión = total de page_views / número de sesiones únicas
-    const avgPagePerSession = uniqueSessionIds > 0 ?
-      (totalPageViews / uniqueSessionIds) : 0
-
-    // Actualizar métricas (sin trends, ya que los filtros no tienen período anterior)
-    setMetrics(prev => ({
-      pageViews: totalPageViews,
-      uniqueVisitors: uniqueVids,
-      registros: registrosValue, // Usar valor filtrado si hay filtros activos
-      conversionRate,
-      returningUsers,
-      avgPagePerSession,
-      trends: prev.trends // Mantener trends del período original
-    }))
-
-    // Recalcular gráfico de tráfico con sesiones filtradas
-    setDailyTraffic(buildTrafficChartData(sessionsToProcess, viewType, convertToLocalTime))
-
-    // Recalcular gráficos de registros SI hay filtros activos
-    if (hasActiveFilters) {
-      // Agrupar contactos únicos por fecha de creación
-      const registrosPorFecha: { [key: string]: Set<string> } = {}
-
-      sessionsToProcess.forEach((session: Session) => {
-        if (session.contact_id && session.contact_created_at) {
-          const createdDate = parseTimestamp(session.contact_created_at)
-          const startedDate = parseTimestamp(session.started_at)
-
-          if (!createdDate || !startedDate || startedDate < createdDate) {
-            return
-          }
-
-          const periodKey = getPeriodKeyFromTimestamp(session.contact_created_at, viewType, convertToLocalTime)
-          if (!periodKey) return
-          if (!registrosPorFecha[periodKey]) {
-            registrosPorFecha[periodKey] = new Set()
-          }
-          registrosPorFecha[periodKey].add(session.contact_id)
-        }
-      })
-
-      // Generar datos para el gráfico de conversiones filtrado.
-      const filteredConversionsData = Object.entries(registrosPorFecha)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([period, contactSet]) => ({
-          label: formatPeriodLabel(period, viewType),
-          value: contactSet.size,
-          ...getPeriodPointMeta(period, viewType)
-        }))
-
-      setDailyConversions(filteredConversionsData)
-    } else {
     }
-    // Si NO hay filtros, mantener los datos originales (ya están seteados en el primer useEffect)
 
-    // Recalcular stats para las cards
-    const browsersForFilter: { [key: string]: Set<string> } = {}
-    viewSessionsToProcess.forEach((session: Session) => {
-      const browser = session.browser || 'Desconocido'
-      if (!browsersForFilter[browser]) browsersForFilter[browser] = new Set()
-      browsersForFilter[browser].add(session.visitor_id)
-    })
-    const uniqueVisitorsInFilter = new Set(viewSessionsToProcess.map(s => s.visitor_id)).size
-    const percentageDenominator = Math.max(uniqueVisitorsInFilter, 1)
-    const browserStats = Object.entries(browsersForFilter)
-      .map(([browser, visitorSet]) => ({
-        name: browser,
-        users: visitorSet.size,
-        percentage: ((visitorSet.size / percentageDenominator) * 100).toFixed(1)
-      }))
-      .sort((a, b) => b.users - a.users)
-      .slice(0, 5)
-    setBrowserData(browserStats)
+    void fetchMessageAnalytics()
 
-    const platformsForFilter: { [key: string]: Set<string> } = {}
-    viewSessionsToProcess.forEach((session: Session) => {
-      // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
-      const platform = normalizeTrafficSource({
-        referrer_url: session.referrer_url,
-        site_source_name: session.site_source_name,
-        utm_source: session.utm_source,
-        source_platform: session.source_platform
-      })
-      if (!platformsForFilter[platform]) platformsForFilter[platform] = new Set()
-      platformsForFilter[platform].add(session.visitor_id)
-    })
-    const platformStats = Object.entries(platformsForFilter)
-      .map(([platform, visitorSet]) => ({
-        name: platform,
-        users: visitorSet.size,
-        percentage: ((visitorSet.size / percentageDenominator) * 100).toFixed(1)
-      }))
-      .sort((a, b) => b.users - a.users)
-      .slice(0, 5)
-    setPlatformsData(platformStats)
-
-    // Calcular placements para "Top de ubicaciones" (Facebook Feed, Instagram Reels, etc.) - VISITANTES ÚNICOS
-    const placementsForFilter: { [key: string]: Set<string> } = {}
-    viewSessionsToProcess.forEach((session: Session) => {
-      const rawPlacement = session.placement || 'Sin ubicación'
-      const placement = formatPlacementName(rawPlacement)
-      if (!placementsForFilter[placement]) placementsForFilter[placement] = new Set()
-      placementsForFilter[placement].add(session.visitor_id)
-    })
-    const placementStats = Object.entries(placementsForFilter)
-      .map(([placement, visitorSet]) => ({
-        name: placement,
-        users: visitorSet.size,
-        percentage: ((visitorSet.size / percentageDenominator) * 100).toFixed(1)
-      }))
-      .sort((a, b) => b.users - a.users)
-      .slice(0, 5)
-    setPlacementsData(placementStats)
-
-    const devicesFiltered: { [key: string]: Set<string> } = {}
-    viewSessionsToProcess.forEach((session: Session) => {
-      const device = session.device_type || 'Desconocido'
-      if (!devicesFiltered[device]) devicesFiltered[device] = new Set()
-      devicesFiltered[device].add(session.visitor_id)
-    })
-    const uniqueVisitorsFiltered = new Set(viewSessionsToProcess.map(s => s.visitor_id)).size
-    const devicePercentageDenominator = Math.max(uniqueVisitorsFiltered, 1)
-    const deviceStats = Object.entries(devicesFiltered)
-      .map(([device, visitorSet]) => ({
-        name: device,
-        users: visitorSet.size,
-        percentage: ((visitorSet.size / devicePercentageDenominator) * 100).toFixed(1)
-      }))
-      .sort((a, b) => b.users - a.users)
-      .slice(0, 5)
-    setDevicesData(deviceStats)
-
-    const operatingSystemsForFilter: { [key: string]: Set<string> } = {}
-    viewSessionsToProcess.forEach((session: Session) => {
-      const os = session.os || 'Desconocido'
-      if (!operatingSystemsForFilter[os]) operatingSystemsForFilter[os] = new Set()
-      operatingSystemsForFilter[os].add(session.visitor_id)
-    })
-    const osStats = Object.entries(operatingSystemsForFilter)
-      .map(([os, visitorSet]) => ({
-        name: os,
-        users: visitorSet.size,
-        percentage: ((visitorSet.size / percentageDenominator) * 100).toFixed(1)
-      }))
-      .sort((a, b) => b.users - a.users)
-      .slice(0, 5)
-    setOsData(osStats)
-
-    const visitorCounts: { [key: string]: number } = {}
-    viewSessionsToProcess.forEach((s: Session) => {
-      visitorCounts[s.visitor_id] = (visitorCounts[s.visitor_id] || 0) + 1
-    })
-    const topVisitorsList = Object.entries(visitorCounts)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 5)
-      .map(([visitorId, count]) => ({
-        id: visitorId.substring(0, 24) + '...',
-        requests: count
-      }))
-    setTopVisitors(topVisitorsList)
-
-  }, [sessions, allSessions, selectedFilters, viewType, convertToLocalTime])
+    return () => {
+      cancelled = true
+    }
+  }, [
+    apiRange.from,
+    apiRange.to,
+    messageSummaryFilterKey,
+    messageSummaryFilters,
+    viewType
+  ])
 
   const messageMetrics = messageAnalytics?.metrics
 
@@ -2363,21 +1738,28 @@ const Analytics: React.FC = () => {
     (messageMetrics?.contacts || 0) > 0 ||
     (messageAnalytics?.trend || []).some(item => (item.messages || 0) > 0)
   )
-  const showWebAnalyticsBlocks = hasWebAnalyticsAccess && Boolean(webTrackingConfigured || hasWebAnalyticsData)
+  const analyticsRefreshing = loading || !hasLoadedAnalytics
+  const messageAnalyticsRefreshing = messageLoading || !hasLoadedMessageAnalytics
+  const showWebAnalyticsBlocks = hasWebAnalyticsAccess && Boolean(
+    (!analyticsError || hasWebAnalyticsSnapshot) &&
+    (webTrackingConfigured || hasWebAnalyticsData)
+  )
   const showMessageAnalyticsBlocks = Boolean(
     messageAnalytics?.status?.connected ||
     hasMessageAnalyticsData
   )
 
-  const metricSections: Array<{ title: string; metrics: typeof webMetrics }> = []
+  const metricSections: Array<{ title: string; metrics: typeof webMetrics; loading: boolean }> = []
   if (showWebAnalyticsBlocks) {
-    metricSections.push({ title: 'Tráfico del sitio', metrics: webMetrics })
+    metricSections.push({ title: 'Tráfico del sitio', metrics: webMetrics, loading: analyticsRefreshing })
   }
   if (showMessageAnalyticsBlocks) {
-    metricSections.push({ title: 'Mensajes', metrics: messageMetricCards })
+    metricSections.push({ title: 'Mensajes', metrics: messageMetricCards, loading: messageAnalyticsRefreshing })
   }
   const sourceGridClassName = metricSections.length > 1 ? 'grid gap-4 xl:grid-cols-2' : 'grid gap-4'
-  const analyticsSubtitle = showWebAnalyticsBlocks && showMessageAnalyticsBlocks
+  const analyticsSubtitle = analyticsError && !hasWebAnalyticsSnapshot
+    ? 'El resumen web no respondió. Los mensajes siguen cargando por separado.'
+    : showWebAnalyticsBlocks && showMessageAnalyticsBlocks
     ? 'Tráfico del sitio, mensajes y conversiones por rango.'
     : showWebAnalyticsBlocks
       ? 'Tráfico del sitio y conversiones por rango.'
@@ -2441,7 +1823,6 @@ const Analytics: React.FC = () => {
 
   const periodLabel = viewType === 'year' ? 'año' : viewType === 'month' ? 'mes' : 'fecha'
   const hasActiveFiltersForCharts = showWebAnalyticsBlocks && hasSelectedWebFilters(selectedFilters)
-  const sessionsForCharts = hasActiveFiltersForCharts ? sessions : allSessions
 
   const messageTrendData = React.useMemo<TrafficPoint[]>(() => (
     buildMessageTrendData(messageAnalytics, viewType, apiRange)
@@ -2502,36 +1883,8 @@ const Analytics: React.FC = () => {
     }
   }, [conversionChartOptions, navigateAnalyticsView, selectedConversionChartView])
 
-  const sessionTrendData = React.useMemo(
-    () => completeSessionTrendPeriods(
-      buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
-      viewType,
-      apiRange
-    ),
-    [sessionsForCharts, viewType, convertToLocalTime, apiRange.from, apiRange.to]
-  )
-
-  const contactCreatedConversionTrendData = React.useMemo(
-    () => completeConversionTrendPeriods(
-      aggregateContactConversionsByPeriod(contactConversionsByDate, viewType),
-      viewType,
-      apiRange
-    ),
-    [contactConversionsByDate, viewType, apiRange.from, apiRange.to]
-  )
-
-  const filteredConversionTrendData = React.useMemo(
-    () => completeConversionTrendPeriods(
-      buildConversionTrendData(sessionsForCharts, viewType, convertToLocalTime),
-      viewType,
-      apiRange
-    ),
-    [sessionsForCharts, viewType, convertToLocalTime, apiRange.from, apiRange.to]
-  )
-
-  const conversionTrendData = hasActiveFiltersForCharts
-    ? filteredConversionTrendData
-    : contactCreatedConversionTrendData
+  const sessionTrendData = sessionTrendSeries
+  const conversionTrendData = conversionTrendSeries
 
   const webChartConfig = React.useMemo<ChartMetricConfig>(() => {
     switch (selectedMainChartView) {
@@ -2688,6 +2041,103 @@ const Analytics: React.FC = () => {
     }
   }, [customersLabel, leadsLabel, newContactsLabel, selectedConversionChartView])
 
+  const loadConversionContactPage = useCallback(async (nextState: AnalyticsContactModalState) => {
+    if (!nextState.range) return
+    const requestId = contactModalRequestRef.current + 1
+    contactModalRequestRef.current = requestId
+    setContactModalState({ ...nextState, loading: true })
+
+    try {
+      const result = await getContactConversionContacts(
+        nextState.range.from,
+        nextState.range.to,
+        nextState.listType,
+        {
+          cursor: nextState.cursor,
+          search: nextState.search,
+          limit: 50
+        }
+      )
+      if (contactModalRequestRef.current !== requestId) return
+
+      setContactModalState({
+        ...nextState,
+        contacts: result.contacts.map(contact => ({
+          ...contact,
+          created_at: contact.created_at || (contact as any).createdAt || ''
+        })),
+        loading: false,
+        pagination: {
+          limit: result.pagination.limit,
+          hasNext: result.pagination.hasNext,
+          nextCursor: result.pagination.nextCursor
+        }
+      })
+    } catch {
+      if (contactModalRequestRef.current !== requestId) return
+      setContactModalState({
+        ...nextState,
+        contacts: [],
+        loading: false,
+        pagination: { limit: 50, hasNext: false, nextCursor: null }
+      })
+    }
+  }, [])
+
+  const handleConversionContactPageChange = useCallback((direction: 'next' | 'previous') => {
+    if (!contactModalState.range) return
+    if (direction === 'next') {
+      if (!contactModalState.pagination.hasNext || !contactModalState.pagination.nextCursor) return
+      void loadConversionContactPage({
+        ...contactModalState,
+        cursor: contactModalState.pagination.nextCursor,
+        cursorHistory: [...contactModalState.cursorHistory, contactModalState.cursor],
+        page: contactModalState.page + 1
+      })
+      return
+    }
+
+    if (contactModalState.page <= 1) return
+    const previousCursor = contactModalState.cursorHistory[contactModalState.cursorHistory.length - 1] ?? null
+    void loadConversionContactPage({
+      ...contactModalState,
+      cursor: previousCursor,
+      cursorHistory: contactModalState.cursorHistory.slice(0, -1),
+      page: contactModalState.page - 1
+    })
+  }, [contactModalState, loadConversionContactPage])
+
+  const handleConversionContactSearch = useCallback((search: string) => {
+    if (!contactModalState.range) return
+    if (search === contactModalState.search) return
+    void loadConversionContactPage({
+      ...contactModalState,
+      cursor: null,
+      cursorHistory: [],
+      page: 1,
+      search
+    })
+  }, [contactModalState, loadConversionContactPage])
+
+  const hydrateConversionContact = useCallback(async (contact: { id: string }) => {
+    const detail = await contactsService.getContactDetails(contact.id, {
+      warmProfilePictures: false,
+      refreshExternalAppointments: false
+    })
+
+    return {
+      ...detail,
+      created_at: detail.createdAt,
+      hasShowedAppointment: detail.hasShowedAppointment,
+      hasAttendedAppointment: detail.hasAttendedAppointment
+    }
+  }, [])
+
+  const closeConversionContactModal = useCallback(() => {
+    contactModalRequestRef.current += 1
+    setContactModalState(emptyContactModalState)
+  }, [])
+
   const handleConversionPointClick = useCallback(async (
     point: AnalyticsChartClickPoint,
     _index: number,
@@ -2697,50 +2147,31 @@ const Analytics: React.FC = () => {
     const from = point.periodStart
     const to = point.periodEnd
 
-    if (!clickConfig || !from || !to) return
+    // La lista legacy no acepta filtros web. Evitamos mostrar contactos que no
+    // corresponden al agregado filtrado hasta que ese drill-down tenga contrato
+    // server-side propio.
+    if (!clickConfig || !from || !to || hasActiveFiltersForCharts) return
 
-    setContactModalState({
+    void loadConversionContactPage({
       open: true,
       title: `${clickConfig.title} · ${point.label}`,
       subtitle: formatRangeLabel(from, to),
       type: clickConfig.modalType,
       contacts: [],
-      loading: true
+      loading: true,
+      listType: clickConfig.listType,
+      range: { from, to },
+      cursor: null,
+      cursorHistory: [],
+      page: 1,
+      search: '',
+      pagination: { limit: 50, hasNext: false, nextCursor: null }
     })
+  }, [getConversionClickConfig, hasActiveFiltersForCharts, loadConversionContactPage])
 
-    try {
-      const contacts = hasActiveFiltersForCharts
-        ? buildFilteredContactListFromSessions(
-            sessionsForCharts,
-            viewType,
-            convertToLocalTime,
-            point.periodKey || '',
-            clickConfig.listType
-          )
-        : (await getContactConversionContacts(from, to, clickConfig.listType)).contacts
-
-      setContactModalState(prev => ({
-        ...prev,
-        contacts: contacts.map(contact => ({
-          ...contact,
-          created_at: contact.created_at || (contact as any).createdAt || ''
-        })),
-        loading: false
-      }))
-    } catch {
-      setContactModalState(prev => ({
-        ...prev,
-        contacts: [],
-        loading: false
-      }))
-    }
-  }, [convertToLocalTime, getConversionClickConfig, hasActiveFiltersForCharts, sessionsForCharts, viewType])
-
-  const analyticsRefreshing = loading && hasLoadedAnalytics
-
-  if (loading && !hasLoadedAnalytics) {
-    return <Loading message="Cargando analíticas..." page="analytics" />
-  }
+  const conversionAnalyticsRefreshing = selectedConversionChartView === 'messages-appointments'
+    ? messageAnalyticsRefreshing
+    : analyticsRefreshing
 
   return (
     <PageContainer>
@@ -2857,6 +2288,30 @@ const Analytics: React.FC = () => {
           </div>
         </div>
 
+        {analyticsError && (
+          <Card variant="glass" className="p-4">
+            <div role="alert" aria-live="assertive" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="font-display text-sm font-semibold text-[var(--text)]">El resumen web no respondió</p>
+                <p className="mt-1 text-sm text-[var(--text-mute)]">
+                  {hasWebAnalyticsSnapshot
+                    ? 'Dejamos visible el último resultado correcto para no engañarte con ceros.'
+                    : analyticsError}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={loading}
+                onClick={() => setAnalyticsRetryKey(current => current + 1)}
+              >
+                {loading ? 'Reintentando…' : 'Reintentar'}
+              </Button>
+            </div>
+          </Card>
+        )}
+
         {/* Métricas por canal */}
         {metricSections.length > 0 && (
           <div className={sourceGridClassName}>
@@ -2873,7 +2328,7 @@ const Analytics: React.FC = () => {
                       value={metric.value}
                       delta={metric.delta}
                       icon={metric.icon}
-                      loading={analyticsRefreshing}
+                      loading={section.loading}
                     />
                   ))}
                 </div>
@@ -2972,7 +2427,7 @@ const Analytics: React.FC = () => {
             </div>
 
             <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
-              {analyticsRefreshing ? (
+              {messageAnalyticsRefreshing ? (
                 <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando mensajes">
                   {[48, 70, 58, 84, 62, 74].map((height, index) => (
                     <span
@@ -3042,7 +2497,7 @@ const Analytics: React.FC = () => {
               </div>
             </div>
             <div className="relative w-full flex-1 min-h-[340px]">
-              {analyticsRefreshing ? (
+              {conversionAnalyticsRefreshing ? (
                 <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando datos">
                   {[48, 70, 58, 84, 62, 74].map((height, index) => (
                     <span
@@ -3064,7 +2519,7 @@ const Analytics: React.FC = () => {
                   legendLabels={{ label1: conversionChartConfig.label1, label2: conversionChartConfig.label2 }}
                   formatValue={formatTrafficAxis}
                   formatTooltipValue={formatTrafficTooltip}
-                  onPointClick={handleConversionPointClick}
+                  onPointClick={hasActiveFiltersForCharts ? undefined : handleConversionPointClick}
                 />
               ) : (
                 <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
@@ -3247,20 +2702,27 @@ const Analytics: React.FC = () => {
         {/* Tabla de sesiones de tracking */}
         {showWebAnalyticsBlocks && (
           <SessionsTable
-            filteredSessions={sessions}
-            useExternalData={true}
+            range={{ start: apiRange.from, end: apiRange.to }}
+            filters={webSummaryFilters}
+            onSessionsChanged={handleTrackingSessionsChanged}
           />
         )}
       </div>
 
       <ContactDetailsModal
         isOpen={contactModalState.open}
-        onClose={() => setContactModalState(emptyContactModalState)}
+        onClose={closeConversionContactModal}
         title={contactModalState.title}
         subtitle={contactModalState.subtitle}
         data={contactModalState.contacts}
         loading={contactModalState.loading}
         type={contactModalState.type}
+        currentPage={contactModalState.page}
+        hasNextPage={contactModalState.pagination.hasNext}
+        hasPreviousPage={contactModalState.page > 1}
+        onPageChange={handleConversionContactPageChange}
+        onSearchChange={handleConversionContactSearch}
+        onSelectContact={hydrateConversionContact}
       />
     </PageContainer>
   )

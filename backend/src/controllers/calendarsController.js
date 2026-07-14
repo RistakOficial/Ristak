@@ -2332,18 +2332,28 @@ export async function getBlockedSlots(req, res) {
  */
 export async function createBlockedSlot(req, res) {
   try {
-    const { accessToken, locationId, ...blockData } = req.body;
+    const { accessToken: suppliedAccessToken, locationId: suppliedLocationId, ...blockData } = req.body;
+    const calendarId = blockData.calendarId || blockData.calendar_id || req.params.calendarId || null;
+    const localCalendar = calendarId
+      ? await db.get('SELECT source, ghl_calendar_id FROM calendars WHERE id = ? LIMIT 1', [calendarId]).catch(() => null)
+      : null;
+    const shouldUseHighLevel = Boolean(
+      suppliedAccessToken || localCalendar?.ghl_calendar_id || cleanString(localCalendar?.source).toLowerCase() === 'ghl'
+    );
+    const context = shouldUseHighLevel
+      ? await getHighLevelContext(req, { accessToken: suppliedAccessToken, locationId: suppliedLocationId })
+      : { accessToken: null, locationId: null };
 
     // (APT-004) Sin HighLevel: crear un bloqueo NATIVO (calendarios Ristak/Google).
     // Se respeta en checkSlotAvailability para impedir agendar sobre ese horario.
-    if (!accessToken) {
+    if (!context.accessToken) {
       const startTime = blockData.startTime || blockData.start_time || blockData.startTimeUtc;
       const endTime = blockData.endTime || blockData.end_time || blockData.endTimeUtc;
       if (!startTime || !endTime) {
         return res.status(400).json({ success: false, error: 'Se requiere startTime y endTime para el bloqueo' });
       }
       const blockedSlot = await localCalendarService.createLocalBlockedSlot({
-        calendarId: blockData.calendarId || blockData.calendar_id || req.params.calendarId || null,
+        calendarId,
         startTime,
         endTime,
         title: blockData.title || blockData.reason || blockData.name || null
@@ -2351,14 +2361,14 @@ export async function createBlockedSlot(req, res) {
       return res.status(201).json({ success: true, data: blockedSlot });
     }
 
-    if (!locationId) {
+    if (!context.locationId) {
       return res.status(400).json({
         success: false,
         error: 'Se requiere locationId'
       });
     }
 
-    const blockedSlot = await calendarService.createBlockedSlot(blockData, locationId, accessToken);
+    const blockedSlot = await calendarService.createBlockedSlot(blockData, context.locationId, context.accessToken);
 
     res.status(201).json({
       success: true,
@@ -2380,21 +2390,26 @@ export async function createBlockedSlot(req, res) {
 export async function updateBlockedSlot(req, res) {
   try {
     const { id } = req.params;
-    const { accessToken, ...updateData } = req.body;
+    const { accessToken: suppliedAccessToken, ...updateData } = req.body;
 
-    // (APT-004) Sin HighLevel: actualizar el bloqueo NATIVO local (calendarios Ristak/Google).
-    if (!accessToken) {
+    // Los bloqueos nativos se resuelven primero por ID. Si no existen, el
+    // backend usa la credencial guardada para actualizar el bloqueo HighLevel;
+    // el navegador no necesita recibir ni reenviar ese secret.
+    if (!suppliedAccessToken) {
       const startTime = updateData.startTime || updateData.start_time || updateData.startTimeUtc || null;
       const endTime = updateData.endTime || updateData.end_time || updateData.endTimeUtc || null;
       const title = updateData.title ?? updateData.reason ?? updateData.name;
       const ok = await localCalendarService.updateLocalBlockedSlot({ id, startTime, endTime, title });
-      if (!ok) {
-        return res.status(404).json({ success: false, error: 'Bloqueo no encontrado' });
+      if (ok) {
+        return res.json({ success: true, data: { id, startTime, endTime, title } });
       }
-      return res.json({ success: true, data: { id, startTime, endTime, title } });
     }
 
-    const blockedSlot = await calendarService.updateBlockedSlot(id, updateData, accessToken);
+    const context = await getHighLevelContext(req, { accessToken: suppliedAccessToken });
+    if (!context.accessToken) {
+      return res.status(404).json({ success: false, error: 'Bloqueo no encontrado' });
+    }
+    const blockedSlot = await calendarService.updateBlockedSlot(id, updateData, context.accessToken);
 
     res.json({
       success: true,
@@ -3350,18 +3365,22 @@ export async function deleteEvent(req, res) {
 export async function deleteBlockedSlot(req, res) {
   try {
     const { id } = req.params;
-    const { accessToken } = req.query;
+    const suppliedAccessToken = req.query.accessToken;
 
-    // (APT-004) Sin HighLevel: eliminar el bloqueo NATIVO local (calendarios Ristak/Google).
-    if (!accessToken) {
+    // Igual que update: primero local por ID y sólo entonces HighLevel con la
+    // credencial guardada en backend.
+    if (!suppliedAccessToken) {
       const ok = await localCalendarService.deleteLocalBlockedSlot(id);
-      if (!ok) {
-        return res.status(404).json({ success: false, error: 'Bloqueo no encontrado' });
+      if (ok) {
+        return res.json({ success: true, message: 'Blocked slot eliminado exitosamente' });
       }
-      return res.json({ success: true, message: 'Blocked slot eliminado exitosamente' });
     }
 
-    await calendarService.deleteBlockedSlot(id, accessToken);
+    const context = await getHighLevelContext(req, { accessToken: suppliedAccessToken });
+    if (!context.accessToken) {
+      return res.status(404).json({ success: false, error: 'Bloqueo no encontrado' });
+    }
+    await calendarService.deleteBlockedSlot(id, context.accessToken);
 
     res.json({
       success: true,

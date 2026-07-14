@@ -176,6 +176,7 @@ import {
   type ConversationAgentAssignmentStatus
 } from '@/utils/conversationAgentAssignment'
 import apiClient from '@/services/apiClient'
+import { createAuthScopedLocalStorageNamespace } from '@/services/authScopedLocalStorage'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { subscribeToChatLiveEvents, reportViewing } from '@/services/chatLiveEventsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
@@ -223,6 +224,7 @@ const CHAT_PINNED_STATE_KEY = 'ristak_phone_chat_pinned_state_v1'
 const CHAT_MANUAL_UNREAD_STATE_KEY = 'ristak_phone_chat_manual_unread_state_v1'
 const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
 const CHAT_FAST_START_INBOX_KEY = 'ristak_phone_chat_fast_start_inbox_v1'
+const QR_RISK_ACCEPTED_STORAGE_KEY = 'ristak_phone_qr_risk_accepted'
 const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 const CHAT_FAST_START_INBOX_LIMIT = 300
 // Lotes moderados: la bandeja calcula stats de mensajes y debe pintar rápido sin ahogar Postgres.
@@ -252,6 +254,22 @@ const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI'
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak'
 const AI_AGENT_CHAT_SEARCH_TEXT = 'asistente personal ai ristak ai agente inteligencia artificial ia'
 const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
+const PHONE_CHAT_PERSISTENT_CACHE_PREFIXES = [
+  CHAT_READ_STATE_KEY,
+  CHAT_ARCHIVED_STATE_KEY,
+  CHAT_MUTED_STATE_KEY,
+  CHAT_PINNED_STATE_KEY,
+  CHAT_MANUAL_UNREAD_STATE_KEY,
+  CHAT_STARRED_MESSAGES_KEY,
+  CHAT_FAST_START_INBOX_KEY,
+  AI_AGENT_MESSAGES_KEY,
+  QR_RISK_ACCEPTED_STORAGE_KEY
+] as const
+const phoneChatStorage = createAuthScopedLocalStorageNamespace(PHONE_CHAT_PERSISTENT_CACHE_PREFIXES)
+
+function getScopedPhoneChatStorageKey(prefix: string) {
+  return phoneChatStorage.getKey(prefix)
+}
 const AI_AGENT_MOBILE_CHAT_CONTEXT_NOTE = `Este mensaje viene del chat movil de ${AI_AGENT_CHAT_DISPLAY_NAME}. Responde como burbuja de chat: texto plano, natural, sin Markdown, sin negritas con asteriscos, sin encabezados y sin listas numeradas salvo que el usuario las pida.`
 const AGENT_STATUS_PHRASE_ROTATION_MS = 4400
 type AgentStatusPhraseLabels = {
@@ -1357,11 +1375,9 @@ interface MessageAudioPlaybackState {
   duration: number
 }
 
-const QR_RISK_ACCEPTED_STORAGE_KEY = 'ristak_phone_qr_risk_accepted'
-
 function readQrRiskAcceptedIds(): Record<string, boolean> {
   try {
-    return JSON.parse(window.localStorage.getItem(QR_RISK_ACCEPTED_STORAGE_KEY) || '{}')
+    return JSON.parse(window.localStorage.getItem(getScopedPhoneChatStorageKey(QR_RISK_ACCEPTED_STORAGE_KEY)) || '{}')
   } catch {
     return {}
   }
@@ -1369,7 +1385,10 @@ function readQrRiskAcceptedIds(): Record<string, boolean> {
 
 function writeQrRiskAcceptedIds(value: Record<string, boolean>) {
   try {
-    window.localStorage.setItem(QR_RISK_ACCEPTED_STORAGE_KEY, JSON.stringify(value))
+    window.localStorage.setItem(
+      getScopedPhoneChatStorageKey(QR_RISK_ACCEPTED_STORAGE_KEY),
+      JSON.stringify(value)
+    )
   } catch {
     // almacenamiento no disponible; el consentimiento se pedirá otra vez
   }
@@ -1858,7 +1877,7 @@ function readChatReadState(): ChatReadState {
   if (typeof window === 'undefined') return {}
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(CHAT_READ_STATE_KEY) || '{}')
+    const parsed = JSON.parse(window.localStorage.getItem(getScopedPhoneChatStorageKey(CHAT_READ_STATE_KEY)) || '{}')
     return parsed && typeof parsed === 'object' ? parsed : {}
   } catch {
     return {}
@@ -1867,14 +1886,18 @@ function readChatReadState(): ChatReadState {
 
 function writeChatReadState(state: ChatReadState) {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(CHAT_READ_STATE_KEY, JSON.stringify(state))
+  try {
+    window.localStorage.setItem(getScopedPhoneChatStorageKey(CHAT_READ_STATE_KEY), JSON.stringify(state))
+  } catch {
+    // Cache best-effort.
+  }
 }
 
 function readStoredChatIds(key: string) {
   if (typeof window === 'undefined') return []
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || '[]')
+    const parsed = JSON.parse(window.localStorage.getItem(getScopedPhoneChatStorageKey(key)) || '[]')
     if (!Array.isArray(parsed)) return []
     return parsed.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
   } catch {
@@ -1884,18 +1907,26 @@ function readStoredChatIds(key: string) {
 
 function writeStoredChatIds(key: string, ids: string[]) {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))))
+  try {
+    window.localStorage.setItem(
+      getScopedPhoneChatStorageKey(key),
+      JSON.stringify(Array.from(new Set(ids)))
+    )
+  } catch {
+    // Cache best-effort.
+  }
 }
 
 function readChatFastStartInbox(selectedChatPhoneId: string): ChatFastStartInboxSnapshot | null {
   if (typeof window === 'undefined') return null
 
+  const storageKey = getScopedPhoneChatStorageKey(CHAT_FAST_START_INBOX_KEY)
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(CHAT_FAST_START_INBOX_KEY) || 'null') as Partial<ChatFastStartInboxSnapshot> | null
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || 'null') as Partial<ChatFastStartInboxSnapshot> | null
     if (!parsed || typeof parsed !== 'object') return null
     if (parsed.selectedChatPhoneId !== selectedChatPhoneId) return null
     if (typeof parsed.savedAt !== 'number' || Date.now() - parsed.savedAt > CHAT_FAST_START_MAX_AGE_MS) {
-      window.localStorage.removeItem(CHAT_FAST_START_INBOX_KEY)
+      window.localStorage.removeItem(storageKey)
       return null
     }
     if (!Array.isArray(parsed.chats)) return null
@@ -1906,7 +1937,7 @@ function readChatFastStartInbox(selectedChatPhoneId: string): ChatFastStartInbox
       chats: parsed.chats.filter((chat): chat is ChatContact => Boolean(chat?.id)).slice(0, CHAT_FAST_START_INBOX_LIMIT)
     }
   } catch {
-    window.localStorage.removeItem(CHAT_FAST_START_INBOX_KEY)
+    window.localStorage.removeItem(storageKey)
     return null
   }
 }
@@ -1915,7 +1946,7 @@ function writeChatFastStartInbox(selectedChatPhoneId: string, chats: ChatContact
   if (typeof window === 'undefined' || chats.length === 0) return
 
   try {
-    window.localStorage.setItem(CHAT_FAST_START_INBOX_KEY, JSON.stringify({
+    window.localStorage.setItem(getScopedPhoneChatStorageKey(CHAT_FAST_START_INBOX_KEY), JSON.stringify({
       selectedChatPhoneId,
       savedAt: Date.now(),
       chats: chats.slice(0, CHAT_FAST_START_INBOX_LIMIT)
@@ -2014,7 +2045,7 @@ function readAIAgentMobileMessages(): AIAgentMessage[] {
   if (typeof window === 'undefined') return []
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(AI_AGENT_MESSAGES_KEY) || '[]')
+    const parsed = JSON.parse(window.localStorage.getItem(getScopedPhoneChatStorageKey(AI_AGENT_MESSAGES_KEY)) || '[]')
     if (!Array.isArray(parsed)) return []
 
     return parsed
@@ -2050,7 +2081,14 @@ function writeAIAgentMobileMessages(messages: AIAgentMessage[]) {
     ...message,
     content: normalizeAIAgentMobileChatContent(message.role, message.content)
   }))
-  window.localStorage.setItem(AI_AGENT_MESSAGES_KEY, JSON.stringify(normalizedMessages))
+  try {
+    window.localStorage.setItem(
+      getScopedPhoneChatStorageKey(AI_AGENT_MESSAGES_KEY),
+      JSON.stringify(normalizedMessages)
+    )
+  } catch {
+    // Cache best-effort.
+  }
 }
 
 function getMobileNotificationContactId(payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) {
@@ -10572,7 +10610,11 @@ export const PhoneChat: React.FC = () => {
     setContactAutomationOpen(true)
     setContactAutomationsLoading(true)
     try {
-      const overview = await automationsService.getOverview({ suppressFeatureNotAvailableToast: true })
+      const overview = await automationsService.getOverview({
+        suppressFeatureNotAvailableToast: true,
+        status: 'published',
+        limit: 100
+      })
       setContactAutomations((overview.automations || []).filter((automation) => automation.status === 'published'))
     } catch (error: any) {
       setContactAutomations([])

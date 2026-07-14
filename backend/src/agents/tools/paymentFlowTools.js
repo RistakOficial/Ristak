@@ -763,11 +763,21 @@ export const listSubscriptionsTool = tool({
   name: 'list_subscriptions',
   description: 'Lista suscripciones registradas con resumen de MRR, activas, pausadas y vencidas. Úsala antes de pausar/cancelar o para reportes de suscripciones.',
   parameters: z.object({
-    status: z.string().nullable().describe('Filtrar por estatus: all | active | paused | past_due | cancelled')
+    status: z.string().nullable().describe('Filtrar por estatus: all | active | paused | past_due | cancelled'),
+    search: z.string().nullable().describe('Buscar por ID, nombre de suscripción, contacto, correo, teléfono o pasarela'),
+    page: z.number().int().min(1).max(100000).nullable().describe('Página a consultar; empieza en 1'),
+    cursor: z.string().nullable().describe('Cursor opaco devuelto como nextCursor por la página anterior; obligatorio después de la página 1'),
+    limit: z.number().int().min(1).max(100).nullable().describe('Filas por página; default 20, máximo 100')
   }),
-  execute: async ({ status }) => {
+  execute: async ({ status, search, page, cursor, limit }) => {
     try {
-      const result = await listSubscriptions({ status: status || 'all' })
+      const result = await listSubscriptions({
+        status: status || 'all',
+        search: search || '',
+        page: page || 1,
+        cursor: cursor || undefined,
+        limit: limit || 20
+      })
       return { ok: true, ...result }
     } catch (error) {
       return { ok: false, error: error.message }

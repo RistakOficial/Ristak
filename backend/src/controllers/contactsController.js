@@ -520,7 +520,7 @@ const journeyMessageCursorSqlExpression = (prefix, valueExpression) => {
 const appendJourneyMessageBeforeParams = (params, beforeDate, beforeCursor) => {
   if (!beforeDate) return params
   return beforeCursor
-    ? [...params, beforeDate, beforeDate, beforeCursor]
+    ? [...params, beforeDate, beforeCursor]
     : [...params, beforeDate]
 }
 
@@ -536,13 +536,7 @@ const journeyMessageBeforeClause = (
   const timestampSort = timestampSortExpression(timestampExpression)
   const cursorTimestampSort = timestampSortParameterExpression()
   if (!beforeCursor) return `AND ${timestampSort} < ${cursorTimestampSort}`
-  return `AND (
-    ${timestampSort} < ${cursorTimestampSort}
-    OR (
-      ${timestampSort} = ${cursorTimestampSort}
-      AND ${cursorIdentityExpression} < ?
-    )
-  )`
+  return `AND (${timestampSort}, ${cursorIdentityExpression}) < (${cursorTimestampSort}, ?)`
 }
 
 const compareJourneyMessagesByCursor = (left, right) => {
@@ -2719,11 +2713,8 @@ export const getChatContacts = async (req, res) => {
 
     if (cursorEnabled) {
       const cursorTimestampSort = timestampSortParameterExpression()
-      conditions.push(`(
-        chat_stats.last_message_sort < ${cursorTimestampSort}
-        OR (chat_stats.last_message_sort = ${cursorTimestampSort} AND chat_stats.contact_id < ?)
-      )`)
-      params.push(cursorMessageDate, cursorMessageDate, cursorContactId)
+      conditions.push(`(chat_stats.last_message_sort, chat_stats.contact_id) < (${cursorTimestampSort}, ?)`)
+      params.push(cursorMessageDate, cursorContactId)
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''

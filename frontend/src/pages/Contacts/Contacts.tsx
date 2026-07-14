@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactAvatar, ContactDetailsModal, Loading, CustomSelect, Modal } from '@/components/common'
+import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactAvatar, Loading, CustomSelect, Modal } from '@/components/common'
+import { KpiCard } from '@/components/common/KpiCard/KpiCard'
+import { ContactDetailsModal } from '@/components/common/ContactDetailsModal/ContactDetailsModal'
 import type { Column } from '@/components/common'
 import {
   Users,
@@ -30,7 +32,6 @@ import { parseSortableDateValue } from '@/utils/dateSort'
 import { contactsService, type Contact, type ContactsPagination, type ContactStats } from '@/services/contactsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
-import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
 import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment, ContactPhoneNumber } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
@@ -590,10 +591,8 @@ const ContactsTable: React.FC = () => {
   const deleteCancelRef = useRef(false)
   const [loading, setLoading] = useState(false)
   const [statsLoading, setStatsLoading] = useState(false)
-  const [loadingEvents, setLoadingEvents] = useState(false) // Loading específico para eventos de calendarios
   const [viewMode, setViewMode] = useState<ContactViewMode>(routeState.viewMode)
   const [isClient, setIsClient] = useState(false)
-  const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
   const [contactTagLabels, setContactTagLabels] = useState<Record<string, string>>(() => {
     const cachedTags = contactTagsService.getCachedTags({ includeSystem: true }) || contactTagsService.getCachedTags()
     return cachedTags ? createTagLabelMap(cachedTags) : {}
@@ -617,7 +616,9 @@ const ContactsTable: React.FC = () => {
   )
   const handledOpenContactRef = useRef<string | null>(null)
   const fetchRequestRef = useRef(0)
+  const statsRequestRef = useRef(0)
   const contactsQueryKeyRef = useRef('')
+  const contactsStatsQueryKeyRef = useRef('')
 
   const navigateContactsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
     navigate({ pathname, search: location.search }, options)
@@ -652,6 +653,31 @@ const ContactsTable: React.FC = () => {
     serializedAdvancedFilters,
     tableSort.key,
     tableSort.order,
+    viewMode
+  ])
+  const contactsStatsQueryKey = useMemo(() => {
+    const normalizedAdvancedFilters = serializedAdvancedFilters
+      ? normalizeContactAdvancedConfig(advancedFilterConfig)
+      : undefined
+    const advancedFiltersWithoutSort = normalizedAdvancedFilters
+      ? (({ sort: _sort, ...filtersWithoutSort }) => filtersWithoutSort)(normalizedAdvancedFilters)
+      : undefined
+
+    return JSON.stringify({
+      viewMode,
+      filter,
+      search: debouncedContactSearch.trim(),
+      advancedFilters: advancedFiltersWithoutSort,
+      start: viewMode === 'by-date' ? getDateRangeKeyPart(dateRange.start) : '',
+      end: viewMode === 'by-date' ? getDateRangeKeyPart(dateRange.end) : ''
+    })
+  }, [
+    advancedFilterConfig,
+    dateRange.end,
+    dateRange.start,
+    debouncedContactSearch,
+    filter,
+    serializedAdvancedFilters,
     viewMode
   ])
 
@@ -793,6 +819,12 @@ const ContactsTable: React.FC = () => {
   }, [contactsPage, contactsQueryKey])
 
   useEffect(() => {
+    if (contactsStatsQueryKeyRef.current === contactsStatsQueryKey) return
+    contactsStatsQueryKeyRef.current = contactsStatsQueryKey
+    void fetchStats()
+  }, [contactsStatsQueryKey])
+
+  useEffect(() => {
     const safeTotalPages = Math.max(contactsPagination.totalPages || 1, 1)
     if (contactsPage > safeTotalPages) {
       setContactsPage(safeTotalPages)
@@ -913,68 +945,6 @@ const ContactsTable: React.FC = () => {
       setSelectedContactIds(nextSelectedIds)
     }
   }, [contacts, selectedContactIds])
-
-  // Cargar eventos de calendarios cuando se activa el filtro "Citados" o "Asistencias".
-  // No depende de HighLevel: el backend sirve las citas locales aunque no haya GHL.
-  useEffect(() => {
-    if (!['appointments', 'attendances'].includes(filter)) {
-      setAllEvents([])
-      setLoadingEvents(false)
-      return
-    }
-
-    let cancelled = false
-
-    const loadAllEvents = async () => {
-      setLoadingEvents(true)
-      try {
-        const now = new Date()
-        const past = new Date(now)
-        past.setFullYear(now.getFullYear() - 1)
-        const future = new Date(now)
-        future.setFullYear(now.getFullYear() + 1)
-
-        // Mantener estos rangos acotados evita que el filtro de contactos intente
-        // cargar décadas de citas cuando solo necesita apoyo reciente/futuro.
-        const [calendars, pastEvents, futureEvents] = await Promise.all([
-          calendarsService.getCalendars(locationId, accessToken),
-          calendarsService.getEvents(
-            locationId || '',
-            past.getTime(),
-            now.getTime(),
-            accessToken || undefined
-          ),
-          calendarsService.getEvents(
-            locationId || '',
-            now.getTime(),
-            future.getTime(),
-            accessToken || undefined
-          )
-        ])
-
-        if (cancelled) return
-
-        const events = Array.from(
-          new Map([...pastEvents, ...futureEvents].map((event, index) => [event.id || `event-${index}`, event])).values()
-        )
-
-        const inactiveCalendarIds = new Set(
-          calendars.filter(calendar => !calendar.isActive).map(calendar => calendar.id)
-        )
-        setAllEvents(events.filter(event => !inactiveCalendarIds.has(event.calendarId)))
-      } catch (error) {
-        // Error silencioso - el filtro seguirá funcionando con datos locales
-      } finally {
-        if (!cancelled) setLoadingEvents(false)
-      }
-    }
-
-    loadAllEvents()
-
-    return () => {
-      cancelled = true
-    }
-  }, [filter, locationId, accessToken])
 
   useEffect(() => {
     if (!selectedContactId) return
@@ -1287,30 +1257,6 @@ const ContactsTable: React.FC = () => {
       }
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los contactos
 
-      setStatsLoading(true)
-      const statsPromise = contactsService.getStats({
-        startDate,
-        endDate,
-        filter,
-        advancedFilters: activeAdvancedFilters,
-        ...(normalizedSearch ? { search: normalizedSearch } : {})
-      })
-        .then((statsData) => {
-          if (fetchRequestRef.current === requestId) {
-            setStats(statsData)
-          }
-        })
-        .catch(() => {
-          if (!hasLoadedContacts && fetchRequestRef.current === requestId) {
-            setStats(null)
-          }
-        })
-        .finally(() => {
-          if (fetchRequestRef.current === requestId) {
-            setStatsLoading(false)
-          }
-        })
-
       const contactsPageResult = await contactsService.getContactsPage({
         startDate,
         endDate,
@@ -1328,13 +1274,10 @@ const ContactsTable: React.FC = () => {
       setContactsPagination(contactsPageResult.pagination)
       setHasLoadedContacts(true)
       setLoading(false)
-
-      void statsPromise
     } catch (error) {
       // Error already shown to user via toast
       if (fetchRequestRef.current === requestId) {
         setContactsPagination(createEmptyContactsPagination(pageToLoad))
-        setStatsLoading(false)
         showToast('error', 'No se pudieron cargar los contactos', 'Hubo un problema al obtener la información de contactos. Intenta refrescar la página.')
       }
     } finally {
@@ -1343,6 +1286,46 @@ const ContactsTable: React.FC = () => {
         setHasLoadedContacts(true)
       }
     }
+  }
+
+  const fetchStats = async () => {
+    const requestId = statsRequestRef.current + 1
+    statsRequestRef.current = requestId
+    const normalizedSearch = debouncedContactSearch.trim()
+    const normalizedAdvancedFilters = serializedAdvancedFilters
+      ? normalizeContactAdvancedConfig(advancedFilterConfig)
+      : undefined
+    const advancedFiltersWithoutSort = normalizedAdvancedFilters
+      ? (({ sort: _sort, ...filtersWithoutSort }) => filtersWithoutSort)(normalizedAdvancedFilters)
+      : undefined
+    let startDate: string | undefined
+    let endDate: string | undefined
+
+    if (viewMode === 'by-date') {
+      startDate = formatDateToISO(dateRange.start)
+      endDate = formatEndDateToISO(dateRange.end)
+    }
+
+    setStatsLoading(true)
+    try {
+      const statsData = await contactsService.getStats({
+        startDate,
+        endDate,
+        filter,
+        advancedFilters: advancedFiltersWithoutSort,
+        ...(normalizedSearch ? { search: normalizedSearch } : {})
+      })
+      if (statsRequestRef.current === requestId) setStats(statsData)
+    } catch {
+      if (!hasLoadedContacts && statsRequestRef.current === requestId) setStats(null)
+    } finally {
+      if (statsRequestRef.current === requestId) setStatsLoading(false)
+    }
+  }
+
+  const refreshContactsAndStats = () => {
+    void fetchData()
+    void fetchStats()
   }
 
   const filteredContacts = useMemo(() => {
@@ -1400,10 +1383,6 @@ const ContactsTable: React.FC = () => {
 
   const hasAttendedAppointment = (contact: Contact) =>
     Boolean(contact.hasShowedAppointment || contact.hasAttendedAppointment) ||
-    Boolean(allEvents.some(event =>
-      event.contactId === contact.id &&
-      isAttendedAppointmentStatus(event.appointmentStatus || (event as any).status)
-    )) ||
     Boolean(contact.appointments?.some(appointment =>
       isAttendedAppointmentStatus(appointment.appointment_status || appointment.status)
     ))
@@ -1440,7 +1419,7 @@ const ContactsTable: React.FC = () => {
       setEditingContact(null)
       navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
       showToast('success', '¡Contacto actualizado!', 'Los cambios se guardaron correctamente')
-      fetchData()
+      refreshContactsAndStats()
     } catch (error) {
       const apiError = error as { status?: number; body?: { code?: string; conflict?: { field: string; contact: { id: string; full_name?: string | null; phone?: string | null; email?: string | null } } } }
       if (apiError?.status === 409 && apiError.body?.code === 'merge_confirmation_required' && apiError.body.conflict) {
@@ -1472,7 +1451,7 @@ const ContactsTable: React.FC = () => {
       await contactsService.restoreContact(id)
       setTrashedContacts((cur) => cur.filter((c) => c.id !== id))
       showToast('success', 'Contacto restaurado', 'Volvió a tu lista de contactos.')
-      fetchData()
+      refreshContactsAndStats()
     } catch {
       showToast('error', 'Error', 'No se pudo restaurar el contacto')
     } finally {
@@ -1590,7 +1569,7 @@ const ContactsTable: React.FC = () => {
       )
     }
 
-    fetchData()
+    refreshContactsAndStats()
   }
 
   const columns: Column<Contact>[] = [
@@ -1772,7 +1751,7 @@ const ContactsTable: React.FC = () => {
       setShowNewContactModal(false)
       openContactModal(newContact)
       showToast('success', '¡Contacto creado exitosamente!', `${contact.name} se agregó a tu lista de contactos`)
-      fetchData()
+      refreshContactsAndStats()
     } catch (error) {
       // (CNT-003) Cuando ya existe un contacto duplicado (por teléfono/email) el
       // backend responde 409 con { error: "<mensaje real>" }. El apiClient conserva
@@ -1849,7 +1828,7 @@ const ContactsTable: React.FC = () => {
   ) : null
 
   const contactsRefreshing = loading && hasLoadedContacts
-  const statsRefreshing = contactsRefreshing || statsLoading
+  const statsRefreshing = statsLoading
 
   if (loading && !hasLoadedContacts) {
     return <Loading message="Cargando contactos..." page="contacts" />
@@ -1964,7 +1943,7 @@ const ContactsTable: React.FC = () => {
           data={filteredContacts}
           keyExtractor={(item) => item.id}
           emptyMessage="No hay contactos disponibles"
-          loading={contactsRefreshing || loadingEvents}
+          loading={contactsRefreshing}
           searchable={true}
           searchPlaceholder="Buscar contactos..."
           serverSideSearch={true}

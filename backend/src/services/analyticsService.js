@@ -1,4 +1,4 @@
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import { DateTime } from 'luxon'
 import { DEFAULT_TIMEZONE, resolveDateRange, resolveDateRangeWithGHLTimezone, sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
@@ -27,7 +27,7 @@ import {
   normalizeTransactionStatusFilters
 } from './transactionQueryService.js'
 
-const isPostgres = Boolean(process.env.DATABASE_URL)
+const isPostgres = databaseDialect === 'postgres'
 const ACTIVE_PAYMENT_STATUSES = new Set(SUCCESS_PAYMENT_STATUSES)
 const INACTIVE_APPOINTMENT_STATUSES = new Set([
   'cancelled',

@@ -939,7 +939,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
    */
   const checkIfTimeIsBlocked = async (startTime: string, endTime: string): Promise<RawBlockedSlot | null> => {
     if (allowHighLevelOverlap) return null;
-    if (!calendar || !accessToken || !locationId) return null;
+    if (!calendar || !locationId) return null;
 
     try {
       // Fecha/hora en la ZONA DE LA CUENTA (los blocked slots vienen en esa zona)

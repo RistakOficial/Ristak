@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, PageHeader, OriginDistributionCard, ConversionFunnelChart, ViewSelector, Loading, ContactDetailsModal, VisitorDetailsModal, TabList, Modal } from '@/components/common'
+import { Card, DateRangePicker, AreaChart, PageContainer, PageHeader, OriginDistributionCard, ConversionFunnelChart, ViewSelector, Loading, TabList, Modal } from '@/components/common'
+import { KpiCard } from '@/components/common/KpiCard/KpiCard'
+import { ContactDetailsModal } from '@/components/common/ContactDetailsModal/ContactDetailsModal'
+import { VisitorDetailsModal } from '@/components/common/VisitorDetailsModal/VisitorDetailsModal'
 import {
   DollarSign,
   Megaphone,
@@ -26,10 +29,10 @@ import { useAppConfig, useUrlDateRangeSync } from '@/hooks'
 import { dashboardService, type DashboardMetrics, type ChartData, type DashboardVisitorDetail } from '@/services/dashboardService'
 import { trackingService } from '@/services/trackingService'
 import { reportsService, type ContactListItem } from '@/services/reportsService'
-import { transactionsService, type Transaction } from '@/services/transactionsService'
-import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
+import type { Transaction } from '@/services/transactionsService'
+import type { CalendarEvent } from '@/services/calendarsService'
 import { campaignsService, type Campaign } from '@/services/campaignsService'
-import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, getBusinessDateRangeTimestamps, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
+import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
@@ -145,6 +148,24 @@ interface ChartInsightModalState {
   subtitle: string
   loading: boolean
   columns: ChartInsightColumn[]
+}
+
+interface VisitorsModalPageState {
+  page: number
+  cursor: string | null
+  cursorHistory: Array<string | null>
+  search: string
+  hasNext: boolean
+  nextCursor: string | null
+}
+
+const emptyVisitorsModalPageState: VisitorsModalPageState = {
+  page: 1,
+  cursor: null,
+  cursorHistory: [],
+  search: '',
+  hasNext: false,
+  nextCursor: null
 }
 
 const emptyChartInsightModal: ChartInsightModalState = {
@@ -466,7 +487,7 @@ export const Dashboard: React.FC = () => {
   const location = useLocation()
   const routeChartView = React.useMemo(() => parseDashboardRoute(location.pathname), [location.pathname])
   const { dateRange, setDateRange } = useDateRange()
-  const { user, locationId, accessToken } = useAuth()
+  const { user, locationId } = useAuth()
   const { labels } = useLabels()
   const { formatLocalDateTime, timezone } = useTimezone()
   const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
@@ -502,6 +523,8 @@ export const Dashboard: React.FC = () => {
   const [selectedChartView, setSelectedChartView] = useState<ChartView>(routeChartView)
   const [extendedChartDataLoaded, setExtendedChartDataLoaded] = useState(false)
   const [extendedChartDataLoading, setExtendedChartDataLoading] = useState(false)
+  const extendedChartRequestRef = React.useRef(0)
+  const extendedChartAbortRef = React.useRef<AbortController | null>(null)
   const [contactModalOpen, setContactModalOpen] = useState(false)
   const [contactModalTitle, setContactModalTitle] = useState('')
   const [contactModalSubtitle, setContactModalSubtitle] = useState('')
@@ -513,6 +536,8 @@ export const Dashboard: React.FC = () => {
   const [visitorsModalSubtitle, setVisitorsModalSubtitle] = useState('')
   const [visitorsModalLoading, setVisitorsModalLoading] = useState(false)
   const [visitorsModalData, setVisitorsModalData] = useState<DashboardVisitorDetail[]>([])
+  const [visitorsModalPage, setVisitorsModalPage] = useState<VisitorsModalPageState>(emptyVisitorsModalPageState)
+  const visitorsModalRequestRef = React.useRef(0)
   const [operationsLoading, setOperationsLoading] = useState(false)
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([])
   const [recentAppointments, setRecentAppointments] = useState<CalendarEvent[]>([])
@@ -803,6 +828,65 @@ export const Dashboard: React.FC = () => {
     return null
   }, [labels.customers, labels.leads])
 
+  const loadVisitorsModalPage = React.useCallback(async ({
+    cursor,
+    cursorHistory,
+    page,
+    search
+  }: Pick<VisitorsModalPageState, 'cursor' | 'cursorHistory' | 'page' | 'search'>) => {
+    const requestId = visitorsModalRequestRef.current + 1
+    visitorsModalRequestRef.current = requestId
+    setVisitorsModalLoading(true)
+
+    const result = await dashboardService.getVisitorsPage({
+      start: dateRange.start,
+      end: dateRange.end,
+      scope: funnelScope,
+      cursor,
+      search,
+      limit: 50
+    })
+    if (visitorsModalRequestRef.current !== requestId) return
+
+    setVisitorsModalData(result.items)
+    setVisitorsModalPage({
+      page,
+      cursor,
+      cursorHistory,
+      search,
+      hasNext: result.pagination.hasNext,
+      nextCursor: result.pagination.nextCursor
+    })
+    setVisitorsModalLoading(false)
+  }, [dateRange.end, dateRange.start, funnelScope])
+
+  const handleVisitorsModalPageChange = React.useCallback((direction: 'next' | 'previous') => {
+    if (direction === 'next') {
+      if (!visitorsModalPage.hasNext || !visitorsModalPage.nextCursor) return
+      void loadVisitorsModalPage({
+        cursor: visitorsModalPage.nextCursor,
+        cursorHistory: [...visitorsModalPage.cursorHistory, visitorsModalPage.cursor],
+        page: visitorsModalPage.page + 1,
+        search: visitorsModalPage.search
+      })
+      return
+    }
+
+    if (visitorsModalPage.page <= 1) return
+    const previousCursor = visitorsModalPage.cursorHistory[visitorsModalPage.cursorHistory.length - 1] ?? null
+    void loadVisitorsModalPage({
+      cursor: previousCursor,
+      cursorHistory: visitorsModalPage.cursorHistory.slice(0, -1),
+      page: visitorsModalPage.page - 1,
+      search: visitorsModalPage.search
+    })
+  }, [loadVisitorsModalPage, visitorsModalPage])
+
+  const handleVisitorsModalSearch = React.useCallback((search: string) => {
+    if (search === visitorsModalPage.search) return
+    void loadVisitorsModalPage({ cursor: null, cursorHistory: [], page: 1, search })
+  }, [loadVisitorsModalPage, visitorsModalPage.search])
+
   const handleFunnelStageClick = React.useCallback(async (stage: { stage: string; value: number }) => {
     const kind = getFunnelStageKind(stage.stage)
     if (!kind) return
@@ -815,20 +899,8 @@ export const Dashboard: React.FC = () => {
       setVisitorsModalTitle('Visitantes')
       setVisitorsModalSubtitle(selectedRangeLabel)
       setVisitorsModalData([])
-      setVisitorsModalLoading(true)
-
-      try {
-        const visitors = await dashboardService.getVisitorsList({
-          start: dateRange.start,
-          end: dateRange.end,
-          scope: funnelScope
-        })
-        setVisitorsModalData(visitors)
-      } catch {
-        setVisitorsModalData([])
-      } finally {
-        setVisitorsModalLoading(false)
-      }
+      setVisitorsModalPage(emptyVisitorsModalPageState)
+      await loadVisitorsModalPage({ cursor: null, cursorHistory: [], page: 1, search: '' })
       return
     }
 
@@ -868,7 +940,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       setContactModalLoading(false)
     }
-  }, [analyticsEnabled, dateRange.end, dateRange.start, funnelScope, getFunnelStageKind, labels.customers, labels.leads, selectedRangeLabel, timezone])
+  }, [analyticsEnabled, dateRange.end, dateRange.start, funnelScope, getFunnelStageKind, labels.customers, labels.leads, loadVisitorsModalPage, selectedRangeLabel, timezone])
 
   const financialScopeOptions = React.useMemo(
     () => [
@@ -915,6 +987,15 @@ export const Dashboard: React.FC = () => {
       return
     }
 
+    const requestId = extendedChartRequestRef.current + 1
+    extendedChartRequestRef.current = requestId
+    extendedChartAbortRef.current?.abort()
+    const controller = new AbortController()
+    extendedChartAbortRef.current = controller
+    const isCurrentRequest = () => (
+      !controller.signal.aborted && extendedChartRequestRef.current === requestId
+    )
+
     setExtendedChartDataLoading(true)
     try {
       // Las métricas de CONTEO ÚNICO (visitantes, citados, asistencias) no se pueden
@@ -929,16 +1010,18 @@ export const Dashboard: React.FC = () => {
         : undefined
 
       const visitorsPromise = analyticsEnabled
-        ? dashboardService.getVisitorsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods })
+        ? dashboardService.getVisitorsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods, signal: controller.signal })
         : Promise.resolve<{ label: string; value: number }[]>([])
 
       const [visitorsData, leadsData, appointmentsData, attendancesData, salesData] = await Promise.all([
         visitorsPromise,
-        dashboardService.getLeadsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy }),
-        dashboardService.getAppointmentsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods }),
-        dashboardService.getAttendancesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods }),
-        dashboardService.getSalesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy })
+        dashboardService.getLeadsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, signal: controller.signal }),
+        dashboardService.getAppointmentsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods, signal: controller.signal }),
+        dashboardService.getAttendancesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods, signal: controller.signal }),
+        dashboardService.getSalesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, signal: controller.signal })
       ])
+
+      if (!isCurrentRequest()) return
 
       const visitorsMap = new Map(visitorsData.map(d => [d.label, d.value]))
       const leadsMap = new Map(leadsData.map(d => [d.label, d.value]))
@@ -989,20 +1072,28 @@ export const Dashboard: React.FC = () => {
 
       setExtendedChartDataLoaded(true)
     } catch (error) {
+      if (!isCurrentRequest()) return
       // TODO: Integrate logging service
       setExtendedChartDataLoaded(false)
     } finally {
-      setExtendedChartDataLoading(false)
+      if (isCurrentRequest()) setExtendedChartDataLoading(false)
     }
   }, [analyticsEnabled, chartApiGroupBy, chartWindow.granularity, chartWindow.buckets, chartWindow.end, chartWindow.start, extendedChartDataLoaded, extendedChartDataLoading, user])
 
   React.useEffect(() => {
+    extendedChartRequestRef.current += 1
+    extendedChartAbortRef.current?.abort()
+    extendedChartAbortRef.current = null
     setExtendedChartDataLoaded(false)
     setExtendedChartDataLoading(false)
     setVisitorsLeadsData([])
     setLeadsAppointmentsData([])
     setAppointmentsAttendancesData([])
     setAttendancesSalesData([])
+
+    return () => {
+      extendedChartAbortRef.current?.abort()
+    }
   }, [analyticsEnabled, chartApiGroupBy, chartWindow.granularity, chartWindow.buckets, chartWindow.end, chartWindow.start])
 
   React.useEffect(() => {
@@ -1019,23 +1110,14 @@ export const Dashboard: React.FC = () => {
     const loadData = async () => {
       setLoading(true)
       try {
-        const [metricsData, funnelDataResponse] = await Promise.all([
-          dashboardService.getDashboardMetrics({
-            start: dateRange.start,
-            end: dateRange.end
-          }),
-          dashboardService.getFunnelData({
-            start: dateRange.start,
-            end: dateRange.end,
-            scope: 'all',
-            includeWeb: hasWebAnalyticsAccess
-          })
-        ])
+        const metricsData = await dashboardService.getDashboardMetrics({
+          start: dateRange.start,
+          end: dateRange.end
+        })
 
         if (!mounted) return
 
         setMetrics(metricsData)
-        setFunnelData(funnelDataResponse)
       } catch (error) {
         // TODO: add logging service
       } finally {
@@ -1050,7 +1132,7 @@ export const Dashboard: React.FC = () => {
     return () => {
       mounted = false
     }
-  }, [analyticsEnabled, dateRange.end, dateRange.start, hasWebAnalyticsAccess, user])
+  }, [dateRange.end, dateRange.start, user])
 
   useEffect(() => {
     if (!user) return
@@ -1094,60 +1176,17 @@ export const Dashboard: React.FC = () => {
     const loadOperationalSnapshot = async () => {
       setOperationsLoading(true)
 
-      const { startTime, endTime, startDate: from, endDate } = getBusinessDateRangeTimestamps(dateRange.start, dateRange.end, timezone)
-      const to = `${endDate}T23:59:59`
-
-      // Una sola llamada sin calendarId devuelve los eventos de todos los
-      // calendarios. No requiere HighLevel: el backend usa su config guardada
-      // y sirve las citas locales aunque no haya GHL.
-      const appointmentsPromise = (async () => {
-        const [calendars, events] = await Promise.all([
-          calendarsService.getCalendars(locationId, accessToken),
-          calendarsService.getEvents(
-            locationId || '',
-            startTime,
-            endTime,
-            accessToken || undefined
-          )
-        ])
-
-        const inactiveCalendarIds = new Set(
-          calendars.filter(calendar => !calendar.isActive).map(calendar => calendar.id)
-        )
-
-        return events.filter(event => !inactiveCalendarIds.has(event.calendarId))
-      })().catch(() => [] as CalendarEvent[])
-
       try {
-        const [transactionsData, contactsResult, appointmentsData] = await Promise.all([
-          transactionsService.getTransactions(from, to),
-          reportsService.getContactsList({
-            from,
-            to,
-            type: 'interesados',
-            scope: 'all'
-          }).then(result => result.contacts).catch(() => [] as ContactListItem[]),
-          appointmentsPromise
-        ])
+        const snapshot = await dashboardService.getOperationalSnapshot({
+          start: dateRange.start,
+          end: dateRange.end
+        })
 
         if (!mounted) return
 
-        const sortedTransactions = [...transactionsData]
-          .filter(transaction => !isTestPaymentRecord(transaction))
-          .sort((a, b) => getTimeValue(getTransactionDate(b)) - getTimeValue(getTransactionDate(a)))
-          .slice(0, 5)
-
-        const sortedContacts = [...contactsResult]
-          .sort((a, b) => getTimeValue(getContactCreatedAt(b)) - getTimeValue(getContactCreatedAt(a)))
-          .slice(0, 5)
-
-        const sortedAppointments = [...appointmentsData]
-          .sort((a, b) => getTimeValue(b.startTime) - getTimeValue(a.startTime))
-          .slice(0, 5)
-
-        setRecentTransactions(sortedTransactions)
-        setRecentContacts(sortedContacts)
-        setRecentAppointments(sortedAppointments)
+        setRecentTransactions(snapshot.transactions)
+        setRecentContacts(snapshot.contacts)
+        setRecentAppointments(snapshot.appointments)
       } catch {
         if (!mounted) return
         setRecentTransactions([])
@@ -1165,10 +1204,14 @@ export const Dashboard: React.FC = () => {
     return () => {
       mounted = false
     }
-  }, [accessToken, dateRange.end, dateRange.start, locationId, timezone, user])
+  }, [dateRange.end, dateRange.start, timezone, user])
 
   // useEffect separado solo para el funnel (no recarga toda la página)
   React.useEffect(() => {
+    if (!user) return
+
+    let mounted = true
+
     const loadFunnelData = async () => {
       try {
         const funnelDataResponse = await dashboardService.getFunnelData({
@@ -1177,14 +1220,18 @@ export const Dashboard: React.FC = () => {
           scope: funnelScope,
           includeWeb: hasWebAnalyticsAccess
         })
-        setFunnelData(funnelDataResponse)
+        if (mounted) setFunnelData(funnelDataResponse)
       } catch (error) {
         // Error silencioso
       }
     }
 
     loadFunnelData()
-  }, [funnelScope, dateRange, hasWebAnalyticsAccess])
+
+    return () => {
+      mounted = false
+    }
+  }, [dateRange.end, dateRange.start, funnelScope, hasWebAnalyticsAccess, user])
 
   const renderOperationsLoadingRows = (count = 4) => (
     Array.from({ length: count }).map((_, index) => (
@@ -1399,7 +1446,8 @@ export const Dashboard: React.FC = () => {
           dashboardService.getVisitorsList({
             start: parseLocalDateString(periodStart.slice(0, 10)),
             end: new Date(periodEnd),
-            scope: 'all'
+            scope: 'all',
+            limit: 100
           }),
           fetchContactsForInsight('interesados', periodStart, periodEnd)
         ])
@@ -1847,7 +1895,7 @@ export const Dashboard: React.FC = () => {
                   })}
                 </div>
               ) : (
-                renderEmptyOperationsState(locationId && accessToken ? 'No hay citas en el rango activo.' : 'No hay citas recientes en Ristak.')
+                renderEmptyOperationsState(locationId ? 'No hay citas en el rango activo.' : 'No hay citas recientes en Ristak.')
               )}
             </div>
           </Card>
@@ -1978,6 +2026,11 @@ export const Dashboard: React.FC = () => {
         subtitle={visitorsModalSubtitle}
         data={visitorsModalData}
         loading={visitorsModalLoading}
+        currentPage={visitorsModalPage.page}
+        hasNextPage={visitorsModalPage.hasNext}
+        hasPreviousPage={visitorsModalPage.page > 1}
+        onPageChange={handleVisitorsModalPageChange}
+        onSearchChange={handleVisitorsModalSearch}
       />
     </>
   )

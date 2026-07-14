@@ -1085,16 +1085,8 @@ export const CalendarsConfiguration: React.FC = () => {
 
     try {
       setLoadingFormSites(true)
-      const data = await sitesService.listSites()
-      const rawForms = data
-        .filter(site => (
-          (site.siteType === 'standard_form' || site.siteType === 'interactive_form') &&
-          site.status !== 'archived'
-        ))
-      const formsWithBlocks = await Promise.all(rawForms.map(site => (
-        sitesService.getSite(site.id).catch(() => site)
-      )))
-      const forms = formsWithBlocks
+      const data = await sitesService.listAllSiteSelectors({ kind: 'forms' })
+      const forms = data.items
         .sort((left, right) => {
           const leftSystem = left.id === CALENDAR_DEFAULT_FORM_SITE_ID ? 0 : 1
           const rightSystem = right.id === CALENDAR_DEFAULT_FORM_SITE_ID ? 0 : 1
@@ -1102,6 +1094,9 @@ export const CalendarsConfiguration: React.FC = () => {
           return String(left.name || '').localeCompare(String(right.name || ''), 'es')
         })
       setFormSites(forms)
+      if (data.truncated) {
+        showToast('warning', 'Demasiados formularios', 'Se muestran los 2,000 formularios más recientes. Archiva los que ya no uses para reducir la lista.')
+      }
       return forms
     } catch (error: any) {
       setFormSites([])
@@ -1668,7 +1663,14 @@ export const CalendarsConfiguration: React.FC = () => {
         : createDefaultCalendarBookingPayment()
       const bookingDisplay = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
       const customEvents = getSavableCalendarCustomEvents(selectedCalendar.customEvents, accountCurrency)
-      const selectedFormWithPayment = findSelectedFormWithPaymentGate(bookingForm, formSites)
+      let selectedFormWithPayment = findSelectedFormWithPaymentGate(bookingForm, formSites)
+      const selectedFormSummary = bookingForm.useCustomForm && bookingForm.customFormId
+        ? formSites.find(site => site.id === bookingForm.customFormId) || null
+        : null
+      if (bookingPayment.enabled && selectedFormSummary?.summary && !selectedFormWithPayment) {
+        const selectedFormDetail = await sitesService.getSite(selectedFormSummary.id)
+        selectedFormWithPayment = siteHasPaymentGateEnabled(selectedFormDetail) ? selectedFormDetail : null
+      }
       const nextSlug = normalizeCalendarSlugInput(selectedCalendar.slug || selectedCalendar.widgetSlug || selectedCalendar.name || selectedCalendar.id)
       const slugConflict = calendars.some(item => (
         item.id !== selectedCalendar.id &&
@@ -1759,7 +1761,7 @@ export const CalendarsConfiguration: React.FC = () => {
         ? nextGoogleCalendarId
           ? `Este calendario ya está ligado a ${googleCalendarOptions.find(option => option.id === nextGoogleCalendarId)?.summary || nextGoogleCalendarId}.`
           : 'Este calendario dejó de sincronizarse con Google Calendar.'
-        : accessToken
+        : locationId
           ? `Los cambios se guardaron en ${selectedCalendar.name}`
           : 'Los cambios quedaron guardados en Ristak y pendientes de sync'
       showToast('success', 'Configuración de calendario actualizada', syncMessage)

@@ -158,6 +158,7 @@ test('video playback aggregate sums selected assets from first-party tracking', 
 
     const aggregate = await getVideoPlaybackAggregate({
       assetIds: [assetA, assetB],
+      includeSiteBreakdown: true,
       dateFrom: '2026-01-15',
       dateTo: '2026-01-15'
     })

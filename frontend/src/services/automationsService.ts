@@ -1,4 +1,9 @@
 import apiClient from './apiClient'
+import {
+  getAuthScopedCacheRevision,
+  registerAuthScopedCacheInvalidator,
+  syncAuthScopedCachePrincipal
+} from './authPrincipalCache'
 
 // ---------------------------------------------------------------------------
 // Tipos del modelo de automatizaciones
@@ -246,6 +251,22 @@ export interface EnrollmentStats {
 export interface AutomationsOverview {
   folders: AutomationFolder[]
   automations: AutomationSummary[]
+  pageInfo: {
+    limit: number
+    hasMore: boolean
+    nextCursor: string | null
+  }
+}
+
+export interface AutomationsListOptions {
+  suppressFeatureNotAvailableToast?: boolean
+  limit?: number
+  cursor?: string | null
+  search?: string
+  folderId?: string | null
+  status?: AutomationStatus
+  includeReview?: boolean
+  force?: boolean
 }
 
 export interface AutomationUpdateInput {
@@ -311,14 +332,77 @@ export const automationsCache = {
 const automationRequests = new Map<string, Promise<Automation>>()
 const deletedAutomationIds = new Set<string>()
 const overviewListeners = new Set<(overview: AutomationsOverview) => void>()
+const overviewPageCache = new Map<string, { overview: AutomationsOverview; expiresAt: number }>()
+const overviewPageRequests = new Map<string, Promise<AutomationsOverview>>()
+const OVERVIEW_PAGE_CACHE_TTL_MS = 15_000
+const OVERVIEW_PAGE_CACHE_MAX_ENTRIES = 40
 let overviewRequestVersion = 0
 let overviewRevision = 0
+
+function invalidateAutomationsPrincipalCache() {
+  overviewRequestVersion += 1
+  overviewRevision = 0
+  automationsCache.overview = null
+  automationsCache.automations.clear()
+  automationRequests.clear()
+  overviewPageCache.clear()
+  overviewPageRequests.clear()
+  deletedAutomationIds.clear()
+}
+
+registerAuthScopedCacheInvalidator(invalidateAutomationsPrincipalCache)
+
+function startAuthScopedCacheOperation() {
+  syncAuthScopedCachePrincipal()
+  return getAuthScopedCacheRevision()
+}
+
+function canPublishAuthScopedResult(requestPrincipalRevision: number) {
+  return requestPrincipalRevision === getAuthScopedCacheRevision()
+}
+
+function invalidateAutomationListPages() {
+  overviewRevision += 1
+  overviewPageCache.clear()
+  overviewPageRequests.clear()
+}
+
+function normalizeListOptions(options: AutomationsListOptions) {
+  return {
+    limit: Math.min(100, Math.max(1, Math.trunc(options.limit || 50))),
+    cursor: String(options.cursor || '').trim(),
+    search: String(options.search || '').trim().slice(0, 200),
+    folderId: options.folderId === undefined || options.folderId === null
+      ? null
+      : (String(options.folderId).trim() || 'root'),
+    status: options.status || '',
+    includeReview: options.includeReview === true
+  }
+}
+
+function overviewPageKey(options: ReturnType<typeof normalizeListOptions>) {
+  return JSON.stringify(options)
+}
+
+function cacheOverviewPage(key: string, overview: AutomationsOverview) {
+  overviewPageCache.delete(key)
+  overviewPageCache.set(key, {
+    overview,
+    expiresAt: Date.now() + OVERVIEW_PAGE_CACHE_TTL_MS
+  })
+  while (overviewPageCache.size > OVERVIEW_PAGE_CACHE_MAX_ENTRIES) {
+    const oldestKey = overviewPageCache.keys().next().value
+    if (typeof oldestKey !== 'string') break
+    overviewPageCache.delete(oldestKey)
+  }
+}
 
 function publishOverview(overview: AutomationsOverview, localMutation = false) {
   if (localMutation) overviewRevision += 1
   automationsCache.overview = {
     folders: [...overview.folders],
-    automations: overview.automations.filter(automation => !deletedAutomationIds.has(automation.id))
+    automations: overview.automations.filter(automation => !deletedAutomationIds.has(automation.id)),
+    pageInfo: { ...overview.pageInfo }
   }
   overviewListeners.forEach(listener => listener(automationsCache.overview as AutomationsOverview))
 }
@@ -331,6 +415,7 @@ function mutateOverview(update: (overview: AutomationsOverview) => AutomationsOv
 export function subscribeAutomationsOverview(
   listener: (overview: AutomationsOverview) => void
 ): () => void {
+  syncAuthScopedCachePrincipal()
   overviewListeners.add(listener)
   return () => overviewListeners.delete(listener)
 }
@@ -368,17 +453,23 @@ function cacheAutomation(automation: Automation) {
 }
 
 function fetchAutomation(automationId: string): Promise<Automation> {
+  syncAuthScopedCachePrincipal()
+  const requestPrincipalRevision = getAuthScopedCacheRevision()
   const inFlight = automationRequests.get(automationId)
   if (inFlight) return inFlight
 
   const request = apiClient
     .get<Automation>(`/automations/${automationId}`)
     .then((automation) => {
-      cacheAutomation(automation)
+      if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
+        cacheAutomation(automation)
+      }
       return automation
     })
     .finally(() => {
-      automationRequests.delete(automationId)
+      if (automationRequests.get(automationId) === request) {
+        automationRequests.delete(automationId)
+      }
     })
 
   automationRequests.set(automationId, request)
@@ -386,21 +477,71 @@ function fetchAutomation(automationId: string): Promise<Automation> {
 }
 
 export const automationsService = {
-  async getOverview(options: { suppressFeatureNotAvailableToast?: boolean } = {}): Promise<AutomationsOverview> {
-    const requestVersion = ++overviewRequestVersion
+  async getOverview(options: AutomationsListOptions = {}): Promise<AutomationsOverview> {
+    syncAuthScopedCachePrincipal()
+    const requestPrincipalRevision = getAuthScopedCacheRevision()
+    const normalizedOptions = normalizeListOptions(options)
+    const cacheKey = overviewPageKey(normalizedOptions)
+    const cached = overviewPageCache.get(cacheKey)
+    if (!options.force && cached && cached.expiresAt > Date.now()) {
+      overviewPageCache.delete(cacheKey)
+      overviewPageCache.set(cacheKey, cached)
+      return cached.overview
+    }
+
+    if (!options.force) {
+      const inFlight = overviewPageRequests.get(cacheKey)
+      if (inFlight) return inFlight
+    }
+
+    const requestVersion = overviewRequestVersion
     const startingRevision = overviewRevision
-    const overview = await apiClient.get<AutomationsOverview>('/automations', options)
-    const normalized = {
-      ...overview,
-      automations: overview.automations.filter(automation => !deletedAutomationIds.has(automation.id))
+    const params: Record<string, string> = {
+      limit: String(normalizedOptions.limit),
+      includeReview: String(normalizedOptions.includeReview)
     }
+    if (normalizedOptions.cursor) params.cursor = normalizedOptions.cursor
+    if (normalizedOptions.search) params.search = normalizedOptions.search
+    if (normalizedOptions.folderId !== null) {
+      params.folderId = normalizedOptions.folderId
+    }
+    if (normalizedOptions.status) params.status = normalizedOptions.status
 
-    if (requestVersion === overviewRequestVersion && startingRevision === overviewRevision) {
-      publishOverview(normalized)
+    const request = apiClient.get<AutomationsOverview>('/automations', {
+      params,
+      suppressFeatureNotAvailableToast: options.suppressFeatureNotAvailableToast
+    }).then((overview) => {
+      const normalized: AutomationsOverview = {
+        folders: Array.isArray(overview.folders) ? overview.folders : [],
+        automations: (Array.isArray(overview.automations) ? overview.automations : [])
+          .filter(automation => !deletedAutomationIds.has(automation.id)),
+        pageInfo: overview.pageInfo || {
+          limit: normalizedOptions.limit,
+          hasMore: false,
+          nextCursor: null
+        }
+      }
+
+      if (
+        requestPrincipalRevision === getAuthScopedCacheRevision() &&
+        requestVersion === overviewRequestVersion &&
+        startingRevision === overviewRevision
+      ) {
+        cacheOverviewPage(cacheKey, normalized)
+        if (!normalizedOptions.cursor && !normalizedOptions.search && options.folderId === undefined) {
+          publishOverview(normalized)
+        }
+      }
+
       return normalized
-    }
+    }).finally(() => {
+      if (overviewPageRequests.get(cacheKey) === request) {
+        overviewPageRequests.delete(cacheKey)
+      }
+    })
 
-    return automationsCache.overview || normalized
+    overviewPageRequests.set(cacheKey, request)
+    return request
   },
 
   async getAutomation(automationId: string): Promise<Automation> {
@@ -408,36 +549,53 @@ export const automationsService = {
   },
 
   async prefetchAutomation(automationId: string): Promise<void> {
+    syncAuthScopedCachePrincipal()
     if (automationsCache.automations.has(automationId)) return
     await fetchAutomation(automationId).catch(() => undefined)
   },
 
   async createAutomation(input: { name: string; folderId?: string | null }): Promise<Automation> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const automation = await apiClient.post<Automation>('/automations', input)
-    deletedAutomationIds.delete(automation.id)
-    cacheAutomation(automation)
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      invalidateAutomationListPages()
+      deletedAutomationIds.delete(automation.id)
+      cacheAutomation(automation)
+    }
     return automation
   },
 
   async updateAutomation(automationId: string, input: AutomationUpdateInput): Promise<Automation> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const automation = await apiClient.put<Automation>(`/automations/${automationId}`, input)
-    if (deletedAutomationIds.has(automation.id)) return automation
-    cacheAutomation(automation)
+    if (
+      canPublishAuthScopedResult(requestPrincipalRevision)
+      && !deletedAutomationIds.has(automation.id)
+    ) {
+      invalidateAutomationListPages()
+      cacheAutomation(automation)
+    }
     return automation
   },
 
   async duplicateAutomation(automationId: string): Promise<Automation> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const automation = await apiClient.post<Automation>(`/automations/${automationId}/duplicate`)
-    deletedAutomationIds.delete(automation.id)
-    cacheAutomation(automation)
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      invalidateAutomationListPages()
+      deletedAutomationIds.delete(automation.id)
+      cacheAutomation(automation)
+    }
     return automation
   },
 
   async deleteAutomation(automationId: string): Promise<void> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const previousIndex = automationsCache.overview?.automations.findIndex(automation => automation.id === automationId) ?? -1
     const previousSummary = previousIndex >= 0
       ? automationsCache.overview?.automations[previousIndex] || null
       : null
+    invalidateAutomationListPages()
     deletedAutomationIds.add(automationId)
     mutateOverview(overview => ({
       ...overview,
@@ -446,29 +604,37 @@ export const automationsService = {
 
     try {
       await apiClient.delete(`/automations/${automationId}`)
-      automationRequests.delete(automationId)
-      automationsCache.automations.delete(automationId)
+      if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+        automationRequests.delete(automationId)
+        automationsCache.automations.delete(automationId)
+      }
     } catch (error) {
-      deletedAutomationIds.delete(automationId)
-      if (previousSummary) {
-        mutateOverview(overview => {
-          if (overview.automations.some(automation => automation.id === automationId)) return overview
-          const automations = [...overview.automations]
-          automations.splice(Math.min(previousIndex, automations.length), 0, previousSummary)
-          return { ...overview, automations }
-        })
+      if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+        deletedAutomationIds.delete(automationId)
+        if (previousSummary) {
+          mutateOverview(overview => {
+            if (overview.automations.some(automation => automation.id === automationId)) return overview
+            const automations = [...overview.automations]
+            automations.splice(Math.min(previousIndex, automations.length), 0, previousSummary)
+            return { ...overview, automations }
+          })
+        }
       }
       throw error
     }
   },
 
   async createFolder(input: { name: string }): Promise<AutomationFolder> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const folder = await apiClient.post<AutomationFolder>('/automations/folders', input)
-    mutateOverview(overview => ({
-      ...overview,
-      folders: [...overview.folders.filter(item => item.id !== folder.id), folder]
-        .sort((a, b) => a.position - b.position)
-    }))
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      invalidateAutomationListPages()
+      mutateOverview(overview => ({
+        ...overview,
+        folders: [...overview.folders.filter(item => item.id !== folder.id), folder]
+          .sort((a, b) => a.position - b.position)
+      }))
+    }
     return folder
   },
 
@@ -476,18 +642,26 @@ export const automationsService = {
     folderId: string,
     input: { name?: string; position?: number }
   ): Promise<AutomationFolder> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const folder = await apiClient.put<AutomationFolder>(`/automations/folders/${folderId}`, input)
-    mutateOverview(overview => ({
-      ...overview,
-      folders: overview.folders.map(item => item.id === folder.id ? folder : item)
-        .sort((a, b) => a.position - b.position)
-    }))
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      invalidateAutomationListPages()
+      mutateOverview(overview => ({
+        ...overview,
+        folders: overview.folders.map(item => item.id === folder.id ? folder : item)
+          .sort((a, b) => a.position - b.position)
+      }))
+    }
     return folder
   },
 
   async reorderFolders(orderedIds: string[]): Promise<AutomationFolder[]> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const folders = await apiClient.post<AutomationFolder[]>('/automations/folders/reorder', { orderedIds })
-    mutateOverview(overview => ({ ...overview, folders }))
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      invalidateAutomationListPages()
+      mutateOverview(overview => ({ ...overview, folders }))
+    }
     return folders
   },
 
@@ -507,8 +681,11 @@ export const automationsService = {
     automationId: string,
     input: { contactId: string; mode: 'now' | 'scheduled'; scheduledAt?: string }
   ): Promise<ContactAutomationEnrollmentResult> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const result = await apiClient.post<ContactAutomationEnrollmentResult>(`/automations/${automationId}/enroll-contact`, input)
-    notifyAutomationEnrollmentChanged(automationId, result.enrollment)
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      notifyAutomationEnrollmentChanged(automationId, result.enrollment)
+    }
     return result
   },
 
@@ -517,11 +694,14 @@ export const automationsService = {
     enrollmentId: string,
     input: AutomationEnrollmentControlInput
   ): Promise<AutomationEnrollment> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const enrollment = await apiClient.post<AutomationEnrollment>(
       `/automations/${automationId}/enrollments/${enrollmentId}/control`,
       input
     )
-    notifyAutomationEnrollmentChanged(automationId, enrollment)
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      notifyAutomationEnrollmentChanged(automationId, enrollment)
+    }
     return enrollment
   },
 
@@ -529,8 +709,11 @@ export const automationsService = {
     automationId: string,
     input: { contactId?: string; contact?: AutomationTestContactInput }
   ): Promise<AutomationTestRunResult> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     const result = await apiClient.post<AutomationTestRunResult>(`/automations/${automationId}/test-run`, input)
-    notifyAutomationEnrollmentChanged(automationId, result.enrollment)
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      notifyAutomationEnrollmentChanged(automationId, result.enrollment)
+    }
     return result
   },
 
@@ -539,13 +722,18 @@ export const automationsService = {
   },
 
   async deleteFolder(folderId: string): Promise<void> {
+    const requestPrincipalRevision = startAuthScopedCacheOperation()
     await apiClient.delete(`/automations/folders/${folderId}`)
-    mutateOverview(overview => ({
-      folders: overview.folders.filter(folder => folder.id !== folderId),
-      automations: overview.automations.map(automation => (
-        automation.folderId === folderId ? { ...automation, folderId: null } : automation
-      ))
-    }))
+    if (canPublishAuthScopedResult(requestPrincipalRevision)) {
+      invalidateAutomationListPages()
+      mutateOverview(overview => ({
+        ...overview,
+        folders: overview.folders.filter(folder => folder.id !== folderId),
+        automations: overview.automations.map(automation => (
+          automation.folderId === folderId ? { ...automation, folderId: null } : automation
+        ))
+      }))
+    }
   },
 
   /** Sube un archivo (data URL base64) y devuelve su URL pública en Ristak */

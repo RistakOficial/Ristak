@@ -1,4 +1,7 @@
-const CACHE_PREFIX = 'ristak_phone_daily_data_cache_v1:'
+import { createAuthScopedLocalStorageNamespace } from './authScopedLocalStorage'
+
+const CACHE_STORAGE_PREFIX = 'ristak_phone_daily_data_cache_v1'
+const phoneDailyStorage = createAuthScopedLocalStorageNamespace([CACHE_STORAGE_PREFIX])
 const MAX_TOTAL_CACHE_CHARS = 1_200_000
 const DEFAULT_MAX_ENTRY_CHARS = 420_000
 
@@ -59,15 +62,16 @@ function getTodayKey(date = new Date(), timezone?: string) {
 }
 
 function getStorageKey(key: string) {
-  return `${CACHE_PREFIX}${key}`
+  return `${phoneDailyStorage.getKey(CACHE_STORAGE_PREFIX)}:${key}`
 }
 
 function getCacheEntries(storage: Storage) {
   const entries: Array<{ key: string; value: string; savedAt: number; dayKey: string }> = []
+  const cachePrefix = `${phoneDailyStorage.getKey(CACHE_STORAGE_PREFIX)}:`
 
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index)
-    if (!key?.startsWith(CACHE_PREFIX)) continue
+    if (!key?.startsWith(cachePrefix)) continue
 
     const value = storage.getItem(key)
     if (!value) continue

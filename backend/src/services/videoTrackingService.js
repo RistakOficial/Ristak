@@ -1024,11 +1024,45 @@ function playbackSummaryFromRow(row = {}, extra = {}) {
   }
 }
 
-function buildAggregatePlaybackWhere(assetIds, dateFilters = {}) {
+function normalizePlaybackSiteScope(value = {}) {
+  const requestedType = cleanString(value?.siteType || value?.type, 40)
+  const siteType = ['sites', 'forms', 'videos'].includes(requestedType) ? requestedType : ''
+  const requestedLandingMode = cleanString(value?.landingMode, 40)
+  const landingMode = ['website', 'funnel'].includes(requestedLandingMode) ? requestedLandingMode : ''
+  return siteType ? { siteType, landingMode } : null
+}
+
+function buildAggregatePlaybackWhere(assetIds, siteIds, siteScope, dateFilters = {}) {
   const params = []
-  const placeholders = assetIds.map(() => '?').join(',')
-  const conditions = [`vps.media_asset_id IN (${placeholders})`]
-  params.push(...assetIds)
+  const conditions = []
+
+  if (assetIds.length) {
+    conditions.push(`vps.media_asset_id IN (${assetIds.map(() => '?').join(',')})`)
+    params.push(...assetIds)
+  }
+  if (siteIds.length) {
+    conditions.push(`vps.site_id IN (${siteIds.map(() => '?').join(',')})`)
+    params.push(...siteIds)
+  } else if (siteScope) {
+    const siteConditions = ["ps.status = 'published'"]
+    if (siteScope.siteType === 'forms') {
+      siteConditions.push("ps.site_type IN ('standard_form', 'interactive_form')")
+    } else if (siteScope.siteType === 'sites') {
+      siteConditions.push("ps.site_type = 'landing_page'")
+      if (siteScope.landingMode) {
+        const pageModeExpression = isPostgresRuntime
+          ? "COALESCE((COALESCE(NULLIF(ps.theme_json, ''), '{}')::jsonb ->> 'pageMode'), 'funnel')"
+          : "COALESCE(json_extract(COALESCE(NULLIF(ps.theme_json, ''), '{}'), '$.pageMode'), 'funnel')"
+        siteConditions.push(`${pageModeExpression} = ?`)
+        params.push(siteScope.landingMode)
+      }
+    }
+    conditions.push(`vps.site_id IN (
+      SELECT ps.id
+      FROM public_sites ps
+      WHERE ${siteConditions.join(' AND ')}
+    )`)
+  }
 
   if (dateFilters.dateFrom && dateFilters.dateTo) {
     conditions.push('vps.last_event_at >= ? AND vps.last_event_at <= ?')
@@ -1056,6 +1090,10 @@ function playbackAggregateSelect() {
 
 export async function getVideoPlaybackAggregate(input = {}) {
   const assetIds = normalizePlaybackIdList(input.assetIds || input.mediaAssetIds)
+  const breakdownAssetIds = normalizePlaybackIdList(input.breakdownAssetIds || input.breakdownMediaAssetIds)
+  const siteIds = normalizePlaybackIdList(input.siteIds || input.publicSiteIds, 500)
+  const siteScope = normalizePlaybackSiteScope(input.siteScope || input.scope)
+  const includeSiteBreakdown = boolValue(input.includeSiteBreakdown)
   const dateFilters = await resolvePlaybackDateFilters(input)
   const hourly = boolValue(input.hourly)
   const emptyPeriodCharts = () => buildPlaybackPeriodCharts([], {
@@ -1065,12 +1103,13 @@ export async function getVideoPlaybackAggregate(input = {}) {
     dateFrom: dateFilters.dateFrom,
     dateTo: dateFilters.dateTo
   })
-  const byAssetId = Object.fromEntries(assetIds.map(assetId => [
+  const requestedBreakdownAssetIds = breakdownAssetIds.length ? breakdownAssetIds : assetIds
+  const byAssetId = Object.fromEntries(requestedBreakdownAssetIds.map(assetId => [
     assetId,
     emptyPlaybackSummary({ assetId })
   ]))
 
-  if (!assetIds.length) {
+  if (!assetIds.length && !siteIds.length && !siteScope) {
     return {
       dateFrom: dateFilters.dateFrom || '',
       dateTo: dateFilters.dateTo || '',
@@ -1081,30 +1120,39 @@ export async function getVideoPlaybackAggregate(input = {}) {
     }
   }
 
-  const { where, params } = buildAggregatePlaybackWhere(assetIds, dateFilters)
-  const summary = await db.get(`
-    SELECT ${playbackAggregateSelect()}
-    FROM video_playback_sessions vps
-    ${where}
-  `, params)
+  const { where, params } = buildAggregatePlaybackWhere(assetIds, siteIds, siteScope, dateFilters)
+  const breakdownWhere = requestedBreakdownAssetIds.length
+    ? buildAggregatePlaybackWhere(requestedBreakdownAssetIds, siteIds, siteScope, dateFilters)
+    : null
+  const summaryPromise = db.get(`
+      SELECT ${playbackAggregateSelect()}
+      FROM video_playback_sessions vps
+      ${where}
+    `, params)
+  const assetRowsPromise = breakdownWhere
+    ? db.all(`
+        SELECT
+          vps.media_asset_id as asset_id,
+          ${playbackAggregateSelect()}
+        FROM video_playback_sessions vps
+        ${breakdownWhere.where}
+        GROUP BY vps.media_asset_id
+      `, breakdownWhere.params)
+    : Promise.resolve([])
+  const [summary, assetRows] = await Promise.all([summaryPromise, assetRowsPromise])
 
-  const assetRows = await db.all(`
-    SELECT
-      vps.media_asset_id as asset_id,
-      ${playbackAggregateSelect()}
-    FROM video_playback_sessions vps
-    ${where}
-    GROUP BY vps.media_asset_id
-  `, params)
-
-  const siteRows = await db.all(`
-    SELECT
-      COALESCE(NULLIF(vps.site_id, ''), 'unknown') as site_id,
-      ${playbackAggregateSelect()}
-    FROM video_playback_sessions vps
-    ${where}
-    GROUP BY COALESCE(NULLIF(vps.site_id, ''), 'unknown')
-  `, params)
+  // `bySiteId` no tiene consumidores en el dashboard de Sites. Sólo se calcula
+  // bajo opt-in explícito para evitar serializar una fila por cada site de la cuenta.
+  const siteRows = includeSiteBreakdown
+    ? await db.all(`
+        SELECT
+          COALESCE(NULLIF(vps.site_id, ''), 'unknown') as site_id,
+          ${playbackAggregateSelect()}
+        FROM video_playback_sessions vps
+        ${where}
+        GROUP BY COALESCE(NULLIF(vps.site_id, ''), 'unknown')
+      `, params)
+    : []
 
   const periodExpression = buildPlaybackPeriodExpression(hourly, dateFilters.appliedTimezone)
   const chartRows = await db.all(`

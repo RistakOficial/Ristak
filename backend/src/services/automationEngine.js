@@ -18,12 +18,18 @@ import {
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import { normalizeContactNameFields } from '../utils/contactNameFormatter.js'
 import {
   claimAppointmentTestAction,
   completeAppointmentTestAction,
   recordSimulatedAppointmentTestAction
 } from './conversationalAppointmentTestAutomationAuditService.js'
+import {
+  AUTOMATION_STOP_ON_RESPONSE_EVENT_TYPE,
+  listPublishedAutomationRowsByIds,
+  listPublishedAutomationRowsForEvent
+} from './automationTriggerIndexService.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -2000,7 +2006,7 @@ function triggerMatches(trigger, eventType, ctx) {
     case 'webhook-received': {
       if (trigger.type !== 'trigger-incoming-webhook') return false
       const endpointId = str(config.endpointId)
-      return !endpointId || endpointId === str(ctx.endpointId)
+      return Boolean(endpointId) && endpointId === str(ctx.endpointId)
     }
 
     case 'trigger-link-clicked': {
@@ -5251,11 +5257,20 @@ async function loadWhatsAppPhoneSnapshot(phoneNumberId) {
   `, [id]).catch(() => null)
 }
 
-async function listPublishedAutomations() {
-  const rows = await db.all(`SELECT id, name, COALESCE(published_flow, flow) AS flow FROM automations WHERE status = 'published'`)
+async function listPublishedAutomations({ eventType = '', endpointId = '', automationIds = null } = {}) {
+  let rows
+  if (Array.isArray(automationIds)) {
+    rows = await listPublishedAutomationRowsByIds(automationIds)
+  } else if (cleanString(eventType)) {
+    const result = await listPublishedAutomationRowsForEvent(eventType, { endpointId })
+    rows = result.rows
+  } else {
+    throw new Error('El motor necesita un evento o IDs explícitos para cargar automatizaciones publicadas')
+  }
+
   const automations = []
   for (const row of rows) {
-    const flow = parseJson(row.flow, { nodes: [], edges: [] })
+    const flow = parseJson(row.published_flow || row.flow, { nodes: [], edges: [] })
     if (await canRunAutomationFlow(flow)) {
       automations.push({ id: row.id, name: row.name, flow })
     }
@@ -5633,7 +5648,7 @@ export async function controlAutomationEnrollment({
   throw engineError(400, 'Acción de inscripción no soportada')
 }
 
-async function resumeWaitingTriggerLinkClicks(automations, baseCtx) {
+async function resumeWaitingTriggerLinkClicks(baseCtx) {
   const contact = baseCtx.contact || {}
   if (!contact.id || !hasTriggerLinkEventContext(baseCtx)) return
 
@@ -5642,9 +5657,13 @@ async function resumeWaitingTriggerLinkClicks(automations, baseCtx) {
      WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
     [contact.id, WAIT_KIND_TRIGGER_LINK_CLICK]
   )
+  const automations = await listPublishedAutomations({
+    automationIds: waiting.map((row) => row.automation_id)
+  })
+  const automationsById = new Map(automations.map((automation) => [automation.id, automation]))
 
   for (const row of waiting) {
-    const automation = automations.find((candidate) => candidate.id === row.automation_id)
+    const automation = automationsById.get(row.automation_id)
     if (!automation) continue
 
     const storedContext = parseJson(row.context, {})
@@ -5727,15 +5746,29 @@ export async function handleIncomingMessage({
       buttonTitle,
       buttonReplyType
     }
-    const automations = await listPublishedAutomations()
+    const [waitingButtons, waiting] = await Promise.all([
+      db.all(
+        `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
+        [contact.id, WAIT_KIND_BUTTON_REPLY]
+      ),
+      db.all(
+        `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
+        [contact.id, WAIT_KIND_REPLY]
+      )
+    ])
+    const waitingAutomationIds = [...waitingButtons, ...waiting].map((row) => row.automation_id)
+    const [messageAutomations, stopOnResponseAutomations, waitingAutomations] = await Promise.all([
+      listPublishedAutomations({ eventType: 'message-received' }),
+      listPublishedAutomations({ eventType: AUTOMATION_STOP_ON_RESPONSE_EVENT_TYPE }),
+      listPublishedAutomations({ automationIds: waitingAutomationIds })
+    ])
+    const waitingAutomationsById = new Map(
+      waitingAutomations.map((automation) => [automation.id, automation])
+    )
 
     // 1) Reanudar inscripciones que esperaban un botón de este contacto
-    const waitingButtons = await db.all(
-      `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
-      [contact.id, WAIT_KIND_BUTTON_REPLY]
-    )
     for (const row of waitingButtons) {
-      const automation = automations.find((candidate) => candidate.id === row.automation_id)
+      const automation = waitingAutomationsById.get(row.automation_id)
       if (!automation) continue
       const storedContext = parseJson(row.context, {})
       const matchedButton = findMatchingWaitButton(storedContext.waitButtons, {
@@ -5778,12 +5811,8 @@ export async function handleIncomingMessage({
     }
 
     // 2) Reanudar inscripciones que esperaban respuesta de este contacto
-    const waiting = await db.all(
-      `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
-      [contact.id, WAIT_KIND_REPLY]
-    )
     for (const row of waiting) {
-      const automation = automations.find((candidate) => candidate.id === row.automation_id)
+      const automation = waitingAutomationsById.get(row.automation_id)
       if (!automation) continue
       const enrollment = {
         id: row.id,
@@ -5812,7 +5841,7 @@ export async function handleIncomingMessage({
     }
 
     // 3) Detener flujos configurados con "salir al responder"
-    for (const automation of automations) {
+    for (const automation of stopOnResponseAutomations) {
       if (automation.flow?.settings?.stopOnContactResponse) {
         await db.run(
           `UPDATE automation_enrollments SET status = 'exited', updated_at = CURRENT_TIMESTAMP
@@ -5824,7 +5853,7 @@ export async function handleIncomingMessage({
     }
 
     // 4) Inscribir en automatizaciones cuyo disparador coincide
-    await enrollMatching(automations, 'message-received', baseCtx)
+    await enrollMatching(messageAutomations, 'message-received', baseCtx)
   } catch (error) {
     logger.error(`[Automatizaciones] Error procesando mensaje entrante: ${error.message}`)
   }
@@ -6291,7 +6320,7 @@ export async function executeTestAutomationEvent(eventType, data = {}) {
     eventType,
     requestedByUserId: cleanString(run.requested_by_user_id)
   })
-  const automations = await listPublishedAutomations()
+  const automations = await listPublishedAutomations({ eventType, endpointId: eventData.endpointId })
   const matched = []
 
   for (const automation of automations) {
@@ -6362,7 +6391,7 @@ export async function previewAutomationEvent(eventType, data = {}) {
     messageText: eventData.messageText || '',
     channel: normalizeConversationChannel(eventData.channel || '')
   })
-  const automations = await listPublishedAutomations()
+  const automations = await listPublishedAutomations({ eventType, endpointId: eventData.endpointId })
   const matched = []
 
   for (const automation of automations) {
@@ -6409,6 +6438,19 @@ export async function previewAutomationEvent(eventType, data = {}) {
  */
 export async function handleAutomationEvent(eventType, data = {}) {
   try {
+    if (
+      eventType === 'contact-created'
+      || eventType === 'contact-updated'
+      || eventType === 'tag-changed'
+      || eventType === 'payment-received'
+      || eventType === 'refund'
+      || eventType === 'appointment-booked'
+      || eventType === 'appointment-status'
+    ) {
+      // El dato ya se guardó antes de publicar el evento. Invalidar aun cuando
+      // Automatizaciones esté apagado mantiene frescos KPIs y conversiones.
+      invalidateTrackingAnalyticsCache()
+    }
     if (!(await canRunBackgroundJob('automations'))) return
     const eventData = data
     // (AUTO-008) Corte de cascada: si este evento proviene de acciones encadenadas de
@@ -6434,9 +6476,9 @@ export async function handleAutomationEvent(eventType, data = {}) {
       messageText: eventData.messageText || '',
       channel: normalizeConversationChannel(eventData.channel || '')
     })
-    const automations = await listPublishedAutomations()
+    const automations = await listPublishedAutomations({ eventType, endpointId: eventData.endpointId })
     if (eventType === 'trigger-link-clicked') {
-      await resumeWaitingTriggerLinkClicks(automations, ctx)
+      await resumeWaitingTriggerLinkClicks(ctx)
     }
     await enrollMatching(automations, eventType, ctx)
   } catch (error) {
@@ -6587,7 +6629,7 @@ export async function processScheduledTriggers(referenceDate = new Date()) {
     if (!nowUtc.isValid) return
 
     const [automations, accountTimezone] = await Promise.all([
-      listPublishedAutomations(),
+      listPublishedAutomations({ eventType: 'scheduler' }),
       getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
     ])
 
@@ -6718,7 +6760,9 @@ export async function processDueResumes() {
       [nowIso()]
     )
     if (rows.length === 0) return
-    const automations = await listPublishedAutomations()
+    const automations = await listPublishedAutomations({
+      automationIds: rows.map((row) => row.automation_id)
+    })
 
     for (const row of rows) {
       // (AUTO-003/CRON-004) Claim atómico antes de actuar: solo procesamos esta espera

@@ -39,7 +39,17 @@ function sendError(res, error, fallback = 'Error procesando la solicitud') {
 
 export async function getAutomationsHandler(req, res) {
   try {
-    res.json({ success: true, data: await getAutomationsOverview() })
+    res.json({
+      success: true,
+      data: await getAutomationsOverview({
+        limit: req.query?.limit,
+        cursor: req.query?.cursor,
+        search: req.query?.search,
+        folderId: req.query?.folderId,
+        status: req.query?.status,
+        includeReview: req.query?.includeReview === 'true'
+      })
+    })
   } catch (error) {
     logger.error(`Error listando automatizaciones: ${error.message}`)
     sendError(res, error, 'Error listando automatizaciones')

@@ -53,34 +53,8 @@
   min-height: 0;
 }
 
-.routeContentReady,
-.routeContentLoading {
+.routeContentReady {
   min-height: 100%;
-}
-
-.routeContentLoading {
-  pointer-events: none;
-  user-select: none;
-}
-
-/* El lienzo de Automatizaciones puede montarse antes de que el cargador de la
- * ruta termine. Sus controles flotantes esperan al mismo estado listo que
- * retira este velo, sin desmontar el canvas ni alterar sus mediciones. */
-.routeContentLoading [data-automation-canvas-chrome='true'] {
-  visibility: hidden;
-}
-
-.routeDataLoader {
-  position: absolute;
-  inset: 0;
-  z-index: 12;
-  display: grid;
-  height: 100%;
-  min-height: 0;
-  place-items: center;
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 .aiAgentSlot {

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Logo } from '@/components/common'
 import { apiUrl } from '@/services/apiBaseUrl'
+import { syncAuthScopedCachePrincipal } from '@/services/authPrincipalCache'
 import { getLoginPathForRoute, isPhoneAppPath, sanitizeAuthRedirectPath } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
 
@@ -39,6 +40,7 @@ export const Sso: React.FC = () => {
 
         if (response.ok && data.success && data.token) {
           localStorage.setItem('auth_token', data.token)
+          syncAuthScopedCachePrincipal(data.token)
           if (data.apiToken) {
             sessionStorage.setItem('ristak_latest_api_token', data.apiToken)
           }

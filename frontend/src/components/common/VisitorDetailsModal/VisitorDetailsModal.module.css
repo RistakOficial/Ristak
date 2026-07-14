@@ -406,6 +406,16 @@
   color: var(--color-text-tertiary);
   background-color: var(--color-background-secondary);
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.footerPagination {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .rightPanel {

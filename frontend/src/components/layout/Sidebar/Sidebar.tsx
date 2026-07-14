@@ -56,6 +56,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import automationsService from '@/services/automationsService'
+import { prefetchRouteModule } from '@/routing/routeModules'
+import { getFirstAllowedSettingsPath } from '@/pages/Settings/settingsNav'
 
 interface SidebarProps {
   collapsed?: boolean
@@ -302,18 +304,69 @@ const getNavChildLinkClasses = (isActive: boolean) => cn(
     : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
 )
 
+const ROUTE_PREFETCH_POINTER_DWELL_MS = 150
+const SITES_IDLE_PREFETCH_STABLE_MS = 4000
+const sidebarRoutePrefetchTimers = new Map<string, number>()
+
+const prefetchSidebarRoute = (destination: string) => {
+  const pendingTimer = sidebarRoutePrefetchTimers.get(destination)
+  if (pendingTimer !== undefined) {
+    window.clearTimeout(pendingTimer)
+    sidebarRoutePrefetchTimers.delete(destination)
+  }
+
+  void prefetchRouteModule(destination).catch(() => {
+    // La navegación normal vuelve a intentar el chunk. Una precarga sin
+    // conexión no debe generar ruido ni bloquear la interacción del menú.
+  })
+}
+
+const scheduleSidebarRoutePrefetch = (destination: string) => {
+  const pendingTimer = sidebarRoutePrefetchTimers.get(destination)
+  if (pendingTimer !== undefined) window.clearTimeout(pendingTimer)
+
+  const timer = window.setTimeout(() => {
+    sidebarRoutePrefetchTimers.delete(destination)
+    prefetchSidebarRoute(destination)
+  }, ROUTE_PREFETCH_POINTER_DWELL_MS)
+  sidebarRoutePrefetchTimers.set(destination, timer)
+}
+
+const cancelSidebarRoutePrefetch = (destination: string) => {
+  const pendingTimer = sidebarRoutePrefetchTimers.get(destination)
+  if (pendingTimer === undefined) return
+  window.clearTimeout(pendingTimer)
+  sidebarRoutePrefetchTimers.delete(destination)
+}
+
+const cancelAllSidebarRoutePrefetches = () => {
+  sidebarRoutePrefetchTimers.forEach((timer) => window.clearTimeout(timer))
+  sidebarRoutePrefetchTimers.clear()
+}
+
+const routePrefetchIntentProps = (destination: string) => ({
+  onPointerEnter: () => scheduleSidebarRoutePrefetch(destination),
+  onPointerLeave: () => cancelSidebarRoutePrefetch(destination),
+  onPointerDown: () => prefetchSidebarRoute(destination),
+  onFocus: () => prefetchSidebarRoute(destination),
+  onBlur: () => cancelSidebarRoutePrefetch(destination),
+  onTouchStart: () => prefetchSidebarRoute(destination)
+})
+
 interface SettingsNavLinkProps {
   pathname: string
+  destination: string
   collapsed?: boolean
   onNavigate?: () => void
 }
 
-const SettingsNavLink: React.FC<SettingsNavLinkProps> = ({ pathname, collapsed = false, onNavigate }) => {
+const SettingsNavLink: React.FC<SettingsNavLinkProps> = ({ pathname, destination, collapsed = false, onNavigate }) => {
   const isSettingsRoute = pathname.startsWith('/settings')
 
   return (
     <Link
-      to="/settings"
+      to={destination}
+      {...routePrefetchIntentProps(destination)}
       onClick={onNavigate}
       aria-label={collapsed ? 'Configuración' : undefined}
       title={collapsed ? 'Configuración' : undefined}
@@ -352,6 +405,7 @@ const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
     return (
       <button
         type="button"
+        {...routePrefetchIntentProps('/transactions')}
         onClick={() => {
           if (!open) onToggle()
           onRequestExpand?.()
@@ -372,6 +426,7 @@ const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
     <div>
       <button
         type="button"
+        {...routePrefetchIntentProps('/transactions')}
         onClick={onToggle}
         aria-expanded={open}
         data-ristak-sidebar-nav-item
@@ -396,6 +451,7 @@ const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
               <Link
                 key={child.to}
                 to={child.to}
+                {...routePrefetchIntentProps(child.to)}
                 onClick={onNavigate}
                 data-ristak-sidebar-nav-item
                 data-ristak-sidebar-subnav-item
@@ -442,6 +498,7 @@ const MdpProgramSidebarBlock: React.FC<MdpProgramSidebarBlockProps> = ({
 
       <Link
         to={item.href}
+        {...routePrefetchIntentProps(item.href)}
         onClick={onNavigate}
         aria-label={item.name}
         title={collapsed ? item.name : undefined}
@@ -493,6 +550,7 @@ const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, collaps
   return (
     <Link
       to={item.href}
+      {...routePrefetchIntentProps(item.href)}
       onClick={() => {
         onNavigate?.()
       }}
@@ -569,6 +627,7 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
     <div ref={setNodeRef} style={style} className="relative">
       <Link
         to={item.href}
+        {...routePrefetchIntentProps(item.href)}
         onClick={(e) => {
           if (isDragging || isEditMode) {
             e.preventDefault()
@@ -618,7 +677,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
     themeFamilies
   } = useTheme()
   const { user } = useAuth()
+  const settingsDestination = useMemo(() => getFirstAllowedSettingsPath(user), [user])
   const canPreloadAutomations = hasModuleAccess(user, 'automations', 'read')
+  const canPreloadSites = hasModuleAccess(user, 'sites', 'read')
+
+  useEffect(() => cancelAllSidebarRoutePrefetches, [])
+
+  // Sites incluye un editor grande. Lo calentamos solamente después de que la
+  // ruta actual quedó estable, con permiso real, red apropiada y tiempo ocioso.
+  // Si el navegador no ofrece requestIdleCallback, no forzamos el parseo pesado.
+  useEffect(() => {
+    if (!canPreloadSites || location.pathname.startsWith('/sites')) return
+
+    const connection = (navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string }
+    }).connection
+    const effectiveType = connection?.effectiveType?.toLowerCase()
+    if (connection?.saveData || effectiveType === 'slow-2g' || effectiveType === '2g') return
+
+    const idleWindow = window as typeof window & {
+      requestIdleCallback?: (callback: () => void) => number
+      cancelIdleCallback?: (handle: number) => void
+    }
+    if (!idleWindow.requestIdleCallback) return
+
+    let idleHandle: number | undefined
+    const stableTimer = window.setTimeout(() => {
+      if (document.visibilityState !== 'visible') return
+      idleHandle = idleWindow.requestIdleCallback?.(() => {
+        if (document.visibilityState !== 'visible') return
+        void prefetchRouteModule('/sites').catch(() => undefined)
+      })
+    }, SITES_IDLE_PREFETCH_STABLE_MS)
+
+    return () => {
+      window.clearTimeout(stableTimer)
+      if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle)
+    }
+  }, [canPreloadSites, location.pathname])
 
   // Precalienta la librería de automatizaciones (abre sin parpadeo) solo cuando
   // el plan y el permiso del usuario incluyen Automatizaciones.
@@ -626,7 +722,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (!canPreloadAutomations) return
 
     const timer = window.setTimeout(() => {
-      void automationsService.getOverview({ suppressFeatureNotAvailableToast: true }).catch(() => undefined)
+      void automationsService.getOverview({
+        suppressFeatureNotAvailableToast: true,
+        folderId: 'root',
+        includeReview: false,
+        limit: 50
+      }).catch(() => undefined)
     }, 2500)
     return () => window.clearTimeout(timer)
   }, [canPreloadAutomations])
@@ -856,7 +957,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               <div className="min-h-0 overflow-y-auto py-2">
                 <Link
-                  to="/settings"
+                  to={settingsDestination}
+                  {...routePrefetchIntentProps(settingsDestination)}
                   onClick={handleNavigate}
                   className="flex min-h-[40px] items-center gap-3 px-4 py-2.5 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--surface-hover)]"
                   role="menuitem"
@@ -1090,6 +1192,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="my-2 border-t border-[var(--border)]" />
         <SettingsNavLink
           pathname={location.pathname}
+          destination={settingsDestination}
           collapsed={collapsed}
           onNavigate={handleNavigate}
         />

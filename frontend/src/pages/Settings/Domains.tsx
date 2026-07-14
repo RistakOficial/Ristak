@@ -117,7 +117,7 @@ export const Domains: React.FC = () => {
     try {
       const [configResult, sitesResult] = await Promise.allSettled([
         sitesService.getDomain(),
-        sitesService.listSites()
+        sitesService.listAllSiteSelectors({ kind: 'domain' })
       ])
 
       if (configResult.status === 'rejected') {
@@ -126,7 +126,10 @@ export const Domains: React.FC = () => {
 
       applyConfig(configResult.value)
       if (sitesResult.status === 'fulfilled') {
-        setSites(sitesResult.value)
+        setSites(sitesResult.value.items)
+        if (sitesResult.value.truncated) {
+          showToast('warning', 'Demasiados sitios', 'Se muestran los 2,000 sitios más recientes. Usa el módulo de Sitios para administrar el resto.')
+        }
       } else {
         setSites([])
         showToast('warning', 'Lista no disponible', 'No se pudieron cargar páginas y formularios para elegir la ruta principal.')

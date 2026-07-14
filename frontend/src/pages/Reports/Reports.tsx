@@ -2,13 +2,10 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Card,
-  KpiCard,
   Table,
   TabList,
   DateRangePicker,
   Button,
-  ContactDetailsModal,
-  VisitorDetailsModal,
   TransactionsModal,
   ViewSelector,
   PageContainer,
@@ -16,6 +13,9 @@ import {
   Loading,
   Modal
 } from '@/components/common'
+import { KpiCard } from '@/components/common/KpiCard/KpiCard'
+import { ContactDetailsModal } from '@/components/common/ContactDetailsModal/ContactDetailsModal'
+import { VisitorDetailsModal } from '@/components/common/VisitorDetailsModal/VisitorDetailsModal'
 import type { Column } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
@@ -28,9 +28,12 @@ import {
   type ReportMetricRow,
   type ContactListItem,
   type ReportRange,
-  type ManualBusinessExpense
+  type ManualBusinessExpense,
+  type ReportTransaction
 } from '@/services/reportsService'
 import { costsService, type Cost } from '@/services/costsService'
+import { contactsService } from '@/services/contactsService'
+import { trackingService } from '@/services/trackingService'
 import { formatCurrency, formatNumber, formatDate, formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDateRangeSync } from '@/hooks'
@@ -110,6 +113,42 @@ type ReportType = 'cashflow' | 'attribution' | 'campaigns'
 type DisplayMode = 'table' | 'metrics'
 type ReportMonthPreset = 'last12' | 'thisYear' | 'all' | 'custom'
 type ModalType = 'interesados' | 'sales' | 'appointments' | 'attendances' | 'customers'
+
+interface VisitorsModalPageState {
+  page: number
+  cursor: string | null
+  cursorHistory: Array<string | null>
+  search: string
+  hasNext: boolean
+  nextCursor: string | null
+}
+
+interface TransactionsModalPageState {
+  page: number
+  cursor: string | null
+  cursorHistory: Array<string | null>
+  search: string
+  hasNext: boolean
+  nextCursor: string | null
+}
+
+const emptyTransactionsModalPageState: TransactionsModalPageState = {
+  page: 1,
+  cursor: null,
+  cursorHistory: [],
+  search: '',
+  hasNext: false,
+  nextCursor: null
+}
+
+const emptyVisitorsModalPageState: VisitorsModalPageState = {
+  page: 1,
+  cursor: null,
+  cursorHistory: [],
+  search: '',
+  hasNext: false,
+  nextCursor: null
+}
 
 type MetricsLoadState = {
   rows: ReportMetricRow[]
@@ -1857,6 +1896,7 @@ export const Reports: React.FC = () => {
   const [hasLoadedMetrics, setHasLoadedMetrics] = useState(false)
   const [hasLoadedSummary, setHasLoadedSummary] = useState(false)
   const metricsRequestRef = React.useRef(0)
+  const summaryRequestRef = React.useRef(0)
 
   const [modalState, setModalState] = useState<{
     open: boolean
@@ -1867,20 +1907,52 @@ export const Reports: React.FC = () => {
     loading: boolean
     range?: { from: string; to: string }
     titleOverride?: string
+    scope: 'all' | 'attribution' | 'campaigns'
+    search: string
+    cursor: string | null
+    cursorHistory: Array<string | null>
+    page: number
+    pagination: {
+      limit: number
+      total: number
+      totalIsCapped: boolean
+      hasNext: boolean
+      nextCursor: string | null
+    }
   }>({
     open: false,
     type: null,
     title: '',
     subtitle: '',
     contacts: [],
-    loading: false
+    loading: false,
+    scope: 'all',
+    search: '',
+    cursor: null,
+    cursorHistory: [],
+    page: 1,
+    pagination: {
+      limit: 50,
+      total: 0,
+      totalIsCapped: false,
+      hasNext: false,
+      nextCursor: null
+    }
   })
+  const modalContactsRequestRef = React.useRef(0)
 
   // Estado para modal de visitantes
   const [isVisitorsModalOpen, setIsVisitorsModalOpen] = useState(false)
   const [visitorsModalLoading, setVisitorsModalLoading] = useState(false)
   const [visitorsData, setVisitorsData] = useState<any[]>([])
   const [visitorsModalDate, setVisitorsModalDate] = useState('')
+  const [visitorsModalRange, setVisitorsModalRange] = useState<{
+    startDate: string
+    endDate: string
+    scope: 'all' | 'attribution' | 'campaigns'
+  } | null>(null)
+  const [visitorsModalPage, setVisitorsModalPage] = useState<VisitorsModalPageState>(emptyVisitorsModalPageState)
+  const visitorsModalRequestRef = React.useRef(0)
 
   // Estado para modal de transacciones
   const [transactionsModalState, setTransactionsModalState] = useState<{
@@ -1888,10 +1960,11 @@ export const Reports: React.FC = () => {
     loading: boolean
     title: string
     subtitle: string
-    transactions: any[]
+    transactions: ReportTransaction[]
     total: number
     totalAmount: number
     range?: { from: string; to: string }
+    page: TransactionsModalPageState
   }>({
     open: false,
     loading: false,
@@ -1899,8 +1972,11 @@ export const Reports: React.FC = () => {
     subtitle: '',
     transactions: [],
     total: 0,
-    totalAmount: 0
+    totalAmount: 0,
+    page: emptyTransactionsModalPageState
   })
+  const transactionsModalRequestRef = React.useRef(0)
+  const transactionsModalAbortRef = React.useRef<AbortController | null>(null)
 
   useEffect(() => {
     const nextPath = buildReportsPath(routeState.displayMode, routeState.viewType, routeState.reportType)
@@ -2019,42 +2095,9 @@ export const Reports: React.FC = () => {
 
         if (!isCurrentRequest()) return
 
-        // Si estamos en modo tracking, obtener visitantes del tracking
-        if (analyticsEnabled && visitorSource === 'tracking') {
-          try {
-            const trackingResponse = await fetch(
-              `/api/tracking/visitors-by-period?` + new URLSearchParams({
-                startDate: apiRange.from,
-                endDate: apiRange.to,
-                groupBy: requestedViewType,
-                scope: scopeParam // Pasar el scope actual para que respete la vista
-              })
-            )
-
-            if (trackingResponse.ok) {
-              const trackingData = await trackingResponse.json()
-              if (!isCurrentRequest()) return
-
-              // Actualizar las métricas con los visitantes del tracking
-              const updatedMetrics = result.metrics.map((metric: ReportMetricRow) => {
-                const trackingVisitors = trackingData.data?.[metric.date] || 0
-                return {
-                  ...metric,
-                  visitors: trackingVisitors
-                }
-              })
-
-              commitMetrics(updatedMetrics)
-            } else {
-              commitMetrics(result.metrics)
-            }
-          } catch (trackingError) {
-            // Si falla el tracking, usar métricas originales
-            commitMetrics(result.metrics)
-          }
-        } else {
-          commitMetrics(result.metrics)
-        }
+        // buildAggregatedReportMetrics ya agrega visitantes desde sessions con el
+        // mismo rango/scope. Un segundo request sólo podía pisar datos más nuevos.
+        commitMetrics(result.metrics)
 
         if (!isCurrentRequest()) return
         setMetricsRange(result.range)
@@ -2074,24 +2117,43 @@ export const Reports: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [analyticsEnabled, apiRange.from, apiRange.to, scopeParam, viewType, showToast, dateRange, visitorSource])
+  }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast])
 
   useEffect(() => {
+    const requestId = summaryRequestRef.current + 1
+    summaryRequestRef.current = requestId
+    const controller = new AbortController()
+    let cancelled = false
+    const isCurrentRequest = () => (
+      !cancelled && !controller.signal.aborted && summaryRequestRef.current === requestId
+    )
+
     const fetchSummary = async () => {
       try {
         setLoadingSummary(true)
-        const result = await reportsService.getSummary({ from: apiRange.from, to: apiRange.to, scope: scopeParam })
+        const result = await reportsService.getSummary(
+          { from: apiRange.from, to: apiRange.to, scope: scopeParam },
+          controller.signal
+        )
+        if (!isCurrentRequest()) return
         setSummary(result)
       } catch (error) {
+        if (!isCurrentRequest()) return
         setSummary(null)
       } finally {
-        setLoadingSummary(false)
-        setHasLoadedSummary(true)
+        if (isCurrentRequest()) {
+          setLoadingSummary(false)
+          setHasLoadedSummary(true)
+        }
       }
     }
 
     fetchSummary()
-  }, [apiRange.from, apiRange.to, scopeParam, dateRange])
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [apiRange.from, apiRange.to, scopeParam])
 
   const loadManualBusinessExpenses = useCallback(async () => {
     try {
@@ -2326,6 +2388,64 @@ export const Reports: React.FC = () => {
     })
   ), [currentMetrics, viewType, includeYearForTable, timezoneInfo, businessExpensesByPeriod, fixedBusinessExpensesByPeriod, applyManualBusinessExpenses, applyFixedBusinessExpenses])
 
+  const loadReportContactsModalPage = React.useCallback(async (options: {
+    type: ModalType
+    from: string
+    to: string
+    scope: 'all' | 'attribution' | 'campaigns'
+    search?: string
+    cursor?: string | null
+    cursorHistory?: Array<string | null>
+    page?: number
+    showError?: boolean
+  }) => {
+    const requestId = modalContactsRequestRef.current + 1
+    modalContactsRequestRef.current = requestId
+    setModalState((previous) => ({ ...previous, loading: true }))
+
+    try {
+      const result = await reportsService.getContactsList({
+        from: options.from,
+        to: options.to,
+        type: options.type === 'customers' ? 'customers' : options.type,
+        scope: options.scope,
+        dedupe: 'person',
+        search: options.search,
+        cursor: options.cursor || undefined,
+        limit: 50
+      })
+      if (modalContactsRequestRef.current !== requestId) return
+
+      setModalState((previous) => ({
+        ...previous,
+        contacts: mapContactsToModalData(result.contacts),
+        loading: false,
+        search: options.search || '',
+        cursor: options.cursor || null,
+        cursorHistory: options.cursorHistory || [],
+        page: options.page || 1,
+        pagination: result.pagination
+      }))
+    } catch {
+      if (modalContactsRequestRef.current !== requestId) return
+      setModalState((previous) => ({
+        ...previous,
+        contacts: [],
+        loading: false,
+        pagination: {
+          limit: 50,
+          total: 0,
+          totalIsCapped: false,
+          hasNext: false,
+          nextCursor: null
+        }
+      }))
+      if (options.showError !== false) {
+        showToast('error', 'No se pudieron cargar los contactos', 'Intenta nuevamente más tarde')
+      }
+    }
+  }, [showToast])
+
   const handleOpenModal = React.useCallback(async (
     type: ModalType,
     range?: { from: string; to: string },
@@ -2353,70 +2473,173 @@ export const Reports: React.FC = () => {
       contacts: [],
       loading: true,
       range,
-      titleOverride
+      titleOverride,
+      scope: currentScope,
+      search: '',
+      cursor: null,
+      cursorHistory: [],
+      page: 1,
+      pagination: {
+        limit: 50,
+        total: 0,
+        totalIsCapped: false,
+        hasNext: false,
+        nextCursor: null
+      }
     })
 
-    try {
-      const result = await reportsService.getContactsList({
+    await loadReportContactsModalPage({
+      type,
+      from,
+      to,
+      scope: currentScope,
+      page: 1,
+      cursor: null,
+      cursorHistory: [],
+      search: ''
+    })
+  }, [apiRange, labels, loadReportContactsModalPage])
+
+  const handleReportContactsPageChange = React.useCallback((direction: 'next' | 'previous') => {
+    if (!modalState.open || !modalState.type || modalState.loading) return
+    const from = modalState.range?.from ?? apiRange.from
+    const to = modalState.range?.to ?? apiRange.to
+
+    if (direction === 'next') {
+      const nextCursor = modalState.pagination.nextCursor
+      if (!modalState.pagination.hasNext || !nextCursor) return
+      void loadReportContactsModalPage({
+        type: modalState.type,
         from,
         to,
-        type: type === 'customers' ? 'customers' : type,
-        scope: currentScope,
-        // (MET-CONSIST) Reports cuenta por persona -> el modal debe colapsar duplicados igual.
-        dedupe: 'person'
+        scope: modalState.scope,
+        search: modalState.search,
+        cursor: nextCursor,
+        cursorHistory: [...modalState.cursorHistory, modalState.cursor],
+        page: modalState.page + 1
       })
-      setModalState(prev => ({
-        ...prev,
-        contacts: mapContactsToModalData(result.contacts),
-        loading: false
-      }))
-    } catch (error) {
-      setModalState(prev => ({ ...prev, contacts: [], loading: false }))
-      showToast('error', 'No se pudieron cargar los contactos', 'Intenta nuevamente más tarde')
+      return
     }
-  }, [apiRange, labels, reportTypeRef, showToast])
+
+    if (modalState.page <= 1) return
+    const previousCursor = modalState.cursorHistory[modalState.cursorHistory.length - 1] || null
+    void loadReportContactsModalPage({
+      type: modalState.type,
+      from,
+      to,
+      scope: modalState.scope,
+      search: modalState.search,
+      cursor: previousCursor,
+      cursorHistory: modalState.cursorHistory.slice(0, -1),
+      page: modalState.page - 1
+    })
+  }, [apiRange.from, apiRange.to, loadReportContactsModalPage, modalState])
+
+  const handleReportContactsSearch = React.useCallback((search: string) => {
+    if (!modalState.open || !modalState.type || search === modalState.search) return
+    const from = modalState.range?.from ?? apiRange.from
+    const to = modalState.range?.to ?? apiRange.to
+    void loadReportContactsModalPage({
+      type: modalState.type,
+      from,
+      to,
+      scope: modalState.scope,
+      search,
+      cursor: null,
+      cursorHistory: [],
+      page: 1
+    })
+  }, [apiRange.from, apiRange.to, loadReportContactsModalPage, modalState])
+
+  const hydrateReportContact = React.useCallback(async (contact: { id: string }) => {
+    const detail = await contactsService.getContactDetails(contact.id, {
+      warmProfilePictures: false,
+      refreshExternalAppointments: false
+    })
+
+    return {
+      ...detail,
+      created_at: detail.createdAt,
+      hasShowedAppointment: detail.hasShowedAppointment,
+      hasAttendedAppointment: detail.hasAttendedAppointment
+    }
+  }, [])
 
   // Limpiar y recargar datos del modal cuando cambian las fechas
   useEffect(() => {
     if (modalState.open && modalState.type) {
       const currentModalType = modalState.type
-      // Limpiar datos anteriores inmediatamente
-      setModalState(prev => ({ ...prev, contacts: [], loading: true }))
-
-      // Recargar con las nuevas fechas
-      const loadModalData = async () => {
-        const from = modalState.range?.from ?? apiRange.from
-        const to = modalState.range?.to ?? apiRange.to
-        const currentReportType = reportTypeRef.current
-        const currentScope = currentReportType === 'campaigns' ? 'campaigns' : currentReportType === 'attribution' ? 'attribution' : 'all'
-
-        try {
-          const result = await reportsService.getContactsList({
-            from,
-            to,
-            type: currentModalType === 'customers' ? 'customers' : currentModalType,
-            scope: currentScope,
-            // (MET-CONSIST) Reports cuenta por persona -> el modal debe colapsar duplicados igual.
-            dedupe: 'person'
-          })
-          setModalState(prev => ({
-            ...prev,
-            contacts: mapContactsToModalData(result.contacts),
-            loading: false
-          }))
-        } catch (error) {
-          setModalState(prev => ({ ...prev, contacts: [], loading: false }))
-        }
-      }
-
-      loadModalData()
+      const from = modalState.range?.from ?? apiRange.from
+      const to = modalState.range?.to ?? apiRange.to
+      void loadReportContactsModalPage({
+        type: currentModalType,
+        from,
+        to,
+        scope: modalState.scope,
+        search: modalState.search,
+        cursor: null,
+        cursorHistory: [],
+        page: 1,
+        showError: false
+      })
     }
   }, [dateRange, apiRange.from, apiRange.to]) // Reaccionar a cambios de fecha
 
+  const loadTransactionsModalPage = useCallback(async (
+    range: { from: string; to: string },
+    { cursor, cursorHistory, page, search }: Pick<TransactionsModalPageState, 'cursor' | 'cursorHistory' | 'page' | 'search'>
+  ) => {
+    transactionsModalAbortRef.current?.abort()
+    const controller = new AbortController()
+    transactionsModalAbortRef.current = controller
+    const requestId = transactionsModalRequestRef.current + 1
+    transactionsModalRequestRef.current = requestId
+    setTransactionsModalState(prev => ({ ...prev, loading: true }))
+
+    try {
+      const result = await reportsService.getTransactionsPage({
+        from: range.from,
+        to: range.to,
+        search,
+        cursor,
+        limit: 50
+      }, controller.signal)
+      if (transactionsModalRequestRef.current !== requestId) return
+
+      setTransactionsModalState(prev => ({
+        ...prev,
+        loading: false,
+        transactions: result.transactions,
+        total: result.summary.count,
+        totalAmount: result.summary.totalAmount,
+        page: {
+          page,
+          cursor,
+          cursorHistory,
+          search,
+          hasNext: result.pagination.hasNext,
+          nextCursor: result.pagination.nextCursor
+        }
+      }))
+    } catch (error) {
+      if (controller.signal.aborted || transactionsModalRequestRef.current !== requestId) return
+      setTransactionsModalState(prev => ({
+        ...prev,
+        transactions: [],
+        total: 0,
+        totalAmount: 0,
+        loading: false,
+        page: { ...emptyTransactionsModalPageState, search }
+      }))
+      showToast('error', 'No se pudieron cargar las transacciones', 'Intenta nuevamente')
+    }
+  }, [showToast])
+
   // Función para abrir modal de transacciones
-  const handleOpenTransactionsModal = useCallback(async (range?: { from: string; to: string }) => {
+  const handleOpenTransactionsModal = useCallback((range?: { from: string; to: string }) => {
     const from = range?.from ?? apiRange.from
     const to = range?.to ?? apiRange.to
+    const effectiveRange = { from, to }
 
     setTransactionsModalState({
       open: true,
@@ -2426,59 +2649,91 @@ export const Reports: React.FC = () => {
       transactions: [],
       total: 0,
       totalAmount: 0,
-      range
+      range: effectiveRange,
+      page: emptyTransactionsModalPageState
     })
+    void loadTransactionsModalPage(effectiveRange, {
+      cursor: null,
+      cursorHistory: [],
+      page: 1,
+      search: ''
+    })
+  }, [apiRange.from, apiRange.to, loadTransactionsModalPage])
 
-    // (MET-CONSIST) El backend topa cada página a 500 filas (RPT-008 anti-OOM). Para que
-    // el modal empate con la celda: el número/monto salen del summary del periodo completo,
-    // y la lista se rellena paginando hasta agotar o hasta un tope de render seguro (el
-    // modal no virtualiza, así que no cargamos decenas de miles de cards al DOM).
-    const PAGE_SIZE = 500
-    const MODAL_MAX_ROWS = 2000
+  useEffect(() => () => transactionsModalAbortRef.current?.abort(), [])
+
+  const handleTransactionsPageChange = useCallback((direction: 'next' | 'previous') => {
+    const range = transactionsModalState.range
+    const current = transactionsModalState.page
+    if (!range) return
+
+    if (direction === 'next') {
+      if (!current.hasNext || !current.nextCursor) return
+      void loadTransactionsModalPage(range, {
+        cursor: current.nextCursor,
+        cursorHistory: [...current.cursorHistory, current.cursor],
+        page: current.page + 1,
+        search: current.search
+      })
+      return
+    }
+
+    if (current.page <= 1) return
+    const previousCursor = current.cursorHistory[current.cursorHistory.length - 1] ?? null
+    void loadTransactionsModalPage(range, {
+      cursor: previousCursor,
+      cursorHistory: current.cursorHistory.slice(0, -1),
+      page: current.page - 1,
+      search: current.search
+    })
+  }, [loadTransactionsModalPage, transactionsModalState.page, transactionsModalState.range])
+
+  const handleTransactionsSearch = useCallback((search: string) => {
+    const range = transactionsModalState.range
+    if (!range || search === transactionsModalState.page.search) return
+    void loadTransactionsModalPage(range, {
+      cursor: null,
+      cursorHistory: [],
+      page: 1,
+      search
+    })
+  }, [loadTransactionsModalPage, transactionsModalState.page.search, transactionsModalState.range])
+
+  const loadVisitorsModalPage = useCallback(async (
+    range: { startDate: string; endDate: string; scope: 'all' | 'attribution' | 'campaigns' },
+    { cursor, cursorHistory, page, search }: Pick<VisitorsModalPageState, 'cursor' | 'cursorHistory' | 'page' | 'search'>
+  ) => {
+    const requestId = visitorsModalRequestRef.current + 1
+    visitorsModalRequestRef.current = requestId
+    setVisitorsModalLoading(true)
 
     try {
-      const accumulated: any[] = []
-      let page = 1
-      let total = 0
-      let totalAmount = 0
-      let hasNext = true
+      const result = await trackingService.getVisitorsPage({
+        ...range,
+        cursor,
+        search,
+        limit: 50
+      })
+      if (visitorsModalRequestRef.current !== requestId) return
 
-      while (hasNext && accumulated.length < MODAL_MAX_ROWS) {
-        const response = await fetch(
-          `/api/reports/transactions?` + new URLSearchParams({
-            from,
-            to,
-            page: String(page),
-            limit: String(PAGE_SIZE)
-          })
-        )
-
-        if (!response.ok) throw new Error(`transactions request failed (${response.status})`)
-
-        const result = await response.json()
-        const pageTransactions: any[] = result.data?.transactions || []
-        accumulated.push(...pageTransactions)
-
-        // El total y el monto vienen agregados del periodo completo; no dependen de la página.
-        total = result.data?.summary?.count ?? result.data?.pagination?.total ?? accumulated.length
-        totalAmount = result.data?.summary?.totalAmount
-          ?? accumulated.reduce((sum, t) => sum + (Number(t.amount) || 0), 0)
-        hasNext = Boolean(result.data?.pagination?.hasNext) && pageTransactions.length > 0
-        page += 1
-      }
-
-      setTransactionsModalState(prev => ({
-        ...prev,
-        transactions: accumulated,
-        total,
-        totalAmount,
-        loading: false
-      }))
-    } catch (error) {
-      setTransactionsModalState(prev => ({ ...prev, transactions: [], total: 0, totalAmount: 0, loading: false }))
-      showToast('error', 'No se pudieron cargar las transacciones', 'Intenta nuevamente')
+      setVisitorsData(result.items)
+      setVisitorsModalPage({
+        page,
+        cursor,
+        cursorHistory,
+        search,
+        hasNext: result.pagination.hasNext,
+        nextCursor: result.pagination.nextCursor
+      })
+    } catch {
+      if (visitorsModalRequestRef.current !== requestId) return
+      setVisitorsData([])
+      setVisitorsModalPage({ ...emptyVisitorsModalPageState, search })
+      showToast('error', 'No se pudieron cargar los visitantes', 'Intenta nuevamente')
+    } finally {
+      if (visitorsModalRequestRef.current === requestId) setVisitorsModalLoading(false)
     }
-  }, [apiRange.from, apiRange.to, showToast])
+  }, [showToast])
 
   // Función para abrir modal de visitantes
   const handleOpenVisitorsModal = useCallback(async (date: string) => {
@@ -2511,31 +2766,46 @@ export const Reports: React.FC = () => {
     }
 
     setVisitorsModalDate(displayDate)
+    const scope = reportTypeRef.current === 'campaigns'
+      ? 'campaigns'
+      : reportTypeRef.current === 'attribution'
+        ? 'attribution'
+        : 'all'
+    const range = { startDate, endDate, scope } as const
+    setVisitorsModalRange(range)
+    setVisitorsData([])
+    setVisitorsModalPage(emptyVisitorsModalPageState)
+    await loadVisitorsModalPage(range, { cursor: null, cursorHistory: [], page: 1, search: '' })
+  }, [analyticsEnabled, loadVisitorsModalPage, reportTypeRef])
 
-    try {
-      const currentScope = reportTypeRef.current === 'campaigns' ? 'campaigns' : reportTypeRef.current === 'attribution' ? 'attribution' : 'all'
-      const response = await fetch(
-        `/api/tracking/visitors?` + new URLSearchParams({
-          startDate: startDate,
-          endDate: endDate,
-          scope: currentScope
-        })
-      )
-
-      if (response.ok) {
-        const data = await response.json()
-        setVisitorsData(data.data || [])
-      } else {
-        setVisitorsData([])
-        showToast('error', 'No se pudieron cargar los visitantes', 'Intenta nuevamente')
-      }
-    } catch (error) {
-      setVisitorsData([])
-      showToast('error', 'Error al cargar visitantes', 'Verifica tu conexión')
-    } finally {
-      setVisitorsModalLoading(false)
+  const handleVisitorsModalPageChange = useCallback((direction: 'next' | 'previous') => {
+    if (!visitorsModalRange) return
+    if (direction === 'next') {
+      if (!visitorsModalPage.hasNext || !visitorsModalPage.nextCursor) return
+      void loadVisitorsModalPage(visitorsModalRange, {
+        cursor: visitorsModalPage.nextCursor,
+        cursorHistory: [...visitorsModalPage.cursorHistory, visitorsModalPage.cursor],
+        page: visitorsModalPage.page + 1,
+        search: visitorsModalPage.search
+      })
+      return
     }
-  }, [analyticsEnabled, showToast, reportTypeRef])
+
+    if (visitorsModalPage.page <= 1) return
+    const previousCursor = visitorsModalPage.cursorHistory[visitorsModalPage.cursorHistory.length - 1] ?? null
+    void loadVisitorsModalPage(visitorsModalRange, {
+      cursor: previousCursor,
+      cursorHistory: visitorsModalPage.cursorHistory.slice(0, -1),
+      page: visitorsModalPage.page - 1,
+      search: visitorsModalPage.search
+    })
+  }, [loadVisitorsModalPage, visitorsModalPage, visitorsModalRange])
+
+  const handleVisitorsModalSearch = useCallback((search: string) => {
+    if (!visitorsModalRange) return
+    if (search === visitorsModalPage.search) return
+    void loadVisitorsModalPage(visitorsModalRange, { cursor: null, cursorHistory: [], page: 1, search })
+  }, [loadVisitorsModalPage, visitorsModalPage.search, visitorsModalRange])
 
   const initialColumns: Column<TableRow>[] = useMemo(() => {
     const salesLabel = reportType === 'cashflow' ? 'Transacciones' : 'Ventas'
@@ -3024,6 +3294,32 @@ export const Reports: React.FC = () => {
 
   const metricsRangeLabel = formatRangeLabel(metricsRange)
   const closeModal = () => setModalState(prev => ({ ...prev, open: false }))
+  const reportContactsModalData = useMemo(() => (
+    modalState.contacts.map(contact => ({
+      id: contact.id,
+      name: contact.name,
+      email: contact.email,
+      phone: contact.phone,
+      created_at: contact.created_at,
+      ltv: contact.ltv,
+      payments: contact.payments,
+      appointments: contact.appointments,
+      source: contact.source,
+      ad_name: contact.ad_name,
+      ad_id: contact.ad_id,
+      campaign_id: contact.campaign_id,
+      campaign_name: contact.campaign_name,
+      adset_id: contact.adset_id,
+      adset_name: contact.adset_name,
+      metaAttribution: contact.metaAttribution,
+      lifetimeLtv: contact.lifetimeLtv,
+      lifetimePurchases: contact.lifetimePurchases,
+      isCustomer: contact.isCustomer,
+      hasAppointments: contact.hasAppointments,
+      hasShowedAppointment: contact.hasShowedAppointment,
+      hasAttendedAppointment: contact.hasAttendedAppointment
+    }))
+  ), [modalState.contacts])
 
   const hasLoadedReports = hasLoadedMetrics && hasLoadedSummary
   const metricsRefreshing = loadingMetrics && hasLoadedMetrics
@@ -3199,26 +3495,18 @@ export const Reports: React.FC = () => {
           onClose={closeModal}
           title={modalState.title}
           subtitle={modalState.subtitle}
-          data={modalState.contacts.map(contact => ({
-            id: contact.id,
-            name: contact.name,
-            email: contact.email,
-            phone: contact.phone,
-            created_at: contact.created_at,
-            ltv: contact.ltv,
-            payments: contact.payments,
-            appointments: contact.appointments,
-            source: contact.source,
-            ad_name: contact.ad_name,
-            ad_id: contact.ad_id,
-            campaign_id: contact.campaign_id,
-            campaign_name: contact.campaign_name,
-            adset_id: contact.adset_id,
-            adset_name: contact.adset_name,
-            metaAttribution: contact.metaAttribution
-          }))}
+          data={reportContactsModalData}
           loading={modalState.loading}
           type={modalState.type === 'customers' ? 'sales' : modalState.type === 'sales' ? 'sales' : (modalState.type === 'appointments' || modalState.type === 'attendances') ? 'appointments' : 'interesados'}
+          totalCount={modalState.pagination.total}
+          totalCountIsCapped={modalState.pagination.totalIsCapped}
+          currentPage={modalState.page}
+          hasNextPage={modalState.pagination.hasNext}
+          hasPreviousPage={modalState.page > 1}
+          onPageChange={handleReportContactsPageChange}
+          onSearchChange={handleReportContactsSearch}
+          onSelectContact={hydrateReportContact}
+          totalValue={null}
         />
 
         {/* Modal de Visitantes */}
@@ -3230,19 +3518,37 @@ export const Reports: React.FC = () => {
             subtitle={`Visitantes del ${visitorsModalDate}`}
             data={visitorsData}
             loading={visitorsModalLoading}
+            currentPage={visitorsModalPage.page}
+            hasNextPage={visitorsModalPage.hasNext}
+            hasPreviousPage={visitorsModalPage.page > 1}
+            onPageChange={handleVisitorsModalPageChange}
+            onSearchChange={handleVisitorsModalSearch}
           />
         )}
 
         {/* Modal de Transacciones */}
         <TransactionsModal
           isOpen={transactionsModalState.open}
-          onClose={() => setTransactionsModalState(prev => ({ ...prev, open: false }))}
+          onClose={() => {
+            transactionsModalAbortRef.current?.abort()
+            transactionsModalRequestRef.current += 1
+            setTransactionsModalState(prev => ({
+              ...prev,
+              open: false,
+              page: emptyTransactionsModalPageState
+            }))
+          }}
           title={transactionsModalState.title}
           subtitle={transactionsModalState.subtitle}
           transactions={transactionsModalState.transactions}
           totalCount={transactionsModalState.total}
           totalAmount={transactionsModalState.totalAmount}
           loading={transactionsModalState.loading}
+          currentPage={transactionsModalState.page.page}
+          hasNextPage={transactionsModalState.page.hasNext}
+          hasPreviousPage={transactionsModalState.page.page > 1}
+          onPageChange={handleTransactionsPageChange}
+          onSearchChange={handleTransactionsSearch}
         />
       </div>
     </PageContainer>

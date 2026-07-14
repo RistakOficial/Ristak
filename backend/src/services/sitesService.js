@@ -4,7 +4,7 @@ import path from 'node:path'
 import JSZip from 'jszip'
 import fetch from 'node-fetch'
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
-import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/database.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
@@ -175,6 +175,8 @@ export const SITE_STATUSES = new Set(['draft', 'published', 'archived'])
 const SITE_LIBRARY_FOLDER_SECTIONS = new Set(['landings', 'forms'])
 const SITE_LIBRARY_HTML_FORMS_FOLDER_ID = 'system-html-forms'
 const SITE_LIBRARY_SOURCE_HTML = 'html'
+const SITE_LIST_DEFAULT_LIMIT = 100
+const SITE_LIST_MAX_LIMIT = 200
 export const CONTENT_BLOCK_TYPES = new Set([
   'headline',
   'subheading',
@@ -4479,6 +4481,7 @@ function mapSite(row) {
     publishedAt: row.published_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    summary: false,
     submissionsCount: Number(row.submissions_count || 0),
     trackingStats: {
       views: Number(row.tracking_views || 0),
@@ -4490,6 +4493,38 @@ function mapSite(row) {
         : 0
     }
   }
+}
+
+function buildSiteSummaryTheme(theme = {}) {
+  const summary = {}
+  const copyKeys = [
+    'accentColor',
+    'backgroundColor',
+    'textColor',
+    'template',
+    'pageMode',
+    'pages',
+    'libraryFolderId',
+    'librarySource',
+    'importedHtml',
+    'importedHtmlSource',
+    'calendarSystemForm',
+    'paymentGate'
+  ]
+
+  for (const key of copyKeys) {
+    if (theme[key] !== undefined && theme[key] !== null) summary[key] = theme[key]
+  }
+
+  return summary
+}
+
+function mapSiteSummary(row) {
+  const site = mapSite(row)
+  if (!site) return null
+  site.theme = buildSiteSummaryTheme(site.theme)
+  site.summary = true
+  return site
 }
 
 function buildPublicDefaultRoute(site, pageIdValue = '') {
@@ -8292,53 +8327,451 @@ async function ensureCalendarBookingSystemForm() {
   }
 }
 
-export async function listSites() {
-  await ensureCalendarBookingSystemForm().catch(error => {
-    logger.warn(`No se pudo asegurar formulario de calendario: ${error.message}`)
-  })
+let calendarBookingSystemFormEnsurePromise = null
+
+async function ensureCalendarBookingSystemFormOnce() {
+  if (!calendarBookingSystemFormEnsurePromise) {
+    calendarBookingSystemFormEnsurePromise = ensureCalendarBookingSystemForm()
+      .catch(error => {
+        calendarBookingSystemFormEnsurePromise = null
+        logger.warn(`No se pudo asegurar formulario de calendario: ${error.message}`)
+      })
+  }
+  await calendarBookingSystemFormEnsurePromise
+}
+
+function normalizeSiteListLimit(value) {
+  const parsed = Number.parseInt(String(value || ''), 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return SITE_LIST_DEFAULT_LIMIT
+  return Math.min(SITE_LIST_MAX_LIMIT, parsed)
+}
+
+function encodeSiteListCursor(row = {}) {
+  const updatedAt = row.updated_at instanceof Date
+    ? row.updated_at.toISOString()
+    : cleanString(row.updated_at)
+  const id = cleanString(row.id)
+  if (!updatedAt || !id) return ''
+  return Buffer.from(JSON.stringify({ updatedAt, id }), 'utf8').toString('base64url')
+}
+
+function decodeSiteListCursor(value = '') {
+  const encoded = cleanString(value)
+  if (!encoded || encoded.length > 600) return null
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
+    const updatedAt = cleanString(parsed?.updatedAt)
+    const id = cleanString(parsed?.id)
+    return updatedAt && id ? { updatedAt, id } : null
+  } catch {
+    return null
+  }
+}
+
+function getSiteSummaryThemeExpression(alias = 's') {
+  const source = `COALESCE(NULLIF(${alias}.theme_json, ''), '{}')`
+  const keys = [
+    'accentColor',
+    'backgroundColor',
+    'textColor',
+    'template',
+    'pageMode',
+    'pages',
+    'libraryFolderId',
+    'librarySource',
+    'importedHtml',
+    'importedHtmlSource',
+    'calendarSystemForm',
+    'paymentGate'
+  ]
+
+  if (databaseDialect === 'postgres') {
+    const jsonSource = `(${source})::jsonb`
+    const pairs = keys.map(key => `'${key}', ${jsonSource} -> '${key}'`).join(', ')
+    return `jsonb_strip_nulls(jsonb_build_object(${pairs}))::text`
+  }
+
+  const pairs = keys.map(key => `'${key}', json_extract(${source}, '$.${key}')`).join(', ')
+  return `json_object(${pairs})`
+}
+
+function getSiteSelectorThemeExpression(alias = 's', selectorView = 'form_selector') {
+  const source = `COALESCE(NULLIF(${alias}.theme_json, ''), '{}')`
+  const keys = selectorView === 'domain_selector'
+    ? ['pages', 'paymentGate']
+    : ['paymentGate', 'libraryFolderId', 'librarySource', 'calendarSystemForm']
+
+  if (databaseDialect === 'postgres') {
+    const jsonSource = `(${source})::jsonb`
+    const pairs = keys.map(key => `'${key}', ${jsonSource} -> '${key}'`).join(', ')
+    return `jsonb_strip_nulls(jsonb_build_object(${pairs}))::text`
+  }
+
+  const pairs = keys.map(key => `'${key}', json_extract(${source}, '$.${key}')`).join(', ')
+  return `json_object(${pairs})`
+}
+
+async function listSiteSelectorPage({ limit, cursor = '', view }) {
+  const pageLimit = normalizeSiteListLimit(limit ?? SITE_LIST_MAX_LIMIT)
+  const decodedCursor = decodeSiteListCursor(cursor)
+  const cursorClause = decodedCursor
+    ? '(s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))'
+    : ''
+  const scopeClause = view === 'form_selector'
+    ? "s.site_type IN ('standard_form', 'interactive_form') AND s.status != 'archived'"
+    : '1 = 1'
+  const whereClause = [scopeClause, cursorClause].filter(Boolean).join(' AND ')
+  const queryParams = decodedCursor
+    ? [decodedCursor.updatedAt, decodedCursor.updatedAt, decodedCursor.id, pageLimit + 1]
+    : [pageLimit + 1]
+  const themeExpression = getSiteSelectorThemeExpression('s', view)
+
+  // Este contrato existe para combos de configuración. No agrega submissions ni
+  // tracking: cargar un selector nunca debe escanear la actividad histórica.
+  const rows = await db.all(`
+    SELECT
+      s.id,
+      s.name,
+      s.slug,
+      s.site_type,
+      s.status,
+      s.domain,
+      s.title,
+      s.description,
+      ${themeExpression} AS theme_json,
+      s.anti_tracking_enabled,
+      s.meta_capi_enabled,
+      s.meta_event_name,
+      s.render_domain_verified,
+      s.render_domain_checked_at,
+      s.render_domain_error,
+      s.published_at,
+      s.created_at,
+      s.updated_at
+    FROM public_sites s
+    WHERE ${whereClause}
+    ORDER BY s.updated_at DESC, s.id DESC
+    LIMIT ?
+  `, queryParams)
+
+  const hasMore = rows.length > pageLimit
+  const pageRows = hasMore ? rows.slice(0, pageLimit) : rows
+  return {
+    items: pageRows.map(mapSiteSummary).filter(Boolean),
+    hasMore,
+    nextCursor: hasMore ? encodeSiteListCursor(pageRows[pageRows.length - 1]) : '',
+    limit: pageLimit
+  }
+}
+
+/**
+ * Lista summaries acotados por cursor. Las métricas se agregan una sola vez por
+ * página; nunca se ejecutan subconsultas correlacionadas por cada site.
+ *
+ * `paginated: false` conserva el contrato histórico de arreglo, pero también lo
+ * acota al máximo operativo para impedir respuestas sin límite.
+ */
+export async function listSites({ limit, cursor = '', paginated = false, view = 'library' } = {}) {
+  await ensureCalendarBookingSystemFormOnce()
+
+  if (view === 'domain_selector' || view === 'form_selector') {
+    return listSiteSelectorPage({ limit, cursor, view })
+  }
+
+  const pageLimit = normalizeSiteListLimit(limit ?? (paginated ? SITE_LIST_DEFAULT_LIMIT : SITE_LIST_MAX_LIMIT))
+  const decodedCursor = decodeSiteListCursor(cursor)
+  const cursorClause = decodedCursor
+    ? 'WHERE (s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))'
+    : ''
+  const queryParams = decodedCursor
+    ? [decodedCursor.updatedAt, decodedCursor.updatedAt, decodedCursor.id, pageLimit + 1]
+    : [pageLimit + 1]
+  const summaryThemeExpression = getSiteSummaryThemeExpression('s')
+
+  const rows = await db.all(`
+    WITH paged_sites AS (
+      SELECT
+        s.id,
+        s.name,
+        s.slug,
+        s.site_type,
+        s.status,
+        s.domain,
+        s.title,
+        s.description,
+        ${summaryThemeExpression} AS theme_json,
+        s.anti_tracking_enabled,
+        s.meta_capi_enabled,
+        s.meta_event_name,
+        s.render_domain_verified,
+        s.render_domain_checked_at,
+        s.render_domain_error,
+        s.published_at,
+        s.created_at,
+        s.updated_at
+      FROM public_sites s
+      ${cursorClause}
+      ORDER BY s.updated_at DESC, s.id DESC
+      LIMIT ?
+    ),
+    scoped_submissions AS (
+      SELECT ps.id AS resolved_site_id, sub.id
+      FROM paged_sites ps
+      INNER JOIN public_site_submissions sub ON sub.site_id = ps.id
+      UNION ALL
+      SELECT ps.id AS resolved_site_id, sub.id
+      FROM paged_sites ps
+      INNER JOIN public_site_submissions sub ON sub.form_site_id = ps.id
+      WHERE sub.site_id IS NULL OR sub.site_id != sub.form_site_id
+    ),
+    submission_metrics AS (
+      SELECT resolved_site_id, COUNT(DISTINCT id) AS submissions_count
+      FROM scoped_submissions
+      GROUP BY resolved_site_id
+    ),
+    scoped_sessions AS (
+      SELECT
+        ps.id AS resolved_site_id,
+        ts.contact_id,
+        ts.visitor_id,
+        ts.session_id,
+        ts.event_name,
+        ts.submission_id
+      FROM paged_sites ps
+      INNER JOIN sessions ts ON ts.site_id = ps.id
+      UNION ALL
+      SELECT
+        ps.id AS resolved_site_id,
+        ts.contact_id,
+        ts.visitor_id,
+        ts.session_id,
+        ts.event_name,
+        ts.submission_id
+      FROM paged_sites ps
+      INNER JOIN sessions ts ON ts.form_site_id = ps.id
+      WHERE ts.site_id IS NULL OR ts.site_id != ts.form_site_id
+    ),
+    tracking_metrics AS (
+      SELECT
+        ts.resolved_site_id,
+        COUNT(CASE WHEN ts.event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
+        COUNT(DISTINCT ${getVisitorIdentityExpression('ts')}) AS tracking_visitors,
+        COUNT(DISTINCT CASE WHEN ts.session_id IS NOT NULL AND ts.session_id != '' THEN ts.session_id END) AS tracking_sessions,
+        COUNT(DISTINCT CASE
+          WHEN ts.event_name = 'native_site_conversion'
+            AND ts.submission_id IS NOT NULL
+            AND ts.submission_id != ''
+          THEN ts.submission_id
+        END) AS tracking_conversions
+      FROM scoped_sessions ts
+      GROUP BY ts.resolved_site_id
+    )
+    SELECT
+      ps.*,
+      COALESCE(sm.submissions_count, 0) AS submissions_count,
+      COALESCE(tm.tracking_views, 0) AS tracking_views,
+      COALESCE(tm.tracking_visitors, 0) AS tracking_visitors,
+      COALESCE(tm.tracking_sessions, 0) AS tracking_sessions,
+      COALESCE(tm.tracking_conversions, 0) AS tracking_conversions
+    FROM paged_sites ps
+    LEFT JOIN submission_metrics sm ON sm.resolved_site_id = ps.id
+    LEFT JOIN tracking_metrics tm ON tm.resolved_site_id = ps.id
+    ORDER BY ps.updated_at DESC, ps.id DESC
+  `, queryParams)
+
+  const hasMore = rows.length > pageLimit
+  const pageRows = hasMore ? rows.slice(0, pageLimit) : rows
+  const items = pageRows.map(mapSiteSummary).filter(Boolean)
+  const page = {
+    items,
+    hasMore,
+    nextCursor: hasMore ? encodeSiteListCursor(pageRows[pageRows.length - 1]) : '',
+    limit: pageLimit
+  }
+
+  return paginated ? page : items
+}
+
+function normalizeSitesVideoListLimit(value) {
+  const parsed = Number.parseInt(String(value || ''), 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 50
+  return Math.min(100, parsed)
+}
+
+function encodeSitesVideoListCursor(row = {}) {
+  const createdAt = row.cursor_created_at instanceof Date
+    ? row.cursor_created_at.toISOString()
+    : cleanString(row.cursor_created_at)
+  const id = cleanString(row.id)
+  if (!createdAt || !id) return ''
+  return Buffer.from(JSON.stringify({ createdAt, id }), 'utf8').toString('base64url')
+}
+
+function decodeSitesVideoListCursor(value = '') {
+  const encoded = cleanString(value)
+  if (!encoded || encoded.length > 600) return null
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
+    const createdAt = cleanString(parsed?.createdAt)
+    const id = cleanString(parsed?.id)
+    return createdAt && id ? { createdAt, id } : null
+  } catch {
+    return null
+  }
+}
+
+function attachSitesVideoSourceMetadata(asset, sourceSiteRow = {}) {
+  if (!asset) return null
+  const sourceTheme = parseJson(sourceSiteRow.source_site_theme_json, {})
+  return {
+    ...asset,
+    metadata: {
+      ...(asset.metadata || {}),
+      analyticsSourceSite: {
+        id: cleanString(sourceSiteRow.source_site_id),
+        name: cleanString(sourceSiteRow.source_site_name) || 'Sitio sin nombre',
+        siteType: cleanString(sourceSiteRow.source_site_type),
+        pageMode: cleanString(sourceTheme.pageMode) || 'funnel'
+      }
+    }
+  }
+}
+
+/**
+ * Lookup exacto para previews/deep links. Mantiene el mismo alcance y metadata
+ * del listado paginado sin recorrer la videoteca ni confiar en la primera
+ * ventana de Sites cargada por el navegador.
+ */
+export async function getSitesVideoAsset({
+  businessId = 'default',
+  assetId = '',
+  streamVideoId = ''
+} = {}) {
+  const normalizedBusinessId = cleanString(businessId) || 'default'
+  const normalizedAssetId = cleanString(assetId)
+  const normalizedStreamVideoId = cleanString(streamVideoId)
+  if (!normalizedAssetId && !normalizedStreamVideoId) return null
+
+  const [asset = null] = normalizedStreamVideoId
+    ? await findMediaAssetsByBunnyStreamVideoIds([normalizedStreamVideoId], {
+        businessId: normalizedBusinessId,
+        modules: ['sites', 'forms']
+      })
+    : await findMediaAssetsByIds([normalizedAssetId])
+
+  const module = cleanString(asset?.module).toLowerCase()
+  if (
+    !asset ||
+    cleanString(asset.businessId || 'default') !== normalizedBusinessId ||
+    !['sites', 'forms'].includes(module) ||
+    cleanString(asset.mediaType).toLowerCase() !== 'video'
+  ) {
+    return null
+  }
+
+  const sourceSite = await db.get(`
+    SELECT
+      id AS source_site_id,
+      name AS source_site_name,
+      site_type AS source_site_type,
+      theme_json AS source_site_theme_json
+    FROM public_sites
+    WHERE id = ?
+      AND status != 'archived'
+    LIMIT 1
+  `, [cleanString(asset.moduleEntityId)])
+  return sourceSite ? attachSitesVideoSourceMetadata(asset, sourceSite) : null
+}
+
+/**
+ * Ventana de videos para Analíticas de Sites. El JOIN contra public_sites hace
+ * el scope en servidor; nunca depende de los Sites que el navegador ya cargó.
+ */
+export async function listSitesVideoAssets({
+  businessId = 'default',
+  siteType = 'videos',
+  landingMode = 'all',
+  siteId = '',
+  limit = 50,
+  cursor = ''
+} = {}) {
+  const safeLimit = normalizeSitesVideoListLimit(limit)
+  const decodedCursor = decodeSitesVideoListCursor(cursor)
+  const normalizedType = ['sites', 'forms', 'videos'].includes(cleanString(siteType))
+    ? cleanString(siteType)
+    : 'videos'
+  const normalizedLandingMode = ['website', 'funnel'].includes(cleanString(landingMode))
+    ? cleanString(landingMode)
+    : ''
+  const normalizedSiteId = cleanString(siteId)
+  const timestampExpression = databaseDialect === 'postgres'
+    ? "COALESCE(m.created_at, TIMESTAMP '1970-01-01 00:00:00')"
+    : "COALESCE(m.created_at, '1970-01-01 00:00:00')"
+  const clauses = [
+    'm.business_id = ?',
+    "m.module IN ('sites', 'forms')",
+    "m.media_type = 'video'",
+    "m.status = 'ready'",
+    'm.deleted_at IS NULL',
+    "ps.status = 'published'"
+  ]
+  const params = [cleanString(businessId) || 'default']
+
+  if (normalizedSiteId) {
+    clauses.push('ps.id = ?')
+    params.push(normalizedSiteId)
+  } else if (normalizedType === 'forms') {
+    clauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
+  } else if (normalizedType === 'sites') {
+    clauses.push("ps.site_type = 'landing_page'")
+    if (normalizedLandingMode) {
+      const pageModeExpression = databaseDialect === 'postgres'
+        ? "COALESCE((COALESCE(NULLIF(ps.theme_json, ''), '{}')::jsonb ->> 'pageMode'), 'funnel')"
+        : "COALESCE(json_extract(COALESCE(NULLIF(ps.theme_json, ''), '{}'), '$.pageMode'), 'funnel')"
+      clauses.push(`${pageModeExpression} = ?`)
+      params.push(normalizedLandingMode)
+    }
+  }
+
+  if (decodedCursor) {
+    clauses.push(`(${timestampExpression} < ? OR (${timestampExpression} = ? AND m.id < ?))`)
+    params.push(decodedCursor.createdAt, decodedCursor.createdAt, decodedCursor.id)
+  }
 
   const rows = await db.all(`
     SELECT
-      s.*,
-      COUNT(DISTINCT sub.id) AS submissions_count,
-      (
-        SELECT COUNT(*)
-        FROM sessions ts
-        WHERE (ts.site_id = s.id OR ts.form_site_id = s.id)
-          AND ts.event_name IN ('native_site_view', 'session_start', 'page_view')
-      ) AS tracking_views,
-      (
-        SELECT COUNT(DISTINCT ${getVisitorIdentityExpression('ts')})
-        FROM sessions ts
-        WHERE (ts.site_id = s.id OR ts.form_site_id = s.id)
-      ) AS tracking_visitors,
-      (
-        SELECT COUNT(DISTINCT ts.session_id)
-        FROM sessions ts
-        WHERE (ts.site_id = s.id OR ts.form_site_id = s.id)
-          AND ts.session_id IS NOT NULL
-          AND ts.session_id != ''
-      ) AS tracking_sessions,
-      (
-        SELECT COUNT(DISTINCT ts.submission_id)
-        FROM sessions ts
-        WHERE (ts.site_id = s.id OR ts.form_site_id = s.id)
-          AND ts.event_name = 'native_site_conversion'
-          AND ts.submission_id IS NOT NULL
-          AND ts.submission_id != ''
-      ) AS tracking_conversions
-    FROM public_sites s
-    LEFT JOIN public_site_submissions sub
-      ON sub.site_id = s.id
-      OR (sub.form_site_id = s.id AND (sub.site_id IS NULL OR sub.site_id != s.id))
-    GROUP BY
-      s.id, s.name, s.slug, s.site_type, s.status, s.domain, s.title, s.description,
-      s.theme_json, s.meta_capi_enabled, s.meta_event_name, s.render_domain_verified,
-      s.render_domain_checked_at, s.render_domain_error, s.published_at, s.created_at, s.updated_at
-    ORDER BY s.updated_at DESC
-  `)
+      m.id,
+      ${timestampExpression} AS cursor_created_at,
+      ps.id AS source_site_id,
+      ps.name AS source_site_name,
+      ps.site_type AS source_site_type,
+      ps.theme_json AS source_site_theme_json
+    FROM media_assets m
+    INNER JOIN public_sites ps ON ps.id = m.module_entity_id
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY ${timestampExpression} DESC, m.id DESC
+    LIMIT ?
+  `, [...params, safeLimit + 1])
+  const hasMore = rows.length > safeLimit
+  const pageRows = rows.slice(0, safeLimit)
+  const assets = await findMediaAssetsByIds(pageRows.map(row => row.id))
+  const assetsById = new Map(assets.map(asset => [asset.id, asset]))
+  const items = pageRows
+    .map(row => attachSitesVideoSourceMetadata(assetsById.get(row.id), row))
+    .filter(Boolean)
 
-  return rows.map(mapSite)
+  return {
+    items,
+    pageInfo: {
+      limit: safeLimit,
+      hasMore,
+      nextCursor: hasMore ? encodeSitesVideoListCursor(pageRows[pageRows.length - 1]) : null
+    },
+    summary: null,
+    facets: [],
+    folders: [],
+    folderPageInfo: { limit: 0, hasMore: false, nextCursor: null }
+  }
 }
 
 export async function listSiteFolders() {
@@ -8732,7 +9165,7 @@ export async function getSitesTrackingSummary(input = {}) {
   }
 }
 
-export async function getSite(siteId, { includeBlocks = true, includeSubmissions = false } = {}) {
+export async function getSite(siteId, { includeBlocks = true, includeSubmissions = false, submissionLimit = 250 } = {}) {
   const row = await db.get('SELECT * FROM public_sites WHERE id = ?', [siteId])
   const site = mapSite(row)
 
@@ -8745,7 +9178,7 @@ export async function getSite(siteId, { includeBlocks = true, includeSubmissions
   }
 
   if (includeSubmissions) {
-    site.submissions = await listSiteSubmissions(site.id)
+    site.submissions = await listSiteSubmissions(site.id, { limit: submissionLimit })
   }
 
   return site
@@ -8990,7 +9423,8 @@ async function ensureSocialProfileBlock(site, currentBlocks = null) {
   return listSiteBlocks(site.id)
 }
 
-export async function listSiteSubmissions(siteId) {
+export async function listSiteSubmissions(siteId, { limit = 250 } = {}) {
+  const boundedLimit = Math.min(250, Math.max(1, Number.parseInt(String(limit || ''), 10) || 250))
   const rows = await db.all(`
     SELECT
       sub.*,
@@ -9002,8 +9436,8 @@ export async function listSiteSubmissions(siteId) {
     WHERE sub.site_id = ?
       OR (sub.form_site_id = ? AND (sub.site_id IS NULL OR sub.site_id != sub.form_site_id))
     ORDER BY sub.created_at DESC
-    LIMIT 250
-  `, [siteId, siteId])
+    LIMIT ?
+  `, [siteId, siteId, boundedLimit])
 
   return rows.map(mapSubmission)
 }
@@ -11617,7 +12051,7 @@ export async function updateSite(siteId, input = {}) {
     siteId
   ])
 
-  return getSite(siteId, { includeBlocks: true, includeSubmissions: true })
+  return getSite(siteId, { includeBlocks: true, includeSubmissions: false })
 }
 
 export async function deleteSite(siteId) {

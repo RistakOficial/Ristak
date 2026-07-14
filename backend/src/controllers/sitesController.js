@@ -24,6 +24,7 @@ import {
   getSitesFontCss,
   getSitesFontFile,
   getSite,
+  getSitesVideoAsset,
   getSitesDomainSettings,
   getSitePreview,
   getSitesTrackingSummary,
@@ -31,6 +32,7 @@ import {
   createSiteFolder,
   listSiteFolders,
   listSites,
+  listSitesVideoAssets,
   listSiteContentAssets,
   refreshSitesAppDomain,
   refreshSitesPublicDomain,
@@ -64,8 +66,7 @@ import {
 } from '../services/localCalendarService.js'
 import { hasCalendarPaymentsFeature } from '../services/licenseService.js'
 import {
-  getMediaAssetBunnyStreamAnalytics,
-  listMediaAssets
+  getMediaAssetBunnyStreamAnalytics
 } from '../services/mediaStorageService.js'
 import {
   isMetaPrivacyPolicyPath,
@@ -245,7 +246,14 @@ export async function sitesFontFileHandler(req, res) {
 
 export async function getSitesHandler(req, res) {
   try {
-    res.json({ success: true, data: await listSites() })
+    const wantsPage = req.query?.paginated === '1' || req.query?.paginated === 'true' || Boolean(req.query?.cursor)
+    const data = await listSites({
+      limit: req.query?.limit,
+      cursor: req.query?.cursor,
+      paginated: wantsPage,
+      view: req.query?.view
+    })
+    res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error listando sites: ${error.message}`)
     sendError(res, error, 'Error listando sites')
@@ -286,27 +294,32 @@ export async function updateSiteFolderHandler(req, res) {
 
 export async function getSitesVideoAssetsHandler(req, res) {
   try {
-    const assets = []
-    const pageSize = 250
-    let offset = 0
-    while (true) {
-      const page = await listMediaAssets({
-        businessId: req.query.businessId || 'default',
-        mediaType: 'video',
-        status: req.query.status || 'ready',
-        limit: pageSize,
-        offset
+    const businessId = String(req.query.businessId || 'default').trim() || 'default'
+    const streamVideoId = String(req.query.streamVideoId || req.query.stream_video_id || '').trim()
+    const requestedAssetId = String(req.query.assetId || req.query.asset_id || '').trim()
+    if (streamVideoId || requestedAssetId) {
+      const asset = await getSitesVideoAsset({
+        businessId,
+        streamVideoId,
+        assetId: requestedAssetId
       })
-      assets.push(...page)
-      if (page.length < pageSize) break
-      offset += pageSize
+      if (!asset) {
+        return res.status(404).json({ success: false, error: 'Video no encontrado' })
+      }
+      return res.json({ success: true, data: asset })
     }
-    const siteVideos = assets.filter((asset) => {
-      const module = String(asset.module || '').toLowerCase()
-      const sourceModule = String(asset.metadata?.stream?.source?.module || '').toLowerCase()
-      return module === 'sites' || module === 'forms' || sourceModule === 'sites' || sourceModule === 'forms'
+
+    // Los uploads actuales comparten `sites`; `forms` conserva compatibilidad
+    // legacy. Ambos viajan en una sola página keyset: jamás recorremos Media completa.
+    const page = await listSitesVideoAssets({
+      businessId,
+      siteType: req.query.siteType || req.query.site_type || 'videos',
+      landingMode: req.query.landingMode || req.query.landing_mode || 'all',
+      siteId: req.query.siteId || req.query.site_id || '',
+      limit: req.query.limit || 50,
+      cursor: req.query.cursor || ''
     })
-    res.json({ success: true, data: siteVideos })
+    res.json({ success: true, data: page })
   } catch (error) {
     logger.error(`Error listando videos de sites: ${error.message}`)
     sendError(res, error, 'Error listando videos de sites')
@@ -326,6 +339,10 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
       }),
       getVideoPlaybackAggregate({
         assetIds: body.videoAssetIds || body.video_asset_ids || [],
+        breakdownAssetIds: body.videoBreakdownAssetIds || body.video_breakdown_asset_ids || [],
+        siteIds: body.videoSiteIds || body.video_site_ids || body.siteIds || body.site_ids || [],
+        siteScope: body.videoScope || body.video_scope || {},
+        includeSiteBreakdown: false,
         dateFrom,
         dateTo,
         hourly: body.hourly
@@ -566,7 +583,8 @@ export async function getSiteHandler(req, res) {
   try {
     const site = await getSite(req.params.siteId, {
       includeBlocks: true,
-      includeSubmissions: true
+      includeSubmissions: req.query?.includeSubmissions === '1' || req.query?.includeSubmissions === 'true',
+      submissionLimit: req.query?.submissionLimit
     })
 
     if (!site) {

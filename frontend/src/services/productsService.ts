@@ -66,6 +66,14 @@ export interface ProductPayload {
 interface ProductsResponse {
   products?: ProductItem[]
   total?: number
+  summary?: ProductSummary
+}
+
+export interface ProductSummary {
+  total: number
+  totalPrices: number
+  withSku: number
+  withoutPrice: number
 }
 
 interface ProductMutationResponse {
@@ -82,19 +90,36 @@ const unwrapProduct = (response: ProductMutationResponse | ProductItem): Product
 }
 
 export const productsService = {
-  async listProducts(params: { limit?: number; query?: string; includePrices?: boolean; sync?: boolean } = {}) {
+  async listProducts(params: {
+    limit?: number
+    offset?: number
+    query?: string
+    includePrices?: boolean
+    sync?: boolean
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  } = {}) {
     const data = await apiClient.get<ProductsResponse>('/products', {
       params: {
         limit: String(params.limit ?? 100),
+        offset: String(params.offset ?? 0),
         includePrices: params.includePrices === false ? 'false' : 'true',
         ...(params.query ? { query: params.query } : {}),
+        ...(params.sortBy ? { sortBy: params.sortBy } : {}),
+        ...(params.sortOrder ? { sortOrder: params.sortOrder } : {}),
         ...(params.sync ? { sync: 'true' } : {})
       }
     })
 
     return {
       products: Array.isArray(data.products) ? data.products : [],
-      total: data.total ?? data.products?.length ?? 0
+      total: data.total ?? data.products?.length ?? 0,
+      summary: data.summary || {
+        total: data.total ?? data.products?.length ?? 0,
+        totalPrices: 0,
+        withSku: 0,
+        withoutPrice: 0
+      }
     }
   },
 

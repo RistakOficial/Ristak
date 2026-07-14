@@ -80,6 +80,15 @@ export interface SubscriptionSummary {
 export interface SubscriptionListResponse {
   subscriptions: PaymentSubscription[]
   summary: SubscriptionSummary
+  pagination: {
+    page: number
+    limit: number
+    total: number | null
+    totalPages: number | null
+    hasNext: boolean
+    hasPrev: boolean
+    nextCursor: string | null
+  }
 }
 
 export interface SubscriptionPayload {
@@ -139,10 +148,35 @@ const EMPTY_SUMMARY: SubscriptionSummary = {
   nextRunAt: null
 }
 
+const EMPTY_PAGINATION: SubscriptionListResponse['pagination'] = {
+  page: 1,
+  limit: 20,
+  total: 0,
+  totalPages: 1,
+  hasNext: false,
+  hasPrev: false,
+  nextCursor: null
+}
+
 export const subscriptionsService = {
-  async listSubscriptions(params: { status?: string; refresh?: boolean } = {}): Promise<SubscriptionListResponse> {
+  async listSubscriptions(params: {
+    status?: string
+    search?: string
+    page?: number
+    cursor?: string | null
+    limit?: number
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+    refresh?: boolean
+  } = {}): Promise<SubscriptionListResponse> {
     const queryParams: Record<string, string> = {}
     if (params.status && params.status !== 'all') queryParams.status = params.status
+    if (params.search?.trim()) queryParams.search = params.search.trim()
+    if (params.page) queryParams.page = String(params.page)
+    if (params.cursor) queryParams.cursor = params.cursor
+    if (params.limit) queryParams.limit = String(params.limit)
+    if (params.sortBy) queryParams.sortBy = params.sortBy
+    if (params.sortOrder) queryParams.sortOrder = params.sortOrder
     if (params.refresh) queryParams.refresh = 'true'
 
     const data = await apiClient.get<SubscriptionListResponse>('/subscriptions', {
@@ -151,7 +185,14 @@ export const subscriptionsService = {
 
     return {
       subscriptions: Array.isArray(data.subscriptions) ? data.subscriptions : [],
-      summary: data.summary || EMPTY_SUMMARY
+      summary: data.summary || EMPTY_SUMMARY,
+      pagination: {
+        ...EMPTY_PAGINATION,
+        ...(data.pagination || {}),
+        nextCursor: typeof data.pagination?.nextCursor === 'string' && data.pagination.nextCursor
+          ? data.pagination.nextCursor
+          : null
+      }
     }
   },
 

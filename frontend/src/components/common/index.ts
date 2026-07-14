@@ -102,6 +102,7 @@ export { PaymentPlatformLogo, getPaymentPlatformLabel } from './PaymentPlatformL
 export type { PaymentPlatformLogoId } from './PaymentPlatformLogo'
 export { Loading } from './Loading'
 export { AppStartupLoader } from './AppStartupLoader'
+export { LazyLoadErrorBoundary } from './LazyLoadErrorBoundary/LazyLoadErrorBoundary'
 export { MediaUploadTray } from './MediaUploadTray'
 export type { MediaUploadTask, MediaUploadTaskStatus } from './MediaUploadTray'
 export {

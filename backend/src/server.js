@@ -3,8 +3,9 @@ import 'dotenv/config'
 import ffmpegStatic from 'ffmpeg-static'
 import express from 'express'
 import cors from 'cors'
+import compression from 'compression'
 import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
+import { dirname, join, relative, sep } from 'path'
 import {
   databaseReady,
   describePostgresConnectionError,
@@ -36,6 +37,8 @@ import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
 import { repairWhatsAppProtocolMessageIdentities } from './services/whatsappApiService.js'
 import { startMetaOAuthPendingSessionCleanupScheduler } from './services/metaOAuthService.js'
 import { startMetaOAuthIntegrationCleanupScheduler } from './services/metaOAuthIntegrationService.js'
+import { scheduleAutomationTriggerIndexBootstrap } from './services/automationTriggerIndexService.js'
+import { scheduleTrackingVisitorProjectionBackfill } from './services/trackingVisitorProjectionService.js'
 
 // Garantiza un ffmpeg con libopus en CUALQUIER runtime (Render nativo O Docker):
 // apunta FFMPEG_PATH al binario estático empaquetado. Toda la transcodificación
@@ -239,6 +242,38 @@ app.use(cors({
     return callback(null, false)
   },
   credentials: true
+}))
+
+const HTTP_COMPRESSION_MIN_BYTES = 1024
+
+function isHttpCompressibleContentType(contentType = '') {
+  const normalized = String(contentType).split(';', 1)[0].trim().toLowerCase()
+  return normalized === 'application/json' ||
+    normalized.endsWith('+json') ||
+    normalized === 'application/javascript' ||
+    normalized === 'application/x-javascript' ||
+    normalized === 'text/javascript' ||
+    normalized === 'text/css' ||
+    normalized === 'image/svg+xml'
+}
+
+function shouldCompressHttpResponse(req, res) {
+  const contentEncoding = String(res.getHeader('Content-Encoding') || '').trim().toLowerCase()
+  if (contentEncoding && contentEncoding !== 'identity') return false
+
+  const contentType = String(res.getHeader('Content-Type') || '')
+  if (contentType.toLowerCase().startsWith('text/event-stream')) return false
+  if (!isHttpCompressibleContentType(contentType)) return false
+
+  return compression.filter(req, res)
+}
+
+// Comprime únicamente respuestas de texto estructurado. Audio, video, imágenes
+// raster, archivos ya comprimidos y SSE pasan intactos para evitar trabajo inútil
+// y buffering de streams en tiempo real.
+app.use(compression({
+  filter: shouldCompressHttpResponse,
+  threshold: HTTP_COMPRESSION_MIN_BYTES
 }))
 
 const conversationalGoalCallbackJsonParser = express.json({
@@ -474,7 +509,32 @@ app.use('/api/tracking', trackingRoutes)
 // Servir frontend en producción
 if (process.env.NODE_ENV === 'production') {
   const frontendPath = join(__dirname, '../../frontend/dist')
-  app.use(express.static(frontendPath))
+  const revalidatableFrontendFiles = new Set(['index.html', 'sw.js'])
+  const viteHashedAssetPathPattern = /^assets\/(?:.+\/)?[^/]+-[A-Za-z0-9_-]{8,}\.[^/]+$/
+
+  app.use(express.static(frontendPath, {
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, filePath) => {
+      const relativePath = relative(frontendPath, filePath).split(sep).join('/')
+
+      // Vite publica los bundles versionados dentro de /assets. El hash cambia
+      // cuando cambia el contenido, así que pueden vivir un año sin revalidar.
+      if (viteHashedAssetPathPattern.test(relativePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+        return
+      }
+
+      // El documento de entrada, el service worker y todos los manifests deben
+      // poder guardarse, pero se revalidan siempre para detectar un deploy nuevo.
+      if (revalidatableFrontendFiles.has(relativePath) || /^manifest(?:\.[^/]+)?\.webmanifest$/i.test(relativePath)) {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate')
+        return
+      }
+
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate')
+    }
+  }))
 
   app.get('/assets/*', (req, res) => {
     res.set('Cache-Control', 'no-store')
@@ -486,7 +546,7 @@ if (process.env.NODE_ENV === 'production') {
     if (req.path.startsWith('/api') || req.path.startsWith('/webhook')) {
       return res.status(404).json({ error: 'Endpoint no encontrado' })
     }
-    res.set('Cache-Control', 'no-cache')
+    res.set('Cache-Control', 'no-cache, must-revalidate')
     res.sendFile(join(frontendPath, 'index.html'))
   })
 }
@@ -507,6 +567,10 @@ async function startRuntimeServices() {
   // (DB-001) Aplicar migraciones versionadas (cambios de esquema aditivos) sobre el
   // schema base ya creado por initTables, antes de habilitar tráfico.
   await runVersionedMigrations()
+
+  // La columna/index ya acepta tráfico. El histórico converge por lotes fuera
+  // de la compuerta de readiness; si el deploy se corta, retoma donde quedó.
+  scheduleTrackingVisitorProjectionBackfill()
 
   // Coexistence puede entregar el mismo mensaje por Baileys y por el webhook
   // oficial. Antes de aceptar tráfico, fusiona únicamente identidades exactas y
@@ -538,6 +602,15 @@ async function startRuntimeServices() {
     'startup:data-maintenance',
     runStartupDataMaintenance,
     'No se pudo completar el mantenimiento histórico en segundo plano'
+  )
+
+  // Las instalaciones existentes pueden tener miles de grafos publicados. El
+  // índice se reconstruye por lotes sin retrasar el healthcheck; mientras
+  // converge, el motor conserva el lookup legacy para no perder eventos.
+  runStartupDrainTask(
+    'startup:automation-trigger-index',
+    scheduleAutomationTriggerIndexBootstrap,
+    'No se pudo preparar el índice de disparadores de automatizaciones'
   )
 
   runStartupDrainTask(

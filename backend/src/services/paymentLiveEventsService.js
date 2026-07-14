@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 
 const HEARTBEAT_INTERVAL_MS = 25_000
 const clients = new Map()
@@ -139,6 +140,9 @@ function derivePaymentScopes(payment = {}) {
 }
 
 function publishPaymentEvent(eventName, payload) {
+  // Analíticas agrega compras/clientes: la coherencia no puede depender de que
+  // exista un navegador conectado al stream SSE.
+  invalidateTrackingAnalyticsCache()
   if (clients.size === 0) return
 
   for (const [clientId, client] of clients.entries()) {

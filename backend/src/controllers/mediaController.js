@@ -1,19 +1,25 @@
 import { promises as fs } from 'fs'
+import { Readable } from 'stream'
+import { pipeline } from 'stream/promises'
 import JSZip from 'jszip'
 import {
   cancelBunnyStreamResumableUpload,
+  deleteMediaSelection,
   extractMediaAssetIdFromUrl,
   finalizeBunnyStreamResumableUpload,
   getMediaAsset,
   getMediaAssetBunnyStreamAnalytics,
-  getMediaAssetBuffer,
   getMediaAssetFile,
+  getMediaAssetReadStream,
   getStorageUsage,
   listMediaAssets,
+  listMediaFolders,
   moveMediaAssets,
+  moveMediaSelection,
   prepareBunnyStreamResumableUpload,
   replaceMediaAsset,
   retryMediaAsset,
+  resolveMediaAssetSelection,
   runStorageDiagnostics,
   softDeleteMediaAsset,
   syncMediaAssetBunnyStream,
@@ -32,6 +38,7 @@ import {
 } from '../services/mediaUploadSafetyService.js'
 
 const MAX_ARCHIVE_DOWNLOAD_ITEMS = Number(process.env.MEDIA_MAX_ARCHIVE_DOWNLOAD_ITEMS || 500)
+const MAX_ARCHIVE_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
 function parseBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback
@@ -45,7 +52,8 @@ function sendError(res, error, fallback = 'Error procesando almacenamiento multi
   res.status(status).json({
     success: false,
     error: error.message || fallback,
-    ...(error.code ? { code: error.code } : {})
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.details ? { details: error.details } : {})
   })
 }
 
@@ -145,6 +153,47 @@ function downloadInputError(message, status = 400, code = 'invalid_media_downloa
   error.status = status
   error.code = code
   return error
+}
+
+export function validateMediaArchiveEntries(entries = []) {
+  let totalBytes = 0
+  for (const entry of entries) {
+    const sizeBytes = Math.floor(Number(entry?.sizeBytes) || 0)
+    if (sizeBytes <= 0) {
+      throw downloadInputError(
+        'Uno de los archivos no tiene un tamaño verificable. Vuelve a subirlo o descárgalo por separado.',
+        409,
+        'media_archive_size_unknown'
+      )
+    }
+    totalBytes += sizeBytes
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_ARCHIVE_DOWNLOAD_BYTES) {
+      throw downloadInputError(
+        'El ZIP supera el límite seguro de 512 MB. Descarga la carpeta en lotes más pequeños.',
+        413,
+        'media_archive_bytes_too_large'
+      )
+    }
+  }
+  return totalBytes
+}
+
+function lazyBoundedArchiveStream(entry, budget) {
+  return Readable.from((async function * readEntry() {
+    const source = await getMediaAssetReadStream(entry.id)
+    for await (const rawChunk of source.stream) {
+      const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk)
+      budget.bytesRead += chunk.length
+      if (budget.bytesRead > MAX_ARCHIVE_DOWNLOAD_BYTES) {
+        throw downloadInputError(
+          'El contenido real del ZIP superó el límite seguro de 512 MB.',
+          413,
+          'media_archive_bytes_too_large'
+        )
+      }
+      yield chunk
+    }
+  })())
 }
 
 function cleanString(value = '') {
@@ -484,17 +533,44 @@ export async function uploadMediaHandler(req, res) {
 
 export async function listMediaAssetsHandler(req, res) {
   try {
-    const assets = await listMediaAssets({
+    const hasFolderPath = Object.prototype.hasOwnProperty.call(req.query || {}, 'path') ||
+      Object.prototype.hasOwnProperty.call(req.query || {}, 'folderPath') ||
+      Object.prototype.hasOwnProperty.call(req.query || {}, 'folder_path')
+    const page = await listMediaAssets({
       businessId: req.query.businessId || 'default',
       module: req.query.module || '',
       mediaType: req.query.mediaType || req.query.media_type || '',
       status: req.query.status || '',
+      search: req.query.search || req.query.q || '',
+      folderPath: hasFolderPath
+        ? req.query.path ?? req.query.folderPath ?? req.query.folder_path ?? ''
+        : null,
+      recursive: parseBoolean(req.query.recursive),
       limit: req.query.limit,
-      offset: req.query.offset
+      cursor: req.query.cursor || '',
+      includeMeta: parseBoolean(req.query.includeMeta ?? req.query.include_meta, true),
+      includeFolders: parseBoolean(req.query.includeFolders ?? req.query.include_folders, true)
     })
-    res.json({ success: true, data: assets })
+    res.json({ success: true, data: page })
   } catch (error) {
     sendError(res, error, 'Error listando archivos multimedia')
+  }
+}
+
+export async function listMediaFoldersHandler(req, res) {
+  try {
+    const page = await listMediaFolders({
+      businessId: req.query.businessId || 'default',
+      parentPath: req.query.parentPath ?? req.query.parent_path ?? req.query.path ?? '',
+      module: req.query.module || '',
+      mediaType: req.query.mediaType || req.query.media_type || '',
+      status: req.query.status || '',
+      limit: req.query.limit,
+      cursor: req.query.cursor || ''
+    })
+    res.json({ success: true, data: page })
+  } catch (error) {
+    sendError(res, error, 'Error listando carpetas multimedia')
   }
 }
 
@@ -538,51 +614,85 @@ export async function deleteMediaAssetHandler(req, res) {
 
 export async function downloadMediaAssetHandler(req, res) {
   try {
-    const { buffer, mimeType, filename } = await getMediaAssetBuffer(req.params.assetId)
+    const { stream, contentType, contentLength, filename } = await getMediaAssetReadStream(req.params.assetId)
     const downloadName = safeHeaderFilename(filename || req.params.assetId, req.params.assetId)
-    res.setHeader('Content-Type', mimeType || 'application/octet-stream')
-    res.setHeader('Content-Length', String(buffer.length))
+    res.setHeader('Content-Type', contentType || 'application/octet-stream')
+    if (contentLength > 0) res.setHeader('Content-Length', String(contentLength))
     res.setHeader('Cache-Control', 'private, no-store')
     res.setHeader('Content-Disposition', attachmentDisposition(downloadName))
-    res.send(buffer)
+    await pipeline(stream, res)
   } catch (error) {
+    if (res.headersSent) {
+      res.destroy(error)
+      return
+    }
     sendError(res, error, 'Error descargando archivo multimedia')
   }
 }
 
 export async function downloadMediaAssetsArchiveHandler(req, res) {
   try {
-    const entries = archiveEntriesFromBody(req.body)
-    if (!entries.length) {
+    const body = req.body || {}
+    const requestedEntries = archiveEntriesFromBody(body)
+    const requestedIds = Array.from(new Set([
+      ...(Array.isArray(body.assetIds) ? body.assetIds : []),
+      ...requestedEntries.map((entry) => entry.id)
+    ].map(cleanString).filter(Boolean)))
+    const folderPaths = Array.isArray(body.folderPaths) ? body.folderPaths : []
+    if (!requestedIds.length && !folderPaths.length) {
       throw downloadInputError('Selecciona al menos un archivo para descargar.')
+    }
+    const pathOverrides = new Map(requestedEntries.map((entry) => [entry.id, entry.path]))
+    const resolvedEntries = await resolveMediaAssetSelection({
+      businessId: body.businessId || body.business_id || 'default',
+      assetIds: requestedIds,
+      folderPaths,
+      mediaType: body.mediaType || body.media_type || '',
+      status: body.status || '',
+      maxItems: MAX_ARCHIVE_DOWNLOAD_ITEMS
+    })
+    const entries = resolvedEntries.map((entry) => ({
+      ...entry,
+      path: pathOverrides.get(entry.id) || entry.path
+    }))
+    if (!entries.length) {
+      throw downloadInputError('No se encontraron archivos activos dentro de la selección.', 404, 'media_selection_empty')
     }
     if (entries.length > MAX_ARCHIVE_DOWNLOAD_ITEMS) {
       throw downloadInputError(`Selecciona máximo ${MAX_ARCHIVE_DOWNLOAD_ITEMS} archivos por descarga.`, 413, 'media_archive_too_large')
     }
+    validateMediaArchiveEntries(entries)
 
     const zip = new JSZip()
     const usedPaths = new Set()
+    const budget = { bytesRead: 0 }
 
     for (const entry of entries) {
-      const { buffer, filename } = await getMediaAssetBuffer(entry.id)
-      const fallbackName = safeHeaderFilename(filename || `${entry.id}.bin`, `${entry.id}.bin`)
+      const fallbackName = safeHeaderFilename(entry.path || `${entry.id}.bin`, `${entry.id}.bin`)
       const archivePath = uniqueZipPath(sanitizeZipPath(entry.path, fallbackName), usedPaths)
-      zip.file(archivePath, buffer, { binary: true })
+      // El generador async abre un solo archivo cuando JSZip lo consume. No
+      // dispara cientos de lecturas remotas horizontales ni conserva buffers
+      // completos en memoria.
+      zip.file(archivePath, lazyBoundedArchiveStream(entry, budget), { binary: true })
     }
 
-    const archive = await zip.generateAsync({
-      type: 'nodebuffer',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 }
-    })
     const archiveName = ensureZipFilename(req.body?.filename)
-
     res.setHeader('Content-Type', 'application/zip')
-    res.setHeader('Content-Length', String(archive.length))
     res.setHeader('Cache-Control', 'private, no-store')
     res.setHeader('Content-Disposition', attachmentDisposition(archiveName))
-    res.send(archive)
+    const archiveStream = zip.generateNodeStream({
+      type: 'nodebuffer',
+      streamFiles: true,
+      // Imágenes, audio y video ya llegan comprimidos. STORE evita quemar CPU
+      // y permite empezar a entregar el ZIP desde el primer archivo.
+      compression: 'STORE'
+    })
+    await pipeline(archiveStream, res)
   } catch (error) {
+    if (res.headersSent) {
+      res.destroy(error)
+      return
+    }
     sendError(res, error, 'Error descargando archivos multimedia')
   }
 }
@@ -599,6 +709,39 @@ export async function moveMediaAssetsHandler(req, res) {
     res.json({ success: true, data: moved })
   } catch (error) {
     sendError(res, error, 'Error moviendo archivos multimedia')
+  }
+}
+
+export async function moveMediaSelectionHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const result = await moveMediaSelection({
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      assetIds: Array.isArray(body.assetIds) ? body.assetIds : [],
+      folderPaths: Array.isArray(body.folderPaths) ? body.folderPaths : [],
+      mediaType: body.mediaType || body.media_type || '',
+      status: body.status || '',
+      targetFolderPath: body.targetFolderPath || body.folderPath || ''
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    sendError(res, error, 'Error moviendo la selección multimedia')
+  }
+}
+
+export async function deleteMediaSelectionHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const result = await deleteMediaSelection({
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      assetIds: Array.isArray(body.assetIds) ? body.assetIds : [],
+      folderPaths: Array.isArray(body.folderPaths) ? body.folderPaths : [],
+      mediaType: body.mediaType || body.media_type || '',
+      status: body.status || ''
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    sendError(res, error, 'Error eliminando la selección multimedia')
   }
 }
 

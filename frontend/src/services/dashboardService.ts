@@ -1,6 +1,10 @@
 // Servicio para el Dashboard principal
 import { apiUrl } from './apiBaseUrl'
 import { formatDateToISO, formatEndDateToISO } from '@/utils/format'
+import type { CalendarEvent } from './calendarsService'
+import type { ContactListItem } from './reportsService'
+import type { Transaction } from './transactionsService'
+import { trackingService, type CursorPage } from './trackingService'
 
 export interface DashboardKPI {
   value: number;
@@ -16,6 +20,12 @@ export interface DashboardMetrics {
   gananciaNeta: DashboardKPI;
   reembolsos: DashboardKPI;
   ltvPromedio: DashboardKPI;
+}
+
+export interface DashboardOperationalSnapshot {
+  transactions: Transaction[];
+  contacts: ContactListItem[];
+  appointments: CalendarEvent[];
 }
 
 export interface ChartData {
@@ -58,6 +68,15 @@ export interface DashboardVisitorDetail {
     appointments?: any[];
     hasAttendedAppointment?: boolean;
   } | null;
+}
+
+export interface DashboardVisitorsPageParams {
+  start: Date;
+  end: Date;
+  scope?: DashboardFunnelScope;
+  cursor?: string | null;
+  search?: string;
+  limit?: number;
 }
 
 export interface SourceDatum {
@@ -120,6 +139,38 @@ class DashboardService {
     } catch (error) {
       // TODO: Implement proper logging service
       return this.getDefaultMetrics();
+    }
+  }
+
+  async getOperationalSnapshot(params: {
+    start: Date;
+    end: Date;
+  }): Promise<DashboardOperationalSnapshot> {
+    const emptySnapshot: DashboardOperationalSnapshot = {
+      transactions: [],
+      contacts: [],
+      appointments: []
+    };
+
+    try {
+      const queryParams = new URLSearchParams({
+        startDate: formatDateToISO(params.start),
+        endDate: formatDateToISO(params.end)
+      });
+      const response = await fetch(apiUrl(`/api/dashboard/operational-snapshot?${queryParams}`));
+
+      if (!response.ok) return emptySnapshot;
+
+      const result = await response.json();
+      const data = result?.data || {};
+
+      return {
+        transactions: Array.isArray(data.transactions) ? data.transactions : [],
+        contacts: Array.isArray(data.contacts) ? data.contacts : [],
+        appointments: Array.isArray(data.appointments) ? data.appointments : []
+      };
+    } catch {
+      return emptySnapshot;
     }
   }
 
@@ -212,6 +263,7 @@ class DashboardService {
     end: Date;
     groupBy?: 'day' | 'month';
     periods?: { start: string; end: string }[];
+    signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -223,7 +275,7 @@ class DashboardService {
         queryParams.set('periods', JSON.stringify(params.periods));
       }
 
-      const response = await fetch(apiUrl(`/api/dashboard/visitors?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/visitors?${queryParams}`), { signal: params.signal });
 
       if (!response.ok) {
         return [];
@@ -236,35 +288,33 @@ class DashboardService {
     }
   }
 
-  async getVisitorsList(params: {
-    start: Date;
-    end: Date;
-    scope?: DashboardFunnelScope;
-  }): Promise<DashboardVisitorDetail[]> {
+  async getVisitorsPage(params: DashboardVisitorsPageParams): Promise<CursorPage<DashboardVisitorDetail>> {
     try {
-      const queryParams = new URLSearchParams({
+      return await trackingService.getVisitorsPage<DashboardVisitorDetail>({
         startDate: formatDateToISO(params.start),
         endDate: formatEndDateToISO(params.end),
-        scope: params.scope || 'all'
-      });
-
-      const response = await fetch(apiUrl(`/api/tracking/visitors?${queryParams}`));
-
-      if (!response.ok) {
-        return [];
-      }
-
-      const result = await response.json();
-      return Array.isArray(result?.data) ? result.data : [];
+        scope: params.scope || 'all',
+        cursor: params.cursor,
+        search: params.search,
+        limit: params.limit
+      })
     } catch (error) {
-      return [];
+      return {
+        items: [],
+        pagination: { limit: Math.min(100, Math.max(1, params.limit ?? 50)), hasNext: false, hasMore: false, nextCursor: null }
+      }
     }
+  }
+
+  async getVisitorsList(params: DashboardVisitorsPageParams): Promise<DashboardVisitorDetail[]> {
+    return (await this.getVisitorsPage(params)).items
   }
 
   async getLeadsData(params: {
     start: Date;
     end: Date;
     groupBy?: 'day' | 'month';
+    signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -273,7 +323,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(apiUrl(`/api/dashboard/leads?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/leads?${queryParams}`), { signal: params.signal });
 
       if (!response.ok) {
         return [];
@@ -291,6 +341,7 @@ class DashboardService {
     end: Date;
     groupBy?: 'day' | 'month';
     periods?: { start: string; end: string }[];
+    signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -302,7 +353,7 @@ class DashboardService {
         queryParams.set('periods', JSON.stringify(params.periods));
       }
 
-      const response = await fetch(apiUrl(`/api/dashboard/appointments?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/appointments?${queryParams}`), { signal: params.signal });
 
       if (!response.ok) {
         return [];
@@ -320,6 +371,7 @@ class DashboardService {
     end: Date;
     groupBy?: 'day' | 'month';
     periods?: { start: string; end: string }[];
+    signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -331,7 +383,7 @@ class DashboardService {
         queryParams.set('periods', JSON.stringify(params.periods));
       }
 
-      const response = await fetch(apiUrl(`/api/dashboard/attendances?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/attendances?${queryParams}`), { signal: params.signal });
 
       if (!response.ok) {
         return [];
@@ -348,6 +400,7 @@ class DashboardService {
     start: Date;
     end: Date;
     groupBy?: 'day' | 'month';
+    signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -356,7 +409,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(apiUrl(`/api/dashboard/sales?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/sales?${queryParams}`), { signal: params.signal });
 
       if (!response.ok) {
         return [];

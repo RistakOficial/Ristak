@@ -21,7 +21,7 @@ test('Android y /movil protegen Analiticas con el contrato Dashboard', async () 
   assert.match(nativeAccess, /analytics:\s*'dashboard'/)
   assert.match(
     frontendApp,
-    /path=\{`\$\{PHONE_APP_PREFIX\}\/analytics`\}[\s\S]*?<AccessRoute moduleKey="dashboard">[\s\S]*?<PhoneAnalytics \/>/
+    /path=\{`\$\{PHONE_APP_PREFIX\}\/analytics`\}[\s\S]*?<AccessRoute moduleKey="dashboard">[\s\S]*?<LazyPhoneAnalytics \/>/
   )
   assert.match(phoneChat, /hasMobileAnalyticsAccess\s*=\s*hasModuleAccess\(user, 'dashboard', 'read'\)/)
   assert.match(phoneChat, /section === 'analytics' && !hasMobileAnalyticsAccess/)

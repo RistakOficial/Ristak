@@ -1,4 +1,4 @@
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import {
   collectAutomationFlowRequiredFeatures,
   normalizeFlow,
@@ -25,13 +25,25 @@ import {
   normalizeContactNameFields,
   splitContactName as splitFormattedContactName
 } from '../utils/contactNameFormatter.js'
+import {
+  listDraftAutomationRowsForWebhookEndpoint,
+  removeAutomationTriggerIndex,
+  replaceAutomationTriggerIndex
+} from './automationTriggerIndexService.js'
 
-const usePostgres = !!process.env.DATABASE_URL
+const usePostgres = databaseDialect === 'postgres'
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
 const AUTOMATION_NAME_MAX_LENGTH = 120
 const DEFAULT_AUTOMATION_NAME = 'Automatización sin título'
+const DEFAULT_AUTOMATIONS_PAGE_SIZE = 50
+const MAX_AUTOMATIONS_PAGE_SIZE = 100
+let automationWebhookSampleAfterLockHookForTest = null
 
 export const AUTOMATION_STATUSES = ['draft', 'published', 'paused', 'archived']
+
+export function setAutomationWebhookSampleAfterLockHookForTest(hook) {
+  automationWebhookSampleAfterLockHookForTest = typeof hook === 'function' ? hook : null
+}
 
 function makeId(prefix) {
   return createRistakId(prefix)
@@ -65,6 +77,46 @@ function notFound(message) {
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function escapeAutomationLikePattern(value) {
+  return String(value || '')
+    .replaceAll('!', '!!')
+    .replaceAll('%', '!%')
+    .replaceAll('_', '!_')
+}
+
+function normalizeAutomationPageLimit(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed)) return DEFAULT_AUTOMATIONS_PAGE_SIZE
+  return Math.min(MAX_AUTOMATIONS_PAGE_SIZE, Math.max(1, parsed))
+}
+
+function encodeAutomationCursor(row) {
+  if (!row) return null
+  const rawUpdatedAt = row.sort_updated_at
+  const updatedAt = rawUpdatedAt instanceof Date
+    ? rawUpdatedAt.toISOString()
+    : String(rawUpdatedAt || '')
+  return Buffer.from(JSON.stringify({
+    updatedAt,
+    id: String(row.id || '')
+  }), 'utf8').toString('base64url')
+}
+
+function decodeAutomationCursor(value) {
+  const cursor = cleanString(value)
+  if (!cursor) return null
+
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    const updatedAt = cleanString(parsed?.updatedAt)
+    const id = cleanString(parsed?.id)
+    if (!updatedAt || !id) throw new Error('invalid cursor')
+    return { updatedAt, id }
+  } catch {
+    throw badRequest('Cursor de automatizaciones inválido')
+  }
 }
 
 function parseFlow(rawFlow) {
@@ -410,6 +462,112 @@ export async function listAutomations() {
   }))
 }
 
+/**
+ * Listado acotado para la librería y los selectores de automatizaciones.
+ *
+ * El cursor usa (updated_at, id) para que insertar o borrar registros mientras
+ * el usuario navega no desplace las páginas. Los grafos sólo se leen cuando la
+ * librería pide explícitamente las insignias de revisión; los catálogos y
+ * selectores reciben summaries puros.
+ */
+export async function listAutomationsPage(options = {}) {
+  const limit = normalizeAutomationPageLimit(options.limit)
+  const cursor = decodeAutomationCursor(options.cursor)
+  const search = cleanString(options.search).slice(0, 200)
+  const requestedStatus = cleanString(options.status).toLowerCase()
+  const status = AUTOMATION_STATUSES.includes(requestedStatus) ? requestedStatus : ''
+  const rawFolderId = options.folderId === undefined || options.folderId === null
+    ? null
+    : cleanString(options.folderId)
+  const includeReview = options.includeReview === true
+  const conditions = []
+  const params = []
+
+  if (search) {
+    const searchDocument = `LOWER(
+      COALESCE(id, '') || ' ' ||
+      COALESCE(name, '') || ' ' ||
+      COALESCE(description, '')
+    )`
+    conditions.push(`${searchDocument} LIKE ? ESCAPE '!'`)
+    params.push(`%${escapeAutomationLikePattern(search.toLowerCase())}%`)
+  }
+
+  if (status) {
+    conditions.push('status = ?')
+    params.push(status)
+  }
+
+  if (rawFolderId !== null) {
+    if (!rawFolderId || rawFolderId === 'root') {
+      conditions.push('folder_id IS NULL')
+    } else {
+      conditions.push('folder_id = ?')
+      params.push(rawFolderId)
+    }
+  }
+
+  const sortTimestamp = "COALESCE(updated_at, created_at, '1970-01-01 00:00:00')"
+  if (cursor) {
+    conditions.push(`(${sortTimestamp}, id) < (?, ?)`)
+    params.push(cursor.updatedAt, cursor.id)
+  }
+
+  const rows = await db.all(
+    `SELECT
+       id,
+       folder_id,
+       name,
+       description,
+       status,
+       created_at,
+       updated_at,
+       published_at,
+       ${sortTimestamp} AS sort_updated_at
+     FROM automations
+     ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+     ORDER BY ${sortTimestamp} DESC, id DESC
+     LIMIT ?`,
+    [...params, limit + 1]
+  )
+
+  const hasMore = rows.length > limit
+  const pageRows = hasMore ? rows.slice(0, limit) : rows
+  const reviewIds = includeReview
+    ? pageRows
+        .filter((row) => ['published', 'paused'].includes(row.status || 'draft'))
+        .map((row) => row.id)
+    : []
+  const [catalogs, reviewRows] = reviewIds.length > 0
+    ? await Promise.all([
+        loadAutomationReferenceCatalogs(),
+        db.all(
+          `SELECT id, flow, published_flow
+           FROM automations
+           WHERE id IN (${reviewIds.map(() => '?').join(', ')})`,
+          reviewIds
+        )
+      ])
+    : [null, []]
+  const reviewRowsById = new Map(reviewRows.map((row) => [row.id, row]))
+  const items = pageRows.map((row) => {
+    const reviewRow = reviewRowsById.get(row.id)
+    const hydratedRow = reviewRow ? { ...row, ...reviewRow } : row
+    return mapAutomationRow(hydratedRow, {
+      reviewStatus: catalogs ? getReviewStatusForAutomationRow(hydratedRow, catalogs) : AUTOMATION_REVIEW_OK
+    })
+  })
+
+  return {
+    items,
+    pageInfo: {
+      limit,
+      hasMore,
+      nextCursor: hasMore ? encodeAutomationCursor(pageRows[pageRows.length - 1]) : null
+    }
+  }
+}
+
 export async function getAutomation(automationId) {
   const row = await db.get('SELECT * FROM automations WHERE id = ?', [automationId])
   if (!row) throw notFound('Automatización no encontrada')
@@ -435,11 +593,14 @@ export async function createAutomation(input = {}) {
   const flow = normalizeFlow(input.flow ? input.flow : defaultFlow())
   await assertAutomationFlowFeatureAccess(flow)
 
-  await db.run(
-    `INSERT INTO automations (id, folder_id, name, description, status, flow, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'draft', ${flowPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [id, folderId, name, input.description || '', JSON.stringify(flow)]
-  )
+  await db.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO automations (id, folder_id, name, description, status, flow, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'draft', ${flowPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [id, folderId, name, input.description || '', JSON.stringify(flow)]
+    )
+    await replaceAutomationTriggerIndex(tx, { id, status: 'draft', flow, published_flow: null })
+  })
 
   return getAutomation(id)
 }
@@ -464,7 +625,14 @@ export async function updateAutomation(automationId, input = {}) {
 
   let status = current.status
   let publishedAt = current.publishedAt
-  let publishedFlow = row.published_flow ? normalizeFlow(parseFlow(row.published_flow)) : null
+  // Una instalación legacy podía tener una automatización publicada sin
+  // published_flow. Congelamos el contrato vivo actual antes de guardar cambios
+  // de borrador para que editar no cambie lo que corre hasta volver a publicar.
+  let publishedFlow = row.published_flow
+    ? normalizeFlow(parseFlow(row.published_flow))
+    : current.status === 'published'
+      ? normalizeFlow(parseFlow(row.flow))
+      : null
   if (input.status !== undefined) {
     if (!AUTOMATION_STATUSES.includes(input.status)) {
       throw badRequest('Estado de automatización inválido')
@@ -492,22 +660,30 @@ export async function updateAutomation(automationId, input = {}) {
     }
   }
 
-  await db.run(
-    `UPDATE automations
-     SET name = ?, description = ?, folder_id = ?, status = ?, flow = ${flowPlaceholder},
-         published_flow = ${flowPlaceholder}, published_at = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [
-      name,
-      description,
-      folderId,
+  await db.transaction(async (tx) => {
+    await tx.run(
+      `UPDATE automations
+       SET name = ?, description = ?, folder_id = ?, status = ?, flow = ${flowPlaceholder},
+           published_flow = ${flowPlaceholder}, published_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        name,
+        description,
+        folderId,
+        status,
+        JSON.stringify(flow),
+        publishedFlow ? JSON.stringify(publishedFlow) : null,
+        publishedAt,
+        automationId
+      ]
+    )
+    await replaceAutomationTriggerIndex(tx, {
+      id: automationId,
       status,
-      JSON.stringify(flow),
-      publishedFlow ? JSON.stringify(publishedFlow) : null,
-      publishedAt,
-      automationId
-    ]
-  )
+      flow,
+      published_flow: publishedFlow
+    })
+  })
 
   return getAutomation(automationId)
 }
@@ -517,11 +693,19 @@ export async function duplicateAutomation(automationId) {
   const id = makeId('auto')
   const name = await resolveNewAutomationName(`${original.name} (copia)`.slice(0, AUTOMATION_NAME_MAX_LENGTH))
 
-  await db.run(
-    `INSERT INTO automations (id, folder_id, name, description, status, flow, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'draft', ${flowPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [id, original.folderId, name, original.description, JSON.stringify(original.flow)]
-  )
+  await db.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO automations (id, folder_id, name, description, status, flow, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'draft', ${flowPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [id, original.folderId, name, original.description, JSON.stringify(original.flow)]
+    )
+    await replaceAutomationTriggerIndex(tx, {
+      id,
+      status: 'draft',
+      flow: original.flow,
+      published_flow: null
+    })
+  })
 
   return getAutomation(id)
 }
@@ -547,6 +731,7 @@ export async function deleteAutomation(automationId) {
         WHERE automation_id = ?`,
       [id]
     )
+    await removeAutomationTriggerIndex(tx, id)
     await tx.run('DELETE FROM automations WHERE id = ?', [id])
     return { id }
   })
@@ -556,59 +741,89 @@ export async function recordAutomationWebhookSample({ endpointId, method, body, 
   const cleanEndpointId = typeof endpointId === 'string' ? endpointId.trim() : ''
   if (!cleanEndpointId) throw badRequest('Endpoint de webhook inválido')
 
-  const rows = await db.all('SELECT id, flow FROM automations ORDER BY updated_at DESC')
+  const { rows } = await listDraftAutomationRowsForWebhookEndpoint(cleanEndpointId)
   const receivedAt = new Date().toISOString()
   const sampleResponse = normalizeWebhookSample({ body, query })
   if (!hasWebhookSampleData(sampleResponse)) {
     throw badRequest('Envía al menos un dato de prueba para mapear variables del webhook')
   }
 
-  for (const row of rows) {
-    const flow = normalizeFlow(parseFlow(row.flow))
-    const startNode = flow.nodes.find((node) => node.type === START_NODE_TYPE)
-    if (!startNode) continue
+  for (const candidate of rows) {
+    // En fallback puede haber miles de grafos. Filtrar el snapshot evita abrir
+    // una transacción por cada fila, pero la coincidencia se valida otra vez
+    // bajo lock antes de escribir.
+    const candidateFlow = normalizeFlow(parseFlow(candidate.flow))
+    const candidateStart = candidateFlow.nodes.find((node) => node.type === START_NODE_TYPE)
+    const candidateTriggers = Array.isArray(candidateStart?.config?.triggers)
+      ? candidateStart.config.triggers
+      : []
+    if (!candidateTriggers.some((trigger) =>
+      trigger?.type === 'trigger-incoming-webhook'
+      && String(trigger?.config?.endpointId || '') === cleanEndpointId
+    )) continue
 
-    const triggers = Array.isArray(startNode.config?.triggers) ? startNode.config.triggers : []
-    const triggerIndex = triggers.findIndex(
-      (trigger) =>
-        trigger?.type === 'trigger-incoming-webhook' &&
-        String(trigger?.config?.endpointId || '') === cleanEndpointId
-    )
-    if (triggerIndex === -1) continue
+    const result = await db.transaction(async (tx) => {
+      const lockSuffix = usePostgres ? ' FOR UPDATE' : ''
+      const current = await tx.get(
+        `SELECT id, status, flow, published_flow
+         FROM automations
+         WHERE id = ?${lockSuffix}`,
+        [candidate.id]
+      )
+      if (!current) return null
 
-    const nextTriggers = triggers.map((trigger, index) =>
-      index === triggerIndex
-        ? {
-            ...trigger,
-            config: {
-              ...(trigger.config || {}),
-              sampleResponse,
-              sampleReceivedAt: receivedAt,
-              sampleMethod: method || 'POST',
-              sampleStatus: 'received'
+      const flow = normalizeFlow(parseFlow(current.flow))
+      const startNode = flow.nodes.find((node) => node.type === START_NODE_TYPE)
+      if (!startNode) return null
+      const triggers = Array.isArray(startNode.config?.triggers) ? startNode.config.triggers : []
+      const triggerIndex = triggers.findIndex(
+        (trigger) =>
+          trigger?.type === 'trigger-incoming-webhook'
+          && String(trigger?.config?.endpointId || '') === cleanEndpointId
+      )
+      if (triggerIndex === -1) return null
+
+      if (automationWebhookSampleAfterLockHookForTest) {
+        await automationWebhookSampleAfterLockHookForTest({ automationId: current.id })
+      }
+
+      const nextTriggers = triggers.map((trigger, index) =>
+        index === triggerIndex
+          ? {
+              ...trigger,
+              config: {
+                ...(trigger.config || {}),
+                sampleResponse,
+                sampleReceivedAt: receivedAt,
+                sampleMethod: method || 'POST',
+                sampleStatus: 'received'
+              }
             }
-          }
-        : trigger
-    )
-    const nextNodes = flow.nodes.map((node) =>
-      node.id === startNode.id
-        ? { ...node, config: { ...node.config, triggers: nextTriggers } }
-        : node
-    )
-    const nextFlow = { ...flow, nodes: nextNodes }
+          : trigger
+      )
+      const nextNodes = flow.nodes.map((node) =>
+        node.id === startNode.id
+          ? { ...node, config: { ...node.config, triggers: nextTriggers } }
+          : node
+      )
+      const nextFlow = { ...flow, nodes: nextNodes }
 
-    await db.run(
-      `UPDATE automations SET flow = ${flowPlaceholder}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [JSON.stringify(nextFlow), row.id]
-    )
+      await tx.run(
+        `UPDATE automations SET flow = ${flowPlaceholder}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [JSON.stringify(nextFlow), current.id]
+      )
+      await replaceAutomationTriggerIndex(tx, { ...current, flow: nextFlow })
 
-    return {
-      automationId: row.id,
-      triggerId: triggers[triggerIndex].id,
-      endpointId: cleanEndpointId,
-      sampleResponse,
-      sampleReceivedAt: receivedAt
-    }
+      return {
+        automationId: current.id,
+        triggerId: triggers[triggerIndex].id,
+        endpointId: cleanEndpointId,
+        sampleResponse,
+        sampleReceivedAt: receivedAt
+      }
+    })
+
+    if (result) return result
   }
 
   throw notFound('Webhook de automatización no encontrado')
@@ -625,9 +840,9 @@ export async function testAutomationWebhookAction(input = {}) {
   return testWebhookAction(config, ctx)
 }
 
-export async function getAutomationsOverview() {
-  const [folders, automations] = await Promise.all([listFolders(), listAutomations()])
-  return { folders, automations }
+export async function getAutomationsOverview(options = {}) {
+  const [folders, page] = await Promise.all([listFolders(), listAutomationsPage(options)])
+  return { folders, automations: page.items, pageInfo: page.pageInfo }
 }
 
 

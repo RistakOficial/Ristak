@@ -44,6 +44,99 @@ export function sqliteTimezoneOffsetClause(timezone = DEFAULT_TIMEZONE, referenc
   return `'${offsetMinutes} minutes'`
 }
 
+const sqliteTimezoneTransitionCache = new Map()
+
+function sqliteTimezoneTransitionWindow(startUtc, endUtc) {
+  const parsedStart = DateTime.fromISO(String(startUtc || ''), { zone: 'utc' })
+  const parsedEnd = DateTime.fromISO(String(endUtc || ''), { zone: 'utc' })
+  const currentYear = DateTime.utc().year
+  const startYear = parsedStart.isValid ? parsedStart.year - 1 : 2000
+  const endYear = parsedEnd.isValid ? parsedEnd.year + 1 : currentYear + 5
+
+  return {
+    start: DateTime.utc(Math.max(1970, startYear), 1, 1).startOf('day'),
+    end: DateTime.utc(Math.min(2200, Math.max(startYear + 1, endYear)), 1, 1).startOf('day')
+  }
+}
+
+function findTimezoneTransition(timezone, lowMillis, highMillis, previousOffset) {
+  let low = lowMillis
+  let high = highMillis
+
+  while (high - low > 1) {
+    const midpoint = Math.floor((low + high) / 2)
+    const offset = DateTime.fromMillis(midpoint, { zone: timezone }).offset
+    if (offset === previousOffset) low = midpoint
+    else high = midpoint
+  }
+
+  return high
+}
+
+function getSqliteTimezoneTransitions(timezone, startUtc, endUtc) {
+  const zone = resolveTimezone(timezone)
+  const window = sqliteTimezoneTransitionWindow(startUtc, endUtc)
+  const cacheKey = `${zone}:${window.start.year}:${window.end.year}`
+  const cached = sqliteTimezoneTransitionCache.get(cacheKey)
+  if (cached) {
+    sqliteTimezoneTransitionCache.delete(cacheKey)
+    sqliteTimezoneTransitionCache.set(cacheKey, cached)
+    return cached
+  }
+
+  const transitions = []
+  let cursorMillis = window.start.toMillis()
+  const endMillis = window.end.toMillis()
+  let currentOffset = DateTime.fromMillis(cursorMillis, { zone }).offset
+  const initialOffset = currentOffset
+  const scanStepMs = 12 * 60 * 60 * 1000
+
+  while (cursorMillis < endMillis) {
+    const nextMillis = Math.min(cursorMillis + scanStepMs, endMillis)
+    const nextOffset = DateTime.fromMillis(nextMillis, { zone }).offset
+    if (nextOffset !== currentOffset) {
+      const transitionMillis = findTimezoneTransition(zone, cursorMillis, nextMillis, currentOffset)
+      const transitionOffset = DateTime.fromMillis(transitionMillis, { zone }).offset
+      transitions.push({
+        atUtc: DateTime.fromMillis(transitionMillis, { zone: 'utc' }).toFormat('yyyy-MM-dd HH:mm:ss'),
+        beforeOffset: currentOffset,
+        afterOffset: transitionOffset
+      })
+      currentOffset = transitionOffset
+    }
+    cursorMillis = nextMillis
+  }
+
+  const result = { initialOffset, transitions }
+  sqliteTimezoneTransitionCache.set(cacheKey, result)
+  while (sqliteTimezoneTransitionCache.size > 32) {
+    sqliteTimezoneTransitionCache.delete(sqliteTimezoneTransitionCache.keys().next().value)
+  }
+  return result
+}
+
+/**
+ * Devuelve un modificador SQLite sensible a DST para convertir un instante UTC
+ * a la hora de pared de una cuenta. SQLite no incluye la base IANA, así que el
+ * CASE se genera con Luxon y usa los cambios reales de offset del rango.
+ */
+export function sqliteTimezoneModifierExpression(
+  utcExpression,
+  timezone = DEFAULT_TIMEZONE,
+  { startUtc = null, endUtc = null } = {}
+) {
+  const { initialOffset, transitions } = getSqliteTimezoneTransitions(timezone, startUtc, endUtc)
+  if (!transitions.length) return `'${initialOffset} minutes'`
+
+  const clauses = []
+  let offset = initialOffset
+  for (const transition of transitions) {
+    clauses.push(`WHEN ${utcExpression} < '${transition.atUtc}' THEN '${offset} minutes'`)
+    offset = transition.afterOffset
+  }
+  return `CASE ${clauses.join(' ')} ELSE '${offset} minutes' END`
+}
+
 /**
  * Invalida el cache de zona horaria. Llamar cuando el usuario cambia la zona
  * en Ristak o cuando se actualiza la config de HighLevel.

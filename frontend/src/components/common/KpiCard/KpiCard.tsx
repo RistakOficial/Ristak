@@ -1,5 +1,5 @@
 import React from 'react'
-import { Card } from '@/components/common'
+import { Card } from '../Card/Card'
 import { cn } from '@/utils/cn'
 
 type IconProp = React.ReactNode | React.ElementType<{ className?: string }>

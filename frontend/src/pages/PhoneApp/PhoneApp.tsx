@@ -564,7 +564,7 @@ export const PhoneApp: React.FC = () => {
 
     const loadPhoneData = async () => {
       setLoadError(null)
-      const cacheKey = getPhoneDailyCacheKey('phone-app', `data-${featureAccessKey}`, locationId || 'default', startIso, endIso)
+      const cacheKey = getPhoneDailyCacheKey('phone-app', `data-${activeSectionId}-${featureAccessKey}`, locationId || 'default', startIso, endIso)
       const cachedPhoneData = readPhoneDailyCache<PhoneAppData>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
       const showedCachedData = Boolean(cachedPhoneData)
 
@@ -581,6 +581,13 @@ export const PhoneApp: React.FC = () => {
       }
 
       const groupBy = getDaysBetween(startDate, endDate) > 95 ? 'month' : 'day'
+      const loadDashboard = activeSectionId === 'dashboard'
+      const loadAppointments = activeSectionId === 'appointments'
+      const loadTransactions = activeSectionId === 'transactions'
+      const loadContacts = activeSectionId === 'contacts'
+      const loadCampaigns = activeSectionId === 'campaigns'
+      const loadReports = activeSectionId === 'reports'
+      const loadAnalytics = activeSectionId === 'analytics'
 
       try {
         const [
@@ -600,49 +607,77 @@ export const PhoneApp: React.FC = () => {
           reportsMetricsResponse,
           reportsSummary
         ] = await Promise.all([
-          canUseDashboard
+          loadDashboard && canUseDashboard
             ? safe(dashboardService.getDashboardMetrics({ start: startDate, end: endDate }), createEmptyDashboardMetrics())
             : Promise.resolve(createEmptyDashboardMetrics()),
-          canUseDashboard && canUsePayments
+          loadDashboard && canUseDashboard && canUsePayments
             ? safe(dashboardService.getFinancialChart({ start: startDate, end: endDate, scope: 'all' }), [] as ChartData[])
             : Promise.resolve([] as ChartData[]),
-          canUseDashboard
+          loadDashboard && canUseDashboard
             ? safe(dashboardService.getFunnelData({ start: startDate, end: endDate, scope: 'all', includeWeb: hasWebAnalyticsAccess }), [] as Array<{ stage: string; value: number }>)
             : Promise.resolve([] as Array<{ stage: string; value: number }>),
-          canUseDashboard
+          loadDashboard && canUseDashboard
             ? safe(dashboardService.getTrafficSources({ start: startDate, end: endDate, includeWeb: hasWebAnalyticsAccess }), [] as Array<{ name: string; value: number; color?: string }>)
             : Promise.resolve([] as Array<{ name: string; value: number; color?: string }>),
-          canUseAnalytics && hasWebAnalyticsAccess
+          loadAnalytics && canUseAnalytics && hasWebAnalyticsAccess
             ? safe(dashboardService.getVisitorsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
             : Promise.resolve([] as Array<{ label: string; value: number }>),
-          canUseContacts
+          (loadContacts || loadAnalytics) && canUseContacts
             ? safe(dashboardService.getLeadsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
             : Promise.resolve([] as Array<{ label: string; value: number }>),
-          canUseAppointments
+          (loadAppointments || loadAnalytics) && canUseAppointments
             ? safe(dashboardService.getAppointmentsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
             : Promise.resolve([] as Array<{ label: string; value: number }>),
-          canUsePayments
+          loadAnalytics && canUsePayments
             ? safe(dashboardService.getSalesData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
             : Promise.resolve([] as Array<{ label: string; value: number }>),
-          canUsePayments
+          loadTransactions && canUsePayments
             ? safe(transactionsService.getSummary(startIso, endIso), createEmptyTransactionSummary())
             : Promise.resolve(createEmptyTransactionSummary()),
-          canUsePayments
-            ? safe(transactionsService.getTransactions(startIso, endIso), [] as Transaction[])
+          loadTransactions && canUsePayments
+            ? safe(
+                transactionsService.getTransactionsPage({
+                  startDate: startIso,
+                  endDate: endIso,
+                  page: 1,
+                  limit: 5,
+                  sortBy: 'date',
+                  sortOrder: 'DESC'
+                }).then(result => result.transactions),
+                [] as Transaction[]
+              )
             : Promise.resolve([] as Transaction[]),
-          canUseContacts
+          loadContacts && canUseContacts
             ? safe(contactsService.getStats(startIso, endIso), createEmptyContactStats())
             : Promise.resolve(createEmptyContactStats()),
-          canUseContacts && canUseReports
+          loadContacts && canUseContacts
             ? safe(
-                reportsService.getContactsList({ from: startIso, to: endIso, scope: 'all' }),
-                { contacts: [], range: { start: startIso, end: endIso, timezone: '', filtered: true } }
+                contactsService.getContactsPage({
+                  startDate: startIso,
+                  endDate: endIso,
+                  page: 1,
+                  limit: 5,
+                  sortBy: 'created_at',
+                  sortOrder: 'DESC'
+                }).then(result => ({
+                  contacts: result.contacts.map(contact => ({
+                    id: contact.id,
+                    name: contact.name || '',
+                    email: contact.email || '',
+                    phone: contact.phone || '',
+                    created_at: contact.createdAt || '',
+                    ltv: Number(contact.ltv || 0),
+                    purchases: Number(contact.purchases || 0),
+                    attributed: false
+                  }))
+                })),
+                { contacts: [] }
               )
-            : Promise.resolve({ contacts: [], range: { start: startIso, end: endIso, timezone: '', filtered: true } }),
-          canUseCampaigns
+            : Promise.resolve({ contacts: [] }),
+          loadCampaigns && canUseCampaigns
             ? safe(campaignsService.getCampaigns(startIso, endIso), [] as Campaign[])
             : Promise.resolve([] as Campaign[]),
-          canUseReports
+          loadReports && canUseReports
             ? safe(reportsService.getMetrics({ from: startIso, to: endIso, groupBy, scope: 'all' }), {
                 metrics: [],
                 range: { start: startIso, end: endIso, timezone: '', filtered: true }
@@ -651,7 +686,7 @@ export const PhoneApp: React.FC = () => {
                 metrics: [],
                 range: { start: startIso, end: endIso, timezone: '', filtered: true }
               }),
-          canUseReports
+          loadReports && canUseReports
             ? safe(reportsService.getSummary({ from: startIso, to: endIso, scope: 'all' }), null)
             : Promise.resolve(null)
         ])
@@ -659,10 +694,10 @@ export const PhoneApp: React.FC = () => {
         // No requiere HighLevel: el backend usa su config guardada y sirve
         // las citas locales aunque no haya GHL.
         const [calendars, rawEvents] = await Promise.all([
-          canUseAppointments
+          loadAppointments && canUseAppointments
             ? safe(calendarsService.getCalendars(locationId, accessToken), [] as Calendar[])
             : Promise.resolve([] as Calendar[]),
-          canUseAppointments
+          loadAppointments && canUseAppointments
             ? safe(
                 calendarsService.getEvents(locationId || '', rangeStartTime, rangeEndTime, accessToken || undefined),
                 [] as CalendarEvent[]

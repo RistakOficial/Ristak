@@ -1,5 +1,6 @@
 import apiClient from './apiClient'
 import type { ContactCustomField } from '@/types'
+import { trackingService, type CursorPage } from './trackingService'
 
 export interface Campaign {
   id: string
@@ -17,6 +18,56 @@ export interface Campaign {
   appointments?: number
   attendances?: number
   adsets?: AdSet[]
+  childCount?: number
+  hasChildren?: boolean
+  lastActiveDate?: string | null
+}
+
+export type CampaignPerformanceLevel = 'campaign' | 'adset' | 'ad'
+
+export interface CampaignPerformanceItem extends Campaign {
+  campaignId?: string | null
+  campaignName?: string | null
+  adSetId?: string | null
+  adsetId?: string | null
+  adSetName?: string | null
+  adsetName?: string | null
+  childCount?: number
+  hasChildren?: boolean
+  lastActiveDate?: string | null
+  ads?: Ad[]
+}
+
+export interface CampaignPerformancePage {
+  items: CampaignPerformanceItem[]
+  pagination: {
+    page: number
+    pageSize: number
+    totalItems: number
+    totalPages: number
+    hasMore: boolean
+  }
+  level: CampaignPerformanceLevel
+  parentId: string | null
+  limits: {
+    pageSizeMax: number
+    hierarchyLoadedLazily: boolean
+  }
+}
+
+export interface CampaignPerformancePageParams {
+  startDate: string
+  endDate: string
+  level?: CampaignPerformanceLevel
+  page?: number
+  pageSize?: number
+  search?: string
+  sortBy?: string | null
+  sortOrder?: 'asc' | 'desc'
+  campaignId?: string
+  adsetId?: string
+  includeVisitors?: boolean
+  onlyWithResults?: boolean
 }
 
 export interface MetaTestCustomParameter {
@@ -158,6 +209,10 @@ export interface CampaignContact {
   ltv: number
   ad_id?: string | null
   ad_name?: string | null
+  campaign_id?: string | null
+  campaign_name?: string | null
+  adset_id?: string | null
+  adset_name?: string | null
   source?: string | null
   is_sale: boolean
   payments?: CampaignContactPayment[]
@@ -171,12 +226,46 @@ export interface CampaignContact {
   customFields?: ContactCustomField[]
 }
 
+export interface CampaignContactsPage {
+  contacts: CampaignContact[]
+  summary: {
+    pageCount: number
+    pageLtv: number
+  }
+  pagination: {
+    limit: number
+    hasNext: boolean
+    nextCursor: string | null
+  }
+  range?: {
+    start: string | null
+    end: string | null
+    timezone: string
+    filtered: boolean
+  }
+}
+
+export interface CampaignContactsPageParams {
+  type: 'interesados' | 'sales' | 'appointments' | 'attendances'
+  startDate: string
+  endDate: string
+  campaign_id?: string
+  adset_id?: string
+  ad_id?: string
+  cursor?: string | null
+  search?: string
+  limit?: number
+}
+
 export interface CampaignVisitorListParams {
   startDate: string
   endDate: string
   campaign_id?: string
   adset_id?: string
   ad_id?: string
+  cursor?: string | null
+  search?: string
+  limit?: number
 }
 
 interface CreativePreviewResponse {
@@ -214,7 +303,7 @@ class CampaignsService {
   async getCampaigns(startDate: string, endDate: string): Promise<Campaign[]> {
     try {
       const data = await apiClient.get<Campaign[]>('/meta/campaigns', {
-        params: { startDate, endDate }
+        params: { startDate, endDate, pageSize: '80' }
       })
 
       // Return real data from Meta
@@ -232,6 +321,26 @@ class CampaignsService {
       // Return empty array on error instead of crashing
       return []
     }
+  }
+
+  async getCampaignPerformancePage(params: CampaignPerformancePageParams): Promise<CampaignPerformancePage> {
+    const query: Record<string, string> = {
+      startDate: params.startDate,
+      endDate: params.endDate,
+      level: params.level || 'campaign',
+      page: String(params.page || 1),
+      pageSize: String(params.pageSize || 50),
+      sortBy: params.sortBy || 'lastActiveDate',
+      sortOrder: params.sortOrder || 'desc',
+      includeVisitors: params.includeVisitors ? '1' : '0'
+    }
+
+    if (params.search?.trim()) query.search = params.search.trim()
+    if (params.campaignId) query.campaignId = params.campaignId
+    if (params.adsetId) query.adsetId = params.adsetId
+    if (params.onlyWithResults) query.onlyWithResults = '1'
+
+    return apiClient.get<CampaignPerformancePage>('/meta/campaigns/page', { params: query })
   }
 
   async getSyncStatus(): Promise<any> {
@@ -312,16 +421,37 @@ class CampaignsService {
     }
   }
 
-  async getContactsByType(params: {
-    type: 'interesados' | 'sales' | 'appointments' | 'attendances'
-    startDate: string
-    endDate: string
-    campaign_id?: string
-    adset_id?: string
-    ad_id?: string
-  }): Promise<CampaignContact[]> {
-    const data = await apiClient.get<CampaignContact[]>('/meta/contacts', { params })
-    return Array.isArray(data) ? data : []
+  async getContactsPage(params: CampaignContactsPageParams, signal?: AbortSignal): Promise<CampaignContactsPage> {
+    const query: Record<string, string> = {
+      type: params.type,
+      startDate: params.startDate,
+      endDate: params.endDate,
+      paginated: 'true',
+      limit: String(params.limit || 50)
+    }
+    if (params.campaign_id) query.campaign_id = params.campaign_id
+    if (params.adset_id) query.adset_id = params.adset_id
+    if (params.ad_id) query.ad_id = params.ad_id
+    if (params.cursor) query.cursor = params.cursor
+    if (params.search?.trim()) query.search = params.search.trim()
+
+    const data = await apiClient.get<CampaignContactsPage>('/meta/contacts', { params: query, signal })
+    const contacts = Array.isArray(data?.contacts) ? data.contacts : []
+    return {
+      ...data,
+      contacts,
+      summary: data?.summary || { pageCount: contacts.length, pageLtv: 0 },
+      pagination: data?.pagination || {
+        limit: params.limit || 50,
+        hasNext: false,
+        nextCursor: null
+      }
+    }
+  }
+
+  async getContactsByType(params: CampaignContactsPageParams): Promise<CampaignContact[]> {
+    const data = await this.getContactsPage(params)
+    return data.contacts
   }
 
   async verifyToken(): Promise<{
@@ -386,21 +516,28 @@ class CampaignsService {
     }
   }
 
-  async getVisitorsList(params: CampaignVisitorListParams): Promise<any[]> {
+  async getVisitorsPage(params: CampaignVisitorListParams): Promise<CursorPage<any>> {
     try {
-      const queryParams: Record<string, string> = {
+      return await trackingService.getVisitorsPage({
         startDate: params.startDate,
         endDate: params.endDate,
-        ...(params.campaign_id ? { campaign_id: params.campaign_id } : {}),
-        ...(params.adset_id ? { adset_id: params.adset_id } : {}),
-        ...(params.ad_id ? { ad_id: params.ad_id } : {})
-      }
-      const data = await apiClient.get<{ data?: any[] } | any[]>('/tracking/visitors', { params: queryParams })
-      if (Array.isArray(data)) return data
-      return Array.isArray(data?.data) ? data.data : []
+        campaign_id: params.campaign_id,
+        adset_id: params.adset_id,
+        ad_id: params.ad_id,
+        cursor: params.cursor,
+        search: params.search,
+        limit: params.limit
+      })
     } catch (error) {
-      return []
+      return {
+        items: [],
+        pagination: { limit: Math.min(100, Math.max(1, params.limit ?? 50)), hasNext: false, hasMore: false, nextCursor: null }
+      }
     }
+  }
+
+  async getVisitorsList(params: CampaignVisitorListParams): Promise<any[]> {
+    return (await this.getVisitorsPage(params)).items
   }
 
   async getFunnelMetrics(startDate: string, endDate: string): Promise<{

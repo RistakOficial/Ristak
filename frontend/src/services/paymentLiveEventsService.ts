@@ -1,4 +1,5 @@
 import { apiUrl } from './apiBaseUrl'
+import { invalidateRistakApiReadCache } from './authFetch'
 
 export type PaymentLiveEventScope = 'transactions' | 'payment_plans' | 'subscriptions'
 export type PaymentLiveEventType = 'payment_changed' | 'subscription_changed'
@@ -80,6 +81,7 @@ function dispatchFrame(frame: string, options: SubscribeOptions) {
     const payload = JSON.parse(parsed.data)
     if (payload?.type !== 'payment_changed' && payload?.type !== 'subscription_changed') return
 
+    invalidateRistakApiReadCache()
     options.onEvent({
       ...payload,
       scopes: normalizeScopes(payload.scopes)

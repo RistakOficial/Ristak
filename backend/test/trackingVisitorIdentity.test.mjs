@@ -107,3 +107,43 @@ test('linkVisitorToContact skips ad-like numeric visitor id history updates', as
     await cleanup(id)
   }
 })
+
+test('linkVisitorToContact commits large history links in bounded batches', async () => {
+  const id = suffix()
+  const contactId = `contact_bulk_link_${id}`
+  const visitorId = `visitor_bulk_link_${id}`
+  const rowCount = 205
+
+  await cleanup(id)
+
+  try {
+    await insertContact(contactId)
+    for (let index = 0; index < rowCount; index += 1) {
+      await db.run(`
+        INSERT INTO sessions (
+          id, session_id, visitor_id, event_name, started_at, created_at
+        ) VALUES (?, ?, ?, 'page_view', ?, ?)
+      `, [
+        `row_bulk_link_${id}_${index}`,
+        `session_bulk_link_${id}_${index}`,
+        visitorId,
+        `2099-06-01T10:${String(index % 60).padStart(2, '0')}:00.000Z`,
+        `2099-06-01T10:${String(index % 60).padStart(2, '0')}:00.000Z`
+      ])
+    }
+
+    const result = await linkVisitorToContact(visitorId, contactId, 'Contacto Bulk')
+    const linked = await db.get(`
+      SELECT COUNT(*) AS total
+      FROM sessions
+      WHERE visitor_id = ? AND contact_id = ?
+    `, [visitorId, contactId])
+
+    assert.equal(result.success, true)
+    assert.equal(result.updated, rowCount)
+    assert.equal(result.batches, 2)
+    assert.equal(Number(linked.total), rowCount)
+  } finally {
+    await cleanup(id)
+  }
+})

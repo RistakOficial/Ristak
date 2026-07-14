@@ -5,10 +5,9 @@ import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
 import { SyncProgressBar } from '@/components/common/SyncProgressBar'
 import { Loading } from '@/components/common/Loading'
-import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { InitializationProvider } from '@/contexts/InitializationContext'
-import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync, useRouteDataLoadGate } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
 import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
 import { apiUrl } from '@/services/apiBaseUrl'
@@ -26,6 +25,9 @@ const AI_AGENT_MIN_MAIN_WIDTH = 320
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 // Routes with their own working surface should not be covered by the global assistant.
 const AI_AGENT_SUPPRESSED_PATHS = ['/chat', '/mdp-program']
+const AIAgentPanel = React.lazy(() => import('@/components/ai/AIAgentPanel/AIAgentPanel').then((module) => ({
+  default: module.AIAgentPanel
+})))
 
 function getInitialAIAgentOpenState() {
   try {
@@ -83,7 +85,6 @@ export const AppShell: React.FC = () => {
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
   const [sitesEditorActive, setSitesEditorActive] = useState(false)
   const aiAgentAvailability = useAIAgentAvailability()
-  const routeDataLoadGate = useRouteDataLoadGate(`${location.pathname}${location.search}`)
   const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read') && hasLicenseFeature(user, ['app_assistant_ai', 'ai']) && aiAgentAvailability.configured
   const aiAgentRouteSuppressed = isAIAgentSuppressedRoute(location.pathname)
   const shouldShowAIAgent = canUseAIAgent && !sitesEditorActive && !aiAgentRouteSuppressed
@@ -289,18 +290,12 @@ export const AppShell: React.FC = () => {
           >
             <div className="flex h-full min-h-0 flex-col">
               {!sitesEditorActive && <Header />}
-              <div
-                className={`${styles.contentScroller} min-h-0 flex-1 overflow-auto`}
-                aria-busy={routeDataLoadGate.loading}
-              >
-                <div className={routeDataLoadGate.loading ? styles.routeContentLoading : styles.routeContentReady}>
-                  <Outlet />
+              <div className={`${styles.contentScroller} min-h-0 flex-1 overflow-auto`}>
+                <div className={styles.routeContentReady}>
+                  <React.Suspense fallback={<Loading message="Abriendo módulo..." size="md" />}>
+                    <Outlet />
+                  </React.Suspense>
                 </div>
-                {routeDataLoadGate.loading && (
-                  <div className={styles.routeDataLoader} role="presentation">
-                    <Loading message="Cargando datos..." size="md" />
-                  </div>
-                )}
               </div>
             </div>
           </Layout>
@@ -326,7 +321,9 @@ export const AppShell: React.FC = () => {
                 title="Arrastra para cambiar el ancho del chat"
               />
             )}
-            <AIAgentPanel variant="docked" onOpenChange={setAIAgentOpen} />
+            <React.Suspense fallback={null}>
+              <AIAgentPanel variant="docked" onOpenChange={setAIAgentOpen} />
+            </React.Suspense>
           </div>
         )}
       </div>

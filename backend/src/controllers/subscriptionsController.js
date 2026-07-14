@@ -53,6 +53,12 @@ export async function listSubscriptionsView(req, res) {
   try {
     const data = await listSubscriptions({
       status: req.query.status,
+      search: req.query.search,
+      page: req.query.page,
+      cursor: req.query.cursor,
+      limit: req.query.limit,
+      sortBy: req.query.sortBy,
+      sortOrder: req.query.sortOrder,
       refresh: ['1', 'true', 'yes'].includes(cleanString(req.query.refresh).toLowerCase())
     })
     res.json({ success: true, data })

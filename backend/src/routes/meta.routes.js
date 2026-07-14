@@ -12,6 +12,7 @@ import {
   getCreativePreview,
   getAdCreativeMedia,
   getCampaigns,
+  getCampaignsPage,
   getSpendOverTime,
   getSyncStatus,
   getContactsByType,
@@ -112,6 +113,7 @@ router.post('/update-recent', updateRecent)
 
 // Datos
 router.get('/campaigns', getCampaigns)
+router.get('/campaigns/page', getCampaignsPage)
 router.get('/creative-preview/:creativeId', getCreativePreview)
 router.get('/ad-creative-media/:adId', getAdCreativeMedia)
 router.get('/spend-over-time', getSpendOverTime)

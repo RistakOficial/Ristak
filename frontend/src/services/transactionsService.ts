@@ -61,6 +61,16 @@ export interface TransactionsPagination {
   hasPrev: boolean
 }
 
+export interface CursorPagination {
+  page: number
+  limit: number
+  total: number | null
+  totalPages: number | null
+  hasNext: boolean
+  hasPrev: boolean
+  nextCursor: string | null
+}
+
 export interface TransactionStatusFacet {
   value: string
   count: number
@@ -93,11 +103,39 @@ export interface PaymentPlan {
   liveMode?: boolean
   deleted?: boolean
   itemCount?: number
+  completedItemCount?: number
   source?: 'ghl' | 'stripe' | 'rebill' | string
   createdAt?: string
   updatedAt?: string
   sortDate?: string
   raw?: Record<string, any>
+}
+
+export interface PaymentPlanSummary {
+  total: number
+  active: number
+  inactive: number
+  completed: number
+}
+
+export interface PaymentPlansPageResult {
+  paymentPlans: PaymentPlan[]
+  pagination: CursorPagination
+  facets: {
+    statuses: TransactionStatusFacet[]
+  }
+  summary: PaymentPlanSummary
+}
+
+interface PaymentPlansPageParams {
+  page?: number
+  cursor?: string | null
+  limit?: number
+  search?: string
+  statuses?: string[]
+  sortBy?: string
+  sortOrder?: 'ASC' | 'DESC' | 'asc' | 'desc'
+  forceRefresh?: boolean
 }
 
 interface TransactionsPageParams {
@@ -220,6 +258,69 @@ const requestTransactionsPage = async ({
   }
 }
 
+const requestPaymentPlansPage = async ({
+  page = 1,
+  cursor,
+  limit = 20,
+  search,
+  statuses,
+  sortBy = 'startDate',
+  sortOrder = 'DESC',
+  forceRefresh = false
+}: PaymentPlansPageParams = {}): Promise<PaymentPlansPageResult> => {
+  const params = new URLSearchParams()
+  params.append('page', String(page))
+  if (cursor) params.append('cursor', cursor)
+  params.append('limit', String(limit))
+  params.append('sortBy', sortBy)
+  params.append('sortOrder', String(sortOrder).toUpperCase())
+  const cleanSearch = search?.trim() || ''
+  if (cleanSearch.length >= 2) params.append('q', cleanSearch)
+  if (statuses?.length) params.append('status', statuses.join(','))
+
+  const response = await fetch(apiUrl(`/api/transactions/payment-plans?${params.toString()}`), {
+    headers: getAuthHeaders(),
+    ...(forceRefresh ? { cache: 'reload' as RequestCache } : {})
+  })
+
+  if (!response.ok) {
+    throw new Error(`No se pudieron cargar los planes de pago (${response.status})`)
+  }
+
+  const json = await response.json()
+  const paymentPlans = Array.isArray(json?.data) ? json.data as PaymentPlan[] : []
+  const pagination = json?.pagination || {}
+  const facets = json?.facets || {}
+  const summary = json?.summary || {}
+
+  return {
+    paymentPlans,
+    pagination: {
+      page: Number(pagination.page || page),
+      limit: Number(pagination.limit || limit),
+      total: pagination.total === null || pagination.total === undefined ? null : Number(pagination.total),
+      totalPages: pagination.totalPages === null || pagination.totalPages === undefined ? null : Number(pagination.totalPages),
+      hasNext: Boolean(pagination.hasNext),
+      hasPrev: Boolean(pagination.hasPrev),
+      nextCursor: typeof pagination.nextCursor === 'string' && pagination.nextCursor ? pagination.nextCursor : null
+    },
+    facets: {
+      statuses: Array.isArray(facets.statuses)
+        ? facets.statuses.map((status: any) => ({
+          value: String(status.value || '').trim().toLowerCase(),
+          count: Number(status.count || 0)
+        })).filter((status: TransactionStatusFacet) => status.value)
+        : []
+    },
+    summary: {
+      total: Number(summary.total || 0),
+      active: Number(summary.active || 0),
+      inactive: Number(summary.inactive || 0),
+      completed: Number(summary.completed || 0)
+    }
+  }
+}
+
 export const transactionsService = {
   getTransactionsPage(params: TransactionsPageParams = {}): Promise<TransactionsPageResult> {
     return requestTransactionsPage(params)
@@ -324,9 +425,13 @@ export const transactionsService = {
     return response.link
   },
 
+  getPaymentPlansPage(params: PaymentPlansPageParams = {}): Promise<PaymentPlansPageResult> {
+    return requestPaymentPlansPage(params)
+  },
+
   async getPaymentPlans(): Promise<PaymentPlan[]> {
-    const data = await apiClient.get<PaymentPlan[]>('/transactions/payment-plans')
-    return data
+    const result = await requestPaymentPlansPage({ limit: 100 })
+    return result.paymentPlans
   },
 
   async getPaymentPlan(id: string): Promise<PaymentPlan> {

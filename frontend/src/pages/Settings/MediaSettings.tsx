@@ -54,13 +54,14 @@ import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import mediaService, {
   isMediaUploadCancelledError,
   type MediaAsset,
+  type MediaFolderPage,
   type MediaDownloadEntry,
-  type MediaMoveEntry,
+  type MediaPageInfo,
+  type MediaSelectionInput,
   type MediaStreamAnalytics,
   type StorageUsage,
   type StreamChartPoint
 } from '@/services/mediaService'
-import { parseSortableDateValue } from '@/utils/dateSort'
 import { formatDateTime as formatBusinessDateTime, formatDateToISO, parseLocalDateString } from '@/utils/format'
 import { getDateOnlyFromCalendarLikeString } from '@/utils/timezone'
 import styles from './MediaSettings.module.css'
@@ -81,7 +82,6 @@ interface ExplorerFile {
   fileName: string
   folderPath: string
   folderSegments: string[]
-  searchText: string
 }
 
 interface FolderSummary {
@@ -94,8 +94,12 @@ interface FolderSummary {
 interface MoveDialogState {
   kind: 'files' | 'folder' | 'selection'
   title: string
-  files: ExplorerFile[]
+  assetIds: string[]
+  folderPaths: string[]
+  filesCount: number
   sourceFolderPath?: string
+  mediaType?: string
+  status?: string
 }
 
 interface MarqueeSelectionState {
@@ -113,6 +117,10 @@ const STORAGE_GB = 1024 * 1024 * 1024
 const FILE_SELECTION_PREFIX = 'file:'
 const FOLDER_SELECTION_PREFIX = 'folder:'
 const MEDIA_DRAG_MIME = 'application/x-ristak-media-assets'
+const MEDIA_LIBRARY_PAGE_SIZE = 50
+const MEDIA_SEARCH_DEBOUNCE_MS = 300
+const EMPTY_MEDIA_PAGE_INFO: MediaPageInfo = { limit: MEDIA_LIBRARY_PAGE_SIZE, hasMore: false, nextCursor: null }
+const EMPTY_FOLDER_PAGE_INFO: MediaPageInfo = { limit: 100, hasMore: false, nextCursor: null }
 
 const mediaTabs: Array<{ value: MediaFilter; label: string; icon: React.ReactNode }> = [
   { value: 'all', label: 'Todo', icon: <HardDrive size={14} /> },
@@ -277,6 +285,10 @@ function formatFolderSegment(segment: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+function presentFolderSummary(folder: FolderSummary): FolderSummary {
+  return { ...folder, name: formatFolderSegment(folder.name) }
+}
+
 function formatModuleLabel(module?: string) {
   const normalized = (module || 'other').toLowerCase()
   return moduleLabelMap[normalized] || formatFolderSegment(normalized)
@@ -312,6 +324,9 @@ function stripTechnicalStorageRoot(parts: string[], asset: MediaAsset) {
 }
 
 function normalizeAssetPath(asset: MediaAsset) {
+  if (asset.folderPath !== undefined) {
+    return [...pathSegments(asset.folderPath), getAssetDisplayName(asset)].filter(Boolean)
+  }
   const rawParts = (asset.bunnyPath || '')
     .split('/')
     .map((part) => part.trim())
@@ -335,80 +350,16 @@ function toExplorerFile(asset: MediaAsset): ExplorerFile {
   const fileName = parts[parts.length - 1] || getAssetDisplayName(asset)
   const folderSegments = parts.slice(0, -1)
   const folderPath = folderSegments.join('/')
-  const searchText = [
-    fileName,
-    folderPath,
-    asset.mimeType,
-    asset.mediaType,
-    asset.module,
-    asset.storageProvider,
-    asset.bunnyPath
-  ].filter(Boolean).join(' ').toLowerCase()
-
   return {
     asset,
     fileName,
     folderPath,
-    folderSegments,
-    searchText
+    folderSegments
   }
 }
 
 function pathSegments(path: string) {
   return path.split('/').filter(Boolean)
-}
-
-function fileMatchesPath(file: ExplorerFile, currentPath: string) {
-  return file.folderPath === currentPath
-}
-
-function fileStartsWithPath(file: ExplorerFile, currentPath: string) {
-  const current = pathSegments(currentPath)
-  return current.every((segment, index) => file.folderSegments[index] === segment)
-}
-
-function buildFolderSummaries(files: ExplorerFile[], currentPath: string): FolderSummary[] {
-  const current = pathSegments(currentPath)
-  const folders = new Map<string, FolderSummary>()
-
-  files.forEach((file) => {
-    if (!fileStartsWithPath(file, currentPath)) return
-    const nextSegment = file.folderSegments[current.length]
-    if (!nextSegment) return
-    const nextPath = [...current, nextSegment].join('/')
-    const existing = folders.get(nextPath) || {
-      path: nextPath,
-      name: formatFolderSegment(nextSegment),
-      filesCount: 0,
-      sizeBytes: 0
-    }
-    existing.filesCount += 1
-    existing.sizeBytes += Number(file.asset.quotaSize || file.asset.sizeProcessed || file.asset.sizeOriginal || 0)
-    folders.set(nextPath, existing)
-  })
-
-  return Array.from(folders.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'))
-}
-
-function buildAllFolderSummaries(files: ExplorerFile[]): FolderSummary[] {
-  const folders = new Map<string, FolderSummary>()
-
-  files.forEach((file) => {
-    file.folderSegments.forEach((_, index) => {
-      const path = file.folderSegments.slice(0, index + 1).join('/')
-      const existing = folders.get(path) || {
-        path,
-        name: file.folderSegments.slice(0, index + 1).map(formatFolderSegment).join(' / '),
-        filesCount: 0,
-        sizeBytes: 0
-      }
-      existing.filesCount += 1
-      existing.sizeBytes += Number(file.asset.quotaSize || file.asset.sizeProcessed || file.asset.sizeOriginal || 0)
-      folders.set(path, existing)
-    })
-  })
-
-  return Array.from(folders.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'))
 }
 
 function buildFileUrl(asset: MediaAsset, variant: 'file' | 'thumbnail' = 'file') {
@@ -462,14 +413,6 @@ function joinFolderPath(...parts: string[]) {
   return parts.flatMap(pathSegments).filter(Boolean).join('/')
 }
 
-function relativeFolderPath(filePath: string, sourceFolderPath: string) {
-  if (!sourceFolderPath) return filePath
-  if (filePath === sourceFolderPath) return ''
-  return filePath.startsWith(`${sourceFolderPath}/`)
-    ? filePath.slice(sourceFolderPath.length + 1)
-    : filePath
-}
-
 function rectsOverlap(a: DOMRect | { left: number; right: number; top: number; bottom: number }, b: DOMRect | { left: number; right: number; top: number; bottom: number }) {
   return a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top
 }
@@ -494,7 +437,20 @@ export const MediaSettings: React.FC = () => {
   const uploadQueue = useMediaUploadQueue()
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const filePaneRef = useRef<HTMLElement>(null)
+  const mediaRequestVersionRef = useRef(0)
+  const folderRequestVersionRef = useRef(0)
+  const rootFolderRequestVersionRef = useRef(0)
+  const moveFolderRequestVersionRef = useRef(0)
   const [assets, setAssets] = useState<MediaAsset[]>([])
+  const [folderSummaries, setFolderSummaries] = useState<FolderSummary[]>([])
+  const [rootFolders, setRootFolders] = useState<FolderSummary[]>([])
+  const [assetPageInfo, setAssetPageInfo] = useState<MediaPageInfo>(EMPTY_MEDIA_PAGE_INFO)
+  const [folderPageInfo, setFolderPageInfo] = useState<MediaPageInfo>(EMPTY_FOLDER_PAGE_INFO)
+  const [rootFolderPageInfo, setRootFolderPageInfo] = useState<MediaPageInfo>(EMPTY_FOLDER_PAGE_INFO)
+  const [libraryItemsCount, setLibraryItemsCount] = useState(0)
+  const [libraryItemsCountIsLowerBound, setLibraryItemsCountIsLowerBound] = useState(false)
+  const [pageCursor, setPageCursor] = useState('')
+  const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -505,6 +461,7 @@ export const MediaSettings: React.FC = () => {
   const [moving, setMoving] = useState(false)
   const [error, setError] = useState('')
   const [query, setQuery] = useUrlStringState<string>('q', '', isQueryParam)
+  const [debouncedQuery, setDebouncedQuery] = useState(query.trim())
   const [activeFilter] = useUrlStringState<MediaFilter>('type', DEFAULT_MEDIA_FILTER, isMediaFilter)
   const [storedViewMode, saveStoredViewMode] = useAppConfig<string>(
     MEDIA_VIEW_MODE_CONFIG_KEY,
@@ -523,6 +480,9 @@ export const MediaSettings: React.FC = () => {
   const [selectedItemKeys, setSelectedItemKeys] = useState<Set<string>>(() => new Set())
   const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null)
   const [moveTargetPath, setMoveTargetPath] = useState('')
+  const [moveFolders, setMoveFolders] = useState<FolderSummary[]>([])
+  const [moveFolderPageInfo, setMoveFolderPageInfo] = useState<MediaPageInfo>(EMPTY_FOLDER_PAGE_INFO)
+  const [moveFoldersLoading, setMoveFoldersLoading] = useState(false)
   const [draggingFileIds, setDraggingFileIds] = useState<string[]>([])
   const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null)
@@ -573,92 +533,173 @@ export const MediaSettings: React.FC = () => {
     })
   }, [saveStoredViewMode, showToast])
 
-  const loadMedia = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), MEDIA_SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(timeout)
+  }, [query])
+
+  const normalizedQuery = debouncedQuery.trim()
+  const browsingGlobalType = activeFilter !== 'all' && !currentPath && !normalizedQuery
+  const mediaTypeFilter = activeFilter === 'all' ? undefined : activeFilter
+  const requestedFolderPath = normalizedQuery || browsingGlobalType ? null : currentPath
+
+  const loadUsage = useCallback(async () => {
+    try {
+      setUsage(await mediaService.getStorageUsage())
+    } catch (usageError) {
+      showToast('error', 'No se cargó el uso de Media', usageError instanceof Error ? usageError.message : 'Intenta otra vez.')
+    }
+  }, [showToast])
+
+  const loadRootFolders = useCallback(async () => {
+    const requestVersion = rootFolderRequestVersionRef.current + 1
+    rootFolderRequestVersionRef.current = requestVersion
+    try {
+      const page = await mediaService.listFolders({
+        parentPath: '',
+        mediaType: mediaTypeFilter,
+        limit: 100
+      })
+      if (requestVersion !== rootFolderRequestVersionRef.current) return
+      setRootFolders(page.items.map(presentFolderSummary))
+      setRootFolderPageInfo(page.pageInfo)
+    } catch (folderError) {
+      if (requestVersion !== rootFolderRequestVersionRef.current) return
+      showToast('error', 'No se cargaron las carpetas', folderError instanceof Error ? folderError.message : 'Intenta otra vez.')
+    }
+  }, [mediaTypeFilter, showToast])
+
+  const loadCurrentFolders = useCallback(async () => {
+    const requestVersion = folderRequestVersionRef.current + 1
+    folderRequestVersionRef.current = requestVersion
+    if (requestedFolderPath === null) {
+      setFolderSummaries([])
+      setFolderPageInfo(EMPTY_FOLDER_PAGE_INFO)
+      return
+    }
+    try {
+      const page = await mediaService.listFolders({
+        parentPath: requestedFolderPath,
+        mediaType: mediaTypeFilter,
+        limit: 100
+      })
+      if (requestVersion !== folderRequestVersionRef.current) return
+      const nextFolders = page.items.map(presentFolderSummary)
+      setFolderSummaries(nextFolders)
+      setFolderPageInfo(page.pageInfo)
+      if (requestedFolderPath === '') {
+        setRootFolders(nextFolders)
+        setRootFolderPageInfo(page.pageInfo)
+      }
+    } catch (folderError) {
+      if (requestVersion !== folderRequestVersionRef.current) return
+      showToast('error', 'No se cargaron las carpetas', folderError instanceof Error ? folderError.message : 'Intenta otra vez.')
+    }
+  }, [mediaTypeFilter, requestedFolderPath, showToast])
+
+  const loadMedia = useCallback(async (
+    mode: 'initial' | 'refresh' = 'refresh',
+    options: { cursor?: string; history?: string[] } = {}
+  ) => {
+    const requestVersion = mediaRequestVersionRef.current + 1
+    mediaRequestVersionRef.current = requestVersion
+    const requestedCursor = options.cursor || ''
+    const includeMeta = !requestedCursor
     if (mode === 'initial') setLoading(true)
     else setRefreshing(true)
     setError('')
 
     try {
-      const [nextAssets, nextUsage] = await Promise.all([
-        mediaService.listAllAssets(),
-        mediaService.getStorageUsage()
-      ])
-      setAssets(nextAssets)
-      setUsage(nextUsage)
+      const page = await mediaService.listAssets({
+        mediaType: mediaTypeFilter,
+        search: normalizedQuery || undefined,
+        folderPath: requestedFolderPath,
+        limit: MEDIA_LIBRARY_PAGE_SIZE,
+        cursor: requestedCursor || null,
+        includeMeta,
+        includeFolders: false
+      })
+      if (requestVersion !== mediaRequestVersionRef.current) return
+
+      setAssets(page.items)
+      setAssetPageInfo(page.pageInfo)
+      if (!requestedCursor) {
+        setLibraryItemsCount(page.summary?.totalItems ?? page.items.length)
+        setLibraryItemsCountIsLowerBound(page.summary === null && page.pageInfo.hasMore)
+      }
+      setPageCursor(requestedCursor)
+      setCursorHistory(options.history || [])
+      setSelectedItemKeys(new Set())
     } catch (loadError) {
+      if (requestVersion !== mediaRequestVersionRef.current) return
       const message = loadError instanceof Error ? loadError.message : 'No se pudo cargar Media.'
       setError(message)
       showToast('error', 'No se cargó Media', message)
     } finally {
-      setLoading(false)
-      setRefreshing(false)
+      if (requestVersion === mediaRequestVersionRef.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
-  }, [showToast])
+  }, [mediaTypeFilter, normalizedQuery, requestedFolderPath, showToast])
 
   useEffect(() => {
     void loadMedia('initial')
   }, [loadMedia])
 
+  useEffect(() => {
+    void loadUsage()
+  }, [loadUsage])
+
+  useEffect(() => {
+    void loadCurrentFolders()
+  }, [loadCurrentFolders])
+
+  useEffect(() => {
+    if (requestedFolderPath !== '') void loadRootFolders()
+    else rootFolderRequestVersionRef.current += 1
+    return () => {
+      rootFolderRequestVersionRef.current += 1
+    }
+  }, [loadRootFolders, requestedFolderPath])
+
+  const refreshLibrary = useCallback(async () => {
+    const tasks: Promise<unknown>[] = [
+      loadMedia('refresh'),
+      loadUsage(),
+      loadCurrentFolders()
+    ]
+    if (requestedFolderPath !== '') tasks.push(loadRootFolders())
+    await Promise.all(tasks)
+  }, [loadCurrentFolders, loadMedia, loadRootFolders, loadUsage, requestedFolderPath])
+
   const files = useMemo(() => assets.map(toExplorerFile), [assets])
   const filesById = useMemo(() => new Map(files.map((file) => [file.asset.id, file])), [files])
-  const allFolderPaths = useMemo(() => {
-    const folders = new Set<string>()
-    files.forEach((file) => {
-      file.folderSegments.forEach((_, index) => {
-        folders.add(file.folderSegments.slice(0, index + 1).join('/'))
-      })
-    })
-    return folders
-  }, [files])
-  const typeFilteredFiles = useMemo(() => (
-    activeFilter === 'all'
-      ? files
-      : files.filter((file) => file.asset.mediaType === activeFilter)
-  ), [activeFilter, files])
-  const normalizedQuery = query.trim().toLowerCase()
-  const browsingGlobalType = activeFilter !== 'all' && !currentPath && !normalizedQuery
-  const visibleFiles = useMemo(() => {
-    const scopedFiles = normalizedQuery
-      ? typeFilteredFiles.filter((file) => file.searchText.includes(normalizedQuery))
-      : browsingGlobalType
-        ? typeFilteredFiles
-        : typeFilteredFiles.filter((file) => fileMatchesPath(file, currentPath))
-
-    return [...scopedFiles].sort((a, b) => {
-      return parseSortableDateValue(b.asset.updatedAt || b.asset.createdAt) -
-        parseSortableDateValue(a.asset.updatedAt || a.asset.createdAt)
-    })
-  }, [browsingGlobalType, currentPath, normalizedQuery, typeFilteredFiles])
-  const folderSummaries = useMemo(() => (
-    normalizedQuery || browsingGlobalType ? [] : buildFolderSummaries(typeFilteredFiles, currentPath)
-  ), [browsingGlobalType, currentPath, normalizedQuery, typeFilteredFiles])
-  const rootFolders = useMemo(() => buildFolderSummaries(typeFilteredFiles, ''), [typeFilteredFiles])
-  const allFolderOptions = useMemo(() => buildAllFolderSummaries(files), [files])
+  const visibleFiles = files
   const visibleSelectionKeys = useMemo(() => [
     ...folderSummaries.map((folder) => folderSelectionKey(folder.path)),
     ...visibleFiles.map((file) => fileSelectionKey(file.asset.id))
   ], [folderSummaries, visibleFiles])
-  const selectedFiles = useMemo(() => {
-    const selected = new Map<string, ExplorerFile>()
-
-    selectedItemKeys.forEach((key) => {
-      const assetId = selectedFileIdFromKey(key)
-      if (assetId) {
-        const file = filesById.get(assetId)
-        if (file) selected.set(assetId, file)
-        return
-      }
-
-      const folderPath = selectedFolderPathFromKey(key)
-      if (folderPath) {
-        files
-          .filter((file) => fileStartsWithPath(file, folderPath))
-          .forEach((file) => selected.set(file.asset.id, file))
-      }
-    })
-
-    return Array.from(selected.values())
-  }, [files, filesById, selectedItemKeys])
+  const selectedFiles = useMemo(() => Array.from(selectedItemKeys)
+    .map(selectedFileIdFromKey)
+    .filter(Boolean)
+    .map((assetId) => filesById.get(assetId))
+    .filter((file): file is ExplorerFile => Boolean(file)), [filesById, selectedItemKeys])
+  const selectedFolderPaths = useMemo(() => Array.from(selectedItemKeys)
+    .map(selectedFolderPathFromKey)
+    .filter(Boolean), [selectedItemKeys])
+  const selectedFolderCounts = useMemo(() => new Map(
+    folderSummaries.map((folder) => [folder.path, folder.filesCount])
+  ), [folderSummaries])
+  const selectedFileCount = selectedFiles.length + selectedFolderPaths.reduce(
+    (total, folderPath) => total + (selectedFolderCounts.get(folderPath) || 0),
+    0
+  )
+  const selectedScope = useMemo<MediaSelectionInput>(() => ({
+    assetIds: selectedFiles.map((file) => file.asset.id),
+    folderPaths: selectedFolderPaths,
+    mediaType: mediaTypeFilter
+  }), [mediaTypeFilter, selectedFiles, selectedFolderPaths])
   const selectedFile = useMemo(() => (
     visibleFiles.find((file) => file.asset.id === selectedAssetId) || visibleFiles[0] || null
   ), [selectedAssetId, visibleFiles])
@@ -675,21 +716,14 @@ export const MediaSettings: React.FC = () => {
   })
   const usagePercent = Math.max(0, Math.min(100, Number(usage?.usage_percent || 0)))
   const filesCount = usage?.files_count ?? assets.length
+  const libraryItemsCountLabel = `${libraryItemsCount}${libraryItemsCountIsLowerBound ? '+' : ''}`
+  const visibleItemsCount = folderSummaries.length + libraryItemsCount
+  const visibleItemsCountLabel = `${visibleItemsCount}${libraryItemsCountIsLowerBound ? '+' : ''}`
   const folderPathParts = pathSegments(currentPath)
-  const selectedFileCount = selectedFiles.length
   const selectedElementCount = selectedItemKeys.size
   const allVisibleSelected = visibleSelectionKeys.length > 0 && visibleSelectionKeys.every((key) => selectedItemKeys.has(key))
   const partiallySelected = !allVisibleSelected && visibleSelectionKeys.some((key) => selectedItemKeys.has(key))
   const actionBusy = Boolean(bulkAction) || moving
-  const moveDestinationOptions = useMemo<FolderSummary[]>(() => [
-    {
-      path: '',
-      name: 'Mi unidad',
-      filesCount: files.length,
-      sizeBytes: files.reduce((total, file) => total + Number(file.asset.quotaSize || file.asset.sizeProcessed || file.asset.sizeOriginal || 0), 0)
-    },
-    ...allFolderOptions
-  ], [allFolderOptions, files])
   const marqueeBox = marqueeSelection && marqueeSelection.moved
     ? {
         left: Math.min(marqueeSelection.startX, marqueeSelection.currentX),
@@ -698,31 +732,6 @@ export const MediaSettings: React.FC = () => {
         height: Math.abs(marqueeSelection.currentY - marqueeSelection.startY)
       }
     : null
-
-  useEffect(() => {
-    setSelectedItemKeys((current) => {
-      let changed = false
-      const next = new Set<string>()
-
-      current.forEach((key) => {
-        const assetId = selectedFileIdFromKey(key)
-        if (assetId) {
-          if (filesById.has(assetId)) next.add(key)
-          else changed = true
-          return
-        }
-
-        const folderPath = selectedFolderPathFromKey(key)
-        if (folderPath && allFolderPaths.has(folderPath)) {
-          next.add(key)
-        } else {
-          changed = true
-        }
-      })
-
-      return changed ? next : current
-    })
-  }, [allFolderPaths, filesById])
 
   useEffect(() => {
     const asset = showVideoAnalytics ? selectedVideoFile?.asset : null
@@ -797,85 +806,129 @@ export const MediaSettings: React.FC = () => {
     })
   }
 
-  const filesInsideFolder = (folderPath: string) => (
-    files.filter((file) => fileStartsWithPath(file, folderPath))
-  )
-
   const filesByIds = (assetIds: string[]) => {
     const uniqueIds = new Set(assetIds)
     return files.filter((file) => uniqueIds.has(file.asset.id))
   }
 
-  const isMoveTargetDisabled = (dialog: MoveDialogState | null, targetPath: string) => {
-    if (!dialog || dialog.files.length === 0) return true
-    if (dialog.kind === 'folder' && dialog.sourceFolderPath) {
-      const sourceParentPath = pathSegments(dialog.sourceFolderPath).slice(0, -1).join('/')
-      if (targetPath === sourceParentPath) return true
-      if (targetPath === dialog.sourceFolderPath) return true
-      if (targetPath.startsWith(`${dialog.sourceFolderPath}/`)) return true
+  const handleNextPage = () => {
+    if (!assetPageInfo.nextCursor || refreshing) return
+    void loadMedia('refresh', {
+      cursor: assetPageInfo.nextCursor,
+      history: [...cursorHistory, pageCursor]
+    })
+  }
+
+  const handlePreviousPage = () => {
+    if (!cursorHistory.length || refreshing) return
+    const previousCursor = cursorHistory[cursorHistory.length - 1] || ''
+    void loadMedia('refresh', {
+      cursor: previousCursor,
+      history: cursorHistory.slice(0, -1)
+    })
+  }
+
+  const appendFolderPage = (current: FolderSummary[], page: MediaFolderPage) => {
+    const byPath = new Map(current.map((folder) => [folder.path, folder]))
+    page.items.map(presentFolderSummary).forEach((folder) => byPath.set(folder.path, folder))
+    return Array.from(byPath.values())
+  }
+
+  const loadMoreCurrentFolders = async () => {
+    if (!folderPageInfo.nextCursor || requestedFolderPath === null) return
+    const requestVersion = folderRequestVersionRef.current + 1
+    folderRequestVersionRef.current = requestVersion
+    try {
+      const page = await mediaService.listFolders({
+        parentPath: requestedFolderPath,
+        mediaType: mediaTypeFilter,
+        cursor: folderPageInfo.nextCursor,
+        limit: 100
+      })
+      if (requestVersion !== folderRequestVersionRef.current) return
+      setFolderSummaries((current) => appendFolderPage(current, page))
+      setFolderPageInfo(page.pageInfo)
+    } catch (folderError) {
+      if (requestVersion !== folderRequestVersionRef.current) return
+      showToast('error', 'No se cargaron más carpetas', folderError instanceof Error ? folderError.message : 'Intenta otra vez.')
     }
-    return dialog.files.every((file) => file.folderPath === targetPath)
+  }
+
+  const loadMoreRootFolders = async () => {
+    if (!rootFolderPageInfo.nextCursor) return
+    const requestVersion = rootFolderRequestVersionRef.current + 1
+    rootFolderRequestVersionRef.current = requestVersion
+    try {
+      const page = await mediaService.listFolders({
+        parentPath: '',
+        mediaType: mediaTypeFilter,
+        cursor: rootFolderPageInfo.nextCursor,
+        limit: 100
+      })
+      if (requestVersion !== rootFolderRequestVersionRef.current) return
+      setRootFolders((current) => appendFolderPage(current, page))
+      setRootFolderPageInfo(page.pageInfo)
+    } catch (folderError) {
+      if (requestVersion !== rootFolderRequestVersionRef.current) return
+      showToast('error', 'No se cargaron más carpetas', folderError instanceof Error ? folderError.message : 'Intenta otra vez.')
+    }
+  }
+
+  const isMoveTargetDisabled = (dialog: MoveDialogState | null, targetPath: string) => {
+    if (!dialog || dialog.filesCount === 0) return true
+    for (const sourceFolderPath of dialog.folderPaths) {
+      const sourceParentPath = pathSegments(sourceFolderPath).slice(0, -1).join('/')
+      if (targetPath === sourceParentPath) return true
+      if (targetPath === sourceFolderPath) return true
+      if (targetPath.startsWith(`${sourceFolderPath}/`)) return true
+    }
+    if (dialog.folderPaths.length) return false
+    const selectedDialogFiles = filesByIds(dialog.assetIds)
+    return selectedDialogFiles.length > 0 && selectedDialogFiles.every((file) => file.folderPath === targetPath)
+  }
+
+  const loadMoveFolders = async (parentPath: string, cursor = '', append = false) => {
+    const requestVersion = moveFolderRequestVersionRef.current + 1
+    moveFolderRequestVersionRef.current = requestVersion
+    setMoveFoldersLoading(true)
+    try {
+      const page = await mediaService.listFolders({ parentPath, cursor: cursor || null, limit: 100 })
+      if (requestVersion !== moveFolderRequestVersionRef.current) return
+      setMoveFolders((current) => append ? appendFolderPage(current, page) : page.items.map(presentFolderSummary))
+      setMoveFolderPageInfo(page.pageInfo)
+    } catch (folderError) {
+      if (requestVersion !== moveFolderRequestVersionRef.current) return
+      showToast('error', 'No se cargaron las carpetas', folderError instanceof Error ? folderError.message : 'Intenta otra vez.')
+    } finally {
+      if (requestVersion === moveFolderRequestVersionRef.current) {
+        setMoveFoldersLoading(false)
+      }
+    }
   }
 
   const openMoveDialog = (dialog: MoveDialogState) => {
-    const firstValidTarget = ['', ...allFolderOptions.map((folder) => folder.path)]
-      .find((path) => !isMoveTargetDisabled(dialog, path)) || ''
     setMoveDialog(dialog)
-    setMoveTargetPath(firstValidTarget)
+    setMoveTargetPath('')
+    setMoveFolders([])
+    setMoveFolderPageInfo(EMPTY_FOLDER_PAGE_INFO)
+    void loadMoveFolders('')
   }
 
   const closeMoveDialog = () => {
     if (moving) return
+    moveFolderRequestVersionRef.current += 1
     setMoveDialog(null)
     setMoveTargetPath('')
+    setMoveFolders([])
+    setMoveFolderPageInfo(EMPTY_FOLDER_PAGE_INFO)
+    setMoveFoldersLoading(false)
   }
 
-  const buildMoveEntries = (dialog: MoveDialogState, targetFolderPath: string): MediaMoveEntry[] => {
-    if (dialog.kind === 'folder' && dialog.sourceFolderPath) {
-      const sourceFolderPath = dialog.sourceFolderPath
-      const folderName = pathSegments(sourceFolderPath).slice(-1)[0] || getCurrentFolderLabel(sourceFolderPath)
-      return dialog.files.map((file) => ({
-        id: file.asset.id,
-        targetFolderPath: joinFolderPath(
-          targetFolderPath,
-          folderName,
-          relativeFolderPath(file.folderPath, sourceFolderPath)
-        )
-      }))
-    }
-
-    if (dialog.kind === 'selection') {
-      const entriesById = new Map<string, MediaMoveEntry>()
-
-      selectedItemKeys.forEach((key) => {
-        const folderPath = selectedFolderPathFromKey(key)
-        if (!folderPath) return
-        const folderName = pathSegments(folderPath).slice(-1)[0] || getCurrentFolderLabel(folderPath)
-        filesInsideFolder(folderPath).forEach((file) => {
-          entriesById.set(file.asset.id, {
-            id: file.asset.id,
-            targetFolderPath: joinFolderPath(
-              targetFolderPath,
-              folderName,
-              relativeFolderPath(file.folderPath, folderPath)
-            )
-          })
-        })
-      })
-
-      selectedItemKeys.forEach((key) => {
-        const assetId = selectedFileIdFromKey(key)
-        if (!assetId || entriesById.has(assetId)) return
-        entriesById.set(assetId, { id: assetId, targetFolderPath })
-      })
-
-      return Array.from(entriesById.values())
-    }
-
-    return dialog.files.map((file) => ({
-      id: file.asset.id,
-      targetFolderPath
-    }))
+  const openMoveFolderPath = (folderPath: string) => {
+    setMoveTargetPath(folderPath)
+    setMoveFolders([])
+    setMoveFolderPageInfo(EMPTY_FOLDER_PAGE_INFO)
+    void loadMoveFolders(folderPath)
   }
 
   const moveFiles = async (dialog: MoveDialogState, targetFolderPath: string) => {
@@ -884,28 +937,34 @@ export const MediaSettings: React.FC = () => {
       return
     }
 
-    const entries = buildMoveEntries(dialog, targetFolderPath)
-    if (!entries.length) {
+    if (!dialog.assetIds.length && !dialog.folderPaths.length) {
       showToast('warning', 'No hay archivos', 'Selecciona al menos un archivo para mover.')
       return
     }
 
     setMoving(true)
     try {
-      const movedAssets = await mediaService.moveAssets(entries, targetFolderPath)
-      const movedById = new Map(movedAssets.map((asset) => [asset.id, asset]))
-      setAssets((current) => current.map((asset) => movedById.get(asset.id) || asset))
+      const affected = (await mediaService.moveSelection({
+        assetIds: dialog.assetIds,
+        folderPaths: dialog.folderPaths,
+        mediaType: dialog.mediaType,
+        status: dialog.status
+      }, targetFolderPath)).affected
       setSelectedItemKeys(new Set())
-      if (movedAssets[0]) {
-        const movedFile = toExplorerFile(movedAssets[0])
-        updateExplorerUrl({ path: movedFile.folderPath, asset: movedAssets[0].id })
-      }
-      await loadMedia('refresh')
-      showToast('success', 'Archivos movidos', `${movedAssets.length} archivo${movedAssets.length === 1 ? '' : 's'} quedaron en la carpeta elegida.`)
+      await refreshLibrary()
+      const destinationPath = dialog.kind === 'folder' && dialog.sourceFolderPath
+        ? joinFolderPath(targetFolderPath, pathSegments(dialog.sourceFolderPath).slice(-1)[0] || '')
+        : targetFolderPath
+      updateExplorerUrl({ path: destinationPath, asset: null })
+      showToast('success', 'Archivos movidos', `${affected} archivo${affected === 1 ? '' : 's'} quedaron en la carpeta elegida.`)
+      moveFolderRequestVersionRef.current += 1
       setMoveDialog(null)
       setMoveTargetPath('')
+      setMoveFolders([])
+      setMoveFolderPageInfo(EMPTY_FOLDER_PAGE_INFO)
+      setMoveFoldersLoading(false)
     } catch (moveError) {
-      await loadMedia('refresh')
+      await refreshLibrary()
       showToast('error', 'No se pudo mover', moveError instanceof Error ? moveError.message : 'Intenta otra vez.')
     } finally {
       setMoving(false)
@@ -918,7 +977,11 @@ export const MediaSettings: React.FC = () => {
     openMoveDialog({
       kind: 'selection',
       title: `Mover ${selectedFileCount} archivo${selectedFileCount === 1 ? '' : 's'}`,
-      files: selectedFiles
+      assetIds: selectedScope.assetIds || [],
+      folderPaths: selectedScope.folderPaths || [],
+      filesCount: selectedFileCount,
+      mediaType: selectedScope.mediaType,
+      status: selectedScope.status
     })
   }
 
@@ -926,7 +989,10 @@ export const MediaSettings: React.FC = () => {
     openMoveDialog({
       kind: 'files',
       title: `Mover ${file.fileName}`,
-      files: [file]
+      assetIds: [file.asset.id],
+      folderPaths: [],
+      filesCount: 1,
+      mediaType: mediaTypeFilter
     })
   }
 
@@ -934,8 +1000,11 @@ export const MediaSettings: React.FC = () => {
     openMoveDialog({
       kind: 'folder',
       title: `Mover carpeta ${folder.name}`,
-      files: filesInsideFolder(folder.path),
-      sourceFolderPath: folder.path
+      assetIds: [],
+      folderPaths: [folder.path],
+      filesCount: folder.filesCount,
+      sourceFolderPath: folder.path,
+      mediaType: mediaTypeFilter
     })
   }
 
@@ -945,7 +1014,10 @@ export const MediaSettings: React.FC = () => {
     void moveFiles({
       kind: 'files',
       title: 'Mover archivos',
-      files: draggedFiles
+      assetIds: draggedFiles.map((file) => file.asset.id),
+      folderPaths: [],
+      filesCount: draggedFiles.length,
+      mediaType: mediaTypeFilter
     }, targetFolderPath)
   }
 
@@ -1102,7 +1174,7 @@ export const MediaSettings: React.FC = () => {
       }
 
       if (successCount > 0) {
-        await loadMedia('refresh')
+        await refreshLibrary()
         if (lastUploaded) {
           const uploadedFile = toExplorerFile(lastUploaded)
           updateExplorerUrl({ path: uploadedFile.folderPath, asset: lastUploaded.id })
@@ -1176,7 +1248,15 @@ export const MediaSettings: React.FC = () => {
   }
 
   const handleDownloadFolder = (folder: FolderSummary) => {
-    void downloadFiles(filesInsideFolder(folder.path), buildArchiveFilename(folder.name))
+    setBulkAction('download')
+    void mediaService.downloadAssetsArchive(
+      { folderPaths: [folder.path], mediaType: mediaTypeFilter },
+      buildArchiveFilename(folder.name)
+    ).then(() => {
+      showToast('success', 'Descarga iniciada', `${folder.filesCount} archivos van en un ZIP.`)
+    }).catch((downloadError) => {
+      showToast('error', 'No se pudo descargar', downloadError instanceof Error ? downloadError.message : 'Intenta otra vez.')
+    }).finally(() => setBulkAction(null))
   }
 
   const handleDownloadSelected = () => {
@@ -1190,7 +1270,18 @@ export const MediaSettings: React.FC = () => {
     const filename = selectedElementCount === 1
       ? buildArchiveFilename(currentFolderName)
       : buildArchiveFilename(`Media ${selectedFileCount} archivos`)
-    void downloadFiles(selectedFiles, filename)
+    if (selectedFolderPaths.length === 0 && selectedFiles.length === 1) {
+      void downloadFiles(selectedFiles, selectedFiles[0].fileName)
+      return
+    }
+
+    setBulkAction('download')
+    void mediaService.downloadAssetsArchive(selectedScope, filename)
+      .then(() => showToast('success', 'Descarga iniciada', `${selectedFileCount} archivos van en un ZIP.`))
+      .catch((downloadError) => {
+        showToast('error', 'No se pudo descargar', downloadError instanceof Error ? downloadError.message : 'Intenta otra vez.')
+      })
+      .finally(() => setBulkAction(null))
   }
 
   const deleteAsset = async (asset: MediaAsset) => {
@@ -1204,7 +1295,7 @@ export const MediaSettings: React.FC = () => {
         next.delete(fileSelectionKey(asset.id))
         return next
       })
-      await loadMedia('refresh')
+      await refreshLibrary()
       showToast('success', 'Archivo eliminado', 'Ya no aparecerá en Media.')
     } catch (deleteError) {
       showToast('error', 'No se pudo eliminar', deleteError instanceof Error ? deleteError.message : 'Intenta otra vez.')
@@ -1227,26 +1318,26 @@ export const MediaSettings: React.FC = () => {
     )
   }
 
-  const deleteFiles = async (filesToDelete: ExplorerFile[], successTitle: string, successMessage: string) => {
-    if (!filesToDelete.length) {
+  const deleteSelection = async (
+    selection: MediaSelectionInput,
+    filesToDelete: number,
+    successTitle: string,
+    successMessage: string
+  ) => {
+    if (!filesToDelete) {
       showToast('warning', 'No hay archivos', 'Selecciona al menos un archivo para eliminar.')
       return
     }
 
     setBulkAction('delete')
-    const deletedIds = new Set<string>()
     try {
-      for (const file of filesToDelete) {
-        await mediaService.deleteAsset(file.asset.id)
-        deletedIds.add(file.asset.id)
-      }
-      setAssets((current) => current.filter((item) => !deletedIds.has(item.id)))
+      await mediaService.deleteSelection(selection)
       setSelectedItemKeys(new Set())
-      if (selectedAssetId && deletedIds.has(selectedAssetId)) setSelectedAssetId(null)
-      await loadMedia('refresh')
+      setSelectedAssetId(null)
+      await refreshLibrary()
       showToast('success', successTitle, successMessage)
     } catch (deleteError) {
-      await loadMedia('refresh')
+      await refreshLibrary()
       showToast('error', 'No se pudo eliminar', deleteError instanceof Error ? deleteError.message : 'Intenta otra vez.')
     } finally {
       setBulkAction(null)
@@ -1254,12 +1345,16 @@ export const MediaSettings: React.FC = () => {
   }
 
   const handleDeleteFolder = (folder: FolderSummary) => {
-    const filesToDelete = filesInsideFolder(folder.path)
     showConfirm(
       'Eliminar carpeta',
-      `Se quitarán ${filesToDelete.length} archivo${filesToDelete.length === 1 ? '' : 's'} dentro de ${folder.name} de Media y del storage conectado. Esta acción no se puede deshacer.`,
+      `Se quitarán ${folder.filesCount} archivo${folder.filesCount === 1 ? '' : 's'} dentro de ${folder.name} de Media y del storage conectado. Esta acción no se puede deshacer.`,
       () => {
-        void deleteFiles(filesToDelete, 'Carpeta eliminada', `${folder.name} ya no aparecerá en Media.`)
+        void deleteSelection(
+          { folderPaths: [folder.path], mediaType: mediaTypeFilter },
+          folder.filesCount,
+          'Carpeta eliminada',
+          `${folder.name} ya no aparecerá en Media.`
+        )
       },
       'Eliminar',
       'Cancelar',
@@ -1273,7 +1368,7 @@ export const MediaSettings: React.FC = () => {
       'Eliminar selección',
       `Se quitarán ${selectedFileCount} archivo${selectedFileCount === 1 ? '' : 's'} de Media y del storage conectado. Esta acción no se puede deshacer.`,
       () => {
-        void deleteFiles(selectedFiles, 'Selección eliminada', 'Los archivos seleccionados ya no aparecerán en Media.')
+        void deleteSelection(selectedScope, selectedFileCount, 'Selección eliminada', 'Los archivos seleccionados ya no aparecerán en Media.')
       },
       'Eliminar',
       'Cancelar',
@@ -1539,7 +1634,7 @@ export const MediaSettings: React.FC = () => {
               variant="secondary"
               size="sm"
               leftIcon={refreshing ? <Loader2 size={16} className={styles.spin} /> : <RefreshCw size={16} />}
-              onClick={() => void loadMedia('refresh')}
+              onClick={() => void refreshLibrary()}
               disabled={refreshing || uploading}
             >
               Actualizar
@@ -1666,7 +1761,7 @@ export const MediaSettings: React.FC = () => {
               })}
             </nav>
           )}
-          <span>{folderSummaries.length + visibleFiles.length} elemento{folderSummaries.length + visibleFiles.length === 1 ? '' : 's'}</span>
+          <span>{visibleItemsCountLabel} elemento{visibleItemsCount === 1 ? '' : 's'}</span>
         </div>
 
         {error ? (
@@ -1674,7 +1769,7 @@ export const MediaSettings: React.FC = () => {
             <File size={26} />
             <strong>No se pudo abrir Media</strong>
             <p>{error}</p>
-            <Button variant="secondary" size="sm" onClick={() => void loadMedia('refresh')}>
+            <Button variant="secondary" size="sm" onClick={() => void refreshLibrary()}>
               Reintentar
             </Button>
           </div>
@@ -1695,7 +1790,7 @@ export const MediaSettings: React.FC = () => {
               >
                 <HardDrive size={17} />
                 <span>Mi unidad</span>
-                <small>{typeFilteredFiles.length}</small>
+                <small>{activeFilter === 'all' ? filesCount : libraryItemsCountLabel}</small>
               </button>
               {rootFolders.map((folder) => (
                 <button
@@ -1716,6 +1811,11 @@ export const MediaSettings: React.FC = () => {
                   <small>{folder.filesCount}</small>
                 </button>
               ))}
+              {rootFolderPageInfo.hasMore ? (
+                <Button variant="ghost" size="sm" onClick={() => void loadMoreRootFolders()}>
+                  Más carpetas
+                </Button>
+              ) : null}
             </aside>
 
             <main
@@ -1741,7 +1841,7 @@ export const MediaSettings: React.FC = () => {
               <div className={styles.paneHeader}>
                 <div>
                   <h2>{normalizedQuery ? 'Resultados' : browsingGlobalType ? getMediaFilterLabel(activeFilter) : getCurrentFolderLabel(currentPath)}</h2>
-                  <p>{folderSummaries.length} carpeta{folderSummaries.length === 1 ? '' : 's'} · {visibleFiles.length} archivo{visibleFiles.length === 1 ? '' : 's'}</p>
+                  <p>{folderSummaries.length} carpeta{folderSummaries.length === 1 ? '' : 's'} · {libraryItemsCountLabel} archivo{libraryItemsCount === 1 ? '' : 's'}</p>
                 </div>
                 {selectedElementCount > 0 ? (
                   <div className={styles.selectionBar}>
@@ -1825,6 +1925,26 @@ export const MediaSettings: React.FC = () => {
                   {visibleFiles.map((file) => renderFileButton(file, 'row'))}
                 </div>
               )}
+              {folderPageInfo.hasMore ? (
+                <div className={styles.paginationBar}>
+                  <Button variant="ghost" size="sm" onClick={() => void loadMoreCurrentFolders()}>
+                    Cargar más carpetas
+                  </Button>
+                </div>
+              ) : null}
+              {cursorHistory.length > 0 || assetPageInfo.hasMore ? (
+                <div className={styles.paginationBar} aria-label="Paginación de archivos">
+                  <span>Página {cursorHistory.length + 1}</span>
+                  <div>
+                    <Button variant="secondary" size="sm" onClick={handlePreviousPage} disabled={!cursorHistory.length || refreshing}>
+                      Anterior
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={handleNextPage} disabled={!assetPageInfo.hasMore || refreshing}>
+                      Siguiente
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </main>
 
             <aside className={styles.previewPane} aria-label="Detalle del archivo seleccionado">
@@ -1909,37 +2029,56 @@ export const MediaSettings: React.FC = () => {
         {moveDialog ? (
           <div className={styles.moveModal}>
             <p className={styles.moveIntro}>
-              {moveDialog.files.length} archivo{moveDialog.files.length === 1 ? '' : 's'} se moverán a:
+              {moveDialog.filesCount} archivo{moveDialog.filesCount === 1 ? '' : 's'} se moverán a {moveTargetPath ? moveTargetPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}.
             </p>
-            <div className={styles.moveFolderList} role="radiogroup" aria-label="Carpeta destino">
-              {moveDestinationOptions.map((folder) => {
-                const disabled = isMoveTargetDisabled(moveDialog, folder.path)
-                const active = moveTargetPath === folder.path
+            <div className={styles.moveFolderList} aria-label="Carpeta destino">
+              {moveTargetPath ? (
+                <button
+                  type="button"
+                  className={styles.moveFolderOption}
+                  disabled={moving || moveFoldersLoading}
+                  onClick={() => openMoveFolderPath(pathSegments(moveTargetPath).slice(0, -1).join('/'))}
+                >
+                  <span className={styles.rowIcon}><ChevronRight size={18} /></span>
+                  <span className={styles.moveFolderMeta}>
+                    <strong>Subir un nivel</strong>
+                    <small>{pathSegments(moveTargetPath).slice(0, -1).map(formatFolderSegment).join(' / ') || 'Mi unidad'}</small>
+                  </span>
+                </button>
+              ) : null}
+              {moveFoldersLoading && moveFolders.length === 0 ? (
+                <div className={styles.moveFoldersLoading}><Loader2 size={18} className={styles.spin} /></div>
+              ) : moveFolders.map((folder) => {
+                const createsCycle = moveDialog.folderPaths.some((sourcePath) => (
+                  folder.path === sourcePath || folder.path.startsWith(`${sourcePath}/`)
+                ))
                 return (
                   <button
-                    key={folder.path || 'root'}
+                    key={folder.path}
                     type="button"
-                    className={cx(
-                      styles.moveFolderOption,
-                      active && styles.moveFolderOptionActive,
-                      disabled && styles.moveFolderOptionDisabled
-                    )}
-                    disabled={disabled || moving}
-                    onClick={() => setMoveTargetPath(folder.path)}
-                    role="radio"
-                    aria-checked={active}
+                    className={cx(styles.moveFolderOption, createsCycle && styles.moveFolderOptionDisabled)}
+                    disabled={createsCycle || moving || moveFoldersLoading}
+                    onClick={() => openMoveFolderPath(folder.path)}
                   >
-                    <span className={styles.rowIcon}>
-                      {folder.path ? <Folder size={18} /> : <HardDrive size={18} />}
-                    </span>
+                    <span className={styles.rowIcon}><Folder size={18} /></span>
                     <span className={styles.moveFolderMeta}>
-                      <strong>{folder.name}</strong>
-                      <small>{folder.path ? folder.path.split('/').map(formatFolderSegment).join(' / ') : 'Raíz de Media'}</small>
+                      <strong>{formatFolderSegment(folder.name)}</strong>
+                      <small>{folder.filesCount} archivo{folder.filesCount === 1 ? '' : 's'}</small>
                     </span>
-                    <small>{folder.filesCount}</small>
+                    <ChevronRight size={16} />
                   </button>
                 )
               })}
+              {moveFolderPageInfo.hasMore ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={moveFoldersLoading || !moveFolderPageInfo.nextCursor}
+                  onClick={() => void loadMoveFolders(moveTargetPath, moveFolderPageInfo.nextCursor || '', true)}
+                >
+                  Cargar más carpetas
+                </Button>
+              ) : null}
             </div>
             <div className={styles.moveModalFooter}>
               <Button variant="secondary" size="sm" onClick={closeMoveDialog} disabled={moving}>

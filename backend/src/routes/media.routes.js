@@ -8,13 +8,16 @@ import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   cancelResumableVideoUploadHandler,
   deleteMediaAssetHandler,
+  deleteMediaSelectionHandler,
   downloadMediaAssetHandler,
   downloadMediaAssetsArchiveHandler,
   getMediaAssetStreamAnalyticsHandler,
   getMediaAssetUrlHandler,
   getStorageUsageHandler,
   listMediaAssetsHandler,
+  listMediaFoldersHandler,
   moveMediaAssetsHandler,
+  moveMediaSelectionHandler,
   finalizeResumableVideoUploadHandler,
   prepareResumableVideoUploadHandler,
   replaceMediaAssetHandler,
@@ -144,6 +147,7 @@ router.post('/video-upload/:assetId/finalize', classifyMediaUpload, requireMedia
 router.delete('/video-upload/:assetId', classifyMediaUpload, requireMediaUploadAccess, cancelResumableVideoUploadHandler)
 router.post('/upload', classifyMediaUpload, requireMediaUploadAccess, uploadSingleFile, uploadMediaHandler)
 router.get('/assets', requireMediaLicense, requireMediaAccess, listMediaAssetsHandler)
+router.get('/folders', requireMediaLicense, requireMediaAccess, listMediaFoldersHandler)
 router.get('/storage/usage', requireMediaLicense, requireMediaAccess, getStorageUsageHandler)
 router.get('/diagnostics', requireMediaLicense, requireMediaAccess, storageDiagnosticsHandler)
 router.get('/assets/:assetId/url', requireMediaLicense, requireMediaAccess, getMediaAssetUrlHandler)
@@ -151,6 +155,8 @@ router.get('/assets/:assetId/download', requireMediaLicense, requireMediaAccess,
 router.get('/assets/:assetId/stream/analytics', requireMediaLicense, requireMediaAccess, getMediaAssetStreamAnalyticsHandler)
 router.post('/assets/download', requireMediaLicense, requireMediaAccess, downloadMediaAssetsArchiveHandler)
 router.post('/assets/move', requireMediaLicense, requireMediaAccess, moveMediaAssetsHandler)
+router.post('/assets/move-selection', requireMediaLicense, requireMediaAccess, moveMediaSelectionHandler)
+router.delete('/assets/selection', requireMediaLicense, requireMediaAccess, deleteMediaSelectionHandler)
 router.delete('/assets/:assetId', requireMediaLicense, requireMediaAccess, deleteMediaAssetHandler)
 router.put('/assets/:assetId/replace', requireMediaLicense, requireMediaAccess, classifyMediaUpload, uploadSingleFile, replaceMediaAssetHandler)
 router.post('/assets/:assetId/retry', requireMediaLicense, requireMediaAccess, retryMediaAssetHandler)

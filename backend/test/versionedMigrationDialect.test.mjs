@@ -46,11 +46,86 @@ function openMemoryDatabase() {
   }
 }
 
-test('las migraciones .postgres.sql solo apuntan a PostgreSQL', () => {
+test('las migraciones con sufijo de dialecto sólo apuntan a su motor', () => {
   assert.equal(migrationRunsForDialect('041_payments_amount_numeric.postgres.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('041_payments_amount_numeric.postgres.sql', 'sqlite'), false)
+  assert.equal(migrationRunsForDialect('050_tracking_performance_indexes.sqlite.sql', 'sqlite'), true)
+  assert.equal(migrationRunsForDialect('050_tracking_performance_indexes.sqlite.sql', 'postgres'), false)
+  assert.equal(migrationRunsForDialect('051_message_analytics_indexes.sqlite.sql', 'sqlite'), true)
+  assert.equal(migrationRunsForDialect('051_message_analytics_indexes.sqlite.sql', 'postgres'), false)
   assert.equal(migrationRunsForDialect('040_common.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('040_common.sql', 'sqlite'), true)
+})
+
+test('PostgreSQL omite y registra una migración exclusiva de SQLite', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-sqlite-only-migration-'))
+  const database = openMemoryDatabase()
+
+  try {
+    await writeFile(
+      join(directory, '051_message_analytics_indexes.sqlite.sql'),
+      'THIS IS INTENTIONALLY NOT VALID SQL; THE RUNNER MUST SKIP IT;\n',
+      'utf8'
+    )
+
+    const result = await runVersionedMigrations({ database, dialect: 'postgres', directory })
+    assert.deepEqual(result, { applied: 0, skipped: 1 })
+    const ledger = await database.all('SELECT name FROM schema_migrations')
+    assert.deepEqual(ledger.map(row => row.name), ['051_message_analytics_indexes.sqlite.sql'])
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('PostgreSQL serializa dos runners y aplica una cadena versionada una sola vez', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-concurrent-migrations-'))
+  const base = openMemoryDatabase()
+  let lockHeld = false
+  let migrationExecutions = 0
+  const lockNames = []
+  const database = {
+    run: (...args) => base.run(...args),
+    all: (...args) => base.all(...args),
+    async exec(sql) {
+      if (sql.includes('concurrent_migration_marker')) {
+        migrationExecutions += 1
+        await new Promise((resolve) => setTimeout(resolve, 60))
+      }
+      return base.exec(sql)
+    },
+    async withAdvisoryLock(lockName, callback) {
+      lockNames.push(lockName)
+      if (lockHeld) {
+        throw Object.assign(new Error('busy'), { code: 'DATABASE_ADVISORY_LOCK_BUSY' })
+      }
+      lockHeld = true
+      try {
+        return await callback(database)
+      } finally {
+        lockHeld = false
+      }
+    }
+  }
+
+  try {
+    await writeFile(
+      join(directory, '001_concurrent.sql'),
+      'CREATE TABLE concurrent_migration_marker (id TEXT PRIMARY KEY);\n',
+      'utf8'
+    )
+    const results = await Promise.all([
+      runVersionedMigrations({ database, dialect: 'postgres', directory }),
+      runVersionedMigrations({ database, dialect: 'postgres', directory })
+    ])
+
+    assert.deepEqual(results.map((result) => result.applied).sort(), [0, 1])
+    assert.equal(migrationExecutions, 1)
+    assert.equal(lockNames.every((name) => name === 'versioned-migrations'), true)
+  } finally {
+    await base.close()
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test('SQLite omite y registra la migracion PostgreSQL sin ejecutar su DDL', async () => {

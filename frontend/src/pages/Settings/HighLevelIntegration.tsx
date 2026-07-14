@@ -53,7 +53,8 @@ export const HighLevelIntegration: React.FC = () => {
 
   const loadIntegrationStatus = async () => {
     try {
-      // En Ajustes siempre se consulta el estado fresco (sin caché compartido)
+      // En Ajustes se revalida el snapshot local; probar la credencial remota
+      // pertenece a la acción explícita de conectar/probar, no al montaje.
       const data = await getIntegrationsStatus({ forceRefresh: true })
       setIntegrationStatus(data as unknown as IntegrationStatus)
     } catch (error) {

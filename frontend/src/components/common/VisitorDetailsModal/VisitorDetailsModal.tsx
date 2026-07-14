@@ -1,5 +1,8 @@
 import { useState, useMemo, useEffect } from 'react'
-import { Modal, Icon, Badge, type BadgeVariant } from '@/components/common'
+import { Badge, type BadgeVariant } from '../Badge/Badge'
+import { Button } from '../Button/Button'
+import { Icon } from '../Icon/Icon'
+import { Modal } from '../Modal/Modal'
 import { formatUrlParameter } from '@/utils/format'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
@@ -18,6 +21,8 @@ interface VisitorDetail {
     ltv?: number
     purchases?: number
     appointments?: any[]
+    appointmentsTotal?: number
+    appointmentsTruncated?: boolean
     hasAttendedAppointment?: boolean
   } | null
   firstVisit?: string | null
@@ -60,6 +65,11 @@ interface VisitorDetailsModalProps {
   subtitle?: string
   data: VisitorDetail[] | Record<string, VisitorDetail> | null | undefined
   loading: boolean
+  currentPage?: number
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
+  onPageChange?: (direction: 'next' | 'previous') => void
+  onSearchChange?: (search: string) => void
 }
 
 export function VisitorDetailsModal({
@@ -68,7 +78,12 @@ export function VisitorDetailsModal({
   title,
   subtitle,
   data,
-  loading
+  loading,
+  currentPage = 1,
+  hasNextPage = false,
+  hasPreviousPage = false,
+  onPageChange,
+  onSearchChange
 }: VisitorDetailsModalProps) {
   const [selectedVisitor, setSelectedVisitor] = useState<VisitorDetail | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -131,6 +146,14 @@ export function VisitorDetailsModal({
     }
   }, [isOpen, normalizedData])
 
+  useEffect(() => {
+    if (!isOpen || !onSearchChange) return
+    const normalizedSearch = searchQuery.trim()
+    const serverSearch = normalizedSearch.length >= 3 ? normalizedSearch : ''
+    const timer = window.setTimeout(() => onSearchChange(serverSearch), 300)
+    return () => window.clearTimeout(timer)
+  }, [isOpen, onSearchChange, searchQuery])
+
   const preparedVisitorSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
   const visitorSearchIndexes = useMemo(() => {
     return normalizedData.map(visitor => buildSearchIndex([
@@ -145,6 +168,7 @@ export function VisitorDetailsModal({
 
   // Filtrar visitantes según búsqueda
   const filteredData = useMemo(() => {
+    if (onSearchChange) return normalizedData
     if (!preparedVisitorSearch.normalized) return normalizedData
 
     return normalizedData.filter((visitor, index) =>
@@ -160,7 +184,7 @@ export function VisitorDetailsModal({
         preparedVisitorSearch
       )
     )
-  }, [normalizedData, preparedVisitorSearch, visitorSearchIndexes])
+  }, [normalizedData, onSearchChange, preparedVisitorSearch, visitorSearchIndexes])
 
   const getDeviceIcon = (deviceType?: string) => {
     if (!deviceType) return 'monitor'
@@ -220,6 +244,7 @@ export function VisitorDetailsModal({
                 <div className={styles.stats}>
                   <span className={styles.statItem}>
                     {normalizedData.length} {normalizedData.length === 1 ? 'visitante' : 'visitantes'}
+                    {onPageChange ? ` en página ${currentPage}` : ''}
                   </span>
                   <span className={styles.statValue}>
                     {normalizedData.filter(d => d.contact?.id).length} identificados
@@ -244,7 +269,7 @@ export function VisitorDetailsModal({
                 <Icon name="search" size={16} className={styles.searchIcon} />
                 <input
                   type="text"
-                  placeholder="Buscar visitantes..."
+                  placeholder="Buscar visitas o contactos (mín. 3 caracteres)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className={styles.searchInput}
@@ -283,7 +308,7 @@ export function VisitorDetailsModal({
                 <>
                   {filteredData.map((visitor) => (
                     <div
-                      key={visitor.visitorId}
+                      key={`${visitor.visitorId}:${visitor.sessionId || visitor.createdAt || ''}`}
                       onClick={() => setSelectedVisitor(visitor)}
                       className={`${styles.visitorItem} ${selectedVisitor?.visitorId === visitor.visitorId ? styles.visitorItemSelected : ''}`}
                     >
@@ -318,11 +343,35 @@ export function VisitorDetailsModal({
             </div>
 
             {/* Footer */}
-            {normalizedData.length > 0 && (
+            {(normalizedData.length > 0 || (onPageChange && (hasPreviousPage || hasNextPage))) && (
               <div className={styles.footer}>
                 <span>
-                  Mostrando {filteredData.length} de {normalizedData.length}
+                  {onPageChange
+                    ? `Mostrando ${filteredData.length} en página ${currentPage}`
+                    : `Mostrando ${filteredData.length} de ${normalizedData.length}`}
                 </span>
+                {onPageChange && (
+                  <div className={styles.footerPagination}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!hasPreviousPage || loading}
+                      onClick={() => onPageChange('previous')}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!hasNextPage || loading}
+                      onClick={() => onPageChange('next')}
+                    >
+                      Siguiente
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -395,7 +444,9 @@ export function VisitorDetailsModal({
                     >
                       <div className={styles.toggleLabel}>
                         <Icon name={appointmentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
-                        <span>Citas ({selectedVisitor.contact.appointments.length})</span>
+                        <span>
+                          Citas ({selectedVisitor.contact.appointmentsTotal ?? selectedVisitor.contact.appointments.length})
+                        </span>
                       </div>
                     </button>
 
@@ -435,6 +486,13 @@ export function VisitorDetailsModal({
                               </li>
                             )
                           })}
+                        {selectedVisitor.contact.appointmentsTruncated && (
+                          <li className={styles.paymentItem}>
+                            <span className={styles.paymentDetailItem}>
+                              Mostrando las 5 citas más recientes.
+                            </span>
+                          </li>
+                        )}
                       </ul>
                     )}
                   </div>

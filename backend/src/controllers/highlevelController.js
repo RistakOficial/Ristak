@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import fetch from 'node-fetch';
-import { db, getAppConfig, setAppConfig } from '../config/database.js';
+import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/database.js';
 import { syncHighLevelData, getSyncProgress } from '../services/highlevelSyncService.js';
 import { syncSingleInvoice } from '../services/invoicesSyncService.js';
 import { logger } from '../utils/logger.js';
@@ -47,14 +47,15 @@ import {
   syncProductsWithSavedConfig,
   updateLocalProduct
 } from '../services/localProductService.js';
-import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors, updateStripePaymentPlanSchedule } from '../services/stripePaymentService.js';
-import { applyConektaPaymentPlanAction, refreshConektaPaymentPlanMirrors, updateConektaPaymentPlanSchedule } from '../services/conektaPaymentService.js';
-import { applyRebillPaymentPlanAction, refreshRebillPaymentPlanMirrors, updateRebillPaymentPlanSchedule } from '../services/rebillPaymentService.js';
+import { applyStripePaymentPlanAction, updateStripePaymentPlanSchedule } from '../services/stripePaymentService.js';
+import { applyConektaPaymentPlanAction, updateConektaPaymentPlanSchedule } from '../services/conektaPaymentService.js';
+import { applyRebillPaymentPlanAction, updateRebillPaymentPlanSchedule } from '../services/rebillPaymentService.js';
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
-import { coalescedTimestampSortExpression, parseSortableTimestamp } from '../utils/sqlTimestampSort.js';
+import { parseSortableTimestamp } from '../utils/sqlTimestampSort.js';
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js';
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js';
+import { getCachedPaymentListSummary } from '../services/paymentListSummaryCacheService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -70,6 +71,8 @@ const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
   'paused',
   'void'
 ]);
+const PAYMENT_PLAN_PAGE_SIZE = 20;
+const PAYMENT_PLAN_MAX_PAGE_SIZE = 100;
 const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE;
 const GHL_CHAT_CHANNELS = {
   whatsapp_api: {
@@ -1754,7 +1757,7 @@ export const updateCustomLabels = async (req, res) => {
  */
 export const listProducts = async (req, res) => {
   try {
-    const { limit = 100, offset = 0, query = '', sync = 'false' } = req.query;
+    const { limit = 100, offset = 0, query = '', sync = 'false', sortBy = 'name', sortOrder = 'asc' } = req.query;
 
     if (sync === 'true') {
       await syncProductsWithSavedConfig().catch(error => {
@@ -1766,13 +1769,16 @@ export const listProducts = async (req, res) => {
       limit: Number(limit),
       offset: Number(offset),
       query: String(query || ''),
-      includePrices: req.query.includePrices !== 'false'
+      includePrices: req.query.includePrices !== 'false',
+      sortBy: String(sortBy || 'name'),
+      sortOrder: String(sortOrder || 'asc')
     });
 
     res.json({
       success: true,
       products: data.products || [],
       total: data.total || 0,
+      summary: data.summary,
       source: 'ristak'
     });
 
@@ -2954,24 +2960,6 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-function extractScheduleList(response) {
-  if (Array.isArray(response)) return response;
-
-  const candidates = [
-    response?.schedules,
-    response?.invoiceSchedules,
-    response?.invoice_schedules,
-    response?.data?.schedules,
-    response?.data?.invoiceSchedules,
-    response?.data?.invoice_schedules,
-    response?.data,
-    response?.items,
-    response?.results
-  ];
-
-  return candidates.find(Array.isArray) || [];
-}
-
 function extractScheduleFromResponse(response) {
   if (!response) return null;
   if (Array.isArray(response)) return response[0] || null;
@@ -3089,10 +3077,6 @@ function resolveSchedulePrimaryDate(schedule = {}) {
   ) || null;
 }
 
-function timestamp(value) {
-  return parseSortableTimestamp(value);
-}
-
 function numberOrNull(value) {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number(value);
@@ -3164,17 +3148,6 @@ function resolveRecurrenceLabel(schedule = {}) {
 
 function normalizeScheduleStatus(value) {
   return value ? String(value).toLowerCase() : 'active';
-}
-
-function isActiveInvoiceSchedule(schedule = {}) {
-  const status = normalizeScheduleStatus(firstDefined(
-    schedule.status,
-    schedule.scheduleStatus,
-    schedule.schedule_status,
-    schedule.state
-  ));
-
-  return !INACTIVE_INVOICE_SCHEDULE_STATUSES.has(status);
 }
 
 export function normalizeInvoiceSchedule(schedule = {}, options = {}) {
@@ -3335,14 +3308,9 @@ async function persistLocalInvoiceSchedule(schedule) {
   }
 }
 
-async function persistLocalInvoiceSchedules(schedules = []) {
-  for (const schedule of schedules) {
-    await persistLocalInvoiceSchedule(schedule);
-  }
-}
-
 function paymentPlanFromRow(row = {}) {
-  const raw = safeJsonParse(row.raw_json, {});
+  const hasExpandedPayload = row.raw_json !== undefined || row.schedule_json !== undefined;
+  const raw = hasExpandedPayload ? safeJsonParse(row.raw_json, {}) : null;
   const formatUtcDateOnly = (date) => ([
     date.getUTCFullYear(),
     String(date.getUTCMonth() + 1).padStart(2, '0'),
@@ -3394,40 +3362,336 @@ function paymentPlanFromRow(row = {}) {
     recurrenceLabel: row.recurrence_label || 'Sin recurrencia',
     liveMode: dbToBoolean(row.live_mode),
     itemCount: Number(row.item_count || 0),
+    ...(row.completed_item_count !== undefined && row.completed_item_count !== null
+      ? { completedItemCount: Number(row.completed_item_count || 0) }
+      : {}),
     source: row.source || 'ghl',
     createdAt,
     updatedAt,
     sortDate: nextRunAt || updatedAt || createdAt,
-    raw: raw && Object.keys(raw).length ? raw : {
-      id: row.id || row.ghl_schedule_id,
-      schedule: safeJsonParse(row.schedule_json, {})
-    }
+    ...(hasExpandedPayload
+      ? {
+          raw: raw && Object.keys(raw).length ? raw : {
+            id: row.id || row.ghl_schedule_id,
+            schedule: safeJsonParse(row.schedule_json, {})
+          }
+        }
+      : {})
   };
 }
 
-async function listLocalInvoiceSchedules({ activeOnly = false, source = '' } = {}) {
+function normalizePaymentPlanStatusExpression(alias = 'payment_plans') {
+  const status = `LOWER(COALESCE(${alias}.status, 'active'))`;
+  return `CASE
+    WHEN ${status} IN ('complete', 'completed', 'paid', 'finished', 'finalized', 'finalizado') THEN 'completed'
+    WHEN ${status} IN ('canceled', 'cancelled') THEN 'cancelled'
+    ELSE ${status}
+  END`;
+}
+
+function paymentPlanTimestampSortExpression(...columns) {
+  const fallback = databaseDialect === 'postgres'
+    ? "TIMESTAMP '1970-01-01 00:00:00'"
+    : "''";
+  return `COALESCE(${[...columns, fallback].join(', ')})`;
+}
+
+function normalizePaymentPlanListQuery(query = {}) {
+  const requestedLimit = Number(query.limit);
+  const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+    ? Math.min(Math.floor(requestedLimit), PAYMENT_PLAN_MAX_PAGE_SIZE)
+    : PAYMENT_PLAN_PAGE_SIZE;
+  const requestedPage = Number(query.page);
+  const hasExplicitPage = Number.isFinite(requestedPage) && requestedPage > 0;
+  const page = hasExplicitPage ? Math.floor(requestedPage) : 1;
+  const rawSearch = String(query.q || query.search || '').trim().slice(0, 160).toLowerCase();
+  const search = rawSearch.length >= 2 ? rawSearch : '';
+  const statuses = [query.status, query.statuses]
+    .flatMap(value => Array.isArray(value) ? value : [value])
+    .flatMap(value => String(value || '').split(','))
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean)
+    .map(value => value === 'canceled' ? 'cancelled' : value === 'complete' ? 'completed' : value);
+
+  return {
+    page,
+    limit,
+    cursor: String(query.cursor || '').trim().slice(0, 4096),
+    search,
+    statuses: Array.from(new Set(statuses)).slice(0, 24),
+    source: String(query.source || '').trim().toLowerCase().slice(0, 40),
+    activeOnly: query.activeOnly === true || query.activeOnly === 'true',
+    sortBy: String(query.sortBy || 'startDate').trim(),
+    sortOrder: String(query.sortOrder || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
+  };
+}
+
+function paymentPlanCursorError(message = 'Cursor de planes de pago inválido') {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
+}
+
+function paymentPlanCursorScope(normalized) {
+  return crypto.createHash('sha256').update(JSON.stringify({
+    activeOnly: normalized.activeOnly,
+    source: normalized.source,
+    search: normalized.search,
+    statuses: normalized.statuses,
+    sortBy: normalized.sortBy,
+    sortOrder: normalized.sortOrder
+  })).digest('base64url');
+}
+
+function encodePaymentPlanCursor(row, normalized) {
+  if (!row?.id || row.cursor_fallback_value === null || row.cursor_fallback_value === undefined) return null;
+  return Buffer.from(JSON.stringify({
+    v: 1,
+    scope: paymentPlanCursorScope(normalized),
+    nullRank: Number(row.cursor_null_rank || 0),
+    sortValue: row.cursor_sort_value,
+    fallbackValue: row.cursor_fallback_value,
+    id: String(row.id)
+  }), 'utf8').toString('base64url');
+}
+
+function decodePaymentPlanCursor(value, normalized) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    const nullRank = Number(parsed?.nullRank);
+    if (
+      parsed?.v !== 1 || parsed?.scope !== paymentPlanCursorScope(normalized) ||
+      ![0, 1].includes(nullRank) || !String(parsed?.fallbackValue ?? '').trim() ||
+      !String(parsed?.id || '').trim() || (nullRank === 0 && parsed?.sortValue === undefined)
+    ) throw new Error('invalid cursor payload');
+    return {
+      nullRank,
+      sortValue: parsed.sortValue,
+      fallbackValue: parsed.fallbackValue,
+      id: String(parsed.id).trim()
+    };
+  } catch {
+    throw paymentPlanCursorError();
+  }
+}
+
+function buildPaymentPlanWhere({ activeOnly, source, search, statuses }, { includeStatuses = true } = {}) {
   const filters = [];
   const params = [];
+  const normalizedStatus = normalizePaymentPlanStatusExpression('payment_plans');
 
   if (activeOnly) {
-    filters.push(`LOWER(COALESCE(status, 'active')) NOT IN (${Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES).map(() => '?').join(', ')})`);
+    filters.push(`LOWER(COALESCE(payment_plans.status, 'active')) NOT IN (${Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES).map(() => '?').join(', ')})`);
     params.push(...Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES));
   }
 
   if (source) {
-    filters.push("COALESCE(source, 'ghl') = ?");
+    filters.push("LOWER(COALESCE(payment_plans.source, 'ghl')) = ?");
     params.push(source);
   }
 
-  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  const sortExpression = coalescedTimestampSortExpression('next_run_at', 'updated_at', 'created_at');
-  const rows = await db.all(
-    `SELECT * FROM payment_plans ${where}
-     ORDER BY ${sortExpression} DESC, id DESC`,
-    params
-  );
+  if (search) {
+    const searchDocument = `LOWER(
+      COALESCE(payment_plans.id, '') || ' ' ||
+      COALESCE(payment_plans.name, '') || ' ' ||
+      COALESCE(payment_plans.title, '') || ' ' ||
+      COALESCE(payment_plans.contact_name, '') || ' ' ||
+      COALESCE(payment_plans.email, '') || ' ' ||
+      COALESCE(payment_plans.phone, '') || ' ' ||
+      COALESCE(payment_plans.description, '') || ' ' ||
+      COALESCE(payment_plans.recurrence_label, '') || ' ' ||
+      COALESCE(payment_plans.source, '')
+    )`;
+    const escapedSearch = search.replace(/[\\%_]/g, value => `\\${value}`);
+    filters.push(`${searchDocument} LIKE ? ESCAPE '\\'`);
+    params.push(`%${escapedSearch}%`);
+  }
 
-  return rows.map(paymentPlanFromRow);
+  if (includeStatuses && statuses.length) {
+    filters.push(`${normalizedStatus} IN (${statuses.map(() => '?').join(', ')})`);
+    params.push(...statuses);
+  }
+
+  return {
+    filters,
+    whereClause: filters.length ? `WHERE ${filters.join(' AND ')}` : '',
+    params
+  };
+}
+
+function appendPaymentPlanCursorCondition(filters, params, cursor, sortExpression, fallbackSortExpression, sortOrder) {
+  if (!cursor) return;
+  const nullRankExpression = `CASE WHEN ${sortExpression} IS NULL THEN 1 ELSE 0 END`;
+  const operator = sortOrder === 'ASC' ? '>' : '<';
+
+  if (cursor.nullRank === 0) {
+    filters.push(`(${nullRankExpression}, ${sortExpression}, ${fallbackSortExpression}, payment_plans.id) ${operator} (?, ?, ?, ?)`);
+    params.push(
+      cursor.nullRank,
+      cursor.sortValue,
+      cursor.fallbackValue,
+      cursor.id
+    );
+    return;
+  }
+
+  filters.push(`(${nullRankExpression}, ${fallbackSortExpression}, payment_plans.id) ${operator} (?, ?, ?)`);
+  params.push(
+    cursor.nullRank,
+    cursor.fallbackValue,
+    cursor.id
+  );
+}
+
+async function getPaymentPlansSummary() {
+  const normalizedStatus = normalizePaymentPlanStatusExpression('payment_plans');
+  const statusRows = await db.all(
+    `SELECT ${normalizedStatus} AS status, COUNT(*) AS count
+     FROM payment_plans
+     GROUP BY ${normalizedStatus}`
+  );
+  const facets = statusRows
+    .map(row => ({
+      value: String(row.status || '').trim(),
+      count: Number(row.count || 0)
+    }))
+    .filter(row => row.value);
+
+  return {
+    facets: { statuses: facets },
+    summary: {
+      total: facets.reduce((sum, row) => sum + row.count, 0),
+      active: facets.filter(row => ['active', 'scheduled', 'pending', 'sent'].includes(row.value)).reduce((sum, row) => sum + row.count, 0),
+      inactive: facets.filter(row => ['paused', 'inactive', 'draft', 'cancelled', 'deleted'].includes(row.value)).reduce((sum, row) => sum + row.count, 0),
+      completed: facets.filter(row => row.value === 'completed').reduce((sum, row) => sum + row.count, 0)
+    }
+  };
+}
+
+async function listLocalInvoiceSchedules(query = {}) {
+  const normalized = normalizePaymentPlanListQuery(query);
+  if (Number.isFinite(Number(query.offset)) && Number(query.offset) > 0) {
+    throw paymentPlanCursorError('La paginación por offset ya no está disponible; usa nextCursor');
+  }
+  if (normalized.page > 1 && !normalized.cursor) {
+    throw paymentPlanCursorError('Las páginas posteriores requieren cursor');
+  }
+  const listWhere = buildPaymentPlanWhere(normalized);
+  const normalizedStatus = normalizePaymentPlanStatusExpression('payment_plans');
+  const startSortExpression = paymentPlanTimestampSortExpression('payment_plans.start_date', 'payment_plans.next_run_at', 'payment_plans.updated_at', 'payment_plans.created_at');
+  const nextRunSortExpression = paymentPlanTimestampSortExpression('payment_plans.next_run_at');
+  const fallbackSortExpression = paymentPlanTimestampSortExpression('payment_plans.next_run_at', 'payment_plans.updated_at', 'payment_plans.created_at');
+  const sortableMap = {
+    startDate: startSortExpression,
+    nextRunAt: nextRunSortExpression,
+    sortDate: fallbackSortExpression,
+    status: normalizedStatus,
+    total: 'payment_plans.total',
+    name: "LOWER(COALESCE(payment_plans.name, payment_plans.title, ''))",
+    contactName: "LOWER(COALESCE(payment_plans.contact_name, ''))",
+    recurrenceLabel: "LOWER(COALESCE(payment_plans.recurrence_label, ''))",
+    email: "LOWER(COALESCE(payment_plans.email, ''))"
+  };
+  const sortExpression = sortableMap[normalized.sortBy] || startSortExpression;
+  const decodedCursor = decodePaymentPlanCursor(normalized.cursor, normalized);
+  appendPaymentPlanCursorCondition(
+    listWhere.filters,
+    listWhere.params,
+    decodedCursor,
+    sortExpression,
+    fallbackSortExpression,
+    normalized.sortOrder
+  );
+  listWhere.whereClause = listWhere.filters.length ? `WHERE ${listWhere.filters.join(' AND ')}` : '';
+  const nullRankExpression = `CASE WHEN ${sortExpression} IS NULL THEN 1 ELSE 0 END`;
+
+  const [candidateRows, cachedSummary] = await Promise.all([
+    db.all(
+      `SELECT
+         payment_plans.id,
+         payment_plans.ghl_schedule_id,
+         payment_plans.contact_id,
+         payment_plans.contact_name,
+         payment_plans.email,
+         payment_plans.phone,
+         payment_plans.name,
+         payment_plans.title,
+         payment_plans.status,
+         payment_plans.total,
+         payment_plans.currency,
+         payment_plans.description,
+         payment_plans.recurrence_label,
+         payment_plans.start_date,
+         payment_plans.next_run_at,
+         payment_plans.end_date,
+         payment_plans.live_mode,
+         payment_plans.item_count,
+         payment_plans.source,
+         payment_plans.last_synced_at,
+         payment_plans.created_at,
+         payment_plans.updated_at,
+         ${nullRankExpression} AS cursor_null_rank,
+         ${sortExpression} AS cursor_sort_value,
+         ${fallbackSortExpression} AS cursor_fallback_value,
+         CASE
+           WHEN LOWER(COALESCE(payment_plans.source, 'ghl')) IN ('stripe', 'conekta', 'rebill', 'mercadopago')
+             THEN CASE
+               WHEN ${normalizedStatus} = 'completed' THEN COALESCE(payment_plans.item_count, 0)
+               ELSE
+                 COALESCE((
+                   SELECT CASE
+                     WHEN COALESCE(payment_flows.first_payment_amount, 0) > 0
+                       AND LOWER(COALESCE(payment_flows.first_payment_status, 'pending')) IN (
+                         'paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'registered'
+                       )
+                     THEN 1 ELSE 0
+                   END
+                   FROM payment_flows
+                   WHERE payment_flows.id = payment_plans.id
+                 ), 0)
+                 + (
+                   SELECT COUNT(*)
+                   FROM installment_payments
+                   WHERE installment_payments.flow_id = payment_plans.id
+                     AND LOWER(COALESCE(installment_payments.status, 'pending')) IN (
+                       'paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'registered'
+                     )
+                 )
+             END
+           ELSE NULL
+         END AS completed_item_count
+       FROM payment_plans
+       ${listWhere.whereClause}
+       ORDER BY ${nullRankExpression} ${normalized.sortOrder}, ${sortExpression} ${normalized.sortOrder}, ${fallbackSortExpression} ${normalized.sortOrder}, payment_plans.id ${normalized.sortOrder}
+       LIMIT ?`,
+      [...listWhere.params, normalized.limit + 1]
+    ),
+    getCachedPaymentListSummary('payment_plans', getPaymentPlansSummary)
+  ]);
+
+  const hasNext = candidateRows.length > normalized.limit;
+  const rows = hasNext ? candidateRows.slice(0, normalized.limit) : candidateRows;
+  const nextCursor = hasNext ? encodePaymentPlanCursor(rows[rows.length - 1], normalized) : null;
+  const hasFilters = Boolean(normalized.activeOnly || normalized.source || normalized.search || normalized.statuses.length);
+  const total = hasFilters ? null : Number(cachedSummary.summary.total || 0);
+  const totalPages = total === null ? null : Math.max(Math.ceil(total / normalized.limit), 1);
+
+  return {
+    data: rows.map(paymentPlanFromRow),
+    pagination: {
+      page: normalized.page,
+      limit: normalized.limit,
+      total,
+      totalPages,
+      hasNext,
+      hasPrev: Boolean(decodedCursor),
+      nextCursor
+    },
+    facets: cachedSummary.facets,
+    summary: cachedSummary.summary,
+    summaryCache: cachedSummary.cache
+  };
 }
 
 async function getLocalInvoiceSchedule(scheduleId) {
@@ -3682,110 +3946,21 @@ export const createInvoiceSchedule = async (req, res) => {
 
 export const listInvoiceSchedules = async (req, res) => {
   try {
-    const activeOnly = req.query.activeOnly === 'true';
-    const requestedLimit = Number(req.query.limit);
-    const singlePage = Number.isFinite(requestedLimit) && requestedLimit > 0;
-    const limit = Math.min(singlePage ? requestedLimit : 100, 100);
-    let offset = Math.max(Number(req.query.offset) || 0, 0);
-    const maxPages = singlePage ? 1 : 10;
-    const schedules = [];
-
-    await refreshStripePaymentPlanMirrors().catch((error) => {
-      logger.warn(`No se pudieron refrescar espejos locales de planes Stripe: ${error.message}`);
-    });
-    await refreshConektaPaymentPlanMirrors().catch((error) => {
-      logger.warn(`No se pudieron refrescar espejos locales de planes Conekta: ${error.message}`);
-    });
-    await refreshRebillPaymentPlanMirrors().catch((error) => {
-      logger.warn(`No se pudieron refrescar espejos locales de planes Rebill: ${error.message}`);
-    });
-
-    const localStripePlans = await listLocalInvoiceSchedules({
-      activeOnly,
-      source: 'stripe'
-    });
-    const localConektaPlans = await listLocalInvoiceSchedules({
-      activeOnly,
-      source: 'conekta'
-    });
-    const localRebillPlans = await listLocalInvoiceSchedules({
-      activeOnly,
-      source: 'rebill'
-    });
-
-    const highLevelConfig = await getHighLevelConfig().catch(() => null);
-    if (!highLevelConfig?.location_id || !highLevelConfig?.api_token) {
-      const localPlans = await listLocalInvoiceSchedules({ activeOnly });
-      return res.json({
-        success: true,
-        data: localPlans,
-        source: 'local'
-      });
-    }
-
-    const ghlClient = await getGHLClient();
-
-    for (let page = 0; page < maxPages; page += 1) {
-      const response = await ghlClient.listInvoiceSchedules({ limit, offset });
-      const pageSchedules = extractScheduleList(response);
-      schedules.push(...pageSchedules);
-
-      if (pageSchedules.length < limit) break;
-      offset += limit;
-    }
-
-    const data = schedules
-      .filter(schedule => !activeOnly || isActiveInvoiceSchedule(schedule))
-      .map(normalizeInvoiceSchedule)
-      .filter(schedule => schedule.id)
-      .sort((left, right) => timestamp(right.sortDate) - timestamp(left.sortDate));
-
-    await persistLocalInvoiceSchedules(data);
-
-    const seenIds = new Set(data.map(schedule => schedule.id));
-    const mergedData = [
-      ...data,
-      ...localStripePlans.filter(schedule => {
-        if (!schedule.id || seenIds.has(schedule.id)) return false;
-        seenIds.add(schedule.id);
-        return true;
-      }),
-      ...localConektaPlans.filter(schedule => {
-        if (!schedule.id || seenIds.has(schedule.id)) return false;
-        seenIds.add(schedule.id);
-        return true;
-      }),
-      ...localRebillPlans.filter(schedule => {
-        if (!schedule.id || seenIds.has(schedule.id)) return false;
-        seenIds.add(schedule.id);
-        return true;
-      })
-    ].sort((left, right) => timestamp(right.sortDate) - timestamp(left.sortDate));
-
-    res.json({
+    // La lectura de una pantalla nunca consulta proveedores ni reconstruye todos
+    // los espejos. Los webhooks, jobs conectados y mutaciones explícitas son los
+    // únicos responsables de materializar el estado remoto en payment_plans.
+    const result = await listLocalInvoiceSchedules(req.query);
+    return res.json({
       success: true,
-      data: mergedData
+      ...result,
+      source: 'local'
     });
   } catch (error) {
-    logger.warn(`No se pudo sincronizar invoice schedules desde GHL; usando cache local si existe: ${error.message}`);
-
-    try {
-      const data = await listLocalInvoiceSchedules({
-        activeOnly: req.query.activeOnly === 'true'
-      });
-
-      return res.json({
-        success: true,
-        data,
-        source: 'local_cache'
-      });
-    } catch (localError) {
-      logger.error(`Error leyendo cache local de invoice schedules: ${localError.message}`);
-    }
-
-    res.status(500).json({
+    logger.error(`Error leyendo planes de pago locales: ${error.message}`);
+    const status = Number(error?.status) >= 400 && Number(error?.status) < 500 ? Number(error.status) : 500;
+    res.status(status).json({
       success: false,
-      error: error.message || 'Error al obtener planes de pago'
+      error: status < 500 ? error.message : 'Error al obtener planes de pago'
     });
   }
 };
@@ -3802,71 +3977,23 @@ export const getInvoiceSchedule = async (req, res) => {
     }
 
     const localSchedule = await getLocalInvoiceSchedule(scheduleId);
-    if (isStripeLocalInvoiceSchedule(localSchedule)) {
-      return res.json({
-        success: true,
-        data: localSchedule,
-        source: 'local_stripe'
-      });
-    }
-
-    if (isMercadoPagoLocalInvoiceSchedule(localSchedule)) {
-      return res.json({
-        success: true,
-        data: localSchedule,
-        source: 'local_mercadopago'
-      });
-    }
-
-    if (isConektaLocalInvoiceSchedule(localSchedule)) {
-      return res.json({
-        success: true,
-        data: localSchedule,
-        source: 'local_conekta'
-      });
-    }
-
-    if (isRebillLocalInvoiceSchedule(localSchedule)) {
-      return res.json({ success: true, data: localSchedule, source: 'local_rebill' });
-    }
-
-    const ghlClient = await getGHLClient();
-    const response = await ghlClient.getInvoiceSchedule(scheduleId);
-    const schedule = extractScheduleFromResponse(response);
-
-    if (!schedule) {
+    if (!localSchedule) {
       return res.status(404).json({
         success: false,
         error: 'Plan de pago no encontrado'
       });
     }
 
-    const normalizedSchedule = normalizeInvoiceSchedule(schedule, { preferredIds: [scheduleId] });
-    await persistLocalInvoiceSchedule(normalizedSchedule);
-
-    res.json({
+    return res.json({
       success: true,
-      data: normalizedSchedule
+      data: localSchedule,
+      source: `local_${localSchedule.source || 'ghl'}`
     });
   } catch (error) {
-    logger.warn(`No se pudo obtener invoice schedule ${req.params.scheduleId} desde GHL; intentando cache local: ${error.message}`);
-
-    try {
-      const localSchedule = await getLocalInvoiceSchedule(req.params.scheduleId);
-      if (localSchedule) {
-        return res.json({
-          success: true,
-          data: localSchedule,
-          source: 'local_cache'
-        });
-      }
-    } catch (localError) {
-      logger.error(`Error leyendo plan local ${req.params.scheduleId}: ${localError.message}`);
-    }
-
+    logger.error(`Error leyendo plan local ${req.params.scheduleId}: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: error.message || 'Error al obtener plan de pago'
+      error: 'Error al obtener plan de pago'
     });
   }
 };

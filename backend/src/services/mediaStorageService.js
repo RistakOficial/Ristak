@@ -6,7 +6,7 @@ import { promises as fs } from 'fs'
 import { createReadStream } from 'fs'
 import { dirname, extname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { compressMediaBuffer } from './mediaCompressionService.js'
 import { createRistakId } from '../utils/idGenerator.js'
@@ -54,6 +54,51 @@ const BUNNY_FILE_UPLOAD_MAX_TIMEOUT_MS = 30 * 60_000
 const BUNNY_FILE_DELETE_TIMEOUT_MS = 30_000
 // Solo necesitamos los primeros bytes para detectar el tipo real del archivo.
 const MEDIA_HEADER_SAMPLE_BYTES = 64 * 1024
+const MEDIA_LIBRARY_DEFAULT_LIMIT = 50
+const MEDIA_LIBRARY_MAX_LIMIT = 100
+const MEDIA_FOLDER_DEFAULT_LIMIT = 100
+const MEDIA_FOLDER_MAX_LIMIT = 100
+const MEDIA_SELECTION_MAX_EXPLICIT_IDS = 500
+const MEDIA_SELECTION_MAX_FOLDER_PATHS = 50
+const MEDIA_SELECTION_MAX_RESOLVED_ITEMS = 2_000
+const MEDIA_REMOTE_SELECTION_MAX_ITEMS = 25
+const MEDIA_REMOTE_SELECTION_MAX_ITEM_BYTES = 64 * 1024 * 1024
+const MEDIA_REMOTE_SELECTION_MAX_TOTAL_BYTES = 256 * 1024 * 1024
+const MEDIA_REMOTE_SELECTION_TIME_BUDGET_MS = 60_000
+const MEDIA_DOWNLOAD_TIMEOUT_MS = 5 * 60_000
+const MEDIA_LIBRARY_CURSOR_FALLBACK_TIMESTAMP = '1970-01-01 00:00:00'
+const MEDIA_LIBRARY_LIST_COLUMNS = `
+  id,
+  business_id,
+  user_id,
+  original_filename,
+  stored_filename,
+  bunny_path,
+  folder_path,
+  public_url,
+  private_url,
+  mime_type,
+  media_type,
+  extension,
+  size_original,
+  size_processed,
+  quota_size,
+  width,
+  height,
+  duration,
+  status,
+  storage_provider,
+  storage_zone,
+  cdn_base_url,
+  module,
+  module_entity_id,
+  is_public,
+  metadata_json,
+  stream_video_id,
+  created_at,
+  updated_at,
+  deleted_at
+`
 
 let centralStorageConfigCache = {
   expiresAt: 0,
@@ -596,6 +641,7 @@ async function resolveClientAccountContext(input = {}) {
 
 function mapAssetRow(row) {
   if (!row) return null
+  const metadata = parseJson(row.metadata_json, {})
   return {
     id: row.id,
     businessId: row.business_id || 'default',
@@ -603,6 +649,11 @@ function mapAssetRow(row) {
     originalFilename: row.original_filename || '',
     storedFilename: row.stored_filename || '',
     bunnyPath: row.bunny_path || '',
+    folderPath: normalizeMediaFolderPath(
+      row.folder_path === null || row.folder_path === undefined
+        ? mediaFolderPathFromObjectPath(row.bunny_path, row.module || row.media_type || 'other')
+        : row.folder_path
+    ),
     publicUrl: row.public_url || '',
     privateUrl: row.private_url || '',
     mimeType: row.mime_type || 'application/octet-stream',
@@ -621,7 +672,8 @@ function mapAssetRow(row) {
     module: row.module || 'other',
     moduleEntityId: row.module_entity_id || null,
     isPublic: boolValue(row.is_public),
-    metadata: parseJson(row.metadata_json, {}),
+    metadata,
+    streamVideoId: cleanString(row.stream_video_id || metadata?.stream?.videoId) || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
     deletedAt: row.deleted_at || null
@@ -1057,6 +1109,19 @@ function bunnyFileUploadTimeoutMs(size = 0) {
   return Math.min(BUNNY_FILE_UPLOAD_MAX_TIMEOUT_MS, Math.max(BUNNY_FILE_UPLOAD_BASE_TIMEOUT_MS, sizeAllowance))
 }
 
+function boundedRemoteOperationTimeout(deadlineAt, fallbackMs) {
+  if (!deadlineAt) return fallbackMs
+  const remainingMs = Math.floor(Number(deadlineAt) - Date.now())
+  if (remainingMs <= 0) {
+    throw errorWithStatus(
+      'La operación remota agotó su presupuesto de tiempo. Recarga Media para ver lo que sí terminó.',
+      409,
+      'media_remote_selection_time_budget_exceeded'
+    )
+  }
+  return Math.max(250, Math.min(fallbackMs, remainingMs))
+}
+
 async function bunnyStreamRequest(config, pathname, {
   method = 'GET',
   query = {},
@@ -1415,14 +1480,15 @@ async function getBunnyStreamVideoHeatmap(config, videoId) {
   )
 }
 
-async function deleteBunnyStreamVideo(config, videoId) {
+async function deleteBunnyStreamVideo(config, videoId, { deadlineAt = 0 } = {}) {
   if (!config.bunnyStreamConfigured || !videoId) return null
   return await bunnyStreamRequest(
     config,
     `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/${encodeURIComponent(videoId)}`,
     {
       method: 'DELETE',
-      okStatuses: [200, 404]
+      okStatuses: [200, 404],
+      timeoutMs: boundedRemoteOperationTimeout(deadlineAt, BUNNY_STREAM_TIMEOUT_MS)
     }
   )
 }
@@ -1569,6 +1635,7 @@ async function updateMediaAssetStream({ asset, stream }) {
          height = ?,
          duration = ?,
          metadata_json = ?,
+         stream_video_id = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
     [
@@ -1576,12 +1643,13 @@ async function updateMediaAssetStream({ asset, stream }) {
       nextHeight,
       nextDuration,
       JSON.stringify(metadata),
+      cleanString(stream?.videoId) || null,
       asset.id
     ]
   )
 }
 
-async function uploadToBunny({ config, objectPath, buffer, mimeType }) {
+async function uploadToBunny({ config, objectPath, buffer, mimeType, deadlineAt = 0 }) {
   logger.info(`[MediaStorage] Subida a Bunny iniciada: ${objectPath}`)
   const response = await fetch(bunnyObjectUrl(config, objectPath), {
     method: 'PUT',
@@ -1591,7 +1659,10 @@ async function uploadToBunny({ config, objectPath, buffer, mimeType }) {
       'Content-Length': String(buffer.length)
     },
     body: buffer,
-    signal: AbortSignal.timeout(bunnyFileUploadTimeoutMs(buffer.length))
+    signal: AbortSignal.timeout(boundedRemoteOperationTimeout(
+      deadlineAt,
+      bunnyFileUploadTimeoutMs(buffer.length)
+    ))
   })
 
   if (!response.ok) {
@@ -1627,7 +1698,7 @@ async function uploadFileToBunny({ config, objectPath, filePath, size, mimeType 
 // Copia un stream remoto a Bunny Storage sin cargar el video completo en RAM ni
 // escribir otro temporal en disco. El Content-Length es obligatorio para evitar
 // que Bunny acepte una transferencia parcial como si fuera un objeto válido.
-async function uploadReadableStreamToBunny({ config, objectPath, stream, size, mimeType }) {
+async function uploadReadableStreamToBunny({ config, objectPath, stream, size, mimeType, deadlineAt = 0 }) {
   if (!isReadableStream(stream) || !Number.isSafeInteger(size) || size <= 0) {
     throw errorWithStatus('La copia de video a Storage no tiene un stream o tamaño válido.', 502, 'bunny_stream_storage_mirror_invalid')
   }
@@ -1641,7 +1712,7 @@ async function uploadReadableStreamToBunny({ config, objectPath, stream, size, m
       'Content-Length': String(size)
     },
     body: stream,
-    signal: AbortSignal.timeout(bunnyFileUploadTimeoutMs(size))
+    signal: AbortSignal.timeout(boundedRemoteOperationTimeout(deadlineAt, bunnyFileUploadTimeoutMs(size)))
   })
 
   if (!response.ok) {
@@ -1664,12 +1735,12 @@ async function readFileHeaderSample(filePath, bytes = MEDIA_HEADER_SAMPLE_BYTES)
   }
 }
 
-async function deleteFromBunny({ config, objectPath }) {
+async function deleteFromBunny({ config, objectPath, deadlineAt = 0 }) {
   if (!objectPath || !config.bunnyConfigured) return
   const response = await fetch(bunnyObjectUrl(config, objectPath), {
     method: 'DELETE',
     headers: { AccessKey: config.bunnyStorageApiKey },
-    signal: AbortSignal.timeout(BUNNY_FILE_DELETE_TIMEOUT_MS)
+    signal: AbortSignal.timeout(boundedRemoteOperationTimeout(deadlineAt, BUNNY_FILE_DELETE_TIMEOUT_MS))
   })
 
   if (!response.ok && response.status !== 404) {
@@ -1701,14 +1772,17 @@ async function cleanupUnpersistedMediaArtifacts({
   }
 }
 
-async function readBunnyObjectBuffer({ config, objectPath, publicUrl = '' }) {
+async function readBunnyObjectBuffer({ config, objectPath, publicUrl = '', deadlineAt = 0 }) {
   const urls = [
     /^https?:\/\//i.test(publicUrl) ? { url: publicUrl, headers: {} } : null,
     objectPath && config.bunnyConfigured ? { url: bunnyObjectUrl(config, objectPath), headers: { AccessKey: config.bunnyStorageApiKey } } : null
   ].filter(Boolean)
 
   for (const request of urls) {
-    const response = await fetch(request.url, { headers: request.headers })
+    const response = await fetch(request.url, {
+      headers: request.headers,
+      signal: AbortSignal.timeout(boundedRemoteOperationTimeout(deadlineAt, MEDIA_DOWNLOAD_TIMEOUT_MS))
+    })
     if (response.ok) return Buffer.from(await response.arrayBuffer())
   }
 
@@ -1859,20 +1933,57 @@ async function ensureStorageQuota(businessId, config) {
   return await db.get('SELECT * FROM storage_quotas WHERE business_id = ?', [normalizedBusinessId])
 }
 
-async function calculateActiveUsageBytes(businessId) {
-  const row = await db.get(
-    `SELECT COALESCE(SUM(quota_size), 0) AS used_bytes
-     FROM media_assets
-     WHERE business_id = ?
-       AND deleted_at IS NULL
-       AND status != 'deleted'`,
-    [normalizeBusinessId(businessId)]
-  )
-  return numberValue(row?.used_bytes)
+async function readActiveUsageCounters(businessId) {
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  try {
+    const rows = await db.all(
+      `SELECT media_type, module, files_count, used_bytes
+       FROM media_storage_usage_counters
+       WHERE business_id = ?
+         AND (files_count > 0 OR used_bytes > 0)`,
+      [normalizedBusinessId]
+    )
+    return rows.map((row) => ({
+      mediaType: cleanString(row.media_type) || 'other',
+      module: cleanString(row.module) || 'other',
+      filesCount: numberValue(row.files_count),
+      usedBytes: numberValue(row.used_bytes)
+    }))
+  } catch (error) {
+    // Compatibilidad durante un rolling deploy: una instancia nueva puede
+    // atender tráfico antes de que otra termine de aplicar la migración 067.
+    if (!/media_storage_usage_counters|does not exist|no such table/i.test(cleanString(error?.message))) {
+      throw error
+    }
+    const rows = await db.all(
+      `SELECT
+         COALESCE(NULLIF(media_type, ''), 'other') AS media_type,
+         COALESCE(NULLIF(module, ''), 'other') AS module,
+         COUNT(*) AS files_count,
+         COALESCE(SUM(quota_size), 0) AS used_bytes
+       FROM media_assets
+       WHERE business_id = ?
+         AND deleted_at IS NULL
+         AND status != 'deleted'
+       GROUP BY COALESCE(NULLIF(media_type, ''), 'other'), COALESCE(NULLIF(module, ''), 'other')`,
+      [normalizedBusinessId]
+    )
+    return rows.map((row) => ({
+      mediaType: cleanString(row.media_type) || 'other',
+      module: cleanString(row.module) || 'other',
+      filesCount: numberValue(row.files_count),
+      usedBytes: numberValue(row.used_bytes)
+    }))
+  }
+}
+
+async function readActiveUsageBytes(businessId) {
+  const counters = await readActiveUsageCounters(businessId)
+  return counters.reduce((total, row) => total + row.usedBytes, 0)
 }
 
 async function refreshQuotaUsage(businessId) {
-  const usedBytes = await calculateActiveUsageBytes(businessId)
+  const usedBytes = await readActiveUsageBytes(businessId)
   await db.run(
     'UPDATE storage_quotas SET used_bytes = ?, updated_at = CURRENT_TIMESTAMP WHERE business_id = ?',
     [usedBytes, normalizeBusinessId(businessId)]
@@ -1886,7 +1997,7 @@ async function assertQuotaAvailable({ businessId, quotaSize, config }) {
     throw errorWithStatus('El almacenamiento está deshabilitado para este negocio.', 403, 'storage_disabled')
   }
 
-  const usedBytes = await calculateActiveUsageBytes(businessId)
+  const usedBytes = await readActiveUsageBytes(businessId)
   const quotaBytes = numberValue(quota.quota_bytes, Math.round(numberValue(quota.quota_gb, 5) * GB))
   const extraBytes = Math.round(numberValue(quota.extra_quota_gb) * GB)
   const totalBytes = quotaBytes + extraBytes
@@ -1897,14 +2008,18 @@ async function assertQuotaAvailable({ businessId, quotaSize, config }) {
 }
 
 async function insertMediaAsset(row) {
+  const metadataStreamModule = cleanString(row.metadata?.stream?.source?.module)
+  const effectiveModule = ['sites', 'forms'].includes(metadataStreamModule)
+    ? metadataStreamModule
+    : row.module
   await db.run(
     `INSERT INTO media_assets (
-      id, business_id, user_id, original_filename, stored_filename, bunny_path,
+      id, business_id, user_id, original_filename, stored_filename, bunny_path, folder_path,
       public_url, private_url, mime_type, media_type, extension,
       size_original, size_processed, quota_size, width, height, duration,
       status, storage_provider, storage_zone, cdn_base_url, module,
-      module_entity_id, is_public, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      module_entity_id, is_public, metadata_json, stream_video_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       row.id,
       row.businessId,
@@ -1912,6 +2027,7 @@ async function insertMediaAsset(row) {
       row.originalFilename,
       row.storedFilename,
       row.bunnyPath,
+      mediaFolderPathFromObjectPath(row.bunnyPath, effectiveModule || row.mediaType || 'other'),
       row.publicUrl || null,
       row.privateUrl || null,
       row.mimeType,
@@ -1927,10 +2043,11 @@ async function insertMediaAsset(row) {
       row.storageProvider,
       row.storageZone || null,
       row.cdnBaseUrl || null,
-      row.module,
+      effectiveModule,
       row.moduleEntityId || null,
       row.isPublic ? 1 : 0,
-      JSON.stringify(row.metadata || {})
+      JSON.stringify(row.metadata || {}),
+      cleanString(row.streamVideoId || row.metadata?.stream?.videoId) || null
     ]
   )
 }
@@ -2245,15 +2362,16 @@ async function ensureBunnyStreamStorageMirrorUnlocked(assetId, context = {}) {
 
     await db.run(
       `UPDATE media_assets
-       SET stored_filename = ?, bunny_path = ?, public_url = ?,
+       SET stored_filename = ?, bunny_path = ?, folder_path = ?, public_url = ?,
            private_url = CASE WHEN is_public = 1 THEN NULL ELSE ? END,
            mime_type = ?, extension = ?, size_processed = ?,
            storage_provider = 'bunny', storage_zone = ?, cdn_base_url = ?,
-           metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+           metadata_json = ?, stream_video_id = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ? AND deleted_at IS NULL`,
       [
         storedFilename,
         objectPath,
+        mediaFolderPathFromObjectPath(objectPath, module || asset.mediaType || 'other'),
         publicUrl,
         publicUrl,
         mirrorMimeType,
@@ -2262,6 +2380,7 @@ async function ensureBunnyStreamStorageMirrorUnlocked(assetId, context = {}) {
         config.bunnyStorageZone,
         config.bunnyCdnBaseUrl,
         JSON.stringify(nextMetadata),
+        cleanString(nextStream.videoId) || null,
         asset.id
       ]
     )
@@ -2635,9 +2754,9 @@ export async function finalizeBunnyStreamResumableUpload(assetId, context = {}) 
 
   await db.run(
     `UPDATE media_assets
-     SET width = ?, height = ?, duration = ?, status = 'ready', metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+     SET width = ?, height = ?, duration = ?, status = 'ready', metadata_json = ?, stream_video_id = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND status = 'uploading' AND deleted_at IS NULL`,
-    [dimensions.width, dimensions.height, dimensions.duration, JSON.stringify(nextMetadata), asset.id]
+    [dimensions.width, dimensions.height, dimensions.duration, JSON.stringify(nextMetadata), cleanString(nextStream.videoId) || null, asset.id]
   )
   await refreshQuotaUsage(asset.businessId)
   logger.info(`[MediaStorage] Video TUS finalizado: ${asset.id} -> ${videoId}`)
@@ -2689,6 +2808,20 @@ function normalizeMediaFolderPath(value = '') {
     .map(sanitizeFolderSegment)
     .filter(Boolean)
     .join('/')
+}
+
+export function mediaFolderPathFromObjectPath(objectPath = '', fallbackFolder = '') {
+  const segments = cleanString(objectPath)
+    .split('/')
+    .map(sanitizeFolderSegment)
+    .filter(Boolean)
+  if (!segments.length) return normalizeMediaFolderPath(fallbackFolder)
+
+  const relativeSegments = (segments[0] === 'accounts' || segments[0] === 'businesses') && segments.length > 2
+    ? segments.slice(2)
+    : segments
+  const folderSegments = relativeSegments.slice(0, -1)
+  return normalizeMediaFolderPath(folderSegments.join('/') || fallbackFolder)
 }
 
 function getStoredObjectFilename(asset) {
@@ -3538,7 +3671,10 @@ export async function findMediaAssetsByPublicUrls(publicUrls = []) {
   return rows.map(mapAssetRow).filter(Boolean)
 }
 
-export async function findMediaAssetsByBunnyStreamVideoIds(videoIds = []) {
+export async function findMediaAssetsByBunnyStreamVideoIds(videoIds = [], {
+  businessId = 'default',
+  modules = ['sites', 'forms']
+} = {}) {
   const seen = new Set()
   const ids = (Array.isArray(videoIds) ? videoIds : [])
     .map(cleanString)
@@ -3550,20 +3686,28 @@ export async function findMediaAssetsByBunnyStreamVideoIds(videoIds = []) {
 
   if (!ids.length) return []
 
+  const scopedModules = Array.from(new Set(
+    (Array.isArray(modules) ? modules : [])
+      .map(cleanString)
+      .filter(Boolean)
+      .map(normalizeModule)
+  ))
+  if (!scopedModules.length || scopedModules.length > 8) {
+    throw errorWithStatus('El lookup de Stream necesita entre 1 y 8 módulos autorizados.', 400, 'invalid_media_modules')
+  }
+
   const rows = await db.all(
     `SELECT * FROM media_assets
-     WHERE media_type = 'video'
-       AND metadata_json IS NOT NULL
+     WHERE business_id = ?
+       AND module IN (${scopedModules.map(() => '?').join(', ')})
+       AND media_type = 'video'
+       AND stream_video_id IN (${ids.map(() => '?').join(', ')})
        AND deleted_at IS NULL
-       AND status != 'deleted'
-       AND (${ids.map(() => 'metadata_json LIKE ?').join(' OR ')})`,
-    ids.map((videoId) => `%${videoId}%`)
+       AND status != 'deleted'`,
+    [normalizeBusinessId(businessId), ...scopedModules, ...ids]
   )
 
-  const wanted = new Set(ids)
-  return rows
-    .map(mapAssetRow)
-    .filter((asset) => asset && wanted.has(cleanString(asset.metadata?.stream?.videoId)))
+  return rows.map(mapAssetRow).filter(Boolean)
 }
 
 export async function getMediaAssetBunnyStreamAnalytics(assetId, options = {}) {
@@ -3649,88 +3793,402 @@ export async function getMediaAssetBunnyStreamAnalytics(assetId, options = {}) {
   }
 }
 
-export async function listMediaAssets({ businessId = 'default', module = '', mediaType = '', status = '', limit = 100, offset = 0 } = {}) {
-  const clauses = ['business_id = ?', 'deleted_at IS NULL']
-  const params = [normalizeBusinessId(businessId)]
-  if (module) {
-    clauses.push('module = ?')
-    params.push(normalizeModule(module))
+function normalizeMediaLibraryLimit(value, fallback, maximum) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(maximum, Math.max(1, Math.floor(parsed)))
+}
+
+function mediaLibraryCursorError() {
+  return errorWithStatus('Cursor de Media inválido.', 400, 'invalid_media_cursor')
+}
+
+function encodeMediaLibraryCursor(kind, payload = {}) {
+  return Buffer.from(JSON.stringify({ v: 1, kind, ...payload }), 'utf8').toString('base64url')
+}
+
+function decodeMediaLibraryCursor(value, expectedKind) {
+  const cursor = cleanString(value)
+  if (!cursor) return null
+  try {
+    const payload = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    if (payload?.v !== 1 || payload?.kind !== expectedKind) throw mediaLibraryCursorError()
+    return payload
+  } catch (error) {
+    if (error?.code === 'invalid_media_cursor') throw error
+    throw mediaLibraryCursorError()
   }
-  if (mediaType) {
-    clauses.push('media_type = ?')
-    params.push(cleanString(mediaType).toLowerCase())
+}
+
+function mediaLibraryTimestampExpression(column = 'created_at') {
+  return databaseDialect === 'postgres'
+    ? `COALESCE(${column}, TIMESTAMP '${MEDIA_LIBRARY_CURSOR_FALLBACK_TIMESTAMP}')`
+    : `COALESCE(${column}, '${MEDIA_LIBRARY_CURSOR_FALLBACK_TIMESTAMP}')`
+}
+
+function cursorTimestampValue(value) {
+  if (value instanceof Date) return value.toISOString()
+  const normalized = cleanString(value)
+  return normalized || MEDIA_LIBRARY_CURSOR_FALLBACK_TIMESTAMP
+}
+
+function escapeMediaLibraryLike(value = '') {
+  return String(value).replace(/[\\%_]/g, (character) => `\\${character}`)
+}
+
+function mediaLibrarySearchTerms(value = '') {
+  return cleanString(value)
+    .toLowerCase()
+    .slice(0, 160)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 8)
+}
+
+function buildMediaLibraryFilters(input = {}, { alias = '', omitMediaType = false } = {}) {
+  const column = (name) => alias ? `${alias}.${name}` : name
+  const clauses = [
+    `${column('business_id')} = ?`,
+    `${column('deleted_at')} IS NULL`,
+    `${column('status')} != 'deleted'`
+  ]
+  const params = [normalizeBusinessId(input.businessId)]
+
+  if (input.module) {
+    clauses.push(`${column('module')} = ?`)
+    params.push(normalizeModule(input.module))
+  } else if (Array.isArray(input.modules) && input.modules.length) {
+    const modules = Array.from(new Set(
+      input.modules.map(cleanString).filter(Boolean).map(normalizeModule)
+    ))
+    if (modules.length > 8) {
+      throw errorWithStatus('Media acepta máximo 8 módulos por consulta.', 400, 'invalid_media_modules')
+    }
+    if (modules.length) {
+      clauses.push(`${column('module')} IN (${modules.map(() => '?').join(', ')})`)
+      params.push(...modules)
+    }
   }
-  if (status) {
-    clauses.push('status = ?')
-    params.push(cleanString(status).toLowerCase())
+  if (!omitMediaType && input.mediaType) {
+    clauses.push(`${column('media_type')} = ?`)
+    params.push(cleanString(input.mediaType).toLowerCase())
+  }
+  if (input.status) {
+    clauses.push(`${column('status')} = ?`)
+    params.push(cleanString(input.status).toLowerCase())
   }
 
-  const safeLimit = Math.min(250, Math.max(1, Number(limit) || 100))
-  const safeOffset = Math.max(0, Number(offset) || 0)
+  if (input.folderPath !== null && input.folderPath !== undefined) {
+    const folderPath = normalizeMediaFolderPath(input.folderPath)
+    if (boolValue(input.recursive)) {
+      if (folderPath) {
+        clauses.push(`(${column('folder_path')} = ? OR ${column('folder_path')} LIKE ? ESCAPE '\\')`)
+        params.push(folderPath, `${escapeMediaLibraryLike(folderPath)}/%`)
+      }
+    } else {
+      clauses.push(`COALESCE(${column('folder_path')}, '') = ?`)
+      params.push(folderPath)
+    }
+  }
+
+  const searchDocument = `LOWER(COALESCE(${column('original_filename')}, '') || ' ' || COALESCE(${column('stored_filename')}, '') || ' ' || COALESCE(${column('bunny_path')}, '') || ' ' || COALESCE(${column('public_url')}, '') || ' ' || COALESCE(${column('mime_type')}, '') || ' ' || COALESCE(${column('media_type')}, '') || ' ' || COALESCE(${column('module')}, ''))`
+  for (const term of mediaLibrarySearchTerms(input.search)) {
+    clauses.push(`${searchDocument} LIKE ? ESCAPE '\\'`)
+    params.push(`%${escapeMediaLibraryLike(term)}%`)
+  }
+
+  return { clauses, params }
+}
+
+function buildMediaFolderCounterFilters(input = {}, { alias = 'f' } = {}) {
+  const column = (name) => alias ? `${alias}.${name}` : name
+  const clauses = [`${column('business_id')} = ?`]
+  const params = [normalizeBusinessId(input.businessId)]
+
+  if (input.module) {
+    clauses.push(`${column('module')} = ?`)
+    params.push(normalizeModule(input.module))
+  } else if (Array.isArray(input.modules) && input.modules.length) {
+    const modules = Array.from(new Set(
+      input.modules.map(cleanString).filter(Boolean).map(normalizeModule)
+    ))
+    if (modules.length > 8) {
+      throw errorWithStatus('Media acepta máximo 8 módulos por consulta.', 400, 'invalid_media_modules')
+    }
+    if (modules.length) {
+      clauses.push(`${column('module')} IN (${modules.map(() => '?').join(', ')})`)
+      params.push(...modules)
+    }
+  }
+  if (input.mediaType) {
+    clauses.push(`${column('media_type')} = ?`)
+    params.push(cleanString(input.mediaType).toLowerCase())
+  }
+  if (input.status) {
+    clauses.push(`${column('status')} = ?`)
+    params.push(cleanString(input.status).toLowerCase())
+  }
+
+  return { clauses, params }
+}
+
+export async function listMediaFolders({
+  businessId = 'default',
+  parentPath = '',
+  module = '',
+  modules = [],
+  mediaType = '',
+  status = '',
+  limit = MEDIA_FOLDER_DEFAULT_LIMIT,
+  cursor = ''
+} = {}) {
+  const normalizedParentPath = normalizeMediaFolderPath(parentPath)
+  const safeLimit = normalizeMediaLibraryLimit(limit, MEDIA_FOLDER_DEFAULT_LIMIT, MEDIA_FOLDER_MAX_LIMIT)
+  const decodedCursor = decodeMediaLibraryCursor(cursor, 'media-folder')
+  const cursorName = decodedCursor ? cleanString(decodedCursor.name) : ''
+  if (decodedCursor && !cursorName) throw mediaLibraryCursorError()
+
+  // Esta consulta navega un resumen exacto por carpeta; su costo depende del
+  // numero de carpetas/dimensiones, no del numero de archivos del negocio.
+  const filters = buildMediaFolderCounterFilters({ businessId, module, modules, mediaType, status })
+  const slashPosition = databaseDialect === 'postgres'
+    ? `POSITION('/' IN relative_path)`
+    : `instr(relative_path, '/')`
+  const cursorClause = cursorName ? 'AND child_name > ?' : ''
+  const prefix = normalizedParentPath
+    ? `${escapeMediaLibraryLike(normalizedParentPath)}/%`
+    : '%'
+  const params = [
+    normalizedParentPath,
+    ...filters.params,
+    prefix,
+    ...(cursorName ? [cursorName] : []),
+    safeLimit + 1
+  ]
+
   const rows = await db.all(
-    `SELECT * FROM media_assets
-     WHERE ${clauses.join(' AND ')}
-     ORDER BY created_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, safeLimit, safeOffset]
+    `WITH options AS (
+       SELECT ? AS parent_path
+     ), scoped AS (
+       SELECT
+         f.folder_path,
+         f.files_count,
+         f.used_bytes,
+         CASE
+           WHEN options.parent_path = '' THEN f.folder_path
+           ELSE substr(f.folder_path, length(options.parent_path) + 2)
+         END AS relative_path
+       FROM media_folder_usage_counters f
+       CROSS JOIN options
+       WHERE ${filters.clauses.join(' AND ')}
+         AND f.folder_path <> options.parent_path
+         AND (options.parent_path = '' OR f.folder_path LIKE ? ESCAPE '\\')
+     ), children AS (
+       SELECT
+         CASE
+           WHEN ${slashPosition} > 0 THEN substr(relative_path, 1, ${slashPosition} - 1)
+           ELSE relative_path
+         END AS child_name,
+         files_count,
+         used_bytes
+       FROM scoped
+     )
+     SELECT
+       child_name,
+       COALESCE(SUM(files_count), 0) AS files_count,
+       COALESCE(SUM(used_bytes), 0) AS size_bytes
+     FROM children
+     WHERE child_name <> ''
+       ${cursorClause}
+     GROUP BY child_name
+     ORDER BY child_name ASC
+     LIMIT ?`,
+    params
   )
-  return rows.map(mapAssetRow)
+
+  const hasMore = rows.length > safeLimit
+  const pageRows = rows.slice(0, safeLimit)
+  const folders = pageRows.map((row) => ({
+    path: normalizeMediaFolderPath([normalizedParentPath, row.child_name].filter(Boolean).join('/')),
+    name: cleanString(row.child_name),
+    filesCount: numberValue(row.files_count),
+    sizeBytes: numberValue(row.size_bytes)
+  }))
+  const lastFolder = folders[folders.length - 1]
+
+  return {
+    items: folders,
+    pageInfo: {
+      limit: safeLimit,
+      hasMore,
+      nextCursor: hasMore && lastFolder
+        ? encodeMediaLibraryCursor('media-folder', { name: pageRows[pageRows.length - 1].child_name })
+        : null
+    }
+  }
+}
+
+export async function listMediaAssets({
+  businessId = 'default',
+  module = '',
+  modules = [],
+  mediaType = '',
+  status = '',
+  search = '',
+  folderPath = null,
+  recursive = false,
+  limit = MEDIA_LIBRARY_DEFAULT_LIMIT,
+  cursor = '',
+  includeMeta = true,
+  includeFolders = true
+} = {}) {
+  const safeLimit = normalizeMediaLibraryLimit(limit, MEDIA_LIBRARY_DEFAULT_LIMIT, MEDIA_LIBRARY_MAX_LIMIT)
+  const decodedCursor = decodeMediaLibraryCursor(cursor, 'media-asset')
+  const sortTimestamp = mediaLibraryTimestampExpression('created_at')
+  const filtersInput = { businessId, module, modules, mediaType, status, search, folderPath, recursive }
+  const filters = buildMediaLibraryFilters(filtersInput)
+
+  if (decodedCursor) {
+    const cursorCreatedAt = cursorTimestampValue(decodedCursor.createdAt)
+    const cursorId = cleanString(decodedCursor.id)
+    if (!cursorId) throw mediaLibraryCursorError()
+    filters.clauses.push(`(${sortTimestamp} < ? OR (${sortTimestamp} = ? AND id < ?))`)
+    filters.params.push(cursorCreatedAt, cursorCreatedAt, cursorId)
+  }
+
+  const metaEnabled = boolValue(includeMeta, true)
+  const isGlobalFolderScope = folderPath === null || folderPath === undefined || (
+    boolValue(recursive) && normalizeMediaFolderPath(folderPath) === ''
+  )
+  const canUseGlobalDurableSummary = metaEnabled &&
+    !cleanString(module) &&
+    (!Array.isArray(modules) || modules.length === 0) &&
+    !cleanString(status) &&
+    !mediaLibrarySearchTerms(search).length &&
+    isGlobalFolderScope
+  const canUseExactFolderSummary = metaEnabled &&
+    folderPath !== null && folderPath !== undefined &&
+    !boolValue(recursive) &&
+    !mediaLibrarySearchTerms(search).length
+  // El árbol de carpetas tiene su propia ruta progresiva. No debe retrasar la
+  // primera página de archivos con un GROUP BY de todos los descendientes.
+  const shouldExposeFolderContract = metaEnabled && boolValue(includeFolders, true)
+  const rowsPromise = db.all(
+    `SELECT
+       ${MEDIA_LIBRARY_LIST_COLUMNS},
+       ${sortTimestamp} AS cursor_created_at
+     FROM media_assets
+     WHERE ${filters.clauses.join(' AND ')}
+     ORDER BY ${sortTimestamp} DESC, id DESC
+     LIMIT ?`,
+    [...filters.params, safeLimit + 1]
+  )
+
+  const exactFolderFilters = canUseExactFolderSummary
+    ? buildMediaFolderCounterFilters({ businessId, module, modules, mediaType, status })
+    : null
+  const exactFolderSummaryPromise = exactFolderFilters
+    ? db.get(
+        `SELECT
+           COALESCE(SUM(files_count), 0) AS total_items,
+           COALESCE(SUM(used_bytes), 0) AS total_bytes
+         FROM media_folder_usage_counters f
+         WHERE ${exactFolderFilters.clauses.join(' AND ')}
+           AND folder_path = ?`,
+        [...exactFolderFilters.params, normalizeMediaFolderPath(folderPath)]
+      )
+    : null
+  const [rows, usageCounters, exactFolderSummary] = await Promise.all([
+    rowsPromise,
+    canUseGlobalDurableSummary ? readActiveUsageCounters(businessId) : [],
+    exactFolderSummaryPromise
+  ])
+  const normalizedSummaryMediaType = cleanString(mediaType).toLowerCase()
+  const summaryCounters = normalizedSummaryMediaType
+    ? usageCounters.filter((row) => row.mediaType === normalizedSummaryMediaType)
+    : usageCounters
+
+  const hasMore = rows.length > safeLimit
+  const pageRows = rows.slice(0, safeLimit)
+  const lastRow = pageRows[pageRows.length - 1]
+
+  return {
+    items: pageRows.map(mapAssetRow),
+    pageInfo: {
+      limit: safeLimit,
+      hasMore,
+      nextCursor: hasMore && lastRow
+        ? encodeMediaLibraryCursor('media-asset', {
+            createdAt: cursorTimestampValue(lastRow.cursor_created_at),
+            id: lastRow.id
+          })
+        : null
+    },
+    summary: canUseGlobalDurableSummary
+      ? {
+          totalItems: summaryCounters.reduce((total, row) => total + row.filesCount, 0),
+          totalBytes: summaryCounters.reduce((total, row) => total + row.usedBytes, 0)
+        }
+      : exactFolderSummary
+        ? {
+            totalItems: numberValue(exactFolderSummary.total_items),
+            totalBytes: numberValue(exactFolderSummary.total_bytes)
+          }
+        : null,
+    // Compatibilidad de respuesta. Las facets no tienen consumidor y obligaban
+    // a otro GROUP BY completo en cada primera página.
+    facets: [],
+    folders: [],
+    folderPageInfo: {
+      limit: MEDIA_FOLDER_DEFAULT_LIMIT,
+      hasMore: false,
+      nextCursor: null
+    },
+    foldersDeferred: shouldExposeFolderContract
+  }
 }
 
 export async function getStorageUsage({ businessId = 'default' } = {}) {
   const config = await getStorageRuntimeConfig()
   const normalizedBusinessId = normalizeBusinessId(businessId)
-  const quota = await ensureStorageQuota(normalizedBusinessId, config)
-  const usedBytes = await refreshQuotaUsage(normalizedBusinessId)
+  // Esta ruta es de lectura. No crea cuotas, no recalcula toda media_assets y
+  // no escribe updated_at cada vez que alguien abre Configuración > Media.
+  const storedQuota = await db.get(
+    'SELECT * FROM storage_quotas WHERE business_id = ?',
+    [normalizedBusinessId]
+  )
+  const defaultQuotaGb = numberValue(config?.defaultQuotaGb, 5)
+  const quota = storedQuota || {
+    quota_gb: defaultQuotaGb,
+    quota_bytes: Math.round(defaultQuotaGb * GB),
+    used_bytes: 0,
+    extra_quota_gb: 0,
+    storage_enabled: 1
+  }
+  const usageCounters = await readActiveUsageCounters(normalizedBusinessId)
+  const usedBytes = usageCounters.reduce((total, row) => total + row.usedBytes, 0)
   const quotaBytes = numberValue(quota.quota_bytes, Math.round(numberValue(quota.quota_gb, 5) * GB))
   const extraQuotaGb = numberValue(quota.extra_quota_gb)
   const totalQuotaBytes = quotaBytes + Math.round(extraQuotaGb * GB)
   const availableBytes = Math.max(0, totalQuotaBytes - usedBytes)
-  const filesRow = await db.get(
-    `SELECT COUNT(*) AS total
-     FROM media_assets
-     WHERE business_id = ?
-       AND deleted_at IS NULL
-       AND status != 'deleted'`,
-    [normalizedBusinessId]
-  )
-  const typeRows = await db.all(
-    `SELECT media_type, COALESCE(SUM(quota_size), 0) AS used_bytes
-     FROM media_assets
-     WHERE business_id = ?
-       AND deleted_at IS NULL
-       AND status != 'deleted'
-     GROUP BY media_type`,
-    [normalizedBusinessId]
-  )
-  const moduleRows = await db.all(
-    `SELECT module, COALESCE(SUM(quota_size), 0) AS used_bytes
-     FROM media_assets
-     WHERE business_id = ?
-       AND deleted_at IS NULL
-       AND status != 'deleted'
-     GROUP BY module`,
-    [normalizedBusinessId]
-  )
   const userRow = await db.get('SELECT business_name, full_name, email FROM users ORDER BY id ASC LIMIT 1').catch(() => null)
 
   const byMediaType = { images: 0, videos: 0, audio: 0, documents: 0, other: 0 }
-  for (const row of typeRows) {
-    const key = row.media_type === 'image'
+  const byModule = {}
+  let filesCount = 0
+  for (const row of usageCounters) {
+    const key = row.mediaType === 'image'
       ? 'images'
-      : row.media_type === 'video'
+      : row.mediaType === 'video'
         ? 'videos'
-        : row.media_type === 'audio'
+        : row.mediaType === 'audio'
           ? 'audio'
-          : row.media_type === 'document'
+          : row.mediaType === 'document'
             ? 'documents'
             : 'other'
-    byMediaType[key] += numberValue(row.used_bytes)
-  }
-
-  const byModule = {}
-  for (const row of moduleRows) {
-    byModule[row.module || 'other'] = numberValue(row.used_bytes)
+    byMediaType[key] += row.usedBytes
+    byModule[row.module] = numberValue(byModule[row.module]) + row.usedBytes
+    filesCount += row.filesCount
   }
 
   return {
@@ -3745,7 +4203,7 @@ export async function getStorageUsage({ businessId = 'default' } = {}) {
     used_bytes: usedBytes,
     available_bytes: availableBytes,
     usage_percent: totalQuotaBytes > 0 ? Math.round((usedBytes / totalQuotaBytes) * 10000) / 100 : 0,
-    files_count: numberValue(filesRow?.total),
+    files_count: filesCount,
     by_media_type: byMediaType,
     by_module: byModule,
     storage_enabled: boolValue(quota.storage_enabled, true),
@@ -3753,7 +4211,13 @@ export async function getStorageUsage({ businessId = 'default' } = {}) {
   }
 }
 
-async function moveSingleMediaAsset({ assetId, targetFolderPath = '', businessId = '' }) {
+async function moveSingleMediaAsset({
+  assetId,
+  targetFolderPath = '',
+  businessId = '',
+  skipQuotaRefresh = false,
+  operationDeadlineAt = 0
+}) {
   const asset = await getMediaAsset(assetId)
   const normalizedBusinessId = businessId ? normalizeBusinessId(businessId) : asset.businessId
   if (asset.businessId !== normalizedBusinessId) {
@@ -3781,20 +4245,29 @@ async function moveSingleMediaAsset({ assetId, targetFolderPath = '', businessId
       throw errorWithStatus('Bunny.net no está configurado para mover este archivo.', 503, 'bunny_not_configured')
     }
 
-    const { buffer } = await getMediaAssetBuffer(asset.id)
-    await uploadToBunny({ config, objectPath: nextObjectPath, buffer, mimeType: asset.mimeType })
+    const source = await getMediaAssetReadStream(asset.id, { deadlineAt: operationDeadlineAt })
+    await uploadReadableStreamToBunny({
+      config,
+      objectPath: nextObjectPath,
+      stream: source.stream,
+      size: source.contentLength,
+      mimeType: asset.mimeType,
+      deadlineAt: operationDeadlineAt
+    })
 
     if (thumbnail?.path && nextThumbnailObjectPath) {
       const thumbnailBuffer = await readBunnyObjectBuffer({
         config,
         objectPath: thumbnail.path,
-        publicUrl: thumbnail.publicUrl
+        publicUrl: thumbnail.publicUrl,
+        deadlineAt: operationDeadlineAt
       })
       await uploadToBunny({
         config,
         objectPath: nextThumbnailObjectPath,
         buffer: thumbnailBuffer,
-        mimeType: thumbnail.mimeType || 'image/webp'
+        mimeType: thumbnail.mimeType || 'image/webp',
+        deadlineAt: operationDeadlineAt
       })
       metadata.variants = {
         ...(metadata.variants || {}),
@@ -3831,6 +4304,7 @@ async function moveSingleMediaAsset({ assetId, targetFolderPath = '', businessId
   await db.run(
     `UPDATE media_assets
      SET bunny_path = ?,
+         folder_path = ?,
          public_url = ?,
          private_url = ?,
          metadata_json = ?,
@@ -3838,6 +4312,7 @@ async function moveSingleMediaAsset({ assetId, targetFolderPath = '', businessId
      WHERE id = ?`,
     [
       nextObjectPath,
+      nextFolderPath,
       nextPublicUrl,
       nextPrivateUrl,
       JSON.stringify(metadata),
@@ -3848,13 +4323,13 @@ async function moveSingleMediaAsset({ assetId, targetFolderPath = '', businessId
   if (bunnyCleanupPaths.length) {
     const config = await getStorageRuntimeConfig()
     for (const objectPath of bunnyCleanupPaths.filter(Boolean)) {
-      await deleteFromBunny({ config, objectPath }).catch((error) => {
+      await deleteFromBunny({ config, objectPath, deadlineAt: operationDeadlineAt }).catch((error) => {
         logger.warn(`[MediaStorage] No se pudo borrar ruta vieja al mover ${asset.id}: ${error.message}`)
       })
     }
   }
 
-  await refreshQuotaUsage(asset.businessId)
+  if (!skipQuotaRefresh) await refreshQuotaUsage(asset.businessId)
   logger.info(`[MediaStorage] Archivo movido: ${asset.id} -> ${nextObjectPath}`)
   return await getMediaAsset(asset.id)
 }
@@ -3881,20 +4356,449 @@ export async function moveMediaAssets({ entries = [], assetIds = [], targetFolde
   if (!cleanEntries.length) {
     throw errorWithStatus('Selecciona al menos un archivo para mover.', 400, 'invalid_media_move')
   }
+  if (cleanEntries.length > MEDIA_SELECTION_MAX_EXPLICIT_IDS) {
+    throw errorWithStatus(
+      `Selecciona máximo ${MEDIA_SELECTION_MAX_EXPLICIT_IDS} archivos explícitos por operación.`,
+      413,
+      'media_selection_too_large'
+    )
+  }
+
+  const requestedIds = cleanEntries.map((entry) => entry.id)
+  const scopedRows = await db.all(
+    `SELECT id, storage_provider, quota_size, stream_video_id
+     FROM media_assets
+     WHERE business_id = ?
+       AND deleted_at IS NULL
+       AND status != 'deleted'
+       AND id IN (${requestedIds.map(() => '?').join(', ')})`,
+    [normalizeBusinessId(businessId), ...requestedIds]
+  )
+  if (scopedRows.length !== requestedIds.length) {
+    throw errorWithStatus(
+      'Uno o más archivos ya no existen o no pertenecen a esta cuenta.',
+      404,
+      'media_selection_assets_missing'
+    )
+  }
+  const operationDeadlineAt = assertSynchronousRemoteSelectionBudget(scopedRows)
 
   const moved = []
   for (const entry of cleanEntries) {
     moved.push(await moveSingleMediaAsset({
       assetId: entry.id,
       targetFolderPath: entry.targetFolderPath,
-      businessId
+      businessId,
+      // Mover cambia la ruta, no el tamaño. El endpoint ya es un lote; hacer
+      // SUM(media_assets) por cada archivo multiplicaba el costo sin aportar
+      // exactitud alguna.
+      skipQuotaRefresh: true,
+      operationDeadlineAt
     }))
   }
 
   return moved
 }
 
-export async function softDeleteMediaAsset(assetId) {
+function normalizeMediaSelection({ assetIds = [], folderPaths = [] } = {}) {
+  const uniqueIds = Array.from(new Set(
+    (Array.isArray(assetIds) ? assetIds : [])
+      .map(cleanString)
+      .filter(Boolean)
+  ))
+  const candidateFolderPaths = Array.from(new Set(
+    (Array.isArray(folderPaths) ? folderPaths : [])
+      .map(normalizeMediaFolderPath)
+      .filter(Boolean)
+  )).sort((left, right) => left.length - right.length || left.localeCompare(right))
+  const uniqueFolderPaths = candidateFolderPaths.filter((folderPath, index) => (
+    !candidateFolderPaths.slice(0, index).some((parentPath) => folderPath.startsWith(`${parentPath}/`))
+  ))
+
+  if (uniqueIds.length > MEDIA_SELECTION_MAX_EXPLICIT_IDS) {
+    throw errorWithStatus(
+      `Selecciona máximo ${MEDIA_SELECTION_MAX_EXPLICIT_IDS} archivos explícitos por operación. Las carpetas completas deben enviarse como carpetas.`,
+      413,
+      'media_selection_too_large'
+    )
+  }
+  if (uniqueFolderPaths.length > MEDIA_SELECTION_MAX_FOLDER_PATHS) {
+    throw errorWithStatus(
+      `Selecciona máximo ${MEDIA_SELECTION_MAX_FOLDER_PATHS} carpetas por operación.`,
+      413,
+      'media_selection_too_large'
+    )
+  }
+  if (!uniqueIds.length && !uniqueFolderPaths.length) {
+    throw errorWithStatus('Selecciona al menos un archivo o carpeta.', 400, 'invalid_media_selection')
+  }
+
+  return { assetIds: uniqueIds, folderPaths: uniqueFolderPaths }
+}
+
+function buildMediaSelectionFilters({
+  businessId = 'default',
+  assetIds = [],
+  folderPaths = [],
+  mediaType = '',
+  status = ''
+} = {}) {
+  const selection = normalizeMediaSelection({ assetIds, folderPaths })
+  const scopeClauses = []
+  const scopeParams = []
+
+  if (selection.assetIds.length) {
+    scopeClauses.push(`id IN (${selection.assetIds.map(() => '?').join(', ')})`)
+    scopeParams.push(...selection.assetIds)
+  }
+  for (const folderPath of selection.folderPaths) {
+    scopeClauses.push(`(folder_path = ? OR folder_path LIKE ? ESCAPE '\\')`)
+    scopeParams.push(folderPath, `${escapeMediaLibraryLike(folderPath)}/%`)
+  }
+
+  const clauses = [
+    'business_id = ?',
+    'deleted_at IS NULL',
+    "status != 'deleted'"
+  ]
+  const params = [normalizeBusinessId(businessId)]
+  const normalizedMediaType = cleanString(mediaType).toLowerCase()
+  const normalizedStatus = cleanString(status).toLowerCase()
+  if (normalizedMediaType) {
+    clauses.push('media_type = ?')
+    params.push(normalizedMediaType)
+  }
+  if (normalizedStatus) {
+    clauses.push('status = ?')
+    params.push(normalizedStatus)
+  }
+  clauses.push(`(${scopeClauses.join(' OR ')})`)
+  params.push(...scopeParams)
+
+  return {
+    selection,
+    clauses,
+    params,
+    mediaType: normalizedMediaType,
+    status: normalizedStatus
+  }
+}
+
+function selectedSourceFolder(folderPath, selectedFolderPaths = []) {
+  const normalized = normalizeMediaFolderPath(folderPath)
+  return selectedFolderPaths.find((candidate) => (
+    normalized === candidate || normalized.startsWith(`${candidate}/`)
+  )) || ''
+}
+
+function movedSelectionFolderPath(currentFolderPath, sourceFolderPath, targetFolderPath) {
+  if (!sourceFolderPath) return normalizeMediaFolderPath(targetFolderPath)
+  const sourceName = sourceFolderPath.split('/').filter(Boolean).pop() || sourceFolderPath
+  const relativePath = currentFolderPath === sourceFolderPath
+    ? ''
+    : currentFolderPath.slice(sourceFolderPath.length + 1)
+  return normalizeMediaFolderPath([targetFolderPath, sourceName, relativePath].filter(Boolean).join('/'))
+}
+
+function assertSynchronousRemoteSelectionBudget(rows = []) {
+  const remoteRows = rows.filter((row) => (
+    ['bunny', 'bunny_stream'].includes(cleanString(row.storage_provider).toLowerCase()) ||
+    Boolean(cleanString(row.stream_video_id))
+  ))
+  const remoteBytes = remoteRows.reduce((total, row) => total + numberValue(row.quota_size), 0)
+  const oversizedRemote = remoteRows.find((row) => numberValue(row.quota_size) > MEDIA_REMOTE_SELECTION_MAX_ITEM_BYTES)
+  if (
+    remoteRows.length > MEDIA_REMOTE_SELECTION_MAX_ITEMS ||
+    remoteBytes > MEDIA_REMOTE_SELECTION_MAX_TOTAL_BYTES ||
+    oversizedRemote
+  ) {
+    throw errorWithStatus(
+      `La selección remota rebasa el límite síncrono seguro (${MEDIA_REMOTE_SELECTION_MAX_ITEMS} archivos, 64 MB por archivo o 256 MB totales). Divide la carpeta en lotes más pequeños.`,
+      413,
+      'media_remote_selection_requires_smaller_batch'
+    )
+  }
+  return remoteRows.length ? Date.now() + MEDIA_REMOTE_SELECTION_TIME_BUDGET_MS : 0
+}
+
+async function runMediaSelectionOperation({
+  businessId = 'default',
+  assetIds = [],
+  folderPaths = [],
+  mediaType = '',
+  status = '',
+  operation,
+  action
+} = {}) {
+  const filters = buildMediaSelectionFilters({ businessId, assetIds, folderPaths, mediaType, status })
+  const sortTimestamp = mediaLibraryTimestampExpression('created_at')
+  let attempted = 0
+  let affected = 0
+  let failed = 0
+  const failures = []
+
+  if (filters.selection.assetIds.length) {
+    const requestedIds = filters.selection.assetIds
+    const explicitClauses = [
+      'business_id = ?',
+      'deleted_at IS NULL',
+      "status != 'deleted'"
+    ]
+    const explicitParams = [normalizeBusinessId(businessId)]
+    if (filters.mediaType) {
+      explicitClauses.push('media_type = ?')
+      explicitParams.push(filters.mediaType)
+    }
+    if (filters.status) {
+      explicitClauses.push('status = ?')
+      explicitParams.push(filters.status)
+    }
+    explicitClauses.push(`id IN (${requestedIds.map(() => '?').join(', ')})`)
+    explicitParams.push(...requestedIds)
+    const presentRows = await db.all(
+      `SELECT id
+       FROM media_assets
+       WHERE ${explicitClauses.join(' AND ')}`,
+      explicitParams
+    )
+    const presentIds = new Set(presentRows.map((row) => cleanString(row.id)))
+    const missingIds = requestedIds.filter((id) => !presentIds.has(id))
+    if (missingIds.length) {
+      const error = errorWithStatus(
+        `${missingIds.length} archivo${missingIds.length === 1 ? '' : 's'} de la selección ya no existe${missingIds.length === 1 ? '' : 'n'}, no pertenece${missingIds.length === 1 ? '' : 'n'} a esta cuenta o quedó fuera del filtro activo. Recarga Media antes de intentar otra vez.`,
+        404,
+        'media_selection_assets_missing'
+      )
+      error.details = { missing: missingIds.length, assetIds: missingIds.slice(0, 25) }
+      throw error
+    }
+  }
+
+  // Tomamos un snapshot acotado antes de tocar un solo archivo. Sin una cola de
+  // background no es honesto aceptar carpetas gigantes y dejar una petición
+  // HTTP abierta indefinidamente.
+  const rows = await db.all(
+    `SELECT id, folder_path, storage_provider, quota_size, stream_video_id,
+            ${sortTimestamp} AS cursor_created_at
+     FROM media_assets
+     WHERE ${filters.clauses.join(' AND ')}
+     ORDER BY ${sortTimestamp} DESC, id DESC
+     LIMIT ?`,
+    [...filters.params, MEDIA_SELECTION_MAX_RESOLVED_ITEMS + 1]
+  )
+  if (rows.length > MEDIA_SELECTION_MAX_RESOLVED_ITEMS) {
+    throw errorWithStatus(
+      `La selección contiene más de ${MEDIA_SELECTION_MAX_RESOLVED_ITEMS} archivos. Divide la carpeta en lotes más pequeños; esta instalación todavía no tiene una cola de trabajos para procesarla sin dejar la ventana bloqueada.`,
+      413,
+      'media_selection_requires_background_job'
+    )
+  }
+
+  const remoteDeadlineAt = assertSynchronousRemoteSelectionBudget(rows)
+  let budgetExceeded = false
+
+  for (const row of rows) {
+    if (remoteDeadlineAt && Date.now() >= remoteDeadlineAt) {
+      const pending = rows.length - attempted
+      attempted = rows.length
+      failed += pending
+      budgetExceeded = true
+      failures.push({
+        id: row.id,
+        error: 'Se agotó el presupuesto síncrono de 60 segundos; los archivos restantes no se tocaron.'
+      })
+      break
+    }
+    attempted += 1
+    try {
+      await action(row, filters.selection, { remoteDeadlineAt })
+      affected += 1
+    } catch (error) {
+      failed += 1
+      if (failures.length < 25) {
+        failures.push({
+          id: row.id,
+          error: cleanString(error?.message || 'Error desconocido').slice(0, 240)
+        })
+      }
+    }
+  }
+
+  if (attempted === 0) {
+    throw errorWithStatus('No se encontraron archivos activos en la selección.', 404, 'media_selection_empty')
+  }
+  if (budgetExceeded) {
+    const error = errorWithStatus(
+      `${operation} se detuvo al llegar al límite seguro de 60 segundos. ${affected} de ${attempted} archivos terminaron; los restantes no se iniciaron.`,
+      409,
+      'media_remote_selection_time_budget_exceeded'
+    )
+    error.details = { operation, attempted, affected, failed, failures }
+    throw error
+  }
+  if (failed) {
+    const error = errorWithStatus(
+      `${operation} quedó incompleta: ${affected} de ${attempted} archivos terminaron; ${failed} fallaron. La biblioteca se recargará para mostrar el estado real.`,
+      409,
+      'media_selection_partial_failure'
+    )
+    error.details = {
+      operation,
+      attempted,
+      affected,
+      failed,
+      failures
+    }
+    throw error
+  }
+
+  return { operation, attempted, affected, failed: 0 }
+}
+
+export async function moveMediaSelection({
+  businessId = 'default',
+  assetIds = [],
+  folderPaths = [],
+  mediaType = '',
+  status = '',
+  targetFolderPath = ''
+} = {}) {
+  const normalizedTarget = normalizeMediaFolderPath(targetFolderPath)
+  const selection = normalizeMediaSelection({ assetIds, folderPaths })
+  const invalidSourcePath = selection.folderPaths.find((sourcePath) => {
+    const sourceParentPath = sourcePath.split('/').slice(0, -1).join('/')
+    return normalizedTarget === sourceParentPath ||
+      normalizedTarget === sourcePath ||
+      normalizedTarget.startsWith(`${sourcePath}/`)
+  })
+  if (invalidSourcePath) {
+    throw errorWithStatus(
+      `La carpeta "${invalidSourcePath}" no puede moverse a sí misma, dentro de sí misma ni al lugar donde ya está.`,
+      400,
+      'invalid_media_move_target'
+    )
+  }
+  return runMediaSelectionOperation({
+    businessId,
+    assetIds: selection.assetIds,
+    folderPaths: selection.folderPaths,
+    mediaType,
+    status,
+    operation: 'La operación de mover',
+    action: async (row, selection, { remoteDeadlineAt }) => {
+      const currentFolderPath = normalizeMediaFolderPath(row.folder_path)
+      const sourceFolderPath = selectedSourceFolder(currentFolderPath, selection.folderPaths)
+      await moveSingleMediaAsset({
+        assetId: row.id,
+        targetFolderPath: movedSelectionFolderPath(currentFolderPath, sourceFolderPath, normalizedTarget),
+        businessId,
+        skipQuotaRefresh: true,
+        operationDeadlineAt: remoteDeadlineAt
+      })
+    }
+  })
+}
+
+export async function deleteMediaSelection({
+  businessId = 'default',
+  assetIds = [],
+  folderPaths = [],
+  mediaType = '',
+  status = ''
+} = {}) {
+  return runMediaSelectionOperation({
+    businessId,
+    assetIds,
+    folderPaths,
+    mediaType,
+    status,
+    operation: 'La operación de eliminar',
+    action: async (row, _selection, { remoteDeadlineAt }) => {
+      await softDeleteMediaAsset(row.id, {
+        skipQuotaRefresh: true,
+        operationDeadlineAt: remoteDeadlineAt
+      })
+    }
+  })
+}
+
+export async function resolveMediaAssetSelection({
+  businessId = 'default',
+  assetIds = [],
+  folderPaths = [],
+  mediaType = '',
+  status = '',
+  maxItems = 500
+} = {}) {
+  const filters = buildMediaSelectionFilters({ businessId, assetIds, folderPaths, mediaType, status })
+  const safeMaximum = Math.max(1, Math.floor(Number(maxItems) || 500))
+  const sortTimestamp = mediaLibraryTimestampExpression('created_at')
+  if (filters.selection.assetIds.length) {
+    const explicitClauses = [
+      'business_id = ?',
+      'deleted_at IS NULL',
+      "status != 'deleted'"
+    ]
+    const explicitParams = [normalizeBusinessId(businessId)]
+    if (filters.mediaType) {
+      explicitClauses.push('media_type = ?')
+      explicitParams.push(filters.mediaType)
+    }
+    if (filters.status) {
+      explicitClauses.push('status = ?')
+      explicitParams.push(filters.status)
+    }
+    explicitClauses.push(`id IN (${filters.selection.assetIds.map(() => '?').join(', ')})`)
+    explicitParams.push(...filters.selection.assetIds)
+    const presentRows = await db.all(
+      `SELECT id FROM media_assets WHERE ${explicitClauses.join(' AND ')}`,
+      explicitParams
+    )
+    const presentIds = new Set(presentRows.map((row) => cleanString(row.id)))
+    const missingIds = filters.selection.assetIds.filter((id) => !presentIds.has(id))
+    if (missingIds.length) {
+      const error = errorWithStatus(
+        `${missingIds.length} archivo${missingIds.length === 1 ? '' : 's'} no pertenece${missingIds.length === 1 ? '' : 'n'} al alcance solicitado o ya no existe${missingIds.length === 1 ? '' : 'n'}.`,
+        404,
+        'media_selection_assets_missing'
+      )
+      error.details = { missing: missingIds.length, assetIds: missingIds.slice(0, 25) }
+      throw error
+    }
+  }
+  const rows = await db.all(
+    `SELECT id, folder_path, original_filename, stored_filename, bunny_path,
+            COALESCE(NULLIF(quota_size, 0), NULLIF(size_processed, 0), NULLIF(size_original, 0), 0) AS size_bytes
+     FROM media_assets
+     WHERE ${filters.clauses.join(' AND ')}
+     ORDER BY ${sortTimestamp} DESC, id DESC
+     LIMIT ?`,
+    [...filters.params, safeMaximum + 1]
+  )
+  if (rows.length > safeMaximum) {
+    throw errorWithStatus(
+      `La selección contiene más de ${safeMaximum} archivos. Descarga una carpeta o lote más pequeño.`,
+      413,
+      'media_archive_too_large'
+    )
+  }
+
+  return rows.map((row) => {
+    const filename = cleanString(
+      row.original_filename || row.stored_filename || cleanString(row.bunny_path).split('/').pop() || row.id
+    )
+    return {
+      id: row.id,
+      path: [normalizeMediaFolderPath(row.folder_path), filename].filter(Boolean).join('/'),
+      sizeBytes: numberValue(row.size_bytes)
+    }
+  })
+}
+
+export async function softDeleteMediaAsset(assetId, {
+  skipQuotaRefresh = false,
+  operationDeadlineAt = 0
+} = {}) {
   const asset = await getMediaAsset(assetId)
   const config = await getStorageRuntimeConfig()
   const metadata = asset.metadata || {}
@@ -3908,9 +4812,9 @@ export async function softDeleteMediaAsset(assetId) {
 
   try {
     if (asset.storageProvider === 'bunny' && asset.bunnyPath) {
-      await deleteFromBunny({ config, objectPath: asset.bunnyPath })
+      await deleteFromBunny({ config, objectPath: asset.bunnyPath, deadlineAt: operationDeadlineAt })
       const thumbPath = metadata.variants?.thumbnail?.path
-      if (thumbPath) await deleteFromBunny({ config, objectPath: thumbPath })
+      if (thumbPath) await deleteFromBunny({ config, objectPath: thumbPath, deadlineAt: operationDeadlineAt })
     } else if (metadata.localPath) {
       await fs.rm(metadata.localPath, { force: true }).catch(() => undefined)
       if (metadata.variants?.thumbnail?.localPath) {
@@ -3924,12 +4828,12 @@ export async function softDeleteMediaAsset(assetId) {
 
   const streamVideoId = cleanString(metadata.stream?.videoId)
   if (streamVideoId) {
-    await deleteBunnyStreamVideo(config, streamVideoId).catch((error) => {
+    await deleteBunnyStreamVideo(config, streamVideoId, { deadlineAt: operationDeadlineAt }).catch((error) => {
       logger.warn(`[MediaStorage] No se pudo borrar video de Bunny Stream ${streamVideoId}: ${error.message}`)
     })
   }
 
-  await refreshQuotaUsage(asset.businessId)
+  if (!skipQuotaRefresh) await refreshQuotaUsage(asset.businessId)
   return { id: assetId, deleted: true }
 }
 
@@ -4018,6 +4922,61 @@ export async function getMediaAssetFile(assetId, variant = '') {
   }
 
   throw errorWithStatus('El archivo no tiene un objeto descargable disponible.', 404, 'media_file_missing')
+}
+
+export async function getMediaAssetReadStream(assetId, { deadlineAt = 0 } = {}) {
+  const asset = await getMediaAsset(assetId)
+  const metadata = asset.metadata || {}
+  const contentLength = Math.floor(numberValue(
+    asset.quotaSize || asset.sizeProcessed || asset.sizeOriginal
+  ))
+
+  if (asset.storageProvider === 'bunny_stream') {
+    throw errorWithStatus(
+      'Este video vive directamente en Bunny Stream y no tiene una descarga binaria en Media.',
+      409,
+      'bunny_stream_binary_unavailable'
+    )
+  }
+  if (metadata.localPath) {
+    const stat = await fs.stat(metadata.localPath).catch(() => null)
+    if (!stat?.isFile()) {
+      throw errorWithStatus('El archivo local ya no está disponible.', 404, 'media_file_missing')
+    }
+    return {
+      stream: createReadStream(metadata.localPath),
+      contentType: asset.mimeType || 'application/octet-stream',
+      contentLength: stat.size,
+      filename: asset.originalFilename || asset.storedFilename || asset.id
+    }
+  }
+
+  const config = await getStorageRuntimeConfig()
+  const requests = [
+    asset.publicUrl && /^https?:\/\//i.test(asset.publicUrl)
+      ? { url: asset.publicUrl, headers: {} }
+      : null,
+    asset.bunnyPath && config.bunnyConfigured
+      ? { url: bunnyObjectUrl(config, asset.bunnyPath), headers: { AccessKey: config.bunnyStorageApiKey } }
+      : null
+  ].filter(Boolean)
+
+  for (const request of requests) {
+    const response = await fetch(request.url, {
+      headers: request.headers,
+      signal: AbortSignal.timeout(boundedRemoteOperationTimeout(deadlineAt, MEDIA_DOWNLOAD_TIMEOUT_MS))
+    })
+    if (!response.ok || !response.body) continue
+    const responseLength = Math.floor(numberValue(response.headers.get('content-length')))
+    return {
+      stream: response.body,
+      contentType: asset.mimeType || response.headers.get('content-type') || 'application/octet-stream',
+      contentLength: responseLength || contentLength,
+      filename: asset.originalFilename || asset.storedFilename || asset.id
+    }
+  }
+
+  throw errorWithStatus('El archivo no tiene contenido disponible para lectura.', 404, 'media_file_missing')
 }
 
 export async function getMediaAssetBuffer(assetId) {

@@ -1,6 +1,7 @@
 import React from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button, Logo } from '@/components/common'
+import { syncAuthScopedCachePrincipal } from '@/services/authPrincipalCache'
 import styles from './Login.module.css'
 
 type LicenseBlockedState = {
@@ -19,6 +20,7 @@ export const LicenseBlocked: React.FC = () => {
   const goToLogin = () => {
     try {
       localStorage.removeItem('auth_token')
+      syncAuthScopedCachePrincipal(null)
     } catch {
       // sin acceso a storage, continuar igual
     }

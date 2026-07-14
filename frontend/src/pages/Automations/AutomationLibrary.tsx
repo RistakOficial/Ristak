@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -8,6 +8,7 @@ import {
   Folder,
   FolderInput,
   FolderPlus,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -37,7 +38,6 @@ import automationsService, {
   AUTOMATION_STATUS_LABELS,
   automationToSummary,
   automationsCache,
-  subscribeAutomationsOverview,
   type AutomationFolder,
   type AutomationSummary
 } from '@/services/automationsService'
@@ -65,6 +65,8 @@ interface NameModal {
   value: string
 }
 
+const AUTOMATIONS_LIBRARY_PAGE_SIZE = 50
+
 export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   currentAutomationId,
   currentAutomation,
@@ -74,17 +76,26 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   const navigate = useNavigate()
   const { showToast, showConfirm } = useNotification()
 
-  const [folders, setFolders] = useState<AutomationFolder[]>(automationsCache.overview?.folders || [])
-  const [automations, setAutomations] = useState<AutomationSummary[]>(automationsCache.overview?.automations || [])
+  const [folders, setFolders] = useState<AutomationFolder[]>([])
+  const [automations, setAutomations] = useState<AutomationSummary[]>([])
+  const [pageInfo, setPageInfo] = useState({
+    limit: AUTOMATIONS_LIBRARY_PAGE_SIZE,
+    hasMore: false,
+    nextCursor: null as string | null
+  })
   const [folderId, setFolderId] = useState<string | null>(null)
   const [initialFolderSynced, setInitialFolderSynced] = useState(false)
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [nameModal, setNameModal] = useState<NameModal | null>(null)
   const [moveModal, setMoveModal] = useState<{ ids: string[]; folderId: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const prefetchTimerRef = useRef<number | null>(null)
+  const listRequestRef = useRef(0)
 
   const openAutomation = (automationId: string) => {
     if (automationId !== currentAutomationId) {
@@ -118,24 +129,91 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
     }, 120)
   }
 
-  const reload = async (options: { silent?: boolean } = {}) => {
+  const reload = useCallback(async (options: {
+    silent?: boolean
+    append?: boolean
+    cursor?: string | null
+    force?: boolean
+  } = {}) => {
+    const requestId = ++listRequestRef.current
+    const append = options.append === true
+    if (append) setLoadingMore(true)
+    else if (!options.silent) setLoading(true)
+
     try {
-      return await automationsService.getOverview()
+      const overview = await automationsService.getOverview({
+        limit: AUTOMATIONS_LIBRARY_PAGE_SIZE,
+        cursor: append ? options.cursor : null,
+        search: debouncedQuery || undefined,
+        folderId: debouncedQuery ? undefined : (folderId || 'root'),
+        includeReview: false,
+        force: options.force
+      })
+      if (requestId !== listRequestRef.current) return null
+
+      setFolders(overview.folders)
+      setAutomations((current) => {
+        if (!append) return overview.automations
+        const merged = new Map(current.map((automation) => [automation.id, automation]))
+        overview.automations.forEach((automation) => merged.set(automation.id, automation))
+        return [...merged.values()]
+      })
+      setPageInfo(overview.pageInfo)
+
+      // Las alertas de referencias rotas requieren revisar el grafo. Se
+      // revalidan después del primer paint para que esa auditoría no vuelva a
+      // bloquear la apertura de la librería.
+      void automationsService.getOverview({
+        limit: AUTOMATIONS_LIBRARY_PAGE_SIZE,
+        cursor: append ? options.cursor : null,
+        search: debouncedQuery || undefined,
+        folderId: debouncedQuery ? undefined : (folderId || 'root'),
+        includeReview: true,
+        force: options.force
+      }).then((reviewedOverview) => {
+        if (requestId !== listRequestRef.current) return
+        const reviewedById = new Map(reviewedOverview.automations.map((automation) => [automation.id, automation]))
+        setAutomations((current) => current.map((automation) => {
+          const reviewed = reviewedById.get(automation.id)
+          return reviewed
+            ? {
+                ...automation,
+                reviewStatus: reviewed.reviewStatus,
+                hasUnpublishedChanges: reviewed.hasUnpublishedChanges
+              }
+            : automation
+        }))
+      }).catch(() => {
+        // El summary ligero ya es utilizable; una auditoría tardía no debe
+        // tumbar ni vaciar la librería.
+      })
+      return overview
     } catch {
-      if (!options.silent) showToast('error', 'No se pudo cargar la librería')
+      if (requestId === listRequestRef.current && !options.silent) {
+        showToast('error', 'No se pudo cargar la librería')
+      }
       return null
+    } finally {
+      if (requestId === listRequestRef.current) {
+        setLoading(false)
+        setLoadingMore(false)
+      }
     }
-  }
+  }, [debouncedQuery, folderId, showToast])
 
   useEffect(() => {
-    const unsubscribe = subscribeAutomationsOverview((overview) => {
-      setFolders(overview.folders)
-      setAutomations(overview.automations)
-    })
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250)
+    return () => window.clearTimeout(timer)
+  }, [query])
+
+  useEffect(() => {
+    setSelected(new Set())
+    if (currentAutomationId && !initialFolderSynced) {
+      setLoading(true)
+      return
+    }
     void reload()
-    return unsubscribe
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [currentAutomationId, initialFolderSynced, reload])
 
   useEffect(() => {
     return () => clearQueuedPrefetch()
@@ -145,15 +223,42 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   useEffect(() => {
     if (initialFolderSynced || !currentAutomationId) return
 
-    const current = automations.find((automation) => automation.id === currentAutomationId)
-    if (!current) return
+    const current = currentAutomation || automationsCache.automations.get(currentAutomationId)
+    if (current) {
+      setFolderId(current.folderId || null)
+      setInitialFolderSynced(true)
+      return
+    }
 
-    if (current.folderId) setFolderId(current.folderId)
-    setInitialFolderSynced(true)
-  }, [automations, currentAutomationId, initialFolderSynced])
+    let cancelled = false
+    void automationsService.getAutomation(currentAutomationId)
+      .then((automation) => {
+        if (cancelled) return
+        setFolderId(automation.folderId || null)
+        setInitialFolderSynced(true)
+      })
+      .catch(() => {
+        if (cancelled) return
+        // El editor mostrará el error de detalle. La librería puede seguir
+        // abriendo la raíz para no dejar toda la navegación lateral bloqueada.
+        setInitialFolderSynced(true)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentAutomation, currentAutomationId, initialFolderSynced])
 
   useEffect(() => {
     if (!currentAutomation) return
+    const normalizedQuery = debouncedQuery.toLocaleLowerCase()
+    const belongsToCurrentView = normalizedQuery
+      ? `${currentAutomation.name} ${currentAutomation.description} ${currentAutomation.id}`
+          .toLocaleLowerCase()
+          .includes(normalizedQuery)
+      : (currentAutomation.folderId || null) === folderId
+    if (!belongsToCurrentView) return
+
     setAutomations((current) => {
       const exists = current.some((automation) => automation.id === currentAutomation.id)
       return exists
@@ -162,7 +267,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
           )
         : [currentAutomation, ...current]
     })
-  }, [currentAutomation])
+  }, [currentAutomation, debouncedQuery, folderId])
 
   const currentFolder = folderId ? folders.find((folder) => folder.id === folderId) || null : null
 
@@ -176,12 +281,8 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   }, [folders, folderId, query])
 
   const visibleAutomations = useMemo(() => {
-    const normalized = query.trim().toLowerCase()
-    if (normalized) {
-      return automations.filter((automation) => automation.name.toLowerCase().includes(normalized))
-    }
-    return automations.filter((automation) => (automation.folderId || null) === folderId)
-  }, [automations, folderId, query])
+    return automations
+  }, [automations])
 
   // ------------------------------------------------------------------
   // Acciones
@@ -577,7 +678,29 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
           )
         })}
 
-        {visibleFolders.length === 0 && visibleAutomations.length === 0 && (
+        {loading && visibleFolders.length === 0 && visibleAutomations.length === 0 && (
+          <p className={styles.leftNavEmpty} role="status" aria-live="polite">
+            <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+            Cargando automatizaciones…
+          </p>
+        )}
+
+        {!loading && pageInfo.hasMore && pageInfo.nextCursor && (
+          <div className={styles.leftNavEmpty}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              fullWidth
+              loading={loadingMore}
+              onClick={() => void reload({ append: true, cursor: pageInfo.nextCursor })}
+            >
+              Cargar más
+            </Button>
+          </div>
+        )}
+
+        {!loading && visibleFolders.length === 0 && visibleAutomations.length === 0 && (
           <p className={styles.leftNavEmpty}>
             {query.trim() ? 'Sin resultados' : 'Carpeta vacía'}
           </p>

@@ -899,7 +899,7 @@ test('cobra automáticamente parcialidades vencidas con tarjeta guardada sin dup
     assert.equal(payment.stripe_charge_id, 'ch_test_1')
     assert.equal(installment.status, 'paid')
     assert.equal(installment.stripe_payment_intent_id, 'pi_test_1')
-    assert.equal(mirroredPlan.status, 'active')
+    assert.equal(mirroredPlan.status, 'completed')
     assert.equal(mirroredSchedule.installments[0].status, 'paid')
 
     const secondRun = await processDueStripePaymentPlanCharges({ limit: 5 })

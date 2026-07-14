@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { ensureLocalDevAuth } from '@/services/authFetch'
 import { apiUrl, requiresRuntimeApiBaseUrl, isNativeAppRuntime, clearRuntimeApiBaseUrl } from '@/services/apiBaseUrl'
 import { clearIntegrationsStatus } from '@/services/integrationsService'
+import { syncAuthScopedCachePrincipal } from '@/services/authPrincipalCache'
 import { useIntegrationsStatus } from '@/hooks/useIntegrationsStatus'
 import type { AccountLocaleDefaults } from '@/utils/accountLocale'
 import type { AccessConfig, LicenseFeatures, UserRole } from '@/utils/accessControl'
@@ -98,8 +99,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Verificar si hay un token guardado al cargar la app
   useEffect(() => {
     const verifyToken = async () => {
+      syncAuthScopedCachePrincipal(localStorage.getItem('auth_token'))
       if (requiresRuntimeApiBaseUrl()) {
         localStorage.removeItem('auth_token')
+        syncAuthScopedCachePrincipal(null)
         setUser(null)
         setNeedsSetup(false)
         setIsLoading(false)
@@ -139,6 +142,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         localStorage.removeItem('auth_token')
+        syncAuthScopedCachePrincipal(null)
         setNeedsSetup(false)
         return false
       }
@@ -147,6 +151,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (!token && await ensureLocalDevAuth()) {
         token = localStorage.getItem('auth_token')
+        syncAuthScopedCachePrincipal(token)
       }
 
       if (!token) {
@@ -204,6 +209,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Guardar token en localStorage
       localStorage.setItem('auth_token', data.token)
+      syncAuthScopedCachePrincipal(data.token)
       if (data.apiToken) {
         sessionStorage.setItem('ristak_latest_api_token', data.apiToken)
       }
@@ -240,6 +246,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Guardar token en localStorage
       localStorage.setItem('auth_token', data.token)
+      syncAuthScopedCachePrincipal(data.token)
       if (data.apiToken) {
         sessionStorage.setItem('ristak_latest_api_token', data.apiToken)
       }
@@ -280,6 +287,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const logout = () => {
     localStorage.removeItem('auth_token')
+    syncAuthScopedCachePrincipal(null)
     clearIntegrationsStatus()
     setUser(null)
     setLocationId(null)

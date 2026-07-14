@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField, CustomSelect } from '@/components/common';
+import { Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField, CustomSelect } from '@/components/common';
+import { KpiCard } from '@/components/common/KpiCard/KpiCard';
 import { ChevronLeft, ChevronRight, Plus, ChevronDown, Settings, Bell, CalendarCheck, Sparkles, Copy, Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
@@ -637,32 +638,54 @@ export const Appointments: React.FC = () => {
       // Calcular rango de fechas según la vista
       const { startTime, endTime } = getDateRange();
 
-      const eventsData = await calendarsService.getEvents(
+      // Calcular estadísticas del mes visible
+      const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      const { startTime: monthStartTime, endTime: monthEndTime } = getBusinessDateRangeTimestamps(monthStart, monthEnd, timezone);
+
+      const visibleEventsPromise = calendarsService.getEvents(
         locationId || '',
         startTime,
         endTime,
         accessToken || undefined,
         selectedCalendar.id
       );
+      const monthlyEventsPromise = startTime === monthStartTime && endTime === monthEndTime
+        ? visibleEventsPromise
+        : calendarsService.getEvents(
+            locationId || '',
+            monthStartTime,
+            monthEndTime,
+            accessToken || undefined,
+            selectedCalendar.id
+          );
+      // La agenda visible es el camino crítico. Las estadísticas mensuales se
+      // publican por separado para que un agregado lento o fallido no retenga
+      // citas que ya llegaron correctamente.
+      const publishVisibleEvents = visibleEventsPromise
+        .then((eventsData) => {
+          if (eventsRequestRef.current !== requestId) return;
+          setEvents(eventsData);
+        })
+        .catch(() => {
+          if (eventsRequestRef.current === requestId) {
+            showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
+          }
+        })
+        .finally(() => {
+          if (eventsRequestRef.current === requestId) setLoading(false);
+        });
 
-      if (eventsRequestRef.current !== requestId) return;
-      setEvents(eventsData);
+      const publishMonthlyStats = monthlyEventsPromise
+        .then((monthlyData) => {
+          if (eventsRequestRef.current !== requestId) return;
+          setStats(calendarsService.calculateStats(monthlyData));
+        })
+        .catch(() => {
+          // Conserva el último snapshot de KPIs; la agenda ya puede usarse.
+        });
 
-      // Calcular estadísticas del mes visible
-      const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-      const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-      const { startTime: monthStartTime, endTime: monthEndTime } = getBusinessDateRangeTimestamps(monthStart, monthEnd, timezone);
-
-      const monthlyData = await calendarsService.getEvents(
-        locationId || '',
-        monthStartTime,
-        monthEndTime,
-        accessToken || undefined,
-        selectedCalendar.id
-      );
-
-      if (eventsRequestRef.current !== requestId) return;
-      setStats(calendarsService.calculateStats(monthlyData));
+      await Promise.all([publishVisibleEvents, publishMonthlyStats]);
     } catch (error) {
       if (eventsRequestRef.current === requestId) {
         showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
@@ -1019,7 +1042,7 @@ export const Appointments: React.FC = () => {
           setUpcomingEvents(current => [created, ...current.filter(event => event.id !== created.id)]);
         }
       }
-      showToast('success', 'Cita programada', accessToken ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak.');
+      showToast('success', 'Cita programada', locationId ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak.');
       closeCreateModal();
       await loadEvents();
       await loadUpcomingEvents();
@@ -1075,7 +1098,7 @@ export const Appointments: React.FC = () => {
       return;
     }
 
-    if (calendars.length === 0 && locationId && accessToken && loading) {
+    if (calendars.length === 0 && locationId && loading) {
       return;
     }
 
@@ -1153,7 +1176,7 @@ export const Appointments: React.FC = () => {
         setUpcomingEvents(current => current.map(event => event.id === updated.id ? updated : event));
         setSelectedEvent(current => current?.id === updated.id ? updated : current);
       }
-      showToast('success', 'Cita actualizada', accessToken ? 'Los cambios se guardaron correctamente.' : 'Los cambios quedaron guardados en Ristak y pendientes de sync.');
+      showToast('success', 'Cita actualizada', locationId ? 'Los cambios se guardaron correctamente.' : 'Los cambios quedaron guardados en Ristak y pendientes de sync.');
 
       // Refetch canónico: backend ya normalizó fechas y estado en la zona del negocio.
       await Promise.all([loadEvents(), loadUpcomingEvents()]);

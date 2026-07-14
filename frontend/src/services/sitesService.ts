@@ -1,6 +1,6 @@
 import apiClient from './apiClient'
 import { apiUrl, getApiBaseUrl } from './apiBaseUrl'
-import type { FirstPartyVideoTracking, MediaAsset, MediaStreamAnalytics, MediaStreamAnalyticsInput, StreamChartPoint } from './mediaService'
+import type { FirstPartyVideoTracking, MediaAsset, MediaAssetPage, MediaStreamAnalytics, MediaStreamAnalyticsInput, StreamChartPoint } from './mediaService'
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token')
@@ -348,6 +348,12 @@ export interface SitesAnalyticsSummary {
 export interface SitesAnalyticsSummaryInput {
   siteIds?: string[]
   videoAssetIds?: string[]
+  videoBreakdownAssetIds?: string[]
+  videoSiteIds?: string[]
+  videoScope?: {
+    siteType: 'sites' | 'forms' | 'videos'
+    landingMode?: 'website' | 'funnel' | 'all'
+  }
   dateFrom?: string
   dateTo?: string
   hourly?: boolean
@@ -733,6 +739,8 @@ export interface PublicSite {
   createdAt: string
   updatedAt: string
   submissionsCount: number
+  /** Summary ligero devuelto por el catálogo; el editor solicita el detalle al abrir. */
+  summary?: boolean
   trackingStats?: {
     views: number
     visitors: number
@@ -742,6 +750,19 @@ export interface PublicSite {
   }
   blocks?: SiteBlock[]
   submissions?: SiteSubmission[]
+}
+
+export interface SitesListPage {
+  items: PublicSite[]
+  hasMore: boolean
+  nextCursor: string
+  limit: number
+}
+
+export interface SitesSelectorCollection {
+  items: PublicSite[]
+  truncated: boolean
+  nextCursor: string
 }
 
 export type SiteLibraryFolderSection = 'landings' | 'forms'
@@ -1139,6 +1160,53 @@ export const sitesService = {
     return apiClient.get<PublicSite[]>('/sites')
   },
 
+  listSitesPage(options: { limit?: number; cursor?: string } = {}) {
+    const params = new URLSearchParams({ paginated: '1' })
+    if (options.limit) params.set('limit', String(options.limit))
+    if (options.cursor) params.set('cursor', options.cursor)
+    return apiClient.get<SitesListPage>(`/sites?${params.toString()}`)
+  },
+
+  async listAllSiteSelectors(options: {
+    kind: 'domain' | 'forms'
+    pageSize?: number
+    maxItems?: number
+  }): Promise<SitesSelectorCollection> {
+    const pageSize = Math.min(200, Math.max(1, Math.trunc(options.pageSize || 200)))
+    const maxItems = Math.min(5000, Math.max(pageSize, Math.trunc(options.maxItems || 2000)))
+    const items: PublicSite[] = []
+    const seenCursors = new Set<string>()
+    let cursor = ''
+    let hasMore = true
+
+    while (hasMore && items.length < maxItems) {
+      const params = new URLSearchParams({
+        paginated: '1',
+        limit: String(Math.min(pageSize, maxItems - items.length)),
+        view: options.kind === 'forms' ? 'form_selector' : 'domain_selector'
+      })
+      if (cursor) params.set('cursor', cursor)
+
+      const page = await apiClient.get<SitesListPage>(`/sites?${params.toString()}`)
+      items.push(...page.items)
+      hasMore = page.hasMore
+      const nextCursor = page.nextCursor || ''
+
+      if (!hasMore || !nextCursor || seenCursors.has(nextCursor)) {
+        cursor = nextCursor
+        break
+      }
+      seenCursors.add(nextCursor)
+      cursor = nextCursor
+    }
+
+    return {
+      items,
+      truncated: hasMore && items.length >= maxItems,
+      nextCursor: cursor
+    }
+  },
+
   listFolders() {
     return apiClient.get<SiteLibraryFolder[]>('/sites/folders')
   },
@@ -1202,8 +1270,12 @@ export const sitesService = {
     return apiClient.delete<{ id: string; deleted: boolean }>(`/sites/${siteId}/content-assets/${bindingId}`)
   },
 
-  getSite(siteId: string) {
-    return apiClient.get<PublicSite>(`/sites/${siteId}`)
+  getSite(siteId: string, options: { includeSubmissions?: boolean; submissionLimit?: number } = {}) {
+    const params = new URLSearchParams()
+    if (options.includeSubmissions) params.set('includeSubmissions', '1')
+    if (options.submissionLimit) params.set('submissionLimit', String(options.submissionLimit))
+    const query = params.toString()
+    return apiClient.get<PublicSite>(`/sites/${siteId}${query ? `?${query}` : ''}`)
   },
 
   async getPreviewHtml(siteId: string, pageId?: string, options: {
@@ -1282,8 +1354,34 @@ export const sitesService = {
     return apiClient.get<SitesDomainConfig>('/sites/domain')
   },
 
-  listVideoAssets() {
-    return apiClient.get<MediaAsset[]>('/sites/video-assets')
+  listVideoAssets(input: {
+    limit?: number
+    cursor?: string | null
+    siteType?: 'sites' | 'forms' | 'videos'
+    landingMode?: 'website' | 'funnel' | 'all'
+    siteId?: string
+  } = {}) {
+    return apiClient.get<MediaAssetPage>('/sites/video-assets', {
+      params: {
+        limit: String(input.limit || 50),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.siteType ? { siteType: input.siteType } : {}),
+        ...(input.landingMode ? { landingMode: input.landingMode } : {}),
+        ...(input.siteId ? { siteId: input.siteId } : {})
+      }
+    })
+  },
+
+  getVideoAssetByStreamId(streamVideoId: string) {
+    return apiClient.get<MediaAsset>('/sites/video-assets', {
+      params: { streamVideoId }
+    })
+  },
+
+  getVideoAssetById(assetId: string) {
+    return apiClient.get<MediaAsset>('/sites/video-assets', {
+      params: { assetId }
+    })
   },
 
   getAnalyticsSummary(input: SitesAnalyticsSummaryInput) {

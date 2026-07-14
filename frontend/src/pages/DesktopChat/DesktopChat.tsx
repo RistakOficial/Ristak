@@ -72,7 +72,7 @@ import {
   type EmailRichTextVariable,
   type ContentFocusItem
 } from '@/components/common'
-import { ContactJourney } from '@/components/common/ContactJourney'
+import { ContactJourney } from '@/components/common/ContactJourney/ContactJourney'
 import { AgentRobot } from '@/components/ai'
 import { PhoneMessageChannelIcon } from '@/components/phone/PhoneMessageChannelIcon'
 import { useAuth } from '@/contexts/AuthContext'
@@ -93,6 +93,7 @@ import {
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
 import apiClient from '@/services/apiClient'
+import { createAuthScopedLocalStorageNamespace } from '@/services/authScopedLocalStorage'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import {
@@ -421,6 +422,12 @@ const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
 const CHAT_REMOVED_STATE_KEY = 'ristak_desktop_chat_removed_state_v1'
 const CHAT_CACHE_KEY = 'ristak_desktop_chat_list_cache_v1'
 const CHAT_CONVERSATION_CACHE_KEY_PREFIX = 'ristak_desktop_chat_conversation_cache_v1'
+const CHAT_PERSISTENT_CACHE_PREFIXES = [
+  CHAT_ARCHIVED_STATE_KEY,
+  CHAT_REMOVED_STATE_KEY,
+  CHAT_CACHE_KEY,
+  CHAT_CONVERSATION_CACHE_KEY_PREFIX
+] as const
 const CHAT_CACHE_MAX_AGE_MS = 30 * 60 * 1000
 const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CACHE_ENTRY_LIMIT = 400
@@ -1153,11 +1160,17 @@ function createAgentInboxContactFromState(state: ConversationAgentState): Deskto
   }
 }
 
+const desktopChatStorage = createAuthScopedLocalStorageNamespace(CHAT_PERSISTENT_CACHE_PREFIXES)
+
+function getScopedChatStorageKey(prefix: string) {
+  return desktopChatStorage.getKey(prefix)
+}
+
 function readStoredChatIds(key: string) {
   if (typeof window === 'undefined') return []
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || '[]')
+    const parsed = JSON.parse(window.localStorage.getItem(getScopedChatStorageKey(key)) || '[]')
     if (!Array.isArray(parsed)) return []
     return parsed.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
   } catch {
@@ -1167,14 +1180,18 @@ function readStoredChatIds(key: string) {
 
 function writeStoredChatIds(key: string, ids: string[]) {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))))
+  try {
+    window.localStorage.setItem(getScopedChatStorageKey(key), JSON.stringify(Array.from(new Set(ids))))
+  } catch {
+    // Cache best-effort.
+  }
 }
 
 function readStoredRemovedChatStates(): RemovedChatState[] {
   if (typeof window === 'undefined') return []
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(CHAT_REMOVED_STATE_KEY) || '[]')
+    const parsed = JSON.parse(window.localStorage.getItem(getScopedChatStorageKey(CHAT_REMOVED_STATE_KEY)) || '[]')
     if (!Array.isArray(parsed)) return []
     return parsed
       .filter((state: unknown): state is RemovedChatState => Boolean(
@@ -1197,7 +1214,14 @@ function readStoredRemovedChatStates(): RemovedChatState[] {
 
 function writeStoredRemovedChatStates(states: RemovedChatState[]) {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(CHAT_REMOVED_STATE_KEY, JSON.stringify(states.slice(0, 200)))
+  try {
+    window.localStorage.setItem(
+      getScopedChatStorageKey(CHAT_REMOVED_STATE_KEY),
+      JSON.stringify(states.slice(0, 200))
+    )
+  } catch {
+    // Cache best-effort.
+  }
 }
 
 function getRemovedChatState(states: RemovedChatState[], contactId: string) {
@@ -1242,7 +1266,7 @@ function readCachedChatList(): ChatListCacheSnapshot {
   if (typeof window === 'undefined') return { chats: [], isFresh: false }
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(CHAT_CACHE_KEY) || 'null')
+    const parsed = JSON.parse(window.localStorage.getItem(getScopedChatStorageKey(CHAT_CACHE_KEY)) || 'null')
     if (!parsed || typeof parsed !== 'object') return { chats: [], isFresh: false }
     const cacheAgeMs = Date.now() - Number(parsed.storedAt || 0)
     if (cacheAgeMs > CHAT_CACHE_STALE_MAX_AGE_MS) return { chats: [], isFresh: false }
@@ -1270,7 +1294,7 @@ function writeCachedChatList(chats: DesktopChatContact[]) {
   if (typeof window === 'undefined') return
 
   try {
-    window.localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify({
+    window.localStorage.setItem(getScopedChatStorageKey(CHAT_CACHE_KEY), JSON.stringify({
       storedAt: Date.now(),
       chats: chats.slice(0, CHAT_CACHE_ENTRY_LIMIT)
     }))
@@ -1654,7 +1678,7 @@ function getOldestConversationMessageDate(journey: JourneyEvent[]) {
 
 function getConversationCacheKey(locationId: string | null | undefined, contactId: string) {
   return [
-    CHAT_CONVERSATION_CACHE_KEY_PREFIX,
+    getScopedChatStorageKey(CHAT_CONVERSATION_CACHE_KEY_PREFIX),
     encodeURIComponent(locationId || 'default'),
     encodeURIComponent(contactId)
   ].join(':')
@@ -4137,7 +4161,6 @@ export const DesktopChat: React.FC = () => {
     const hasSearch = normalizedSearch.length > 0
 
     if (append) {
-      if (hasSearch) return
       // El load-more usa su propio controller y solo se bloquea por otro load-more en curso o
       // porque ya no hay más. NO lo bloquea la carga inicial ni los refrescos: dispara de
       // inmediato al llegar al fondo.
@@ -4191,32 +4214,23 @@ export const DesktopChat: React.FC = () => {
         chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE
         setChats((currentChats) => dedupeChatsById([...currentChats, ...pageChats]))
       } else if (hasSearch) {
-        let offset = 0
-        let allChats: DesktopChatContact[] = []
-        let hasMore = true
-
-        while (hasMore && chatsRequestRef.current === controller) {
-          const pageChats = await fetchChatPage(offset)
-          allChats = dedupeChatsById([...allChats, ...pageChats])
-          offset += pageChats.length
-          hasMore = pageChats.length >= CHAT_LIST_PAGE_SIZE
-        }
+        const pageChats = await fetchChatPage(0)
 
         if (chatsRequestRef.current !== controller) return
 
         chatListLoadedSearchRef.current = normalizedSearch
-        chatListOffsetRef.current = offset
-        chatListHasMoreRef.current = hasMore
-        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, allChats))
-        setChats(allChats)
+        chatListOffsetRef.current = pageChats.length
+        chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE
+        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, pageChats))
+        setChats(pageChats)
         setActiveContactId((current) => {
           const removedStates = removedChatStatesRef.current
-          if (current && allChats.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) {
+          if (current && pageChats.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) {
             return current
           }
           const archivedSet = archivedChatIdSetRef.current
           const agentSet = agentPriorityChatIdSetRef.current
-          return getDefaultActiveChatId(allChats, archivedSet, agentSet, removedStates)
+          return getDefaultActiveChatId(pageChats, archivedSet, agentSet, removedStates)
         })
       } else if (silent) {
         // Refresco en segundo plano: NO recortar ni reconstruir la lista entera (eso causa
@@ -6413,7 +6427,7 @@ export const DesktopChat: React.FC = () => {
     if (!hasAutomationsAccess || !automationModalOpen) return
     let cancelled = false
     setAutomationsLoading(true)
-    automationsService.getOverview()
+    automationsService.getOverview({ status: 'published', limit: 100 })
       .then((overview) => {
         if (cancelled) return
         const published = overview.automations.filter((automation) => automation.status === 'published')

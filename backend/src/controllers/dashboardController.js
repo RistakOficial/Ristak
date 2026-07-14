@@ -1,19 +1,37 @@
-import { db } from '../config/database.js';
+import { databaseDialect, db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
-import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
+import { normalizeToUtcIso, resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
 import { getGroupExpression } from '../services/analyticsService.js';
 import { getManualBusinessExpensesTotalForRange, calculateMonthlyFixedCostForRange } from '../services/manualBusinessExpensesService.js';
-import { getContactSourceBreakdown } from '../services/contactSourceService.js';
-import { getTrafficDistributions, getWhatsAppApiSourceBreakdown, getWhatsAppApiNumberBreakdown, getLeadsContactIds } from '../services/originDistributionService.js';
-import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
+import {
+  CONTACT_SOURCE_SELECTION_COLUMNS,
+  getContactSourceBreakdownForSelection
+} from '../services/contactSourceService.js';
+import { getTrafficDistributions, getWhatsAppApiNumberBreakdown } from '../services/originDistributionService.js';
 import { DateTime } from 'luxon';
-import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES, successfulPaymentStatusCondition } from '../utils/paymentMode.js';
 import { getStorageStatus as getDatabaseStorageStatus } from '../services/notificationsService.js';
 import { getVisitorIdentityExpression } from '../services/trackingService.js';
+import { buildTransactionListWhere } from '../services/transactionQueryService.js';
 
-const isPostgres = Boolean(process.env.DATABASE_URL);
+const isPostgres = databaseDialect === 'postgres';
+const DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT = 5;
+const DASHBOARD_INACTIVE_APPOINTMENT_STATUSES = [
+  'cancelled',
+  'canceled',
+  'no_show',
+  'noshow',
+  'invalid',
+  'failed',
+  'missed',
+  'deleted',
+  'void',
+  'voided'
+];
+const DASHBOARD_ATTENDED_APPOINTMENT_STATUSES = ['showed', 'attended', 'completed', 'complete'];
+
+const sqlStringList = (values) => values.map(value => `'${value}'`).join(', ');
 
 function timestampDateExpression(column, timezone = 'UTC') {
   if (!isPostgres) {
@@ -53,6 +71,59 @@ const buildDateFilters = (range) => {
 
   return { filters, params };
 };
+
+const normalizeDashboardPaymentStatus = (status) => {
+  const normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'succeeded' ? 'paid' : normalized;
+};
+
+const mapOperationalTransaction = (row) => ({
+  id: row.id,
+  date: normalizeToUtcIso(row.date || row.created_at, 'UTC'),
+  contactId: row.contact_id || undefined,
+  contactName: row.contact_name || '',
+  email: row.contact_email || '',
+  phone: row.contact_phone || '',
+  amount: Number(row.amount || 0),
+  currency: row.currency || undefined,
+  method: row.payment_method || 'other',
+  status: normalizeDashboardPaymentStatus(row.status),
+  paymentMode: row.payment_mode || 'live',
+  paymentProvider: row.payment_provider || 'manual',
+  title: row.title || row.description || 'Pago',
+  description: row.description || '',
+  createdAt: normalizeToUtcIso(row.created_at, 'UTC'),
+  updatedAt: normalizeToUtcIso(row.updated_at, 'UTC')
+});
+
+const mapOperationalContact = (row) => ({
+  id: row.id,
+  name: row.full_name || '',
+  email: row.email || '',
+  phone: row.phone || '',
+  created_at: normalizeToUtcIso(row.created_at, 'UTC'),
+  ltv: Number(row.total_paid || 0),
+  purchases: Number(row.purchases_count || 0),
+  attributed: Boolean(row.attribution_ad_id),
+  source: row.source || null
+});
+
+const mapOperationalAppointment = (row) => ({
+  id: row.id,
+  title: row.title || '(Sin título)',
+  calendarId: row.calendar_id || '',
+  locationId: row.location_id || '',
+  contactId: row.contact_id || undefined,
+  appointmentStatus: row.appointment_status || row.status || 'confirmed',
+  status: row.status || row.appointment_status || 'confirmed',
+  assignedUserId: row.assigned_user_id || undefined,
+  notes: row.notes || '',
+  address: row.address || '',
+  startTime: normalizeToUtcIso(row.start_time, 'UTC'),
+  endTime: normalizeToUtcIso(row.end_time || row.start_time, 'UTC'),
+  dateAdded: normalizeToUtcIso(row.date_added || row.start_time, 'UTC'),
+  dateUpdated: normalizeToUtcIso(row.date_updated, 'UTC') || undefined
+});
 
 // NUEVA: Filtros específicos para meta_ads (columna date es TEXT "YYYY-MM-DD")
 const buildMetaAdsDateFilters = (range) => {
@@ -99,7 +170,7 @@ const coerceZonedDateTime = (value, fallbackUtc, zone) => {
 // bucket (las mismas de buildChartBuckets y las mismas que abre el modal) y aquí
 // calculamos el DISTINCT una sola vez por ventana. Las series aditivas (leads, ventas,
 // ingresos, gasto) siguen pidiéndose por día y sumándose sin cambio.
-const parseChartPeriods = async (periodsParam) => {
+const parseChartPeriods = (periodsParam, timezone) => {
   if (!periodsParam) return null;
 
   let parsed;
@@ -114,31 +185,48 @@ const parseChartPeriods = async (periodsParam) => {
   const valid = parsed.filter(p => p && p.start && p.end);
   if (valid.length === 0) return null;
 
-  // Cada bucket se resuelve con el MISMO timezone/rango que usa el modal
-  // (resolveDateRangeWithGHLTimezone), garantizando ventanas idénticas.
-  const resolved = await Promise.all(valid.map(async (p) => {
-    const r = await resolveDateRangeWithGHLTimezone({ startDate: p.start, endDate: p.end });
+  // El timezone ya fue resuelto una sola vez para toda la petición. Así evitamos
+  // una lectura de configuración por bucket y conservamos las fronteras del modal.
+  const resolved = valid.map((p) => {
+    const r = resolveDateRange({ startDate: p.start, endDate: p.end, timezone });
     return {
       label: p.start,
       startUtc: r.startUtc,
-      endUtc: r.endUtc,
-      startMs: new Date(r.startUtc).getTime(),
-      endMs: new Date(r.endUtc).getTime()
+      endUtc: r.endUtc
     };
-  }));
+  }).filter(period => period.startUtc && period.endUtc);
 
-  return resolved;
+  return resolved.length > 0 ? resolved : null;
 };
 
-// Índice del bucket cuya ventana contiene la fecha dada (-1 si ninguno).
-const findPeriodIndex = (dateInput, periods) => {
-  if (!dateInput) return -1;
-  const t = (dateInput instanceof Date ? dateInput : new Date(dateInput)).getTime();
-  if (Number.isNaN(t)) return -1;
-  for (let i = 0; i < periods.length; i++) {
-    if (t >= periods[i].startMs && t <= periods[i].endMs) return i;
-  }
-  return -1;
+const buildDistinctChartBuckets = (dateColumn, identityExpression, periods) => {
+  const params = [];
+  const selects = periods.map((period, index) => {
+    params.push(period.startUtc, period.endUtc);
+    return `COUNT(DISTINCT CASE
+      WHEN ${dateColumn} >= ? AND ${dateColumn} <= ? THEN ${identityExpression}
+    END) AS b${index}`;
+  });
+  const overallStart = periods.reduce(
+    (minimum, period) => (period.startUtc < minimum ? period.startUtc : minimum),
+    periods[0].startUtc
+  );
+  const overallEnd = periods.reduce(
+    (maximum, period) => (period.endUtc > maximum ? period.endUtc : maximum),
+    periods[0].endUtc
+  );
+
+  return { selects, params, overallStart, overallEnd };
+};
+
+const mapDistinctChartBuckets = (row, periods) => periods.map((period, index) => ({
+  label: period.label,
+  value: Number(row?.[`b${index}`] || 0)
+}));
+
+const dashboardCalendarCondition = (alias, calendarIds) => {
+  if (!calendarIds?.length) return '';
+  return `${alias}.calendar_id IN (${calendarIds.map(() => '?').join(', ')})`;
 };
 
 const getLocalDateRange = (range) => {
@@ -314,6 +402,140 @@ const computeFinancialSnapshot = async (range) => {
     reembolsos,
     ltvPromedio
   };
+};
+
+/**
+ * Devuelve únicamente las filas necesarias para las tres listas operativas del
+ * Dashboard. Es deliberadamente local: no sincroniza Stripe, HighLevel, Google
+ * Calendar ni ningún otro proveedor durante este GET.
+ */
+export const getOperationalSnapshot = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren startDate y endDate (formato: YYYY-MM-DD)'
+      });
+    }
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenContactCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const visibleLinkedContactCondition = hiddenContactCondition
+      ? `(${hiddenContactCondition} OR c.id IS NULL)`
+      : '1 = 1';
+    const paymentListWhere = buildTransactionListWhere({
+      range,
+      hiddenCondition: hiddenContactCondition,
+      includeStatus: false,
+      paymentAlias: 'p',
+      contactAlias: 'c',
+      extraContactConditions: [nonTestPaymentCondition('p')]
+    });
+
+    const paymentsQuery = `
+      SELECT
+        p.id,
+        p.contact_id,
+        p.amount,
+        p.currency,
+        p.status,
+        p.payment_method,
+        p.payment_mode,
+        p.payment_provider,
+        p.title,
+        p.description,
+        p.date,
+        p.created_at,
+        p.updated_at,
+        c.full_name AS contact_name,
+        c.email AS contact_email,
+        c.phone AS contact_phone
+      FROM payments p
+      LEFT JOIN contacts c ON c.id = p.contact_id
+      ${paymentListWhere.whereClause}
+      ORDER BY p.date DESC, p.created_at DESC, p.id DESC
+      LIMIT ${DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT}
+    `;
+
+    const contactsQuery = `
+      SELECT
+        c.id,
+        c.full_name,
+        c.email,
+        c.phone,
+        c.created_at,
+        c.total_paid,
+        c.purchases_count,
+        c.attribution_ad_id,
+        c.source
+      FROM contacts c
+      WHERE c.created_at >= ?
+        AND c.created_at <= ?
+        AND c.deleted_at IS NULL
+        ${hiddenContactCondition ? `AND ${hiddenContactCondition}` : ''}
+      ORDER BY c.created_at DESC, c.id DESC
+      LIMIT ${DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT}
+    `;
+
+    const appointmentsQuery = `
+      SELECT
+        a.id,
+        a.calendar_id,
+        a.contact_id,
+        a.location_id,
+        a.title,
+        a.status,
+        a.appointment_status,
+        a.assigned_user_id,
+        a.notes,
+        a.address,
+        a.start_time,
+        a.end_time,
+        a.date_added,
+        a.date_updated
+      FROM appointments a
+      LEFT JOIN contacts c ON c.id = a.contact_id
+      LEFT JOIN calendars cal ON cal.id = a.calendar_id
+      WHERE a.start_time >= ?
+        AND a.start_time <= ?
+        AND a.deleted_at IS NULL
+        AND COALESCE(a.sync_status, '') != 'pending_delete'
+        AND (cal.id IS NULL OR COALESCE(cal.is_active, 1) != 0)
+        AND ${visibleLinkedContactCondition}
+      ORDER BY a.start_time DESC, a.id DESC
+      LIMIT ${DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT}
+    `;
+
+    const [paymentRows, contactRows, appointmentRows] = await Promise.all([
+      db.all(paymentsQuery, paymentListWhere.params),
+      db.all(contactsQuery, [range.startUtc, range.endUtc]),
+      db.all(appointmentsQuery, [range.startUtc, range.endUtc])
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        transactions: paymentRows.map(mapOperationalTransaction),
+        contacts: contactRows.map(mapOperationalContact),
+        appointments: appointmentRows.map(mapOperationalAppointment)
+      },
+      range: {
+        start: range.startUtc,
+        end: range.endUtc,
+        timezone: range.appliedTimezone
+      },
+      limit: DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT
+    });
+  } catch (error) {
+    logger.error(`Error en getOperationalSnapshot: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener el resumen operativo del dashboard'
+    });
+  }
 };
 
 /**
@@ -655,39 +877,25 @@ export const getVisitorsData = async (req, res) => {
     }
 
     const identityExpression = getVisitorIdentityExpression();
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const timezone = range.appliedTimezone;
 
     // Ruta por bucket exacto (semana/quincena/trimestre/año): un COUNT(DISTINCT) por
     // ventana, calculado en una sola query con agregación condicional. Empata el modal.
-    const periods = await parseChartPeriods(periodsParam);
+    const periods = parseChartPeriods(periodsParam, timezone);
     if (periods) {
-      const selects = periods.map((_, i) =>
-        `COUNT(DISTINCT CASE WHEN started_at >= ? AND started_at <= ? THEN ${identityExpression} END) as b${i}`
-      );
-      const overallStart = periods.reduce((min, p) => (p.startUtc < min ? p.startUtc : min), periods[0].startUtc);
-      const overallEnd = periods.reduce((max, p) => (p.endUtc > max ? p.endUtc : max), periods[0].endUtc);
-
-      const bucketParams = [];
-      periods.forEach(p => { bucketParams.push(p.startUtc, p.endUtc); });
-      bucketParams.push(overallStart, overallEnd);
+      const buckets = buildDistinctChartBuckets('started_at', identityExpression, periods);
+      const bucketParams = [...buckets.params, buckets.overallStart, buckets.overallEnd];
 
       const bucketQuery = `
-        SELECT ${selects.join(', ')}
+        SELECT ${buckets.selects.join(', ')}
         FROM sessions
         WHERE started_at >= ? AND started_at <= ?
       `;
 
       const row = await db.get(bucketQuery, bucketParams);
-      const visitorsData = periods.map((p, i) => ({
-        label: p.label,
-        value: parseInt(row?.[`b${i}`]) || 0
-      }));
-
-      return res.json(visitorsData);
+      return res.json(mapDistinctChartBuckets(row, periods));
     }
-
-    // Obtener timezone dinámico de HighLevel
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
-    const timezone = range.appliedTimezone;
 
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('started_at', groupBy, timezone);
@@ -772,13 +980,11 @@ export const getLeadsData = async (req, res) => {
 
 /**
  * Obtiene datos de citas programadas por periodo
- * IMPORTANTE: Cuenta contactos ÚNICOS con cita, agrupados por fecha de creación del contacto
- * Esto permite atribución correcta de marketing (qué día se creó el contacto que agendó cita)
+ * En scope "all" agrupa por date_added; en atribución agrupa por created_at del contacto.
+ * En ambos casos cuenta contactos únicos dentro de cada bucket.
  *
- * Sistema OPTIMIZADO (método de Contacts):
- * 1. Carga TODOS los eventos de calendarios (1-5 llamadas API)
- * 2. Filtra contactos en memoria (rápido)
- * 3. Agrupa por periodo
+ * Todas las variantes se resuelven con agregación local acotada al rango. Este
+ * GET nunca sincroniza calendarios ni descarga historiales de proveedores.
  */
 export const getAppointmentsData = async (req, res) => {
   try {
@@ -788,139 +994,98 @@ export const getAppointmentsData = async (req, res) => {
       return res.status(400).json([]);
     }
 
-    // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-
-    // Buckets exactos (semana/quincena/trimestre/año): el Set por bucket dedupe al
-    // mismo contacto citado en varios días de la ventana (empata el modal por periodo).
-    const periods = await parseChartPeriods(periodsParam);
-
-    // (RPT-006) Alinear la definición de "Citas" con la del funnel para que el número
-    // de la gráfica y el del embudo coincidan en la misma pantalla.
-    // - scope 'all' (default): cita por fecha en que se AGENDÓ (date_added), igual que
-    //   getFunnelData en su rama "Todos".
-    // - scope atribución (attribution/campaigns/attributed): cita contada por la fecha
-    //   de creación del contacto, igual que la rama de atribución del funnel.
+    const periods = parseChartPeriods(periodsParam, timezone);
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
-
-    const attributionCalendarIds = await getAttributionCalendarIds();
-    const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-
-    // Ristak funciona local-first: si falta la fuente externa opcional, se omite
-    // remota opcional y se cuentan las citas ya guardadas en la DB local.
-    if (!config || !config.api_token) {
-      logger.info('[RPT-007] getAppointmentsData: fuente externa HighLevel omitida; usando citas locales de Ristak.');
-    }
+    const isAttributed = scope === 'campaigns' || scope === 'attributed';
+    const [configuredCalendarIds, hiddenFilters] = await Promise.all([
+      getAttributionCalendarIds(),
+      getHiddenContactFilters()
+    ]);
+    const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
+    const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const calendarCondition = dashboardCalendarCondition('a', attributionCalendarIds);
 
     if (!useContactAttribution) {
-      // (RPT-006) Vista "Todos": agrupar por date_added de la cita (híbrido DB + API),
-      // misma fuente y filtro de calendarios que el funnel.
-      const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js');
-
-      const [dbAppointments, apiAppointments] = await Promise.all([
-        // (MET-CONSIST) NO prefiltrar por date_added en SQL: la fecha canónica de la
-        // cita se define en mergeAppointments('oldest_date') y el prefiltro TEXT contra
-        // range.startUtc (ISO con 'T') tumbaba las citas del día de inicio. El filtro por
-        // rango se aplica en JS más abajo, idéntico al del modal (buildContactsList).
-        loadAppointmentsFromDB({ calendarIds: attributionCalendarIds }),
-        config && config.api_token
-          ? loadAppointmentsFromAPI(config.location_id, config.api_token, attributionCalendarIds)
-          : []
-      ]);
-
-      const allAppointments = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date');
-
-      const start = new Date(range.startUtc);
-      const end = new Date(range.endUtc);
-
+      const baseConditions = ['a.contact_id IS NOT NULL'];
+      if (hiddenConditionC) baseConditions.push(`(c.id IS NULL OR ${hiddenConditionC})`);
+      if (calendarCondition) baseConditions.push(calendarCondition);
       if (periods) {
-        // Un Set de contactos por bucket; el mismo contacto citado en 2+ días del
-        // bucket cuenta una sola vez (DISTINCT sobre la ventana, igual que el modal).
-        const bucketSets = periods.map(() => new Set());
-        allAppointments.forEach(apt => {
-          if (!apt.dateAdded || !apt.contactId) return;
-          const dateAdded = new Date(apt.dateAdded);
-          const idx = findPeriodIndex(dateAdded, periods);
-          if (idx < 0) return;
-          bucketSets[idx].add(apt.contactId);
-        });
-
-        const appointmentsData = periods.map((p, i) => ({ label: p.label, value: bucketSets[i].size }));
-        return res.json(appointmentsData);
+        const buckets = buildDistinctChartBuckets('a.date_added', 'a.contact_id', periods);
+        const row = await db.get(`
+          SELECT ${buckets.selects.join(', ')}
+          FROM appointments a
+          LEFT JOIN contacts c ON c.id = a.contact_id
+          WHERE a.date_added >= ? AND a.date_added <= ?
+            AND ${baseConditions.join(' AND ')}
+        `, [
+          ...buckets.params,
+          buckets.overallStart,
+          buckets.overallEnd,
+          ...attributionCalendarIds
+        ]);
+        return res.json(mapDistinctChartBuckets(row, periods));
       }
 
-      const periodMap = {};
-
-      allAppointments.forEach(apt => {
-        if (!apt.dateAdded || !apt.contactId) return;
-        const dateAdded = new Date(apt.dateAdded);
-        if (!(dateAdded >= start && dateAdded <= end)) return;
-
-        // Periodo por date_added en la zona aplicada (mismo agrupado que las demás gráficas)
-        const zoned = DateTime.fromJSDate(dateAdded, { zone: 'utc' }).setZone(timezone || 'UTC');
-        const periodKey = groupBy === 'month' ? zoned.toFormat('yyyy-MM') : zoned.toISODate();
-        if (!periodKey) return;
-
-        if (!periodMap[periodKey]) {
-          periodMap[periodKey] = new Set();
-        }
-        periodMap[periodKey].add(apt.contactId);
-      });
-
-      const appointmentsData = Object.keys(periodMap)
-        .sort()
-        .map(periodo => ({ label: periodo, value: periodMap[periodo].size }));
-
-      return res.json(appointmentsData);
+      const dateExpression = getGroupExpression('a.date_added', groupBy, timezone);
+      const rows = await db.all(`
+        SELECT ${dateExpression} AS periodo, COUNT(DISTINCT a.contact_id) AS total
+        FROM appointments a
+        LEFT JOIN contacts c ON c.id = a.contact_id
+        WHERE a.date_added >= ? AND a.date_added <= ?
+          AND ${baseConditions.join(' AND ')}
+        GROUP BY periodo
+        ORDER BY periodo
+      `, [range.startUtc, range.endUtc, ...attributionCalendarIds]);
+      return res.json(rows.map(row => ({ label: row.periodo, value: Number(row.total || 0) })));
     }
 
-    // Vista atribución: cita por fecha de creación del contacto.
-    const dateExpression = getGroupExpression('created_at', groupBy, timezone);
+    const activeAppointmentConditions = [
+      'a.contact_id = c.id',
+      `LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${sqlStringList(DASHBOARD_INACTIVE_APPOINTMENT_STATUSES)})`
+    ];
+    if (calendarCondition) activeAppointmentConditions.push(calendarCondition);
+    const contactConditions = [];
+    if (hiddenConditionC) contactConditions.push(hiddenConditionC);
+    if (isAttributed) {
+      contactConditions.push(`c.attribution_ad_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM meta_ads ma
+        WHERE ma.ad_id = c.attribution_ad_id
+          AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', timezone)}
+      )`);
+    }
+    contactConditions.push(`EXISTS (
+      SELECT 1 FROM appointments a
+      WHERE ${activeAppointmentConditions.join(' AND ')}
+    )`);
 
-    const contactsWithAppointments = await getContactsWithAppointmentsHybrid(
-      config?.location_id,
-      config?.api_token,
-      attributionCalendarIds
-    );
+    if (periods) {
+      const buckets = buildDistinctChartBuckets('c.created_at', 'c.id', periods);
+      const row = await db.get(`
+        SELECT ${buckets.selects.join(', ')}
+        FROM contacts c
+        WHERE c.created_at >= ? AND c.created_at <= ?
+          AND ${contactConditions.join(' AND ')}
+      `, [
+        ...buckets.params,
+        buckets.overallStart,
+        buckets.overallEnd,
+        ...attributionCalendarIds
+      ]);
+      return res.json(mapDistinctChartBuckets(row, periods));
+    }
 
-    logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API)`);
-
-    const hiddenFilters = await getHiddenContactFilters();
-    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
-
-    const contactsQuery = `
-      SELECT
-        id as contact_id,
-        ${dateExpression} as periodo
-      FROM contacts
-      WHERE created_at >= ? AND created_at <= ?
-        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
-    `;
-
-    const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
-
-    const periodMap = {};
-
-    contactsRaw.forEach(contact => {
-      if (contactsWithAppointments.has(contact.contact_id)) {
-        const periodKey = contact.periodo;
-
-        if (!periodMap[periodKey]) {
-          periodMap[periodKey] = new Set();
-        }
-        periodMap[periodKey].add(contact.contact_id);
-      }
-    });
-
-    const appointmentsData = Object.keys(periodMap)
-      .sort()
-      .map(periodo => ({
-        label: periodo,
-        value: periodMap[periodo].size
-      }));
-
-    res.json(appointmentsData);
+    const dateExpression = getGroupExpression('c.created_at', groupBy, timezone);
+    const rows = await db.all(`
+      SELECT ${dateExpression} AS periodo, COUNT(DISTINCT c.id) AS total
+      FROM contacts c
+      WHERE c.created_at >= ? AND c.created_at <= ?
+        AND ${contactConditions.join(' AND ')}
+      GROUP BY periodo
+      ORDER BY periodo
+    `, [range.startUtc, range.endUtc, ...attributionCalendarIds]);
+    res.json(rows.map(row => ({ label: row.periodo, value: Number(row.total || 0) })));
 
   } catch (error) {
     logger.error(`Error en getAppointmentsData: ${error.message}`);
@@ -935,7 +1100,7 @@ export const getAppointmentsData = async (req, res) => {
  */
 export const getAttendancesData = async (req, res) => {
   try {
-    const { startDate, endDate, groupBy = 'day', periods: periodsParam } = req.query;
+    const { startDate, endDate, groupBy = 'day', scope = 'all', periods: periodsParam } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json([]);
@@ -943,79 +1108,70 @@ export const getAttendancesData = async (req, res) => {
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const dateExpression = getGroupExpression('c.created_at', groupBy, timezone);
-    const periods = await parseChartPeriods(periodsParam);
+    const periods = parseChartPeriods(periodsParam, timezone);
+    const isAttributed = scope === 'campaigns' || scope === 'attributed';
+    const [hiddenFilters, configuredCalendarIds] = await Promise.all([
+      getHiddenContactFilters(),
+      getAttributionCalendarIds()
+    ]);
+    const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
+    const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const attendanceAppointmentConditions = [
+      'attended_a.contact_id = c.id',
+      `LOWER(COALESCE(attended_a.appointment_status, attended_a.status, '')) IN (${sqlStringList(DASHBOARD_ATTENDED_APPOINTMENT_STATUSES)})`
+    ];
+    const calendarCondition = dashboardCalendarCondition('attended_a', attributionCalendarIds);
+    if (calendarCondition) attendanceAppointmentConditions.push(calendarCondition);
 
-    const hiddenFilters = await getHiddenContactFilters();
-    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
-    const attributionCalendarIds = await getAttributionCalendarIds();
-    const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-
-    // Ristak funciona local-first: si falta la fuente externa opcional, se omite
-    // remota opcional y se cuentan asistencias locales/sticky.
-    if (!config || !config.api_token) {
-      logger.info('[RPT-007] getAttendancesData: fuente externa HighLevel omitida; usando asistencias locales de Ristak.');
+    const contactConditions = [];
+    if (hiddenConditionC) contactConditions.push(hiddenConditionC);
+    if (isAttributed) {
+      contactConditions.push(`c.attribution_ad_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM meta_ads ma
+        WHERE ma.ad_id = c.attribution_ad_id
+          AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', timezone)}
+      )`);
     }
-
-    const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
-      config?.location_id,
-      config?.api_token,
-      attributionCalendarIds
-    );
-
-    if (contactsWithAttendances.size === 0) {
-      return res.json([]);
-    }
-
-    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
-    const conditions = ['c.created_at >= ?', 'c.created_at <= ?'];
-    if (hiddenCondition) conditions.push(hiddenCondition);
-
-    const contactsQuery = `
-      SELECT
-        c.id as contact_id,
-        c.created_at as raw_created_at,
-        ${dateExpression} as periodo
-      FROM contacts c
-      WHERE ${conditions.join(' AND ')}
-    `;
-
-    const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
+    contactConditions.push(`(
+      COALESCE(c.purchases_count, 0) > 0
+      OR COALESCE(c.total_paid, 0) > 0
+      OR EXISTS (
+        SELECT 1 FROM appointment_attendance_signals aas
+        WHERE aas.contact_id = c.id
+      )
+      OR EXISTS (
+        SELECT 1 FROM appointments attended_a
+        WHERE ${attendanceAppointmentConditions.join(' AND ')}
+      )
+    )`);
 
     if (periods) {
-      // DISTINCT de contactos con asistencia por ventana exacta de bucket (empata el modal).
-      const bucketSets = periods.map(() => new Set());
-      contactsRaw.forEach(contact => {
-        if (!contactsWithAttendances.has(contact.contact_id)) return;
-        const idx = findPeriodIndex(contact.raw_created_at, periods);
-        if (idx < 0) return;
-        bucketSets[idx].add(contact.contact_id);
-      });
-
-      const attendancesData = periods.map((p, i) => ({ label: p.label, value: bucketSets[i].size }));
-      return res.json(attendancesData);
+      const buckets = buildDistinctChartBuckets('c.created_at', 'c.id', periods);
+      const row = await db.get(`
+        SELECT ${buckets.selects.join(', ')}
+        FROM contacts c
+        WHERE c.created_at >= ? AND c.created_at <= ?
+          AND ${contactConditions.join(' AND ')}
+      `, [
+        ...buckets.params,
+        buckets.overallStart,
+        buckets.overallEnd,
+        ...attributionCalendarIds
+      ]);
+      return res.json(mapDistinctChartBuckets(row, periods));
     }
 
-    const periodMap = {};
+    const dateExpression = getGroupExpression('c.created_at', groupBy, timezone);
+    const rows = await db.all(`
+      SELECT ${dateExpression} AS periodo, COUNT(DISTINCT c.id) AS total
+      FROM contacts c
+      WHERE c.created_at >= ? AND c.created_at <= ?
+        AND ${contactConditions.join(' AND ')}
+      GROUP BY periodo
+      ORDER BY periodo
+    `, [range.startUtc, range.endUtc, ...attributionCalendarIds]);
 
-    contactsRaw.forEach(contact => {
-      if (!contactsWithAttendances.has(contact.contact_id)) return;
-
-      if (!periodMap[contact.periodo]) {
-        periodMap[contact.periodo] = new Set();
-      }
-
-      periodMap[contact.periodo].add(contact.contact_id);
-    });
-
-    const attendancesData = Object.keys(periodMap)
-      .sort()
-      .map(periodo => ({
-        label: periodo,
-        value: periodMap[periodo].size
-      }));
-
-    res.json(attendancesData);
+    res.json(rows.map(row => ({ label: row.periodo, value: Number(row.total || 0) })));
   } catch (error) {
     logger.error(`Error en getAttendancesData: ${error.message}`);
     res.json([]);
@@ -1126,55 +1282,12 @@ export const getTrafficSources = async (req, res) => {
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
-    // Cada visitante web cuenta una sola vez. Tomamos su primera sesión del rango,
-    // igual que hacía este endpoint antes, y después sumamos conversaciones de WhatsApp.
-    const query = `
-      SELECT
-        visitor_id,
-        referrer_url,
-        site_source_name,
-        utm_source,
-        source_platform
-      FROM (
-        SELECT
-          visitor_id,
-          referrer_url,
-          site_source_name,
-          utm_source,
-          source_platform,
-          ROW_NUMBER() OVER (
-            PARTITION BY visitor_id
-            ORDER BY started_at ASC, created_at ASC, id ASC
-          ) as source_rank
-        FROM sessions
-        WHERE started_at >= ? AND started_at <= ?
-          AND visitor_id IS NOT NULL
-          AND visitor_id != ''
-      )
-      WHERE source_rank = 1
-    `
-    const params = [range.startUtc, range.endUtc]
-
-    const sessions = shouldIncludeWeb ? await db.all(query, params) : []
-
-    const sourcesMap = new Map()
-    sessions.forEach(session => {
-      const sourceName = normalizeTrafficSource({
-        referrer_url: session.referrer_url,
-        site_source_name: session.site_source_name,
-        utm_source: session.utm_source,
-        source_platform: session.source_platform
-      })
-
-      sourcesMap.set(sourceName, (sourcesMap.get(sourceName) || 0) + 1)
+    const hiddenFilters = shouldIncludeWhatsapp ? await getHiddenContactFilters() : []
+    const traffic = await getTrafficDistributions(range, {
+      includeWeb: shouldIncludeWeb,
+      includeWhatsapp: shouldIncludeWhatsapp,
+      hiddenFilters
     })
-
-    if (shouldIncludeWhatsapp) {
-      const whatsappSources = await getWhatsAppApiSourceBreakdown(range, { limit: 100 })
-      whatsappSources.forEach(({ name, value }) => {
-        sourcesMap.set(name, (sourcesMap.get(name) || 0) + value)
-      })
-    }
 
     // Mapear colores por plataforma
     const colorMap = {
@@ -1205,14 +1318,12 @@ export const getTrafficSources = async (req, res) => {
       'Desconocido': '#64748b'
     }
 
-    const data = Array.from(sourcesMap.entries())
-      .map(([name, value]) => ({
+    const data = traffic.sources
+      .map(({ name, value }) => ({
         name,
         value,
         color: colorMap[name] || '#6b7280'
       }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10)
 
     res.json({ success: true, data })
   } catch (error) {
@@ -1231,53 +1342,74 @@ export const getTrafficSources = async (req, res) => {
  * @param {{ startUtc: string, endUtc: string }} range
  * @returns {Promise<Array<{ name: string, value: number }>>}
  */
-async function getSourceBreakdownByMetric(metric, range) {
-  const hiddenFilters = await getHiddenContactFilters()
-  const hiddenConditionContacts = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
-  const hiddenConditionC = hiddenConditionContacts ? hiddenConditionContacts.replace(/contacts\./g, 'c.') : ''
+async function getSourceBreakdownByMetric(
+  metric,
+  range,
+  { hiddenFilters = [], attributionCalendarIds = null } = {}
+) {
+  const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false)
 
-  let contactIds = []
+  if (metric === 'leads') {
+    return getContactSourceBreakdownForSelection({
+      selectionSql: `
+        SELECT ${CONTACT_SOURCE_SELECTION_COLUMNS}
+        FROM contacts c
+        WHERE c.created_at >= ? AND c.created_at <= ?
+          ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
+      `,
+      params: [range.startUtc, range.endUtc],
+      limit: 10
+    })
+  }
 
   if (metric === 'appointments') {
-    const attributionCalendarIds = await getAttributionCalendarIds()
-    const conditions = ['a.date_added >= ?', 'a.date_added <= ?', 'a.contact_id IS NOT NULL']
+    const appointmentConditions = [
+      'a.contact_id = c.id',
+      'a.date_added >= ?',
+      'a.date_added <= ?'
+    ]
     const params = [range.startUtc, range.endUtc]
 
-    if (attributionCalendarIds && attributionCalendarIds.length > 0) {
-      conditions.push(`a.calendar_id IN (${attributionCalendarIds.map(() => '?').join(', ')})`)
+    if (attributionCalendarIds?.length) {
+      appointmentConditions.push(`a.calendar_id IN (${attributionCalendarIds.map(() => '?').join(', ')})`)
       params.push(...attributionCalendarIds)
     }
-    if (hiddenConditionC) conditions.push(hiddenConditionC)
 
-    const rows = await db.all(`
-      SELECT DISTINCT a.contact_id AS id
-      FROM appointments a
-      INNER JOIN contacts c ON c.id = a.contact_id
-      WHERE ${conditions.join(' AND ')}
-    `, params)
-    contactIds = rows.map(row => row.id)
-  } else {
-    // conversions: clientes nuevos = contactos cuyo primer pago exitoso cae en el rango
-    const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
-    const conditions = ['first_p.first_payment_date >= ?', 'first_p.first_payment_date <= ?']
-    if (hiddenConditionC) conditions.push(hiddenConditionC)
+    return getContactSourceBreakdownForSelection({
+      selectionSql: `
+        SELECT ${CONTACT_SOURCE_SELECTION_COLUMNS}
+        FROM contacts c
+        WHERE ${hiddenConditionC ? `${hiddenConditionC} AND` : ''}
+          EXISTS (
+            SELECT 1
+            FROM appointments a
+            WHERE ${appointmentConditions.join(' AND ')}
+          )
+      `,
+      params,
+      limit: 10
+    })
+  }
 
-    const rows = await db.all(`
-      SELECT DISTINCT c.id AS id
+  // conversions: clientes nuevos = contactos cuyo primer pago exitoso cae en el rango.
+  const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
+  return getContactSourceBreakdownForSelection({
+    selectionSql: `
+      SELECT ${CONTACT_SOURCE_SELECTION_COLUMNS}
       FROM contacts c
       INNER JOIN (
-        SELECT contact_id, MIN(date) as first_payment_date
+        SELECT contact_id, MIN(date) AS first_payment_date
         FROM payments
         WHERE LOWER(status) IN (${statusPlaceholders})
           AND ${nonTestPaymentCondition()}
         GROUP BY contact_id
       ) first_p ON first_p.contact_id = c.id
-      WHERE ${conditions.join(' AND ')}
-    `, [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc])
-    contactIds = rows.map(row => row.id)
-  }
-
-  return getContactSourceBreakdown(contactIds, { limit: 10 })
+      WHERE first_p.first_payment_date >= ? AND first_p.first_payment_date <= ?
+        ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
+    `,
+    params: [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc],
+    limit: 10
+  })
 }
 
 /**
@@ -1298,15 +1430,22 @@ export const getOriginDistribution = async (req, res) => {
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
-    const [traffic, leadIds, appointments, conversions, whatsappNumbers] = await Promise.all([
-      getTrafficDistributions(range, { includeWeb: shouldIncludeWeb, includeWhatsapp: shouldIncludeWhatsapp }),
-      getLeadsContactIds(range),
-      getSourceBreakdownByMetric('appointments', range),
-      getSourceBreakdownByMetric('conversions', range),
-      shouldIncludeWhatsapp ? getWhatsAppApiNumberBreakdown(range) : []
+    const [hiddenFilters, attributionCalendarIds] = await Promise.all([
+      getHiddenContactFilters(),
+      getAttributionCalendarIds()
     ])
 
-    const leads = await getContactSourceBreakdown(leadIds, { limit: 10 })
+    const [traffic, leads, appointments, conversions, whatsappNumbers] = await Promise.all([
+      getTrafficDistributions(range, {
+        includeWeb: shouldIncludeWeb,
+        includeWhatsapp: shouldIncludeWhatsapp,
+        hiddenFilters
+      }),
+      getSourceBreakdownByMetric('leads', range, { hiddenFilters }),
+      getSourceBreakdownByMetric('appointments', range, { hiddenFilters, attributionCalendarIds }),
+      getSourceBreakdownByMetric('conversions', range, { hiddenFilters }),
+      shouldIncludeWhatsapp ? getWhatsAppApiNumberBreakdown(range, { hiddenFilters }) : []
+    ])
 
     res.json({
       success: true,
@@ -1475,8 +1614,8 @@ export const getFinancialOverview = async (req, res) => {
  *    - campaigns: Igual + filtro attribution_ad_id IS NOT NULL
  *
  * 3. CITAS:
- *    - all: Híbrido DB+API filtrado por date_added (cuando se agendó)
- *    - attribution/campaigns: getContactsWithAppointmentsHybrid() agrupado por created_at del contacto
+ *    - all: DB local filtrada en SQL por date_added (cuando se agendó)
+ *    - attribution/campaigns: contactos del rango con cita local activa
  *
  * 4. CLIENTES NUEVOS:
  *    - all: Contactos cuyo PRIMER pago está en el rango (MIN(date) FROM payments)
@@ -1490,231 +1629,156 @@ export const getFunnelData = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
     }
 
-    // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
     const shouldIncludeWeb = String(includeWeb) !== '0'
-
-    // Obtener labels personalizados del usuario
-    const hlConfig = await db.get('SELECT custom_labels, location_id, api_token FROM highlevel_config LIMIT 1')
+    const [hlConfig, hiddenFilters, configuredCalendarIds] = await Promise.all([
+      db.get('SELECT custom_labels FROM highlevel_config LIMIT 1'),
+      getHiddenContactFilters(),
+      getAttributionCalendarIds()
+    ])
+    const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : []
     const defaultLabels = {
       customer: 'Cliente',
       customers: 'Clientes',
       lead: 'Interesado',
       leads: 'Interesados'
     }
-
-    // Ristak funciona local-first: si falta la fuente externa opcional, se omite
-    // remota opcional y el funnel usa DB local/señales sticky.
-    if (!hlConfig || !hlConfig.api_token) {
-      logger.info('[RPT-007] getFunnelData: fuente externa HighLevel omitida; usando citas/asistencias locales de Ristak.')
-    }
-
     let labels = defaultLabels
-    if (hlConfig && hlConfig.custom_labels) {
+    if (hlConfig?.custom_labels) {
       try {
         const parsed = JSON.parse(hlConfig.custom_labels)
         labels = { ...defaultLabels, ...parsed }
-      } catch (error) {
+      } catch {
         logger.warn('Error parsing custom_labels, usando valores por defecto')
       }
     }
 
-    // ========================================
-    // 1. VISITANTES (según scope)
-    // ========================================
-    let visitorsCount = 0
+    const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    const attributedContactCondition = isAttributed
+      ? `c.attribution_ad_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM meta_ads ma
+          WHERE ma.ad_id = c.attribution_ad_id
+            AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone)}
+        )`
+      : ''
+    const contactRangeConditions = ['c.created_at >= ?', 'c.created_at <= ?']
+    if (attributedContactCondition) contactRangeConditions.push(attributedContactCondition)
+    if (hiddenConditionC) contactRangeConditions.push(hiddenConditionC)
+    const contactRangeParams = [range.startUtc, range.endUtc]
 
-    if (!shouldIncludeWeb) {
-      visitorsCount = 0
-    } else if (!useContactAttribution) {
-      // Vista "Todos": Todos los visitantes en el rango de fechas
-      const visitorsQuery = `
+    let visitorsQuery = 'SELECT 0 AS count'
+    let visitorsParams = []
+    if (shouldIncludeWeb && !useContactAttribution) {
+      visitorsQuery = `
         SELECT COUNT(DISTINCT ${getVisitorIdentityExpression()}) as count
         FROM sessions
         WHERE started_at >= ? AND started_at <= ?
       `
-      const visitorsParams = [range.startUtc, range.endUtc]
-
-      const visitorsResult = await db.get(visitorsQuery, visitorsParams)
-      visitorsCount = parseInt(visitorsResult?.count || 0)
-    } else {
-      // Vista "Último toque": Solo visitantes que SE CONVIRTIERON en contacto
-      // Agrupa por fecha de creación del contacto
-      const visitorsQuery = `
+      visitorsParams = [range.startUtc, range.endUtc]
+    } else if (shouldIncludeWeb) {
+      visitorsQuery = `
         SELECT COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as count
         FROM sessions s
         INNER JOIN contacts c ON c.id = s.contact_id
         WHERE c.created_at >= ? AND c.created_at <= ?
-          ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM meta_ads ma
-            WHERE ma.ad_id = c.attribution_ad_id
-              AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone)}
-          )` : ''}
+          ${attributedContactCondition ? `AND ${attributedContactCondition}` : ''}
       `
-      const visitorsParams = [range.startUtc, range.endUtc]
-
-      const visitorsResult = await db.get(visitorsQuery, visitorsParams)
-      visitorsCount = parseInt(visitorsResult?.count || 0)
+      visitorsParams = [range.startUtc, range.endUtc]
     }
-
-    // ========================================
-    // 2. LEADS (según scope)
-    // ========================================
-    const hiddenFilters = await getHiddenContactFilters();
-    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
-
-    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
-    const conditions = ['created_at >= ?', 'created_at <= ?'];
-    if (isAttributed) {
-      conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM meta_ads ma
-        WHERE ma.ad_id = contacts.attribution_ad_id
-          AND ${metaAdsSameLocalDayCondition('ma.date', 'contacts.created_at', range.appliedTimezone)}
-      )`);
-    }
-    if (hiddenCondition) conditions.push(hiddenCondition);
 
     const leadsQuery = `
       SELECT COUNT(*) as count
-      FROM contacts
-      WHERE ${conditions.join(' AND ')}
-    `;
-    const leadsParams = [range.startUtc, range.endUtc];
+      FROM contacts c
+      WHERE ${contactRangeConditions.join(' AND ')}
+    `
 
-    const leadsData = await db.get(leadsQuery, leadsParams)
-
-    // ========================================
-    // 3. CITAS (según scope)
-    // ========================================
-    let appointmentsCount = 0
-
-    // Obtener calendarios de atribución configurados
-    const attributionCalendarIds = await getAttributionCalendarIds()
-
+    const calendarCondition = (alias, params) => {
+      if (!attributionCalendarIds.length) return ''
+      params.push(...attributionCalendarIds)
+      return `${alias}.calendar_id IN (${attributionCalendarIds.map(() => '?').join(', ')})`
+    }
+    let appointmentsQuery
+    let appointmentsParams
     if (useContactAttribution) {
-      // Vista "Último toque": Contar contactos creados en el rango que TIENEN cita (cualquier fecha)
-      const contactsWithAppointments = await getContactsWithAppointmentsHybrid(
-        hlConfig?.location_id,
-        hlConfig?.api_token,
-        attributionCalendarIds
-      )
-
-      // Contar cuántos contactos del rango tienen cita
-      // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
-      const conditions = ['created_at >= ?', 'created_at <= ?'];
-      if (isAttributed) {
-        conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM meta_ads ma
-          WHERE ma.ad_id = contacts.attribution_ad_id
-            AND ${metaAdsSameLocalDayCondition('ma.date', 'contacts.created_at', range.appliedTimezone)}
-        )`);
-      }
-      if (hiddenCondition) conditions.push(hiddenCondition);
-
-      const contactsQuery = `
-        SELECT id
-        FROM contacts
-        WHERE ${conditions.join(' AND ')}
-      `;
-      const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
-      appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length;
+      appointmentsParams = [...contactRangeParams]
+      const appointmentConditions = [
+        'a.contact_id = c.id',
+        `LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${sqlStringList(DASHBOARD_INACTIVE_APPOINTMENT_STATUSES)})`
+      ]
+      const appointmentCalendarCondition = calendarCondition('a', appointmentsParams)
+      if (appointmentCalendarCondition) appointmentConditions.push(appointmentCalendarCondition)
+      appointmentsQuery = `
+        SELECT COUNT(*) AS count
+        FROM contacts c
+        WHERE ${contactRangeConditions.join(' AND ')}
+          AND EXISTS (
+            SELECT 1 FROM appointments a
+            WHERE ${appointmentConditions.join(' AND ')}
+          )
+      `
     } else {
-      // Vista "Todos": Híbrido DB+API filtrado por date_added
-      const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js')
-
-      const [dbAppointments, apiAppointments] = await Promise.all([
-        // (MET-CONSIST) NO prefiltrar por date_added en SQL (ver nota en getAppointmentsData):
-        // el rango se filtra en JS tras el merge, igual que el modal (buildContactsList).
-        loadAppointmentsFromDB({ calendarIds: attributionCalendarIds }),
-        hlConfig && hlConfig.api_token
-          ? loadAppointmentsFromAPI(hlConfig.location_id, hlConfig.api_token, attributionCalendarIds)
-          : []
-      ])
-
-      const allAppointments = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date')
-
-      // Filtrar por rango de dateAdded
-      const appointmentsInRange = allAppointments.filter(apt => {
-        if (!apt.dateAdded) return false
-        const dateAdded = new Date(apt.dateAdded)
-        const start = new Date(range.startUtc)
-        const end = new Date(range.endUtc)
-        return dateAdded >= start && dateAdded <= end
-      })
-
-      // Contar contactos únicos
-      const uniqueContactIds = new Set(appointmentsInRange.map(apt => apt.contactId).filter(Boolean))
-      appointmentsCount = uniqueContactIds.size
+      appointmentsParams = [range.startUtc, range.endUtc]
+      const appointmentConditions = [
+        'a.date_added >= ?',
+        'a.date_added <= ?',
+        'a.contact_id IS NOT NULL'
+      ]
+      if (hiddenConditionC) appointmentConditions.push(`(c.id IS NULL OR ${hiddenConditionC})`)
+      const appointmentCalendarCondition = calendarCondition('a', appointmentsParams)
+      if (appointmentCalendarCondition) appointmentConditions.push(appointmentCalendarCondition)
+      appointmentsQuery = `
+        SELECT COUNT(DISTINCT a.contact_id) AS count
+        FROM appointments a
+        LEFT JOIN contacts c ON c.id = a.contact_id
+        WHERE ${appointmentConditions.join(' AND ')}
+      `
     }
 
-    // ========================================
-    // 4. ASISTENCIAS (siempre por fecha de creación del contacto)
-    // ========================================
-    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
-    const attendanceConditions = ['created_at >= ?', 'created_at <= ?'];
-    if (isAttributed) {
-      attendanceConditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM meta_ads ma
-        WHERE ma.ad_id = contacts.attribution_ad_id
-          AND ${metaAdsSameLocalDayCondition('ma.date', 'contacts.created_at', range.appliedTimezone)}
-      )`);
-    }
-    if (hiddenCondition) attendanceConditions.push(hiddenCondition);
+    const attendanceParams = [...contactRangeParams]
+    const attendedAppointmentConditions = [
+      'attended_a.contact_id = c.id',
+      `LOWER(COALESCE(attended_a.appointment_status, attended_a.status, '')) IN (${sqlStringList(DASHBOARD_ATTENDED_APPOINTMENT_STATUSES)})`
+    ]
+    const attendanceCalendarCondition = calendarCondition('attended_a', attendanceParams)
+    if (attendanceCalendarCondition) attendedAppointmentConditions.push(attendanceCalendarCondition)
+    const attendancesQuery = `
+      SELECT COUNT(*) AS count
+      FROM contacts c
+      WHERE ${contactRangeConditions.join(' AND ')}
+        AND (
+          COALESCE(c.purchases_count, 0) > 0
+          OR COALESCE(c.total_paid, 0) > 0
+          OR EXISTS (
+            SELECT 1 FROM appointment_attendance_signals aas
+            WHERE aas.contact_id = c.id
+          )
+          OR EXISTS (
+            SELECT 1 FROM appointments attended_a
+            WHERE ${attendedAppointmentConditions.join(' AND ')}
+          )
+        )
+    `
 
-    const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
-      hlConfig?.location_id,
-      hlConfig?.api_token,
-      attributionCalendarIds
-    )
-    const attendanceContactsQuery = `
-      SELECT id
-      FROM contacts
-      WHERE ${attendanceConditions.join(' AND ')}
-    `;
-    const attendanceContactsRaw = await db.all(attendanceContactsQuery, [range.startUtc, range.endUtc]);
-    const attendancesCount = attendanceContactsRaw.filter(c => contactsWithAttendances.has(c.id)).length;
-
-    // ========================================
-    // 5. CLIENTES NUEVOS (según scope)
-    // ========================================
-    let customersCount = 0
-
+    let customersQuery
+    let customersParams
     if (useContactAttribution) {
-      // Vista "Último toque": Contactos creados en el rango con purchases_count > 0
-      // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
-      const conditions = ['purchases_count > 0', 'created_at >= ?', 'created_at <= ?'];
-      if (isAttributed) {
-        conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM meta_ads ma
-          WHERE ma.ad_id = contacts.attribution_ad_id
-            AND ${metaAdsSameLocalDayCondition('ma.date', 'contacts.created_at', range.appliedTimezone)}
-        )`);
-      }
-      if (hiddenCondition) conditions.push(hiddenCondition);
-
-      const customersQuery = `
-        SELECT COUNT(DISTINCT id) as count
-        FROM contacts
-        WHERE ${conditions.join(' AND ')}
-      `;
-      const customersData = await db.get(customersQuery, [range.startUtc, range.endUtc]);
-      customersCount = parseInt(customersData?.count || 0);
+      customersQuery = `
+        SELECT COUNT(DISTINCT c.id) as count
+        FROM contacts c
+        WHERE COALESCE(c.purchases_count, 0) > 0
+          AND ${contactRangeConditions.join(' AND ')}
+      `
+      customersParams = [...contactRangeParams]
     } else {
-      // Vista "Todos": Contactos cuyo PRIMER pago está en el rango
       const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
-
-      // (RPT-009) Mezclar '?' (statusPlaceholders) con $N hardcodeados rompía en
-      // SQLite. Usamos solo '?'; el adaptador los convierte a $1..$N en Postgres
-      // según el orden de firstPaymentParams (statuses, luego start/end).
-      const conditions = ['first_p.first_payment_date >= ?',
-                         'first_p.first_payment_date <= ?']
-      if (hiddenCondition) {
-        conditions.push(hiddenCondition.replace(/contacts\./g, 'c.'))
-      }
-
-      const firstPaymentQuery = `
+      const firstPaymentConditions = [
+        'first_p.first_payment_date >= ?',
+        'first_p.first_payment_date <= ?'
+      ]
+      if (hiddenConditionC) firstPaymentConditions.push(hiddenConditionC)
+      customersQuery = `
         SELECT COUNT(DISTINCT c.id) as count
         FROM contacts c
         INNER JOIN (
@@ -1724,19 +1788,25 @@ export const getFunnelData = async (req, res) => {
           AND ${nonTestPaymentCondition()}
           GROUP BY contact_id
         ) first_p ON first_p.contact_id = c.id
-        WHERE ${conditions.join(' AND ')}
+        WHERE ${firstPaymentConditions.join(' AND ')}
       `
-      const firstPaymentParams = [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc]
-      const customersData = await db.get(firstPaymentQuery, firstPaymentParams)
-      customersCount = parseInt(customersData?.count || 0)
+      customersParams = [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc]
     }
 
-    // ========================================
-    // 6. RESPUESTA
-    // ========================================
+    const [visitorsData, leadsData, appointmentsData, attendancesData, customersData] = await Promise.all([
+      db.get(visitorsQuery, visitorsParams),
+      db.get(leadsQuery, contactRangeParams),
+      db.get(appointmentsQuery, appointmentsParams),
+      db.get(attendancesQuery, attendanceParams),
+      db.get(customersQuery, customersParams)
+    ])
+    const visitorsCount = Number(visitorsData?.count || 0)
+    const appointmentsCount = Number(appointmentsData?.count || 0)
+    const attendancesCount = Number(attendancesData?.count || 0)
+    const customersCount = Number(customersData?.count || 0)
     const data = [
       ...(shouldIncludeWeb ? [{ stage: 'Visitantes', value: visitorsCount }] : []),
-      { stage: labels.leads, value: parseInt(leadsData?.count || 0) },
+      { stage: labels.leads, value: Number(leadsData?.count || 0) },
       { stage: 'Citas', value: appointmentsCount },
       { stage: 'Asistencias', value: attendancesCount },
       { stage: labels.customers, value: customersCount }

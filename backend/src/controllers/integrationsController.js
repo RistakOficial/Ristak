@@ -58,11 +58,21 @@ async function verifyHighLevelConnection(config) {
   return { connected, locationData };
 }
 
+async function resolveLocalIntegrationStatus(label, fallback, loader) {
+  try {
+    return await loader();
+  } catch (error) {
+    logger.warn(`Error obteniendo estado de ${label}: ${error.message}`);
+    return fallback;
+  }
+}
+
 /**
  * Obtiene el estado de las integraciones
  */
 export const getStatus = async (req, res) => {
   try {
+    const verifyExternal = ['1', 'true', 'yes'].includes(String(req.query.verify || '').trim().toLowerCase());
     // Obtener estado de HighLevel
     const config = await db.get(
       'SELECT location_id, api_token, location_data FROM highlevel_config LIMIT 1'
@@ -79,7 +89,9 @@ export const getStatus = async (req, res) => {
     if (config) {
       highlevelStatus.configured = true;
       highlevelStatus.locationId = config.location_id;
-      highlevelStatus.accessToken = config.api_token;
+      // El status global sólo expone metadata. El token permanece en backend y
+      // jamás viaja al navegador ni queda en snapshots persistentes.
+      highlevelStatus.accessToken = null;
 
       // Parsear los datos del location si existen
       if (config.location_data) {
@@ -90,16 +102,113 @@ export const getStatus = async (req, res) => {
         }
       }
 
-      const verification = await verifyHighLevelConnection(config);
-      highlevelStatus.connected = verification.connected;
-      if (verification.locationData) {
-        highlevelStatus.locationData = verification.locationData;
+      // Navegar por el CRM no debe esperar a HighLevel. Conexión significa que
+      // existe configuración local; la verificación remota queda disponible
+      // sólo para una acción explícita de diagnóstico/reconexión.
+      highlevelStatus.connected = Boolean(config.location_id && config.api_token);
+      if (verifyExternal) {
+        const verification = await verifyHighLevelConnection(config);
+        highlevelStatus.connected = verification.connected;
+        if (verification.locationData) {
+          highlevelStatus.locationData = verification.locationData;
+        }
       }
     }
 
-    const [metaConfig, metaSocialConfig] = await Promise.all([
-      getMetaConfig().catch(() => null),
-      getMetaSocialConfig().catch(() => null)
+    // Todos los proveedores siguientes son lecturas locales independientes.
+    // Resolverlos en paralelo evita que cada página pague la suma de nueve
+    // consultas/configuraciones secuenciales al montar el shell.
+    const [
+      [metaConfig, metaSocialConfig],
+      whatsappStatus,
+      openaiStatus,
+      googleCalendarStatus,
+      stripeStatus,
+      mercadoPagoStatus,
+      conektaStatus,
+      clipStatus,
+      rebillStatus
+    ] = await Promise.all([
+      Promise.all([
+        getMetaConfig().catch(() => null),
+        getMetaSocialConfig().catch(() => null)
+      ]),
+      resolveLocalIntegrationStatus('WhatsApp', { configured: false, connected: false }, async () => {
+        const waRows = await db.all(
+          `SELECT config_key, config_value FROM app_config
+           WHERE config_key IN ('whatsapp_api_enabled', 'whatsapp_api_ycloud_api_key_encrypted', 'whatsapp_api_key', 'whatsapp_api_webhook_endpoint_id')`
+        );
+        const wa = {};
+        for (const row of waRows || []) wa[row.config_key] = row.config_value;
+        const enabled = wa['whatsapp_api_enabled'] !== '0';
+        const hasApiKey = Boolean(wa['whatsapp_api_ycloud_api_key_encrypted'] || wa['whatsapp_api_key']);
+        const hasWebhook = Boolean(wa['whatsapp_api_webhook_endpoint_id']);
+        return { configured: hasApiKey, connected: Boolean(enabled && hasApiKey && hasWebhook) };
+      }),
+      resolveLocalIntegrationStatus('OpenAI', { configured: false, connected: false }, async () => {
+        const aiStatus = await getAIAgentStatus({});
+        return {
+          configured: Boolean(aiStatus?.configured),
+          connected: Boolean(aiStatus?.configured),
+          credentialStatus: aiStatus?.credentialStatus || 'missing'
+        };
+      }),
+      resolveLocalIntegrationStatus('Google Calendar', { configured: false, connected: false }, async () => {
+        const calConfig = await getGoogleCalendarConfig();
+        return { configured: Boolean(calConfig?.connected), connected: Boolean(calConfig?.connected) };
+      }),
+      resolveLocalIntegrationStatus('Stripe', { configured: false, connected: false }, async () => {
+        const config = await getStripePaymentConfig();
+        return {
+          configured: Boolean(config?.configured),
+          connected: Boolean(config?.configured),
+          connectionType: config?.connectionType || 'manual',
+          mode: config?.mode || 'test',
+          publishableKey: config?.publishableKey || null,
+          accountLabel: config?.accountLabel || null
+        };
+      }),
+      resolveLocalIntegrationStatus('Mercado Pago', { configured: false, connected: false }, async () => {
+        const config = await getMercadoPagoPaymentConfig();
+        return {
+          configured: Boolean(config?.configured),
+          connected: Boolean(config?.configured),
+          mode: config?.mode || 'test',
+          publicKey: config?.publicKey || null,
+          accountLabel: config?.accountLabel || null
+        };
+      }),
+      resolveLocalIntegrationStatus('Conekta', { configured: false, connected: false }, async () => {
+        const config = await getConektaPaymentConfig();
+        return {
+          configured: Boolean(config?.configured),
+          connected: Boolean(config?.configured),
+          mode: config?.mode || 'test',
+          publicKey: config?.publicKey || null,
+          accountLabel: config?.accountLabel || null
+        };
+      }),
+      resolveLocalIntegrationStatus('CLIP', { configured: false, connected: false }, async () => {
+        const config = await getClipPaymentConfig();
+        return {
+          configured: Boolean(config?.configured),
+          connected: Boolean(config?.configured),
+          mode: config?.mode || 'test',
+          accountLabel: config?.accountLabel || null,
+          hasApiKey: Boolean(config?.hasApiKey)
+        };
+      }),
+      resolveLocalIntegrationStatus('Rebill', { configured: false, connected: false }, async () => {
+        const config = await getRebillPaymentConfig();
+        return {
+          configured: Boolean(config?.configured),
+          connected: Boolean(config?.configured),
+          mode: config?.mode || 'test',
+          publicKey: config?.publicKey || null,
+          accountLabel: config?.accountLabel || null,
+          webhookConfigured: Boolean(config?.webhookConfigured)
+        };
+      })
     ]);
 
     const metaStatus = {
@@ -118,129 +227,6 @@ export const getStatus = async (req, res) => {
       pageId: metaSocialConfig?.page_id || null,
       instagramAccountId: metaSocialConfig?.instagram_account_id || null
     };
-
-    // WhatsApp: se lee directo de app_config (ligero) para no disparar el
-    // status completo, que es costoso. Conectado = habilitado + API key + webhook.
-    let whatsappStatus = { configured: false, connected: false };
-    try {
-      const waRows = await db.all(
-        `SELECT config_key, config_value FROM app_config
-         WHERE config_key IN ('whatsapp_api_enabled', 'whatsapp_api_ycloud_api_key_encrypted', 'whatsapp_api_key', 'whatsapp_api_webhook_endpoint_id')`
-      );
-      const wa = {};
-      for (const row of waRows || []) wa[row.config_key] = row.config_value;
-      const enabled = wa['whatsapp_api_enabled'] !== '0';
-      const hasApiKey = Boolean(wa['whatsapp_api_ycloud_api_key_encrypted'] || wa['whatsapp_api_key']);
-      const hasWebhook = Boolean(wa['whatsapp_api_webhook_endpoint_id']);
-      whatsappStatus = {
-        configured: hasApiKey,
-        connected: Boolean(enabled && hasApiKey && hasWebhook)
-      };
-    } catch (error) {
-      logger.warn(`Error obteniendo estado de WhatsApp: ${error.message}`);
-    }
-
-    // OpenAI (Agente AI)
-    let openaiStatus = { configured: false, connected: false };
-    try {
-      const aiStatus = await getAIAgentStatus({});
-      openaiStatus = {
-        configured: Boolean(aiStatus?.configured),
-        connected: Boolean(aiStatus?.configured),
-        credentialStatus: aiStatus?.credentialStatus || 'missing'
-      };
-    } catch (error) {
-      logger.warn(`Error obteniendo estado de OpenAI: ${error.message}`);
-    }
-
-    // Google Calendar
-    let googleCalendarStatus = { configured: false, connected: false };
-    try {
-      const calConfig = await getGoogleCalendarConfig();
-      googleCalendarStatus = {
-        configured: Boolean(calConfig?.connected),
-        connected: Boolean(calConfig?.connected)
-      };
-    } catch (error) {
-      logger.warn(`Error obteniendo estado de Google Calendar: ${error.message}`);
-    }
-
-    // Stripe
-    let stripeStatus = { configured: false, connected: false };
-    try {
-      const stripeConfig = await getStripePaymentConfig();
-      stripeStatus = {
-        configured: Boolean(stripeConfig?.configured),
-        connected: Boolean(stripeConfig?.configured),
-        connectionType: stripeConfig?.connectionType || 'manual',
-        mode: stripeConfig?.mode || 'test',
-        publishableKey: stripeConfig?.publishableKey || null,
-        accountLabel: stripeConfig?.accountLabel || null
-      };
-    } catch (error) {
-      logger.warn(`Error obteniendo estado de Stripe: ${error.message}`);
-    }
-
-    // Mercado Pago
-    let mercadoPagoStatus = { configured: false, connected: false };
-    try {
-      const mercadoPagoConfig = await getMercadoPagoPaymentConfig();
-      mercadoPagoStatus = {
-        configured: Boolean(mercadoPagoConfig?.configured),
-        connected: Boolean(mercadoPagoConfig?.configured),
-        mode: mercadoPagoConfig?.mode || 'test',
-        publicKey: mercadoPagoConfig?.publicKey || null,
-        accountLabel: mercadoPagoConfig?.accountLabel || null
-      };
-    } catch (error) {
-      logger.warn(`Error obteniendo estado de Mercado Pago: ${error.message}`);
-    }
-
-    // Conekta
-    let conektaStatus = { configured: false, connected: false };
-    try {
-      const conektaConfig = await getConektaPaymentConfig();
-      conektaStatus = {
-        configured: Boolean(conektaConfig?.configured),
-        connected: Boolean(conektaConfig?.configured),
-        mode: conektaConfig?.mode || 'test',
-        publicKey: conektaConfig?.publicKey || null,
-        accountLabel: conektaConfig?.accountLabel || null
-      };
-    } catch (error) {
-      logger.warn(`Error obteniendo estado de Conekta: ${error.message}`);
-    }
-
-    // CLIP
-    let clipStatus = { configured: false, connected: false };
-    try {
-      const clipConfig = await getClipPaymentConfig();
-      clipStatus = {
-        configured: Boolean(clipConfig?.configured),
-        connected: Boolean(clipConfig?.configured),
-        mode: clipConfig?.mode || 'test',
-        accountLabel: clipConfig?.accountLabel || null,
-        hasApiKey: Boolean(clipConfig?.hasApiKey)
-      };
-    } catch (error) {
-      logger.warn(`Error obteniendo estado de CLIP: ${error.message}`);
-    }
-
-    // Rebill
-    let rebillStatus = { configured: false, connected: false };
-    try {
-      const rebillConfig = await getRebillPaymentConfig();
-      rebillStatus = {
-        configured: Boolean(rebillConfig?.configured),
-        connected: Boolean(rebillConfig?.configured),
-        mode: rebillConfig?.mode || 'test',
-        publicKey: rebillConfig?.publicKey || null,
-        accountLabel: rebillConfig?.accountLabel || null,
-        webhookConfigured: Boolean(rebillConfig?.webhookConfigured)
-      };
-    } catch (error) {
-      logger.warn(`Error obteniendo estado de Rebill: ${error.message}`);
-    }
 
     // Respuesta con estructura mejorada
     res.json({

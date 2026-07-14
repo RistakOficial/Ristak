@@ -94,7 +94,7 @@ Usado por el pixel cuando detecta contacto HighLevel en `_ud`. Actualiza el cust
 
 Vincula sesiones históricas de un `visitor_id` a un `contact_id`.
 
-### `GET /api/tracking/sessions`
+### `GET /api/tracking/sessions` (legacy/compatibilidad)
 
 Sin fechas, devuelve paginación:
 
@@ -114,13 +114,63 @@ Respuesta:
 }
 ```
 
-Con `start` y `end`, devuelve un array directo para la página Analytics:
+Con `start` y `end`, el endpoint legacy puede devolver un array directo para
+clientes anteriores:
 
 ```bash
 curl 'http://localhost:3001/api/tracking/sessions?start=2026-05-01&end=2026-05-28'
 ```
 
+La pagina Analytics ya no usa esta variante porque su payload crece con cada
+evento. Ninguna superficie nueva debe usarla para descargar un rango completo.
+
 El rango se resuelve con el timezone configurado en Ristak. Si HighLevel está conectado y no hay timezone propio, se usa como fallback de compatibilidad mediante `resolveDateRangeWithGHLTimezone()`.
+
+### `POST /api/tracking/analytics/summary`
+
+Contrato agregado y acotado para la pagina Analytics. Body:
+
+```json
+{
+  "start": "2026-05-01",
+  "end": "2026-05-28",
+  "groupBy": "day",
+  "filters": { "device_type": ["mobile"] }
+}
+```
+
+La respuesta usa `{ "success": true, "data": ... }` y contiene:
+
+- rango actual/anterior y timezone aplicado;
+- metricas, periodo anterior y tendencias;
+- `trafficSeries` y `conversionSeries`;
+- distribuciones top y facets acotadas.
+
+No incluye eventos crudos. `groupBy` acepta `day`, `month` o `year`; si el rango
+generaria mas de 400 puntos, el backend sube automaticamente la granularidad.
+Cada facet devuelve como maximo 25 opciones. Los filtros desconocidos o valores
+fuera de los limites se rechazan en vez de interpolarse en SQL.
+
+### `POST /api/tracking/sessions/search`
+
+Tabla paginada de eventos. Body:
+
+```json
+{
+  "start": "2026-05-01",
+  "end": "2026-05-28",
+  "filters": {},
+  "q": "campana primavera",
+  "column": "utm_campaign",
+  "cursor": null,
+  "limit": 50
+}
+```
+
+Devuelve `items`, `limit`, `hasMore` y `nextCursor`. El limite se normaliza entre
+20 y 100. El cursor es opaco y pagina por `started_at + id`; el endpoint no hace
+`COUNT(*)` ni entrega columnas pesadas que la tabla no muestra. Para editar una
+fila, la interfaz hidrata el registro completo con `GET /sessions/:id`.
 
 ### `GET /api/tracking/sessions/:id`
 

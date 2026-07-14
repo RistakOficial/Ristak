@@ -15,6 +15,10 @@ import {
 import { startConektaPaymentPlansCron, stopConektaPaymentPlansCron } from './conektaPaymentPlans.cron.js'
 import { startEmailInboundSyncCron, stopEmailInboundSyncCron } from './emailInboundSync.cron.js'
 import { startGoogleCalendarSyncCron, stopGoogleCalendarSyncCron } from './googleCalendarSync.cron.js'
+import {
+  startHighLevelPaymentPlanMirrorCron,
+  stopHighLevelPaymentPlanMirrorCron
+} from './highlevelPaymentPlansMirror.cron.js'
 import { startHighLevelSyncCron, stopHighLevelSyncCron } from './highlevelSync.cron.js'
 import { startMercadoPagoPaymentPlansCron, stopMercadoPagoPaymentPlansCron } from './mercadoPagoPaymentPlans.cron.js'
 import {
@@ -56,6 +60,15 @@ export function registerIntegrationCrons() {
     isEnabled: isHighLevelConnected,
     start: startHighLevelSyncCron,
     stop: stopHighLevelSyncCron
+  })
+
+  registerIntegrationCron({
+    name: 'highlevel-payment-plan-mirror',
+    label: 'HighLevel planes de pago',
+    provider: 'highlevel',
+    isEnabled: isHighLevelConnected,
+    start: startHighLevelPaymentPlanMirrorCron,
+    stop: stopHighLevelPaymentPlanMirrorCron
   })
 
   registerIntegrationCron({

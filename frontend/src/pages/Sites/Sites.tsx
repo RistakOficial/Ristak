@@ -191,6 +191,7 @@ import mediaService, {
   type FirstPartyVideoRetentionSegment,
   type FirstPartyVideoViewer,
   type MediaAsset,
+  type MediaPageInfo,
   type MediaStreamAnalytics,
   type StreamChartPoint
 } from '@/services/mediaService'
@@ -1291,6 +1292,7 @@ const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 const BLOCK_ORDER_ALL_PAGES_KEY = '__all_pages__'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
+const SITES_LIBRARY_PAGE_SIZE = 120
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
 const FORM_FINAL_PAGE_IDS = new Set([FORM_THANK_YOU_PAGE_ID, FORM_DISQUALIFIED_PAGE_ID])
@@ -2515,6 +2517,18 @@ const getMediaMetadataRecord = (asset?: MediaAsset | null) => {
   return metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {}
 }
 
+const getMediaAnalyticsSourceSiteRecord = (asset?: MediaAsset | null) => {
+  const sourceSite = getMediaMetadataRecord(asset).analyticsSourceSite
+  return sourceSite && typeof sourceSite === 'object'
+    ? sourceSite as Record<string, unknown>
+    : {}
+}
+
+const getMediaSourceSiteName = (asset?: MediaAsset | null) => {
+  const name = getMediaAnalyticsSourceSiteRecord(asset).name
+  return typeof name === 'string' ? name.trim() : ''
+}
+
 const getMediaStreamRecord = (asset?: MediaAsset | null) => {
   const stream = getMediaMetadataRecord(asset).stream
   return stream && typeof stream === 'object' ? stream as Record<string, unknown> : {}
@@ -2538,7 +2552,9 @@ const getMediaStreamVideoId = (asset?: MediaAsset | null) => {
 const getMediaSourceSiteId = (asset?: MediaAsset | null) => {
   const source = getMediaStreamSourceRecord(asset)
   const sourceEntityId = typeof source.moduleEntityId === 'string' ? source.moduleEntityId.trim() : ''
-  return sourceEntityId || asset?.moduleEntityId || ''
+  const analyticsSourceId = getMediaAnalyticsSourceSiteRecord(asset).id
+  const normalizedAnalyticsSourceId = typeof analyticsSourceId === 'string' ? analyticsSourceId.trim() : ''
+  return sourceEntityId || asset?.moduleEntityId || normalizedAnalyticsSourceId
 }
 
 const readSitesNumber = (value: unknown) => {
@@ -2695,7 +2711,7 @@ const getMediaAssetDisplayName = (asset: MediaAsset) => (
 )
 
 const getSiteAnalyticsVideoLabel = (asset: MediaAsset, sitesById: Map<string, PublicSite>) => {
-  const siteName = sitesById.get(getMediaSourceSiteId(asset))?.name
+  const siteName = sitesById.get(getMediaSourceSiteId(asset))?.name || getMediaSourceSiteName(asset)
   const videoName = shortenSitesText(getMediaAssetDisplayName(asset), siteName ? 34 : 54)
   return [videoName, siteName ? shortenSitesText(siteName, 24) : ''].filter(Boolean).join(' · ')
 }
@@ -2728,7 +2744,7 @@ const buildSitesVideoAggregateRows = (
 ): SitesVideoAggregateRow[] => (
   videos.map((asset) => {
     const sourceSiteId = getMediaSourceSiteId(asset)
-    const sourceLabel = sitesById.get(sourceSiteId)?.name || 'Sin origen'
+    const sourceLabel = sitesById.get(sourceSiteId)?.name || getMediaSourceSiteName(asset) || 'Sin origen'
     const aggregate = aggregateByAssetId?.[asset.id] || null
     const views = aggregate ? readSitesNumber(aggregate.plays) : getSiteAnalyticsVideoMetric(asset, 'views')
     const watchTime = aggregate ? readSitesNumber(aggregate.watchedSeconds) : getSiteAnalyticsVideoMetric(asset, 'totalWatchTime')
@@ -6467,18 +6483,25 @@ const getBunnyStreamVideoIdFromUrl = (url: string) => {
 
 const isBunnyStreamEmbedUrl = (url: string) => Boolean(getBunnyStreamVideoIdFromUrl(url))
 
-let siteVideoAssetsPreviewPromise: Promise<MediaAsset[]> | null = null
+const siteVideoAssetPreviewPromises = new Map<string, Promise<MediaAsset>>()
 const siteVideoStoragePreviewSyncPromises = new Map<string, Promise<MediaAsset>>()
+const sitesVideoPageSize = 50
+const emptySitesVideoPageInfo: MediaPageInfo = { limit: sitesVideoPageSize, hasMore: false, nextCursor: null }
 
-const loadSiteVideoAssetsForPreview = (forceRefresh = false) => {
-  if (forceRefresh) siteVideoAssetsPreviewPromise = null
-  if (!siteVideoAssetsPreviewPromise) {
-    siteVideoAssetsPreviewPromise = sitesService.listVideoAssets().catch(error => {
-      siteVideoAssetsPreviewPromise = null
+const loadSiteVideoAssetForPreview = (streamVideoId: string, forceRefresh = false) => {
+  if (forceRefresh) siteVideoAssetPreviewPromises.delete(streamVideoId)
+  if (!siteVideoAssetPreviewPromises.has(streamVideoId)) {
+    if (siteVideoAssetPreviewPromises.size >= 100) {
+      const oldestKey = siteVideoAssetPreviewPromises.keys().next().value
+      if (oldestKey) siteVideoAssetPreviewPromises.delete(oldestKey)
+    }
+    const request = sitesService.getVideoAssetByStreamId(streamVideoId).catch(error => {
+      siteVideoAssetPreviewPromises.delete(streamVideoId)
       throw error
     })
+    siteVideoAssetPreviewPromises.set(streamVideoId, request)
   }
-  return siteVideoAssetsPreviewPromise
+  return siteVideoAssetPreviewPromises.get(streamVideoId) as Promise<MediaAsset>
 }
 
 const prepareSiteVideoAssetStoragePreview = (asset: MediaAsset) => {
@@ -7305,6 +7328,33 @@ const getVideoFormGateSourceId = (block?: SiteBlock | null) => (
   getSettingString(block?.settings || {}, 'videoFormGateFormSiteId') ||
   getSettingString(block?.settings || {}, 'video_form_gate_form_site_id')
 )
+
+const collectLinkedFormIdsFromBlocks = (blocks: SiteBlock[] = []) => {
+  const linkedFormIds = new Set<string>()
+  const visit = (items: SiteBlock[]) => {
+    items.forEach((block) => {
+      const linkedFormId = block.blockType === 'form_embed'
+        ? getEmbeddedFormSourceId(block)
+        : block.blockType === 'video'
+          ? getVideoFormGateSourceId(block)
+          : ''
+      if (linkedFormId) linkedFormIds.add(linkedFormId)
+
+      const settings = block.settings || {}
+      const nestedGroups = [
+        settings.embeddedBlocks,
+        settings.videoFormGateEmbeddedBlocks,
+        settings.video_form_gate_embedded_blocks
+      ]
+      nestedGroups.forEach((nested) => {
+        if (Array.isArray(nested)) visit(nested as SiteBlock[])
+      })
+    })
+  }
+
+  visit(blocks)
+  return linkedFormIds
+}
 
 const getVideoFormGateSinglePage = (): SitePage[] => [
   makeTemplateFunnelPage(VIDEO_FORM_GATE_PAGE_ID, 'Formulario de video', 0)
@@ -8354,22 +8404,6 @@ function FormEmbedEditorPanel({
   )
 }
 
-const hydrateSitesForBuilder = async (list: PublicSite[]) => {
-  const builderSites = list.filter(site => isLanding(site) || isFormSite(site))
-  if (!builderSites.length) return list
-
-  const hydratedSites = await Promise.all(builderSites.map(async (site) => {
-    try {
-      return normalizeSiteForEditor(await sitesService.getSite(site.id))
-    } catch {
-      return site
-    }
-  }))
-  const hydratedById = new Map(hydratedSites.map(site => [site.id, site]))
-
-  return list.map(site => hydratedById.get(site.id) || site)
-}
-
 // Lets a field block's canvas preview offer an inline "save this answer in a
 // custom field" prompt without threading the catalog through every canvas layer.
 type FormFieldBindingContextValue = {
@@ -8423,6 +8457,10 @@ export const Sites: React.FC = () => {
   }), [storedFormsViewMode, storedLandingsViewMode])
   const [section, setSection] = useState<SitesSection>(routeState.section)
   const [sites, setSites] = useState<PublicSite[]>([])
+  const [formCatalog, setFormCatalog] = useState<PublicSite[]>([])
+  const [hydratedFormDetails, setHydratedFormDetails] = useState<Record<string, PublicSite>>({})
+  const [sitesNextCursor, setSitesNextCursor] = useState('')
+  const [loadingMoreSites, setLoadingMoreSites] = useState(false)
   const [siteFolders, setSiteFolders] = useState<SiteLibraryFolder[]>([])
   const [libraryViewMode, setLibraryViewMode] = useState<Record<LibraryViewSection, LibraryViewMode>>({
     landings: 'gallery',
@@ -8467,7 +8505,11 @@ export const Sites: React.FC = () => {
   const [formResponseRows, setFormResponseRows] = useState<LeadRow[]>([])
   const [loadingFormResponses, setLoadingFormResponses] = useState(false)
   const [siteVideoAssets, setSiteVideoAssets] = useState<MediaAsset[]>([])
+  const [siteVideoPageInfo, setSiteVideoPageInfo] = useState<MediaPageInfo>(emptySitesVideoPageInfo)
+  const [siteVideoCurrentCursor, setSiteVideoCurrentCursor] = useState<string | null>(null)
+  const [siteVideoCursorHistory, setSiteVideoCursorHistory] = useState<string[]>([])
   const [loadingSiteVideos, setLoadingSiteVideos] = useState(false)
+  const siteVideoRequestRef = useRef(0)
   const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>(routeAnalyticsSiteType)
   const [sitesAnalyticsLandingMode, setSitesAnalyticsLandingMode] = useState<SitesAnalyticsLandingMode>(routeAnalyticsLandingMode)
   const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState(routeAnalyticsSiteId)
@@ -8500,6 +8542,9 @@ export const Sites: React.FC = () => {
   const [savingImportMapping, setSavingImportMapping] = useState(false)
   const [editorHistoryState, setEditorHistoryState] = useState({ undo: 0, redo: 0, busy: false })
   const selectedSiteRef = useRef<PublicSite | null>(null)
+  const siteDetailRequestsRef = useRef(new Map<string, Promise<PublicSite>>())
+  const formCatalogRequestRef = useRef(0)
+  const formCatalogTruncationWarnedRef = useRef(false)
   const librarySettingsSiteRef = useRef<PublicSite | null>(null)
   const pendingAIGenerationSiteRef = useRef<PublicSite | null>(null)
   const completedAIGenerationRedirectRef = useRef<CompletedAIGenerationRedirect>(null)
@@ -8685,7 +8730,7 @@ export const Sites: React.FC = () => {
     () => sites.filter(site => site.siteType === 'landing_page'),
     [sites]
   )
-  const forms = useMemo(
+  const libraryForms = useMemo(
     // El formulario de sistema del calendario (librarySource 'calendar') NO es un
     // formulario del usuario: se oculta de la biblioteca de Formularios y de TODOS los
     // selectores de embed/respuestas/video-gate. Las citas siguen guardando contacto por
@@ -8693,6 +8738,45 @@ export const Sites: React.FC = () => {
     () => sites.filter(site => (site.siteType === 'standard_form' || site.siteType === 'interactive_form') && getSiteLibrarySource(site) !== 'calendar'),
     [sites]
   )
+  const forms = useMemo(() => {
+    const byId = new Map<string, PublicSite>()
+    formCatalog.forEach((site) => {
+      if (isFormSite(site) && getSiteLibrarySource(site) !== 'calendar') byId.set(site.id, site)
+    })
+    libraryForms.forEach((site) => {
+      const current = byId.get(site.id)
+      if (!current || !site.summary) byId.set(site.id, site)
+    })
+    Object.values(hydratedFormDetails).forEach((site) => {
+      if (isFormSite(site) && getSiteLibrarySource(site) !== 'calendar') byId.set(site.id, site)
+    })
+    return [...byId.values()]
+  }, [formCatalog, hydratedFormDetails, libraryForms])
+
+  const loadFormsCatalog = useCallback(async () => {
+    const requestId = formCatalogRequestRef.current + 1
+    formCatalogRequestRef.current = requestId
+    try {
+      const collection = await sitesService.listAllSiteSelectors({ kind: 'forms' })
+      if (formCatalogRequestRef.current !== requestId) return
+      setFormCatalog(collection.items.filter(site => (
+        isFormSite(site) && getSiteLibrarySource(site) !== 'calendar'
+      )))
+      if (collection.truncated && !formCatalogTruncationWarnedRef.current) {
+        formCatalogTruncationWarnedRef.current = true
+        showToast(
+          'warning',
+          'Catálogo de formularios acotado',
+          'Los formularios ya vinculados seguirán cargando bajo demanda. Para elegir otro, usa uno de los 2,000 más recientes.'
+        )
+      }
+    } catch {
+      if (formCatalogRequestRef.current !== requestId) return
+      // La biblioteca principal sigue utilizable; los formularios referenciados
+      // se hidratan directamente por id al abrir un site.
+      setFormCatalog([])
+    }
+  }, [showToast])
   const sitesById = useMemo(
     () => new Map(sites.map(site => [site.id, site])),
     [sites]
@@ -8713,18 +8797,29 @@ export const Sites: React.FC = () => {
     )),
     [baseAnalyticsSites, sitesAnalyticsLandingMode, sitesAnalyticsSiteType]
   )
-  const analyticsSiteIds = useMemo(
-    () => new Set(analyticsSites.map(site => site.id)),
-    [analyticsSites]
-  )
+  const analyticsVideoOriginOptions = useMemo(() => {
+    const origins = new Map<string, { id: string; name: string }>()
+    siteVideoAssets.forEach((asset) => {
+      const id = getMediaSourceSiteId(asset)
+      const name = sitesById.get(id)?.name || getMediaSourceSiteName(asset)
+      if (id && name) origins.set(id, { id, name })
+    })
+    return [...origins.values()]
+  }, [siteVideoAssets, sitesById])
+  const analyticsSiteOptions = useMemo(() => {
+    if (sitesAnalyticsSiteType !== 'videos') return analyticsSites
+    const options = new Map(analyticsSites.map(site => [site.id, { id: site.id, name: site.name }]))
+    analyticsVideoOriginOptions.forEach(origin => options.set(origin.id, origin))
+    return [...options.values()]
+  }, [analyticsSites, analyticsVideoOriginOptions, sitesAnalyticsSiteType])
   const filteredAnalyticsVideos = useMemo(() => (
     siteVideoAssets.filter((asset) => {
       const sourceSiteId = getMediaSourceSiteId(asset)
-      if (!sourceSiteId || !analyticsSiteIds.has(sourceSiteId)) return false
+      if (!sourceSiteId) return false
       if (sitesAnalyticsSiteId) return sourceSiteId === sitesAnalyticsSiteId
       return true
     })
-  ), [analyticsSiteIds, siteVideoAssets, sitesAnalyticsSiteId])
+  ), [siteVideoAssets, sitesAnalyticsSiteId])
   const scopedAnalyticsSites = useMemo(
     () => sitesAnalyticsSiteId
       ? analyticsSites.filter(site => site.id === sitesAnalyticsSiteId)
@@ -8741,17 +8836,17 @@ export const Sites: React.FC = () => {
     () => scopedAnalyticsSites.map(site => site.id),
     [scopedAnalyticsSites]
   )
-  const analyticsSummaryVideoAssetIds = useMemo(
-    () => scopedAnalyticsVideos.map(asset => asset.id),
-    [scopedAnalyticsVideos]
-  )
   const analyticsSummarySiteKey = useMemo(
     () => analyticsSummarySiteIds.join('|'),
     [analyticsSummarySiteIds]
   )
-  const analyticsSummaryVideoKey = useMemo(
-    () => analyticsSummaryVideoAssetIds.join('|'),
-    [analyticsSummaryVideoAssetIds]
+  const analyticsVideoBreakdownIds = useMemo(
+    () => scopedAnalyticsVideos.slice(0, 100).map(asset => asset.id),
+    [scopedAnalyticsVideos]
+  )
+  const analyticsVideoBreakdownKey = useMemo(
+    () => analyticsVideoBreakdownIds.join('|'),
+    [analyticsVideoBreakdownIds]
   )
   const selectedAnalyticsVideo = useMemo(() => (
     sitesAnalyticsVideoId
@@ -8760,11 +8855,12 @@ export const Sites: React.FC = () => {
   ), [filteredAnalyticsVideos, sitesAnalyticsVideoId])
   useEffect(() => {
     if (!sitesAnalyticsSiteId) return
+    if (sitesAnalyticsSiteType === 'videos') return
     if (!analyticsSites.some(site => site.id === sitesAnalyticsSiteId)) {
       setSitesAnalyticsSiteId('')
       updateSitesAnalyticsQuery({ siteId: '' })
     }
-  }, [analyticsSites, sitesAnalyticsSiteId, updateSitesAnalyticsQuery])
+  }, [analyticsSites, sitesAnalyticsSiteId, sitesAnalyticsSiteType, updateSitesAnalyticsQuery])
   useEffect(() => {
     if (section !== 'analytics') return
     if (sitesAnalyticsSiteType !== 'videos') {
@@ -8774,11 +8870,29 @@ export const Sites: React.FC = () => {
       }
       return
     }
-    if (sitesAnalyticsVideoId && !filteredAnalyticsVideos.some(asset => asset.id === sitesAnalyticsVideoId)) {
+    if (!sitesAnalyticsVideoId || filteredAnalyticsVideos.some(asset => asset.id === sitesAnalyticsVideoId)) return
+
+    if (siteVideoAssets.some(asset => asset.id === sitesAnalyticsVideoId)) {
       setSitesAnalyticsVideoId('')
       updateSitesAnalyticsQuery({ videoId: '' })
+      return
     }
-  }, [filteredAnalyticsVideos, section, sitesAnalyticsSiteType, sitesAnalyticsVideoId, updateSitesAnalyticsQuery])
+
+    let cancelled = false
+    sitesService.getVideoAssetById(sitesAnalyticsVideoId)
+      .then(asset => {
+        if (cancelled) return
+        setSiteVideoAssets(current => current.some(item => item.id === asset.id) ? current : [asset, ...current])
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSitesAnalyticsVideoId('')
+        updateSitesAnalyticsQuery({ videoId: '' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [filteredAnalyticsVideos, section, siteVideoAssets, sitesAnalyticsSiteType, sitesAnalyticsVideoId, updateSitesAnalyticsQuery])
   const blocks = useMemo(
     () => [...(selectedSite?.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder),
     [selectedSite?.blocks]
@@ -9258,6 +9372,13 @@ export const Sites: React.FC = () => {
 
   function upsertSiteInEditorList(site: PublicSite) {
     const normalizedSite = normalizeSiteForEditor(site)
+    if (isFormSite(normalizedSite)) {
+      setHydratedFormDetails(current => ({ ...current, [normalizedSite.id]: normalizedSite }))
+      setFormCatalog(current => current.some(item => item.id === normalizedSite.id)
+        ? current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item)
+        : [normalizedSite, ...current]
+      )
+    }
     setSites(current => {
       const exists = current.some(item => item.id === normalizedSite.id)
       if (!exists) return [normalizedSite, ...current]
@@ -9663,6 +9784,7 @@ export const Sites: React.FC = () => {
 
   useEffect(() => {
     loadSites(routeState.siteId || new URLSearchParams(window.location.search).get('siteEditor') || undefined, routeState.pageId || undefined)
+    void loadFormsCatalog()
     loadCalendarsForBuilder()
     loadCustomFieldsForBuilder()
   }, [])
@@ -9850,22 +9972,86 @@ export const Sites: React.FC = () => {
     }
   }, [hasUnsavedChanges, performUrlNavigation, requestLeaveEditor])
 
+  const loadSiteDetail = useCallback((siteId: string) => {
+    const existing = siteDetailRequestsRef.current.get(siteId)
+    if (existing) return existing
+
+    let request: Promise<PublicSite>
+    request = sitesService.getSite(siteId)
+      .then(site => {
+        const normalizedSite = normalizeSiteForEditor(site)
+        if (isFormSite(normalizedSite)) {
+          setHydratedFormDetails(current => ({ ...current, [normalizedSite.id]: normalizedSite }))
+        }
+        return normalizedSite
+      })
+      .finally(() => {
+        if (siteDetailRequestsRef.current.get(siteId) === request) {
+          siteDetailRequestsRef.current.delete(siteId)
+        }
+      })
+    siteDetailRequestsRef.current.set(siteId, request)
+    return request
+  }, [])
+
+  const linkedFormIds = useMemo(() => {
+    const ids = new Set<string>()
+    const visitedSiteIds = new Set<string>()
+    const pendingSites: PublicSite[] = editorSite ? [editorSite] : []
+
+    while (pendingSites.length) {
+      const site = pendingSites.shift()
+      if (!site || visitedSiteIds.has(site.id)) continue
+      visitedSiteIds.add(site.id)
+      collectLinkedFormIdsFromBlocks(site.blocks || []).forEach((formId) => {
+        ids.add(formId)
+        const hydrated = hydratedFormDetails[formId]
+        if (hydrated && !visitedSiteIds.has(hydrated.id)) pendingSites.push(hydrated)
+      })
+    }
+
+    return [...ids]
+  }, [editorSite, hydratedFormDetails])
+  const linkedFormIdsKey = linkedFormIds.join('|')
+
+  useEffect(() => {
+    if (!linkedFormIds.length) return
+    let cancelled = false
+
+    linkedFormIds.forEach((formId) => {
+      if (hydratedFormDetails[formId]?.blocks) return
+      void loadSiteDetail(formId).catch(() => {
+        if (cancelled) return
+        // Conserva la referencia guardada: un fallo transitorio no convierte el
+        // bloque en un formulario vacío ni borra la selección del usuario.
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [hydratedFormDetails, linkedFormIdsKey, loadSiteDetail])
+
   const loadSites = async (selectId?: string, selectPageId?: string) => {
     setLoading(true)
     try {
-      const [list, nextDomainConfig, folders] = await Promise.all([
-        sitesService.listSites(),
+      const [page, nextDomainConfig, folders] = await Promise.all([
+        sitesService.listSitesPage({ limit: SITES_LIBRARY_PAGE_SIZE }),
         sitesService.getDomain(),
         sitesService.listFolders()
       ])
-      const builderSites = await hydrateSitesForBuilder(list)
-      setSites(builderSites)
+      setSites(page.items)
+      setSitesNextCursor(page.nextCursor)
       setSiteFolders(folders)
       setDomainConfig(nextDomainConfig)
       setDomainInput(nextDomainConfig.domain)
-      const nextId = selectId || (selectedSite?.id && builderSites.some(site => site.id === selectedSite.id) ? selectedSite.id : '')
+      const nextId = selectId || (selectedSite?.id && page.items.some(site => site.id === selectedSite.id) ? selectedSite.id : '')
       if (nextId) {
-        const site = normalizeSiteForEditor(await sitesService.getSite(nextId))
+        const site = await loadSiteDetail(nextId)
+        setSites(current => current.some(item => item.id === site.id)
+          ? current.map(item => item.id === site.id ? site : item)
+          : [site, ...current]
+        )
         const nextPages = normalizeFunnelPages(site)
         setSelectedSite(site)
         setSection(getSiteSection(site))
@@ -9879,6 +10065,29 @@ export const Sites: React.FC = () => {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar los sites')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadMoreSites = async () => {
+    if (!sitesNextCursor || loadingMoreSites) return
+    setLoadingMoreSites(true)
+    try {
+      const page = await sitesService.listSitesPage({
+        limit: SITES_LIBRARY_PAGE_SIZE,
+        cursor: sitesNextCursor
+      })
+      setSites(current => {
+        const byId = new Map(current.map(site => [site.id, site]))
+        page.items.forEach(site => {
+          if (!byId.has(site.id)) byId.set(site.id, site)
+        })
+        return [...byId.values()]
+      })
+      setSitesNextCursor(page.nextCursor)
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar más sites')
+    } finally {
+      setLoadingMoreSites(false)
     }
   }
 
@@ -9926,7 +10135,10 @@ export const Sites: React.FC = () => {
 
     setLoadingFormResponses(true)
     try {
-      const site = normalizeSiteForEditor(await sitesService.getSite(formId))
+      const site = normalizeSiteForEditor(await sitesService.getSite(formId, {
+        includeSubmissions: true,
+        submissionLimit: 200
+      }))
       const rows = (site.submissions || [])
         .map(submission => ({
           ...submission,
@@ -9973,15 +10185,34 @@ export const Sites: React.FC = () => {
     setSelectedResponsesFormId(formId)
   }
 
-  const loadSiteVideos = async () => {
+  const loadSiteVideos = async (cursor: string | null = null, cursorHistory: string[] = []) => {
+    const requestId = siteVideoRequestRef.current + 1
+    siteVideoRequestRef.current = requestId
     setLoadingSiteVideos(true)
     try {
-      setSiteVideoAssets(await sitesService.listVideoAssets())
+      const page = await sitesService.listVideoAssets({
+        limit: sitesVideoPageSize,
+        cursor,
+        siteType: sitesAnalyticsSiteType,
+        landingMode: sitesAnalyticsLandingMode,
+        siteId: sitesAnalyticsSiteId
+      })
+      if (siteVideoRequestRef.current !== requestId) return
+      setSiteVideoAssets(page.items)
+      setSiteVideoPageInfo(page.pageInfo)
+      setSiteVideoCurrentCursor(cursor)
+      setSiteVideoCursorHistory(cursorHistory)
     } catch (error) {
-      setSiteVideoAssets([])
+      if (siteVideoRequestRef.current !== requestId) return
+      if (!cursor) {
+        setSiteVideoAssets([])
+        setSiteVideoPageInfo(emptySitesVideoPageInfo)
+        setSiteVideoCurrentCursor(null)
+        setSiteVideoCursorHistory([])
+      }
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar los videos de sitios')
     } finally {
-      setLoadingSiteVideos(false)
+      if (siteVideoRequestRef.current === requestId) setLoadingSiteVideos(false)
     }
   }
 
@@ -9989,7 +10220,7 @@ export const Sites: React.FC = () => {
     if (section === 'analytics') {
       void loadSiteVideos()
     }
-  }, [section])
+  }, [section, sitesAnalyticsLandingMode, sitesAnalyticsSiteId, sitesAnalyticsSiteType])
 
   useEffect(() => {
     if (section !== 'analytics') {
@@ -10006,7 +10237,12 @@ export const Sites: React.FC = () => {
 
     sitesService.getAnalyticsSummary({
       siteIds: analyticsSummarySiteIds,
-      videoAssetIds: analyticsSummaryVideoAssetIds,
+      videoBreakdownAssetIds: analyticsVideoBreakdownIds,
+      videoSiteIds: sitesAnalyticsSiteId ? [sitesAnalyticsSiteId] : [],
+      videoScope: {
+        siteType: sitesAnalyticsSiteType,
+        landingMode: sitesAnalyticsLandingMode
+      },
       ...getSitesAnalyticsRange(dateRange.start, dateRange.end)
     })
       .then((summary) => {
@@ -10027,10 +10263,13 @@ export const Sites: React.FC = () => {
     }
   }, [
     analyticsSummarySiteKey,
-    analyticsSummaryVideoKey,
+    analyticsVideoBreakdownKey,
     dateRange.end,
     dateRange.start,
-    section
+    section,
+    sitesAnalyticsLandingMode,
+    sitesAnalyticsSiteId,
+    sitesAnalyticsSiteType
   ])
 
   useEffect(() => {
@@ -10077,7 +10316,11 @@ export const Sites: React.FC = () => {
 
   const openSite = async (siteId: string, pageId?: string, options?: { replaceRoute?: boolean }) => {
     try {
-      const site = normalizeSiteForEditor(await sitesService.getSite(siteId))
+      const site = await loadSiteDetail(siteId)
+      setSites(current => current.some(item => item.id === site.id)
+        ? current.map(item => item.id === site.id ? site : item)
+        : [site, ...current]
+      )
       const nextPages = normalizeFunnelPages(site)
       const nextPageId = nextPages.some(page => page.id === pageId) ? pageId! : nextPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
       setSelectedSite(site)
@@ -10266,8 +10509,9 @@ export const Sites: React.FC = () => {
     const nextFolderId = folderId || SITE_LIBRARY_ROOT_ID
     if (currentFolderId === nextFolderId) return
 
-    const draft = patchSiteLibraryFolder(site, nextFolderId)
     try {
+      const detailedSite = site.summary ? await loadSiteDetail(site.id) : site
+      const draft = patchSiteLibraryFolder(detailedSite, nextFolderId)
       const updated = normalizeSiteForEditor(await sitesService.updateSite(site.id, {
         theme: draft.theme
       }))
@@ -10420,7 +10664,7 @@ export const Sites: React.FC = () => {
     setLibrarySettingsLoading(true)
 
     try {
-      const hydratedSite = normalizeSiteForEditor(await sitesService.getSite(site.id))
+      const hydratedSite = await loadSiteDetail(site.id)
       if (librarySettingsSiteRef.current?.id === initialSite.id) {
         syncLibrarySettingsSite(hydratedSite)
       }
@@ -11571,8 +11815,9 @@ export const Sites: React.FC = () => {
     try {
       const importData = await sitesService.updateImportMapping(importReview.site.id, formMappings)
       setSelectedImportData(importData)
-      const refreshedSites = await hydrateSitesForBuilder(await sitesService.listSites())
-      setSites(refreshedSites)
+      const refreshedPage = await sitesService.listSitesPage({ limit: SITES_LIBRARY_PAGE_SIZE })
+      setSites(refreshedPage.items)
+      setSitesNextCursor(refreshedPage.nextCursor)
       setImportReview(null)
       showToast('success', 'Ruta de datos guardada', 'Ristak ya sabe donde guardar cada dato de este HTML.')
     } catch (error) {
@@ -11713,16 +11958,7 @@ export const Sites: React.FC = () => {
 
     try {
       const site = await sitesService.updateSite(siteToUpdate.id, {
-        name: siteToUpdate.name,
-        slug: nextSlug,
-        siteType: siteToUpdate.siteType,
-        status: siteToUpdate.status,
-        title: getPublicTitleForSave(siteToUpdate),
-        description: siteToUpdate.description,
-        theme: siteToUpdate.theme,
-        antiTrackingEnabled: siteToUpdate.antiTrackingEnabled !== false,
-        metaCapiEnabled: siteToUpdate.metaCapiEnabled,
-        metaEventName: siteToUpdate.metaEventName
+        slug: nextSlug
       })
       const normalizedSite = normalizeSiteForEditor(site)
 
@@ -13880,7 +14116,7 @@ export const Sites: React.FC = () => {
             ) : section === 'analytics' ? (
               <SitesAnalyticsPanel
                 sites={scopedAnalyticsSites}
-                siteOptions={analyticsSites}
+                siteOptions={analyticsSiteOptions}
                 sitesById={sitesById}
                 videos={scopedAnalyticsVideos}
                 videoOptions={filteredAnalyticsVideos}
@@ -13892,6 +14128,8 @@ export const Sites: React.FC = () => {
                 analyticsSummary={sitesAnalyticsSummary}
                 analytics={sitesVideoAnalytics}
                 loadingVideos={loadingSiteVideos}
+                hasMoreVideos={siteVideoPageInfo.hasMore}
+                hasPreviousVideos={siteVideoCursorHistory.length > 0}
                 loadingAnalytics={sitesAnalyticsSummaryLoading || sitesVideoAnalyticsLoading}
                 analyticsError={sitesVideoAnalyticsError}
                 analyticsSummaryError={sitesAnalyticsSummaryError}
@@ -13901,6 +14139,18 @@ export const Sites: React.FC = () => {
                 onLandingModeChange={handleSitesAnalyticsLandingModeChange}
                 onSiteChange={handleSitesAnalyticsSiteChange}
                 onVideoChange={handleSitesAnalyticsVideoChange}
+                onNextVideos={() => {
+                  if (!siteVideoPageInfo.nextCursor) return
+                  void loadSiteVideos(siteVideoPageInfo.nextCursor, [
+                    ...siteVideoCursorHistory,
+                    siteVideoCurrentCursor || ''
+                  ])
+                }}
+                onPreviousVideos={() => {
+                  if (!siteVideoCursorHistory.length) return
+                  const previousCursor = siteVideoCursorHistory[siteVideoCursorHistory.length - 1] || null
+                  void loadSiteVideos(previousCursor, siteVideoCursorHistory.slice(0, -1))
+                }}
                 onDateRangeChange={(start, end) => setDateRange({
                   start: parseLocalDateString(start),
                   end: parseLocalDateString(end),
@@ -13942,7 +14192,7 @@ export const Sites: React.FC = () => {
             ) : (section === 'landings' || section === 'forms') && !editorSite ? (
               <SitesLibraryPanel
                 section={section}
-                sites={section === 'landings' ? landings : forms}
+                sites={section === 'landings' ? landings : libraryForms}
                 folders={siteFolders}
                 viewMode={libraryViewMode[section === 'forms' ? 'forms' : 'landings'] || getLibraryDefaultView(section)}
                 forms={forms}
@@ -13968,6 +14218,9 @@ export const Sites: React.FC = () => {
                 onOpenSettings={(site) => { void openLibrarySettings(site) }}
                 onDelete={(site) => void handleDeleteSite(site)}
                 onBulkDelete={handleBulkDeleteSites}
+                hasMore={Boolean(sitesNextCursor)}
+                loadingMore={loadingMoreSites}
+                onLoadMore={() => { void loadMoreSites() }}
                 domainConfig={domainConfig}
               />
             ) : editorSite ? (
@@ -25144,6 +25397,9 @@ interface SitesLibraryPanelProps {
   onOpenSettings: (site: PublicSite) => void
   onDelete: (site: PublicSite) => void
   onBulkDelete: (sites: PublicSite[]) => Promise<string[]>
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore: () => void
 }
 
 interface BulkSelectCheckboxProps extends React.InputHTMLAttributes<HTMLInputElement> {
@@ -25165,6 +25421,15 @@ const LibrarySitePreview: React.FC<{
   forms: PublicSite[]
   calendars: CalendarType[]
 }> = ({ site, forms, calendars }) => {
+  if (site.summary) {
+    return (
+      <div className={`${styles.libraryPreviewViewport} ${styles.librarySummaryPreview}`} aria-hidden="true">
+        {isLanding(site) ? <LayoutTemplate size={30} /> : <FormInput size={30} />}
+        <span>{site.name}</span>
+      </div>
+    )
+  }
+
   const pages = hasEditablePages(site) ? normalizeFunnelPages(site) : []
   const activePageId = pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
   const blocks = getLibraryPreviewBlocks(site)
@@ -25342,7 +25607,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   onSetDefaultRoute,
   onOpenSettings,
   onDelete,
-  onBulkDelete
+  onBulkDelete,
+  hasMore,
+  loadingMore,
+  onLoadMore
 }) => {
   const isLandingLibrary = section === 'landings'
   const librarySection: 'landings' | 'forms' = isLandingLibrary ? 'landings' : 'forms'
@@ -26016,6 +26284,14 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <FolderOpen size={24} />
           <strong>{normalizedQuery ? 'Sin resultados' : activeFolder ? 'Carpeta vacía' : 'Sin elementos sueltos'}</strong>
           <p>{normalizedQuery ? 'Prueba con otro nombre o ruta.' : 'Crea algo nuevo o arrastra elementos a una carpeta para ordenar la biblioteca.'}</p>
+        </div>
+      )}
+
+      {hasMore && (
+        <div className={styles.libraryLoadMore}>
+          <Button type="button" variant="secondary" loading={loadingMore} onClick={onLoadMore}>
+            Cargar más
+          </Button>
         </div>
       )}
 
@@ -27544,7 +27820,8 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
   )
 }
 
-const mediaPickerAssetLimit = 250
+const mediaPickerPageSize = 50
+const emptyMediaPickerPageInfo: MediaPageInfo = { limit: mediaPickerPageSize, hasMore: false, nextCursor: null }
 
 function formatMediaPickerAssetSize(asset: MediaAsset) {
   const bytes = Number(asset.quotaSize || asset.sizeProcessed || asset.sizeOriginal || 0)
@@ -27581,9 +27858,14 @@ const SitesMediaPickerModal: React.FC<{
 }> = ({ kind, moduleEntityId, onClose, onSelect }) => {
   const inputRef = useRef<HTMLInputElement>(null)
   const blockedCloseToastAtRef = useRef(0)
+  const requestVersionRef = useRef(0)
   const uploadQueue = useMediaUploadQueue()
   const [assets, setAssets] = useState<MediaAsset[]>([])
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [pageInfo, setPageInfo] = useState<MediaPageInfo>(emptyMediaPickerPageInfo)
+  const [pageCursor, setPageCursor] = useState('')
+  const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [syncingAssetId, setSyncingAssetId] = useState('')
@@ -27612,22 +27894,37 @@ const SitesMediaPickerModal: React.FC<{
     showToast('warning', 'No se puede cerrar todavía', message)
   }, [kind, mediaPickerBusy, onClose, showToast, uploading])
 
-  const loadAssets = useCallback(async () => {
+  const loadAssets = useCallback(async (cursor = '', history: string[] = []) => {
+    const requestVersion = requestVersionRef.current + 1
+    requestVersionRef.current = requestVersion
     setLoading(true)
     try {
-      const list = await mediaService.listAllAssets({
+      const page = await mediaService.listAssets({
         mediaType: kind,
-        status: 'ready'
+        status: 'ready',
+        search: debouncedQuery || undefined,
+        limit: mediaPickerPageSize,
+        cursor: cursor || null,
+        includeMeta: false,
+        includeFolders: false
       })
-      setAssets(list
-        .filter(asset => asset.status !== 'deleted' && asset.mediaType === kind)
-        .slice(0, mediaPickerAssetLimit))
+      if (requestVersion !== requestVersionRef.current) return
+      setAssets(page.items)
+      setPageInfo(page.pageInfo)
+      setPageCursor(cursor)
+      setCursorHistory(history)
     } catch (error) {
+      if (requestVersion !== requestVersionRef.current) return
       showToast('error', 'No se pudo cargar Media', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     } finally {
-      setLoading(false)
+      if (requestVersion === requestVersionRef.current) setLoading(false)
     }
-  }, [kind, showToast])
+  }, [debouncedQuery, kind, showToast])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 300)
+    return () => window.clearTimeout(timeout)
+  }, [query])
 
   useEffect(() => {
     void loadAssets()
@@ -27640,16 +27937,6 @@ const SitesMediaPickerModal: React.FC<{
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [requestClose])
-
-  const filteredAssets = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    if (!normalizedQuery) return assets
-    return assets.filter(asset => {
-      const name = getMediaPickerAssetName(asset).toLowerCase()
-      const url = getMediaPickerAssetUrl(asset).toLowerCase()
-      return name.includes(normalizedQuery) || url.includes(normalizedQuery)
-    })
-  }, [assets, query])
 
   const selectAsset = async (asset: MediaAsset) => {
     const url = getMediaPickerAssetUrl(asset)
@@ -27711,7 +27998,7 @@ const SitesMediaPickerModal: React.FC<{
         onProgress: ({ percent }) => uploadQueue.setTaskProgress(taskId, percent)
       })
       uploadQueue.finishTask(taskId, 'complete', 'Subida completa')
-      setAssets(current => [uploaded, ...current.filter(asset => asset.id !== uploaded.id)].slice(0, mediaPickerAssetLimit))
+      setAssets(current => [uploaded, ...current.filter(asset => asset.id !== uploaded.id)].slice(0, mediaPickerPageSize))
       onSelect(getMediaPickerAssetUrl(uploaded), uploaded)
       onClose()
       showToast('success', kind === 'image' ? 'Imagen seleccionada' : 'Video seleccionado', 'El archivo ya quedó puesto en el editor.')
@@ -27753,6 +28040,19 @@ const SitesMediaPickerModal: React.FC<{
     )
   }
 
+  const loadNextPage = () => {
+    if (!pageInfo.nextCursor || loading) return
+    void loadAssets(pageInfo.nextCursor, [...cursorHistory, pageCursor])
+  }
+
+  const loadPreviousPage = () => {
+    if (!cursorHistory.length || loading) return
+    void loadAssets(
+      cursorHistory[cursorHistory.length - 1] || '',
+      cursorHistory.slice(0, -1)
+    )
+  }
+
   return (
     <div
       className={styles.mediaPickerOverlay}
@@ -27782,7 +28082,7 @@ const SitesMediaPickerModal: React.FC<{
             />
           </label>
           <div className={styles.mediaPickerActions}>
-            <button type="button" className={styles.mediaPickerSecondaryButton} onClick={() => void loadAssets()} disabled={loading || mediaPickerBusy}>
+            <button type="button" className={styles.mediaPickerSecondaryButton} onClick={() => void loadAssets(pageCursor, cursorHistory)} disabled={loading || mediaPickerBusy}>
               <RefreshCw size={14} />
               <span>Actualizar</span>
             </button>
@@ -27798,9 +28098,9 @@ const SitesMediaPickerModal: React.FC<{
             <div className={styles.mediaPickerEmpty} role="status" aria-live="polite" aria-label="Cargando biblioteca">
               <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
             </div>
-          ) : filteredAssets.length ? (
+          ) : assets.length ? (
             <div className={styles.mediaPickerGrid}>
-              {filteredAssets.map(asset => {
+              {assets.map(asset => {
                 const assetUrl = getMediaPickerAssetUrl(asset)
                 const previewUrl = getMediaPickerAssetUrl(asset, 'thumbnail')
                 const directVideoUrl = getDirectMediaAssetVideoUrl(asset)
@@ -27873,6 +28173,29 @@ const SitesMediaPickerModal: React.FC<{
             </div>
           )}
         </div>
+        {cursorHistory.length > 0 || pageInfo.hasMore ? (
+          <div className={styles.mediaPickerPagination} aria-label="Paginación de Media">
+            <span>Página {cursorHistory.length + 1}</span>
+            <div>
+              <button
+                type="button"
+                className={styles.mediaPickerSecondaryButton}
+                onClick={loadPreviousPage}
+                disabled={!cursorHistory.length || loading || mediaPickerBusy}
+              >
+                Anterior
+              </button>
+              <button
+                type="button"
+                className={styles.mediaPickerSecondaryButton}
+                onClick={loadNextPage}
+                disabled={!pageInfo.hasMore || loading || mediaPickerBusy}
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        ) : null}
         <MediaUploadTray
           tasks={uploadQueue.tasks}
           scope="modal"
@@ -35209,13 +35532,7 @@ const BunnyStreamStoragePreview: React.FC<{
     setResolved(false)
     setPreparationFailed(false)
 
-    const findStorageAsset = (assets: MediaAsset[]) => {
-      const storageAsset = assets.find(asset => getMediaStreamVideoId(asset) === streamVideoId)
-      return storageAsset || null
-    }
-
-    const resolveStorageUrl = async (assets: MediaAsset[]) => {
-      const storageAsset = findStorageAsset(assets)
+    const resolveStorageUrl = async (storageAsset: MediaAsset) => {
       // A direct Bunny Stream upload stores its embed page as publicUrl. That
       // URL belongs in an iframe; only real files/playlists can feed <video>.
       const directUrl = getDirectMediaAssetVideoUrl(storageAsset)
@@ -35232,12 +35549,12 @@ const BunnyStreamStoragePreview: React.FC<{
       }
     }
 
-    loadSiteVideoAssetsForPreview()
-      .then(async assets => {
+    loadSiteVideoAssetForPreview(streamVideoId)
+      .then(async asset => {
         if (cancelled) return
-        let publicUrl = await resolveStorageUrl(assets)
+        let publicUrl = await resolveStorageUrl(asset)
         if (!publicUrl) {
-          publicUrl = await resolveStorageUrl(await loadSiteVideoAssetsForPreview(true))
+          publicUrl = await resolveStorageUrl(await loadSiteVideoAssetForPreview(streamVideoId, true))
         }
         if (cancelled) return
         setStorageUrl(publicUrl)
@@ -42401,7 +42718,7 @@ const FormResponsesQuickPanel: React.FC<{
 
 interface SitesAnalyticsPanelProps {
   sites: PublicSite[]
-  siteOptions: PublicSite[]
+  siteOptions: Array<Pick<PublicSite, 'id' | 'name'>>
   sitesById: Map<string, PublicSite>
   videos: MediaAsset[]
   videoOptions: MediaAsset[]
@@ -42413,6 +42730,8 @@ interface SitesAnalyticsPanelProps {
   analyticsSummary: SitesAnalyticsSummary | null
   analytics: MediaStreamAnalytics | null
   loadingVideos: boolean
+  hasMoreVideos: boolean
+  hasPreviousVideos: boolean
   loadingAnalytics: boolean
   analyticsError: string
   analyticsSummaryError: string
@@ -42422,6 +42741,8 @@ interface SitesAnalyticsPanelProps {
   onLandingModeChange: (value: SitesAnalyticsLandingMode) => void
   onSiteChange: (value: string) => void
   onVideoChange: (value: string) => void
+  onNextVideos: () => void
+  onPreviousVideos: () => void
   onDateRangeChange: (start: string, end: string) => void
 }
 
@@ -42439,6 +42760,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   analyticsSummary,
   analytics,
   loadingVideos,
+  hasMoreVideos,
+  hasPreviousVideos,
   loadingAnalytics,
   analyticsError,
   analyticsSummaryError,
@@ -42448,6 +42771,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   onLandingModeChange,
   onSiteChange,
   onVideoChange,
+  onNextVideos,
+  onPreviousVideos,
   onDateRangeChange
 }) => {
   const retentionVideoRef = useRef<HTMLVideoElement | null>(null)
@@ -42627,6 +42952,17 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const aggregateVideoStats = analyticsSummary?.videos || null
   const aggregateVideoSummary = aggregateVideoStats?.summary || null
   const videoRows = buildSitesVideoAggregateRows(videos, sitesById, aggregateVideoStats?.byAssetId || null)
+  const videoOriginRows = [...videoRows.reduce((origins, row) => {
+    if (!row.sourceSiteId) return origins
+    const current = origins.get(row.sourceSiteId)
+    origins.set(row.sourceSiteId, {
+      id: row.sourceSiteId,
+      label: row.sourceLabel,
+      count: (current?.count || 0) + 1
+    })
+    return origins
+  }, new Map<string, { id: string; label: string; count: number }>()).values()]
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
   const videoRowsByViews = [...videoRows].sort((a, b) => b.views - a.views || b.watchTime - a.watchTime)
   const videoRowsByWatchTime = [...videoRows].sort((a, b) => b.watchTime - a.watchTime || b.views - a.views)
   const videoRowsByAverageWatch = [...videoRows].sort((a, b) => b.averageWatchTime - a.averageWatchTime || b.views - a.views)
@@ -42696,17 +43032,17 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const videoViewers = firstPartyTracking?.viewers || []
   const currentVideoLabel = selectedVideo ? getSiteAnalyticsVideoLabel(selectedVideo, sitesById) : 'Sin video seleccionado'
   const scopeSiteLabel = selectedSiteId
-    ? sitesById.get(selectedSiteId)?.name || 'Sitio seleccionado'
+    ? sitesById.get(selectedSiteId)?.name || siteOptions.find(site => site.id === selectedSiteId)?.name || 'Sitio seleccionado'
     : typeLabel
   const availableEntityText = `${siteOptions.length} ${siteOptions.length === 1 ? entityLabel : entityPluralLabel} disponible${siteOptions.length === 1 ? '' : 's'}`
   const dashboardEntityText = `${sites.length} ${sites.length === 1 ? entityLabel : entityPluralLabel} en el dashboard`
   const scopeDescription = isVideosView
-    ? `${videos.length} video${videos.length === 1 ? '' : 's'} en filtro${selectedVideoMode ? ` · ${currentVideoLabel}` : ' · vista agregada'}`
+    ? `${videos.length} video${videos.length === 1 ? '' : 's'} cargado${videos.length === 1 ? '' : 's'}${hasPreviousVideos || hasMoreVideos ? ' · hay más disponibles' : ''}${selectedVideoMode ? ` · ${currentVideoLabel}` : ' · vista agregada'}`
     : `${availableEntityText} · ${dashboardEntityText} · ${videos.length} video${videos.length === 1 ? '' : 's'} dentro`
   const kpiCards = isVideosView
     ? selectedVideoMode
       ? [
-          { key: 'videos', icon: <Video size={16} />, label: 'Videos', value: formatSitesCompactNumber(videos.length) },
+          { key: 'videos', icon: <Video size={16} />, label: hasPreviousVideos || hasMoreVideos ? 'Videos cargados' : 'Videos', value: formatSitesCompactNumber(videos.length) },
           { key: 'plays', icon: <Play size={16} />, label: 'Reproducciones', value: formatSitesCompactNumber(videoViews) },
           { key: 'viewers', icon: <Eye size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(uniqueVideoViewers) },
           { key: 'play-rate', icon: <MousePointerClick size={16} />, label: 'Tasa de reproducción', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate) },
@@ -42714,7 +43050,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           { key: 'engagement', icon: <Flame size={16} />, label: 'Interacción', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore) }
         ]
       : [
-          { key: 'videos', icon: <Video size={16} />, label: 'Videos', value: formatSitesCompactNumber(videos.length) },
+          { key: 'videos', icon: <Video size={16} />, label: hasPreviousVideos || hasMoreVideos ? 'Videos cargados' : 'Videos', value: formatSitesCompactNumber(videos.length) },
           { key: 'plays', icon: <Play size={16} />, label: 'Reproducciones', value: formatSitesCompactNumber(totalVideoViews) },
           { key: 'origins', icon: <LayoutTemplate size={16} />, label: 'Orígenes', value: formatSitesCompactNumber(totalVideoOrigins) },
           { key: 'stream', icon: <CheckCircle2 size={16} />, label: 'Con Stream', value: `${formatSitesCompactNumber(totalStreamVideos)}/${formatSitesCompactNumber(videos.length)}` },
@@ -43080,11 +43416,11 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
             <strong>{formatSitesCompactNumber(totalVideoOrigins)}</strong>
           </div>
           {renderDetailRows(
-            rowsByVideoCount.slice(0, 6).map(row => ({
-              key: row.site.id,
+            videoOriginRows.slice(0, 6).map(row => ({
+              key: row.id,
               icon: <LayoutTemplate size={15} />,
-              label: row.site.name,
-              value: `${formatSitesCompactNumber(row.videoCount)} video${row.videoCount === 1 ? '' : 's'}`
+              label: row.label,
+              value: `${formatSitesCompactNumber(row.count)} video${row.count === 1 ? '' : 's'}`
             })),
             'Sin orígenes asociados.'
           )}
@@ -43482,6 +43818,20 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       </div>
 
       {isVideosView ? renderVideoAnalytics() : renderEntityAnalytics()}
+      {isVideosView && !selectedVideoId && (hasPreviousVideos || hasMoreVideos) && (
+        <div className={styles.editorActions}>
+          {hasPreviousVideos && (
+            <Button variant="secondary" disabled={loadingVideos} onClick={onPreviousVideos}>
+              Videos anteriores
+            </Button>
+          )}
+          {hasMoreVideos && (
+            <Button variant="secondary" loading={loadingVideos} onClick={onNextVideos}>
+              Siguientes {sitesVideoPageSize}
+            </Button>
+          )}
+        </div>
+      )}
     </section>
   )
 }

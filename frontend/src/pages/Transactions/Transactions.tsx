@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, TableSelectionToolbar, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal, PaymentPlatformLogo } from '@/components/common'
+import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal, PaymentPlatformLogo } from '@/components/common'
+import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import type { Column, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -51,7 +52,15 @@ import {
   toDateTimeLocalInputValue,
   todayDateOnlyInTimezone
 } from '@/utils/timezone'
-import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan, type TransactionsPagination } from '@/services/transactionsService'
+import {
+  transactionsService,
+  type Transaction,
+  type TransactionSummary,
+  type PaymentPlan,
+  type PaymentPlanSummary,
+  type CursorPagination,
+  type TransactionsPagination
+} from '@/services/transactionsService'
 import { subscribeToPaymentLiveEvents, type PaymentLiveEvent } from '@/services/paymentLiveEventsService'
 import { highLevelService } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -473,6 +482,7 @@ const TRANSACTION_STATUS_ORDER = [
   'deleted'
 ]
 const TRANSACTIONS_PAGE_SIZE = 20
+const PAYMENT_PLANS_PAGE_SIZE = 20
 const EMPTY_TRANSACTIONS_PAGINATION: TransactionsPagination = {
   page: 1,
   limit: TRANSACTIONS_PAGE_SIZE,
@@ -480,6 +490,21 @@ const EMPTY_TRANSACTIONS_PAGINATION: TransactionsPagination = {
   totalPages: 1,
   hasNext: false,
   hasPrev: false
+}
+const EMPTY_PAYMENT_PLANS_PAGINATION: CursorPagination = {
+  page: 1,
+  limit: PAYMENT_PLANS_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  hasNext: false,
+  hasPrev: false,
+  nextCursor: null
+}
+const EMPTY_PAYMENT_PLAN_SUMMARY: PaymentPlanSummary = {
+  total: 0,
+  active: 0,
+  inactive: 0,
+  completed: 0
 }
 const getDateRangeKeyValue = (value: unknown) => value instanceof Date ? value.getTime() : String(value || '')
 
@@ -554,6 +579,21 @@ const getPaymentRowStatus = (row: Record<string, any>) => (
 )
 
 const getPaymentPlanProgress = (plan: PaymentPlan): PaymentPlanProgress => {
+  const materializedTotal = Number(plan.itemCount)
+  const materializedCompleted = Number(plan.completedItemCount)
+  if (
+    Number.isFinite(materializedTotal) && materializedTotal > 0 &&
+    Number.isFinite(materializedCompleted) && materializedCompleted >= 0
+  ) {
+    const completed = Math.min(materializedCompleted, materializedTotal)
+    return {
+      known: true,
+      completed,
+      total: materializedTotal,
+      remaining: Math.max(materializedTotal - completed, 0)
+    }
+  }
+
   const raw = getObjectValue(plan.raw)
   const schedule = getObjectValue(raw.schedule)
   const response = getObjectValue(raw.response)
@@ -737,6 +777,14 @@ export const Transactions: React.FC = () => {
     order: 'desc'
   })
   const [paymentPlans, setPaymentPlans] = useState<PaymentPlan[]>([])
+  const [paymentPlansPage, setPaymentPlansPage] = useState(1)
+  const [paymentPlansPagination, setPaymentPlansPagination] = useState<CursorPagination>(EMPTY_PAYMENT_PLANS_PAGINATION)
+  const [paymentPlanStatusCounts, setPaymentPlanStatusCounts] = useState<Record<string, number>>({})
+  const [paymentPlanSummary, setPaymentPlanSummary] = useState<PaymentPlanSummary>(EMPTY_PAYMENT_PLAN_SUMMARY)
+  const [paymentPlanTableSort, setPaymentPlanTableSort] = useState<{ key: string; order: 'asc' | 'desc' }>({
+    key: 'startDate',
+    order: 'desc'
+  })
   const [summary, setSummary] = useState<TransactionSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [paymentPlansLoading, setPaymentPlansLoading] = useState(false)
@@ -794,12 +842,20 @@ export const Transactions: React.FC = () => {
   const [hasLoadedTransactions, setHasLoadedTransactions] = useState(false)
   const [transactionSearchTerm, setTransactionSearchTerm] = useState('')
   const [debouncedTransactionSearch, setDebouncedTransactionSearch] = useState('')
+  const [paymentPlanSearchTerm, setPaymentPlanSearchTerm] = useState('')
+  const [debouncedPaymentPlanSearch, setDebouncedPaymentPlanSearch] = useState('')
   const handledOpenPaymentRef = useRef<string | null>(null)
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
   const paymentPlansUnavailableRedirectedRef = useRef(false)
   const transactionsRequestRef = useRef(0)
   const transactionsQueryKeyRef = useRef('')
   const paymentPlansRequestRef = useRef(0)
+  const paymentPlansQueryKeyRef = useRef('')
+  const paymentPlanCursorStackRef = useRef<Array<string | null>>([null])
+  const paymentPlanDetailRequestRef = useRef<{ sequence: number; planId: string | null }>({
+    sequence: 0,
+    planId: null
+  })
   const paymentLiveRefreshTimerRef = useRef<number | null>(null)
   const paymentLiveRefreshInFlightRef = useRef(false)
   const paymentLiveRefreshQueuedRef = useRef(false)
@@ -812,6 +868,13 @@ export const Transactions: React.FC = () => {
     refreshTransactions: async () => undefined,
     refreshPaymentPlans: async () => undefined
   })
+
+  useEffect(() => () => {
+    paymentPlanDetailRequestRef.current = {
+      sequence: paymentPlanDetailRequestRef.current.sequence + 1,
+      planId: null
+    }
+  }, [])
 
   const navigateTransactionsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
     navigate({ pathname, search: location.search }, options)
@@ -921,11 +984,24 @@ export const Transactions: React.FC = () => {
     return () => window.clearTimeout(handle)
   }, [transactionSearchTerm])
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      const cleanSearch = paymentPlanSearchTerm.trim()
+      setDebouncedPaymentPlanSearch(cleanSearch.length >= 2 ? cleanSearch : '')
+    }, 300)
+    return () => window.clearTimeout(handle)
+  }, [paymentPlanSearchTerm])
+
   const selectedTransactionStatuses = useMemo(
     () => transactionStatusFilters.status || [],
     [transactionStatusFilters]
   )
   const selectedTransactionStatusKey = selectedTransactionStatuses.join('|')
+  const selectedPaymentPlanStatuses = useMemo(
+    () => paymentPlanStatusFilters.status || [],
+    [paymentPlanStatusFilters]
+  )
+  const selectedPaymentPlanStatusKey = selectedPaymentPlanStatuses.join('|')
   const transactionsQueryKey = useMemo(() => JSON.stringify({
     viewMode,
     start: viewMode === 'by-date' ? getDateRangeKeyValue(dateRange.start) : '',
@@ -942,6 +1018,17 @@ export const Transactions: React.FC = () => {
     transactionTableSort.key,
     transactionTableSort.order,
     viewMode
+  ])
+  const paymentPlansQueryKey = useMemo(() => JSON.stringify({
+    search: debouncedPaymentPlanSearch,
+    statuses: selectedPaymentPlanStatusKey,
+    sortBy: paymentPlanTableSort.key,
+    sortOrder: paymentPlanTableSort.order
+  }), [
+    debouncedPaymentPlanSearch,
+    paymentPlanTableSort.key,
+    paymentPlanTableSort.order,
+    selectedPaymentPlanStatusKey
   ])
 
   useEffect(() => {
@@ -961,8 +1048,17 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     if (paymentTableTab !== 'payment-plans') return
 
-    fetchPaymentPlans()
-  }, [conektaConnected, highLevelConnected, paymentTableTab, stripeConnected])
+    if (paymentPlansQueryKeyRef.current !== paymentPlansQueryKey) {
+      paymentPlansQueryKeyRef.current = paymentPlansQueryKey
+      paymentPlanCursorStackRef.current = [null]
+      if (paymentPlansPage !== 1) {
+        setPaymentPlansPage(1)
+        return
+      }
+    }
+
+    fetchPaymentPlans({ page: paymentPlansPage })
+  }, [paymentPlansPage, paymentPlansQueryKey, paymentTableTab])
 
   useEffect(() => {
     setPaymentTableTab(current => current === routeState.tab ? current : routeState.tab)
@@ -1114,18 +1210,46 @@ export const Transactions: React.FC = () => {
     }
   }
 
-  const fetchPaymentPlans = async () => {
+  const fetchPaymentPlans = async (options: { page?: number; forceRefresh?: boolean } = {}) => {
+    const pageToLoad = options.page || paymentPlansPage
     const requestId = paymentPlansRequestRef.current + 1
     paymentPlansRequestRef.current = requestId
     setPaymentPlansLoading(true)
     try {
-      const plans = await transactionsService.getPaymentPlans()
+      const result = await transactionsService.getPaymentPlansPage({
+        page: pageToLoad,
+        cursor: paymentPlanCursorStackRef.current[pageToLoad - 1] || null,
+        limit: PAYMENT_PLANS_PAGE_SIZE,
+        search: debouncedPaymentPlanSearch,
+        statuses: selectedPaymentPlanStatuses,
+        sortBy: paymentPlanTableSort.key,
+        sortOrder: paymentPlanTableSort.order,
+        forceRefresh: options.forceRefresh
+      })
       if (paymentPlansRequestRef.current === requestId) {
-        setPaymentPlans(plans)
+        if (result.paymentPlans.length === 0 && pageToLoad > 1) {
+          paymentPlanCursorStackRef.current = paymentPlanCursorStackRef.current.slice(0, pageToLoad - 1)
+          setPaymentPlansPage(pageToLoad - 1)
+          return
+        }
+
+        paymentPlanCursorStackRef.current[pageToLoad] = result.pagination.nextCursor
+
+        setPaymentPlans(result.paymentPlans)
+        setPaymentPlansPagination(result.pagination)
+        setPaymentPlanStatusCounts(
+          result.facets.statuses.reduce<Record<string, number>>((counts, status) => {
+            counts[status.value] = status.count
+            return counts
+          }, {})
+        )
+        setPaymentPlanSummary(result.summary)
       }
     } catch (error) {
       if (paymentPlansRequestRef.current === requestId) {
         showToast('error', 'No se pudieron cargar los planes de pago', 'Ristak no pudo leer los planes guardados. Intenta actualizar de nuevo.')
+        setPaymentPlansPagination(EMPTY_PAYMENT_PLANS_PAGINATION)
+        setPaymentPlanStatusCounts({})
       }
     } finally {
       if (paymentPlansRequestRef.current === requestId) {
@@ -1137,7 +1261,7 @@ export const Transactions: React.FC = () => {
   paymentLiveRefreshRef.current = {
     activeTab: paymentTableTab,
     refreshTransactions: () => fetchData(false),
-    refreshPaymentPlans: fetchPaymentPlans
+    refreshPaymentPlans: () => fetchPaymentPlans({ forceRefresh: true })
   }
 
   useEffect(() => {
@@ -1205,9 +1329,9 @@ export const Transactions: React.FC = () => {
           showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta o una integración compatible para consultar y programar planes de pago.')
           return
         }
-        showToast('info', 'Actualizando planes de pago', 'Consultando planes guardados en Ristak y tus pasarelas conectadas...')
-        await fetchPaymentPlans()
-        showToast('success', 'Planes actualizados', 'La lista de planes de pago se actualizó correctamente.')
+        showToast('info', 'Actualizando planes de pago', 'Leyendo el estado más reciente guardado en Ristak...')
+        await fetchPaymentPlans({ forceRefresh: true })
+        showToast('success', 'Planes actualizados', 'La lista ya muestra el estado más reciente guardado en Ristak.')
         return
       }
 
@@ -1344,6 +1468,10 @@ export const Transactions: React.FC = () => {
   }
 
   const closePaymentPlanModal = () => {
+    paymentPlanDetailRequestRef.current = {
+      sequence: paymentPlanDetailRequestRef.current.sequence + 1,
+      planId: null
+    }
     setPaymentPlanModal({
       plan: null,
       loading: false,
@@ -1393,6 +1521,9 @@ export const Transactions: React.FC = () => {
   }
 
   const handleOpenPaymentPlan = async (plan: PaymentPlan) => {
+    const sequence = paymentPlanDetailRequestRef.current.sequence + 1
+    paymentPlanDetailRequestRef.current = { sequence, planId: plan.id }
+    handledOpenPaymentPlanRef.current = plan.id
     setPaymentTableTab('payment-plans')
     navigateTransactionsPath(buildPaymentPlanDetailPath(plan.id))
     setPaymentPlanModal({
@@ -1403,12 +1534,20 @@ export const Transactions: React.FC = () => {
 
     try {
       const detailedPlan = await transactionsService.getPaymentPlan(plan.id)
+      if (
+        paymentPlanDetailRequestRef.current.sequence !== sequence ||
+        paymentPlanDetailRequestRef.current.planId !== plan.id
+      ) return
       setPaymentPlanModal({
         plan: detailedPlan,
         loading: false,
         saving: false
       })
     } catch (error) {
+      if (
+        paymentPlanDetailRequestRef.current.sequence !== sequence ||
+        paymentPlanDetailRequestRef.current.planId !== plan.id
+      ) return
       setPaymentPlanModal(prev => ({ ...prev, loading: false }))
       showToast('error', 'No se pudo cargar el detalle', 'Se abrió la información disponible de la tabla, pero no se pudo cargar el detalle completo.')
     }
@@ -2065,12 +2204,18 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     const planId = routeState.paymentPlanId
     if (!planId) {
+      paymentPlanDetailRequestRef.current = {
+        sequence: paymentPlanDetailRequestRef.current.sequence + 1,
+        planId: null
+      }
       handledOpenPaymentPlanRef.current = null
       return
     }
 
     if (handledOpenPaymentPlanRef.current === planId) return
     handledOpenPaymentPlanRef.current = planId
+    const sequence = paymentPlanDetailRequestRef.current.sequence + 1
+    paymentPlanDetailRequestRef.current = { sequence, planId }
     setPaymentTableTab('payment-plans')
 
     setPaymentPlanModal({
@@ -2082,7 +2227,11 @@ export const Transactions: React.FC = () => {
     let isMounted = true
     transactionsService.getPaymentPlan(planId)
       .then(plan => {
-        if (!isMounted) return
+        if (
+          !isMounted ||
+          paymentPlanDetailRequestRef.current.sequence !== sequence ||
+          paymentPlanDetailRequestRef.current.planId !== planId
+        ) return
         setPaymentPlanModal({
           plan,
           loading: false,
@@ -2090,7 +2239,11 @@ export const Transactions: React.FC = () => {
         })
       })
       .catch(() => {
-        if (!isMounted) return
+        if (
+          !isMounted ||
+          paymentPlanDetailRequestRef.current.sequence !== sequence ||
+          paymentPlanDetailRequestRef.current.planId !== planId
+        ) return
         setPaymentPlanModal(prev => ({ ...prev, loading: false }))
         showToast('error', 'No se pudo abrir el plan', 'El resultado existe, pero no se pudo cargar el detalle.')
       })
@@ -2862,7 +3015,7 @@ export const Transactions: React.FC = () => {
   }
   const getPlanFilterStatus = (plan: PaymentPlan) => {
     const status = normalizePaymentPlanStatusForDisplay(getNormalizedPlanStatus(plan))
-    if (status !== 'completed' && isPaymentPlanFullyPaid(plan)) return 'completed'
+    if (['active', 'scheduled', 'pending', 'sent'].includes(status) && isPaymentPlanFullyPaid(plan)) return 'completed'
     return status
   }
   const getPaymentPlanStartDate = (plan: PaymentPlan) => (
@@ -2899,26 +3052,23 @@ export const Transactions: React.FC = () => {
   }, [selectedTransactionStatuses, transactionStatusCounts])
 
   const paymentPlanStatusFilterData = useMemo(() => {
-    const counts = paymentPlans.reduce<Record<string, number>>((acc, plan) => {
-      const status = getPlanFilterStatus(plan)
-      if (!status) return acc
-      acc[status] = (acc[status] || 0) + 1
-      return acc
-    }, {})
+    const counts = paymentPlanStatusCounts
 
     const orderedStatuses = [
       ...PAYMENT_PLAN_STATUS_ORDER.filter(status => counts[status]),
+      ...selectedPaymentPlanStatuses.filter(status => !PAYMENT_PLAN_STATUS_ORDER.includes(status) || !counts[status]),
       ...Object.keys(counts).filter(status => !PAYMENT_PLAN_STATUS_ORDER.includes(status)).sort()
     ]
+    const uniqueOrderedStatuses = Array.from(new Set(orderedStatuses))
 
     return {
-      statuses: orderedStatuses.map(status => ({
+      statuses: uniqueOrderedStatuses.map(status => ({
         name: PAYMENT_PLAN_STATUS_BADGES[status]?.label || status,
         value: status,
-        count: counts[status]
+        count: counts[status] || 0
       }))
     }
-  }, [paymentPlans])
+  }, [paymentPlanStatusCounts, selectedPaymentPlanStatuses])
 
   const selectedTransactions = useMemo(() => {
     if (selectedTransactionIds.length === 0) return []
@@ -2926,13 +3076,6 @@ export const Transactions: React.FC = () => {
     const selectedIds = new Set(selectedTransactionIds)
     return transactions.filter(transaction => selectedIds.has(transaction.id))
   }, [selectedTransactionIds, transactions])
-
-  const filteredPaymentPlans = useMemo(() => {
-    const selectedStatuses = paymentPlanStatusFilters.status || []
-    if (!selectedStatuses.length) return paymentPlans
-
-    return paymentPlans.filter(plan => selectedStatuses.includes(getPlanFilterStatus(plan)))
-  }, [paymentPlanStatusFilters, paymentPlans])
 
   const selectedPaymentPlans = useMemo(() => {
     if (selectedPaymentPlanIds.length === 0) return []
@@ -2963,6 +3106,7 @@ export const Transactions: React.FC = () => {
   const handleStatusFilterChange = (filters: StatusFilters) => {
     if (paymentTableTab === 'payment-plans') {
       setPaymentPlanStatusFilters(filters)
+      setPaymentPlansPage(1)
       return
     }
 
@@ -3432,31 +3576,7 @@ export const Transactions: React.FC = () => {
   }
 
   const transactionsRefreshing = paymentTableTab === 'transactions' && loading && hasLoadedTransactions
-  const paymentPlanTotals = useMemo(() => {
-    return paymentPlans.reduce((acc, plan) => {
-      const status = getPlanFilterStatus(plan)
-      acc.total += 1
-
-      if (['active', 'scheduled', 'pending', 'sent'].includes(status)) {
-        acc.active += 1
-      }
-
-      if (['paused', 'inactive', 'draft', 'cancelled', 'canceled', 'deleted'].includes(status)) {
-        acc.inactive += 1
-      }
-
-      if (['completed', 'complete'].includes(status)) {
-        acc.completed += 1
-      }
-
-      return acc
-    }, {
-      total: 0,
-      active: 0,
-      inactive: 0,
-      completed: 0
-    })
-  }, [paymentPlans])
+  const paymentPlanTotals = paymentPlanSummary
 
   if (paymentTableTab === 'transactions' && loading && !hasLoadedTransactions) {
     return <Loading message="Cargando pagos..." page="transactions" />
@@ -3696,15 +3816,37 @@ export const Transactions: React.FC = () => {
           <Table
             key="payment_plans_table"
             initialColumns={paymentPlanColumns}
-            data={filteredPaymentPlans}
+            data={paymentPlans}
             keyExtractor={(item) => item.id}
             onRowClick={handleOpenPaymentPlan}
             emptyMessage={canProgramPaymentPlan ? 'No hay planes de pago' : 'Conecta una pasarela compatible para ver y programar planes de pago'}
             loading={paymentPlansLoading}
             searchable={true}
             searchPlaceholder="Buscar planes de pago..."
+            serverSideSearch={true}
+            searchTerm={paymentPlanSearchTerm}
+            onSearchTermChange={setPaymentPlanSearchTerm}
+            serverSidePagination={true}
+            currentPage={paymentPlansPagination.page || paymentPlansPage}
+            cursorPagination
+            hasNextPage={paymentPlansPagination.hasNext}
+            onPageChange={(nextPage) => {
+              if (nextPage > paymentPlansPage) {
+                if (!paymentPlansPagination.nextCursor) return
+                paymentPlanCursorStackRef.current[nextPage - 1] = paymentPlansPagination.nextCursor
+              }
+              setSelectedPaymentPlanIds([])
+              setPaymentPlansPage(nextPage)
+            }}
+            serverSideSort={true}
+            sortBy={paymentPlanTableSort.key}
+            sortOrder={paymentPlanTableSort.order}
+            onSortChange={(sortBy, sortOrder) => {
+              setPaymentPlanTableSort({ key: sortBy, order: sortOrder })
+              setPaymentPlansPage(1)
+            }}
             paginated={true}
-            pageSize={20}
+            pageSize={PAYMENT_PLANS_PAGE_SIZE}
             searchPosition="left"
             tableId="payment_plans"
             initialSortBy="startDate"
@@ -3714,7 +3856,7 @@ export const Transactions: React.FC = () => {
               selectedKeys: selectedPaymentPlanIds,
               onChange: setSelectedPaymentPlanIds,
               getRowLabel: (item) => item.name || item.title || 'plan de pago',
-              selectAllLabel: 'Seleccionar todos los planes'
+              selectAllLabel: 'Seleccionar planes de esta página'
             }}
           />
         )}

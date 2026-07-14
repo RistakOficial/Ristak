@@ -4,6 +4,7 @@ import {
   setRuntimeApiBaseUrl,
   type RuntimeTenant
 } from './apiBaseUrl'
+import { syncAuthScopedCachePrincipal } from './authPrincipalCache'
 
 type InstallerTenantResponse = {
   success?: boolean
@@ -83,6 +84,7 @@ export async function loginWithPortal(email: string, password: string): Promise<
 
   if (response.ok && data.token) {
     localStorage.setItem('auth_token', data.token)
+    syncAuthScopedCachePrincipal(data.token)
     if (data.apiToken) {
       sessionStorage.setItem('ristak_latest_api_token', data.apiToken)
     }

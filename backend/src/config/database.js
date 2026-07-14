@@ -2874,6 +2874,7 @@ async function initTablesUnlocked() {
         original_filename TEXT,
         stored_filename TEXT,
         bunny_path TEXT,
+        folder_path TEXT NOT NULL DEFAULT '',
         public_url TEXT,
         private_url TEXT,
         mime_type TEXT,
@@ -2893,6 +2894,7 @@ async function initTablesUnlocked() {
         module_entity_id TEXT,
         is_public INTEGER DEFAULT 0,
         metadata_json TEXT,
+        stream_video_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         deleted_at DATETIME
@@ -2945,6 +2947,7 @@ async function initTablesUnlocked() {
       ['original_filename', 'TEXT'],
       ['stored_filename', 'TEXT'],
       ['bunny_path', 'TEXT'],
+      ['folder_path', "TEXT NOT NULL DEFAULT ''"],
       ['public_url', 'TEXT'],
       ['private_url', 'TEXT'],
       ['mime_type', 'TEXT'],
@@ -3019,6 +3022,16 @@ async function initTablesUnlocked() {
       } catch (err) {
         // La columna ya existe.
       }
+    }
+
+    try {
+      if (usePostgres) {
+        await db.run('ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS stream_video_id TEXT')
+      } else {
+        await db.run('ALTER TABLE media_assets ADD COLUMN stream_video_id TEXT')
+      }
+    } catch (err) {
+      // La columna ya existe; la migración versionada hace el backfill seguro.
     }
 
     try {

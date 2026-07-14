@@ -10,7 +10,6 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  KpiCard,
   Modal,
   NumberInput,
   PageContainer,
@@ -19,6 +18,7 @@ import {
   Table,
   TableSelectionToolbar
 } from '@/components/common'
+import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import type { Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency, useHighLevelConnected } from '@/hooks'
@@ -28,7 +28,8 @@ import {
   type ProductItem,
   type ProductPayload,
   type ProductPostWebhook,
-  type ProductPrice
+  type ProductPrice,
+  type ProductSummary
 } from '@/services/productsService'
 import { paymentSettingsService } from '@/services/paymentSettingsService'
 import {
@@ -310,11 +311,25 @@ const getProductSourceLabel = (product: ProductItem) => (
   product.source === 'ghl' || product.ghlProductId ? 'HighLevel' : 'Ristak'
 )
 
+const PRODUCTS_PAGE_SIZE = 20
+const EMPTY_PRODUCT_SUMMARY: ProductSummary = {
+  total: 0,
+  totalPrices: 0,
+  withSku: 0,
+  withoutPrice: 0
+}
+
 export const PaymentProducts: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const { connected: highLevelConnected } = useHighLevelConnected()
   const [accountCurrency] = useAccountCurrency()
   const [products, setProducts] = useState<ProductItem[]>([])
+  const [productsTotal, setProductsTotal] = useState(0)
+  const [productsPage, setProductsPage] = useState(1)
+  const [productSearchTerm, setProductSearchTerm] = useState('')
+  const [debouncedProductSearch, setDebouncedProductSearch] = useState('')
+  const [productSort, setProductSort] = useState<{ key: string; order: 'asc' | 'desc' }>({ key: 'name', order: 'asc' })
+  const [productMetrics, setProductMetrics] = useState<ProductSummary>(EMPTY_PRODUCT_SUMMARY)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -332,11 +347,19 @@ export const PaymentProducts: React.FC = () => {
 
     try {
       const data = await productsService.listProducts({
-        limit: 100,
+        limit: PRODUCTS_PAGE_SIZE,
+        offset: (productsPage - 1) * PRODUCTS_PAGE_SIZE,
+        query: debouncedProductSearch,
         includePrices: true,
-        sync
+        sync,
+        sortBy: productSort.key,
+        sortOrder: productSort.order
       })
       setProducts(data.products)
+      setProductsTotal(data.total)
+      setProductMetrics(data.summary)
+      const totalPages = Math.max(1, Math.ceil(data.total / PRODUCTS_PAGE_SIZE))
+      if (productsPage > totalPages) setProductsPage(totalPages)
     } catch (error) {
       showToast('error', 'No se pudieron cargar los productos', error instanceof Error ? error.message : 'Intenta actualizar de nuevo.')
     } finally {
@@ -346,8 +369,16 @@ export const PaymentProducts: React.FC = () => {
   }
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setProductsPage(1)
+      setDebouncedProductSearch(productSearchTerm.trim())
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [productSearchTerm])
+
+  useEffect(() => {
     void loadProducts()
-  }, [])
+  }, [debouncedProductSearch, productSort, productsPage])
 
   useEffect(() => {
     if (selectedProductIds.length === 0) return
@@ -387,30 +418,6 @@ export const PaymentProducts: React.FC = () => {
       return Boolean(productId && selectedIds.has(productId))
     })
   }, [products, selectedProductIds])
-
-  const productMetrics = useMemo(() => {
-    return products.reduce((acc, product) => {
-      const prices = getProductPrices(product)
-
-      acc.total += 1
-      acc.totalPrices += prices.length
-
-      if (!prices.some((price) => getPriceAmount(price) > 0)) {
-        acc.withoutPrice += 1
-      }
-
-      if (prices.some((price) => String(price.sku || '').trim())) {
-        acc.withSku += 1
-      }
-
-      return acc
-    }, {
-      total: 0,
-      withoutPrice: 0,
-      totalPrices: 0,
-      withSku: 0
-    })
-  }, [products])
 
   const openCreateProduct = () => {
     setEditingProduct(null)
@@ -1176,7 +1183,19 @@ export const PaymentProducts: React.FC = () => {
             searchable={true}
             searchPlaceholder="Buscar productos..."
             paginated={true}
-            pageSize={20}
+            pageSize={PRODUCTS_PAGE_SIZE}
+            serverSideSearch={true}
+            searchTerm={productSearchTerm}
+            onSearchTermChange={setProductSearchTerm}
+            serverSidePagination={true}
+            currentPage={productsPage}
+            totalItems={productsTotal}
+            totalPages={Math.max(1, Math.ceil(productsTotal / PRODUCTS_PAGE_SIZE))}
+            onPageChange={setProductsPage}
+            serverSideSort={true}
+            sortBy={productSort.key}
+            sortOrder={productSort.order}
+            onSortChange={(key, order) => setProductSort({ key, order })}
             searchPosition="left"
             tableId="payment_products_catalog"
             initialSortBy="name"

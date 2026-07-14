@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldAlert, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
-import { Badge, Button, Card, CheckboxMultiSelect, ContactSearchInput, CustomSelect, ExpandableTextareaField, KpiCard, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import { Badge, Button, Card, CheckboxMultiSelect, ContactSearchInput, CustomSelect, ExpandableTextareaField, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import type { ContactSearchInputContact } from '@/components/common/ContactSearchInput/ContactSearchInput'
 import {
   PhoneChatPreview,

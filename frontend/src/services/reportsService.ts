@@ -178,6 +178,50 @@ export interface ContactListItem {
   hasAttendedAppointment?: boolean
 }
 
+export interface ReportContactsPagination {
+  limit: number
+  total: number
+  totalIsCapped: boolean
+  hasNext: boolean
+  nextCursor: string | null
+}
+
+export interface ReportTransaction {
+  id: string
+  contact_id: string
+  contact_name: string
+  contact_email: string
+  contact_phone: string
+  amount: number
+  currency?: string
+  status: string
+  date: string
+  payment_method?: string
+  payment_method_category?: string
+  payment_type?: string
+  payment_channel?: string
+  description?: string
+}
+
+export interface ReportTransactionsPage {
+  transactions: ReportTransaction[]
+  range: ReportRange
+  summary: {
+    count: number
+    totalAmount: number
+  }
+  pagination: {
+    mode: 'cursor' | 'page'
+    page: number | null
+    limit: number
+    total: number | null
+    totalPages: number | null
+    hasNext: boolean
+    hasPrev: boolean
+    nextCursor: string | null
+  }
+}
+
 class ReportsService {
   async getMetrics(params: { from?: string; to?: string; groupBy?: GroupBy; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' }): Promise<{ metrics: ReportMetricRow[]; range: ReportRange }> {
     const query: Record<string, string> = {}
@@ -198,7 +242,16 @@ class ReportsService {
     return apiClient.get<ContactsReport>('/reports/contacts', { params: query })
   }
 
-  async getContactsList(params: { from?: string; to?: string; type?: 'interesados' | 'customers' | 'sales' | 'appointments' | 'attendances'; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed'; dedupe?: 'person' | 'record' }): Promise<{ contacts: ContactListItem[]; range: ReportRange }> {
+  async getContactsList(params: {
+    from?: string
+    to?: string
+    type?: 'interesados' | 'customers' | 'sales' | 'appointments' | 'attendances'
+    scope?: 'all' | 'attribution' | 'campaigns' | 'attributed'
+    dedupe?: 'person' | 'record'
+    search?: string
+    cursor?: string
+    limit?: number
+  }): Promise<{ contacts: ContactListItem[]; range: ReportRange; pagination: ReportContactsPagination }> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
     if (params.to) query.to = params.to
@@ -207,8 +260,11 @@ class ReportsService {
     // (MET-CONSIST) dedupe='person' pide al backend colapsar por email/teléfono para que el
     // modal empate el número mostrado. Reports lo usa; Dashboard lo omite (cuenta por registro).
     if (params.dedupe) query.dedupe = params.dedupe
+    if (params.search?.trim()) query.search = params.search.trim()
+    if (params.cursor) query.cursor = params.cursor
+    if (params.limit) query.limit = String(params.limit)
 
-    const response = await apiClient.get<{ contacts: ContactListItem[]; range: ReportRange }>(
+    const response = await apiClient.get<{ contacts: ContactListItem[]; range: ReportRange; pagination: ReportContactsPagination }>(
       '/reports/contacts/list',
       { params: query }
     )
@@ -216,7 +272,14 @@ class ReportsService {
     const rawContacts = Array.isArray(response.contacts) ? response.contacts : []
     return {
       ...response,
-      contacts: rawContacts
+      contacts: rawContacts,
+      pagination: response.pagination || {
+        limit: params.limit || 50,
+        total: rawContacts.length,
+        totalIsCapped: false,
+        hasNext: false,
+        nextCursor: null
+      }
     }
   }
 
@@ -228,6 +291,44 @@ class ReportsService {
     return apiClient.get<PaymentsReport>('/reports/payments', { params: query })
   }
 
+  async getTransactionsPage(params: {
+    from?: string
+    to?: string
+    search?: string
+    cursor?: string | null
+    page?: number
+    limit?: number
+  }, signal?: AbortSignal): Promise<ReportTransactionsPage> {
+    const query: Record<string, string> = {}
+    if (params.from) query.from = params.from
+    if (params.to) query.to = params.to
+    if (params.search?.trim()) query.search = params.search.trim()
+    if (params.cursor) query.cursor = params.cursor
+    if (params.page) query.page = String(params.page)
+    if (params.limit) query.limit = String(params.limit)
+
+    const response = await apiClient.get<ReportTransactionsPage>('/reports/transactions', {
+      params: query,
+      signal
+    })
+    const transactions = Array.isArray(response?.transactions) ? response.transactions : []
+    return {
+      ...response,
+      transactions,
+      summary: response?.summary || { count: transactions.length, totalAmount: 0 },
+      pagination: response?.pagination || {
+        mode: 'cursor',
+        page: null,
+        limit: params.limit || 50,
+        total: transactions.length,
+        totalPages: transactions.length > 0 ? 1 : 0,
+        hasNext: false,
+        hasPrev: false,
+        nextCursor: null
+      }
+    }
+  }
+
   async getCampaignsReport(params: { from?: string; to?: string }): Promise<CampaignsReport> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
@@ -236,13 +337,16 @@ class ReportsService {
     return apiClient.get<CampaignsReport>('/reports/campaigns', { params: query })
   }
 
-  async getSummary(params: { from?: string; to?: string; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' }): Promise<ReportsSummary> {
+  async getSummary(
+    params: { from?: string; to?: string; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' },
+    signal?: AbortSignal
+  ): Promise<ReportsSummary> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
     if (params.to) query.to = params.to
     if (params.scope) query.scope = params.scope
 
-    return apiClient.get<ReportsSummary>('/reports/summary', { params: query })
+    return apiClient.get<ReportsSummary>('/reports/summary', { params: query, signal })
   }
 
   async getManualBusinessExpenses(): Promise<ManualBusinessExpense[]> {

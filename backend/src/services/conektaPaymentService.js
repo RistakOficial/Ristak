@@ -3,6 +3,7 @@ import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
+import { isPaymentPlanScheduleFullyPaid } from '../utils/paymentPlanStatus.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
@@ -2743,6 +2744,13 @@ async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
   const startDate = flow.first_payment_date || visibleInstallments[0]?.due_date || flow.created_at
   const nextRunAt = nextInstallment?.due_date || flow.first_payment_date || flow.created_at
   const itemCount = (Number(flow.first_payment_amount || 0) > 0 ? 1 : 0) + visibleInstallments.length
+  const mirrorStatus = isPaymentPlanScheduleFullyPaid({
+    firstPaymentAmount: flow.first_payment_amount,
+    firstPaymentStatus: flow.first_payment_status,
+    installments: visibleInstallments
+  })
+    ? 'completed'
+    : getConektaPlanMirrorStatus(flow)
   const cardLabel = flow.conekta_payment_source_label || metadata.conektaPaymentSourceLabel || null
   const scheduleJson = {
     provider: 'conekta',
@@ -2824,7 +2832,7 @@ async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
       flow.contact_phone || null,
       flow.concept || 'Plan de pagos',
       flow.concept || 'Plan de pagos',
-      getConektaPlanMirrorStatus(flow),
+      mirrorStatus,
       Number(flow.total_amount || 0),
       flow.currency || DEFAULT_CURRENCY,
       flow.concept || 'Plan de pagos',

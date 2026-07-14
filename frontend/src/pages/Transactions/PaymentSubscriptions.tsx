@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   CalendarClock,
@@ -32,7 +32,6 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  KpiCard,
   Modal,
   NumberInput,
   PageContainer,
@@ -42,6 +41,7 @@ import {
   Table,
   TableSelectionToolbar
 } from '@/components/common'
+import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import type { BadgeVariant, Column, PaymentLinkReadyData, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -59,6 +59,7 @@ import {
   subscriptionsService,
   type PaymentSubscription,
   type SubscriptionInterval,
+  type SubscriptionListResponse,
   type SubscriptionPayload,
   type SubscriptionStatus,
   type SubscriptionSummary
@@ -96,6 +97,18 @@ const EMPTY_SUMMARY: SubscriptionSummary = {
   pastDue: 0,
   monthlyRevenue: 0,
   nextRunAt: null
+}
+
+const SUBSCRIPTIONS_PAGE_SIZE = 20
+
+const EMPTY_PAGINATION = {
+  page: 1,
+  limit: SUBSCRIPTIONS_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  hasNext: false,
+  hasPrev: false,
+  nextCursor: null
 }
 
 const STATUS_FILTERS = [
@@ -539,14 +552,6 @@ function getSubscriptionPaymentLinkEmailSubject() {
   return 'Autoriza tu suscripción'
 }
 
-function matchesStatusFilter(subscription: PaymentSubscription, filter: string) {
-  if (filter === 'all') return true
-  const status = String(subscription.status || '').toLowerCase()
-  if (filter === 'active') return status === 'active' || status === 'trialing'
-  if (filter === 'past_due') return status === 'past_due' || status === 'incomplete'
-  return status === filter
-}
-
 function paymentLiveEventTargetsSubscriptions(event: PaymentLiveEvent) {
   const scopes = event.scopes || []
   return scopes.length === 0 || scopes.includes('subscriptions')
@@ -578,7 +583,13 @@ export const PaymentSubscriptions: React.FC = () => {
   const customerLowerLabel = formatCrmLabelLower(customerLabel, DEFAULT_CRM_LABELS.customer)
   const [subscriptions, setSubscriptions] = useState<PaymentSubscription[]>([])
   const [summary, setSummary] = useState<SubscriptionSummary>(EMPTY_SUMMARY)
+  const [pagination, setPagination] = useState<SubscriptionListResponse['pagination']>(EMPTY_PAGINATION)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [subscriptionsPage, setSubscriptionsPage] = useState(1)
+  const [subscriptionSearchInput, setSubscriptionSearchInput] = useState('')
+  const [subscriptionSearch, setSubscriptionSearch] = useState('')
+  const [subscriptionSortBy, setSubscriptionSortBy] = useState('nextRunAt')
+  const [subscriptionSortOrder, setSubscriptionSortOrder] = useState<'asc' | 'desc'>('asc')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -606,25 +617,67 @@ export const PaymentSubscriptions: React.FC = () => {
   const liveRefreshTimerRef = useRef<number | null>(null)
   const liveRefreshInFlightRef = useRef(false)
   const liveRefreshQueuedRef = useRef(false)
+  const hasLoadedSubscriptionsRef = useRef(false)
+  const subscriptionsRequestRef = useRef(0)
+  const subscriptionsQueryKeyRef = useRef('')
+  const subscriptionCursorStackRef = useRef<Array<string | null>>([null])
   const loadSubscriptionsRef = useRef<(options?: { refresh?: boolean }) => Promise<void>>(async () => undefined)
 
-  const loadSubscriptions = async ({ refresh = false } = {}) => {
-    if (refresh) setRefreshing(true)
+  const subscriptionsQueryKey = useMemo(() => JSON.stringify({
+    status: statusFilter,
+    search: subscriptionSearch,
+    sortBy: subscriptionSortBy,
+    sortOrder: subscriptionSortOrder
+  }), [statusFilter, subscriptionSearch, subscriptionSortBy, subscriptionSortOrder])
+
+  const loadSubscriptions = useCallback(async ({ refresh = false } = {}) => {
+    const requestId = subscriptionsRequestRef.current + 1
+    subscriptionsRequestRef.current = requestId
+    if (refresh || hasLoadedSubscriptionsRef.current) setRefreshing(true)
     else setLoading(true)
 
     try {
-      const data = await subscriptionsService.listSubscriptions({ refresh })
+      const data = await subscriptionsService.listSubscriptions({
+        status: statusFilter,
+        search: subscriptionSearch,
+        page: subscriptionsPage,
+        cursor: subscriptionCursorStackRef.current[subscriptionsPage - 1] || null,
+        limit: SUBSCRIPTIONS_PAGE_SIZE,
+        sortBy: subscriptionSortBy,
+        sortOrder: subscriptionSortOrder,
+        refresh
+      })
+      if (subscriptionsRequestRef.current !== requestId) return
       setSubscriptions(data.subscriptions)
       setSummary(data.summary)
+      setPagination(data.pagination)
+      if (data.subscriptions.length === 0 && subscriptionsPage > 1) {
+        subscriptionCursorStackRef.current = subscriptionCursorStackRef.current.slice(0, subscriptionsPage - 1)
+        setSubscriptionsPage(subscriptionsPage - 1)
+        return
+      }
+      subscriptionCursorStackRef.current[subscriptionsPage] = data.pagination.nextCursor
+      hasLoadedSubscriptionsRef.current = true
     } catch (error) {
+      if (subscriptionsRequestRef.current !== requestId) return
       showToast('error', 'No se pudieron cargar las suscripciones', error instanceof Error ? error.message : 'Intenta actualizar otra vez.')
     } finally {
+      if (subscriptionsRequestRef.current !== requestId) return
       setLoading(false)
       setRefreshing(false)
     }
-  }
+  }, [showToast, statusFilter, subscriptionSearch, subscriptionsPage, subscriptionSortBy, subscriptionSortOrder])
 
   loadSubscriptionsRef.current = loadSubscriptions
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSubscriptionsPage(1)
+      setSubscriptionSearch(subscriptionSearchInput.trim())
+    }, 300)
+
+    return () => window.clearTimeout(timer)
+  }, [subscriptionSearchInput])
 
   useEffect(() => {
     const clearScheduledRefresh = () => {
@@ -643,7 +696,9 @@ export const PaymentSubscriptions: React.FC = () => {
 
       liveRefreshInFlightRef.current = true
       try {
-        await loadSubscriptionsRef.current({ refresh: true })
+        // Un evento vivo sólo revalida la página visible y el resumen SQL. La
+        // sincronización externa queda reservada para el botón explícito.
+        await loadSubscriptionsRef.current({ refresh: false })
       } finally {
         liveRefreshInFlightRef.current = false
         if (liveRefreshQueuedRef.current) {
@@ -675,8 +730,17 @@ export const PaymentSubscriptions: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    if (subscriptionsQueryKeyRef.current !== subscriptionsQueryKey) {
+      subscriptionsQueryKeyRef.current = subscriptionsQueryKey
+      subscriptionCursorStackRef.current = [null]
+      if (subscriptionsPage !== 1) {
+        setSubscriptionsPage(1)
+        return
+      }
+    }
+
     void loadSubscriptions()
-  }, [])
+  }, [loadSubscriptions, subscriptionsPage, subscriptionsQueryKey])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -870,10 +934,6 @@ export const PaymentSubscriptions: React.FC = () => {
     navigate('/transactions', { replace: true })
   }, [hasSubscriptionGateway, integrationsLoading, navigate, showToast])
 
-  const filteredSubscriptions = useMemo(
-    () => subscriptions.filter((subscription) => matchesStatusFilter(subscription, statusFilter)),
-    [statusFilter, subscriptions]
-  )
   const canDeleteSubscription = (_subscription: PaymentSubscription) => true
   const selectedSubscriptions = useMemo(() => {
     if (selectedSubscriptionIds.length === 0) return []
@@ -1815,7 +1875,7 @@ export const PaymentSubscriptions: React.FC = () => {
           <Table
             key="payment_subscriptions_table"
             initialColumns={columns}
-            data={filteredSubscriptions}
+            data={subscriptions}
             keyExtractor={(item) => item.id}
             onRowClick={openEditSubscription}
             emptyMessage="No hay suscripciones guardadas"
@@ -1823,11 +1883,38 @@ export const PaymentSubscriptions: React.FC = () => {
             searchable={true}
             searchPlaceholder="Buscar suscripciones..."
             paginated={true}
-            pageSize={20}
+            pageSize={SUBSCRIPTIONS_PAGE_SIZE}
             filters={STATUS_FILTERS}
             activeFilter={statusFilter}
-            onFilterChange={setStatusFilter}
+            onFilterChange={(nextFilter) => {
+              setSelectedSubscriptionIds([])
+              setSubscriptionsPage(1)
+              setStatusFilter(nextFilter)
+            }}
             searchPosition="left"
+            serverSideSearch
+            searchTerm={subscriptionSearchInput}
+            onSearchTermChange={setSubscriptionSearchInput}
+            serverSidePagination
+            currentPage={pagination.page}
+            cursorPagination
+            hasNextPage={pagination.hasNext}
+            onPageChange={(nextPage) => {
+              if (nextPage > subscriptionsPage) {
+                if (!pagination.nextCursor) return
+                subscriptionCursorStackRef.current[nextPage - 1] = pagination.nextCursor
+              }
+              setSelectedSubscriptionIds([])
+              setSubscriptionsPage(nextPage)
+            }}
+            serverSideSort
+            sortBy={subscriptionSortBy}
+            sortOrder={subscriptionSortOrder}
+            onSortChange={(nextSortBy, nextSortOrder) => {
+              setSubscriptionsPage(1)
+              setSubscriptionSortBy(nextSortBy)
+              setSubscriptionSortOrder(nextSortOrder)
+            }}
             tableId="payment_subscriptions"
             initialSortBy="nextRunAt"
             initialSortOrder="asc"
