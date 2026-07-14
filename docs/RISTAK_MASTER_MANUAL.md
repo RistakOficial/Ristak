@@ -2841,9 +2841,11 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   reproductor personalizable de Ristak; nunca montan el iframe de Stream y por
   eso sus reproducciones no contaminan las analíticas reales. Publicado/en vivo
   cambia al iframe de Stream y conserva la configuración guardada del frame.
-  Un asset legacy que solo vive en Stream muestra `Preparando vista previa del
-  video` en editor hasta que la sincronización crea su espejo de Storage; jamás
-  usa la página iframe como `<video src>` ni carga Stream como fallback no-track.
+  Un asset legacy que solo vive en Stream muestra brevemente `Preparando vista
+  previa del video`; abrir el editor o crear una preview-session autenticada
+  dispara automáticamente la creación de su espejo de Storage. El proceso está
+  deduplicado por asset, conserva el mismo video de Stream y jamás usa la página
+  iframe como `<video src>` ni carga Stream como fallback no-track.
   El mismo contrato aplica al HTML importado. En el canvas, el primer click
   selecciona el bloque y, una vez seleccionado, el reproductor recibe interacción
   para reproducir, pausar y operar sus controles sin volver interactivos los

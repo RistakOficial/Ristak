@@ -34,6 +34,7 @@ import {
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
 import {
+  ensureMediaAssetStoragePreview,
   findMediaAssetsByIds,
   findMediaAssetsByBunnyStreamVideoIds,
   findMediaAssetsByPublicUrls
@@ -15675,6 +15676,42 @@ function collectBunnyStreamVideoIdsFromBlocks(blocks = [], ids = new Set()) {
     }
   }
   return ids
+}
+
+export async function prepareSiteVideoStoragePreviews(site, { strict = false } = {}) {
+  const videoIds = [...collectBunnyStreamVideoIdsFromBlocks(site?.blocks || [])]
+  if (!videoIds.length) {
+    return { total: 0, pending: 0, prepared: 0, failed: 0 }
+  }
+
+  const assets = await findMediaAssetsByBunnyStreamVideoIds(videoIds)
+  const pendingAssets = assets.filter(asset => asset.storageProvider === 'bunny_stream')
+  let prepared = 0
+  const failures = []
+
+  // Una copia por vez evita que un preview con varios videos sature la salida de
+  // red del servicio. El candado de mediaStorageService deduplica además editor,
+  // preview y reintentos concurrentes del mismo asset.
+  for (const asset of pendingAssets) {
+    try {
+      await ensureMediaAssetStoragePreview(asset.id, {
+        module: asset.module || 'sites',
+        moduleEntityId: asset.moduleEntityId || site?.id || ''
+      })
+      prepared += 1
+    } catch (error) {
+      failures.push({ asset, error })
+      logger.warn(`[Sites] No se pudo preparar Storage para video ${asset.id}: ${error.message}`)
+    }
+  }
+
+  if (strict && failures.length) throw failures[0].error
+  return {
+    total: assets.length,
+    pending: pendingAssets.length,
+    prepared,
+    failed: failures.length
+  }
 }
 
 async function buildVideoStorageAssetsByStreamVideoId(blocks = [], { enabled = false } = {}) {

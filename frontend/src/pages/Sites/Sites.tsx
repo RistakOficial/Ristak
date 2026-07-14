@@ -6468,6 +6468,7 @@ const getBunnyStreamVideoIdFromUrl = (url: string) => {
 const isBunnyStreamEmbedUrl = (url: string) => Boolean(getBunnyStreamVideoIdFromUrl(url))
 
 let siteVideoAssetsPreviewPromise: Promise<MediaAsset[]> | null = null
+const siteVideoStoragePreviewSyncPromises = new Map<string, Promise<MediaAsset>>()
 
 const loadSiteVideoAssetsForPreview = (forceRefresh = false) => {
   if (forceRefresh) siteVideoAssetsPreviewPromise = null
@@ -6478,6 +6479,21 @@ const loadSiteVideoAssetsForPreview = (forceRefresh = false) => {
     })
   }
   return siteVideoAssetsPreviewPromise
+}
+
+const prepareSiteVideoAssetStoragePreview = (asset: MediaAsset) => {
+  const existing = siteVideoStoragePreviewSyncPromises.get(asset.id)
+  if (existing) return existing
+
+  const request = mediaService.syncAssetStream(asset.id, {
+    module: asset.module || 'sites',
+    moduleEntityId: asset.moduleEntityId || undefined
+  }).catch(error => {
+    siteVideoStoragePreviewSyncPromises.delete(asset.id)
+    throw error
+  })
+  siteVideoStoragePreviewSyncPromises.set(asset.id, request)
+  return request
 }
 
 const normalizeEmbedHeight = (value: string | null | undefined) => {
@@ -35185,17 +35201,29 @@ const BunnyStreamStoragePreview: React.FC<{
   const streamVideoId = useMemo(() => getBunnyStreamVideoIdFromUrl(embedUrl), [embedUrl])
   const [storageUrl, setStorageUrl] = useState('')
   const [resolved, setResolved] = useState(false)
+  const [preparationFailed, setPreparationFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setStorageUrl('')
     setResolved(false)
+    setPreparationFailed(false)
 
-    const findStorageUrl = (assets: MediaAsset[]) => {
+    const findStorageAsset = (assets: MediaAsset[]) => {
       const storageAsset = assets.find(asset => getMediaStreamVideoId(asset) === streamVideoId)
+      return storageAsset || null
+    }
+
+    const resolveStorageUrl = async (assets: MediaAsset[]) => {
+      const storageAsset = findStorageAsset(assets)
       // A direct Bunny Stream upload stores its embed page as publicUrl. That
       // URL belongs in an iframe; only real files/playlists can feed <video>.
-      return getDirectMediaAssetVideoUrl(storageAsset)
+      const directUrl = getDirectMediaAssetVideoUrl(storageAsset)
+      if (directUrl) return directUrl
+      if (storageAsset?.storageProvider !== 'bunny_stream') return ''
+
+      const repaired = await prepareSiteVideoAssetStoragePreview(storageAsset)
+      return getDirectMediaAssetVideoUrl(repaired)
     }
 
     if (!streamVideoId) {
@@ -35207,15 +35235,18 @@ const BunnyStreamStoragePreview: React.FC<{
     loadSiteVideoAssetsForPreview()
       .then(async assets => {
         if (cancelled) return
-        let publicUrl = findStorageUrl(assets)
+        let publicUrl = await resolveStorageUrl(assets)
         if (!publicUrl) {
-          publicUrl = findStorageUrl(await loadSiteVideoAssetsForPreview(true))
+          publicUrl = await resolveStorageUrl(await loadSiteVideoAssetsForPreview(true))
         }
         if (cancelled) return
         setStorageUrl(publicUrl)
       })
       .catch(() => {
-        if (!cancelled) setStorageUrl('')
+        if (!cancelled) {
+          setStorageUrl('')
+          setPreparationFailed(true)
+        }
       })
       .finally(() => {
         if (!cancelled) setResolved(true)
@@ -35250,7 +35281,9 @@ const BunnyStreamStoragePreview: React.FC<{
   return (
     <div className="rstk-media rstk-media-empty" data-rstk-selection-surface="true" data-rstk-preview-stream-disabled="true">
       <span className="rstk-play"><Play size={22} /></span>
-      {resolved ? 'Preparando vista previa del video' : 'Preparando video'}
+      {resolved
+        ? preparationFailed ? 'No se pudo preparar la vista previa del video' : 'Preparando vista previa del video'
+        : 'Preparando video'}
     </div>
   )
 }

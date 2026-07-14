@@ -741,6 +741,47 @@ test('sincronizar un asset TUS antiguo repara su copia faltante de Storage sin c
       ]
     )
 
+    const sitesService = await import('../src/services/sitesService.js')
+    const prepared = await sitesService.prepareSiteVideoStoragePreviews({
+      id: 'site_legacy_tus',
+      blocks: [{
+        blockType: 'video',
+        content: '',
+        settings: {
+          mediaUrl: 'https://iframe.mediadelivery.net/embed/123/stream-video-1'
+        }
+      }]
+    }, { strict: true })
+
+    assert.deepEqual(prepared, {
+      total: 1,
+      pending: 1,
+      prepared: 1,
+      failed: 0
+    })
+
+    const repairedFromPreview = await mediaStorageService.getMediaAsset(assetId)
+    assert.equal(repairedFromPreview.storageProvider, 'bunny')
+    assert.match(repairedFromPreview.bunnyPath, /^accounts\/loc_repair\/sites\//)
+    assert.equal(repairedFromPreview.metadata.stream.videoId, 'stream-video-1')
+    assert.equal(repairedFromPreview.metadata.directUpload.storageMirror.source, 'bunny_stream_original')
+
+    const repeated = await sitesService.prepareSiteVideoStoragePreviews({
+      id: 'site_legacy_tus',
+      blocks: [{
+        blockType: 'video',
+        settings: {
+          mediaUrl: 'https://iframe.mediadelivery.net/embed/123/stream-video-1'
+        }
+      }]
+    }, { strict: true })
+    assert.deepEqual(repeated, {
+      total: 1,
+      pending: 0,
+      prepared: 0,
+      failed: 0
+    })
+
     const repaired = await mediaStorageService.syncMediaAssetBunnyStream(assetId, {
       businessId: 'default',
       module: 'sites',

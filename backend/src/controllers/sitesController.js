@@ -20,6 +20,7 @@ import {
   initSitePaymentCheckout,
   paySiteCheckout,
   prepareSiteCheckoutInstallments,
+  prepareSiteVideoStoragePreviews,
   getSitesFontCss,
   getSitesFontFile,
   getSite,
@@ -590,6 +591,8 @@ export async function previewSiteHandler(req, res) {
       : null
     const renderSite = draftSite || site
 
+    await prepareSiteVideoStoragePreviews(renderSite, { strict: true })
+
     res.set('Cache-Control', 'no-store')
     res.status(200).type('html').send(await renderPublicSiteHtml(renderSite, {
       pageId: req.query?.page,
@@ -612,6 +615,9 @@ export async function createPreviewSessionHandler(req, res) {
       return res.status(404).json({ success: false, error: 'Site no encontrado' })
     }
     const draftSite = await buildPreviewSiteDraft(site, req.body?.draftSite)
+    const previewSite = draftSite || site
+
+    await prepareSiteVideoStoragePreviews(previewSite, { strict: true })
 
     cleanupPreviewSessions()
     const token = crypto.randomBytes(32).toString('base64url')
@@ -663,6 +669,8 @@ export async function previewSiteSessionHandler(req, res) {
     if (!site) {
       return res.status(404).type('html').send('Site no encontrado')
     }
+
+    await prepareSiteVideoStoragePreviews(site, { strict: true })
 
     res.set('Cache-Control', 'no-store')
     res.status(200).type('html').send(await renderPublicSiteHtml(site, {

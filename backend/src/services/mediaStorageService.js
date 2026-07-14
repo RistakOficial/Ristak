@@ -2294,6 +2294,21 @@ async function ensureBunnyStreamStorageMirror(assetId, context = {}) {
   throw errorWithStatus('No se pudo preparar la vista previa de Storage.', 409, 'media_upload_in_progress')
 }
 
+// Punto de entrada interno para superficies autenticadas de Sites. Mantiene la
+// reparación de assets Stream-only separada de la sincronización completa de
+// metadata: abrir un editor o generar un preview sólo debe crear el espejo que
+// alimenta al reproductor Ristak, nunca crear otro video de Stream.
+export async function ensureMediaAssetStoragePreview(assetId, context = {}) {
+  const asset = await getMediaAsset(assetId)
+  const module = normalizeModule(context.module || asset.module)
+  if (!isBunnyStreamEligibleVideo({ mediaType: asset.mediaType, module })) {
+    throw errorWithStatus('Este archivo no es un video de sitios o formularios.', 400, 'bunny_stream_not_applicable')
+  }
+
+  if (asset.storageProvider !== 'bunny_stream') return asset
+  return ensureBunnyStreamStorageMirror(asset.id, { ...context, module })
+}
+
 function assertResumableAssetMatches(asset, { sizeBytes, mimeType, module, clientUploadId }) {
   const assetUploadId = cleanString(asset.metadata?.clientUploadId || asset.metadata?.directUpload?.clientUploadId)
   if (

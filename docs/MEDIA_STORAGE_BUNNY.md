@@ -178,9 +178,11 @@ another account.
   `metadata_json.stream` for live rendering and analytics.
 - A legacy Stream-only row must never be used as `<video src>` and must not fall
   back to its Stream iframe in editor/no-track mode. It shows a preparation state
-  until `POST /api/media/assets/:id/stream/sync` creates the missing Storage
-  mirror. The same rule applies to imported HTML previews; live rendering can
-  continue using Stream while the repair is pending.
+  while the authenticated editor or preview-session creates the missing Storage
+  mirror automatically. The same repair remains available through
+  `POST /api/media/assets/:id/stream/sync`, preserves the original Stream video
+  ID and is deduplicated with an advisory lock. The same rule applies to imported
+  HTML previews; live rendering can continue using Stream while repair is pending.
 
 ## App media explorer
 
