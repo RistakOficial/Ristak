@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { createPortal } from 'react-dom'
-import { Card, Button, Modal, CustomSelect } from '@/components/common'
+import { Card, Button, Modal } from '@/components/common'
 import {
   Zap,
   CheckCircle,
@@ -11,14 +10,10 @@ import {
   RefreshCw,
   Trash2,
   Loader2,
-  Info,
-  X,
-  Plus,
-  UserX
+  Info
 } from 'lucide-react'
 import { Badge } from '@/components/common/Badge'
 import { highLevelService } from '@/services/highLevelService'
-import { hiddenContactsService, type HiddenFilter } from '@/services/hiddenContactsService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -39,7 +34,7 @@ interface IntegrationStatus {
 }
 
 export const HighLevelIntegration: React.FC = () => {
-  const { showToast, showConfirm } = useNotification()
+  const { showToast } = useNotification()
   const { theme } = useTheme()
   const [loading, setLoading] = useState(false)
   const [checkingStatus, setCheckingStatus] = useState(false)
@@ -50,14 +45,6 @@ export const HighLevelIntegration: React.FC = () => {
   const [ghlConfig, setGhlConfig] = useState<any>(null)
   const [isEditMode, setIsEditMode] = useState(false)
   const [showDisconnectModal, setShowDisconnectModal] = useState(false)
-
-  // Estados para contactos ocultos
-  const [showHiddenContactsModal, setShowHiddenContactsModal] = useState(false)
-  const [hiddenFilters, setHiddenFilters] = useState<HiddenFilter[]>([])
-  const [newFilter, setNewFilter] = useState('')
-  const [newFilterType, setNewFilterType] = useState<'contains' | 'exact'>('contains')
-  const [loadingFilters, setLoadingFilters] = useState(false)
-  const [addingFilter, setAddingFilter] = useState(false)
 
   useEffect(() => {
     loadIntegrationStatus()
@@ -158,68 +145,6 @@ export const HighLevelIntegration: React.FC = () => {
     } finally {
       setCheckingStatus(false)
     }
-  }
-
-  // Funciones para contactos ocultos
-  const loadHiddenFilters = async () => {
-    setLoadingFilters(true)
-    try {
-      const filters = await hiddenContactsService.getFilters()
-      setHiddenFilters(filters)
-    } catch (error) {
-      showToast('error', 'Error', 'No se pudieron cargar los filtros')
-    } finally {
-      setLoadingFilters(false)
-    }
-  }
-
-  const handleAddFilter = async () => {
-    if (!newFilter.trim()) {
-      showToast('warning', 'Filtro vacío', 'Ingresa un texto para filtrar')
-      return
-    }
-
-    setAddingFilter(true)
-    try {
-      const filter = await hiddenContactsService.addFilter(newFilter.trim(), newFilterType)
-      setHiddenFilters(prev => [filter, ...prev])
-      setNewFilter('')
-      setNewFilterType('contains')
-      const typeText = newFilterType === 'exact' ? 'exactamente igual a' : 'contengan'
-      showToast('success', 'Filtro agregado', `Los contactos ${typeText} "${newFilter.trim()}" se ocultarán`)
-    } catch (error: any) {
-      if (error.message?.includes('409') || error.message?.includes('existe')) {
-        showToast('warning', 'Filtro duplicado', 'Este filtro ya existe')
-      } else {
-        showToast('error', 'Error', 'No se pudo agregar el filtro')
-      }
-    } finally {
-      setAddingFilter(false)
-    }
-  }
-
-  const handleDeleteFilter = (id: string, text: string) => {
-    showConfirm(
-      'Eliminar filtro',
-      `Vas a eliminar el filtro "${text}". Esta acción no se puede deshacer.`,
-      async () => {
-        try {
-          await hiddenContactsService.deleteFilter(id)
-          setHiddenFilters(prev => prev.filter(f => f.id !== id))
-          showToast('success', 'Filtro eliminado', `El filtro "${text}" fue eliminado`)
-        } catch (error) {
-          showToast('error', 'Error', 'No se pudo eliminar el filtro')
-          return false
-        }
-      },
-      'Eliminar',
-      'Cancelar'
-    )
-  }
-
-  const handleOpenHiddenContactsModal = () => {
-    setShowHiddenContactsModal(true)
-    loadHiddenFilters()
   }
 
   const isConnected = integrationStatus?.highlevel?.connected
@@ -527,37 +452,6 @@ export const HighLevelIntegration: React.FC = () => {
         </div>
         )}
 
-        {/* Sección de Contactos Ocultos */}
-        {isConfigured && (
-        <div className={styles.section}>
-          <div className={styles.sectionHeader}>
-            <div>
-              <h3 className={styles.sectionTitle}>Contactos Ocultos</h3>
-              <p className={styles.sectionDescription}>
-                Oculta contactos de prueba o internos en todas las vistas
-              </p>
-            </div>
-          </div>
-
-          <div className={styles.infoBox}>
-            <div className={styles.infoBoxTitle}>
-              <UserX size={16} />
-              <span>Filtrado de Contactos</span>
-            </div>
-            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '16px' }}>
-              Agrega palabras clave para ocultar contactos en todas las vistas de la aplicación.
-              Los contactos que contengan estos textos en su nombre, email, teléfono o ID se ocultarán automáticamente.
-            </p>
-            <Button
-              variant="secondary"
-              onClick={handleOpenHiddenContactsModal}
-            >
-              <UserX size={16} />
-              Gestionar contactos ocultos
-            </Button>
-          </div>
-        </div>
-        )}
       </Card>
 
       <Modal
@@ -572,114 +466,6 @@ export const HighLevelIntegration: React.FC = () => {
         typeToConfirm="DESCONECTAR"
       />
 
-      {/* Modal de Contactos Ocultos */}
-      {showHiddenContactsModal && createPortal(
-        <div className={styles.modalOverlay} data-overlay="" onClick={() => setShowHiddenContactsModal(false)}>
-          <div
-            className={styles.hiddenContactsModal}
-            data-modal=""
-            data-modal-shell="legacy"
-            data-modal-size="md"
-            data-modal-type="custom"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={styles.modalHeader} data-modal-header="">
-              <h2>Contactos Ocultos</h2>
-              <button
-                className={styles.modalClose}
-                onClick={() => setShowHiddenContactsModal(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className={styles.modalBody} data-modal-content="">
-              <p className={styles.modalDescription}>
-                Agrega palabras clave para ocultar contactos en todas las vistas. Los contactos que coincidan
-                con estos textos en su nombre, email, teléfono o ID serán filtrados automáticamente.
-              </p>
-
-              <div className={styles.addFilterSection}>
-                <div className={styles.filterInputGroup}>
-                  <input
-                    type="text"
-                    className={styles.filterInput}
-                    placeholder="Ej: test, raul, 5512345678..."
-                    value={newFilter}
-                    onChange={(e) => setNewFilter(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleAddFilter()}
-                    disabled={addingFilter}
-                  />
-                  <CustomSelect
-                    style={{ minWidth: 150 }}
-                    value={newFilterType}
-                    onChange={(e) => setNewFilterType(e.target.value as 'contains' | 'exact')}
-                    disabled={addingFilter}
-                  >
-                    <option value="contains">Contiene</option>
-                    <option value="exact">Es exactamente</option>
-                  </CustomSelect>
-                </div>
-                <Button
-                  onClick={handleAddFilter}
-                  disabled={addingFilter || !newFilter.trim()}
-                >
-                  {addingFilter ? (
-                    <Loader2 size={16} className={styles.spinIcon} />
-                  ) : (
-                    <Plus size={16} />
-                  )}
-                  Agregar
-                </Button>
-              </div>
-
-              <div className={styles.filtersSection}>
-                <h3 className={styles.filtersSectionTitle}>Filtros activos ({hiddenFilters.length})</h3>
-
-                {loadingFilters ? (
-                  <div className={styles.loadingFilters} role="status" aria-live="polite" aria-label="Cargando filtros">
-                    <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
-                  </div>
-                ) : hiddenFilters.length === 0 ? (
-                  <div className={styles.emptyFilters}>
-                    <UserX size={32} />
-                    <p>No hay filtros configurados</p>
-                    <span>Los contactos agregados aparecerán aquí</span>
-                  </div>
-                ) : (
-                  <div className={styles.filterChips}>
-                    {hiddenFilters.map((filter) => (
-                      <div key={filter.id} className={styles.filterChip}>
-                        <span className={styles.chipText}>{filter.filterText}</span>
-                        <span className={styles.chipBadge} title={filter.matchType === 'exact' ? 'Coincidencia exacta' : 'Contiene'}>
-                          {filter.matchType === 'exact' ? '=' : '⊃'}
-                        </span>
-                        <button
-                          className={styles.chipDeleteButton}
-                          onClick={() => handleDeleteFilter(filter.id, filter.filterText)}
-                          title="Eliminar filtro"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className={styles.modalFooter} data-modal-footer="">
-              <Button
-                variant="ghost"
-                onClick={() => setShowHiddenContactsModal(false)}
-              >
-                Cerrar
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
     </div>
   )
 }

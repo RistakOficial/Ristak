@@ -17,6 +17,7 @@ import {
   Settings2,
   Tags,
   User,
+  UserX,
   Users
 } from 'lucide-react'
 import { HighLevelIntegration } from './HighLevelIntegration'
@@ -34,6 +35,7 @@ import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
 import { NotificationSettings } from './NotificationSettings'
 import { PrivacySettings } from './PrivacySettings'
+import { HiddenContactsSettings } from './HiddenContactsSettings'
 import { MediaSettings } from './MediaSettings'
 import { CustomFields } from './CustomFields'
 import { VariableFields } from './VariableFields'
@@ -42,7 +44,7 @@ import { TagsSettings } from './TagsSettings'
 import { AIAgentSettings } from './AIAgentSettings'
 import { HighLevelIcon, MetaIcon, WhatsAppIcon } from '@/components/common/Icon/CustomIcons'
 import { useAuth } from '@/contexts/AuthContext'
-import { getFirstAllowedAppPath, hasLicenseFeature, hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
+import { getFirstAllowedAppPath, hasLicenseFeature, hasModuleAccess, normalizeRole, type PermissionKey } from '@/utils/accessControl'
 import { cn } from '@/utils/cn'
 import {
   getFirstAllowedSettingsPath,
@@ -53,10 +55,14 @@ import {
 } from './settingsNav'
 import styles from './Settings.module.css'
 
-const SettingsAccessGate: React.FC<{ moduleKey: PermissionKey; featureKeys?: readonly string[]; children: React.ReactNode }> = ({ moduleKey, featureKeys, children }) => {
+const SettingsAccessGate: React.FC<{ moduleKey: PermissionKey; featureKeys?: readonly string[]; adminOnly?: boolean; children: React.ReactNode }> = ({ moduleKey, featureKeys, adminOnly = false, children }) => {
   const { user } = useAuth()
 
-  if (!hasModuleAccess(user, moduleKey, 'read') || (featureKeys && !hasLicenseFeature(user, featureKeys))) {
+  if (
+    !hasModuleAccess(user, moduleKey, 'read') ||
+    (featureKeys && !hasLicenseFeature(user, featureKeys)) ||
+    (adminOnly && normalizeRole(user?.role) !== 'admin')
+  ) {
     return <Navigate to={getFirstAllowedAppPath(user)} replace />
   }
 
@@ -71,6 +77,7 @@ const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/notifications': BellRing,
   '/settings/mobile-app': MonitorSmartphone,
   '/settings/privacy': CheckCheck,
+  '/settings/hidden-contacts': UserX,
   '/settings/calendars': CalendarDays,
   '/settings/payments': CreditCard,
   '/settings/highlevel': HighLevelIcon,
@@ -171,6 +178,7 @@ export const Settings: React.FC = () => {
               <Route path="notifications" element={<SettingsAccessGate moduleKey="settings_account"><NotificationSettings /></SettingsAccessGate>} />
               <Route path="mobile-app" element={<SettingsAccessGate moduleKey="settings_mobile"><MobileAppSettings /></SettingsAccessGate>} />
               <Route path="privacy" element={<SettingsAccessGate moduleKey="settings_account"><PrivacySettings /></SettingsAccessGate>} />
+              <Route path="hidden-contacts" element={<SettingsAccessGate moduleKey="contacts" adminOnly><HiddenContactsSettings /></SettingsAccessGate>} />
               <Route path="users-access" element={<SettingsAccessGate moduleKey="settings_users"><UserAccessSettings /></SettingsAccessGate>} />
               <Route path="account" element={<SettingsAccessGate moduleKey="settings_account"><AccountSettings /></SettingsAccessGate>} />
             </Routes>

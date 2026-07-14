@@ -1317,264 +1317,6 @@ body.dark .warningBox {
   background: rgba(245, 158, 11, 0.12);
 }
 
-/* Modal de Contactos Ocultos */
-.modalOverlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: var(--z-index-modal);
-  padding: var(--spacing-xl);
-}
-
-.hiddenContactsModal {
-  background: var(--surface-solid, var(--color-background));
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xl);
-  max-width: 600px;
-  width: 100%;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.modalHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-xl);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.modalHeader h2 {
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
-.modalClose {
-  background: none;
-  border: none;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  padding: var(--spacing-sm);
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.modalClose:hover {
-  background: var(--color-background-hover);
-  color: var(--color-text-primary);
-}
-
-.modalBody {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-xl);
-}
-
-.modalDescription {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  margin: 0 0 var(--spacing-xl) 0;
-  line-height: 1.5;
-}
-
-.addFilterSection {
-  display: flex;
-  align-items: stretch;
-  gap: var(--spacing-md);
-  margin-bottom: var(--spacing-2xl);
-}
-
-.filterInputGroup {
-  flex: 1;
-  display: flex;
-  align-items: stretch;
-  gap: var(--spacing-sm);
-}
-
-.filterInput {
-  flex: 1;
-  height: 40px;
-  padding: 0 var(--spacing-md);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  font-size: var(--font-size-md);
-  color: var(--text);
-  background: var(--surface);
-  transition: all 0.2s;
-}
-
-.filterInput::placeholder {
-  color: var(--text-mute);
-}
-
-.filterInput:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.filterInput:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.filterTypeSelect {
-  height: 40px;
-  padding: 0 var(--spacing-md);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-md);
-  color: var(--color-text-primary);
-  background: var(--color-background);
-  cursor: pointer;
-  transition: all 0.2s;
-  min-width: 150px;
-}
-
-.filterTypeSelect:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: var(--ristak-focus-ring);
-}
-
-.filterTypeSelect:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.filtersSection {
-  margin-top: var(--spacing-xl);
-}
-
-.filtersSectionTitle {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-secondary);
-  margin: 0 0 var(--spacing-md) 0;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.loadingFilters {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-2xl);
-  color: var(--color-text-secondary);
-}
-
-.emptyFilters {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-3xl);
-  text-align: center;
-  color: var(--color-text-tertiary);
-}
-
-.emptyFilters svg {
-  margin-bottom: var(--spacing-md);
-  opacity: 0.5;
-}
-
-.emptyFilters p {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
-  margin: 0 0 var(--spacing-xs) 0;
-}
-
-.emptyFilters span {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
-}
-
-.filterChips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-sm);
-}
-
-.filterChip {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-background-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-  transition: all 0.2s;
-  width: 100%;
-  justify-content: space-between;
-}
-
-.filterChip:hover {
-  background: var(--color-background-hover);
-}
-
-.chipText {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chipBadge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 6px;
-  background: var(--color-background-tertiary);
-  border-radius: var(--radius-sm);
-  font-size: 10px;
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-tertiary);
-  cursor: help;
-}
-
-.chipDeleteButton {
-  background: none;
-  border: none;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.chipDeleteButton:hover {
-  color: var(--color-error);
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.modalFooter {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: var(--spacing-xl);
-  border-top: 1px solid var(--color-border);
-}
-
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -2132,9 +1874,7 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
 .formGroup:has(.radioGroup),
 .formField:has(.radioGroup),
 .formGroup:has(.switchContainer),
-.formField:has(.switchContainer),
-.formGroup:has(.filterChip),
-.formField:has(.filterChip) {
+.formField:has(.switchContainer) {
   grid-column: 1 / -1;
 }
 
@@ -2152,9 +1892,7 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
 
 .formInput,
 .input,
-.dropdownTrigger,
-.filterInput,
-.filterTypeSelect {
+.dropdownTrigger {
   width: 100%;
   min-height: 42px;
   padding: 0 12px;
@@ -2169,9 +1907,7 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
 
 .formInput:focus,
 .input:focus,
-.dropdownTrigger:focus,
-.filterInput:focus,
-.filterTypeSelect:focus {
+.dropdownTrigger:focus {
   border-color: var(--accent);
   box-shadow: var(--ristak-focus-ring);
 }
@@ -2405,7 +2141,6 @@ textarea.input {
 
 .inputButton,
 .copyIconButton,
-.chipDeleteButton,
 .actionButton {
   display: inline-flex;
   align-items: center;
@@ -2425,22 +2160,9 @@ textarea.input {
 
 .inputButton:hover,
 .copyIconButton:hover,
-.chipDeleteButton:hover,
 .actionButton:hover {
   color: var(--color-text-primary);
   background: rgba(148, 163, 184, 0.1);
-}
-
-.filterChip {
-  min-height: 42px;
-  padding: 0 10px 0 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.06);
-}
-
-.chipText {
-  font-size: 13px;
 }
 
 .toggleContainer,

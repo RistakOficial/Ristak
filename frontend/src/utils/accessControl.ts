@@ -420,6 +420,7 @@ export function hasModuleAccess(
 
 export const ROUTE_ACCESS: Array<{ prefix: string; moduleKey: PermissionKey }> = [
   { prefix: '/settings/users-access', moduleKey: 'settings_users' },
+  { prefix: '/settings/hidden-contacts', moduleKey: 'contacts' },
   { prefix: '/settings/account', moduleKey: 'settings_account' },
   { prefix: '/settings/mobile-app', moduleKey: 'settings_mobile' },
   { prefix: '/settings/calendars', moduleKey: 'settings_calendars' },

@@ -11,12 +11,7 @@ export interface HiddenFilter {
 
 export const hiddenContactsService = {
   async getFilters(): Promise<HiddenFilter[]> {
-    try {
-      const data = await apiClient.get<HiddenFilter[]>('/hidden-contacts')
-      return data
-    } catch {
-      return []
-    }
+    return apiClient.get<HiddenFilter[]>('/hidden-contacts')
   },
 
   async addFilter(filterText: string, matchType: MatchType = 'contains'): Promise<HiddenFilter> {

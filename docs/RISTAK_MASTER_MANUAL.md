@@ -261,8 +261,13 @@ Shell desktop protegido:
 Configuracion se organiza en:
 
 - Cuenta: cuenta, usuarios, notificaciones, privacidad, aplicacion movil.
-- Integraciones: HighLevel, Meta, WhatsApp, correos, Inteligencia Artificial,
-  pagos, calendarios.
+- Contactos: contactos ocultos. Esta pagina es independiente de HighLevel y de
+  cualquier otra integracion; solo los administradores pueden agregar o eliminar
+  reglas de ocultamiento.
+- Agenda: calendarios.
+- Cobros: pagos.
+- Plataformas conectadas: HighLevel, Meta, WhatsApp, correos, Inteligencia
+  Artificial.
 - Datos y rastreo: rastreo web, dominios, costos, media.
 - Personalizacion: campos, variables, trigger links, etiquetas.
 - Avanzado: Developers.
@@ -411,6 +416,11 @@ tracking, WhatsApp, Meta, carga manual, API externa o automatizaciones.
 Capacidades:
 
 - CRUD y busqueda.
+- Los administradores gestionan las reglas globales de contactos ocultos desde
+  `Configuracion > Contactos > Contactos ocultos`. Las reglas pueden buscar una
+  coincidencia parcial o exacta sobre nombre, correo, telefono e ID, y se aplican
+  a contactos, chat, reportes, metricas y notificaciones. Esta configuracion no
+  depende de que HighLevel este conectado o siquiera habilitado.
 - Detalle con historial y actividad.
 - Tags y carpetas.
 - Campos personalizados y variables. El catalogo de campos personalizados vive

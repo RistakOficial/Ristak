@@ -2,6 +2,7 @@ import {
   getFirstAllowedAppPath,
   hasLicenseFeature,
   hasModuleAccess,
+  normalizeRole,
   type AccessControlledUser,
   type PermissionKey
 } from '@/utils/accessControl'
@@ -11,6 +12,7 @@ import {
 // rutas declaradas en Settings.tsx.
 export type SettingsNavGroup =
   | 'Cuenta'
+  | 'Contactos'
   | 'Agenda'
   | 'Cobros'
   | 'Plataformas conectadas'
@@ -24,6 +26,7 @@ export interface SettingsNavItem {
   group: SettingsNavGroup
   permissionKey?: PermissionKey
   featureKeys?: readonly string[]
+  adminOnly?: boolean
 }
 
 export const settingsNavigation: SettingsNavItem[] = [
@@ -32,6 +35,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/notifications', label: 'Notificaciones', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/privacy', label: 'Privacidad', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/mobile-app', label: 'Aplicación móvil', group: 'Cuenta', permissionKey: 'settings_mobile' },
+  { to: '/settings/hidden-contacts', label: 'Contactos ocultos', group: 'Contactos', permissionKey: 'contacts', adminOnly: true },
   { to: '/settings/calendars', label: 'Calendarios', group: 'Agenda', permissionKey: 'settings_calendars' },
   { to: '/settings/payments', label: 'Pagos', group: 'Cobros', permissionKey: 'settings_payments' },
   { to: '/settings/highlevel', label: 'HighLevel', group: 'Plataformas conectadas', permissionKey: 'settings_integrations', featureKeys: ['highlevel_integration'] },
@@ -52,6 +56,7 @@ export const settingsNavigation: SettingsNavItem[] = [
 
 export const settingsGroupOrder: SettingsNavGroup[] = [
   'Cuenta',
+  'Contactos',
   'Agenda',
   'Cobros',
   'Plataformas conectadas',
@@ -63,7 +68,8 @@ export const settingsGroupOrder: SettingsNavGroup[] = [
 export const getVisibleSettingsNavigation = (user?: AccessControlledUser | null) =>
   settingsNavigation.filter((item) => (
     (!item.permissionKey || hasModuleAccess(user, item.permissionKey, 'read')) &&
-    (!item.featureKeys || hasLicenseFeature(user, item.featureKeys))
+    (!item.featureKeys || hasLicenseFeature(user, item.featureKeys)) &&
+    (!item.adminOnly || normalizeRole(user?.role) === 'admin')
   ))
 
 export const getFirstAllowedSettingsPath = (user?: AccessControlledUser | null) =>
