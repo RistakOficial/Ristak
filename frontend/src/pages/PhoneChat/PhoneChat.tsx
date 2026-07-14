@@ -14376,6 +14376,7 @@ export const PhoneChat: React.FC = () => {
     address: string
     timeZone: string
     contactId?: string
+    strictAvailabilityCheck?: true
   }) => {
     const isCalendarActionAppointment = Boolean(wideAppointmentDefaults)
     const calendarForAppointment = appointmentSheetCalendar || selectedCalendar

@@ -5,6 +5,7 @@ import { db } from '../src/config/database.js'
 import { buildInputItems } from '../src/agents/runner.js'
 import { buildNativeConversationalInstructions } from '../src/agents/conversational/nativePrompt.js'
 import {
+  buildNativeFreeSlotDays,
   createConversationalTools,
   loadConversationalAppointmentOfferDecisionContext
 } from '../src/agents/conversational/tools.js'
@@ -24,6 +25,8 @@ import {
   runToolCallingV2Turn,
   sanitizeToolCallingV2Reply
 } from '../src/agents/conversational/runner.js'
+import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import { getAccountTimezone } from '../src/utils/dateUtils.js'
 
 function conversationMessages(count) {
   return Array.from({ length: count }, (_, index) => ({
@@ -193,6 +196,14 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
   const offerEventId = `cae_appointment_preview_offer_${previewScopeId}`
   const offerExecutionId = `test:offer_${suffix}`
   const confirmationExecutionId = `test:confirm_${suffix}`
+  const calendarId = `calendar_${suffix}`
+  const timezone = await getAccountTimezone()
+  const pendingStartTime = '2030-07-15T16:00:00.000Z'
+  const pendingLabel = buildNativeFreeSlotDays([{
+    timezone,
+    slots: [pendingStartTime]
+  }], timezone)[0].options[0].localLabel
+  const pendingOfferText = `Tengo disponible ${pendingLabel}${/[.!?]$/u.test(pendingLabel) ? ' ' : '. '}¿Te funciona ese horario?`
   const config = {
     id: agentId,
     runtimeMode: 'tool_calling_v2',
@@ -200,7 +211,7 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
     model: 'gpt-4.1-mini',
     capabilitiesConfig: {
       items: [
-        { id: 'schedule_appointment', enabled: true, calendarId: `calendar_${suffix}`, bookingOwner: 'ai' },
+        { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai' },
         {
           id: 'collect_payment',
           enabled: true,
@@ -215,22 +226,36 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
   }
 
   try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda oferta pendiente runtime',
+      source: 'ristak',
+      openHours: []
+    }, { source: 'ristak', syncStatus: 'synced' })
     await db.run(
       `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
        VALUES (?, ?, ?, 'appointment_slot_preview_offer_created', ?)`,
       [offerEventId, contactId, agentId, JSON.stringify({
         agentId,
         contactId,
-        calendarId: `calendar_${suffix}`,
-        startTime: '2030-07-15T16:00:00.000Z',
-        localLabel: 'lunes 15 de julio de 2030 a las 10:00 a.m.',
-        timezone: 'America/Mexico_City',
+        calendarId,
+        startTime: pendingStartTime,
+        localLabel: pendingLabel,
+        timezone,
+        bookingOwner: 'ai',
+        terminalToolName: 'book_appointment',
         channel: 'whatsapp',
         executionId: offerExecutionId,
-        offerText: 'Tengo disponible lunes 15 de julio de 2030 a las 10:00 a.m. ¿Te funciona ese horario?',
+        offerText: pendingOfferText,
+        purpose: 'book',
+        appointmentId: null,
+        expectedStartTime: null,
+        expectedEndTime: null,
+        durationMs: null,
         status: 'active',
         phase: 'awaiting_decision',
         previewScopeId,
+        offeredAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
       })]
     )
@@ -240,7 +265,7 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
       config,
       runtime: { modelProvider: {} },
       messages: [
-        { id: offerExecutionId, role: 'assistant', content: 'Tengo disponible lunes 15 de julio de 2030 a las 10:00 a.m. ¿Te funciona ese horario?' },
+        { id: offerExecutionId, role: 'assistant', content: pendingOfferText },
         { id: confirmationExecutionId, role: 'user', content: 'ok' }
       ],
       contactId,
@@ -263,12 +288,12 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
           'get_contact_appointments',
           'get_free_slots',
           'offer_appointment_slot',
-          'book_appointment',
-          'reschedule_appointment',
           'cancel_appointment',
           'create_payment_link',
           'send_to_human'
         ]) assert.ok(names.includes(expected), `${expected} debe seguir disponible con una oferta activa`)
+        assert.equal(names.includes('book_appointment'), false, 'la aceptación debe entrar por el resolver único')
+        assert.equal(names.includes('reschedule_appointment'), false, 'la aceptación debe entrar por el resolver único')
         assert.equal(names.includes('get_conversation_history'), false)
         return 'respuesta de prueba'
       },
@@ -289,7 +314,7 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
       appointmentOfferDecision: result.appointmentOfferDecision,
       accountLocale: { currency: 'MXN' },
       conversationMessages: [
-        { id: offerExecutionId, role: 'assistant', content: 'Tengo disponible lunes 15 de julio de 2030 a las 10:00 a.m. ¿Te funciona ese horario?' },
+        { id: offerExecutionId, role: 'assistant', content: pendingOfferText },
         { id: confirmationExecutionId, role: 'user', content: 'cuánto cuesta la consulta?' }
       ],
       actions: []
@@ -312,6 +337,7 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
       .find((item) => item.name === 'resolve_active_appointment_offer')
       .invoke(null, JSON.stringify({
         decision: 'request_other_options',
+        nextPreferenceScope: 'open',
         reply: null,
         title: null,
         notes: null,
@@ -345,6 +371,14 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
     delete restoredOffer.resolvedAt
     delete restoredOffer.resolvedExecutionId
     delete restoredOffer.resolution
+    const restoredProgress = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_selection_progress'`,
+      [contactId, agentId]
+    )).detail_json)
+    restoredOffer.offeredAt = new Date(
+      Math.max(Date.now(), Date.parse(restoredProgress.updatedAt || '') + 1)
+    ).toISOString()
     await db.run(
       'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
       [JSON.stringify(restoredOffer), offerEventId]
@@ -388,6 +422,7 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
     assert.equal(staleAcceptance.ok, false)
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [offerEventId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
   }
 })
 
@@ -400,6 +435,14 @@ test('oferta de reagenda humana pendiente conserva request_human_booking como ú
   const offerEventId = `cae_appointment_preview_offer_${previewScopeId}`
   const offerExecutionId = `test:human_offer_${suffix}`
   const confirmationExecutionId = `test:human_confirm_${suffix}`
+  const calendarId = `calendar_${suffix}`
+  const timezone = await getAccountTimezone()
+  const pendingStartTime = '2030-07-16T19:00:00.000Z'
+  const pendingLabel = buildNativeFreeSlotDays([{
+    timezone,
+    slots: [pendingStartTime]
+  }], timezone)[0].options[0].localLabel
+  const pendingOfferText = `Tengo disponible ${pendingLabel}${/[.!?]$/u.test(pendingLabel) ? ' ' : '. '}¿Te funciona ese horario?`
   const config = {
     id: agentId,
     runtimeMode: 'tool_calling_v2',
@@ -409,26 +452,35 @@ test('oferta de reagenda humana pendiente conserva request_human_booking como ú
       items: [{
         id: 'schedule_appointment',
         enabled: true,
-        calendarId: `calendar_${suffix}`,
+        calendarId,
         bookingOwner: 'human'
       }]
     }
   }
 
   try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda humana pendiente runtime',
+      source: 'ristak',
+      allowReschedule: true,
+      openHours: []
+    }, { source: 'ristak', syncStatus: 'synced' })
     await db.run(
       `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
        VALUES (?, ?, ?, 'appointment_slot_preview_offer_created', ?)`,
       [offerEventId, contactId, agentId, JSON.stringify({
         agentId,
         contactId,
-        calendarId: `calendar_${suffix}`,
-        startTime: '2030-07-16T19:00:00.000Z',
-        localLabel: 'martes 16 de julio de 2030 a la 1:00 p.m.',
-        timezone: 'America/Mexico_City',
+        calendarId,
+        startTime: pendingStartTime,
+        localLabel: pendingLabel,
+        timezone,
+        bookingOwner: 'human',
+        terminalToolName: 'request_human_booking',
         channel: 'whatsapp',
         executionId: offerExecutionId,
-        offerText: 'Tengo disponible martes 16 de julio de 2030 a la 1:00 p.m. ¿Te funciona ese horario?',
+        offerText: pendingOfferText,
         purpose: 'reschedule',
         appointmentId: `appointment_${suffix}`,
         expectedStartTime: '2030-07-15T16:00:00.000Z',
@@ -437,6 +489,7 @@ test('oferta de reagenda humana pendiente conserva request_human_booking como ú
         status: 'active',
         phase: 'awaiting_decision',
         previewScopeId,
+        offeredAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
       })]
     )
@@ -445,7 +498,7 @@ test('oferta de reagenda humana pendiente conserva request_human_booking como ú
       config,
       runtime: { modelProvider: {} },
       messages: [
-        { id: offerExecutionId, role: 'assistant', content: 'Tengo disponible martes 16 de julio de 2030 a la 1:00 p.m. ¿Te funciona ese horario?' },
+        { id: offerExecutionId, role: 'assistant', content: pendingOfferText },
         { id: confirmationExecutionId, role: 'user', content: 'sí, cámbiamela a ese horario' }
       ],
       contactId,
@@ -457,7 +510,8 @@ test('oferta de reagenda humana pendiente conserva request_human_booking como ú
     }, {
       executeAgent: async ({ agent }) => {
         const names = agent.tools.map((item) => item.name)
-        assert.ok(names.includes('request_human_booking'))
+        assert.ok(names.includes('resolve_active_appointment_offer'))
+        assert.equal(names.includes('request_human_booking'), false)
         assert.equal(names.includes('reschedule_appointment'), false)
         assert.match(agent.instructions, /única terminal válida es request_human_booking/i)
         assert.match(agent.instructions, /sin modificar el calendario/i)
@@ -472,6 +526,7 @@ test('oferta de reagenda humana pendiente conserva request_human_booking como ú
     assert.equal(result.appointmentOfferDecision?.terminalToolName, 'request_human_booking')
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [offerEventId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
   }
 })
 

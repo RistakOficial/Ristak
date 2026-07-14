@@ -1820,12 +1820,39 @@ Reglas base:
 - La base guarda instantes en UTC.
 - Fechas de calendario se interpretan en zona del negocio.
 - No dependas del timezone del navegador para datos CRM.
+- `calendars.open_hours` (API `openHours`) es la fuente de verdad del horario
+  semanal. Usa días `0..6` (`0=domingo`) y admite varios rangos no solapados por
+  día. `availability_schedule_configured=1` distingue una agenda explícita vacía
+  (calendario cerrado) de un registro legacy todavía sin configurar; un formato
+  explícito ilegible falla cerrado y nunca inventa disponibilidad.
+- Los calendarios existentes sin horario se migran una sola vez al horario legacy
+  visible de lunes a viernes, 09:00–17:00. Los calendarios nuevos nacen con ese
+  mismo horario explícito para que pueda editarse o apagarse desde el primer uso.
+- En Configuración > Calendarios el wizard mantiene este orden: `Detalles`,
+  `Disponibilidad`, `URL y Datos`, `Cobro`, `Mensajes automáticos`, `Avanzado`,
+  `Eventos` y `Estilos y diseños`. `Disponibilidad` contiene primero el editor
+  semanal y debajo duración, cadencia, reglas y espacios entre citas. `URL y
+  Datos` reúne el enlace público, formulario y acción posterior al agendado.
+- El mismo horario semanal gobierna `free-slots`, URL pública, calendarios
+  embebidos/Sites, agente conversacional y los modales web, Android e iOS cuando
+  usan el modo `Por defecto`. El modo `Personalizado` es el override intencional
+  para capturar una hora manual y no debe heredar esa restricción.
+- Los rangos del horario semanal son horas de pared de la zona del negocio. Una
+  zona elegida por el visitante sólo cambia cómo se muestran los mismos instantes;
+  no desplaza el horario ni se usa para calcular qué espacios existen.
+- Toda reserva pública vuelve a validar, dentro del candado/transacción del
+  calendario, horario semanal, ventana, cupo diario, buffers, bloqueos y choques
+  justo antes del INSERT. Dos solicitudes simultáneas al mismo espacio no pueden
+  terminar en dos citas. Los flujos con cobro aplican esa validación cuando
+  finalmente intentan crear la cita; el pago pendiente no reserva el espacio.
 - Los calendarios espejados desde HighLevel siguen siendo calendarios locales
   utilizables aunque HighLevel se desconecte. Sus URLs publicas, disponibilidad
   y bookings deben resolverse contra la DB de Ristak; las citas nuevas,
   ediciones y eliminaciones quedan en `sync_status` pendiente/error/
   `pending_delete` y se empujan a HighLevel cuando la integracion vuelva a
-  conectarse.
+  conectarse. Mientras una edición local está `pending` o `error`, un refresh
+  entrante de HighLevel no puede pisar su `openHours`; primero se reintenta el
+  cambio local y sólo después el espejo vuelve a quedar `synced`.
 - Si HighLevel ya esta desconectado, un calendario espejado de HighLevel puede
   eliminarse de Ristak como copia local junto con sus citas locales asociadas.
   Mientras HighLevel siga configurado, el borrado local queda bloqueado porque
@@ -3077,22 +3104,84 @@ zona con `data-rstk-native-element="form|calendar|payment|video"` y
 `data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
 a bloques reales del sitio:
 
-El HTML importado es una superficie cerrada, no un editor visual alterno. El
-usuario puede reemplazar el HTML/ZIP completo o pedirle al asistente que devuelva
-el HTML completo modificado; no edita copy, imagenes, botones, campos o secciones
-desde el preview. El codigo se muestra en modo solo lectura y el preview solo
-permite seleccionar slots funcionales de Ristak.
+El HTML importado es una superficie cerrada y code-first, no un editor visual
+alterno. Al crear la pagina, el usuario pega el documento HTML completo o sube
+un archivo HTML/ZIP; Ristak crea automaticamente el sitio y sus paginas, abre el
+editor y detecta los campos, slots multimedia y elementos nativos declarados en
+el codigo. Reemplazar el HTML/ZIP o guardar codigo pegado vuelve a ejecutar la
+deteccion. El usuario tambien puede pedirle al asistente que devuelva el HTML
+completo modificado. El codigo de cada pagina se puede pegar y editar
+directamente; el preview no modifica copy, imagenes, botones, campos o secciones
+por si solo y solo permite seleccionar slots funcionales de Ristak.
 
-El Panel de contenido permanece visible aunque no exista ningun slot. Desde ese
-panel se suben o eligen archivos de Media, se preparan instrucciones para agregar
-un elemento nativo o HTML con IA y se configuran los slots detectados. Los
-archivos conectados usan `public_site_content_assets`: `asset_key` es el alias
-estable que vive en el HTML y `media_asset_id` apunta al archivo fisico actual.
-Para imagen/medio se usa `data-rstk-asset-id="clave"`; para fondos,
-`data-rstk-background-asset-id="clave"`. Reemplazar el archivo actualiza el
-binding sin tocar la clave ni regenerar el HTML. El renderer resuelve la clave
-server-side y la ruta publica estable es
+El Panel de contenido muestra lo que ya declaro el HTML; no existe una accion
+"Agregar al HTML" ni un flujo que obligue a subir multimedia antes de escribir
+el codigo. Un `data-rstk-asset-id` o `data-rstk-background-asset-id` con clave no
+vacia declara inmediatamente un slot asociable, aunque todavia no tenga archivo
+y aparezca como pendiente. Desde esa fila el usuario elige o sube el recurso de
+Media que corresponde. Al asociarlo, `public_site_content_assets` guarda
+`asset_key` como alias estable y `media_asset_id` como archivo fisico actual.
+Reemplazar el archivo actualiza el binding sin tocar la clave ni regenerar el
+HTML. El renderer resuelve la clave server-side y la ruta publica estable es
 `/api/sites/public/content-assets/:siteId/:assetKey`.
+
+Si una zona multimedia, un campo o un slot nativo existe solo en el borrador
+activo, la accion de asociarlo guarda primero el codigo de forma silenciosa y
+continua solo si ese guardado termino bien. El selector no cierra ni anuncia una
+asociacion hasta que backend la confirma. Los guardados automaticos se agrupan
+por clave y pasan por una sola cola por sitio para que cambios rapidos o dos
+zonas simultaneas no creen duplicados ni apliquen respuestas fuera de orden. El
+panel se aisla por `site.id`, por lo que un timer o respuesta de un sitio anterior
+no puede escribir ni repintar el sitio que se abrio despues. Si coincide con el
+guardado global del sitio, ambas rutas comparten la misma compuerta: Guardar o
+Publicar espera la cola nativa que ya este en vuelo, y un slot que llegue despues
+se aplaza hasta que termine el guardado global. Solo ese slot aplazado se
+reintenta. Antes de confirmar Guardar o Publicar tambien se vacian de inmediato
+los autosaves que sigan dentro del debounce de 450 ms y cualquier draft nativo
+pendiente. Dos intenciones globales concurrentes se encolan; una publicacion no
+se descarta porque haya empezado antes un guardado silencioso. Las respuestas de
+preview se validan contra sitio, pagina y request vigente para no pintar una
+pagina anterior despues de cambiar de paso.
+
+El selector de Media carga hasta 250 archivos por pagina y ofrece `Cargar mas`
+sin bloquear la primera vista. Si la busqueda local aun no encuentra una
+coincidencia, conserva la opcion `Buscar en mas archivos`; eliminar un archivo
+recarga la primera pagina para no saltarse elementos por el cambio de offsets.
+
+El contrato canonico para contenido asociable es:
+
+- Imagen: `<img data-rstk-asset-id="imagen-01" data-rstk-label="Imagen principal" alt="">`.
+- Fondo: `<section data-rstk-background-asset-id="fondo-01" data-rstk-label="Fondo principal">`.
+- Audio: `<audio data-rstk-asset-id="audio-01" data-rstk-label="Audio principal" controls></audio>`.
+- PDF, ZIP o cualquier multimedia descargable: `<a data-rstk-asset-id="descarga-01" data-rstk-label="Archivo descargable" download>Descargar</a>`. El selector permite cualquier tipo de Media para este caso.
+
+Los descargables nunca apuntan directamente al CDN: el renderer coloca una URL
+same-origin con `?download=1`, fuerza `Content-Disposition: attachment` y
+transmite el archivo en streaming. En Bunny propaga rangos HTTP para que una
+descarga grande se pueda reanudar sin cargar el archivo completo en memoria. La
+ruta responde `no-store` porque una misma clave puede apuntar a otro archivo
+después de una reasociación. Un video antiguo que solo vive en Bunny Stream debe
+crear su espejo binario de Storage durante la asociación autenticada; la visita
+pública nunca dispara esa preparación ni intenta descargar el HTML del player.
+
+Un `data-rstk-asset-id` solo declara una zona cuando Ristak puede escribirla de
+verdad: `href` en `<a>`; `src` en `<img>`, `<audio>`, `<video>`, `<source>`,
+`<track>`, `<iframe>` o `<input type="image">`; y `poster` en `<video>` cuando
+se declara `data-rstk-asset-target="poster"`. Para fondos se usa exclusivamente
+`data-rstk-background-asset-id`. Poner la clave en un `<div>`, `<picture>` u
+otro tag sin destino compatible no crea una zona fantasma en el panel.
+El `iframe` sin `src` que generaba el editor anterior se conserva únicamente
+cuando tiene una clave estable válida; el sanitizador elimina cualquier otro
+`iframe` vacío o inseguro y el binding legacy completa su `src` al renderizar.
+
+Las claves de `public_site_content_assets` son globales al sitio, no a una sola
+pagina. Repetir `imagen-01` en una o varias paginas reutiliza intencionalmente el
+mismo archivo. Si dos zonas deben poder asociarse por separado, el HTML debe
+usar claves distintas, idealmente con contexto de pagina, por ejemplo
+`landing-imagen-01` y `gracias-imagen-01`.
+Si una clave ya asociada cambia de tipo en el HTML, por ejemplo de imagen a
+audio, el editor la marca para reasociar y el renderer no inyecta el archivo
+incompatible anterior.
 
 Los slots nativos que Ristak renderiza (`form`, `calendar` con
 `data-rstk-native-render="ristak"`, `payment` y `video`) deben ser huecos
@@ -3122,7 +3211,10 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   HTML importado, pero expone `window.ristakCalendarGetSlots(slotId, params)` y
   `window.ristakCalendarBook(slotId, payload)` para mapearlo a un calendario de
   Ristak. `payload.startTime` debe ser ISO UTC y `payload.timezone` la zona
-  horaria usada para la cita; el backend valida disponibilidad antes de crearla.
+  horaria usada para mostrar la cita; el backend calcula con la zona del negocio
+  y valida disponibilidad antes de crearla. Aunque `free-slots` agrupe resultados
+  por día, el bridge devuelve al calendario importado sólo la lista plana del día
+  solicitado; no inventa ni mezcla espacios de otras fechas.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
   de pagos del editor. El `Purchase` sale solo del pago confirmado.
 - `video`: renderiza el bloque de video real de Ristak con la misma subida/URL,
@@ -3169,11 +3261,17 @@ arranca con estado "Mantener oculto", el render importado marca el target con
 parpadeos entre preview y sitio publicado.
 
 En el editor HTML importado, el Panel de contenido ocupa el inspector derecho y
-administra multimedia, formularios, calendarios, pagos y videos con los mismos
-controles del editor visual. No aparecen popovers sobre textos, imagenes,
-botones, campos o secciones. El panel puede preparar una instruccion para que la
-IA agregue un elemento en modo nativo o HTML; pago siempre queda en modo nativo
-porque la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
+administra los slots multimedia, formularios, calendarios, pagos y videos que el
+codigo ya contiene. No aparecen popovers sobre textos, imagenes, botones, campos
+o secciones, ni controles para insertar elementos nuevos en el HTML. Imagenes,
+fondos, audio y descargables se asocian desde su fila detectada. Para un video
+premium y personalizable, el HTML debe reservar
+`<div data-rstk-native-element="video" data-rstk-native-id="video-01" data-rstk-label="Video principal"></div>`;
+usar un `<video>` HTML propio lo deja bajo control del codigo y no sustituye el
+player nativo. El slot nativo conserva la misma fuente/subida, diseno del frame,
+boton de play, colores, controles, acciones por tiempo, formulario de video y
+eventos Meta/CAPI del editor visual. Pago tambien permanece siempre nativo porque
+la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
 guardar, la previsualizacion usa el render del backend de la pagina activa para
 mostrar los elementos nativos ya montados tal como se veran en vivo; las
 respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
@@ -4185,8 +4283,11 @@ nunca un booleano escrito por el modelo.
   negritas y compacta slots consecutivos como ventanas legibles indicando su
   cadencia (`cada hora`, `cada 30 min`, etc.) para no inventar inicios intermedios. La lista es
   informativa: no crea una oferta durable, no aparta ningun horario y un `ok`
-  posterior no identifica cual opcion eligio. El agente debe pedir dia y hora;
-  cuando la persona elige uno, vuelve a consultar esa preferencia exacta.
+  posterior no identifica cual opcion eligio. Dia y hora pueden llegar en
+  mensajes distintos. Cuando la persona elige solamente un dia, el agente
+  reconsulta esa fecha exacta y llama `offer_appointment_options` con
+  `selectionMode=collecting_time`; el servidor muestra solo los horarios de ese
+  dia y pregunta unicamente la hora faltante.
   `weekdays` usa numeracion ISO de lunes 1 a domingo 7,
   `earliestLocalTime`/`latestLocalTime` acotan horas locales y
   `relativeToPreviousOffer` permite negociar "mas tarde" o "mas temprano" sin
@@ -4194,13 +4295,88 @@ nunca un booleano escrito por el modelo.
   mensajes, la lista guarda durante 24 horas una referencia interna minima y
   maxima con instante exacto, fecha, hora y zona originales, ademas de identidad
   de agente, contacto, canal, calendario, proposito y sesion de prueba; no guarda
-  una oferta aceptable ni convierte un `ok` en seleccion. "Mas tarde" y "mas
+  una oferta aceptable ni convierte un `ok` en seleccion.
+
+  La seleccion parcial vive en `appointment_selection_progress` dentro de
+  `conversational_agent_events`. Conserva agente, contacto, canal, calendario,
+  proposito, cita de origen cuando es reagenda, fecha local cuando ya existe,
+  zona del negocio,
+  rangos que realmente se mostraron, estado y vencimiento. Se aisla por agente,
+  contacto, canal y sesion de preview; cada hilo recupera solamente su propio
+  estado. Se invalida si cambia el calendario o la zona, vence el TTL, el dia ya
+  paso o deja de ser valida la cita o el permiso de una reagenda. En la siguiente
+  vuelta el Runner rehidrata el alcance como hecho estructurado. En estado
+  `collecting_time`, si llega solo una hora, la combina con el dia guardado,
+  reconsulta exactamente ese punto y despues crea la oferta individual. Con
+  fecha activa, `get_free_slots` exige
+  `progressDateAction=keep_selected_date` para una hora suelta; solo acepta
+  `replace_selected_date` con un rango de un unico dia cuando la persona cambio
+  explicitamente de fecha. Primero comprueba la disponibilidad base del nuevo
+  dia: si el dia tiene slots pero la hora exacta solicitada no, guarda el dia
+  nuevo como `collecting_time`; si el dia completo esta cerrado o la consulta
+  falla, descarta el dia anterior y guarda `collecting_date` con `missingFields`
+  igual a `date`. Ese segundo estado conserva calendario, proposito y la cita
+  objetivo de una reagenda, pero no conserva ninguna fecha: la siguiente vuelta
+  pide un dia nuevo y una hora suelta no puede volver a pegarse al dia viejo.
+  `request_other_options` con alcance `different_date` o `open` entra por esta
+  misma transicion: no borra el progreso ni pierde el `appointmentId` de una
+  reagenda. Durante un despliegue gradual, una instancia anterior todavia puede
+  alcanzar a crear una oferta sin cerrar este progreso. El lector nuevo reconcilia
+  ambas filas dentro del mismo candado: la oferta solo gana si es posterior y
+  conserva exactamente identidad, canal, calendario, zona, fecha, texto canonico,
+  proposito y forma de alta o reagenda; entonces liga el responsable terminal y
+  marca el progreso como reemplazado. Una oferta distinta, incompleta o mas vieja
+  se cierra por CAS y deja ganar al progreso. Formas desconocidas, estados no
+  reconocidos y versiones futuras del ledger fallan cerrado incluso si aparentan
+  estar terminados o vencidos, para no degradar una operacion futura a una cita
+  nueva ni agendar una hora distinta de la mostrada.
+  Tambien permite explorar varios dias sin convertir una reagenda en cita nueva.
+  La transicion se guarda por CAS y la transicion final a oferta vuelve a
+  comprobar la fecha, por lo que el modelo no puede consultar o confirmar
+  silenciosamente otro dia. Si la persona si cambia el dia, reemplaza la fecha sin
+  arrastrar una hora anterior; una pregunta intermedia no borra la seleccion. En una reagenda,
+  `purpose` y `appointmentId`
+  se derivan del estado durable en servidor aunque el modelo mande `null`; un ID
+  distinto falla cerrado para no convertir una reagenda en cita nueva ni al
+  reves. Antes de rehidratar una reagenda, el backend vuelve a comprobar que la
+  cita siga siendo futura, activa, del contacto y del calendario, y que la agenda
+  todavia permita reagendar; si cualquiera de esos hechos cambia, cierra el
+  progreso por CAS en vez de preguntar la misma fecha indefinidamente. Un fallo
+  transitorio de base no invalida la seleccion: falla cerrado y permite que la
+  siguiente vuelta reintente la lectura. Los rangos guardados permiten razonar sobre
+  referencias como "el ultimo", "ese dia" o "el de las cuatro", pero nunca
+  prueban disponibilidad vigente. Reiniciar o abandonar cierra el estado parcial
+  con `resolve_active_appointment_selection`; sus escrituras usan CAS para que
+  dos ejecuciones no se pisen y el estado expira a las 24 horas. Una fecha que ya
+  quedo en el pasado, un TTL vencido o un cambio de calendario o zona se marca
+  `superseded` por CAS antes de empezar de nuevo: no bloquea el chat y tampoco
+  revive si vuelve la configuracion anterior. Versiones desconocidas del esquema
+  no se sobrescriben ni se degradan durante un despliegue gradual. La referencia de la lista y el
+  progreso se guardan en una sola transaccion; el salto de progreso a oferta
+  individual tambien crea la oferta y cierra la fecha parcial atomicamente. Si
+  una mitad falla, no queda una lista fantasma ni se pierde el dia elegido. El
+  mismo candado por contacto obliga a que una oferta individual y una lista
+  concurrentes tengan una sola autoridad: el turno viejo revierte su escritura,
+  recarga el estado ganador y termina esa vuelta con una respuesta canonica, sin
+  reintentar sobre el mismo fingerprint ni abrir otro loop. El
+  preview usa una fila centinela por sesion para conservar esa misma exclusion
+  mutua en PostgreSQL incluso cuando todavia no existe una oferta o un progreso
+  que pueda bloquearse. El
+  reset y el job de limpieza del tester eliminan tambien el progreso de preview.
+  "Mas tarde" y "mas
   temprano" comparan la hora local que vio la persona: la misma hora de otro dia
   no cuenta como posterior o anterior. El instante sólo desempata dos horas
   repetidas del mismo dia y la misma zona durante un cambio DST. Si despues se
   rechaza una oferta individual, esa referencia mas reciente manda sobre la lista
-  anterior. Una oferta individual vencida deja de ser confirmable, pero conserva
-  durante 24 horas la referencia semantica necesaria para pedir otra hora.
+  anterior. Una oferta individual vencida deja de ser confirmable: el loader la
+  cierra por CAS, recupera el dia como `collecting_time` cuando calendario y zona
+  siguen vigentes y no veta el slot, porque expirar no equivale a que la persona
+  lo rechazara. Si habia varias expiradas, `offeredAt` con precision de
+  milisegundos decide cual fue realmente la mas reciente aunque `created_at` empate;
+  se cierran de la mas vieja a la mas nueva y solo la mas reciente puede restaurar el dia. Ya cerrada, la oferta
+  expirada conserva durante 24 horas su instante como referencia semantica para
+  interpretar "mas tarde" o "mas temprano" sin caer de nuevo en una lista u
+  oferta anterior.
 
   Incluso si el cliente propone dia y hora exactos, el agente debe consultar
   `get_free_slots` y llamar `offer_appointment_slot` con un solo `startTime`.
@@ -4218,6 +4394,50 @@ nunca un booleano escrito por el modelo.
   vigente. `resolve_active_appointment_offer` sólo se usa cuando el mensaje
   realmente decide sobre ella: aceptar, pedir otras opciones, rechazar o entregar
   a una persona cuando handoff esté habilitado.
+  Mientras esa oferta individual esta activa, el modelo no recibe tambien
+  `book_appointment`, `reschedule_appointment` ni `request_human_booking`: la
+  unica puerta de decision es `resolve_active_appointment_offer`. Una aceptacion
+  natural como "si", "va" o "confirmo" entra como `accept`; el resolver recupera
+  la oferta exacta y ejecuta internamente la terminal correcta segun proposito y
+  `bookingOwner`. Esto evita que la confirmacion caiga en una tool incompatible,
+  vuelva a pedir fecha u hora o deje la cita sin crear. Pedir otro horario declara
+  si conserva el mismo dia, cambia de fecha o deja la busqueda abierta; solo el
+  primer caso restaura la fecha parcial y ninguno reutiliza la hora rechazada.
+  Cada oferta nueva queda ligada tambien al calendario, la zona del negocio y el
+  responsable terminal vigentes al mostrarla. El backend revalida esos tres
+  hechos al hidratarla, justo antes de resolverla y otra vez dentro de la terminal
+  antes de sellar o materializar la seleccion. Esa ultima comprobacion vuelve a
+  leer la configuracion durable del agente, sin dejar que el snapshot viejo del
+  turno la tape, exige que el agente siga existiendo y habilitado y compara
+  calendario, `account_timezone`, `bookingOwner` y tool terminal contra la
+  oferta. En el borde de commit usa un fingerprint semantico de las reglas que
+  cambian disponibilidad —duracion, intervalo, buffers, horario abierto, cupos,
+  ventana de reservacion y permisos— y repite la comprobacion dentro de la misma
+  transaccion que crea, reagenda o entrega la solicitud humana. Primero toma el
+  candado del calendario y despues los locks de autoridad para mantener un orden
+  unico en PostgreSQL. `app_config.account_timezone` conserva una fila sentinel
+  con valor `NULL` cuando no hay override: sigue usando HighLevel/default, pero
+  permite bloquear tambien el primer cambio concurrente de zona sin serializar
+  citas distintas entre si. Si la capacidad se
+  apaga o cambia calendario, zona o `bookingOwner`, marca la oferta `superseded`
+  por CAS. Asi un `si` posterior no agenda un UTC cuyo significado local cambio;
+  la cierra sin esperar el TTL y no la revive aunque vuelva la configuracion.
+  Persistir la oferta
+  no basta para volverla autoridad visible: si el fence de entrega demuestra que
+  salieron cero partes por un mensaje nuevo, una medida preventiva, un estado
+  externo o un fallo durable previo al envio, el Runner cierra exactamente la
+  oferta creada por esa ejecucion y restaura el dia sin marcar la hora como
+  rechazada. Antes de un cierre previo al envio comprueba el plan durable de
+  entrega: si ya existe o no puede leerse, conserva la oferta porque otro intento
+  pudo haberla enviado o todavia puede reintentar exactamente ese mismo texto. Si
+  el primer intento al proveedor falla con cero partes, el plan queda `pending` y
+  la oferta tambien se conserva para que el retry no envie un horario que ya no
+  pueda aceptarse. Una entrega `ambiguous` o con alguna parte enviada tampoco se
+  toca para no duplicar mensajes. Como defensa adicional, si un `si` llega pero el historial no
+  puede probar que la oferta exacta fue visible despues del mensaje entrante que
+  creo esa oferta concreta, el resolver no agenda, cierra esa oferta invisible y
+  vuelve a pedir solamente la hora en vez de dejarla en loop. Una oferta vieja con
+  texto identico no sirve como evidencia para una oferta nueva que nunca salio.
   Una duda o respuesta ambigua no llama al resolver ni cambia el evento. No
   existe detector de `ok`, listas de frases, regex, etapa ni tool `keep_open` que
   sustituya el trabajo semantico del modelo. Pedir otras opciones cambia la
@@ -4242,8 +4462,9 @@ nunca un booleano escrito por el modelo.
   del horario. La llamada nativa expresa la decision semantica del modelo; el
   servidor recupera `startTime` desde la unica oferta vigente que guardo el
   propio servidor y construye la evidencia con el mensaje completo mas reciente
-  del cliente y la oferta canonica que ya fue visible en el hilo. Puede haber una
-  aclaración intermedia sin perder la oferta. Después
+  del cliente y la oferta canonica visible despues del inbound `executionId` que
+  la origino. Puede haber una aclaración intermedia despues de esa oferta sin
+  perderla. Después
   sólo comprueba identidad, orden y coincidencia literal contra el hilo; no usa
   regex ni reglas de palabras para adivinar intención. Una oferta ausente,
   vencida, tomada de otro turno, ambigua, ligada a otro slot o perteneciente a
@@ -4376,6 +4597,9 @@ nunca un booleano escrito por el modelo.
   La opcion blindada `allowOverlaps` se aplica igual en consulta, oferta,
   validacion previa al cobro, confirmacion automatica y solicitud humana; apagada
   exige slot libre y encendida permite el empalme sin saltarse horas de atencion.
+  En confirmacion y reagendamiento estrictos, el override de conflictos sólo se
+  acepta desde el contexto interno del agente que leyó esa configuración; una
+  bandera `ignoreAppointmentConflicts` enviada por un cliente no lo autoriza.
   El contacto solicitante de la cita es siempre el contacto canonico del hilo.
   `appointment_participants` conserva snapshots separados para `requester`,
   `primary_attendee` y cualquier cantidad acotada de `guest`; nombre es el unico

@@ -81,6 +81,11 @@ calendarsService.deleteEvent(eventId, accessToken)
 ```
 
 `AppointmentModal` maneja contacto, usuario asignado, título, estado, fechas, ubicación y notas.
+Al crear una cita, el modo `Por defecto` manda una validación estricta para que
+la hora pertenezca al horario semanal y cumpla las reglas del calendario. El modo
+`Personalizado` conserva la captura manual como override explícito. Editar una
+cita mantiene el contrato anterior y no convierte silenciosamente una hora
+existente en una reserva nueva.
 
 Después de crear o editar, la vista aplica únicamente la respuesta confirmada por
 backend y ejecuta un refetch canónico para respetar normalización de fechas,
@@ -194,6 +199,13 @@ En `/settings/calendars`:
 
 - `default_calendar_id`: calendario seleccionado por defecto en `/appointments`.
 - `attribution_calendar_ids`: calendarios que cuentan para atribución/marketing.
+- `openHours`: horario semanal por calendario, con días activables y varios
+  rangos por día. Un arreglo vacío configurado significa calendario cerrado.
+
+El wizard usa ocho pasos: `Detalles`, `Disponibilidad`, `URL y Datos`, `Cobro`,
+`Mensajes automáticos`, `Avanzado`, `Eventos` y `Estilos y diseños`.
+`Disponibilidad` reúne el horario semanal, duración, cadencia, reglas y buffers;
+`URL y Datos` reúne enlace público, formulario y acción final.
 
 Si no hay calendarios de atribución configurados, backend usa todos como fallback.
 

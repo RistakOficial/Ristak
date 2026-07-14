@@ -49,6 +49,35 @@ test('imported HTML code files are listed and saved through the code editor endp
   }
 })
 
+test('removing the last HTML form also clears stale detected fields and mappings', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    updateImportedSiteCodeFiles
+  } = await import('../src/services/sitesService.js')
+
+  let siteId = ''
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'remove-form.html',
+      siteType: 'landing_page',
+      name: `Remove Form ${Date.now()}`,
+      fileBase64: Buffer.from('<!doctype html><html><body><form data-rstk-form="lead_capture"><label for="email">Correo</label><input id="email" name="email" type="email"></form></body></html>', 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    assert.equal(created.import.detectedForms.length, 1)
+    assert.equal(created.import.formMappings.length, 1)
+
+    const updated = await updateImportedSiteCodeFiles(siteId, {
+      files: [{ path: '', content: '<!doctype html><html><body><main><h1>Sin formulario</h1></main></body></html>' }]
+    })
+    assert.deepEqual(updated.import.detectedForms, [])
+    assert.deepEqual(updated.import.formMappings, [])
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('AI HTML draft edit never saves code when the full-page assistant cannot produce a draft', async () => {
   const {
     createImportedSiteFromHtml,
@@ -255,8 +284,9 @@ test('imported HTML preview rewrites Bunny Stream embeds to storage video', asyn
         id, business_id, original_filename, stored_filename, bunny_path,
         public_url, mime_type, media_type, extension,
         size_original, size_processed, quota_size, status,
-        storage_provider, module, module_entity_id, is_public, metadata_json
-      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+        storage_provider, module, module_entity_id, is_public, metadata_json,
+        stream_video_id
+      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?, ?)`,
       [
         assetId,
         `imported/${assetId}.mp4`,
@@ -269,7 +299,8 @@ test('imported HTML preview rewrites Bunny Stream embeds to storage video', asyn
             libraryId: '123456',
             videoId: streamVideoId
           }
-        })
+        }),
+        streamVideoId
       ]
     )
 
@@ -468,8 +499,12 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /Esta prohibido responderle al usuario dentro del HTML/)
   assert.match(instructions, /Aplica cambios en silencio/)
   assert.match(instructions, /El HTML es el resultado final/)
-  assert.match(instructions, /data-rstk-asset-id="CLAVE"/)
-  assert.match(instructions, /data-rstk-background-asset-id="CLAVE"/)
+  assert.match(instructions, /data-rstk-asset-id="inicio-imagen-01"/)
+  assert.match(instructions, /data-rstk-background-asset-id="inicio-fondo-01"/)
+  assert.match(instructions, /data-rstk-asset-id="inicio-audio-01"/)
+  assert.match(instructions, /data-rstk-asset-id="inicio-descarga-01"/)
+  assert.match(instructions, /claves multimedia son globales al sitio/)
+  assert.match(instructions, /primero declara la zona en el HTML/)
   assert.match(instructions, /data-rstk-native-element="video"/)
   assert.match(instructions, /Un video HTML propio queda opaco/)
   assert.doesNotMatch(instructions, /data-rstk-editable="true"/)

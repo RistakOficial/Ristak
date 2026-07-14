@@ -2014,10 +2014,15 @@ function injectHtmlBeforeHeadClose(html = '', injection = '') {
 function sanitizeImportedIframeTag(attrsText = '', report = []) {
   const attrs = parseHtmlAttributes(attrsText)
   const src = safeEmbedUrl(attrs.src || '')
-  if (!src) {
+  const managedAssetKey = cleanSiteContentAssetKey(
+    attrs['data-rstk-asset-id'] || attrs['data-ristak-asset-id'] || attrs['data-ristack-asset-id'] || ''
+  )
+  if (!src && !managedAssetKey) {
     report.push('Se quito 1 iframe inseguro')
     return ''
   }
+
+  if (!src) report.push('Se preservo 1 iframe administrado por una clave de contenido')
 
   const title = limitString(attrs.title || attrs['aria-label'] || 'Código', 120)
   const allow = limitString(attrs.allow || DEFAULT_EMBED_ALLOW, 280) || DEFAULT_EMBED_ALLOW
@@ -2030,7 +2035,7 @@ function sanitizeImportedIframeTag(attrsText = '', report = []) {
     .filter(([key]) => /^data-(rstk|ristak|ristack)-/i.test(key))
     .map(([key, value]) => ` ${key}="${escapeHtml(value)}"`)
     .join('')
-  return `<iframe${id ? ` id="${escapeHtml(id)}"` : ''}${className ? ` class="${escapeHtml(className)}"` : ''}${dataAttrs} src="${escapeHtml(src)}" title="${escapeHtml(title)}"${width ? ` width="${escapeHtml(width)}"` : ''}${height ? ` height="${escapeHtml(height)}"` : ''}${style ? ` style="${escapeHtml(style)}"` : ''} loading="lazy" referrerpolicy="no-referrer-when-downgrade" sandbox="${EMBED_SANDBOX_URL}" allow="${escapeHtml(allow)}" allowfullscreen></iframe>`
+  return `<iframe${id ? ` id="${escapeHtml(id)}"` : ''}${className ? ` class="${escapeHtml(className)}"` : ''}${dataAttrs}${src ? ` src="${escapeHtml(src)}"` : ''} title="${escapeHtml(title)}"${width ? ` width="${escapeHtml(width)}"` : ''}${height ? ` height="${escapeHtml(height)}"` : ''}${style ? ` style="${escapeHtml(style)}"` : ''} loading="lazy" referrerpolicy="no-referrer-when-downgrade" sandbox="${EMBED_SANDBOX_URL}" allow="${escapeHtml(allow)}" allowfullscreen></iframe>`
 }
 
 function replaceImportedWistiaPlayers(html = '', report = []) {
@@ -6701,8 +6706,9 @@ Reglas duras:
 - La página debe ser responsiva, profesional y lista para publicarse.
 - Copy corto: titulares de 4 a 10 palabras cuando sea posible, párrafos breves de 1 a 2 líneas, listas cortas para explicar detalles.
 - Si un texto largo es necesario, ajusta el CSS con font-size menor, max-width razonable, line-height claro y espacios suficientes. No dejes titulares enormes que rompan el layout.
-- Si Ristak entrega un catálogo de contenido, usa exclusivamente sus claves con data-rstk-asset-id o data-rstk-background-asset-id. No pegues la URL física de Storage o Bunny.
-- Solo usa imágenes HTTPS directas cuando el usuario las proporcione expresamente y no exista una clave del Panel de contenido.
+- El contenido es code-first: declara claves semánticas estables con data-rstk-asset-id o data-rstk-background-asset-id aunque todavía no exista el archivo. Ristak detectará esas zonas para que el usuario asocie Media después.
+- Las claves multimedia son globales al sitio: usa una clave distinta por contenido y repítela solo cuando varias zonas deban reutilizar exactamente el mismo archivo. Nunca pegues una URL física de Storage o Bunny en lugar de una clave.
+- Solo usa imágenes HTTPS directas cuando el usuario las proporcione expresamente y no quiera que ese contenido sea reemplazable desde Ristak.
 - No uses formularios que dependan de JavaScript. El submit lo intercepta Ristak.
 - No agregues action externo en formularios.
 - No escondas campos importantes ni uses inputs sin name.
@@ -6717,9 +6723,10 @@ Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
 Contrato de código cerrado y contenido:
 - El HTML es el resultado final. No uses data-rstk-editable, data-rstk-edit-type ni contratos de edición visual por elemento.
 - Para cambiar copy, estructura o diseño devuelve el documento HTML completo, conservando todo lo que el usuario no pidió cambiar.
-- Contenido estable: <img data-rstk-asset-id="CLAVE" alt="..."> para imagen/medio; <section data-rstk-background-asset-id="CLAVE"> para fondo; <a data-rstk-asset-id="CLAVE"> para descarga.
-- Nunca reemplaces una CLAVE por una URL física. Si una clave no existe en el catálogo, pide más información.
-- Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="video-principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
+- Contenido estable code-first: <img data-rstk-asset-id="inicio-imagen-01" data-rstk-label="Imagen principal" alt="..."> para imagen; <section data-rstk-background-asset-id="inicio-fondo-01" data-rstk-label="Fondo principal"> para fondo; <audio data-rstk-asset-id="inicio-audio-01" data-rstk-label="Audio principal" controls></audio> para audio; <a data-rstk-asset-id="inicio-descarga-01" data-rstk-label="PDF informativo" download>Descargar</a> para descargables.
+- Un descargable puede asociar cualquier archivo de Media: imagen, audio, video, PDF o ZIP. No pongas data-rstk-asset-id en div o picture; usa los tags canonicos anteriores para que Ristak pueda escribir la URL real.
+- Nunca reemplaces una clave por una URL física. No esperes un catálogo previo: primero declara la zona en el HTML y Ristak permitirá asociar el archivo después.
+- Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
@@ -10345,6 +10352,129 @@ function normalizeSiteContentAssetKey(value = '') {
   return cleanSiteContentAssetKey(value) || `contenido-${crypto.randomBytes(4).toString('hex')}`
 }
 
+function buildPublicSiteContentAssetPath(siteId = '', assetKey = '', options = {}) {
+  const path = `/api/sites/public/content-assets/${encodeURIComponent(cleanString(siteId))}/${encodeURIComponent(cleanString(assetKey))}`
+  return options.download ? `${path}?download=1` : path
+}
+
+const IMPORTED_CONTENT_ASSET_ATTRS = [
+  'data-rstk-asset-id',
+  'data-ristak-asset-id',
+  'data-ristack-asset-id'
+]
+const IMPORTED_BACKGROUND_ASSET_ATTRS = [
+  'data-rstk-background-asset-id',
+  'data-ristak-background-asset-id',
+  'data-ristack-background-asset-id'
+]
+const IMPORTED_CONTENT_ASSET_KIND_ATTRS = [
+  'data-rstk-asset-kind',
+  'data-ristak-asset-kind',
+  'data-ristack-asset-kind'
+]
+const IMPORTED_CONTENT_ASSET_TARGET_ATTRS = [
+  'data-rstk-asset-target',
+  'data-ristak-asset-target',
+  'data-ristack-asset-target'
+]
+
+function normalizeImportedContentAssetKind(value = '') {
+  const token = cleanString(value).toLowerCase().replace(/[_\s]+/g, '-')
+  if (['image', 'imagen', 'photo', 'foto', 'background', 'fondo', 'background-image'].includes(token)) return 'image'
+  if (['audio', 'sound', 'sonido'].includes(token)) return 'audio'
+  if (['video', 'player', 'reproductor'].includes(token)) return 'video'
+  if (['document', 'documento', 'download', 'descarga', 'file', 'archivo', 'pdf'].includes(token)) return 'document'
+  return ''
+}
+
+function getImportedContentAssetKind(tagName = '', attrs = {}) {
+  const tag = cleanString(tagName).toLowerCase()
+  const target = getImportedContentAssetTarget(tag, attrs)
+  if (target === 'poster') return 'image'
+  if (tag === 'img' || (tag === 'input' && cleanString(attrs.type).toLowerCase() === 'image')) return 'image'
+  if (tag === 'audio') return 'audio'
+  if (tag === 'video' || tag === 'iframe') return 'video'
+  if (tag === 'a') return 'document'
+  if (tag === 'source') {
+    const sourceType = cleanString(attrs.type).toLowerCase()
+    if (sourceType.startsWith('image/')) return 'image'
+    if (sourceType.startsWith('audio/')) return 'audio'
+    if (sourceType.startsWith('video/')) return 'video'
+  }
+  return normalizeImportedContentAssetKind(firstImportedNativeAttr(attrs, IMPORTED_CONTENT_ASSET_KIND_ATTRS)) || 'other'
+}
+
+function getImportedContentAssetTarget(tagName = '', attrs = {}) {
+  const tag = cleanString(tagName).toLowerCase()
+  const explicitTarget = cleanString(firstImportedNativeAttr(attrs, IMPORTED_CONTENT_ASSET_TARGET_ATTRS)).toLowerCase()
+  const srcTags = new Set(['img', 'video', 'audio', 'source', 'track', 'iframe'])
+  if (tag === 'input' && cleanString(attrs.type).toLowerCase() === 'image') srcTags.add('input')
+
+  if (explicitTarget) {
+    if (explicitTarget === 'href' && tag === 'a') return 'href'
+    if (explicitTarget === 'poster' && tag === 'video') return 'poster'
+    if (explicitTarget === 'src' && srcTags.has(tag)) return 'src'
+    return ''
+  }
+  if (tag === 'a') return 'href'
+  return srcTags.has(tag) ? 'src' : ''
+}
+
+function collectImportedContentAssetKinds(html = '', requestedAssetKey = '') {
+  const requestedKey = cleanSiteContentAssetKey(requestedAssetKey)
+  const kinds = new Set()
+  if (!requestedKey) return kinds
+
+  String(html || '').replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (_openingTag, rawTagName, attrsText = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    const backgroundKey = cleanSiteContentAssetKey(firstImportedNativeAttr(attrs, IMPORTED_BACKGROUND_ASSET_ATTRS))
+    const assetKey = cleanSiteContentAssetKey(firstImportedNativeAttr(attrs, IMPORTED_CONTENT_ASSET_ATTRS))
+    if (backgroundKey === requestedKey) kinds.add('image')
+    if (assetKey === requestedKey && getImportedContentAssetTarget(rawTagName, attrs)) {
+      kinds.add(getImportedContentAssetKind(rawTagName, attrs))
+    }
+    return _openingTag
+  })
+  return kinds
+}
+
+async function getDeclaredImportedContentAssetKinds(site, importedSite, assetKey) {
+  const kinds = new Set()
+  const pages = await getImportedSitePagesForAIContext(site, importedSite, { htmlLimit: 0 })
+  const htmlSources = pages.map(page => page.html)
+  if (!htmlSources.length) {
+    htmlSources.push(importedSite?.htmlSanitized || importedSite?.htmlOriginal || '')
+  }
+  const popupHtml = cleanString(site?.theme?.importedPopupHtml || site?.theme?.imported_popup_html)
+  if (popupHtml) htmlSources.push(popupHtml)
+
+  htmlSources.forEach(html => {
+    collectImportedContentAssetKinds(html, assetKey).forEach(kind => kinds.add(kind))
+  })
+  return kinds
+}
+
+function isMediaAssetCompatibleWithImportedContentKind(mediaAsset, kind) {
+  const mediaType = cleanString(mediaAsset?.mediaType).toLowerCase() || 'archivo'
+  return kind === 'other' || kind === 'document' || kind === mediaType
+}
+
+function assertMediaAssetMatchesImportedContentKinds(mediaAsset, assetKey, kinds) {
+  const mediaType = cleanString(mediaAsset?.mediaType).toLowerCase() || 'archivo'
+  const incompatibleKinds = [...kinds].filter(kind => !isMediaAssetCompatibleWithImportedContentKind(mediaAsset, kind))
+  if (!incompatibleKinds.length) return
+
+  const expectedLabels = {
+    image: 'una imagen',
+    audio: 'un audio',
+    video: 'un video'
+  }
+  const expected = [...new Set(incompatibleKinds.map(kind => expectedLabels[kind] || 'otro tipo de archivo'))].join(' o ')
+  const error = new Error(`La zona "${assetKey}" espera ${expected}; el archivo elegido es de tipo ${mediaType}.`)
+  error.status = 400
+  throw error
+}
+
 function mapSiteContentAssetRow(row = {}, mediaAsset = null) {
   const siteId = cleanString(row.site_id)
   const assetKey = cleanString(row.asset_key)
@@ -10355,7 +10485,7 @@ function mapSiteContentAssetRow(row = {}, mediaAsset = null) {
     label: row.label || assetKey,
     kind: row.kind || mediaAsset?.mediaType || 'other',
     mediaAssetId: row.media_asset_id,
-    publicPath: `/api/sites/public/content-assets/${encodeURIComponent(siteId)}/${encodeURIComponent(assetKey)}`,
+    publicPath: buildPublicSiteContentAssetPath(siteId, assetKey),
     mediaAsset,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
@@ -10389,17 +10519,59 @@ export async function saveSiteContentAsset(siteId, input = {}) {
     throw error
   }
 
-  const mediaAsset = await getReadyPublicMediaAsset(input.mediaAssetId || input.media_asset_id)
+  let mediaAsset = await getReadyPublicMediaAsset(input.mediaAssetId || input.media_asset_id)
   const bindingId = cleanString(input.id)
-  const existing = bindingId
+  const explicitKeyInput = cleanString(input.assetKey || input.asset_key)
+  const explicitAssetKey = explicitKeyInput ? cleanSiteContentAssetKey(explicitKeyInput) : ''
+  if (explicitKeyInput && !explicitAssetKey) {
+    const error = new Error('La clave de contenido no es válida.')
+    error.status = 400
+    throw error
+  }
+
+  let existing = bindingId
     ? await db.get('SELECT * FROM public_site_content_assets WHERE id = ? AND site_id = ? LIMIT 1', [bindingId, siteId])
     : null
+  if (bindingId && !existing) {
+    const error = new Error('La asociación de contenido no existe.')
+    error.status = 404
+    throw error
+  }
+  if (existing && explicitAssetKey && cleanSiteContentAssetKey(existing.asset_key) !== explicitAssetKey) {
+    const error = new Error('La clave enviada no corresponde a la asociación que intentas reemplazar.')
+    error.status = 409
+    throw error
+  }
+  if (!existing && explicitAssetKey) {
+    existing = await db.get(
+      'SELECT * FROM public_site_content_assets WHERE site_id = ? AND asset_key = ? LIMIT 1',
+      [siteId, explicitAssetKey]
+    )
+  }
+
   const requestedKey = normalizeSiteContentAssetKey(
-    existing?.asset_key || input.assetKey || input.asset_key || input.label || mediaAsset.originalFilename
+    existing?.asset_key || explicitAssetKey || input.label || mediaAsset.originalFilename
   )
   let assetKey = requestedKey
 
-  if (!existing) {
+  const importedSite = await getImportedSiteBySiteId(siteId)
+  const declaredKinds = await getDeclaredImportedContentAssetKinds(site, importedSite, assetKey)
+  if (explicitAssetKey && !declaredKinds.size) {
+    const error = new Error(`El HTML no declara ninguna zona de contenido con la clave "${assetKey}".`)
+    error.status = 400
+    throw error
+  }
+  if (declaredKinds.size) {
+    assertMediaAssetMatchesImportedContentKinds(mediaAsset, assetKey, declaredKinds)
+  }
+  if (declaredKinds.has('document') && mediaAsset.storageProvider === 'bunny_stream') {
+    mediaAsset = await ensureMediaAssetStoragePreview(mediaAsset.id, {
+      module: mediaAsset.module || 'sites',
+      moduleEntityId: siteId
+    })
+  }
+
+  if (!existing && !explicitAssetKey) {
     let suffix = 2
     while (await db.get('SELECT id FROM public_site_content_assets WHERE site_id = ? AND asset_key = ? LIMIT 1', [siteId, assetKey])) {
       assetKey = `${requestedKey.slice(0, 72)}-${suffix}`
@@ -10419,6 +10591,24 @@ export async function saveSiteContentAsset(siteId, input = {}) {
       existing.id,
       siteId
     ])
+  } else if (explicitAssetKey) {
+    await db.run(`
+      INSERT INTO public_site_content_assets (
+        id, site_id, asset_key, label, kind, media_asset_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(site_id, asset_key) DO UPDATE SET
+        label = excluded.label,
+        kind = excluded.kind,
+        media_asset_id = excluded.media_asset_id,
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+      createRistakId('content_asset'),
+      siteId,
+      assetKey,
+      cleanString(input.label || mediaAsset.originalFilename || assetKey),
+      cleanString(input.kind || mediaAsset.mediaType || 'other'),
+      mediaAsset.id
+    ])
   } else {
     await db.run(`
       INSERT INTO public_site_content_assets (
@@ -10435,7 +10625,15 @@ export async function saveSiteContentAsset(siteId, input = {}) {
   }
 
   const row = await db.get('SELECT * FROM public_site_content_assets WHERE site_id = ? AND asset_key = ? LIMIT 1', [siteId, assetKey])
-  return mapSiteContentAssetRow(row, mediaAsset)
+  if (!row) {
+    const error = new Error('No se pudo confirmar la asociación de contenido.')
+    error.status = 500
+    throw error
+  }
+  const [resolvedMediaAsset] = row.media_asset_id === mediaAsset.id
+    ? [mediaAsset]
+    : await findMediaAssetsByIds([row.media_asset_id])
+  return mapSiteContentAssetRow(row, resolvedMediaAsset || null)
 }
 
 export async function deleteSiteContentAsset(siteId, bindingId) {
@@ -10461,17 +10659,6 @@ export async function getPublicSiteContentAsset(siteId, assetKey) {
   return mapSiteContentAssetRow(row, mediaAsset)
 }
 
-const IMPORTED_CONTENT_ASSET_ATTRS = [
-  'data-rstk-asset-id',
-  'data-ristak-asset-id',
-  'data-ristack-asset-id'
-]
-const IMPORTED_BACKGROUND_ASSET_ATTRS = [
-  'data-rstk-background-asset-id',
-  'data-ristak-background-asset-id',
-  'data-ristack-background-asset-id'
-]
-
 async function resolveImportedContentAssets(html = '', siteId = '') {
   const source = String(html || '')
   const keys = new Set()
@@ -10491,10 +10678,6 @@ async function resolveImportedContentAssets(html = '', siteId = '') {
   const assetsByKey = new Map(rows
     .map((row) => [row.asset_key, assetsById.get(row.media_asset_id) || null])
     .filter(([, asset]) => Boolean(asset)))
-  const urlsByKey = new Map(rows
-    .map((row) => [row.asset_key, assetsById.get(row.media_asset_id)?.publicUrl || ''])
-    .filter(([, url]) => Boolean(url)))
-
   // Content bindings created before direct Stream uploads used <video>. When
   // that binding now points to Bunny's HTML player, upgrade the element itself
   // to an iframe before resolving src; otherwise the browser gets HTML bytes as
@@ -10526,8 +10709,9 @@ async function resolveImportedContentAssets(html = '', siteId = '') {
     const tagName = cleanString(rawTagName).toLowerCase()
     let nextTag = openingTag
 
-    if (backgroundKey && urlsByKey.has(backgroundKey)) {
-      const url = urlsByKey.get(backgroundKey)
+    const backgroundAsset = backgroundKey ? assetsByKey.get(backgroundKey) : null
+    if (backgroundAsset?.publicUrl && isMediaAssetCompatibleWithImportedContentKind(backgroundAsset, 'image')) {
+      const url = backgroundAsset.publicUrl
       const safeBackground = `url("${String(url).replace(/"/g, '%22')}")`
       const currentStyle = cleanString(attrs.style)
       const nextStyle = /background-image\s*:/i.test(currentStyle)
@@ -10536,16 +10720,17 @@ async function resolveImportedContentAssets(html = '', siteId = '') {
       nextTag = setHtmlAttribute(nextTag, attrsText, 'style', nextStyle)
     }
 
-    if (!assetKey || !urlsByKey.has(assetKey)) return nextTag
-    const url = urlsByKey.get(assetKey)
-    const explicitTarget = cleanString(attrs['data-rstk-asset-target']).toLowerCase()
-    const inferredTarget = tagName === 'a'
-      ? 'href'
-      : ['img', 'video', 'audio', 'source', 'track', 'input', 'iframe'].includes(tagName)
-        ? 'src'
-        : ''
-    const target = ['src', 'href', 'poster'].includes(explicitTarget) ? explicitTarget : inferredTarget
-    return target ? setHtmlAttribute(nextTag, attrsText, target, url) : nextTag
+    const asset = assetKey ? assetsByKey.get(assetKey) : null
+    const target = getImportedContentAssetTarget(tagName, attrs)
+    const kind = getImportedContentAssetKind(tagName, attrs)
+    if (!asset?.publicUrl || !target || !isMediaAssetCompatibleWithImportedContentKind(asset, kind)) return nextTag
+    if (target === 'href') {
+      const downloadUrl = buildPublicSiteContentAssetPath(siteId, assetKey, { download: true })
+      let downloadTag = setHtmlAttribute(nextTag, attrsText, 'href', downloadUrl)
+      downloadTag = removeHtmlAttribute(downloadTag, 'download')
+      return setHtmlAttribute(downloadTag, attrsText, 'download', asset.originalFilename || assetKey || 'archivo')
+    }
+    return setHtmlAttribute(nextTag, attrsText, target, asset.publicUrl)
   })
 }
 
@@ -11219,7 +11404,7 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
   `, [
     storedMainHtml,
     storedMainHtml,
-    jsonString(detectedForms.length ? detectedForms : currentImport.detectedForms),
+    jsonString(detectedForms),
     jsonString(nextMappings),
     jsonString(Array.from(new Set([
       ...(Array.isArray(currentImport.securityReport) ? currentImport.securityReport : []),
@@ -24030,8 +24215,42 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       }
       return data;
     };
-    const slotStartValue = (slot) => String(slot && (slot.startTime || slot.start_time || slot.start || slot.iso || slot.value) || '');
-    const slotLabel = (slot) => String(slot && (slot.label || slot.display || slot.localTime || slot.local_time || slotStartValue(slot)) || 'Horario');
+    const slotStartValue = (slot) => typeof slot === 'string'
+      ? slot
+      : String(slot && (slot.startTime || slot.start_time || slot.start || slot.iso || slot.value) || '');
+    const slotLabel = (slot) => typeof slot === 'string'
+      ? slot
+      : String(slot && (slot.label || slot.display || slot.localTime || slot.local_time || slotStartValue(slot)) || 'Horario');
+    const slotDateInTimezone = (slot, timezone) => {
+      const startValue = slotStartValue(slot);
+      const instant = new Date(startValue);
+      if (!startValue || Number.isNaN(instant.getTime())) return '';
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          ...(timezone ? { timeZone: timezone } : {}),
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).formatToParts(instant);
+        const values = {};
+        parts.forEach(part => {
+          if (part.type !== 'literal') values[part.type] = part.value;
+        });
+        return values.year && values.month && values.day
+          ? values.year + '-' + values.month + '-' + values.day
+          : '';
+      } catch {
+        return '';
+      }
+    };
+    const slotsForSelectedDate = (slots, selectedDate, timezone) => {
+      const list = Array.isArray(slots) ? slots : [];
+      const hasDayGroups = list.some(day => day && typeof day === 'object' && Array.isArray(day.slots));
+      if (!hasDayGroups) return list;
+      return list
+        .flatMap(day => Array.isArray(day && day.slots) ? day.slots : [])
+        .filter(slot => slotDateInTimezone(slot, timezone) === selectedDate);
+    };
     const wireDeclarativeCalendar = (root) => {
       if (!root || root.dataset.rstkCalendarWired === 'true') return;
       const slotId = root.getAttribute('data-rstk-native-slot-id') || '';
@@ -24061,9 +24280,9 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
             endDate: String(endDateInput && endDateInput.value || startDate),
             timezone: config.timezone || ''
           });
-          const list = Array.isArray(slots) ? slots : [];
+          const list = slotsForSelectedDate(slots, startDate, config.timezone || '')
+            .filter(slot => slotStartValue(slot));
           slotsField.innerHTML = '<option value="">Selecciona un horario</option>' + list
-            .filter(slot => slotStartValue(slot))
             .map(slot => '<option value="' + slotStartValue(slot).replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">' + slotLabel(slot).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</option>')
             .join('');
           setMessage(list.length ? '' : 'No hay horarios disponibles para esa fecha.', list.length ? '' : 'empty');

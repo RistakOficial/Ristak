@@ -9,7 +9,8 @@ import {
   buildNativeFreeSlotDays,
   createConversationalTools,
   filterNativeFreeSlotDays,
-  loadConversationalAppointmentOfferDecisionContext
+  loadConversationalAppointmentOfferDecisionContext,
+  loadConversationalAppointmentSelectionProgressContext
 } from '../src/agents/conversational/tools.js'
 import { buildCanonicalAppointmentSlotOption } from '../src/agents/conversational/actionEvidence.js'
 import {
@@ -74,6 +75,8 @@ test('una oferta activa bloquea listas y slots nuevos; request_other_options exi
   const localDate = targetDay.toISODate()
   const rejectedStartTime = localSlot(localDate, '09:00', timezone)
   const canonical = buildCanonicalAppointmentSlotOption(rejectedStartTime, timezone)
+  const canonicalSeparator = /[.!?]$/u.test(canonical.localLabel) ? ' ' : '. '
+  const canonicalOfferText = `Tengo disponible ${canonical.localLabel}${canonicalSeparator}¿Te funciona ese horario?`
   const previewScopeId = `appointment_preview_${createHash('sha256').update(suffix).digest('hex').slice(0, 48)}`
   const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
   const config = {
@@ -120,7 +123,7 @@ test('una oferta activa bloquea listas y slots nuevos; request_other_options exi
         localLabel: canonical.localLabel,
         timezone,
         executionId: `preview-offer-${suffix}`,
-        offerText: `Tengo disponible ${canonical.localLabel}. ¿Te funciona ese horario?`,
+        offerText: canonicalOfferText,
         purpose: 'book',
         appointmentId: null,
         status: 'active',
@@ -166,6 +169,7 @@ test('una oferta activa bloquea listas y slots nuevos; request_other_options exi
       .find((item) => item.name === 'resolve_active_appointment_offer')
       .invoke(null, JSON.stringify({
         decision: 'request_other_options',
+        nextPreferenceScope: 'same_date',
         reply: null,
         title: null,
         notes: null,
@@ -210,6 +214,11 @@ test('una oferta activa bloquea listas y slots nuevos; request_other_options exi
       accountLocale: { currency: 'MXN' },
       config
     }
+    freshCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: freshCtx,
+      config
+    })
+    assert.equal(freshCtx.appointmentSelectionProgress?.selectedDate, localDate)
     const availability = await toolNamed(freshCtx, 'get_free_slots').invoke(null, JSON.stringify({
       startDate: localDate,
       endDate: localDate,
@@ -245,7 +254,7 @@ test('una oferta activa bloquea listas y slots nuevos; request_other_options exi
       startTime: validStartTime,
       appointmentId: `appointment-wrong-${suffix}`
     }))
-    assert.equal(wrongAppointment.code, 'appointment_slot_not_in_current_availability')
+    assert.equal(wrongAppointment.code, 'appointment_progress_scope_mismatch')
 
     const validOffer = await toolNamed(freshCtx, 'offer_appointment_slot').invoke(null, JSON.stringify({
       startTime: validStartTime,

@@ -176,6 +176,7 @@ import {
   retainNativeLocalOutboxMessages,
 } from './conversationReliability';
 import {
+  getAppointmentAvailabilityRequestFields,
   isCurrentCalendarSlotSelection,
   type CalendarSlotSelection,
 } from './calendarState';
@@ -9104,7 +9105,10 @@ function CalendarSection({
     return null;
   }, [api, businessTimezone, calendars, selectedCalendar]);
 
-  const saveAppointmentDraft = useCallback(async (draft: AppointmentDraft) => {
+  const saveAppointmentDraft = useCallback(async (
+    draft: AppointmentDraft,
+    scheduleMode: AppointmentScheduleMode,
+  ) => {
     if (appointmentBusy || appointmentSaveLockRef.current) return;
     if (!calendarContextUsable) {
       Alert.alert('Zona horaria no disponible', 'Vuelve a cargar el calendario antes de guardar esta cita.');
@@ -9159,6 +9163,10 @@ function CalendarSection({
         notes: buildAppointmentNotesWithGuests(draft.notes, draft.guests),
         address: draft.address.trim(),
         timeZone: businessTimezone,
+        ...getAppointmentAvailabilityRequestFields({
+          formMode: appointmentMode,
+          scheduleMode,
+        }),
       };
       if (appointmentMode === 'create') {
         payload.calendarId = calendarId;
@@ -10351,7 +10359,7 @@ function AppointmentFormSheet({
   timezone: string;
   onChange: (draft: AppointmentDraft | null) => void;
   onClose: () => void;
-  onSave: (draft: AppointmentDraft) => void;
+  onSave: (draft: AppointmentDraft, scheduleMode: AppointmentScheduleMode) => void;
 }) {
   const { height: viewportHeight } = useWindowDimensions();
   const [scheduleMode, setScheduleMode] = useState<AppointmentScheduleMode>('default');
@@ -10672,7 +10680,7 @@ function AppointmentFormSheet({
         return;
       }
     }
-    onSave(draft);
+    onSave(draft, scheduleMode);
   }, [activeDraftCalendarKey, draft, freeSlots, mode, onSave, scheduleMode, selectedSlot]);
 
   const applyDatePart = useCallback((updates: Partial<typeof selectedDateParts>) => {
@@ -23676,6 +23684,12 @@ function NativeConversationScreen({
         endTime,
         notes: appointmentDraft.notes.trim(),
         appointmentStatus: 'confirmed',
+        // Este formulario siempre es captura manual; no debe fingir que el
+        // usuario eligió un espacio publicado por el calendario.
+        ...getAppointmentAvailabilityRequestFields({
+          formMode: 'create',
+          scheduleMode: 'custom',
+        }),
       };
       const signature = JSON.stringify(payload);
       const intent = quickAppointmentIntentRef.current?.signature === signature

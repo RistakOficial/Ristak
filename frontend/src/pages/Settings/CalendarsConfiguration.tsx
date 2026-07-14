@@ -21,7 +21,14 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   MetaParameterValueInput,
-  type MetaParameterVariable
+  type MetaParameterVariable,
+  WeeklyAvailabilityEditor,
+  calendarDurationToMinutes,
+  createDefaultWeeklyAvailability,
+  openHoursToWeeklyAvailability,
+  summarizeWeeklyAvailability,
+  validateWeeklyAvailability,
+  weeklyAvailabilityToOpenHours
 } from '@/components/common'
 import {
   ArrowLeft,
@@ -113,7 +120,7 @@ import pageStyles from './CalendarsConfiguration.module.css'
 
 type CalendarSettingsView = 'calendars' | 'google'
 type CalendarSourcePreference = 'combined' | 'ristak' | 'ghl' | 'google'
-type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'payment' | 'reminders' | 'advanced' | 'events' | 'design'
+type CalendarWizardStepId = 'basics' | 'availability' | 'publicUrl' | 'payment' | 'reminders' | 'advanced' | 'events' | 'design'
 type CalendarPreviewStep = 'date' | 'time' | 'details'
 
 const parseCalendarSettingsRoute = (pathname: string) => {
@@ -297,16 +304,25 @@ const CALENDAR_WIZARD_STEPS: Array<{
   description: string
 }> = [
   { id: 'basics', label: 'Detalles', description: 'Nombre, cita y estado.' },
-  { id: 'publicUrl', label: 'URL pública', description: 'Link para compartir.' },
-  { id: 'availability', label: 'Disponibilidad', description: 'Duración y espacios.' },
-  { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
-  { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
+  { id: 'availability', label: 'Disponibilidad', description: 'Horarios, duración y reglas.' },
+  { id: 'publicUrl', label: 'URL y Datos', description: 'Enlace, preguntas y cierre.' },
   { id: 'payment', label: 'Cobro', description: 'Pasarela y monto.' },
   { id: 'reminders', label: 'Mensajes automáticos', description: 'Recordatorios y avisos.' },
   { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' },
   { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' },
   { id: 'design', label: 'Estilos y diseños', description: 'Vista, colores y tipografía.' }
 ]
+
+const createDefaultCalendarOpenHours = () => (
+  weeklyAvailabilityToOpenHours(createDefaultWeeklyAvailability())
+)
+
+const normalizeCalendarAvailabilityForEditing = (calendar: CalendarType): CalendarType => ({
+  ...calendar,
+  openHours: weeklyAvailabilityToOpenHours(openHoursToWeeklyAvailability(calendar.openHours, {
+    fallbackToDefault: calendar.availabilityScheduleConfigured !== true
+  }))
+})
 const CALENDAR_TEMPLATE_EXTRA_CATEGORIES = [
   { id: 'calendar', label: 'Calendario' }
 ]
@@ -803,11 +819,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const hasCalendarCustomFormsAccess = hasLicenseFeature(user, ['forms']) && hasLicenseFeature(user, ['sites'])
   const visibleCalendarWizardSteps = useMemo(
     () => CALENDAR_WIZARD_STEPS
-      .filter(step => hasCalendarPaymentAccess || step.id !== 'payment')
-      .map(step => (!hasCalendarCustomFormsAccess && step.id === 'form'
-        ? { ...step, label: 'Datos', description: 'Campos básicos y cierre.' }
-        : step)),
-    [hasCalendarCustomFormsAccess, hasCalendarPaymentAccess]
+      .filter(step => hasCalendarPaymentAccess || step.id !== 'payment'),
+    [hasCalendarPaymentAccess]
   )
 
   // El origen de calendarios solo tiene sentido con integraciones externas.
@@ -857,6 +870,8 @@ export const CalendarsConfiguration: React.FC = () => {
     allowBookingAfterUnit: 'hours',
     allowBookingFor: 30,
     allowBookingForUnit: 'days',
+    openHours: createDefaultCalendarOpenHours(),
+    availabilityScheduleConfigured: true,
     bookingForm: createDefaultCalendarBookingForm(),
     bookingCompletion: createDefaultCalendarBookingCompletion(),
     bookingPayment: createDefaultCalendarBookingPayment(),
@@ -1001,7 +1016,7 @@ export const CalendarsConfiguration: React.FC = () => {
       const calendar = calendars.find(item => item.id === routeState.calendarId)
       if (calendar) {
         setSelectedCalendar({
-          ...calendar,
+          ...normalizeCalendarAvailabilityForEditing(calendar),
           bookingForm: normalizeCalendarBookingForm(calendar.bookingForm, { allowCustomForm: hasCalendarCustomFormsAccess }),
           bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
           bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
@@ -1615,7 +1630,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const handleOpenCalendarEditor = (calendar: CalendarType) => {
     const bookingDisplay = normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor)
     setSelectedCalendar({
-      ...calendar,
+      ...normalizeCalendarAvailabilityForEditing(calendar),
       bookingForm: normalizeCalendarBookingForm(calendar.bookingForm, { allowCustomForm: hasCalendarCustomFormsAccess }),
       bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
       bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
@@ -1647,6 +1662,24 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const handleSaveCalendarConfig = async () => {
     if (!selectedCalendar) return
+
+    const weeklyAvailability = openHoursToWeeklyAvailability(selectedCalendar.openHours, {
+      fallbackToDefault: selectedCalendar.availabilityScheduleConfigured !== true
+    })
+    const availabilityValidation = validateWeeklyAvailability(
+      weeklyAvailability,
+      calendarDurationToMinutes(selectedCalendar.slotDuration, selectedCalendar.slotDurationUnit)
+    )
+
+    if (!availabilityValidation.valid) {
+      setCalendarWizardStep('availability')
+      showToast(
+        'error',
+        'Revisa tus horarios disponibles',
+        availabilityValidation.issues[0]?.message || 'Hay un horario que no se puede guardar.'
+      )
+      return
+    }
 
     setSavingConfig(true)
     setSavingGoogleSyncCalendarId(selectedCalendar.id)
@@ -1727,6 +1760,8 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingAfterUnit: selectedCalendar.allowBookingAfterUnit || 'hours',
         allowBookingFor: selectedCalendar.allowBookingFor || 30,
         allowBookingForUnit: selectedCalendar.allowBookingForUnit || 'days',
+        openHours: weeklyAvailabilityToOpenHours(weeklyAvailability),
+        availabilityScheduleConfigured: true,
         appoinmentPerSlot: selectedCalendar.appoinmentPerSlot,
         appoinmentPerDay: selectedCalendar.appoinmentPerDay,
         autoConfirm: selectedCalendar.autoConfirm !== false,
@@ -1821,6 +1856,8 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingAfterUnit: 'hours',
         allowBookingFor: 30,
         allowBookingForUnit: 'days',
+        openHours: createDefaultCalendarOpenHours(),
+        availabilityScheduleConfigured: true,
         bookingForm: createDefaultCalendarBookingForm(),
         bookingCompletion: createDefaultCalendarBookingCompletion(),
         bookingPayment: createDefaultCalendarBookingPayment(),
@@ -2300,6 +2337,13 @@ export const CalendarsConfiguration: React.FC = () => {
       ? normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
       : createDefaultCalendarBookingPayment()
     const bookingDisplayConfig = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
+    const weeklyAvailability = openHoursToWeeklyAvailability(selectedCalendar.openHours, {
+      fallbackToDefault: selectedCalendar.availabilityScheduleConfigured !== true
+    })
+    const appointmentDurationMinutes = calendarDurationToMinutes(
+      selectedCalendar.slotDuration,
+      selectedCalendar.slotDurationUnit
+    )
     const customEventsConfig = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
     const customEventsHasParameters = hasCalendarCustomEventParameters(customEventsConfig.parameters)
     const selectedCalendarAttributed = attributionCalendarIds.includes(selectedCalendar.id)
@@ -3013,6 +3057,25 @@ export const CalendarsConfiguration: React.FC = () => {
                 <>
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
+              <strong>Horarios disponibles</strong>
+              <span>Elige los días y rangos que podrán ofrecer el calendario, los enlaces públicos y el agente.</span>
+            </div>
+            <WeeklyAvailabilityEditor
+              value={weeklyAvailability}
+              minimumRangeMinutes={appointmentDurationMinutes}
+              onChange={(nextAvailability) => updateSelectedCalendar({
+                openHours: weeklyAvailabilityToOpenHours(nextAvailability),
+                availabilityScheduleConfigured: true
+              })}
+              aria-label={`Horarios disponibles de ${selectedCalendar.name}`}
+            />
+            <small>
+              Zona del negocio: {accountTimezone || DEFAULT_TIMEZONE}. Puedes agregar varios bloques al mismo día.
+            </small>
+          </section>
+
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
               <strong>Tiempos de cita</strong>
               <span>Cuánto dura cada cita y cada cuánto se muestran horarios.</span>
             </div>
@@ -3057,26 +3120,12 @@ export const CalendarsConfiguration: React.FC = () => {
                 </div>
               </label>
 
-              <label className={pageStyles.editorField}>
-                <span>Qué horarios usar</span>
-                <CustomSelect
-                  value={selectedCalendar.availabilityType !== undefined ? String(selectedCalendar.availabilityType) : ''}
-                  onValueChange={(value) => updateSelectedCalendar({
-                    availabilityType: value === '' ? undefined : parseInt(value, 10)
-                  })}
-                  options={[
-                    { value: '', label: 'Horarios abiertos y horarios especiales' },
-                    { value: '0', label: 'Solo horarios abiertos' },
-                    { value: '1', label: 'Solo horarios especiales' }
-                  ]}
-                />
-              </label>
             </div>
           </section>
                 </>
               )}
 
-              {currentStep.id === 'rules' && (
+              {currentStep.id === 'availability' && (
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
               <strong>Reglas para agendar</strong>
@@ -3149,7 +3198,7 @@ export const CalendarsConfiguration: React.FC = () => {
           </section>
               )}
 
-              {currentStep.id === 'form' && (
+              {currentStep.id === 'publicUrl' && (
                 <>
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
@@ -4075,6 +4124,9 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarRow = (calendar: CalendarType) => {
     const isAttributed = attributionCalendarIds.includes(calendar.id)
     const isDefault = defaultCalendarId === calendar.id
+    const availabilitySummary = summarizeWeeklyAvailability(openHoursToWeeklyAvailability(calendar.openHours, {
+      fallbackToDefault: calendar.availabilityScheduleConfigured !== true
+    }))
     const handleRowClick = (event: React.MouseEvent<HTMLElement>) => {
       const target = event.target as HTMLElement
       if (target.closest('button, a, input, select, textarea, [role="menuitem"]')) return
@@ -4105,6 +4157,7 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
 
               <div className={pageStyles.calendarMeta}>
+                <span>{availabilitySummary}</span>
                 <span>{calendar.slotDuration} {calendar.slotDurationUnit}</span>
                 <span>Cada {calendar.slotInterval} {calendar.slotIntervalUnit}</span>
                 {calendar.googleCalendarId && (

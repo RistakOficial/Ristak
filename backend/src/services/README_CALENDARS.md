@@ -66,6 +66,46 @@ numero nacional; no debe aparecer `+52`, `52`, `+1` ni otro prefijo dentro del
 campo de numero. No vuelvas a renderizar telefono como un `type="tel"` simple
 sin selector de pais.
 
+## Disponibilidad Semanal
+
+`calendars.open_hours` es la fuente de verdad del horario semanal. La API lo
+expone como `openHours` en una forma canónica por día:
+
+```json
+[
+  {
+    "daysOfTheWeek": [1],
+    "hours": [
+      { "openHour": 9, "openMinute": 0, "closeHour": 12, "closeMinute": 0 },
+      { "openHour": 13, "openMinute": 0, "closeHour": 17, "closeMinute": 0 }
+    ]
+  }
+]
+```
+
+Reglas del contrato:
+
+- Los días son `0..6`, donde `0=domingo`; `7` sólo se acepta como alias ISO de
+  domingo al normalizar entradas históricas.
+- Un día puede contener varios rangos, siempre dentro del mismo día, ordenados y
+  sin solaparse. Las escrituras inválidas responden `400` con
+  `invalid_calendar_open_hours`.
+- Las escrituras nuevas usan horas `0..23`; el último cierre seleccionable es
+  `23:59`. Esto mantiene el mismo contrato en Ristak y calendarios conectados.
+- `availabilityScheduleConfigured=true` con `openHours: []` significa que el
+  calendario está cerrado. Un horario explícito ilegible también falla cerrado.
+- El fallback lunes a viernes 09:00–17:00 existe sólo para registros legacy sin
+  la marca de configuración. La migración 049 materializa ese horario y los
+  calendarios nuevos también lo guardan de forma explícita.
+- Las horas se interpretan en `account_timezone`; el `timezone` del visitante
+  sólo sirve para presentar los instantes ya calculados.
+- URL pública, Sites, agente conversacional y creación admin/móvil en modo
+  `Por defecto` consumen esta misma disponibilidad. El modo `Personalizado`
+  conserva su override manual.
+- La creación pública realiza la comprobación final dentro de la transacción y
+  el candado del calendario. Además del horario aplica ventana de reserva,
+  límites diarios/por espacio, buffers, bloqueos y citas existentes.
+
 ## Funciones Del Servicio
 
 ### `getCalendars(locationId, accessToken)`
@@ -84,9 +124,11 @@ Lista eventos/citas por rango en timestamp ms. `calendarId` es opcional.
 
 Obtiene detalle de una cita remota de HighLevel. Para citas propias de Ristak, el controlador puede responder desde la base local.
 
-### `getFreeSlots(calendarId, startDate, endDate, accessToken, timezone = 'America/Mexico_City')`
+### `getFreeSlots(calendarId, startDate, endDate, accessToken, timezone)`
 
-Obtiene slots disponibles.
+Obtiene slots disponibles. Para calendarios locales, las fechas se interpretan
+con `account_timezone`; la zona pedida por una superficie pública sólo cambia la
+representación de salida.
 
 ### `getBlockedSlots(locationId, startTime, endTime, accessToken, calendarId = null, calendar = null)`
 
@@ -198,7 +240,7 @@ Operaciones soportadas:
 - `noshow`: marca `appointmentStatus = noshow`.
 - `delete`: elimina el evento con `DELETE /calendars/events/:eventId`.
 
-La herramienta resuelve contacto por DB/GHL, usa `default_calendar_id` cuando no se proporciona calendario, calcula `endTime` con la duracion del calendario si falta, guarda espejo local en `appointments`, dispara los eventos de Automatizaciones `appointment-booked` y `appointment-status` al crear, y conserva el evento WhatsApp de cita agendada.
+La herramienta resuelve contacto por DB/GHL, usa `default_calendar_id` cuando no se proporciona calendario, calcula `endTime` con la duracion del calendario si falta, consulta y vuelve a validar `openHours` y las reglas del calendario en la zona del negocio, guarda espejo local en `appointments`, dispara los eventos de Automatizaciones `appointment-booked` y `appointment-status` al crear, y conserva el evento WhatsApp de cita agendada.
 
 ## Referencias
 

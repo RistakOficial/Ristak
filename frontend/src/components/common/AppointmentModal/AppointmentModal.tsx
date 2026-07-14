@@ -10,6 +10,7 @@ import { PhoneDateTimeField } from '@/components/phone/ui/PhoneDateTimeField';
 import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
 import { PhoneSegmentedTabs, PhoneSheet } from '@/components/phone/ui';
+import { calendarDurationToMinutes } from '../WeeklyAvailabilityEditor';
 import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot, RawBlockedSlot } from '@/services/calendarsService';
 import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
@@ -133,6 +134,39 @@ const getContactDelivery = (contact: Partial<Contact>) => (
 const isHighLevelCalendar = (calendar?: Calendar | null) => (
   calendar?.source === 'ghl' || Boolean(calendar?.ghlCalendarId)
 );
+
+/**
+ * El endpoint puede conservar grupos de días cerrados con `slots: []` para
+ * describir el rango completo consultado. Esos grupos no son fechas elegibles:
+ * el modal solo debe enseñar días que realmente tengan al menos un horario.
+ *
+ * También unificamos fechas repetidas para no pintar la misma opción dos veces
+ * cuando un proveedor responde el rango en más de un bloque.
+ */
+export const normalizeAvailableSlotGroups = (groups: FreeSlot[]): FreeSlot[] => {
+  if (!Array.isArray(groups)) return [];
+
+  const slotsByDate = new Map<string, string[]>();
+
+  for (const group of groups) {
+    const date = typeof group?.date === 'string' ? group.date.trim() : '';
+    const normalizedSlots = Array.isArray(group?.slots)
+      ? group.slots
+          .filter((slot): slot is string => typeof slot === 'string' && Boolean(slot.trim()))
+          .map((slot) => slot.trim())
+      : [];
+
+    if (!date || normalizedSlots.length === 0) continue;
+
+    const current = slotsByDate.get(date) || [];
+    for (const slot of normalizedSlots) {
+      if (!current.includes(slot)) current.push(slot);
+    }
+    slotsByDate.set(date, current);
+  }
+
+  return Array.from(slotsByDate, ([date, slots]) => ({ date, slots }));
+};
 
 /**
  * Formatea slot completo con duración
@@ -389,10 +423,23 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         slotsTimezone
       );
 
-      setFreeSlots(slots);
+      const availableSlotGroups = normalizeAvailableSlotGroups(slots);
+      setFreeSlots(availableSlotGroups);
+      setSelectedDate((currentDate) => (
+        availableSlotGroups.some((group) => group.date === currentDate)
+          ? currentDate
+          : ''
+      ));
+      setSelectedSlot((currentSlot) => (
+        availableSlotGroups.some((group) => group.slots.includes(currentSlot))
+          ? currentSlot
+          : ''
+      ));
     } catch {
       showToast('error', 'Error al cargar horarios', 'No se pudieron cargar los horarios disponibles');
       setFreeSlots([]);
+      setSelectedDate('');
+      setSelectedSlot('');
     } finally {
       setLoadingSlots(false);
     }
@@ -1016,6 +1063,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           return;
         }
 
+        if (scheduleMode === 'default' && !selectedSlot) {
+          showToast('error', 'Horario requerido', 'Selecciona uno de los horarios disponibles del calendario.');
+          setIsSaving(false);
+          return;
+        }
+
         // Validación: verificar si el horario está bloqueado
         if (formData.startTime && formData.endTime) {
           const startIso = toIsoForSave(formData.startTime, saveTimezone);
@@ -1049,6 +1102,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           timeZone: saveTimezone,
           contactId: formData.contactId // SIEMPRE incluir contactId
         };
+
+        if (scheduleMode === 'default') {
+          payload.strictAvailabilityCheck = true;
+        }
 
         // Agregar assignedUserId si está seleccionado
         if (formData.assignedUserId) {
@@ -1334,7 +1391,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     )
   );
   // --- Agendado móvil: fecha + hora de inicio + duración (el fin se calcula solo) ---
-  const fallbackDuration = Math.max(1, Number(calendar?.slotDuration || 60) || 60);
+  const configuredDurationMinutes = calendarDurationToMinutes(
+    calendar?.slotDuration ?? 60,
+    calendar?.slotDurationUnit ?? 'mins'
+  );
+  const fallbackDuration = configuredDurationMinutes;
   const startLocalValue = formData.startTime
     ? (isAbsoluteIso(formData.startTime) ? toLocalInputValue(formData.startTime, formData.timeZone) : formData.startTime)
     : '';
@@ -1980,7 +2041,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                       .find((s) => s.date === selectedDate)
                                       ?.slots.map((timeSlot) => ({
                                         value: timeSlot,
-                                        label: formatSlotWithDuration(timeSlot, calendar?.slotDuration || 60, accountTimezone)
+                                        label: formatSlotWithDuration(timeSlot, configuredDurationMinutes, accountTimezone)
                                       })) || [])
                                   ]
                                 : [{ value: '', label: 'Primero selecciona una fecha' }],
@@ -1990,8 +2051,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                 // Construir startTime y endTime en ISO format
                                 if (value) {
                                   const startDate = new Date(value);
-                                  const duration = calendar?.slotDuration || 60;
-                                  const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
+                                  const endDate = new Date(startDate.getTime() + configuredDurationMinutes * 60 * 1000);
 
                                   setFormData({
                                     ...formData,
@@ -2019,9 +2079,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                               onChange={(value) => {
                                 // Cuando cambia el startTime, actualizar automáticamente el endTime
                                 // según la duración configurada del calendario (slotDuration)
-                                const duration = calendar?.slotDuration || 60; // Default 60 minutos
                                 const startDate = new Date(value);
-                                const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
+                                const endDate = new Date(startDate.getTime() + configuredDurationMinutes * 60 * 1000);
 
                                 setFormData({
                                   ...formData,
@@ -2065,9 +2124,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                       label="Inicio"
                       value={formData.startTime}
                       onChange={(value) => {
-                        const duration = calendar?.slotDuration || 60;
                         const startDate = new Date(value);
-                        const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
+                        const endDate = new Date(startDate.getTime() + configuredDurationMinutes * 60 * 1000);
 
                         setFormData({
                           ...formData,

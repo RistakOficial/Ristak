@@ -183,7 +183,7 @@ async function assertPublicDns(hostname) {
 
 }
 
-function createSafeHttpsAgent() {
+export function createSafeOutboundMediaHttpsAgent() {
   return new HttpsAgent({
     lookup(hostname, options, callback) {
       let safeHostname
@@ -250,7 +250,7 @@ export async function downloadSafeOutboundMediaUrl(value = '', {
       throw mediaReferenceError('La descarga segura del archivo tardó demasiado.', 408, 'media_download_timeout')
     }
 
-    const agent = createSafeHttpsAgent()
+    const agent = createSafeOutboundMediaHttpsAgent()
     let response
     try {
       response = await fetch(safeUrl, {

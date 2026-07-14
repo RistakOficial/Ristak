@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { DateTime } from 'luxon'
 import { db } from '../src/config/database.js'
+import { getAccountTimezone } from '../src/utils/dateUtils.js'
 import { createPublicAppointment, deleteCalendar, deleteEvent } from '../src/controllers/calendarsController.js'
 import {
   createLocalCalendar,
@@ -133,7 +134,8 @@ test('public booking keeps a mirrored HighLevel calendar working from local DB w
   const email = `ghl-public-local-${suffix}@example.test`
   const phone = '6565559100'
   const highLevelSnapshot = await snapshotRows('highlevel_config')
-  const baseDay = DateTime.utc().plus({ days: 35 }).startOf('day')
+  const businessTimezone = await getAccountTimezone()
+  const baseDay = DateTime.utc().setZone(businessTimezone).plus({ days: 35 }).startOf('day')
   const nextWednesday = baseDay.plus({ days: (3 - baseDay.weekday + 7) % 7 })
   const slotStart = nextWednesday.set({ hour: 10, minute: 0 })
 
@@ -498,7 +500,8 @@ test('public calendar booking reuses an existing email contact when phone belong
   const email = `public-calendar-existing-${suffix}@example.test`
   const phoneInput = '6567426612'
   const normalizedPhone = '+526567426612'
-  const baseDay = DateTime.utc().plus({ days: 30 }).startOf('day')
+  const businessTimezone = await getAccountTimezone()
+  const baseDay = DateTime.utc().setZone(businessTimezone).plus({ days: 30 }).startOf('day')
   const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
   const slotStart = nextMonday.set({ hour: 15, minute: 0 })
 
@@ -590,7 +593,8 @@ test('public calendar booking keeps the active form contact when calendar email 
   const phoneInput = '6565558800'
   const normalizedPhone = '+526565558800'
   const calendarIds = []
-  const baseDay = DateTime.utc().plus({ days: 35 }).startOf('day')
+  const businessTimezone = await getAccountTimezone()
+  const baseDay = DateTime.utc().setZone(businessTimezone).plus({ days: 35 }).startOf('day')
   const nextTuesday = baseDay.plus({ days: (2 - baseDay.weekday + 7) % 7 })
   const slotStart = nextTuesday.set({ hour: 11, minute: 0 })
 

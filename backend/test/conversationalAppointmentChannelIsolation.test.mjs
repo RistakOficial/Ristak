@@ -24,7 +24,17 @@ test('una oferta nueva en otro canal no reemplaza la oferta pendiente del canal 
     )
 
     const common = {
-      config: { id: agentId },
+      config: {
+        id: agentId,
+        capabilitiesConfig: {
+          items: [{
+            id: 'schedule_appointment',
+            enabled: true,
+            calendarId,
+            bookingOwner: 'ai'
+          }]
+        }
+      },
       calendarId,
       startTime: '2099-01-05T17:00:00.000Z',
       localLabel: 'lunes 5 de enero de 2099 a las 11:00 a.m.',

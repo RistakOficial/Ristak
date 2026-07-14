@@ -8,8 +8,8 @@ import Observation
 /// - Round Robin exige `assignedUserId` al crear (validación de cliente).
 /// - Pre-chequeo de bloqueos nativos antes del POST (silencioso si el fetch
 ///   falla, paridad web/RN).
-/// - 409 `slot_unavailable` → ofrecer «Crear de todos modos»
-///   (`ignoreAppointmentConflicts`, paridad web).
+/// - 409 `slot_unavailable` → el modo Por defecto exige elegir otro espacio;
+///   personalizado/edición pueden ofrecer «Crear de todos modos».
 /// - Invitados serializados en `notes` con el bloque `Invitados:`.
 @MainActor
 @Observable
@@ -243,6 +243,12 @@ final class AppointmentFormViewModel {
 
     var showsAssignmentSection: Bool {
         requiresAssignment || (assignedUserID?.isEmpty == false)
+    }
+
+    /// Crear desde un espacio libre conserva el candado de disponibilidad en
+    /// el POST. Personalizado y edición mantienen su override manual.
+    var requiresStrictAvailabilityCheck: Bool {
+        !isEdit && entryMode == .defaultSlots
     }
 
     /// Round Robin sin `teamMembers` configurados: limitación documentada
@@ -543,6 +549,7 @@ final class AppointmentFormViewModel {
             // se omite si está vacía (paridad RN App.tsx ~8107).
             address: isEdit ? trimmedAddress : (trimmedAddress.isEmpty ? nil : trimmedAddress),
             assignedUserId: (assignedUserID?.isEmpty == false) ? assignedUserID : nil,
+            strictAvailabilityCheck: requiresStrictAvailabilityCheck ? true : nil,
             ignoreAppointmentConflicts: ignoringConflicts ? true : nil
         )
 
@@ -556,7 +563,11 @@ final class AppointmentFormViewModel {
             saveSuccessCount += 1
             return saved
         } catch let error as RistakAPIError where error.isSlotUnavailable {
-            alert = FormAlert(title: "Horario ocupado", message: error.message, offersOverbook: true)
+            alert = FormAlert(
+                title: "Horario ocupado",
+                message: error.message,
+                offersOverbook: !requiresStrictAvailabilityCheck
+            )
             return nil
         } catch let error as RistakAPIError {
             alert = FormAlert(title: "No se pudo guardar", message: error.message)

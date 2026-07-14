@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { pipeline } from 'node:stream/promises'
 import {
   buildPreviewSiteDraft,
   buildCalendarMetaPixelSnippet,
@@ -66,7 +67,8 @@ import {
 } from '../services/localCalendarService.js'
 import { hasCalendarPaymentsFeature } from '../services/licenseService.js'
 import {
-  getMediaAssetBunnyStreamAnalytics
+  getMediaAssetBunnyStreamAnalytics,
+  getMediaAssetDownloadFile
 } from '../services/mediaStorageService.js'
 import {
   isMetaPrivacyPolicyPath,
@@ -75,6 +77,7 @@ import {
 import { getVideoPlaybackAggregate, getVideoPlaybackViewers } from '../services/videoTrackingService.js'
 import { logger } from '../utils/logger.js'
 import { requestHasNoTrack } from '../utils/noTracking.js'
+import { attachmentDisposition } from '../utils/contentDisposition.js'
 
 const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
 const sitePreviewSessions = new Map()
@@ -513,16 +516,60 @@ export async function importedSiteAssetHandler(req, res) {
 }
 
 export async function publicSiteContentAssetHandler(req, res) {
+  let cleanupDownload = null
+  let removeAbortListener = null
   try {
     const binding = await getPublicSiteContentAsset(req.params.siteId, req.params.assetKey)
     if (!binding?.mediaAsset?.publicUrl) {
       return res.status(404).type('text/plain').send('Contenido no encontrado')
     }
+    if (/^(1|true)$/i.test(String(req.query?.download || ''))) {
+      const clientAbortController = new AbortController()
+      const abortDownload = () => clientAbortController.abort()
+      const abortOnResponseClose = () => {
+        if (!res.writableFinished) abortDownload()
+      }
+      req.once?.('aborted', abortDownload)
+      res.once?.('close', abortOnResponseClose)
+      removeAbortListener = () => {
+        req.off?.('aborted', abortDownload)
+        res.off?.('close', abortOnResponseClose)
+      }
+      const file = await getMediaAssetDownloadFile(binding.mediaAsset.id, {
+        range: req.headers?.range,
+        method: req.method,
+        requirePublic: true,
+        signal: clientAbortController.signal
+      })
+      cleanupDownload = file.cleanup
+      res.status(file.statusCode || 200)
+      res.set('Cache-Control', 'no-store')
+      res.set('Content-Type', file.contentType || binding.mediaAsset.mimeType || 'application/octet-stream')
+      if (file.contentLength !== undefined) res.set('Content-Length', String(file.contentLength))
+      if (file.contentRange) res.set('Content-Range', file.contentRange)
+      res.set('Accept-Ranges', file.acceptRanges || 'bytes')
+      res.set('X-Content-Type-Options', 'nosniff')
+      res.set('Content-Disposition', attachmentDisposition(file.filename || binding.label || binding.assetKey, 'archivo'))
+      if (String(req.method || 'GET').toUpperCase() === 'HEAD') return res.end()
+      await pipeline(file.stream, res)
+      return undefined
+    }
     res.set('Cache-Control', 'public, max-age=300')
     return res.redirect(302, binding.mediaAsset.publicUrl)
   } catch (error) {
     logger.error(`Error sirviendo contenido estable de site: ${error.message}`)
+    if (req.aborted || res.headersSent) {
+      if (!res.destroyed) res.destroy(error)
+      return undefined
+    }
+    if (error.contentRange) {
+      res.set('Content-Range', error.contentRange)
+      res.set('Accept-Ranges', 'bytes')
+    }
     return res.status(error.status || 500).type('text/plain').send(error.message || 'No se pudo abrir el contenido')
+  } finally {
+    removeAbortListener?.()
+    cleanupDownload?.()
   }
 }
 
@@ -1083,6 +1130,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path === '/api/sites/public/font-file' ||
       req.path.startsWith('/api/sites/public/calendar-preview/') ||
       req.path.startsWith('/api/sites/public/imported-assets/') ||
+      req.path.startsWith('/api/sites/public/content-assets/') ||
       req.path.startsWith('/api/stripe/public/payments/') ||
       req.path.startsWith('/api/conekta/public/payments/') ||
       req.path.startsWith('/api/mercadopago/public/payments/') ||

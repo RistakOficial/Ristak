@@ -1746,15 +1746,83 @@ const isImportedHtmlSite = (site?: PublicSite | null) =>
 
 type ImportedNativeElementType = 'form' | 'calendar' | 'payment' | 'video'
 type ImportedNativeElementRenderMode = 'ristak' | 'custom'
+type ImportedContentAssetKind = 'image' | 'background' | 'audio' | 'video' | 'document' | 'other'
+type SitesMediaPickerKind = 'image' | 'video' | 'audio' | 'document' | 'other'
+type ImportedContentAssetSlot = {
+  key: string
+  assetKey: string
+  pageId?: string
+  kind: ImportedContentAssetKind
+  label: string
+  tagName: string
+  occurrences: number
+}
+const isImportedContentAssetBindingCompatible = (
+  slot: ImportedContentAssetSlot,
+  binding?: SiteContentAsset | null
+) => {
+  const mediaType = String(binding?.mediaAsset?.mediaType || '').toLowerCase()
+  if (!mediaType) return false
+  if (slot.kind === 'document' || slot.kind === 'other') return true
+  const expectedType = slot.kind === 'background' ? 'image' : slot.kind
+  return mediaType === expectedType
+}
 type ImportedNativeElementSlot = {
   key: string
   id: string
+  siteId?: string
   pageId?: string
   type: ImportedNativeElementType
   renderMode: ImportedNativeElementRenderMode
   label: string
   tagName: string
 }
+type ImportedNativeElementSaveOptions = {
+  notify?: boolean
+  silentValidation?: boolean
+  showSaving?: boolean
+  clearDraft?: boolean
+  refreshPreview?: boolean
+  skipGlobalSaveGate?: boolean
+  skipHtmlSave?: boolean
+}
+type ImportedNativeElementSaveRequest = {
+  slot: ImportedNativeElementSlot
+  options: Required<ImportedNativeElementSaveOptions>
+}
+type ImportedCodeSaveOptions = {
+  skipNativeQueueWait?: boolean
+}
+type ImportedNativeElementFlushOptions = {
+  allowDuringGlobalSave?: boolean
+  htmlAlreadySaved?: boolean
+}
+type ImportedNativeElementSaveFlusher = (options?: ImportedNativeElementFlushOptions) => Promise<boolean>
+
+const normalizeImportedNativeElementSaveOptions = (
+  options: ImportedNativeElementSaveOptions = {}
+): Required<ImportedNativeElementSaveOptions> => ({
+  notify: options.notify ?? true,
+  silentValidation: options.silentValidation ?? false,
+  showSaving: options.showSaving ?? true,
+  clearDraft: options.clearDraft ?? true,
+  refreshPreview: options.refreshPreview ?? true,
+  skipGlobalSaveGate: options.skipGlobalSaveGate ?? false,
+  skipHtmlSave: options.skipHtmlSave ?? false
+})
+
+const mergeImportedNativeElementSaveOptions = (
+  current: Required<ImportedNativeElementSaveOptions>,
+  incoming: Required<ImportedNativeElementSaveOptions>
+): Required<ImportedNativeElementSaveOptions> => ({
+  notify: current.notify || incoming.notify,
+  silentValidation: current.silentValidation && incoming.silentValidation,
+  showSaving: current.showSaving || incoming.showSaving,
+  clearDraft: current.clearDraft || incoming.clearDraft,
+  refreshPreview: current.refreshPreview || incoming.refreshPreview,
+  skipGlobalSaveGate: current.skipGlobalSaveGate || incoming.skipGlobalSaveGate,
+  skipHtmlSave: current.skipHtmlSave || incoming.skipHtmlSave
+})
 
 const importedNativeElementBlockTypes: Record<ImportedNativeElementType, SiteBlockType> = {
   form: 'form_embed',
@@ -1769,6 +1837,24 @@ const importedNativeElementTypeLabels: Record<ImportedNativeElementType, string>
   payment: 'Pago',
   video: 'Video'
 }
+
+const importedContentAssetKindLabels: Record<ImportedContentAssetKind, string> = {
+  image: 'Imagen',
+  background: 'Fondo',
+  audio: 'Audio',
+  video: 'Video HTML',
+  document: 'Descargable',
+  other: 'Archivo'
+}
+
+const importedContentAssetSelector = [
+  '[data-rstk-asset-id]',
+  '[data-ristak-asset-id]',
+  '[data-ristack-asset-id]',
+  '[data-rstk-background-asset-id]',
+  '[data-ristak-background-asset-id]',
+  '[data-ristack-background-asset-id]'
+].join(',')
 
 const importedNativeElementSelector = [
   '[data-rstk-native-element]',
@@ -1825,6 +1911,142 @@ const normalizeImportedNativeToken = (value?: string | null) => (
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[_\s]+/g, '-')
 )
+
+const normalizeImportedContentAssetKey = (value?: string | null) => (
+  String(value || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+)
+
+const getImportedContentAssetAttr = (element: Element, names: string[]) => {
+  for (const name of names) {
+    const value = element.getAttribute(name)
+    if (value !== null && String(value).trim()) return String(value).trim()
+  }
+  return ''
+}
+
+const getImportedContentAssetKeyFromElement = (element: Element) => normalizeImportedContentAssetKey(
+  getImportedContentAssetAttr(element, [
+    'data-rstk-background-asset-id',
+    'data-ristak-background-asset-id',
+    'data-ristack-background-asset-id',
+    'data-rstk-asset-id',
+    'data-ristak-asset-id',
+    'data-ristack-asset-id'
+  ])
+)
+
+const getImportedContentAssetTargetFromElement = (element: Element) => {
+  const tagName = element.tagName.toLowerCase()
+  const explicitTarget = normalizeImportedNativeToken(getImportedContentAssetAttr(element, [
+    'data-rstk-asset-target',
+    'data-ristak-asset-target',
+    'data-ristack-asset-target'
+  ]))
+  const supportsSrc = ['img', 'video', 'audio', 'source', 'track', 'iframe'].includes(tagName) || (
+    tagName === 'input' && normalizeImportedNativeToken(element.getAttribute('type')) === 'image'
+  )
+
+  if (explicitTarget) {
+    if (explicitTarget === 'href' && tagName === 'a') return 'href'
+    if (explicitTarget === 'poster' && tagName === 'video') return 'poster'
+    if (explicitTarget === 'src' && supportsSrc) return 'src'
+    return ''
+  }
+  if (tagName === 'a') return 'href'
+  return supportsSrc ? 'src' : ''
+}
+
+const getImportedContentAssetKindFromElement = (element: Element): ImportedContentAssetKind => {
+  const isBackground = Boolean(getImportedContentAssetAttr(element, [
+    'data-rstk-background-asset-id',
+    'data-ristak-background-asset-id',
+    'data-ristack-background-asset-id'
+  ]))
+  if (isBackground) return 'background'
+
+  const tagName = element.tagName.toLowerCase()
+  if (getImportedContentAssetTargetFromElement(element) === 'poster') return 'image'
+  if (tagName === 'img' || (tagName === 'input' && normalizeImportedNativeToken(element.getAttribute('type')) === 'image')) return 'image'
+  if (tagName === 'audio') return 'audio'
+  if (tagName === 'video' || tagName === 'iframe') return 'video'
+  if (tagName === 'source') {
+    const parentTag = element.parentElement?.tagName.toLowerCase()
+    if (parentTag === 'audio') return 'audio'
+    if (parentTag === 'video' || parentTag === 'picture') return parentTag === 'picture' ? 'image' : 'video'
+  }
+  if (tagName === 'a') return 'document'
+  const explicitKind = normalizeImportedNativeToken(getImportedContentAssetAttr(element, [
+    'data-rstk-asset-kind',
+    'data-ristak-asset-kind',
+    'data-ristack-asset-kind'
+  ]))
+  if (['image', 'imagen', 'photo', 'foto', 'background', 'fondo', 'background-image'].includes(explicitKind)) return 'image'
+  if (['audio', 'sound', 'sonido'].includes(explicitKind)) return 'audio'
+  if (['video', 'player', 'reproductor'].includes(explicitKind)) return 'video'
+  if (['document', 'documento', 'download', 'descarga', 'file', 'archivo', 'pdf'].includes(explicitKind)) return 'document'
+  return 'other'
+}
+
+const getImportedContentAssetLabel = (element: Element, kind: ImportedContentAssetKind, assetKey: string) => {
+  const explicitLabel = getImportedContentAssetAttr(element, [
+    'data-rstk-label',
+    'data-ristak-label',
+    'data-ristack-label',
+    'aria-label',
+    'title',
+    'alt'
+  ])
+  if (explicitLabel) return explicitLabel
+  const text = String(element.textContent || '').replace(/\s+/g, ' ').trim()
+  if (text) return text.slice(0, 80)
+  return `${importedContentAssetKindLabels[kind]} ${assetKey}`
+}
+
+const detectImportedContentAssetSlots = (html = ''): ImportedContentAssetSlot[] => {
+  if (!html || typeof DOMParser === 'undefined') return []
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const slots = new Map<string, ImportedContentAssetSlot>()
+    Array.from(doc.querySelectorAll(importedContentAssetSelector)).forEach(element => {
+      const assetKey = getImportedContentAssetKeyFromElement(element)
+      if (!assetKey) return
+      const isBackground = Boolean(getImportedContentAssetAttr(element, [
+        'data-rstk-background-asset-id',
+        'data-ristak-background-asset-id',
+        'data-ristack-background-asset-id'
+      ]))
+      if (!isBackground && !getImportedContentAssetTargetFromElement(element)) return
+      const kind = getImportedContentAssetKindFromElement(element)
+      const existing = slots.get(assetKey)
+      if (existing) {
+        slots.set(assetKey, {
+          ...existing,
+          kind: existing.kind === 'other' ? kind : existing.kind,
+          occurrences: existing.occurrences + 1
+        })
+        return
+      }
+      slots.set(assetKey, {
+        key: `asset:${assetKey}`,
+        assetKey,
+        kind,
+        label: getImportedContentAssetLabel(element, kind, assetKey),
+        tagName: element.tagName.toLowerCase(),
+        occurrences: 1
+      })
+    })
+    return [...slots.values()]
+  } catch {
+    return []
+  }
+}
 
 const normalizeImportedNativeElementType = (value?: string | null): ImportedNativeElementType | null => {
   const token = normalizeImportedNativeToken(value)
@@ -2122,7 +2344,9 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Resultado del descarte: usa disqualifyOutcome="message" + buttonMessage, disqualifyOutcome="specific_page" + buttonPageId, o disqualifyOutcome="url" + buttonUrl. Ejemplo: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
 - Si cualquier respuesta puede descalificar, el <form> final debe llevar data-rstk-conversion-condition="qualified_only". Ristak guardará todos los submits, pero solo enviará Pixel/CAPI cuando el resultado sea calificado.
 - Nunca dispares fbq, gtag, dataLayer ni eventos de conversión manuales al click o submit. Ristak emite el evento después de conocer el resultado real.
-- Multimedia del Panel de contenido: usa únicamente las claves exactas que Ristak entregue. Imagen/medio: <img data-rstk-asset-id="CLAVE" alt="...">. Fondo: <section data-rstk-background-asset-id="CLAVE">...</section>. Descarga: <a data-rstk-asset-id="CLAVE">Descargar</a>. Nunca sustituyas una clave por la URL física de Storage o Bunny.
+- Multimedia code-first: declara claves semánticas aunque el archivo todavía no exista. Imagen: <img data-rstk-asset-id="inicio-imagen-01" data-rstk-label="Imagen principal" alt="...">. Fondo: <section data-rstk-background-asset-id="inicio-fondo-01" data-rstk-label="Fondo principal">...</section>. Audio: <audio data-rstk-asset-id="inicio-audio-01" data-rstk-label="Audio principal" controls></audio>. Descarga: <a data-rstk-asset-id="inicio-descarga-01" data-rstk-label="PDF informativo" download>Descargar</a>.
+- Un descargable puede asociar cualquier archivo de Media: imagen, audio, video, PDF o ZIP. No pongas data-rstk-asset-id en div o picture; usa los tags canónicos anteriores para que Ristak pueda escribir la URL real.
+- Las claves multimedia son globales al sitio: usa una clave única por contenido y repítela solo si varias zonas deben mostrar exactamente el mismo archivo. Nunca sustituyas una clave por la URL física de Storage o Bunny.
 - Para video configurable, reproductor, acciones y formularios sobre video usa siempre el slot nativo de video. Un video HTML propio queda opaco y no se configura desde Ristak.
 - Secciones que sean targets de video deben usar id único.
 - Evita navegación automática, submits automáticos y window.open.`.trim()
@@ -8566,6 +8790,26 @@ export const Sites: React.FC = () => {
   const pendingEmbeddedFormSourceDraftsRef = useRef<Map<string, PublicSite>>(new Map())
   const pendingEmbeddedFormDeletedBlockIdsRef = useRef<Map<string, Set<string>>>(new Map())
   const savingPendingEditorRef = useRef(false)
+  const editorSaveQueueTailRef = useRef<Promise<boolean>>(Promise.resolve(true))
+  const importedNativeSaveQueuesRef = useRef<Record<string, Promise<boolean>>>({})
+  const importedNativeSaveFlushersRef = useRef<Record<string, ImportedNativeElementSaveFlusher>>({})
+
+  const registerImportedNativeSaveQueue = useCallback((siteId: string, queue: Promise<boolean>) => {
+    importedNativeSaveQueuesRef.current[siteId] = queue
+    const clearQueue = () => {
+      if (importedNativeSaveQueuesRef.current[siteId] === queue) {
+        delete importedNativeSaveQueuesRef.current[siteId]
+      }
+    }
+    void queue.then(clearQueue, clearQueue)
+  }, [])
+
+  const isGlobalEditorSaveActive = useCallback(() => savingPendingEditorRef.current, [])
+
+  const registerImportedNativeSaveFlusher = useCallback((siteId: string, flusher: ImportedNativeElementSaveFlusher | null) => {
+    if (flusher) importedNativeSaveFlushersRef.current[siteId] = flusher
+    else delete importedNativeSaveFlushersRef.current[siteId]
+  }, [])
 
   function syncEditorHistoryState() {
     setEditorHistoryState({
@@ -9264,6 +9508,7 @@ export const Sites: React.FC = () => {
     silent?: boolean
     statusOverride?: PublicSite['status']
     forceSite?: boolean
+    skipNativeQueueWait?: boolean
   }
 
   function resetPendingEditorSaveQueue() {
@@ -9602,48 +9847,87 @@ export const Sites: React.FC = () => {
     return nextSite
   }
 
-  async function flushPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
+  async function performPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
     let siteToSave = selectedSiteRef.current || selectedSite
-    if (!siteToSave || savingPendingEditorRef.current) return false
-
-    if (options.statusOverride === 'published' && (!domainConfig.domain || !domainConfig.renderDomainVerified)) {
-      showToast('error', 'Dominio requerido', 'Configura y verifica un dominio antes de publicar este sitio.')
-      return false
-    }
-
-    try {
-      siteToSave = await materializeDraftEmbeddedForms(siteToSave)
-      siteToSave = await materializeDraftVideoFormGates(siteToSave)
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo preparar el formulario')
-      return false
-    }
-    const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
-    const createdBlockIds = [...pendingCreatedBlockIdsRef.current].filter(blockId =>
-      localBlocksById.has(blockId) && !pendingDeletedBlockIdsRef.current.has(blockId)
-    )
-    const deletedBlockIds = [...pendingDeletedBlockIdsRef.current].filter(blockId =>
-      !pendingCreatedBlockIdsRef.current.has(blockId)
-    )
-    const blockIdsToSave = [...pendingBlockSaveIdsRef.current].filter(blockId =>
-      localBlocksById.has(blockId) &&
-      !pendingCreatedBlockIdsRef.current.has(blockId) &&
-      !pendingDeletedBlockIdsRef.current.has(blockId)
-    )
-    const orderScopeKeys = [...pendingBlockOrderScopesRef.current]
-    const importedCodeFilesToSave = [...pendingImportedCodeDraftsRef.current.entries()].map(([path, content]) => ({ path, content }))
-    const embeddedFormSourceDraftsToSave = pendingEmbeddedFormSourceDraftsRef.current.size
-    const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
-
-    if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length && !importedCodeFilesToSave.length && !embeddedFormSourceDraftsToSave) {
-      clearEditorDirtyState()
-      return true
-    }
-
+    if (!siteToSave) return false
     savingPendingEditorRef.current = true
     setSaving(true)
 
     try {
+      const activeNativeQueue = importedNativeSaveQueuesRef.current[siteToSave.id]
+      // A native slot may call this flush to persist newly detected HTML while it
+      // is already inside the registered queue. That origin must not await itself.
+      if (activeNativeQueue && !options.skipNativeQueueWait) {
+        await activeNativeQueue.catch(() => false)
+        const currentSite = selectedSiteRef.current
+        if (!currentSite || currentSite.id !== siteToSave.id) return false
+        siteToSave = currentSite
+      }
+
+      if (options.statusOverride === 'published' && (!domainConfig.domain || !domainConfig.renderDomainVerified)) {
+        showToast('error', 'Dominio requerido', 'Configura y verifica un dominio antes de publicar este sitio.')
+        return false
+      }
+
+      const importedCodeFilesToSaveFirst = [...pendingImportedCodeDraftsRef.current.entries()]
+        .map(([path, content]) => ({ path, content }))
+      if (importedCodeFilesToSaveFirst.length) {
+        const result = await sitesService.updateImportedCodeFiles(siteToSave.id, {
+          files: importedCodeFilesToSaveFirst
+        })
+        siteToSave = normalizeSiteForEditor(result.site)
+        pendingImportedCodeDraftsRef.current.clear()
+        setSelectedImportData(result.import)
+        setImportedCodeDrafts({})
+        syncSelectedSite(siteToSave)
+      }
+
+      if (!options.skipNativeQueueWait) {
+        const flushNativeSaves = importedNativeSaveFlushersRef.current[siteToSave.id]
+        if (flushNativeSaves) {
+          const nativeSaved = await flushNativeSaves({
+            allowDuringGlobalSave: true,
+            htmlAlreadySaved: true
+          })
+          if (!nativeSaved) {
+            showToast('warning', 'Falta guardar contenido', 'Revisa la configuración del elemento detectado antes de guardar o publicar.')
+            return false
+          }
+          const currentSite = selectedSiteRef.current
+          if (!currentSite || currentSite.id !== siteToSave.id) return false
+          siteToSave = currentSite
+        }
+      }
+
+      try {
+        siteToSave = await materializeDraftEmbeddedForms(siteToSave)
+        siteToSave = await materializeDraftVideoFormGates(siteToSave)
+      } catch (error) {
+        showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo preparar el formulario')
+        return false
+      }
+      const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
+      const createdBlockIds = [...pendingCreatedBlockIdsRef.current].filter(blockId =>
+        localBlocksById.has(blockId) && !pendingDeletedBlockIdsRef.current.has(blockId)
+      )
+      const deletedBlockIds = [...pendingDeletedBlockIdsRef.current].filter(blockId =>
+        !pendingCreatedBlockIdsRef.current.has(blockId)
+      )
+      const blockIdsToSave = [...pendingBlockSaveIdsRef.current].filter(blockId =>
+        localBlocksById.has(blockId) &&
+        !pendingCreatedBlockIdsRef.current.has(blockId) &&
+        !pendingDeletedBlockIdsRef.current.has(blockId)
+      )
+      const orderScopeKeys = [...pendingBlockOrderScopesRef.current]
+      const importedCodeFilesToSave = [...pendingImportedCodeDraftsRef.current.entries()].map(([path, content]) => ({ path, content }))
+      const embeddedFormSourceDraftsToSave = pendingEmbeddedFormSourceDraftsRef.current.size
+      const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
+
+      if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length && !importedCodeFilesToSave.length && !embeddedFormSourceDraftsToSave) {
+        clearEditorDirtyState()
+        return true
+      }
+
       let site = siteToSave
       if (shouldSaveSite) {
         site = await sitesService.updateSite(siteToSave.id, {
@@ -9709,6 +9993,14 @@ export const Sites: React.FC = () => {
       savingPendingEditorRef.current = false
       setSaving(false)
     }
+  }
+
+  function flushPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
+    const queuedSave = editorSaveQueueTailRef.current
+      .catch(() => false)
+      .then(() => performPendingEditorSaves(options))
+    editorSaveQueueTailRef.current = queuedSave
+    return queuedSave
   }
 
   const handleConfirmLeaveEditor = useCallback((action?: () => void) => {
@@ -10597,6 +10889,21 @@ export const Sites: React.FC = () => {
     setSelectedSite(normalizedSite)
     setSelectedBlockId(current => normalizedSite.blocks?.some(block => block.id === current) || isEditorSurfaceSelection(current) ? current : '')
     setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+  }
+
+  function syncSavedSiteBlocks(site: PublicSite) {
+    const normalizedSite = normalizeSiteForEditor(site)
+    const currentSite = selectedSiteRef.current
+    if (!currentSite || currentSite.id !== normalizedSite.id) return
+    const nextSite = {
+      ...currentSite,
+      blocks: normalizedSite.blocks || [],
+      updatedAt: normalizedSite.updatedAt
+    }
+    selectedSiteRef.current = nextSite
+    setSelectedSite(nextSite)
+    setSelectedBlockId(current => nextSite.blocks?.some(block => block.id === current) || isEditorSurfaceSelection(current) ? current : '')
+    setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
   }
 
   const syncLibrarySettingsSite = (site: PublicSite) => {
@@ -11748,7 +12055,7 @@ export const Sites: React.FC = () => {
         pageId: nextPageId,
         device
       }))
-      showToast('success', 'HTML en blanco creado', 'Se abrió el editor de código para que escribas o pegues tu página.')
+      showToast('success', 'Página HTML creada', 'Pega el código completo; campos y contenido aparecerán automáticamente en el panel derecho.')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el HTML en blanco')
     } finally {
@@ -11832,9 +12139,7 @@ export const Sites: React.FC = () => {
 
     setLoadingImportData(true)
     try {
-      const importData = selectedImportData?.siteId === site.id
-        ? selectedImportData
-        : await sitesService.getImportMapping(site.id)
+      const importData = await sitesService.getImportMapping(site.id)
       setSelectedImportData(importData)
       const importReviewState = buildImportReviewState(site, importData)
       setImportReview(importReviewState)
@@ -11868,6 +12173,11 @@ export const Sites: React.FC = () => {
       forceSite: !options.silent || Boolean(statusOverride)
     })
   }
+
+  const handleSaveImportedCodeDrafts = (options: ImportedCodeSaveOptions = {}) => flushPendingEditorSaves({
+    silent: true,
+    skipNativeQueueWait: options.skipNativeQueueWait
+  })
 
   const handleOpenLiveEditorSite = () => {
     if (!editorSite || !isPublicSiteLive(editorSite, domainConfig)) return
@@ -14232,6 +14542,7 @@ export const Sites: React.FC = () => {
                 />
               ) : isImportedHtmlSite(editorSite) ? (
                 <ImportedHtmlEditorPanel
+                  key={editorSite.id}
                   site={editorSite}
                   forms={forms}
                   calendars={calendars}
@@ -14259,7 +14570,12 @@ export const Sites: React.FC = () => {
                   onImportMappingUpdated={setSelectedImportData}
                   onUpdateRoute={handleUpdateLibraryRoute}
                   onPatchSite={updateSelectedSite}
+                  onSyncSavedSite={syncSavedSiteBlocks}
                   onSaveSite={() => handleSaveSite(undefined, { silent: true })}
+                  onSaveCodeDrafts={handleSaveImportedCodeDrafts}
+                  onNativeSaveQueue={registerImportedNativeSaveQueue}
+                  onNativeSaveFlusher={registerImportedNativeSaveFlusher}
+                  isGlobalSaveActive={isGlobalEditorSaveActive}
                   onDelete={() => void handleDeleteSite(editorSite)}
                 />
               ) : (
@@ -19542,7 +19858,12 @@ const ImportedHtmlEditorPanel: React.FC<{
   onImportMappingUpdated: (importData: ImportedSiteImport) => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
   onPatchSite: (patch: Partial<PublicSite>) => void
+  onSyncSavedSite: (site: PublicSite) => void
   onSaveSite: () => void | Promise<void>
+  onSaveCodeDrafts: (options?: ImportedCodeSaveOptions) => Promise<boolean>
+  onNativeSaveQueue: (siteId: string, queue: Promise<boolean>) => void
+  onNativeSaveFlusher: (siteId: string, flusher: ImportedNativeElementSaveFlusher | null) => void
+  isGlobalSaveActive: () => boolean
   onDelete: () => void
 }> = ({
   site,
@@ -19567,9 +19888,14 @@ const ImportedHtmlEditorPanel: React.FC<{
   onContentUpdated,
   onImportMappingUpdated,
   onPatchSite,
+  onSyncSavedSite,
   onSaveSite,
+  onSaveCodeDrafts,
+  onNativeSaveQueue,
+  onNativeSaveFlusher,
+  isGlobalSaveActive,
 }) => {
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const [accountCurrency] = useAccountCurrency()
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const codePreviewIframeRef = useRef<HTMLIFrameElement | null>(null)
@@ -19582,7 +19908,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   const previewVisualContextRef = useRef<SitesAIPreviewVisualContext | null>(null)
   const inlineImageFileInputRef = useRef<HTMLInputElement | null>(null)
   const codeAssistantAttachmentInputRef = useRef<HTMLInputElement | null>(null)
-  const contentAssetInputRef = useRef<HTMLInputElement | null>(null)
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(true)
   const [previewError, setPreviewError] = useState('')
@@ -19630,20 +19955,32 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [contentAssetsLoading, setContentAssetsLoading] = useState(true)
   const [contentAssetsUploading, setContentAssetsUploading] = useState(false)
   const [contentAssetsError, setContentAssetsError] = useState('')
-  const [contentAssetPickerKind, setContentAssetPickerKind] = useState<'image' | 'video' | null>(null)
-  const [contentAssetReplacingId, setContentAssetReplacingId] = useState('')
-  const [contentElementType, setContentElementType] = useState<ImportedNativeElementType>('form')
-  const [contentElementMode, setContentElementMode] = useState<ImportedNativeElementRenderMode>('ristak')
+  const [contentAssetPickerKind, setContentAssetPickerKind] = useState<SitesMediaPickerKind | null>(null)
+  const [contentAssetPickerSlotKey, setContentAssetPickerSlotKey] = useState('')
+  const [selectedContentAssetSlotKey, setSelectedContentAssetSlotKey] = useState('')
+  const [contentAssetsRevision, setContentAssetsRevision] = useState(0)
   const [selectedImportedNativeElementKey, setSelectedImportedNativeElementKey] = useState('')
   const [importedVideoFormGateActiveBlockId, setImportedVideoFormGateActiveBlockId] = useState('')
   const [importedVideoFormGateActiveElement, setImportedVideoFormGateActiveElement] = useState<EmbeddedFormActiveElement>('field')
   const [importedNativeElementDrafts, setImportedNativeElementDrafts] = useState<Record<string, Record<string, unknown>>>({})
   const [importedNativeElementSavingKey, setImportedNativeElementSavingKey] = useState('')
   const importedNativeElementDraftsRef = useRef<Record<string, Record<string, unknown>>>({})
+  const importedNativeElementDraftVersionsRef = useRef<Record<string, number>>({})
   const importedNativeElementAutosaveTimersRef = useRef<Record<string, number>>({})
+  const importedNativeElementScheduledSavesRef = useRef<Record<string, ImportedNativeElementSaveRequest>>({})
+  const importedNativeElementPendingSavesRef = useRef<Record<string, ImportedNativeElementSaveRequest>>({})
+  const importedNativeElementSaveQueuesRef = useRef<Record<string, Promise<boolean>>>({})
+  const importedNativeElementDeferredSavesRef = useRef<Record<string, ImportedNativeElementSaveRequest>>({})
+  const importedCodeSaveInFlightRef = useRef<Promise<boolean> | null>(null)
+  const importedNativeElementMountedRef = useRef(true)
+  const importedNativeElementGlobalSaveActiveRef = useRef(saving)
+  const importedNativeElementGlobalSaveWasActiveRef = useRef(saving)
+  importedNativeElementGlobalSaveActiveRef.current = saving
   const importedNativeElementSiteRef = useRef(site)
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
+  const activeImportedPageIdRef = useRef(activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID)
+  activeImportedPageIdRef.current = activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
   const popupCodeFile = useMemo<ImportedSiteCodeFile>(() => ({
     path: IMPORTED_POPUP_CODE_PATH,
     label: 'Pop up',
@@ -19687,6 +20024,21 @@ const ImportedHtmlEditorPanel: React.FC<{
   const activeCodeKey = activeCodeFile ? getImportedCodeFileKey(activeCodeFile.path) : ''
   const activeCodeValue = activeCodeFile ? codeDrafts[activeCodeKey] ?? activeCodeFile.content : ''
   const activeCodeDirty = Boolean(activeCodeKey && Object.prototype.hasOwnProperty.call(codeDrafts, activeCodeKey))
+  const activeCodeDirtyRef = useRef(activeCodeDirty)
+  const onSaveCodeDraftsRef = useRef(onSaveCodeDrafts)
+  activeCodeDirtyRef.current = activeCodeDirty
+  onSaveCodeDraftsRef.current = onSaveCodeDrafts
+  const ensureDetectedHtmlSaved = useCallback(async (options: ImportedCodeSaveOptions = {}) => {
+    if (!activeCodeDirtyRef.current) return true
+    if (!importedCodeSaveInFlightRef.current) {
+      importedCodeSaveInFlightRef.current = onSaveCodeDraftsRef.current(options).finally(() => {
+        importedCodeSaveInFlightRef.current = null
+      })
+    }
+    const saved = await importedCodeSaveInFlightRef.current
+    if (saved) activeCodeDirtyRef.current = false
+    return saved
+  }, [])
   const activePageDraftPreviewHtml = !popupCodeActive && activeCodeFile?.language === 'html' && activeCodeDirty ? activeCodeValue : ''
   const editorPreviewHtml = activePageDraftPreviewHtml ? codeRuntimePreviewHtml || activePageDraftPreviewHtml : previewHtml
   const importedNativeElementDetectionHtml = activeCodeFile?.language === 'html'
@@ -19697,15 +20049,34 @@ const ImportedHtmlEditorPanel: React.FC<{
     return detectImportedNativeElementSlots(importedNativeElementDetectionHtml)
       .map(slot => ({
         ...slot,
+        siteId: site.id,
         pageId,
-        key: `${pageId}:${slot.key}`
+        key: `${site.id}:${pageId}:${slot.key}`
       }))
+  }, [activeImportedPage?.id, activePageId, importedNativeElementDetectionHtml, site.id])
+  const importedContentAssetSlots = useMemo(() => {
+    const pageId = activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
+    return detectImportedContentAssetSlots(importedNativeElementDetectionHtml).map(slot => ({
+      ...slot,
+      pageId,
+      key: `${pageId}:${slot.key}`
+    }))
   }, [activeImportedPage?.id, activePageId, importedNativeElementDetectionHtml])
+  const detectedImportedFieldCount = useMemo(() => {
+    if (!importedNativeElementDetectionHtml || typeof DOMParser === 'undefined') return 0
+    try {
+      const doc = new DOMParser().parseFromString(importedNativeElementDetectionHtml, 'text/html')
+      return collectImportedPanelFormFields(doc).length
+    } catch {
+      return 0
+    }
+  }, [importedNativeElementDetectionHtml])
   const importedNativeElementDuplicateIds = useMemo(
     () => detectImportedNativeElementDuplicateIds(importedNativeElementDetectionHtml),
     [importedNativeElementDetectionHtml]
   )
   const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || null
+  const selectedContentAssetSlot = importedContentAssetSlots.find(slot => slot.key === selectedContentAssetSlotKey) || null
   const loadContentAssets = useCallback(async () => {
     setContentAssetsLoading(true)
     setContentAssetsError('')
@@ -19722,20 +20093,21 @@ const ImportedHtmlEditorPanel: React.FC<{
     void loadContentAssets()
   }, [loadContentAssets])
 
-  const connectContentMediaAsset = useCallback(async (asset: MediaAsset, bindingId = '') => {
+  const connectContentMediaAsset = useCallback(async (asset: MediaAsset, slot: ImportedContentAssetSlot) => {
     setContentAssetsUploading(true)
     setContentAssetsError('')
     try {
+      const currentBinding = contentAssets.find(item => item.assetKey === slot.assetKey)
       const binding = await sitesService.saveContentAsset(site.id, {
-        id: bindingId || undefined,
+        id: currentBinding?.id,
         mediaAssetId: asset.id,
-        label: getMediaPickerAssetName(asset),
+        assetKey: slot.assetKey,
+        label: slot.label || getMediaPickerAssetName(asset),
         kind: asset.mediaType
       })
       setContentAssets(current => [binding, ...current.filter(item => item.id !== binding.id)])
-      showToast('success', bindingId ? 'Archivo reemplazado' : 'Contenido conectado', bindingId
-        ? 'La clave del HTML no cambió.'
-        : 'Ya tiene una referencia estable para usarla en el HTML.')
+      setContentAssetsRevision(current => current + 1)
+      showToast('success', currentBinding ? 'Contenido reemplazado' : 'Contenido asociado', `${slot.label} ya usa ${getMediaPickerAssetName(asset)}.`)
       return binding
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo conectar el archivo al sitio.'
@@ -19745,42 +20117,29 @@ const ImportedHtmlEditorPanel: React.FC<{
     } finally {
       setContentAssetsUploading(false)
     }
-  }, [showToast, site.id])
-
-  const handleContentAssetUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    setContentAssetsUploading(true)
-    setContentAssetsError('')
-    try {
-      const asset = await mediaService.uploadFile({
-        file,
-        module: 'sites',
-        moduleEntityId: site.id,
-        isPublic: true
-      })
-      await connectContentMediaAsset(asset)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'No se pudo subir el archivo.'
-      setContentAssetsError(message)
-      showToast('error', 'No se pudo subir', message)
-    } finally {
-      setContentAssetsUploading(false)
-    }
-  }, [connectContentMediaAsset, showToast, site.id])
+  }, [contentAssets, showToast, site.id])
 
   const contentAssetsCatalog = useMemo(() => {
-    if (!contentAssets.length) return 'No hay recursos multimedia conectados a esta página.'
     return [
-      'Catálogo de contenido estable de esta página (usa la clave; nunca pegues la URL física):',
-      ...contentAssets.map(asset => `- ${asset.label} [${asset.kind}] => ${asset.assetKey}`),
+      'Contrato code-first de contenido estable:',
+      '- Declara una clave semántica y única aunque todavía no exista el archivo. Ristak la detectará para asociarla después.',
+      '- Imagen: <img data-rstk-asset-id="inicio-imagen-01" data-rstk-label="Imagen principal" alt="...">',
+      '- Fondo: <section data-rstk-background-asset-id="inicio-fondo-01" data-rstk-label="Fondo principal">...</section>',
+      '- Audio: <audio data-rstk-asset-id="inicio-audio-01" data-rstk-label="Audio principal" controls></audio>',
+      '- Descargable: <a data-rstk-asset-id="inicio-descarga-01" data-rstk-label="PDF informativo" download>Descargar</a>',
+      '- Video configurable: <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>',
+      '- Un descargable acepta cualquier archivo de Media. No declares claves de archivo en div o picture: no tienen un destino URL compatible.',
+      '- Las claves de archivo son globales al sitio. Repite una clave solo cuando quieras reutilizar exactamente el mismo contenido.',
       '',
-      'Imagen/medio: <img data-rstk-asset-id="CLAVE" alt="...">',
-      'Fondo: <section data-rstk-background-asset-id="CLAVE">...</section>',
-      'Archivo descargable: <a data-rstk-asset-id="CLAVE">Descargar</a>'
+      importedContentAssetSlots.length
+        ? 'Contenido detectado en la página activa:'
+        : 'No hay contenido asociable declarado en la página activa.',
+      ...importedContentAssetSlots.map(slot => {
+        const binding = contentAssets.find(asset => asset.assetKey === slot.assetKey)
+        return `- ${slot.label} [${slot.kind}] => ${slot.assetKey} (${isImportedContentAssetBindingCompatible(slot, binding) ? 'asociado' : 'pendiente'})`
+      })
     ].join('\n')
-  }, [contentAssets])
+  }, [contentAssets, importedContentAssetSlots])
   const guardedEditorPreviewHtml = useMemo(
     () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
     [editorPreviewHtml]
@@ -19833,6 +20192,16 @@ const ImportedHtmlEditorPanel: React.FC<{
       setSelectedImportedNativeElementKey('')
     }
   }, [importedNativeElementSlots, selectedImportedNativeElementKey])
+
+  useEffect(() => {
+    if (!importedContentAssetSlots.length) {
+      if (selectedContentAssetSlotKey) setSelectedContentAssetSlotKey('')
+      return
+    }
+    if (selectedContentAssetSlotKey && !importedContentAssetSlots.some(slot => slot.key === selectedContentAssetSlotKey)) {
+      setSelectedContentAssetSlotKey('')
+    }
+  }, [importedContentAssetSlots, selectedContentAssetSlotKey])
 
   const getImportedNativeElementDefaultSettingsForSlot = useCallback((slot: ImportedNativeElementSlot) => {
     const blockType = importedNativeElementBlockTypes[slot.type]
@@ -19903,6 +20272,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeImportedPage?.id, activePageId, getImportedNativeElementDraftSettings, site])
 
   const patchImportedNativeElementDraft = useCallback((slot: ImportedNativeElementSlot, patch: Record<string, unknown>) => {
+    importedNativeElementDraftVersionsRef.current[slot.key] = (importedNativeElementDraftVersionsRef.current[slot.key] || 0) + 1
     const nextDrafts = {
       ...importedNativeElementDraftsRef.current,
       [slot.key]: {
@@ -19930,25 +20300,36 @@ const ImportedHtmlEditorPanel: React.FC<{
     return ''
   }, [accountCurrency])
 
-  const saveImportedNativeElementSlot = useCallback(async (
+  const performImportedNativeElementSlotSave = useCallback(async (
     slot: ImportedNativeElementSlot,
-    options: {
-      notify?: boolean
-      silentValidation?: boolean
-      showSaving?: boolean
-      clearDraft?: boolean
-      refreshPreview?: boolean
-    } = {}
+    options: Required<ImportedNativeElementSaveOptions>
   ) => {
     const {
       notify = true,
       silentValidation = false,
       showSaving = true,
       clearDraft = true,
-      refreshPreview = true
+      refreshPreview = true,
+      skipGlobalSaveGate = false,
+      skipHtmlSave = false
     } = options
-    const currentSite = importedNativeElementSiteRef.current || site
-    const existing = findImportedNativeElementBlock(currentSite.blocks || [], slot)
+    if (!importedNativeElementMountedRef.current) return false
+    const expectedSiteId = slot.siteId || site.id
+    const globalSaveIsActive = () => importedNativeElementGlobalSaveActiveRef.current || isGlobalSaveActive()
+    const draftVersion = importedNativeElementDraftVersionsRef.current[slot.key] || 0
+    const deferUntilGlobalSaveFinishes = () => {
+      const deferred = importedNativeElementDeferredSavesRef.current[slot.key]
+      importedNativeElementDeferredSavesRef.current[slot.key] = {
+        slot,
+        options: deferred
+          ? mergeImportedNativeElementSaveOptions(deferred.options, options)
+          : options
+      }
+    }
+    if (!skipGlobalSaveGate && globalSaveIsActive()) {
+      deferUntilGlobalSaveFinishes()
+      return false
+    }
     const blockType = importedNativeElementBlockTypes[slot.type]
     const settings = getImportedNativeElementDraftSettings(slot)
     const content = slot.type === 'payment'
@@ -19959,9 +20340,25 @@ const ImportedHtmlEditorPanel: React.FC<{
     const validationError = validateImportedNativeElementSlotSettings(slot, settings)
     if (validationError) {
       if (notify && !silentValidation) showToast('warning', 'Falta configuración', validationError)
-      return
+      return false
+    }
+    if (!skipHtmlSave && !await ensureDetectedHtmlSaved({ skipNativeQueueWait: true })) {
+      if (globalSaveIsActive()) deferUntilGlobalSaveFinishes()
+      return false
+    }
+    if (!importedNativeElementMountedRef.current) return false
+    if (!skipGlobalSaveGate && globalSaveIsActive()) {
+      deferUntilGlobalSaveFinishes()
+      return false
     }
 
+    const currentSite = importedNativeElementSiteRef.current?.id === expectedSiteId
+      ? importedNativeElementSiteRef.current
+      : site.id === expectedSiteId
+        ? site
+        : null
+    if (!currentSite) return false
+    const existing = findImportedNativeElementBlock(currentSite.blocks || [], slot)
     if (showSaving) setImportedNativeElementSavingKey(slot.key)
     try {
       const saved = existing
@@ -19977,22 +20374,34 @@ const ImportedHtmlEditorPanel: React.FC<{
           settings
         })
       const normalized = normalizeSiteForEditor(saved)
+      if (!importedNativeElementMountedRef.current || normalized.id !== expectedSiteId || site.id !== expectedSiteId) return true
       importedNativeElementSiteRef.current = normalized
-      onPatchSite(normalized)
+      onSyncSavedSite(normalized)
       if (clearDraft) {
         setImportedNativeElementDrafts(current => {
+          if ((importedNativeElementDraftVersionsRef.current[slot.key] || 0) !== draftVersion) return current
           const next = { ...current }
           delete next[slot.key]
+          delete importedNativeElementDraftVersionsRef.current[slot.key]
           importedNativeElementDraftsRef.current = next
           return next
         })
       }
       if (refreshPreview) {
+        const previewPageId = slot.pageId || activeImportedPageIdRef.current
+        const requestId = previewRequestIdRef.current + 1
+        previewRequestIdRef.current = requestId
         try {
-          const html = await sitesService.getPreviewHtml(normalized.id, activeImportedPage?.id, {
+          const html = await sitesService.getPreviewHtml(normalized.id, previewPageId, {
             test: true,
             draftSite: normalized
           })
+          if (
+            !importedNativeElementMountedRef.current ||
+            previewRequestIdRef.current !== requestId ||
+            activeImportedPageIdRef.current !== previewPageId
+          ) return true
+          previewHtmlContextKeyRef.current = `${normalized.id}:${previewPageId}`
           setPreviewHtml(html)
           setPreviewError('')
           setPreviewVersion(current => current + 1)
@@ -20002,32 +20411,166 @@ const ImportedHtmlEditorPanel: React.FC<{
         }
       }
       if (notify) showToast('success', 'Elemento Ristak guardado', `${importedNativeElementTypeLabels[slot.type]} conectado con el HTML importado.`)
+      return true
     } catch (error) {
       if (notify) showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Revisa la configuración e intenta otra vez.')
+      return false
     } finally {
       if (showSaving) setImportedNativeElementSavingKey('')
     }
-  }, [activeImportedPage?.id, activePageId, getImportedNativeElementDraftSettings, onPatchSite, showToast, site, validateImportedNativeElementSlotSettings])
+  }, [activeImportedPage?.id, activePageId, ensureDetectedHtmlSaved, getImportedNativeElementDraftSettings, isGlobalSaveActive, onSyncSavedSite, showToast, site, validateImportedNativeElementSlotSettings])
+
+  const saveImportedNativeElementSlot = useCallback((
+    slot: ImportedNativeElementSlot,
+    options: ImportedNativeElementSaveOptions = {}
+  ) => {
+    if (!importedNativeElementMountedRef.current) return Promise.resolve(false)
+    const normalizedOptions = normalizeImportedNativeElementSaveOptions(options)
+    const pending = importedNativeElementPendingSavesRef.current[slot.key]
+    importedNativeElementPendingSavesRef.current[slot.key] = {
+      slot,
+      options: pending
+        ? mergeImportedNativeElementSaveOptions(pending.options, normalizedOptions)
+        : normalizedOptions
+    }
+
+    const queueKey = slot.siteId || site.id
+    const activeQueue = importedNativeElementSaveQueuesRef.current[queueKey]
+    if (activeQueue) return activeQueue
+
+    const runQueue = async () => {
+      let result = true
+      while (importedNativeElementMountedRef.current) {
+        const pendingEntry = Object.entries(importedNativeElementPendingSavesRef.current)
+          .find(([, request]) => (request.slot.siteId || queueKey) === queueKey)
+        if (!pendingEntry) break
+        const [pendingKey, request] = pendingEntry
+        delete importedNativeElementPendingSavesRef.current[pendingKey]
+        result = await performImportedNativeElementSlotSave(request.slot, request.options) && result
+      }
+      return result
+    }
+    let queue: Promise<boolean>
+    queue = runQueue().finally(() => {
+      if (importedNativeElementSaveQueuesRef.current[queueKey] === queue) {
+        delete importedNativeElementSaveQueuesRef.current[queueKey]
+      }
+    })
+    importedNativeElementSaveQueuesRef.current[queueKey] = queue
+    onNativeSaveQueue(queueKey, queue)
+    return queue
+  }, [onNativeSaveQueue, performImportedNativeElementSlotSave, site.id])
 
   const scheduleImportedNativeElementAutosave = useCallback((slot: ImportedNativeElementSlot) => {
     const existingTimer = importedNativeElementAutosaveTimersRef.current[slot.key]
     if (existingTimer) window.clearTimeout(existingTimer)
-    importedNativeElementAutosaveTimersRef.current[slot.key] = window.setTimeout(() => {
-      delete importedNativeElementAutosaveTimersRef.current[slot.key]
-      void saveImportedNativeElementSlot(slot, {
+    const request = {
+      slot,
+      options: normalizeImportedNativeElementSaveOptions({
         notify: false,
         silentValidation: true,
         showSaving: false,
-        clearDraft: false,
+        clearDraft: true,
         refreshPreview: false
+      })
+    }
+    importedNativeElementScheduledSavesRef.current[slot.key] = request
+    importedNativeElementAutosaveTimersRef.current[slot.key] = window.setTimeout(() => {
+      delete importedNativeElementAutosaveTimersRef.current[slot.key]
+      delete importedNativeElementScheduledSavesRef.current[slot.key]
+      void saveImportedNativeElementSlot(request.slot, request.options).then(saved => {
+        if (
+          !saved &&
+          importedNativeElementMountedRef.current &&
+          !importedNativeElementDeferredSavesRef.current[slot.key]
+        ) {
+          importedNativeElementScheduledSavesRef.current[slot.key] = request
+        }
       })
     }, 450)
   }, [saveImportedNativeElementSlot])
 
+  const flushImportedNativeElementSaves = useCallback<ImportedNativeElementSaveFlusher>(async (options = {}) => {
+    const requests = new Map<string, ImportedNativeElementSaveRequest>()
+    const addRequest = (request: ImportedNativeElementSaveRequest) => {
+      const current = requests.get(request.slot.key)
+      requests.set(request.slot.key, {
+        slot: request.slot,
+        options: current
+          ? mergeImportedNativeElementSaveOptions(current.options, request.options)
+          : request.options
+      })
+    }
+
+    Object.entries(importedNativeElementScheduledSavesRef.current).forEach(([slotKey, request]) => {
+      const timer = importedNativeElementAutosaveTimersRef.current[slotKey]
+      if (timer) window.clearTimeout(timer)
+      delete importedNativeElementAutosaveTimersRef.current[slotKey]
+      addRequest(request)
+    })
+    importedNativeElementScheduledSavesRef.current = {}
+    Object.values(importedNativeElementDeferredSavesRef.current).forEach(addRequest)
+    importedNativeElementDeferredSavesRef.current = {}
+    Object.keys(importedNativeElementDraftsRef.current).forEach(slotKey => {
+      if (requests.has(slotKey)) return
+      const slot = importedNativeElementSlots.find(item => item.key === slotKey)
+      if (!slot) return
+      addRequest({
+        slot,
+        options: normalizeImportedNativeElementSaveOptions({
+          notify: false,
+          silentValidation: true,
+          showSaving: false,
+          clearDraft: true,
+          refreshPreview: false
+        })
+      })
+    })
+
+    if (!requests.size) {
+      const activeQueue = importedNativeElementSaveQueuesRef.current[site.id]
+      return activeQueue ? Boolean(await activeQueue.catch(() => false)) : true
+    }
+
+    const flushOptions = normalizeImportedNativeElementSaveOptions({
+      notify: false,
+      silentValidation: true,
+      showSaving: false,
+      clearDraft: true,
+      refreshPreview: false,
+      skipGlobalSaveGate: options.allowDuringGlobalSave,
+      skipHtmlSave: options.htmlAlreadySaved
+    })
+    const results = await Promise.all([...requests.values()].map(request => (
+      saveImportedNativeElementSlot(request.slot, mergeImportedNativeElementSaveOptions(request.options, flushOptions))
+    )))
+    return results.every(Boolean)
+  }, [importedNativeElementSlots, saveImportedNativeElementSlot, site.id])
+
+  useEffect(() => {
+    onNativeSaveFlusher(site.id, flushImportedNativeElementSaves)
+    return () => onNativeSaveFlusher(site.id, null)
+  }, [flushImportedNativeElementSaves, onNativeSaveFlusher, site.id])
+
   useEffect(() => () => {
+    importedNativeElementMountedRef.current = false
     Object.values(importedNativeElementAutosaveTimersRef.current).forEach(timer => window.clearTimeout(timer))
     importedNativeElementAutosaveTimersRef.current = {}
+    importedNativeElementScheduledSavesRef.current = {}
+    importedNativeElementPendingSavesRef.current = {}
+    importedNativeElementDeferredSavesRef.current = {}
   }, [])
+
+  useEffect(() => {
+    const saveWasActive = importedNativeElementGlobalSaveWasActiveRef.current
+    importedNativeElementGlobalSaveWasActiveRef.current = saving
+    if (saving || !saveWasActive) return
+    const deferredSaves = Object.values(importedNativeElementDeferredSavesRef.current)
+    importedNativeElementDeferredSavesRef.current = {}
+    deferredSaves.forEach(request => {
+      void saveImportedNativeElementSlot(request.slot, request.options)
+    })
+  }, [saveImportedNativeElementSlot, saving])
 
   const getImportedNativeElementPreviewSite = useCallback((): PublicSite | undefined => {
     if (!importedNativeElementSlots.length) return undefined
@@ -20276,7 +20819,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   useEffect(() => {
     void loadInlinePreview()
-  }, [loadInlinePreview])
+  }, [contentAssetsRevision, loadInlinePreview])
 
   useEffect(() => {
     const shouldRenderDraftCodePreview = Boolean(
@@ -20330,6 +20873,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     activeCodeValue,
     activeImportedPage?.id,
     codeEditorOpen,
+    contentAssetsRevision,
     getImportedNativeElementPreviewSite,
     popupCodeActive,
     site.id
@@ -20632,6 +21176,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setChoiceEditor(null)
     setFieldEditor(null)
     setSelectedImportedNativeElementKey('')
+    setSelectedContentAssetSlotKey('')
   }, [clearImportedVideoActionHover])
 
   const selectImportedNativeElementFromPreviewTarget = useCallback((
@@ -20642,6 +21187,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!match) return false
 
     setSelectedImportedNativeElementKey(match.slot.key)
+    setSelectedContentAssetSlotKey('')
     setInlineEditor(null)
     setButtonEditor(null)
     setVideoEditor(null)
@@ -23443,50 +23989,26 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeCodeFile, activeCodePreviewHtml, activeCodeValue, clearInlineSelection, codeEditorOpen, guardedCodePreviewHtml, onCodeDraftChange, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement, selectImportedNativeElementFromPreviewTarget, showToast])
 
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
-  const copyContentAssetReference = async (asset: SiteContentAsset, target: 'media' | 'background' = 'media') => {
-    const safeLabel = asset.label.replace(/"/g, '&quot;')
-    const usesBunnyStreamIframe = asset.kind === 'video' && Boolean(
-      getBunnyStreamVideoIdFromUrl(asset.mediaAsset?.publicUrl || '')
-    )
-    const snippet = target === 'background'
-      ? `<section data-rstk-background-asset-id="${asset.assetKey}">...</section>`
-      : asset.kind === 'document' || asset.kind === 'other'
-        ? `<a data-rstk-asset-id="${asset.assetKey}">Descargar ${asset.label}</a>`
-        : asset.kind === 'audio'
-          ? `<audio data-rstk-asset-id="${asset.assetKey}" controls></audio>`
-          : asset.kind === 'video'
-            ? usesBunnyStreamIframe
-              ? `<iframe data-rstk-asset-id="${asset.assetKey}" title="${safeLabel}" loading="lazy" allow="${DEFAULT_EMBED_ALLOW}" allowfullscreen></iframe>`
-              : `<video data-rstk-asset-id="${asset.assetKey}" controls playsinline></video>`
-            : `<img data-rstk-asset-id="${asset.assetKey}" alt="${safeLabel}">`
-    try {
-      await copyTextToClipboard(snippet)
-      showToast('success', 'Referencia copiada', 'La clave seguirá funcionando aunque reemplaces el archivo.')
-    } catch (error) {
-      showToast('error', 'No se pudo copiar', error instanceof Error ? error.message : 'Cópiala manualmente.')
-    }
-  }
-
   const removeContentAssetBinding = async (asset: SiteContentAsset) => {
     try {
       await sitesService.deleteContentAsset(site.id, asset.id)
       setContentAssets(current => current.filter(item => item.id !== asset.id))
-      showToast('success', 'Referencia quitada', 'El archivo sigue en Media; solo se desconectó de esta página.')
+      setContentAssetsRevision(current => current + 1)
+      showToast('success', 'Asociación quitada', 'El archivo sigue en Media; esta zona quedó pendiente.')
     } catch (error) {
       showToast('error', 'No se pudo quitar', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     }
   }
 
-  const prepareContentElementWithAI = () => {
-    const label = importedNativeElementTypeLabels[contentElementType].toLowerCase()
-    const nativeId = `${contentElementType}-principal`
-    const instruction = contentElementMode === 'ristak'
-      ? `Agrega un ${label} nativo de Ristak en el lugar correcto del diseño. Usa un slot vacío: <div data-rstk-native-element="${contentElementType}" data-rstk-native-id="${nativeId}" data-rstk-label="${importedNativeElementTypeLabels[contentElementType]} principal"></div>. No inventes datos, mocks ni un ${label} alterno. Conserva el resto del HTML.`
-      : contentElementType === 'calendar'
-        ? `Agrega un calendario HTML personalizado conectado a Ristak con data-rstk-native-element="calendar", data-rstk-native-id="calendar-principal" y data-rstk-native-render="custom". Conserva el resto del HTML y no agregues scripts externos.`
-        : `Agrega un ${label} hecho en HTML dentro del diseño, sin convertirlo en slot nativo. Debe usar el contrato HTML seguro de Ristak y conservar el resto de la página.`
-    setCodeAssistantPrompt(instruction)
-    showToast('success', 'Instrucción preparada', 'Revísala y envíala al asistente de código.')
+  const requestRemoveContentAssetBinding = (asset: SiteContentAsset, slot: ImportedContentAssetSlot) => {
+    const assetName = asset.mediaAsset ? getMediaPickerAssetName(asset.mediaAsset) : asset.label || 'el archivo asociado'
+    showConfirm(
+      'Quitar asociación',
+      `${slot.label} dejará de mostrar "${assetName}". El archivo seguirá guardado en Media.`,
+      () => { void removeContentAssetBinding(asset) },
+      'Quitar',
+      'Cancelar'
+    )
   }
 
   const importedNativeElementsPanel = (() => {
@@ -23510,6 +24032,33 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (type === 'calendar') return <CalendarDays size={13} />
       if (type === 'payment') return <DollarSign size={13} />
       return <Video size={13} />
+    }
+
+    const renderContentSlotIcon = (kind: ImportedContentAssetKind) => {
+      if (kind === 'image' || kind === 'background') return <Image size={13} />
+      if (kind === 'audio') return <Volume2 size={13} />
+      if (kind === 'video') return <Video size={13} />
+      return <FileText size={13} />
+    }
+
+    const getContentSlotPickerKind = (kind: ImportedContentAssetKind): SitesMediaPickerKind => {
+      if (kind === 'background') return 'image'
+      if (kind === 'document') return 'other'
+      return kind === 'image' || kind === 'video' || kind === 'audio' ? kind : 'other'
+    }
+
+    const openContentAssetPicker = async (slot: ImportedContentAssetSlot) => {
+      if (!await ensureDetectedHtmlSaved()) return
+      setContentAssetPickerSlotKey(slot.key)
+      setContentAssetPickerKind(getContentSlotPickerKind(slot.kind))
+    }
+
+    const mappedFieldCount = (importData?.formMappings || []).reduce((total, form) => total + form.fields.length, 0)
+    const visibleFieldCount = Math.max(mappedFieldCount, detectedImportedFieldCount)
+
+    const openDetectedFieldMapping = async () => {
+      if (!await ensureDetectedHtmlSaved()) return
+      onEditFields()
     }
 
     const patchSelectedVideoSettings = (patch: Record<string, unknown>) => {
@@ -23555,119 +24104,118 @@ const ImportedHtmlEditorPanel: React.FC<{
           </div>
         </div>
         <p className={styles.importedFormFieldsHint}>
-          El HTML se mantiene cerrado. Desde aquí conectas archivos estables y configuras las zonas que Ristak controla.
+          El código define las zonas. Aquí solo asocias su contenido y configuras los elementos reales de Ristak.
         </p>
 
         <section className={styles.importedContentHubSection}>
           <div className={styles.importedContentHubSectionHeader}>
             <div>
-              <span>Multimedia</span>
-              <strong>{contentAssets.length} {contentAssets.length === 1 ? 'recurso conectado' : 'recursos conectados'}</strong>
+              <span>Contenido detectado</span>
+              <strong>{importedContentAssetSlots.length} {importedContentAssetSlots.length === 1 ? 'zona' : 'zonas'}</strong>
             </div>
             <button type="button" onClick={() => void loadContentAssets()} disabled={contentAssetsLoading || contentAssetsUploading} aria-label="Actualizar contenido">
               <RefreshCw size={14} className={contentAssetsLoading ? styles.previewSpin : ''} />
             </button>
           </div>
-          <div className={styles.importedContentHubActions}>
-            <Button type="button" size="sm" variant="secondary" onClick={() => { setContentAssetReplacingId(''); setContentAssetPickerKind('image') }} disabled={contentAssetsUploading}>
-              <Image size={14} /> Imagen
-            </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => { setContentAssetReplacingId(''); setContentAssetPickerKind('video') }} disabled={contentAssetsUploading}>
-              <Video size={14} /> Video
-            </Button>
-            <input
-              ref={contentAssetInputRef}
-              type="file"
-              accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
-              className={styles.hiddenFileInput}
-              onChange={handleContentAssetUpload}
-            />
-            <Button type="button" size="sm" variant="secondary" onClick={() => contentAssetInputRef.current?.click()} loading={contentAssetsUploading} disabled={contentAssetsUploading}>
-              <Upload size={14} /> Subir archivo
-            </Button>
-          </div>
           {contentAssetsError && <p className={styles.importedContentHubError}>{contentAssetsError}</p>}
-          {!contentAssetsLoading && !contentAssets.length && (
-            <p className={styles.importedFormFieldsHint}>Sube o elige un archivo. Ristak creará una clave estable para que el HTML nunca dependa de una URL física.</p>
+          {!contentAssetsLoading && !importedContentAssetSlots.length && (
+            <p className={styles.importedFormFieldsHint}>Esta página no declara imágenes, fondos, audios o descargables asociables. Cuando el código incluya una clave Ristak, aparecerá aquí automáticamente.</p>
           )}
-          <div className={styles.importedContentAssetList}>
-            {contentAssets.map(asset => (
-              <div key={asset.id} className={styles.importedContentAssetRow}>
-                <span className={styles.importedContentAssetIcon}>
-                  {asset.kind === 'video' ? <Video size={15} /> : asset.kind === 'image' ? <Image size={15} /> : <FileText size={15} />}
-                </span>
-                <span className={styles.importedFormFieldRowMain}>
-                  <strong>{asset.label}</strong>
-                  <small>{asset.assetKey}</small>
-                </span>
-                <button type="button" onClick={() => void copyContentAssetReference(asset)} aria-label={`Copiar referencia de ${asset.label}`} title="Copiar referencia">
-                  <Copy size={13} />
+          <div className={styles.importedFormFieldsList}>
+            {importedContentAssetSlots.map(slot => {
+              const binding = contentAssets.find(asset => asset.assetKey === slot.assetKey)
+              const bindingCompatible = isImportedContentAssetBindingCompatible(slot, binding)
+              const isSelected = selectedContentAssetSlot?.key === slot.key
+              return (
+                <button
+                  key={slot.key}
+                  type="button"
+                  className={`${styles.importedFormFieldRow} ${isSelected ? styles.importedNativeElementRowActive : ''}`}
+                  onClick={() => {
+                    setSelectedContentAssetSlotKey(slot.key)
+                    setSelectedImportedNativeElementKey('')
+                  }}
+                  disabled={contentAssetsUploading}
+                  aria-pressed={isSelected}
+                >
+                  {renderContentSlotIcon(slot.kind)}
+                  <span className={styles.importedFormFieldRowMain}>
+                    <strong>{slot.label}</strong>
+                    <small>{importedContentAssetKindLabels[slot.kind]} · {slot.assetKey}{slot.occurrences > 1 ? ` · ${slot.occurrences} usos` : ''}</small>
+                  </span>
+                  <span className={styles.importedFormFieldBadge}>{bindingCompatible ? 'Asociado' : binding ? 'Reasociar' : 'Pendiente'}</span>
                 </button>
-                {asset.kind === 'image' && (
-                  <button type="button" onClick={() => void copyContentAssetReference(asset, 'background')} aria-label={`Copiar fondo de ${asset.label}`} title="Copiar como fondo">
-                    <LayoutTemplate size={13} />
-                  </button>
-                )}
-                {(asset.kind === 'image' || asset.kind === 'video') && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setContentAssetReplacingId(asset.id)
-                      setContentAssetPickerKind(asset.kind as 'image' | 'video')
-                    }}
-                    aria-label={`Reemplazar ${asset.label}`}
-                    title="Reemplazar sin cambiar la clave"
-                  >
-                    <RefreshCw size={13} />
-                  </button>
-                )}
-                <button type="button" onClick={() => void removeContentAssetBinding(asset)} aria-label={`Desconectar ${asset.label}`} title="Desconectar">
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
+              )
+            })}
           </div>
+
+          {selectedContentAssetSlot && (() => {
+            const binding = contentAssets.find(asset => asset.assetKey === selectedContentAssetSlot.assetKey)
+            const bindingCompatible = isImportedContentAssetBindingCompatible(selectedContentAssetSlot, binding)
+            const currentFileName = binding?.mediaAsset ? getMediaPickerAssetName(binding.mediaAsset) : binding?.label || ''
+            return (
+              <div className={styles.importedNativeElementControls}>
+                <div className={styles.importedButtonActionHeader}>
+                  {renderContentSlotIcon(selectedContentAssetSlot.kind)}
+                  <div>
+                    <span>{importedContentAssetKindLabels[selectedContentAssetSlot.kind]}</span>
+                    <strong>{selectedContentAssetSlot.label}</strong>
+                  </div>
+                </div>
+                <span className={styles.importedFormFieldRowMain}>
+                  <strong>{currentFileName || 'Sin archivo asociado'}</strong>
+                  <small>Clave estable: {selectedContentAssetSlot.assetKey}</small>
+                </span>
+                {binding && !bindingCompatible && (
+                  <p className={styles.importedContentHubError}>El tipo de esta zona cambió y el archivo anterior ya no sirve aquí. Elige uno compatible para volver a asociarla.</p>
+                )}
+                {selectedContentAssetSlot.kind === 'video' && (
+                  <p className={styles.importedFormFieldsHint}>Este es un video HTML compatible. Para editar reproductor, botón de play, colores y acciones usa un slot nativo de video.</p>
+                )}
+                <div className={styles.importedButtonActionFooter}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void openContentAssetPicker(selectedContentAssetSlot)}
+                    disabled={saving || contentAssetsUploading}
+                  >
+                    {binding ? <RefreshCw size={14} /> : <Upload size={14} />}
+                    {binding ? 'Reemplazar archivo' : 'Elegir de Media'}
+                  </Button>
+                  {binding && (
+                    <Button type="button" size="sm" variant="secondary" onClick={() => requestRemoveContentAssetBinding(binding, selectedContentAssetSlot)} disabled={contentAssetsUploading}>
+                      <Unlink2 size={14} /> Quitar asociación
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
         </section>
 
-        <section className={styles.importedContentHubSection}>
-          <div className={styles.importedContentHubSectionHeader}>
-            <div>
-              <span>Agregar al HTML</span>
-              <strong>Nativo o diseñado por IA</strong>
+        {visibleFieldCount > 0 && (
+          <section className={styles.importedContentHubSection}>
+            <div className={styles.importedContentHubSectionHeader}>
+              <div>
+                <span>Campos detectados</span>
+                <strong>{visibleFieldCount} {visibleFieldCount === 1 ? 'campo asociable' : 'campos asociables'}</strong>
+              </div>
             </div>
-          </div>
-          <div className={styles.importedContentElementBuilder}>
-            <CustomSelect value={contentElementType} onChange={(event) => {
-              const nextType = event.target.value as ImportedNativeElementType
-              setContentElementType(nextType)
-              if (nextType === 'payment') setContentElementMode('ristak')
-            }}>
-              <option value="form">Formulario</option>
-              <option value="calendar">Calendario</option>
-              <option value="payment">Pasarela de pago</option>
-              <option value="video">Video</option>
-            </CustomSelect>
-            <CustomSelect value={contentElementMode} onChange={(event) => setContentElementMode(event.target.value as ImportedNativeElementRenderMode)}>
-              <option value="ristak">Nativo de Ristak</option>
-              {contentElementType !== 'payment' && <option value="custom">HTML diseñado por IA</option>}
-            </CustomSelect>
-            <Button type="button" size="sm" onClick={prepareContentElementWithAI} disabled={!activeCodeFile || codeAssistantSaving}>
-              <Sparkles size={14} /> Preparar con IA
+            <p className={styles.importedFormFieldsHint}>Asocia cada dato del HTML a un dato del contacto o a un campo personalizado.</p>
+            <Button type="button" size="sm" variant="secondary" onClick={() => void openDetectedFieldMapping()} disabled={loadingImportData || saving} loading={loadingImportData}>
+              <ListChecks size={14} /> Asociar campos
             </Button>
-          </div>
-          {contentElementType === 'payment' && (
-            <p className={styles.importedFormFieldsHint}>Los cobros reales siempre usan la pasarela segura de Ristak. La IA solo decide dónde va.</p>
-          )}
-        </section>
+          </section>
+        )}
 
         <div className={styles.importedContentHubSectionHeader}>
           <div>
-            <span>Elementos detectados</span>
+            <span>Elementos Ristak detectados</span>
             <strong>{importedNativeElementSlots.length} {importedNativeElementSlots.length === 1 ? 'zona' : 'zonas'}</strong>
           </div>
         </div>
         {!importedNativeElementSlots.length && (
-          <p className={styles.importedFormFieldsHint}>Todavía no hay slots nativos. Prepáralos con IA y aparecerán aquí para configurarlos.</p>
+          <p className={styles.importedFormFieldsHint}>Esta página no declara formularios, calendarios, pagos o videos nativos.</p>
         )}
         {importedNativeElementDuplicateIds.length > 0 && (
           <p className={styles.importedContentHubError}>
@@ -23683,7 +24231,10 @@ const ImportedHtmlEditorPanel: React.FC<{
                 key={slot.key}
                 type="button"
                 className={`${styles.importedFormFieldRow} ${isSelected ? styles.importedNativeElementRowActive : ''}`}
-                onClick={() => setSelectedImportedNativeElementKey(slot.key)}
+                onClick={() => {
+                  setSelectedImportedNativeElementKey(slot.key)
+                  setSelectedContentAssetSlotKey('')
+                }}
                 disabled={Boolean(importedNativeElementSavingKey)}
                 aria-pressed={isSelected}
               >
@@ -23898,7 +24449,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 size="sm"
                 onClick={() => void saveImportedNativeElementSlot(selectedSlot)}
                 loading={selectedSlotSaving}
-                disabled={selectedSlotSaving}
+                disabled={saving || selectedSlotSaving}
               >
                 <Save size={14} />
                 {selectedBlock ? 'Guardar configuración' : 'Conectar zona'}
@@ -23940,7 +24491,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         >
           <div className={styles.importedCodePaneHeader}>
             <div className={styles.importedCodeTitleBlock}>
-              <span>HTML final</span>
+              <span>Código HTML</span>
               <strong>{activeCodeFile?.label || activeImportedPage?.title || 'Código de la página'}</strong>
             </div>
             <div className={styles.importedCodeHeaderActions}>
@@ -24000,9 +24551,10 @@ const ImportedHtmlEditorPanel: React.FC<{
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="off"
-                readOnly
+                disabled={saving}
                 wrap="soft"
-                aria-label={`Código de solo lectura de ${activeCodeFile.label || activeCodeFile.path || 'archivo principal'}`}
+                aria-label={`Código HTML de ${activeCodeFile.label || activeCodeFile.path || 'archivo principal'}`}
+                onChange={(event) => onCodeDraftChange(activeCodeFile.path, event.target.value, activeCodeFile.content)}
                 onScroll={syncCodeHighlightScroll}
               />
             </div>
@@ -24226,10 +24778,12 @@ const ImportedHtmlEditorPanel: React.FC<{
             moduleEntityId={site.id}
             onClose={() => {
               setContentAssetPickerKind(null)
-              setContentAssetReplacingId('')
+              setContentAssetPickerSlotKey('')
             }}
-            onSelect={(_url, asset) => {
-              if (asset) void connectContentMediaAsset(asset, contentAssetReplacingId)
+            onSelect={async (_url, asset) => {
+              const slot = importedContentAssetSlots.find(item => item.key === contentAssetPickerSlotKey)
+              if (!asset || !slot) return false
+              return Boolean(await connectContentMediaAsset(asset, slot))
             }}
           />
         )}
@@ -26597,7 +27151,13 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     '- Entrega HTML, CSS y JavaScript estático. Si hay varios archivos, organízalos para que se puedan comprimir en un ZIP e importar en Ristak.',
     '- No dependas de un build step, servidor propio, framework que requiera compilación ni rutas privadas.',
     '- Trata el HTML como código final y cerrado. No uses data-rstk-editable ni dependas de un editor visual por elemento.',
-    '- Para multimedia usa las claves exactas del Panel de contenido: data-rstk-asset-id="CLAVE" o data-rstk-background-asset-id="CLAVE". Nunca pegues la URL física de Storage o Bunny.',
+    '- Para multimedia declara claves semánticas aunque todavía no exista el archivo. Ristak detectará cada zona y después permitirá asociarla desde Media.',
+    '- Imagen: <img data-rstk-asset-id="inicio-imagen-01" data-rstk-label="Imagen principal" alt="...">.',
+    '- Fondo: <section data-rstk-background-asset-id="inicio-fondo-01" data-rstk-label="Fondo principal">...</section>.',
+    '- Audio: <audio data-rstk-asset-id="inicio-audio-01" data-rstk-label="Audio principal" controls></audio>.',
+    '- Descargable: <a data-rstk-asset-id="inicio-descarga-01" data-rstk-label="PDF informativo" download>Descargar</a>.',
+    '- Un descargable puede asociar imagen, audio, video, PDF, ZIP u otro archivo de Media. No pongas data-rstk-asset-id en div o picture.',
+    '- Las claves multimedia son globales al sitio. Repite una clave solo si varias zonas deben compartir exactamente el mismo archivo. Nunca pegues la URL física de Storage o Bunny.',
     '- Para botones usa data-rstk-button-actions como JSON cuando conozcas la acción. Acciones válidas: url, next_page, specific_page, submit, disqualify, open_popup y close_popup.',
     '- Solo uses next_page cuando la página tenga claramente otra página después en el orden del embudo. En la última página no pongas next_page; usa specific_page, url o deja la acción configurable.',
     '- Si generas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.',
@@ -26889,8 +27449,8 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
             <div className={styles.choiceGrid}>
               <button type="button" disabled={creating} onClick={() => onCreateBlankHtml('landing_page')}>
                 <Code2 size={22} />
-                <strong>Proyecto HTML para IA</strong>
-                <p>Abre una base limpia para generar la página completa con el asistente de código.</p>
+                <strong>Pegar código HTML</strong>
+                <p>Crea la página y pega el código completo; Ristak detecta campos y contenido al instante.</p>
                 <ChevronRight size={18} />
               </button>
               <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
@@ -27850,11 +28410,30 @@ function getMediaPickerAssetUrl(asset: MediaAsset, variant: 'file' | 'thumbnail'
   return `${getApiBaseUrl()}${path}`
 }
 
+const sitesMediaPickerLabels: Record<SitesMediaPickerKind, { singular: string; plural: string; accept: string }> = {
+  image: { singular: 'imagen', plural: 'imágenes', accept: 'image/*' },
+  video: { singular: 'video', plural: 'videos', accept: 'video/*' },
+  audio: { singular: 'audio', plural: 'audios', accept: 'audio/*' },
+  document: {
+    singular: 'documento',
+    plural: 'documentos',
+    accept: 'application/pdf,text/plain,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv'
+  },
+  other: { singular: 'archivo', plural: 'archivos', accept: '*/*' }
+}
+
+const renderSitesMediaPickerKindIcon = (kind: SitesMediaPickerKind, size = 20) => {
+  if (kind === 'image') return <Image size={size} />
+  if (kind === 'video') return <Video size={size} />
+  if (kind === 'audio') return <Volume2 size={size} />
+  return <FileText size={size} />
+}
+
 const SitesMediaPickerModal: React.FC<{
-  kind: 'image' | 'video'
+  kind: SitesMediaPickerKind
   moduleEntityId?: string
   onClose: () => void
-  onSelect: (url: string, asset?: MediaAsset) => void
+  onSelect: (url: string, asset?: MediaAsset) => boolean | void | Promise<boolean | void>
 }> = ({ kind, moduleEntityId, onClose, onSelect }) => {
   const inputRef = useRef<HTMLInputElement>(null)
   const blockedCloseToastAtRef = useRef(0)
@@ -27869,12 +28448,18 @@ const SitesMediaPickerModal: React.FC<{
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [syncingAssetId, setSyncingAssetId] = useState('')
+  const [selectingAssetId, setSelectingAssetId] = useState('')
   const [deletingAssetId, setDeletingAssetId] = useState('')
+  const selectionInFlightRef = useRef(false)
   const { showToast, showConfirm } = useNotification()
-  const accept = kind === 'image' ? 'image/*' : 'video/*'
-  const title = kind === 'image' ? 'Elegir imagen' : 'Elegir video'
-  const uploadText = uploading ? 'Subiendo...' : kind === 'image' ? 'Subir imagen nueva' : 'Subir video nuevo'
-  const mediaPickerBusy = uploading || Boolean(syncingAssetId)
+  const kindLabels = sitesMediaPickerLabels[kind]
+  const accept = kindLabels.accept
+  const title = `Elegir ${kindLabels.singular}`
+  const feminineKind = kind === 'image'
+  const kindArticle = feminineKind ? 'la' : 'el'
+  const kindSelectionTitle = `${kindLabels.singular.charAt(0).toUpperCase()}${kindLabels.singular.slice(1)} ${feminineKind ? 'seleccionada' : 'seleccionado'}`
+  const uploadText = uploading ? 'Subiendo...' : `Subir ${kindLabels.singular} ${feminineKind ? 'nueva' : 'nuevo'}`
+  const mediaPickerBusy = uploading || Boolean(syncingAssetId) || Boolean(selectingAssetId)
 
   const requestClose = useCallback(() => {
     if (!mediaPickerBusy) {
@@ -27882,17 +28467,19 @@ const SitesMediaPickerModal: React.FC<{
       return
     }
 
-    const message = uploading
-      ? `Ristak todavía está subiendo ${kind === 'image' ? 'la imagen' : 'el video'}. Espera a que termine para que no quede incompleto.`
+    const message = selectingAssetId
+      ? `Ristak está asociando ${kindArticle} ${kindLabels.singular}. Espera a que termine para no duplicar la operación.`
+      : uploading
+      ? `Ristak todavía está subiendo ${kindArticle} ${kindLabels.singular}. Espera a que termine para que no quede incompleto.`
       : kind === 'video'
         ? 'Ristak está procesando el video para dejarlo listo en el sitio. Espera a que termine.'
-        : 'Ristak está procesando la imagen para dejarla lista en el sitio. Espera a que termine.'
+        : `Ristak está procesando el ${kindLabels.singular} para dejarlo listo en el sitio. Espera a que termine.`
 
     const now = Date.now()
     if (now - blockedCloseToastAtRef.current < 1800) return
     blockedCloseToastAtRef.current = now
     showToast('warning', 'No se puede cerrar todavía', message)
-  }, [kind, mediaPickerBusy, onClose, showToast, uploading])
+  }, [kind, kindArticle, kindLabels.singular, mediaPickerBusy, onClose, selectingAssetId, showToast, uploading])
 
   const loadAssets = useCallback(async (cursor = '', history: string[] = []) => {
     const requestVersion = requestVersionRef.current + 1
@@ -27900,7 +28487,7 @@ const SitesMediaPickerModal: React.FC<{
     setLoading(true)
     try {
       const page = await mediaService.listAssets({
-        mediaType: kind,
+        ...(kind === 'other' ? {} : { mediaType: kind }),
         status: 'ready',
         search: debouncedQuery || undefined,
         limit: mediaPickerPageSize,
@@ -27945,32 +28532,45 @@ const SitesMediaPickerModal: React.FC<{
       return
     }
 
-    let selectedAsset = asset
-    if (kind === 'video') {
-      setSyncingAssetId(asset.id)
-      try {
-        const synced = await mediaService.syncAssetStream(asset.id, {
-          module: 'sites',
-          moduleEntityId
-        })
-        selectedAsset = synced
-        setAssets(current => current.map(item => item.id === synced.id ? synced : item))
-        const streamMetadata = synced.metadata?.stream
-        const streamStatus = streamMetadata && typeof streamMetadata === 'object'
-          ? String((streamMetadata as { syncStatus?: unknown }).syncStatus || '')
-          : ''
-        if (streamStatus === 'failed' || streamStatus === 'skipped') {
-          showToast('warning', 'Video agregado sin metadata de Stream', 'Ristak lo mostrará, pero Bunny Stream no regresó metadata lista.')
-        }
-      } catch (error) {
-        showToast('warning', 'Video agregado sin metadata de Stream', error instanceof Error ? error.message : 'Ristak lo mostrará, pero no pudo sincronizarlo con Bunny Stream.')
-      } finally {
-        setSyncingAssetId('')
-      }
-    }
+    if (selectionInFlightRef.current) return
+    selectionInFlightRef.current = true
+    setSelectingAssetId(asset.id)
 
-    onSelect(url, selectedAsset)
-    onClose()
+    let selectedAsset = asset
+    let shouldClose = false
+    try {
+      if (kind === 'video') {
+        setSyncingAssetId(asset.id)
+        try {
+          const synced = await mediaService.syncAssetStream(asset.id, {
+            module: 'sites',
+            moduleEntityId
+          })
+          selectedAsset = synced
+          setAssets(current => current.map(item => item.id === synced.id ? synced : item))
+          const streamMetadata = synced.metadata?.stream
+          const streamStatus = streamMetadata && typeof streamMetadata === 'object'
+            ? String((streamMetadata as { syncStatus?: unknown }).syncStatus || '')
+            : ''
+          if (streamStatus === 'failed' || streamStatus === 'skipped') {
+            showToast('warning', 'Video agregado sin metadata de Stream', 'Ristak lo mostrará, pero Bunny Stream no regresó metadata lista.')
+          }
+        } catch (error) {
+          showToast('warning', 'Video agregado sin metadata de Stream', error instanceof Error ? error.message : 'Ristak lo mostrará, pero no pudo sincronizarlo con Bunny Stream.')
+        } finally {
+          setSyncingAssetId('')
+        }
+      }
+
+      const accepted = await onSelect(getMediaPickerAssetUrl(selectedAsset) || url, selectedAsset)
+      shouldClose = accepted !== false
+    } catch (error) {
+      showToast('error', 'No se pudo asociar', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+    } finally {
+      selectionInFlightRef.current = false
+      setSelectingAssetId('')
+    }
+    if (shouldClose) onClose()
   }
 
   const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -27983,6 +28583,14 @@ const SitesMediaPickerModal: React.FC<{
     }
     if (kind === 'video' && !file.type.startsWith('video/')) {
       showToast('error', 'Archivo no válido', 'Sube un video MP4, WebM o MOV.')
+      return
+    }
+    if (kind === 'audio' && !file.type.startsWith('audio/')) {
+      showToast('error', 'Archivo no válido', 'Sube un archivo de audio compatible.')
+      return
+    }
+    if (kind === 'document' && (file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
+      showToast('error', 'Archivo no válido', 'Sube un PDF, documento, hoja, presentación o archivo de texto.')
       return
     }
 
@@ -27999,9 +28607,10 @@ const SitesMediaPickerModal: React.FC<{
       })
       uploadQueue.finishTask(taskId, 'complete', 'Subida completa')
       setAssets(current => [uploaded, ...current.filter(asset => asset.id !== uploaded.id)].slice(0, mediaPickerPageSize))
-      onSelect(getMediaPickerAssetUrl(uploaded), uploaded)
+      const accepted = await onSelect(getMediaPickerAssetUrl(uploaded), uploaded)
+      if (accepted === false) return
       onClose()
-      showToast('success', kind === 'image' ? 'Imagen seleccionada' : 'Video seleccionado', 'El archivo ya quedó puesto en el editor.')
+      showToast('success', kindSelectionTitle, 'El archivo ya quedó asociado en el editor.')
     } catch (error) {
       if (isMediaUploadCancelledError(error)) {
         uploadQueue.finishTask(taskId, 'error', 'Subida cancelada')
@@ -28018,7 +28627,7 @@ const SitesMediaPickerModal: React.FC<{
     setDeletingAssetId(asset.id)
     try {
       await mediaService.deleteAsset(asset.id)
-      setAssets(current => current.filter(item => item.id !== asset.id))
+      await loadAssets(pageCursor, cursorHistory)
       showToast('success', 'Archivo eliminado', 'Se quitó de la biblioteca de Media.')
     } catch (error) {
       showToast('error', 'No se pudo eliminar', error instanceof Error ? error.message : 'Inténtalo otra vez.')
@@ -28063,7 +28672,7 @@ const SitesMediaPickerModal: React.FC<{
       <div className={styles.mediaPickerModal} role="dialog" aria-modal="true" aria-label={title} aria-busy={mediaPickerBusy} data-modal="">
         <header className={styles.mediaPickerHeader}>
           <div className={styles.mediaPickerHeaderTitle}>
-            <span>{kind === 'image' ? 'Biblioteca de imágenes' : 'Biblioteca de videos'}</span>
+            <span>Biblioteca de {kindLabels.plural}</span>
             <strong>{title}</strong>
           </div>
           <button type="button" className={styles.mediaPickerCloseButton} onClick={requestClose} aria-label="Cerrar selector">
@@ -28076,7 +28685,7 @@ const SitesMediaPickerModal: React.FC<{
             <input
               data-ristak-unstyled
               value={query}
-              placeholder={kind === 'image' ? 'Buscar imagen...' : 'Buscar video...'}
+              placeholder={`Buscar ${kindLabels.singular}...`}
               onChange={(event) => setQuery(event.target.value)}
               autoFocus
             />
@@ -28108,68 +28717,71 @@ const SitesMediaPickerModal: React.FC<{
                 const name = getMediaPickerAssetName(asset)
                 const deleting = deletingAssetId === asset.id
                 const syncing = syncingAssetId === asset.id
-                const disabled = Boolean(syncingAssetId) || deleting
+                const selecting = selectingAssetId === asset.id
+                const disabled = mediaPickerBusy || deleting
 
-                return (
-                  <div
-                    key={asset.id}
-                    className={styles.mediaPickerAsset}
-                    aria-disabled={disabled}
-                    aria-busy={syncing || deleting}
-                  >
-                    <button
-                      type="button"
-                      className={styles.mediaPickerAssetMain}
-                      onClick={() => { void selectAsset(asset) }}
-                      disabled={disabled}
-                      aria-label={`Elegir ${name}`}
+                  return (
+                    <div
+                      key={asset.id}
+                      className={styles.mediaPickerAsset}
+                      aria-disabled={disabled}
+                      aria-busy={syncing || selecting || deleting}
                     >
-                      <span className={styles.mediaPickerAssetPreview}>
-                        {kind === 'image' ? (
-                          <img src={previewUrl} alt="" loading="lazy" />
-                        ) : (
-                          videoThumbnailUrl
-                            ? <img src={videoThumbnailUrl} alt="" loading="lazy" />
-                            : directVideoUrl
-                              ? <video src={directVideoUrl} muted playsInline preload="metadata" />
-                            : <Video size={24} />
-                        )}
-                      </span>
-                      <span className={styles.mediaPickerAssetInfo}>
-                        <strong title={name}>{name}</strong>
-                        <small>{formatMediaPickerAssetSize(asset)}</small>
-                      </span>
-                    </button>
-                    <span className={styles.mediaPickerAssetFooter}>
                       <button
                         type="button"
-                        className={styles.mediaPickerChooseButton}
+                        className={styles.mediaPickerAssetMain}
                         onClick={() => { void selectAsset(asset) }}
                         disabled={disabled}
                         aria-label={`Elegir ${name}`}
                       >
-                        {syncing && <RefreshCw size={13} className={styles.previewSpin} aria-hidden="true" />}
-                        <span>{syncing ? 'Sincronizando' : 'Elegir'}</span>
+                        <span className={styles.mediaPickerAssetPreview}>
+                          {kind === 'image' ? (
+                            <img src={previewUrl} alt="" loading="lazy" />
+                          ) : kind === 'video' ? (
+                            videoThumbnailUrl
+                              ? <img src={videoThumbnailUrl} alt="" loading="lazy" />
+                              : directVideoUrl
+                                ? <video src={directVideoUrl} muted playsInline preload="metadata" />
+                                : <Video size={24} />
+                          ) : (
+                            renderSitesMediaPickerKindIcon(kind, 24)
+                          )}
+                        </span>
+                        <span className={styles.mediaPickerAssetInfo}>
+                          <strong title={name}>{name}</strong>
+                          <small>{formatMediaPickerAssetSize(asset)}</small>
+                        </span>
                       </button>
-                      <button
-                        type="button"
-                        className={styles.mediaPickerDeleteButton}
-                        onClick={(event) => requestDeleteAsset(asset, event)}
-                        disabled={deleting || Boolean(syncingAssetId)}
-                        aria-label={`Eliminar ${name}`}
-                      >
-                        {deleting ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
-                      </button>
-                    </span>
-                  </div>
-                )
-              })}
+                      <span className={styles.mediaPickerAssetFooter}>
+                        <button
+                          type="button"
+                          className={styles.mediaPickerChooseButton}
+                          onClick={() => { void selectAsset(asset) }}
+                          disabled={disabled}
+                          aria-label={`Elegir ${name}`}
+                        >
+                          {(syncing || selecting) && <RefreshCw size={13} className={styles.previewSpin} aria-hidden="true" />}
+                          <span>{syncing ? 'Sincronizando' : selecting ? 'Asociando' : 'Elegir'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.mediaPickerDeleteButton}
+                          onClick={(event) => requestDeleteAsset(asset, event)}
+                          disabled={deleting || mediaPickerBusy}
+                          aria-label={`Eliminar ${name}`}
+                        >
+                          {deleting ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
+                        </button>
+                      </span>
+                    </div>
+                  )
+                })}
             </div>
           ) : (
             <div className={styles.mediaPickerEmpty}>
-              {kind === 'image' ? <Image size={20} /> : <Video size={20} />}
-              <strong>No hay {kind === 'image' ? 'imágenes' : 'videos'} listos</strong>
-              <span>Sube uno nuevo desde aquí o cambia la búsqueda.</span>
+              {renderSitesMediaPickerKindIcon(kind, 20)}
+              <strong>{query.trim() ? 'Sin coincidencias' : `No hay ${kindLabels.plural} ${feminineKind ? 'listas' : 'listos'}`}</strong>
+              <span>Sube un archivo nuevo desde aquí o cambia la búsqueda.</span>
             </div>
           )}
         </div>

@@ -1,4 +1,5 @@
 import { Agent, Runner } from '@openai/agents'
+import { DateTime } from 'luxon'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../../utils/dateUtils.js'
@@ -63,7 +64,9 @@ import { DEFAULT_OPENAI_MODEL } from '../../config/openAIModels.js'
 import { hasFeature } from '../../services/licenseService.js'
 import {
   createConversationalTools,
-  loadConversationalAppointmentOfferDecisionContext
+  loadConversationalAppointmentOfferDecisionContext,
+  loadConversationalAppointmentSelectionProgressContext,
+  supersedeUndeliveredConversationalAppointmentOffer
 } from './tools.js'
 import { buildInputItems } from '../runner.js'
 import {
@@ -115,6 +118,7 @@ const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
   'apply_safety_measure',
   'offer_appointment_options',
   'offer_appointment_slot',
+  'resolve_active_appointment_selection',
   'book_appointment',
   'request_human_booking',
   'reschedule_appointment',
@@ -129,7 +133,7 @@ const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
 
 function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
   const serverVisibleTerminal = (Array.isArray(toolResults) ? toolResults : []).find((result) => (
-    ['offer_appointment_options', 'offer_appointment_slot', 'resolve_active_appointment_offer'].includes(String(result?.tool?.name || '').trim()) &&
+    ['offer_appointment_options', 'offer_appointment_slot', 'resolve_active_appointment_selection', 'resolve_active_appointment_offer'].includes(String(result?.tool?.name || '').trim()) &&
     result?.output?.terminal === true &&
     result?.output?.suppressReply !== true &&
     String(result?.output?.visibleReply || '').trim()
@@ -233,7 +237,7 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
 export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email']
 
 // Identificadores internos que jamás deben llegar al cliente final.
-const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|reschedule_appointment|cancel_appointment|get_contact_appointments|resolve_active_appointment_offer|offer_appointment_options|create_payment_link|get_payment_status|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
+const TOOL_CALLING_V2_INTERNAL_IDENTIFIER_PATTERN = /\b(ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|request_human_booking|reschedule_appointment|cancel_appointment|get_contact_appointments|resolve_active_appointment_selection|resolve_active_appointment_offer|offer_appointment_options|create_payment_link|get_payment_status|send_goal_url|send_trigger_link|get_free_slots|get_business_profile|list_products|get_contact_profile|get_conversation_history|save_contact_data|apply_safety_measure|update_closing_context|register_deposit_payment_proof)\b/gi
 
 export function normalizeConversationalChannel(value = 'whatsapp') {
   const raw = String(value || '').trim().toLowerCase()
@@ -1797,6 +1801,9 @@ async function buildToolCallingV2AgentForRun({
   ctx.appointmentOfferDecision = previewAppointmentPaymentResume
     ? null
     : await loadConversationalAppointmentOfferDecisionContext({ ctx, config })
+  ctx.appointmentSelectionProgress = previewAppointmentPaymentResume
+    ? null
+    : await loadConversationalAppointmentSelectionProgressContext({ ctx, config })
   const tools = createConversationalTools(ctx)
   const paymentResumeToolChoice = resolvePaymentResumeToolChoice({
     config,
@@ -1843,15 +1850,63 @@ async function buildToolCallingV2AgentForRun({
 - Usa resolve_active_appointment_offer sólo cuando el último mensaje realmente decida algo sobre esta oferta: accept si la acepta; request_other_options si quiere otro horario; decline si ya no quiere agendar;${pendingOfferHandoffInstruction}
 - Si el mensaje trata otro asunto, responde o usa la herramienta correspondiente sin tocar la oferta. No fuerces al cliente a decidir antes de ayudarle.
 - Antes de ofrecer otro horario, resuelve esta oferta con request_other_options.
-- Si pide algo más tarde o más temprano, usa request_other_options y después reconsulta get_free_slots con relativeToPreviousOffer="later" o "earlier". Conserva el rango, weekdays y límites horarios que siga pidiendo; no vuelvas a mostrar el horario rechazado.
+- Si pide otra hora del mismo día, usa request_other_options con nextPreferenceScope="same_date" y después reconsulta get_free_slots para esa fecha; usa relativeToPreviousOffer="later" o "earlier" cuando corresponda. Si cambia de día usa nextPreferenceScope="different_date" y no arrastres la hora anterior; usa "open" si dejó la fecha abierta. No vuelvas a mostrar el horario rechazado.
 - Si cambia a una consulta amplia, después de request_other_options usa offer_appointment_options. Si da o elige una fecha y hora exactas, reconsulta ese punto y usa offer_appointment_slot. Una lista múltiple es sólo informativa: nunca la trates como esta oferta individual ni aceptes un "ok" ambiguo como selección.
 ${pendingOfferAcceptanceInstruction}
 ${pendingOfferPurposeInstruction}- Este bloque describe estado interno verificado. No menciones herramientas, fases ni maquinaria en la respuesta visible.`
     : ''
+  const progressiveShownRanges = (Array.isArray(ctx.appointmentSelectionProgress?.previouslyShownRanges)
+    ? ctx.appointmentSelectionProgress.previouslyShownRanges
+    : [])
+    .slice(0, 12)
+    .map((range) => {
+      const first = String(range?.firstLocalTime || '').slice(0, 5)
+      const last = String(range?.lastLocalTime || '').slice(0, 5)
+      const count = Math.max(1, Number(range?.count) || 1)
+      if (!first || !last) return ''
+      const zone = String(ctx.appointmentSelectionProgress?.selectedTimezone || timezone)
+      const withOffset = (localTime, startTime) => {
+        const instant = DateTime.fromISO(String(startTime || ''), { setZone: true }).setZone(zone)
+        return instant.isValid ? `${localTime} (UTC${instant.toFormat('ZZ')})` : localTime
+      }
+      const firstLabel = withOffset(first, range?.firstStartTime)
+      const lastLabel = withOffset(last, range?.lastStartTime)
+      return first === last ? firstLabel : `${firstLabel}-${lastLabel} (${count} opciones)`
+    })
+    .filter(Boolean)
+    .join(', ')
+  const progressivePurposeInstruction = ctx.appointmentSelectionProgress?.purpose === 'reschedule'
+    ? '- Esta selección pertenece a una reagenda vigente. Conserva ese propósito; el servidor retiene y aplica la identidad exacta de la cita sin exponerla ni depender de que la copies.'
+    : '- Esta selección pertenece a una cita nueva. No agregues un appointmentId ni la conviertas en reagenda.'
+  const progressiveNeedsDate = ctx.appointmentSelectionProgress?.appointmentStatus === 'collecting_date'
+  const progressiveSelectionInstruction = ctx.appointmentSelectionProgress?.active
+    ? (progressiveNeedsDate
+        ? `## Selección progresiva de cita
+- Ristak conserva el calendario y el propósito de esta selección, pero la fecha anterior ya fue descartada porque el último día solicitado no pudo usarse.
+${progressivePurposeInstruction}
+- En esta fase falta la fecha. Pide o interpreta un día nuevo; una hora suelta por sí sola no basta y jamás debe volver a ligarse al día descartado.
+- Si el último mensaje aporta una fecha exacta, con o sin hora, consulta sólo ese día con get_free_slots y progressDateAction="replace_selected_date". El servidor conservará el propósito y, si aplica, la identidad exacta de la cita que se está moviendo.
+- Si pide explorar varios días, consulta el rango con progressDateAction="keep_selected_date" y muestra las opciones con offer_appointment_options en modo exploring; la exploración no convierte una reagenda en cita nueva.
+- Si habla de otro tema, responde con normalidad y conserva esta selección. No menciones este estado interno.`
+        : `## Selección progresiva de cita
+- Ristak conserva como hecho estructurado la fecha ${String(ctx.appointmentSelectionProgress.selectedDate || '').slice(0, 10)} en la zona ${String(ctx.appointmentSelectionProgress.selectedTimezone || timezone).slice(0, 100)} para el calendario configurado.
+${progressivePurposeInstruction}
+- En esta fase ya no falta el día: falta únicamente la hora. No vuelvas a pedir la fecha ni presentes otra vez varios días.
+- Horarios mostrados anteriormente para ese día: ${progressiveShownRanges || 'sin resumen durable'}. Sirven para resolver referencias como "el último" o "el de las cuatro", pero no prueban disponibilidad actual.
+- Si el último mensaje aporta una hora, incluso de forma cotidiana o contextual, combínala con esta fecha y reconsulta get_free_slots exactamente para ese día y esa hora con progressDateAction="keep_selected_date"; sólo después usa offer_appointment_slot con el startTime real que devuelva.
+- Los rangos guardados describen lo que se mostró antes, no disponibilidad vigente. Nunca crees ni ofrezcas una cita sin la reconsulta exacta.
+- Si la persona cambia explícitamente de día, la nueva consulta usa progressDateAction="replace_selected_date", reemplaza esta fecha y no arrastra una hora anterior. Si no cambió el día, jamás uses esa transición. Si explícitamente abandona o reinicia la búsqueda antes de existir una oferta individual, usa resolve_active_appointment_selection.
+- Si habla de otro tema, responde con normalidad y conserva esta selección. No menciones este estado interno.`)
+    : ''
   const runtimeFactInstruction = cleanRuntimeEventContext
     ? `## Estado factual verificado por Ristak\n${cleanRuntimeEventContext}\n- Este bloque es contexto interno del sistema, no un mensaje del cliente. No lo cites, no muestres IDs ni expliques la maquinaria interna.`
     : ''
-  const instructions = [baseInstructions, pendingOfferInstruction, runtimeFactInstruction].filter(Boolean).join('\n\n')
+  const instructions = [
+    baseInstructions,
+    pendingOfferInstruction,
+    progressiveSelectionInstruction,
+    runtimeFactInstruction
+  ].filter(Boolean).join('\n\n')
 
   const agent = createToolCallingV2Agent({
     model,
@@ -1869,6 +1924,7 @@ ${pendingOfferPurposeInstruction}- Este bloque describe estado interno verificad
     aiProvider,
     forcedToolName: paymentResumeToolChoice,
     appointmentOfferDecision: ctx.appointmentOfferDecision,
+    appointmentSelectionProgress: ctx.appointmentSelectionProgress,
     capabilityManifest,
     validationErrors: getConversationalNativeRuntimeValidationErrors(config),
     knowledge
@@ -2610,6 +2666,30 @@ function getConversationalProviderMessageId(result) {
   ).trim() || null
 }
 
+export async function canDeclareConversationalReplyUndeliveredBeforeSend({
+  contactId,
+  agentId,
+  channel,
+  sourceMessageId,
+  externalIdPrefix = 'convagent',
+  loadPlan = getConversationalReplyDeliveryPlan
+} = {}) {
+  try {
+    const priorPlan = await loadPlan({
+      contactId,
+      agentId,
+      channel: normalizeConversationalChannel(channel),
+      sourceMessageId,
+      externalIdPrefix
+    })
+    return !priorPlan
+  } catch {
+    // Si el ledger no se puede leer, pudo existir una entrega previa. La oferta
+    // se conserva y la evidencia visible del resolver sigue fallando cerrado.
+    return false
+  }
+}
+
 export async function sendReplyParts({
   contactId,
   phone,
@@ -2958,15 +3038,29 @@ export async function sendReplyParts({
       })
     }
   } catch (error) {
+    let failedSettlement = null
     if (durableLedger && deliveryClaim?.claimed) {
-      await durableLedger.settle(durablePlan.id, deliveryClaim.claimToken, {
+      failedSettlement = await durableLedger.settle(durablePlan.id, deliveryClaim.claimToken, {
         status: 'pending',
         error: error.message || 'reply_delivery_failed'
       }).catch((settleError) => {
         logger.error(`[Agente conversacional] No se pudo cerrar el plan de entrega fallido: ${settleError.message}`)
+        return null
       })
     }
-    throw error
+    const deliveryFailure = {
+      sentParts,
+      durableStatus: String(failedSettlement?.status || '').trim() || null,
+      planId: String(durablePlan?.id || '').trim() || null
+    }
+    if (error && (typeof error === 'object' || typeof error === 'function')) {
+      error.conversationalReplyDelivery = deliveryFailure
+      throw error
+    }
+    const wrappedError = new Error(String(error || 'reply_delivery_failed'))
+    wrappedError.cause = error
+    wrappedError.conversationalReplyDelivery = deliveryFailure
+    throw wrappedError
   }
 
   if (durableLedger) {
@@ -3024,6 +3118,31 @@ async function handleToolCallingV2InboundTurn({
     historyEnvelope: { ...historyEnvelope, messages }
   })
   const { ctx, model, reply } = turn
+  const closeUndeliveredAppointmentOffer = async (reason, { beforeDelivery = false } = {}) => {
+    try {
+      if (beforeDelivery) {
+        // En un retry del mismo inbound la oferta y la action se reconstruyen
+        // con la misma identidad. Si ya existe un plan, pudo haber enviado o
+        // dejado ambiguo el globo antes del crash; no declaramos cero entrega.
+        const mayDeclareUndelivered = await canDeclareConversationalReplyUndeliveredBeforeSend({
+          contactId,
+          agentId: agentConfig?.id || '',
+          channel: normalizedChannel,
+          sourceMessageId: latest?.id || '',
+          externalIdPrefix: 'convagent'
+        })
+        if (!mayDeclareUndelivered) return false
+      }
+      return await supersedeUndeliveredConversationalAppointmentOffer({
+        ctx,
+        config: agentConfig,
+        reason
+      })
+    } catch (error) {
+      logger.error(`[Agente conversacional] No se pudo cerrar la oferta que no salió: ${error.message}`)
+      return false
+    }
+  }
 
   await recordConversationalAgentEvent({
     contactId,
@@ -3046,6 +3165,7 @@ async function handleToolCallingV2InboundTurn({
     action?.outcome?.terminal === true
   ))
   if (preventiveSuppression) {
+    await closeUndeliveredAppointmentOffer('offer_reply_prevented', { beforeDelivery: true })
     await recordConversationalAgentEvent({
       contactId,
       eventType: 'reply_suppressed',
@@ -3074,6 +3194,7 @@ async function handleToolCallingV2InboundTurn({
     (postState.status !== 'active' || Boolean(postState.signal)) && !ownTerminalState
   )
   if (externallyBlocked) {
+    await closeUndeliveredAppointmentOffer('offer_reply_blocked_by_conversation_state', { beforeDelivery: true })
     await recordConversationalAgentEvent({
       contactId,
       eventType: 'reply_suppressed',
@@ -3093,6 +3214,7 @@ async function handleToolCallingV2InboundTurn({
 
   const latestBeforeSend = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
   if (latestBeforeSend) {
+    await closeUndeliveredAppointmentOffer('offer_reply_preempted_before_send', { beforeDelivery: true })
     await recordConversationalAgentEvent({
       contactId,
       eventType: 'reply_suppressed',
@@ -3116,6 +3238,10 @@ async function handleToolCallingV2InboundTurn({
     return { sent: false, reason: 'newer_inbound_before_reply', turn }
   }
 
+  // sendReplyParts reserva el plan durable antes del primer intento al proveedor.
+  // Si ese intento falla con cero partes, el plan queda pending y el retry debe
+  // conservar tanto el texto como la oferta que ese texto confirma. Cerrar aquí
+  // la oferta dejaría al retry enviando un horario que ya no puede aceptarse.
   const delivery = await sendReplyParts({
     contactId,
     phone,
@@ -3135,11 +3261,17 @@ async function handleToolCallingV2InboundTurn({
   })
 
   if (delivery.suppressedByPreventiveMeasure) {
+    if (Number(delivery.sentParts || 0) === 0) {
+      await closeUndeliveredAppointmentOffer('offer_reply_prevented_before_send')
+    }
     await settleActiveClaim({ status: 'completed', answered: false })
     return { sent: false, reason: 'preventive_measure_before_delivery', turn, delivery }
   }
 
   if (delivery.interruptedBy) {
+    if (Number(delivery.sentParts || 0) === 0) {
+      await closeUndeliveredAppointmentOffer('offer_reply_preempted_during_send')
+    }
     await recordConversationalAgentEvent({
       contactId,
       eventType: 'reply_suppressed',
@@ -3171,6 +3303,7 @@ async function handleToolCallingV2InboundTurn({
   }
 
   if (!delivery.parts.length) {
+    await closeUndeliveredAppointmentOffer('offer_reply_empty')
     await settleActiveClaim({ status: 'failed', error: 'empty_reply_delivery' })
     throw new Error('El runtime tool_calling_v2 produjo una entrega vacía')
   }

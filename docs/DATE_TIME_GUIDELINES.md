@@ -26,6 +26,12 @@ Backend:
   opciones, ejemplos o tests.
 - Si un valor no trae zona horaria explícita, interprétalo con la zona del
   negocio antes de convertirlo a UTC.
+- Los rangos semanales de calendario (`openHours`) son horas de pared en la zona
+  del negocio. Calcula primero ahí el día y el rango válido y después conviértelo
+  a un instante UTC. Una zona del visitante puede reformatear ese instante, pero
+  nunca mover ni redefinir la disponibilidad del negocio. Al consultar por fecha
+  del visitante cubre hasta dos días de borde: UTC-12 y UTC+14 pueden separar el
+  mismo instante por dos fechas de calendario.
 
 Frontend:
 
@@ -145,6 +151,9 @@ Usa `businessTodayDateOnly(timezone)`, `normalizeDateOnlyInTimezone()`,
 
 - Google Calendar / HighLevel Calendar: convierte rangos `YYYY-MM-DD` a inicio y
   fin de día en la zona del negocio antes de pedir slots o eventos.
+- Calendarios públicos y embebidos: si el visitante elige otra zona, amplía la
+  consulta de fechas lo necesario para cubrir el borde visual, calcula los slots
+  con la zona del negocio y luego agrúpalos/muéstralos en la zona del visitante.
 - Stripe, Conekta, Rebill y Mercado Pago: las fechas internas del plan se calculan con la
   zona del negocio; los cargos reales se ejecutan como instantes UTC.
 - En planes Stripe, Conekta y Rebill, una fecha programada sin hora usa las 10:00

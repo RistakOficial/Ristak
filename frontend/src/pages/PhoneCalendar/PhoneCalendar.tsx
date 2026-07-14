@@ -1512,6 +1512,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     address: string
     timeZone: string
     contactId?: string
+    strictAvailabilityCheck?: true
   }) => {
     if (!selectedCalendar) return
 

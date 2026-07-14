@@ -7,6 +7,25 @@ export type CalendarSlotSelection = {
   slot: string;
 };
 
+type AppointmentAvailabilityRequestInput = {
+  formMode: 'create' | 'edit';
+  scheduleMode: 'default' | 'custom';
+};
+
+/**
+ * Keeps the server-side availability lock attached to appointments created
+ * from a free slot, while preserving the explicit manual override offered by
+ * the custom scheduler.
+ */
+export function getAppointmentAvailabilityRequestFields({
+  formMode,
+  scheduleMode,
+}: AppointmentAvailabilityRequestInput): { strictAvailabilityCheck?: true } {
+  return formMode === 'create' && scheduleMode === 'default'
+    ? { strictAvailabilityCheck: true }
+    : {};
+}
+
 type CurrentCalendarSlotSelectionInput = {
   calendarId: string;
   dateOnly: string;

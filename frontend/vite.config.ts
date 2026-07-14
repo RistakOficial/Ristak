@@ -18,6 +18,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: false
       },
+      '/media': {
+        // Los assets locales usan la misma ruta pública que producción.
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        secure: false
+      },
       '/webhook': {
         // ⚠️ PUERTO FIJO 3001 - NO CAMBIAR ESTE VALOR ⚠️
         target: 'http://localhost:3001',

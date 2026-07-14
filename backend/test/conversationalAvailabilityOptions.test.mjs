@@ -11,7 +11,8 @@ import {
   buildNativeFreeSlotDays,
   createConversationalTools,
   filterNativeFreeSlotDays,
-  loadConversationalAppointmentOfferDecisionContext
+  loadConversationalAppointmentOfferDecisionContext,
+  loadConversationalAppointmentSelectionProgressContext
 } from '../src/agents/conversational/tools.js'
 import { ensureToolCallingV2VisibleReply } from '../src/agents/conversational/runner.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
@@ -238,8 +239,8 @@ test('offer_appointment_options muestra hasta tres días reales sin crear una of
       id: calendarId,
       name: 'Agenda con opciones agrupadas',
       source: 'ristak',
-      slotDuration: 60,
-      slotDurationUnit: 'mins',
+      slotDuration: 1,
+      slotDurationUnit: 'hours',
       slotInterval: 60,
       slotIntervalUnit: 'mins',
       appoinmentPerSlot: 2,
@@ -264,6 +265,7 @@ test('offer_appointment_options muestra hasta tres días reales sin crear una of
     }))
     assert.equal(availability.ok, true, JSON.stringify(availability))
     assert.equal(availability.total, 9)
+    assert.equal(availability.durationMinutes, 60)
 
     const grouped = await tools
       .find((item) => item.name === 'offer_appointment_options')
@@ -474,6 +476,10 @@ test('un horario individual rechazado más recientemente manda sobre la lista an
       contactId,
       previewScopeId,
       executionId: `execution_offer_${suffix}`
+    })
+    offerCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: offerCtx,
+      config
     })
     const exact = await toolByName(offerCtx, 'get_free_slots').invoke(null, JSON.stringify(freeSlotsInput(
       day.toISODate(),

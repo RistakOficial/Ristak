@@ -265,7 +265,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       executionId: confirmationRun.executionId,
       actions: [],
       conversationMessages: [
-        { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' },
+        { id: offerRun.executionId, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' },
         { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
         { id: confirmationRun.executionId, role: 'user', content: 'antes dime cuánto cuesta' }
       ]
@@ -296,12 +296,17 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       'get_contact_appointments',
       'get_free_slots',
       'offer_appointment_slot',
-      'book_appointment',
-      'reschedule_appointment',
       'cancel_appointment',
       'create_payment_link',
       'resolve_active_appointment_offer'
     ]) assert.ok(decisionTools.some((item) => item.name === expected), `${expected} debe seguir disponible`)
+    for (const hiddenTerminal of ['book_appointment', 'reschedule_appointment', 'request_human_booking']) {
+      assert.equal(
+        decisionTools.some((item) => item.name === hiddenTerminal),
+        false,
+        `${hiddenTerminal} no debe competir con el resolver de la oferta activa`
+      )
+    }
 
     const offerBeforePriceLookup = (await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
@@ -333,7 +338,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       executionId: acceptanceRun.executionId,
       actions: [],
       conversationMessages: [
-        { id: `opening_${suffix}`, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' },
+        { id: offerRun.executionId, role: 'user', content: 'Quiero agendar a mi mamá Paty y Ana irá como acompañante.' },
         { id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply },
         { id: confirmationRun.executionId, role: 'user', content: 'antes dime cuánto cuesta' },
         { id: `assistant_price_${suffix}`, role: 'assistant', content: priceReply },
