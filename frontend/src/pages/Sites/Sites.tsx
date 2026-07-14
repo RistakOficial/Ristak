@@ -26352,7 +26352,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
   } else if (answers.forms === 'custom') {
     sections.push(
       'Formularios:',
-      '- La página usará campos HTML personalizados compatibles.',
+      '- ChatGPT o Claude diseñarán el formulario con compatibilidad Ristak.',
       '- Usa <form data-rstk-form-id="lead-form"> y campos con name, id, label visible y placeholder.',
       '- Marca email y teléfono con data-rstk-field="email" o data-rstk-field="phone" cuando existan.',
       '- Si un botón envía el formulario, debe estar dentro del mismo <form> y usar una acción submit compatible.',
@@ -26408,7 +26408,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
   } else if (answers.video === 'html') {
     sections.push(
       'Video:',
-      '- La página usará video HTML compatible.',
+      '- ChatGPT o Claude diseñarán el video con compatibilidad Ristak.',
       '- El video HTML queda bajo control total del código y no se edita desde Ristak. Para reproductor, acciones y formularios sobre video usa el video nativo.',
       ''
     )
@@ -26484,7 +26484,7 @@ const ExternalAICompatibilityModal: React.FC<{
   const handleCopy = async () => {
     try {
       await copyTextToClipboard(compatibilityText)
-      showToast('success', 'Código copiado', 'Pégalo en ChatGPT, Claude o Codex junto con tu petición real.')
+      showToast('success', 'Instrucciones copiadas', 'Pégalas en ChatGPT, Claude o Codex junto con tu petición real.')
     } catch (error) {
       showToast('error', 'No se pudo copiar', error instanceof Error ? error.message : 'Copia el texto manualmente.')
     }
@@ -26505,7 +26505,7 @@ const ExternalAICompatibilityModal: React.FC<{
       isOpen={isOpen}
       onClose={onClose}
       title="Asistente de compatibilidad"
-      subtitle="Elige qué elementos especiales de Ristak quieres permitir dentro del HTML que te genere una IA externa."
+      subtitle="Elige qué quieres que ChatGPT o Claude diseñen y qué elementos prefieres agregar desde Ristak."
       size="lg"
       closeOnBackdropClick={!creating}
       closeOnEscape={!creating}
@@ -26514,40 +26514,40 @@ const ExternalAICompatibilityModal: React.FC<{
         <label className={styles.importedActionField}>
           <span>¿Tu página usará formularios?</span>
           <CustomSelect value={answers.forms} onChange={(event) => updateAnswer('forms', event.target.value as ExternalAIFormMode)}>
-            <option value="native">Sí, usando formularios nativos de Ristak</option>
-            <option value="custom">Sí, usando campos HTML personalizados compatibles</option>
-            <option value="none">No usará formularios</option>
+            <option value="native">Agregar los formularios completos de Ristak</option>
+            <option value="custom">Hacer que ChatGPT o Claude diseñen el formulario con compatibilidad Ristak</option>
+            <option value="none">Diseñar la página sin formularios</option>
           </CustomSelect>
         </label>
 
         <label className={styles.importedActionField}>
           <span>¿Tu página usará calendario?</span>
           <CustomSelect value={answers.calendar} onChange={(event) => updateAnswer('calendar', event.target.value as ExternalAICalendarMode)}>
-            <option value="native">Sí, usando el calendario nativo de Ristak</option>
-            <option value="custom">Sí, usando un calendario diseñado por la IA pero conectado a Ristak</option>
-            <option value="none">No usará calendario</option>
+            <option value="native">Agregar el calendario completo de Ristak</option>
+            <option value="custom">Hacer que ChatGPT o Claude diseñen el calendario con compatibilidad Ristak</option>
+            <option value="none">Diseñar la página sin calendario</option>
           </CustomSelect>
         </label>
 
         <label className={styles.importedActionField}>
           <span>¿Tu página usará video?</span>
           <CustomSelect value={answers.video} onChange={(event) => updateAnswer('video', event.target.value as ExternalAIVideoMode)}>
-            <option value="native">Sí, usando video nativo de Ristak</option>
-            <option value="html">Sí, usando video HTML compatible</option>
-            <option value="none">No usará video</option>
+            <option value="native">Agregar el reproductor completo de Ristak</option>
+            <option value="html">Hacer que ChatGPT o Claude diseñen el video con compatibilidad Ristak</option>
+            <option value="none">Diseñar la página sin video</option>
           </CustomSelect>
         </label>
 
         <label className={styles.importedActionField}>
           <span>¿Tu página usará pago?</span>
           <CustomSelect value={answers.payment} onChange={(event) => updateAnswer('payment', event.target.value as ExternalAIPaymentMode)}>
-            <option value="native">Sí, usando pago nativo de Ristak</option>
-            <option value="none">No usará pago</option>
+            <option value="native">Agregar el sistema de pago completo de Ristak</option>
+            <option value="none">Diseñar la página sin pagos</option>
           </CustomSelect>
         </label>
 
         <label className={styles.aiCreationPrompt}>
-          <span>Código de compatibilidad</span>
+          <span>Instrucciones de compatibilidad</span>
           <textarea
             readOnly
             rows={14}
@@ -26625,8 +26625,8 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
               </button>
               <button type="button" disabled={creating} onClick={() => setExternalAICompatibilityOpen(true)}>
                 <Sparkles size={22} />
-                <strong>Hacer la mía con ChatGPT/Claude</strong>
-                <p>Completarás un formulario y te daremos un código de compatibilidad para pegar en ChatGPT o Claude.</p>
+                <strong>Diseñar con ChatGPT o Claude</strong>
+                <p>Responde unas preguntas y copia instrucciones listas para diseñar una página compatible con Ristak.</p>
                 <ChevronRight size={18} />
               </button>
               {aiAgentAvailable && (

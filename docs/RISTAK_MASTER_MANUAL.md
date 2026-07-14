@@ -2927,13 +2927,16 @@ por ejemplo `Landing-01.html`, `Form-02.html`, `Booked-03.html`. Ristak usa ese
 numero para ordenar paginas importadas o generadas; no debe depender del orden
 alfabetico del ZIP ni de nombres como `Pagina 1`.
 
-En el flujo de crear un sitio, la opcion `Hacer la mia con ChatGPT/Claude`
+En el flujo de crear un sitio, la opcion `Diseñar con ChatGPT o Claude`
 vive dentro del grupo de Editor HTML, despues de `Subir HTML o ZIP`. Esta opcion
 no llama a ninguna API de IA ni crea paginas por el usuario: solo abre un
-asistente de compatibilidad que pregunta si el HTML generado externamente usara
-formularios, calendario, video o pago de Ristak. Al terminar muestra un bloque de
-texto listo para copiar y pegar en ChatGPT, Claude o Codex junto con la peticion
-real del usuario. Desde ese modal, `Subir mi HTML` abre el flujo de importacion
+asistente de compatibilidad que pregunta si ChatGPT o Claude diseñaran los
+formularios, el calendario o el video con compatibilidad Ristak, si se insertaran
+los elementos completos de Ristak o si la pagina no los incluira. Los dropdowns
+usan el `CustomSelect` global y el valor cerrado conserva la misma tipografia de
+las opciones abiertas. Al terminar muestra instrucciones listas para copiar y
+pegar en ChatGPT, Claude o Codex junto con la peticion real del usuario. Desde ese
+modal, `Subir mi HTML` abre el flujo de importacion
 ZIP/HTML y `Ir al editor` crea una hoja HTML en blanco para pegar codigo pagina
 por pagina. Si el usuario elige formulario HTML personalizado, ese bloque
 copiable incluye el contrato de calificacion por opcion, los tres destinos de
