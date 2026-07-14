@@ -115,6 +115,14 @@ final class NotificationService: UNNotificationServiceExtension {
         userInfo: [AnyHashable: Any],
         completion: @escaping (UNNotificationContent) -> Void
     ) {
+        // Communication Notifications cambian el titulo visible por el nombre del
+        // remitente. Eso solo corresponde a mensajes reales; citas, pagos y avisos
+        // deben conservar su titulo semantico (por ejemplo, "Nueva Cita").
+        guard notificationCategory(from: userInfo) == "chat" else {
+            completion(content)
+            return
+        }
+
         guard #available(iOS 15.0, *) else {
             completion(content)
             return
@@ -182,6 +190,11 @@ final class NotificationService: UNNotificationServiceExtension {
         } else {
             finalize(nil)
         }
+    }
+
+    private func notificationCategory(from userInfo: [AnyHashable: Any]) -> String {
+        let category = stringValue(userInfo["category"]) ?? ""
+        return category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     // MARK: - Avatar de iniciales (fallback nativo)

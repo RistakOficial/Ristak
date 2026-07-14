@@ -5012,7 +5012,13 @@ mostrar el avatar del contacto como remitente. La extension
 `ios/app/RistakNotificationService` ya se embebe en la app con bundle
 `com.ristak.app.NotificationService` y procesa `contactAvatarUrl` /
 `senderAvatarUrl` como avatar de remitente; `notificationImageUrl` queda para
-media real del mensaje.
+media real del mensaje. Ese enriquecimiento y `INSendMessageIntent` pertenecen
+solo a `category=chat`: citas, pagos, prioridades de agente y otros eventos
+conservan su titulo semantico y no reciben avatar de remitente. El contrato
+visible de una cita nueva es `📅 Nueva Cita` con
+`Contacto - 28 Mayo, 11:00 AM` en la zona horaria de la cuenta; el de un pago
+exitoso es `💸 Nuevo Pago` con `Contacto ($20,000)` en la moneda del pago o
+de la cuenta. Los estados no exitosos mantienen titulos especificos.
 El topic APNs valido para la app Apple es exactamente `com.ristak.app`; el
 Installer no debe reportar iOS configurado con un bundle legacy o Android. La
 app registra el token con `platform=ios`, `clientType=native` y
@@ -5022,6 +5028,11 @@ estan listos. La activacion se serializa, usa reintentos 5/15/60/300 s y se
 revalida en foreground si la confirmacion supera 6 h. Logout deshabilita el
 device con `DELETE /api/push/mobile-devices` best-effort y siempre limpia APNs
 local; 401/licencia revocada tambien ejecutan la limpieza local inmediata.
+El mismo principio aplica a Android Play/Expo (`com.ristak.android`): permiso
+concedido no significa token registrado. La app exige la confirmacion de
+`POST /api/push/mobile-devices`, reintenta fallas de token o red con backoff
+5/15/60/300 s y al volver a foreground, y solo entonces muestra
+`Alertas activas`. La renovacion del token tambien reintenta su persistencia.
 La Notification Service Extension serializa tareas/callbacks para finalizar una
 sola vez, descarga con timeouts de 6–7 s y limita el avatar a 5 MB y la media
 adjunta a 12 MB; si no puede enriquecer, entrega la notificacion base.

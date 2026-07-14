@@ -199,8 +199,8 @@ test('accion notify_push envia payload push cuando la IA detecta confirmacion', 
 
     assert.equal(payloads.length, 1)
     assert.equal(payloads[0].payload.title, '✅ Cita confirmada')
-    assert.match(payloads[0].payload.body, /Ana/)
-    assert.match(payloads[0].payload.body, /Consulta dental/)
+    assert.match(payloads[0].payload.body, /^Ana - /)
+    assert.doesNotMatch(payloads[0].payload.body, /Consulta dental/)
     assert.match(payloads[0].payload.body, /Confirmo asistencia/)
     assert.equal(payloads[0].payload.tag, `appointment-confirmed-${appointmentId}`)
     assert.equal(payloads[0].payload.category, 'appointment_confirmed')

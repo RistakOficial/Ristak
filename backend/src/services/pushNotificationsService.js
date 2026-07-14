@@ -5,6 +5,8 @@ import sharp from 'sharp'
 import webPush from 'web-push'
 import { db, getAppConfig, setAppConfig, getUserAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
+import { getAccountTimezone, normalizeToUtcIso, resolveTimezone } from '../utils/dateUtils.js'
 import {
   getCentralMobilePushStatus,
   isLicenseEnforced,
@@ -153,6 +155,7 @@ const APP_NAME_NOTIFICATION_TEXTS = new Set([
   'from reistack'
 ])
 const NOTIFICATION_TITLE_EMOJI_BY_TEXT = new Map([
+  ['Nuevo Pago', '💸'],
   ['Pago recibido', '💸'],
   ['Pago completado', '💸'],
   ['Pago rechazado', '❌'],
@@ -166,6 +169,7 @@ const NOTIFICATION_TITLE_EMOJI_BY_TEXT = new Map([
   ['Pago enviado', '📤'],
   ['Pago creado', '🧾'],
   ['Pago actualizado', '💳'],
+  ['Nueva Cita', '📅'],
   ['Cita agendada', '📅'],
   ['Cita confirmada', '✅'],
   ['Cita reprogramada', '↩️'],
@@ -177,15 +181,15 @@ const NOTIFICATION_TITLE_EMOJI_PREFIXES = Array.from(
   new Set(NOTIFICATION_TITLE_EMOJI_BY_TEXT.values())
 )
 const PAYMENT_STATUS_TITLES = {
-  paid: 'Pago completado',
-  succeeded: 'Pago completado',
-  completed: 'Pago completado',
-  complete: 'Pago completado',
-  fulfilled: 'Pago completado',
-  success: 'Pago completado',
-  captured: 'Pago completado',
-  approved: 'Pago completado',
-  accredited: 'Pago completado',
+  paid: 'Nuevo Pago',
+  succeeded: 'Nuevo Pago',
+  completed: 'Nuevo Pago',
+  complete: 'Nuevo Pago',
+  fulfilled: 'Nuevo Pago',
+  success: 'Nuevo Pago',
+  captured: 'Nuevo Pago',
+  approved: 'Nuevo Pago',
+  accredited: 'Nuevo Pago',
   failed: 'Pago rechazado',
   failure: 'Pago rechazado',
   error: 'Pago rechazado',
@@ -209,43 +213,10 @@ const PAYMENT_STATUS_TITLES = {
   sent: 'Pago enviado',
   draft: 'Pago creado'
 }
-const PAYMENT_STATUS_BODY_LABELS = {
-  paid: 'Pago completado',
-  succeeded: 'Pago completado',
-  completed: 'Pago completado',
-  complete: 'Pago completado',
-  fulfilled: 'Pago completado',
-  success: 'Pago completado',
-  captured: 'Pago completado',
-  approved: 'Pago completado',
-  accredited: 'Pago completado',
-  failed: 'Pago rechazado',
-  failure: 'Pago rechazado',
-  error: 'Pago rechazado',
-  declined: 'Pago rechazado',
-  rejected: 'Pago rechazado',
-  requires_action: 'Pago requiere atención',
-  pending: 'Pago pendiente',
-  processing: 'Pago pendiente',
-  in_process: 'Pago pendiente',
-  partial: 'Pago parcial',
-  overdue: 'Pago vencido',
-  refunded: 'Pago reembolsado',
-  refund: 'Pago reembolsado',
-  partially_refunded: 'Pago reembolsado',
-  void: 'Pago cancelado',
-  voided: 'Pago cancelado',
-  cancelled: 'Pago cancelado',
-  canceled: 'Pago cancelado',
-  deleted: 'Pago cancelado',
-  scheduled: 'Pago programado',
-  sent: 'Link de pago enviado',
-  draft: 'Pago creado'
-}
 const APPOINTMENT_STATUS_TITLES = {
-  booked: 'Cita agendada',
-  scheduled: 'Cita agendada',
-  created: 'Cita agendada',
+  booked: 'Nueva Cita',
+  scheduled: 'Nueva Cita',
+  created: 'Nueva Cita',
   confirmed: 'Cita confirmada',
   rescheduled: 'Cita reprogramada',
   cancelled: 'Cita cancelada',
@@ -997,6 +968,8 @@ export async function renderNotificationInitialsAvatarPng({
 
 async function enrichNotificationPayloadForDelivery(payload = {}) {
   const normalized = normalizeNotificationPayload(payload)
+  if (String(normalized.category || '').trim().toLowerCase() !== 'chat') return normalized
+
   const contactIds = normalizePayloadContactIds(normalized)
   if (contactIds.length !== 1) return normalized
 
@@ -1422,33 +1395,47 @@ function getSubscriptionId(endpoint = '') {
   return `push_${crypto.createHash('sha256').update(endpoint).digest('hex')}`
 }
 
-function formatAppointmentTime(value) {
+function formatAppointmentTime(value, timezone) {
   if (!value) return ''
-  const date = new Date(value)
+  const zone = resolveTimezone(timezone)
+  const normalizedValue = normalizeToUtcIso(value, zone)
+  if (!normalizedValue) return ''
+  const date = new Date(normalizedValue)
   if (Number.isNaN(date.getTime())) return ''
 
-  return new Intl.DateTimeFormat('es-MX', {
-    day: '2-digit',
-    month: 'short',
+  const parts = new Intl.DateTimeFormat('es-MX', {
+    day: 'numeric',
+    month: 'long',
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true
-  }).format(date)
+    hour12: true,
+    timeZone: zone
+  }).formatToParts(date)
+  const part = (type) => parts.find((item) => item.type === type)?.value || ''
+  const month = part('month')
+  const capitalizedMonth = month ? `${month.charAt(0).toUpperCase()}${month.slice(1)}` : ''
+  const dayPeriod = part('dayPeriod').replace(/[.\s]/g, '').toUpperCase()
+  const dateLabel = [part('day'), capitalizedMonth].filter(Boolean).join(' ')
+  const timeLabel = `${part('hour')}:${part('minute')}${dayPeriod ? ` ${dayPeriod}` : ''}`
+  return [dateLabel, timeLabel].filter(Boolean).join(', ')
 }
 
-function formatPaymentAmount(amount, currency = 'MXN') {
+function formatPaymentAmount(amount, currency = '') {
   if (amount === undefined || amount === null || amount === '') return ''
   const value = Number(amount)
   if (!Number.isFinite(value)) return ''
+  const normalizedCurrency = String(currency || '').trim().toUpperCase()
+  if (!/^[A-Z]{3}$/.test(normalizedCurrency)) return ''
 
   try {
     return new Intl.NumberFormat('es-MX', {
       style: 'currency',
-      currency: String(currency || 'MXN').toUpperCase(),
+      currency: normalizedCurrency,
+      minimumFractionDigits: 0,
       maximumFractionDigits: 2
     }).format(value)
   } catch {
-    return `$${value.toFixed(2)}`
+    return `$${value.toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
   }
 }
 
@@ -1464,11 +1451,6 @@ function getPaymentNotificationTitle(payment = {}) {
   return addNotificationTitleEmoji(PAYMENT_STATUS_TITLES[status] || 'Pago actualizado')
 }
 
-function getPaymentNotificationStatusLabel(payment = {}) {
-  const status = normalizePaymentStatus(payment.paymentStatus || payment.payment_status || payment.status || 'paid')
-  return PAYMENT_STATUS_BODY_LABELS[status] || 'Pago actualizado'
-}
-
 function getPaymentContactLabel(payment = {}) {
   const contact = cleanNotificationText(
     payment.contactName ||
@@ -1480,20 +1462,6 @@ function getPaymentContactLabel(payment = {}) {
     ''
   )
   return contact && !isAppNameNotificationText(contact) ? contact.slice(0, 90) : 'Cliente'
-}
-
-function getPaymentConceptLabel(payment = {}) {
-  const concept = cleanNotificationText(
-    payment.title ||
-    payment.description ||
-    payment.concept ||
-    payment.productName ||
-    payment.product_name ||
-    payment.name ||
-    ''
-  )
-  if (!concept || /^pago(?:\s+(?:registrado|recibido|manual|programado|required|requerido|obligatorio|solicitado|pendiente))?$/i.test(concept)) return ''
-  return concept.slice(0, 90)
 }
 
 function getPaymentDetailLabel(payment = {}) {
@@ -1509,14 +1477,11 @@ function getPaymentDetailLabel(payment = {}) {
 }
 
 function getPaymentNotificationBody(payment = {}) {
-  const parts = [
-    getPaymentNotificationStatusLabel(payment),
-    getPaymentContactLabel(payment),
-    formatPaymentAmount(payment.amount, payment.currency),
-    getPaymentConceptLabel(payment),
-    getPaymentDetailLabel(payment)
-  ].filter(Boolean)
-  return (parts.join(' · ') || 'Revisa el detalle del pago.').slice(0, 220)
+  const contactLabel = getPaymentContactLabel(payment)
+  const amountLabel = formatPaymentAmount(payment.amount, payment.currency)
+  const detail = getPaymentDetailLabel(payment)
+  const primary = amountLabel ? `${contactLabel} (${amountLabel})` : contactLabel
+  return (`${primary}${detail ? ` - ${detail}` : ''}` || 'Revisa el detalle del pago.').slice(0, 220)
 }
 
 function normalizeAppointmentEventType(value = '') {
@@ -1541,32 +1506,28 @@ function getAppointmentEventKey(eventType = 'booked') {
   return `appointment_${normalized}`
 }
 
-function getAppointmentNotificationBody(appointment = {}, options = {}, { contactName = '', detail = '' } = {}) {
-  const appointmentTitle = cleanNotificationText(
-    options.appointmentTitle ||
-    appointment.title ||
-    appointment.name ||
-    ''
-  )
-  const calendarName = cleanNotificationText(
-    options.calendarName ||
-    appointment.calendarName ||
-    appointment.calendar_name ||
-    ''
-  )
+function getAppointmentNotificationBody(appointment = {}, options = {}, { contactName = '', detail = '', timezone = '' } = {}) {
   const timeLabel = formatAppointmentTime(
     options.startTime ||
     appointment.startTime ||
-    appointment.start_time
+    appointment.start_time,
+    timezone
   )
-  const parts = [
-    contactName,
-    appointmentTitle && !/^nueva cita$/i.test(appointmentTitle) ? appointmentTitle : '',
-    timeLabel,
-    calendarName,
-    cleanNotificationText(detail)
-  ].filter(Boolean)
-  return (parts.join(' · ') || 'Revisa los detalles de la cita.').slice(0, 220)
+  const primary = [contactName || 'Cliente', timeLabel].filter(Boolean).join(' - ')
+  const cleanDetail = cleanNotificationText(detail)
+  return (`${primary}${cleanDetail ? ` - ${cleanDetail}` : ''}` || 'Revisa los detalles de la cita.').slice(0, 220)
+}
+
+async function resolveAppointmentNotificationTimezone(appointment = {}, options = {}) {
+  const explicitTimezone = cleanNotificationText(
+    options.timezone ||
+    options.timeZone ||
+    appointment.timezone ||
+    appointment.time_zone ||
+    ''
+  )
+  if (explicitTimezone) return resolveTimezone(explicitTimezone)
+  return resolveTimezone(await getAccountTimezone())
 }
 
 function getAndroidChannelId({ soundEnabled = true, vibrationEnabled = true } = {}) {
@@ -2220,13 +2181,14 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
   }
 
   const contactName = await getAppointmentContactName(appointment, options)
+  const timezone = await resolveAppointmentNotificationTimezone(appointment, options)
   const eventType = normalizeAppointmentEventType(options.eventType || 'booked')
   const eventKey = getAppointmentEventKey(eventType)
   const isTest = Boolean(options.isTest ?? appointment.isTest ?? appointment.is_test)
   const baseTitle = getAppointmentNotificationTitle(eventType)
   const payload = {
     title: isTest ? `Prueba · ${baseTitle}` : baseTitle,
-    body: getAppointmentNotificationBody(appointment, options, { contactName }),
+    body: getAppointmentNotificationBody(appointment, options, { contactName, timezone }),
     tag: `calendar-${calendarId}`,
     threadId: `calendar-${calendarId}`,
     url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointment.id || '')}`,
@@ -2269,13 +2231,15 @@ export async function sendAppointmentStatusNotification(appointment = {}, option
   }
 
   const contactName = await getAppointmentContactName(appointment, options)
+  const timezone = await resolveAppointmentNotificationTimezone(appointment, options)
   const eventKey = getAppointmentEventKey(eventType)
   const appointmentId = String(options.appointmentId || appointment.id || '').trim()
   const payload = {
     title: getAppointmentNotificationTitle(eventType),
     body: getAppointmentNotificationBody(appointment, options, {
       contactName,
-      detail: options.resultDetail || options.detail || ''
+      detail: options.resultDetail || options.detail || '',
+      timezone
     }),
     tag: `appointment-${eventType}-${appointmentId || calendarId}`,
     threadId: `calendar-${calendarId}`,
@@ -2331,11 +2295,13 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
   }
 
   const contactName = await getAppointmentContactName(appointment, options)
+  const timezone = await resolveAppointmentNotificationTimezone(appointment, options)
   const payload = {
     title: getAppointmentNotificationTitle('confirmed'),
     body: getAppointmentNotificationBody(appointment, options, {
       contactName,
-      detail: options.resultDetail || ''
+      detail: options.resultDetail || '',
+      timezone
     }),
     tag: `appointment-confirmed-${appointmentId}`,
     threadId: calendarId ? `calendar-${calendarId}` : `appointment-${appointmentId}`,
@@ -2499,7 +2465,8 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
     contactName: senderName,
     contactId,
     url: `/movil?contact=${encodeURIComponent(contactId)}`,
-    category: 'chat'
+    category: 'agent_priority',
+    eventKey: 'agent_priority'
   }
 
   // (MOB-006) Comparte el on/off de chat (chat_push_notifications_enabled) por usuario.
@@ -2534,7 +2501,14 @@ export async function sendPaymentNotification(payment = {}) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
   }
 
-  const payload = buildPaymentNotificationPayload(payment)
+  const explicitCurrency = cleanNotificationText(
+    payment.currency ||
+    payment.currencyCode ||
+    payment.currency_code ||
+    ''
+  ).toUpperCase()
+  const currency = explicitCurrency || await getAccountCurrency()
+  const payload = buildPaymentNotificationPayload({ ...payment, currency })
 
   // (MOB-006) enabledKey => on/off de pagos por usuario destinatario (fallback global).
   return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
