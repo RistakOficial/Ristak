@@ -49,6 +49,28 @@ test('mutaciones de proveedores revalidan el estado global', async () => {
   assert.match(highLevel, /disconnect[\s\S]*?refreshIntegrationsStatusAfter/)
 })
 
+test('inicializacion conecta Meta, Google Calendar y OpenAI sin mandar a Configuracion', async () => {
+  const [page, context, metaService, calendarsService] = await Promise.all([
+    readSource('frontend/src/pages/Initialization/Initialization.tsx'),
+    readSource('frontend/src/contexts/InitializationContext.tsx'),
+    readSource('frontend/src/services/metaOAuthService.ts'),
+    readSource('frontend/src/services/calendarsService.ts')
+  ])
+
+  assert.match(context, /\{ id: 'meta', required: true/)
+  assert.match(context, /\{ id: 'google-calendar', required: true/)
+  assert.match(context, /\{ id: 'openai', required: true/)
+  assert.doesNotMatch(context, /facebook-page|meta-app|whatsapp-api/)
+  assert.match(page, /metaOAuthService\.createConnectUrl\('\/initialization'\)/)
+  assert.match(page, /calendarsService\.getGoogleConnectUrl\('\/initialization'\)/)
+  assert.match(page, /conversationalAgentService\.connectAIProvider\('openai', apiKey\)/)
+  assert.match(page, /metaOAuthService\.complete\(\{ handoffToken: metaHandoff \}\)/)
+  assert.match(page, /calendarsService\.claimGoogleOAuth\(googleHandoff\)/)
+  assert.doesNotMatch(page, /<Link|to=['"]\/settings/)
+  assert.match(metaService, /createConnectUrl: \(returnPath = '\/settings\/meta-ads\/cuenta'\)/)
+  assert.match(calendarsService, /getGoogleConnectUrl\(returnPath = ''\)/)
+})
+
 test('libreria de automatizaciones actualiza inmediatamente y revierte si falla', async () => {
   const [service, library] = await Promise.all([
     readSource('frontend/src/services/automationsService.ts'),

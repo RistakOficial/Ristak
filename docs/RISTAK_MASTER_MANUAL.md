@@ -180,6 +180,30 @@ onboarding, permisos operativos y selectores dependientes sin recargar la ruta.
 Las respuestas anteriores a una revalidacion mas nueva se descartan. Al cerrar
 sesion se limpia tambien este snapshot para no heredar conexiones de otra sesion.
 
+### Inicializacion de cuentas
+
+`/initialization` es la entrada rápida para administradores nuevos. La pantalla
+no replica toda la configuracion ni presenta una checklist tecnica: muestra solo
+las conexiones disponibles por permiso para **Meta**, **Google Calendar** y
+**OpenAI**. Cada boton inicia o completa el flujo real en esa misma ruta:
+
+- Meta crea el Business Login oficial con retorno a `/initialization`, reclama
+  el handoff opaco y deja la cuenta OAuth autorizada. La seleccion operativa de
+  Page, Instagram, cuenta publicitaria y Dataset sigue siendo opcional y vive en
+  la seccion Meta cuando el negocio la necesite.
+- Google Calendar abre el OAuth central con retorno permitido a
+  `/initialization`, reclama el handoff y guarda el refresh token cifrado. Elegir
+  calendarios concretos o combinar citas es configuracion posterior, no requisito
+  para considerar conectada la cuenta.
+- OpenAI abre un modal local para pegar la API key. Backend valida la key contra
+  el proveedor y conserva solamente la credencial cifrada; el navegador no la
+  persiste ni vuelve a mostrarla completa.
+
+El progreso se calcula únicamente con las conexiones que el usuario puede usar
+segun permisos. Cuando todas están conectadas, el administrador puede entrar al
+dashboard; si todavía no tiene alguna cuenta, **Hacerlo después** conserva la
+salida explícita sin inventar credenciales ni valores de prueba.
+
 Rutas publicas:
 
 - `/setup`: configuracion inicial.

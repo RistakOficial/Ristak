@@ -1,163 +1,233 @@
-import React, { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import {
-  Facebook,
-  Instagram,
-  Megaphone,
-  Target,
-  MessageCircle,
-  Code2,
-  PlugZap,
-  Bot,
-  Calendar,
-  CheckCircle2,
-  ArrowRight,
-  ExternalLink,
-  RefreshCw,
-  EyeOff,
-  Rocket,
-  Check
-} from 'lucide-react'
-import { Button } from '@/components/common/Button'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Bot, CalendarDays, Check, EyeOff, RefreshCw, ShieldCheck } from 'lucide-react'
 import { Badge } from '@/components/common/Badge'
-import { Logo } from '@/components/common/Logo'
+import { Button } from '@/components/common/Button'
+import { Card } from '@/components/common/Card'
+import { MetaBrandMark } from '@/components/common/MetaBrandMark'
 import { Modal } from '@/components/common/Modal'
-import { useAuth } from '@/contexts/AuthContext'
+import { PageContainer } from '@/components/common/PageContainer'
+import { PageHeader } from '@/components/common/PageHeader'
 import { useInitialization, type InitStepId } from '@/contexts/InitializationContext'
-import { hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
+import { useNotification } from '@/contexts/NotificationContext'
+import { calendarsService } from '@/services/calendarsService'
+import { conversationalAgentService } from '@/services/conversationalAgentService'
+import { metaOAuthService } from '@/services/metaOAuthService'
 import styles from './Initialization.module.css'
 
-type IconType = React.ComponentType<{ size?: number | string; className?: string }>
+type ConnectionAction = InitStepId | 'refresh' | null
+type IconType = React.ComponentType<{ size?: number; className?: string }>
 
-interface StepMeta {
+interface ConnectionMeta {
   title: string
   description: string
+  buttonLabel: string
   icon: IconType
-  /** Ruta interna a la pantalla de conexión. */
-  to?: string
-  /** Enlace externo (guía). */
-  externalHref?: string
-  externalLabel?: string
 }
 
-const STEP_META: Record<InitStepId, StepMeta> = {
-  'facebook-page': {
-    title: 'Conecta tu página de Facebook',
-    description: 'Empieza por la página principal del negocio. Es la base para conectar Instagram, anuncios y permisos de Meta.',
-    icon: Facebook,
-    to: '/settings/meta-ads'
-  },
-  instagram: {
-    title: 'Conecta Instagram',
-    description: 'Vincula la cuenta de Instagram que ya vive dentro del mismo negocio y página de Facebook.',
-    icon: Instagram,
-    to: '/settings/meta-ads'
-  },
-  'ad-account': {
-    title: 'Selecciona tu cuenta publicitaria',
-    description: 'Conecta la cuenta publicitaria desde la que Ristak va a leer métricas y administrar campañas.',
-    icon: Megaphone,
-    to: '/settings/meta-ads'
-  },
-  pixel: {
-    title: 'Conecta el píxel de Facebook',
-    description: 'Selecciona el píxel o dataset de Meta para medir visitas, formularios y resultados de campañas.',
-    icon: Target,
-    to: '/settings/meta-ads'
-  },
-  whatsapp: {
-    title: 'Conecta tu aplicación de WhatsApp Business',
-    description: 'Vincula la cuenta o número de WhatsApp Business que usarás para conversaciones y seguimiento.',
-    icon: MessageCircle,
-    to: '/settings/whatsapp'
-  },
-  'meta-app': {
-    title: 'Crea la cuenta y app en Meta Developers',
-    description: 'Crea o entra a Meta Developers y prepara la aplicación que tendrá permisos para Marketing, Instagram y WhatsApp.',
-    icon: Code2,
-    externalHref: 'https://developers.facebook.com/apps/',
-    externalLabel: 'Abrir Meta Developers'
-  },
-  'meta-connect': {
-    title: 'Conecta la app de Meta Developers',
-    description: 'Vincula la app de Meta Developers con Ristak para que use tus permisos y activos correctamente.',
-    icon: PlugZap,
-    to: '/settings/meta-ads'
-  },
-  'whatsapp-api': {
-    title: 'Agrega WhatsApp API a Meta Developers',
-    description: 'Dentro de la app de Meta Developers, conecta WhatsApp API para que Ristak pueda operar mensajes oficiales desde esa app.',
-    icon: MessageCircle,
-    to: '/settings/whatsapp'
-  },
-  openai: {
-    title: 'Conecta OpenAI',
-    description: 'Agrega tu clave de OpenAI para activar Ristak AI.',
-    icon: Bot,
-    to: '/ai-agent/general'
+const CONNECTION_META: Record<InitStepId, ConnectionMeta> = {
+  meta: {
+    title: 'Meta',
+    description: 'Autoriza tu portafolio una sola vez para usar Facebook, Instagram y tus cuentas publicitarias.',
+    buttonLabel: 'Conectar Meta',
+    icon: MetaBrandMark
   },
   'google-calendar': {
-    title: 'Conecta Google Calendar',
-    description: 'Opcional. Sincroniza tu calendario para gestionar citas y disponibilidad.',
-    icon: Calendar,
-    to: '/settings/calendars/google'
+    title: 'Google Calendar',
+    description: 'Autoriza tu cuenta de Google para sincronizar calendarios, disponibilidad y citas.',
+    buttonLabel: 'Conectar Google',
+    icon: CalendarDays
+  },
+  openai: {
+    title: 'OpenAI',
+    description: 'Pega tu API key. Ristak la valida y la guarda cifrada para activar sus funciones de IA.',
+    buttonLabel: 'Conectar OpenAI',
+    icon: Bot
   }
 }
 
-const STEP_PERMISSION_KEYS: Partial<Record<InitStepId, PermissionKey[]>> = {
-  'facebook-page': ['campaigns'],
-  instagram: ['campaigns'],
-  'ad-account': ['campaigns'],
-  pixel: ['campaigns'],
-  whatsapp: ['settings_whatsapp'],
-  'meta-app': ['campaigns', 'settings_whatsapp'],
-  'meta-connect': ['campaigns'],
-  'whatsapp-api': ['settings_whatsapp'],
-  openai: ['ai_agent'],
-  'google-calendar': ['settings_calendars']
+const META_OAUTH_KEYS = [
+  'meta_oauth',
+  'meta_oauth_handoff_token',
+  'meta_oauth_handoff',
+  'meta_oauth_kind',
+  'meta_oauth_integration_kind',
+  'integration_kind',
+  'meta_oauth_message',
+  'meta_oauth_error_code'
+]
+
+const GOOGLE_OAUTH_KEYS = ['google_handoff_token', 'connected']
+const OAUTH_RETURN_KEYS = [...META_OAUTH_KEYS, ...GOOGLE_OAUTH_KEYS]
+
+function readOAuthValue(search: URLSearchParams, fragment: URLSearchParams, key: string) {
+  return fragment.get(key) || search.get(key) || ''
+}
+
+function cleanOAuthReturn(search: URLSearchParams, fragment: URLSearchParams) {
+  OAUTH_RETURN_KEYS.forEach(key => {
+    search.delete(key)
+    fragment.delete(key)
+  })
+
+  return {
+    pathname: '/initialization',
+    search: search.toString() ? `?${search.toString()}` : '',
+    hash: fragment.toString() ? `#${fragment.toString()}` : ''
+  }
 }
 
 export const Initialization: React.FC = () => {
+  const location = useLocation()
   const navigate = useNavigate()
-  const { user } = useAuth()
-  const {
-    loading,
-    steps,
-    isInitialized,
-    setHidden,
-    setMetaAppDone,
-    refresh
-  } = useInitialization()
+  const { showToast } = useNotification()
+  const { loading, steps, isInitialized, setHidden, refresh } = useInitialization()
+  const handledReturnsRef = useRef(new Set<string>())
 
+  const [activeAction, setActiveAction] = useState<ConnectionAction>(null)
+  const [showOpenAIModal, setShowOpenAIModal] = useState(false)
+  const [openAIKey, setOpenAIKey] = useState('')
   const [showHideModal, setShowHideModal] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
 
-  const visibleSteps = useMemo(() => steps.filter((step) => {
-    const permissionKeys = STEP_PERMISSION_KEYS[step.id]
-    return !permissionKeys || permissionKeys.some((key) => hasModuleAccess(user, key, 'read'))
-  }), [steps, user])
+  const connectedCount = useMemo(() => steps.filter(step => step.done).length, [steps])
 
-  const visibleRequiredDone = useMemo(
-    () => visibleSteps.filter((step) => step.required && step.done).length,
-    [visibleSteps]
-  )
-  const visibleRequiredTotal = useMemo(
-    () => visibleSteps.filter((step) => step.required).length,
-    [visibleSteps]
-  )
+  useEffect(() => {
+    const search = new URLSearchParams(location.search)
+    const fragment = new URLSearchParams(location.hash.replace(/^#/, ''))
+    const metaResult = readOAuthValue(search, fragment, 'meta_oauth')
+    const metaHandoff = readOAuthValue(search, fragment, 'meta_oauth_handoff_token')
+      || readOAuthValue(search, fragment, 'meta_oauth_handoff')
+    const metaKind = readOAuthValue(search, fragment, 'meta_oauth_kind')
+      || readOAuthValue(search, fragment, 'meta_oauth_integration_kind')
+      || readOAuthValue(search, fragment, 'integration_kind')
+    const metaMessage = readOAuthValue(search, fragment, 'meta_oauth_message')
+    const metaErrorCode = readOAuthValue(search, fragment, 'meta_oauth_error_code')
+    const googleHandoff = readOAuthValue(search, fragment, 'google_handoff_token')
+    const googleConnected = readOAuthValue(search, fragment, 'connected') === '1'
 
-  const pct = useMemo(() => {
-    if (visibleRequiredTotal === 0) return 0
-    return Math.round((visibleRequiredDone / visibleRequiredTotal) * 100)
-  }, [visibleRequiredDone, visibleRequiredTotal])
+    if (!metaResult && !metaHandoff && !googleHandoff && !googleConnected) return
+
+    navigate(cleanOAuthReturn(search, fragment), { replace: true })
+
+    const finishOAuthReturn = async () => {
+      if (metaResult || metaHandoff) {
+        const returnKey = `meta:${metaHandoff || metaResult}`
+        if (handledReturnsRef.current.has(returnKey)) return
+        handledReturnsRef.current.add(returnKey)
+        setActiveAction('meta')
+
+        try {
+          if (metaResult === 'error' || !metaHandoff || (metaKind && metaKind !== 'legacy')) {
+            throw new Error(metaMessage || (metaErrorCode === 'meta_scopes_missing'
+              ? 'Meta no concedió todos los permisos. Activa todos los accesos y vuelve a intentarlo.'
+              : 'La autorización fue cancelada o Meta no devolvió acceso.'))
+          }
+
+          await metaOAuthService.complete({ handoffToken: metaHandoff })
+          await refresh()
+          showToast('success', 'Meta conectado', 'Tu cuenta quedó autorizada. Puedes elegir activos específicos más adelante cuando los necesites.')
+        } catch (error) {
+          showToast('error', 'Meta no se conectó', error instanceof Error ? error.message : 'No pudimos guardar la autorización de Meta.')
+        } finally {
+          setActiveAction(null)
+        }
+        return
+      }
+
+      const returnKey = `google:${googleHandoff || 'missing'}`
+      if (handledReturnsRef.current.has(returnKey)) return
+      handledReturnsRef.current.add(returnKey)
+      setActiveAction('google-calendar')
+
+      try {
+        if (!googleHandoff) {
+          throw new Error('Google autorizó la cuenta, pero no devolvió el acceso necesario para guardarla.')
+        }
+        await calendarsService.claimGoogleOAuth(googleHandoff)
+        await refresh()
+        showToast('success', 'Google Calendar conectado', 'La cuenta quedó lista para sincronizar calendarios y citas.')
+      } catch (error) {
+        showToast('error', 'Google Calendar no se conectó', error instanceof Error ? error.message : 'No pudimos guardar la autorización de Google.')
+      } finally {
+        setActiveAction(null)
+      }
+    }
+
+    void finishOAuthReturn()
+  }, [location.hash, location.search, navigate, refresh, showToast])
 
   const handleRefresh = async () => {
-    setRefreshing(true)
+    setActiveAction('refresh')
     try {
       await refresh()
+      showToast('success', 'Conexiones comprobadas', 'Los estados ya están actualizados.')
+    } catch (error) {
+      showToast('error', 'No pudimos comprobar las conexiones', error instanceof Error ? error.message : 'Intenta de nuevo en un momento.')
     } finally {
-      setRefreshing(false)
+      setActiveAction(null)
     }
+  }
+
+  const handleConnectMeta = async () => {
+    setActiveAction('meta')
+    try {
+      const status = await metaOAuthService.getStatus()
+      if (!status.available || status.mode !== 'redirect') {
+        throw new Error(status.error || 'La conexión segura con Meta todavía no está disponible.')
+      }
+      const connection = await metaOAuthService.createConnectUrl('/initialization')
+      if (!connection.connectUrl) throw new Error('Meta no devolvió una URL segura de conexión.')
+      window.location.assign(connection.connectUrl)
+    } catch (error) {
+      setActiveAction(null)
+      showToast('error', 'No pudimos abrir Meta', error instanceof Error ? error.message : 'Intenta de nuevo en un momento.')
+    }
+  }
+
+  const handleConnectGoogle = async () => {
+    setActiveAction('google-calendar')
+    try {
+      const connection = await calendarsService.getGoogleConnectUrl('/initialization')
+      if (!connection.url) throw new Error('Google no devolvió una URL segura de conexión.')
+      window.location.assign(connection.url)
+    } catch (error) {
+      setActiveAction(null)
+      showToast('error', 'No pudimos abrir Google Calendar', error instanceof Error ? error.message : 'Intenta de nuevo en un momento.')
+    }
+  }
+
+  const handleConnectOpenAI = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const apiKey = openAIKey.trim()
+    if (!apiKey.startsWith('sk-') || apiKey.length < 30) {
+      showToast('error', 'API key incompleta', 'Pega la API key completa de OpenAI; debe iniciar con sk-.')
+      return
+    }
+
+    setActiveAction('openai')
+    try {
+      await conversationalAgentService.connectAIProvider('openai', apiKey)
+      await refresh()
+      setOpenAIKey('')
+      setShowOpenAIModal(false)
+      showToast('success', 'OpenAI conectado', 'La API key fue validada y guardada de forma cifrada.')
+    } catch (error) {
+      showToast('error', 'OpenAI no se conectó', error instanceof Error ? error.message : 'Revisa la API key e intenta de nuevo.')
+    } finally {
+      setActiveAction(null)
+    }
+  }
+
+  const handleConnection = (id: InitStepId) => {
+    if (id === 'meta') {
+      void handleConnectMeta()
+      return
+    }
+    if (id === 'google-calendar') {
+      void handleConnectGoogle()
+      return
+    }
+    setShowOpenAIModal(true)
   }
 
   const handleConfirmHide = async () => {
@@ -166,140 +236,153 @@ export const Initialization: React.FC = () => {
   }
 
   return (
-    <div className={styles.page}>
-      <div className={styles.hero}>
-        <div className={styles.heroGlow} aria-hidden="true" />
-        <span className={styles.heroBadge}>
-          <Rocket size={14} />
-          Inicialización
-        </span>
-        <h1 className={styles.heroTitle}>Pon en marcha tu</h1>
-        <Logo size="lg" className={styles.heroLogo} />
-        <p className={styles.heroSubtitle}>
-          Conecta tus integraciones en orden para dejar todo listo. A medida que las completes,
-          esta página se actualizará sola y desaparecerá del menú cuando termines lo esencial.
-        </p>
-
-        <div className={styles.progressWrap}>
-          <div className={styles.progressMeta}>
-            <span className={styles.progressLabel}>
-              {visibleRequiredDone} de {visibleRequiredTotal} pasos esenciales completados
-            </span>
-            <span className={styles.progressPct}>{pct}%</span>
-          </div>
-          <div className={styles.progressTrack}>
-            <div className={styles.progressBar} style={{ width: `${pct}%` }} />
-          </div>
-        </div>
-
-        <div className={styles.toolbar}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleRefresh}
-            loading={refreshing}
-            leftIcon={<RefreshCw size={15} />}
-          >
-            Volver a comprobar
-          </Button>
-          {isInitialized && (
+    <PageContainer>
+      <PageHeader
+        eyebrow="Inicialización"
+        title="Conecta tus cuentas"
+        subtitle="Tres conexiones y listo. Todo se autoriza desde aquí, sin brincar a Configuración."
+        actions={(
+          <>
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
-              onClick={() => navigate('/dashboard')}
-              leftIcon={<Check size={15} />}
+              onClick={() => void handleRefresh()}
+              loading={activeAction === 'refresh'}
+              leftIcon={<RefreshCw size={15} />}
             >
-              Ir al dashboard
+              Comprobar
             </Button>
-          )}
+            {isInitialized && (
+              <Button size="sm" onClick={() => navigate('/dashboard')} leftIcon={<Check size={15} />}>
+                Ir al dashboard
+              </Button>
+            )}
+          </>
+        )}
+      />
+
+      <div className={styles.content}>
+        <div className={styles.progress} aria-label={`${connectedCount} de ${steps.length} cuentas conectadas`}>
+          <div className={styles.progressCopy}>
+            <span>Progreso</span>
+            <strong>{connectedCount} de {steps.length}</strong>
+          </div>
+          <div className={styles.progressSegments} aria-hidden="true">
+            {steps.map(step => (
+              <span key={step.id} className={`${styles.progressSegment} ${step.done ? styles.progressSegmentDone : ''}`} />
+            ))}
+          </div>
         </div>
-      </div>
 
-      <div className={styles.steps}>
-        {visibleSteps.map((step, index) => {
-          const meta = STEP_META[step.id]
-          const Icon = meta.icon
-          return (
-            <div
-              key={step.id}
-              className={`${styles.step} ${step.done ? styles.stepDone : ''}`}
-              style={{ ['--delay' as string]: `${index * 60}ms` }}
-            >
-              <div className={`${styles.stepIcon} ${step.done ? styles.stepIconDone : ''}`}>
-                {step.done ? <CheckCircle2 size={22} /> : <Icon size={22} />}
-              </div>
-
-              <div className={styles.stepBody}>
-                <div className={styles.stepTitleRow}>
-                  <span className={styles.stepTitle}>{meta.title}</span>
-                  {!step.required && step.done && (
-                    <Badge variant="success">Conectado</Badge>
-                  )}
-                  {!step.required && !step.done && (
-                    <Badge variant="neutral">Opcional</Badge>
+        <Card padding="none" className={styles.connectionSurface}>
+          {steps.map(step => {
+            const meta = CONNECTION_META[step.id]
+            const Icon = meta.icon
+            return (
+              <section key={step.id} className={styles.connectionRow} data-connection={step.id}>
+                <div className={styles.connectionIcon} aria-hidden="true">
+                  {step.done ? <Check size={22} /> : <Icon size={22} />}
+                </div>
+                <div className={styles.connectionCopy}>
+                  <div className={styles.connectionHeading}>
+                    <h2>{meta.title}</h2>
+                    <Badge variant={step.done ? 'success' : 'neutral'}>
+                      {step.done ? 'Conectada' : 'Pendiente'}
+                    </Badge>
+                  </div>
+                  <p>{meta.description}</p>
+                </div>
+                <div className={styles.connectionAction}>
+                  {step.done ? (
+                    <span className={styles.connectedText}><Check size={16} /> Lista</span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={() => handleConnection(step.id)}
+                      loading={activeAction === step.id}
+                      disabled={loading || (activeAction !== null && activeAction !== step.id)}
+                    >
+                      {meta.buttonLabel}
+                    </Button>
                   )}
                 </div>
-                <p className={styles.stepDesc}>{meta.description}</p>
-              </div>
+              </section>
+            )
+          })}
+        </Card>
 
-              <div className={styles.stepAction}>
-                {step.done ? (
-                  <span className={styles.checkDone}>
-                    <Check size={16} /> Listo
-                  </span>
-                ) : step.manual ? (
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    {meta.externalHref && (
-                      <a href={meta.externalHref} target="_blank" rel="noreferrer">
-                        <Button variant="ghost" size="sm" leftIcon={<ExternalLink size={15} />}>
-                          {meta.externalLabel || 'Abrir guía'}
-                        </Button>
-                      </a>
-                    )}
-                    <Button variant="secondary" size="sm" onClick={() => setMetaAppDone(true)}>
-                      Marcar como hecho
-                    </Button>
-                  </div>
-                ) : meta.to ? (
-                  <Link to={meta.to} className={styles.linkBtn}>
-                    <Button variant="primary" size="sm" leftIcon={<ArrowRight size={15} />}>
-                      Conectar
-                    </Button>
-                  </Link>
-                ) : null}
-              </div>
-            </div>
-          )
-        })}
+        <div className={styles.securityNote}>
+          <ShieldCheck size={18} aria-hidden="true" />
+          <p>Meta y Google abren su autorización oficial. Las credenciales que Ristak necesita conservar se guardan cifradas.</p>
+        </div>
+
+        <div className={styles.footer}>
+          <p>¿Todavía no tienes alguna cuenta? Puedes entrar a Ristak y conectarla después.</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowHideModal(true)}
+            leftIcon={<EyeOff size={15} />}
+            disabled={loading}
+          >
+            Hacerlo después
+          </Button>
+        </div>
       </div>
 
-      <div className={styles.footer}>
-        <p className={styles.footerText}>
-          ¿No vas a conectar algo por ahora? Puedes ocultar esta página de inicialización.
-          Desaparecerá del menú y dejaremos de redirigirte aquí.
-        </p>
-        <Button
-          variant="danger"
-          size="sm"
-          onClick={() => setShowHideModal(true)}
-          leftIcon={<EyeOff size={15} />}
-          disabled={loading}
-        >
-          Ocultar inicialización
-        </Button>
-      </div>
+      <Modal
+        isOpen={showOpenAIModal}
+        onClose={() => {
+          if (activeAction !== 'openai') setShowOpenAIModal(false)
+        }}
+        type="custom"
+        size="sm"
+        title="Conectar OpenAI"
+        subtitle="La key se valida antes de guardarse y nunca vuelve a mostrarse completa."
+        closeOnBackdropClick={activeAction !== 'openai'}
+        closeOnEscape={activeAction !== 'openai'}
+      >
+        <form className={styles.credentialForm} onSubmit={handleConnectOpenAI}>
+          <label htmlFor="initialization-openai-key">API key de OpenAI</label>
+          <input
+            id="initialization-openai-key"
+            type="password"
+            value={openAIKey}
+            onChange={event => setOpenAIKey(event.target.value)}
+            placeholder="sk-..."
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            disabled={activeAction === 'openai'}
+          />
+          <p className={styles.credentialHint}>La encuentras en tu cuenta de OpenAI. No la pegues en chats ni documentos.</p>
+          <div className={styles.credentialActions}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowOpenAIModal(false)}
+              disabled={activeAction === 'openai'}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" loading={activeAction === 'openai'} disabled={!openAIKey.trim()}>
+              Validar y conectar
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal
         isOpen={showHideModal}
         onClose={() => setShowHideModal(false)}
         type="confirm"
         title="Ocultar inicialización"
-        message="Esta página dejará de mostrarse en el menú y ya no te redirigiremos aquí al entrar. Podrás seguir conectando integraciones desde Configuración."
+        message="Dejaremos de mostrar esta página al entrar. Las conexiones seguirán disponibles desde sus secciones correspondientes."
         confirmText="Ocultar"
         cancelText="Cancelar"
         typeToConfirm="OCULTAR"
         onConfirm={handleConfirmHide}
       />
-    </div>
+    </PageContainer>
   )
 }

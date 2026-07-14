@@ -33,6 +33,10 @@ test('Meta OAuth vuelve al dominio público exacto de la instalación', () => {
     buildMetaOAuthReturnUrl(req, '/settings/meta-ads/ads?source=oauth', '/settings/meta-ads/ads'),
     'https://raulgomez.onrender.com/settings/meta-ads/ads?source=oauth'
   )
+  assert.equal(
+    buildMetaOAuthReturnUrl(req, '/initialization', '/settings/meta-ads/cuenta'),
+    'https://raulgomez.onrender.com/initialization'
+  )
 })
 
 test('Meta OAuth rechaza retornos externos, protocol-relative y rutas API', () => {

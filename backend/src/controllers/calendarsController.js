@@ -775,8 +775,10 @@ function sanitizeGoogleCalendarReturnPath(value, fallbackPath = '/settings/calen
 
   try {
     const url = new URL(rawPath.slice(0, 700), 'https://ristak.local');
-    const isCalendarsPath = url.pathname === '/settings/calendars' || url.pathname.startsWith('/settings/calendars/');
-    if (!isCalendarsPath) return fallback;
+    const isAllowedPath = url.pathname === '/initialization'
+      || url.pathname === '/settings/calendars'
+      || url.pathname.startsWith('/settings/calendars/');
+    if (!isAllowedPath) return fallback;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return fallback;

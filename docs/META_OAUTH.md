@@ -16,7 +16,8 @@ La experiencia recomendada usa el boton **Conectar con Meta**, que abre
 directamente el dialogo oficial. La persona decide libremente qué activos
 autoriza; Ristak no preselecciona ni obliga opciones dentro de Meta. Antes de
 conectar, Configuracion muestra solamente el titulo, una explicacion corta y el
-boton centrado; las pestañas no aparecen todavía. Al regresar, la cuenta queda
+boton centrado; `/initialization` ofrece el mismo flujo como acceso rápido sin
+mandar primero a Configuracion. Las pestañas no aparecen todavía. Al regresar, la cuenta queda
 conectada y entonces aparecen las secciones funcionales. **Meta Ads** contiene la
 cuenta publicitaria y el Dataset; **Redes sociales** contiene la Página y el
 Instagram profesional. Una conexion nueva empieza sin activos operativos. Cada
@@ -178,8 +179,10 @@ https://www.facebook.com/v25.0/dialog/oauth
 1. Configuracion muestra el login OAuth sin pestañas y consulta en segundo plano
    el estado con `GET /api/meta/oauth/status` sin crear `state`.
 2. Al pulsar **Conectar con Meta** o **Autorizar nuevos activos**, Ristak solicita
-   `POST /api/meta/oauth/connect-url` y abre Meta directamente, mandando como retorno absoluto
-   `/settings/meta-ads/cuenta` en el host publico de la instalacion.
+   `POST /api/meta/oauth/connect-url` y abre Meta directamente. Configuracion manda
+   como retorno absoluto `/settings/meta-ads/cuenta`; la inicializacion rápida
+   manda `/initialization`. Ambos regresan al host publico de la instalacion y
+   reclaman el mismo handoff opaco.
 3. Installer valida ese origin contra la instalacion, crea un `state` opaco con
    TTL y abre el Config ID unificado.
 4. Meta vuelve al callback unico de Installer. Installer consume `state`,

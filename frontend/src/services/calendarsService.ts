@@ -350,8 +350,9 @@ function isCalendarSettingsPath(pathname = '') {
   return pathname === '/settings/calendars' || pathname.startsWith('/settings/calendars/');
 }
 
-function getGoogleCalendarReturnPath() {
+function getGoogleCalendarReturnPath(explicitReturnPath = '') {
   if (typeof window === 'undefined') return '/settings/calendars/google';
+  if (explicitReturnPath.trim()) return explicitReturnPath.trim();
 
   const pathname = isCalendarSettingsPath(window.location.pathname)
     ? window.location.pathname
@@ -394,9 +395,9 @@ export const calendarsService = {
     return apiClient.get<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
   },
 
-  async getGoogleConnectUrl(): Promise<GoogleCalendarConnectUrl> {
+  async getGoogleConnectUrl(returnPath = ''): Promise<GoogleCalendarConnectUrl> {
     return apiClient.post<GoogleCalendarConnectUrl>('/calendars/google-integration/connect-url', {
-      returnPath: getGoogleCalendarReturnPath(),
+      returnPath: getGoogleCalendarReturnPath(returnPath),
       appUrl: getCurrentAppUrl()
     });
   },
