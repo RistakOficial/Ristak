@@ -160,6 +160,7 @@ Body:
 ### Configuración
 
 - `GET /api/tracking/config`
+- `POST /api/tracking/domain/verify`
 - `POST /api/tracking/configure`
 - `POST /api/tracking/analytics-preference`
 - `POST /api/tracking/visitor-source-preference`
@@ -168,7 +169,30 @@ Body:
 - `GET /api/tracking/visitors`
 - `GET /api/tracking/contacts-by-date`
 
-`configure` crea o actualiza el custom value `rstktrack` en HighLevel. Si hay Meta Pixel y la preferencia `include_meta_pixel` está activa, el snippet también incluye Meta Pixel.
+`domain/verify` recibe `{ "domain": "track.tudominio.com" }`, comprueba que
+`/health` responde con la identidad de esta instalación y sólo entonces guarda el
+dominio como activo. Usa el mismo contrato de verificación que Configuración ->
+Dominios: no basta con que el DNS resuelva o que responda cualquier Ristak; debe
+llegar al servicio instalado correcto.
+
+La fuente de verdad vive en `app_config`:
+
+- `tracking_domain`
+- `tracking_domain_verified`
+- `tracking_domain_checked_at`
+- `tracking_domain_error`
+
+`GET /api/tracking/config` sólo entrega `trackingSnippet` cuando ese estado está
+verificado. Ya no toma el hostname del navegador ni exige abrir el dashboard
+desde el CNAME. Si se intenta cambiar a un dominio nuevo que todavía falla, se
+conserva el dominio verificado anterior; si falla la revalidación del dominio
+activo, se deshabilita el snippet hasta que vuelva a responder.
+
+`configure` crea o actualiza el custom value `rstktrack` en HighLevel usando
+exclusivamente el dominio verificado. El estado `isConfigured` sólo es verdadero
+si el custom value apunta al dominio activo, no por encontrar cualquier script
+viejo. Si hay Meta Pixel y la preferencia `include_meta_pixel` está activa, el
+snippet también incluye Meta Pixel.
 
 ## Flujo Del Pixel
 
@@ -476,7 +500,12 @@ curl 'http://localhost:3001/api/tracking/sessions?limit=10'
 
 ## Producción
 
-Para same-origin real, usa un dominio o CNAME que llegue al mismo servicio donde vive Ristak.
+Para same-origin real, usa un dominio o CNAME que llegue al mismo servicio donde
+vive Ristak. Después de darlo de alta en Render, entra a **Configuración ->
+Rastreo Web**, escríbelo en **Dominio personalizado** y presiona **Validar y
+guardar**. El pixel aparece en esa misma pantalla en cuanto Ristak confirma que
+el dominio ya responde con la identidad de esta instalación; no necesitas abrir
+el dashboard desde ese dominio.
 
 Ejemplo:
 

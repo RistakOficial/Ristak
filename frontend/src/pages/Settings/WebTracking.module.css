@@ -19,7 +19,7 @@
 }
 
 .stepItem + .stepItem {
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-top: 1px solid var(--border);
 }
 
 .stepItem::before {
@@ -28,10 +28,10 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
-  color: var(--color-text-secondary);
-  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  background: var(--surface-2);
   font-size: 12px;
   font-weight: 600;
   content: counter(tracking-step);
@@ -59,10 +59,10 @@
 
 .stepBody code {
   padding: 1px 6px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 5px;
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  color: var(--text);
   font-size: 12px;
 }
 
@@ -113,10 +113,84 @@
 
 .domainRow code {
   padding: 3px 8px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 6px;
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  color: var(--text);
   font-size: 12px;
   font-weight: 550;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.domainForm {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.domainFieldRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.domainField {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.domainField > span {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.domainField input {
+  width: 100%;
+  min-width: 0;
+}
+
+.domainHelp,
+.domainError {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.domainHelp {
+  color: var(--text-dim);
+}
+
+.domainHelp code {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.domainError {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+@media (max-width: 720px) {
+  .domainFieldRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .domainFieldRow > button {
+    width: 100%;
+  }
 }

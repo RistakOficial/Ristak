@@ -11,9 +11,13 @@ Ojo: la tabla guarda una fila por evento, no una fila agregada por sesión.
 ## Opción Recomendada: Instalación Directa En Ristak
 
 1. Entra a **Configuración -> Rastreo Web**.
-2. Usa un dominio personalizado o CNAME, no el dominio `*.onrender.com`.
-3. Copia el snippet del pixel.
-4. Inserta el snippet antes de `</body>` o en el bloque global de tracking del sitio.
+2. Crea un dominio personalizado o CNAME y agrégalo como Custom Domain del web
+   service en Render; no uses el dominio `*.onrender.com` como host público del
+   pixel.
+3. Escribe el dominio en **Dominio personalizado** y presiona **Validar y
+   guardar**. Ristak confirma que Render ya lo enruta a esta instalación.
+4. En cuanto quede verificado, copia el snippet que aparece en la misma pantalla.
+5. Inserta el snippet antes de `</body>` o en el bloque global de tracking del sitio.
 
 El snippet queda parecido a:
 
@@ -56,7 +60,10 @@ Nombre: collect
 Apunta a: tu-servicio.onrender.com
 ```
 
-Después agrega ese dominio en Render como custom domain si lo necesitas. En Cloudflare, proxy ON puede funcionar, pero valida que el host llegue correcto al backend.
+Después agrega ese dominio en Render como Custom Domain. En Cloudflare, proxy ON
+puede funcionar, pero el host debe llegar al backend correcto. Regresa a
+**Configuración -> Rastreo Web**, escribe el dominio y usa **Validar y guardar**;
+no hace falta abrir Ristak desde el dominio nuevo.
 
 ## Probar Que Jala
 
@@ -177,7 +184,10 @@ No mezcles `snip.js` de un dominio con `collect` de otro.
 
 ### Analíticas no aparecen
 
-La app oculta Analíticas en dominios `*.onrender.com`. En dominio personalizado, **Rastreo Web** activa `show_analytics` y `visitor_source=tracking` automáticamente cuando detecta dominio válido.
+**Rastreo Web** sólo genera el snippet después de validar el dominio guardado.
+Cuando la verificación termina, activa `show_analytics` y
+`visitor_source=tracking` aunque el dashboard siga abierto desde el dominio de
+Render. El hostname del navegador ya no es la fuente de verdad.
 
 ## Más Detalle
 

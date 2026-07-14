@@ -11,11 +11,13 @@ import { getMessageAnalyticsSummary, getWhatsAppApiAnalyticsSummary } from '../s
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { getNoTrackReason } from '../utils/noTracking.js'
 import {
-  isLoopbackHost,
   normalizePublicHost,
-  resolvePublicServiceBaseUrl,
-  resolvePublicServiceHost
+  resolvePublicServiceBaseUrl
 } from '../utils/publicUrl.js'
+import {
+  getTrackingDomainConfig,
+  verifyAndSaveTrackingDomain
+} from '../services/trackingDomainService.js'
 import {
   collectMetaParameterSignals,
   getMetaParameterBuilderClientBundle,
@@ -242,16 +244,6 @@ function getTrackingPublicFallbacks() {
     process.env.PUBLIC_URL,
     process.env.APP_URL
   ]
-}
-
-function resolveTrackingDomain(req, submittedDomain = '') {
-  const frontendDomain = normalizePublicHost(submittedDomain)
-  if (frontendDomain && !isLoopbackHost(frontendDomain)) return frontendDomain
-
-  const configuredTrackingDomain = normalizePublicHost(process.env.TRACKING_DOMAIN)
-  if (configuredTrackingDomain && !isLoopbackHost(configuredTrackingDomain)) return configuredTrackingDomain
-
-  return resolvePublicServiceHost(req, getTrackingPublicFallbacks())
 }
 
 /**
@@ -1413,7 +1405,8 @@ export async function deleteSessionsHandler(req, res) {
  */
 export async function getTrackingConfig(req, res) {
   try {
-    const trackingDomain = resolveTrackingDomain(req, req.query.frontendDomain)
+    const domainConfig = await getTrackingDomainConfig()
+    const { trackingDomain, trackingDomainVerified } = domainConfig
     const serviceBaseUrl = resolvePublicServiceBaseUrl(req, getTrackingPublicFallbacks())
     const serviceDomain = normalizePublicHost(serviceBaseUrl)
 
@@ -1437,7 +1430,11 @@ export async function getTrackingConfig(req, res) {
         if (response.ok) {
           const data = await response.json()
           const trackingValue = data.customValues?.find(cv => cv.name === 'rstktrack')
-          isConfigured = !!trackingValue && trackingValue.value && trackingValue.value.includes('<script')
+          isConfigured = Boolean(
+            trackingDomainVerified &&
+            trackingDomain &&
+            trackingValue?.value?.includes(`https://${trackingDomain}/snip.js`)
+          )
         }
       } catch (error) {
         logger.warn('Error verificando custom values:', error.message)
@@ -1462,7 +1459,7 @@ export async function getTrackingConfig(req, res) {
       "SELECT COUNT(*) as total FROM public_sites WHERE status = 'published'"
     ).catch(() => ({ total: 0 }))
     const hasPublicSites = Number(publicSitesRow?.total || 0) > 0
-    const trackingSnippet = trackingDomain
+    const trackingSnippet = trackingDomainVerified && trackingDomain
       ? buildTrackingSnippet({
         trackingDomain,
         metaPixelId: hasMetaPixel ? metaConfig.pixel_id : null,
@@ -1472,6 +1469,9 @@ export async function getTrackingConfig(req, res) {
 
     res.json({
       trackingDomain,
+      trackingDomainVerified,
+      trackingDomainCheckedAt: domainConfig.trackingDomainCheckedAt,
+      trackingDomainError: domainConfig.trackingDomainError,
       serviceDomain,
       serviceBaseUrl,
       isConfigured,
@@ -1491,6 +1491,20 @@ export async function getTrackingConfig(req, res) {
 }
 
 /**
+ * Valida y guarda el dominio que servirá el pixel de tracking.
+ * POST /api/tracking/domain/verify
+ */
+export async function verifyTrackingDomainHandler(req, res) {
+  try {
+    const result = await verifyAndSaveTrackingDomain(req.body?.domain)
+    res.json(result)
+  } catch (error) {
+    logger.error('Error verificando dominio de tracking:', error)
+    res.status(500).json({ error: 'No se pudo verificar el dominio de tracking' })
+  }
+}
+
+/**
  * Configura automáticamente el tracking en HighLevel
  * POST /api/tracking/configure
  */
@@ -1505,11 +1519,14 @@ export async function configureTracking(req, res) {
       })
     }
 
-    const trackingDomain = resolveTrackingDomain(req, req.body.frontendDomain)
+    const domainConfig = await getTrackingDomainConfig()
+    const trackingDomain = domainConfig.trackingDomainVerified
+      ? domainConfig.trackingDomain
+      : ''
 
     if (!trackingDomain) {
       return res.status(400).json({
-        error: 'No se pudo detectar el dominio de tracking automáticamente'
+        error: 'Valida un dominio de rastreo antes de sincronizar el pixel'
       })
     }
 

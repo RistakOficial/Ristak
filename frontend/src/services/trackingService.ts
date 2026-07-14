@@ -98,8 +98,11 @@ export interface TrackingSession {
   contact_has_attended_appointment?: boolean | number | string | null
 }
 
-interface TrackingConfig {
+export interface TrackingConfig {
   trackingDomain: string | null
+  trackingDomainVerified: boolean
+  trackingDomainCheckedAt: string | null
+  trackingDomainError: string | null
   serviceDomain?: string | null
   serviceBaseUrl?: string | null
   isConfigured: boolean
@@ -107,6 +110,27 @@ interface TrackingConfig {
   showAnalytics: boolean
   hasPublicSites?: boolean
   trackingSnippet?: string | null
+}
+
+export interface TrackingDomainVerification {
+  verified: boolean
+  error: string | null
+  method?: string
+  url?: string
+  identityField?: string | null
+  details?: Record<string, unknown>
+}
+
+export interface TrackingDomainCandidate {
+  trackingDomain: string
+  trackingDomainVerified: boolean
+  trackingDomainCheckedAt: string | null
+  trackingDomainError: string | null
+}
+
+export interface TrackingDomainVerificationResponse extends TrackingDomainCandidate {
+  candidate: TrackingDomainCandidate
+  verification: TrackingDomainVerification
 }
 
 /**
@@ -159,11 +183,7 @@ function getTrackingConfig(options: { forceRefresh?: boolean } = {}): Promise<Tr
     return trackingConfigCache.promise
   }
 
-  // Enviar el dominio actual del frontend como parámetro
-  const currentDomain = window.location.hostname
-  const promise = apiClient.get<TrackingConfig>('/api/tracking/config', {
-    params: { frontendDomain: currentDomain }
-  }).catch(error => {
+  const promise = apiClient.get<TrackingConfig>('/api/tracking/config').catch(error => {
     // No cachear errores para permitir reintentos
     trackingConfigCache = null
     throw error
@@ -174,14 +194,20 @@ function getTrackingConfig(options: { forceRefresh?: boolean } = {}): Promise<Tr
 }
 
 /**
+ * Comprueba que el dominio responde con el health de esta instalación y, sólo
+ * entonces, lo guarda como fuente del pixel.
+ */
+async function verifyTrackingDomain(domain: string): Promise<TrackingDomainVerificationResponse> {
+  const response = await apiClient.post<TrackingDomainVerificationResponse>('/api/tracking/domain/verify', { domain })
+  trackingConfigCache = null
+  return response
+}
+
+/**
  * Configura automáticamente el tracking en HighLevel
  */
 async function configureTracking(): Promise<{ success: boolean; message: string; snippet?: string; instructions?: string; error?: string }> {
-  // Enviar el dominio actual del frontend en el body
-  const currentDomain = window.location.hostname
-  const response = await apiClient.post<any>('/api/tracking/configure', {
-    frontendDomain: currentDomain
-  })
+  const response = await apiClient.post<any>('/api/tracking/configure')
   // La config cambió en el backend: invalidar el caché compartido
   trackingConfigCache = null
   return response
@@ -210,5 +236,6 @@ export const trackingService = {
   updateSession,
   deleteSessions,
   getTrackingConfig,
+  verifyTrackingDomain,
   configureTracking
 }
