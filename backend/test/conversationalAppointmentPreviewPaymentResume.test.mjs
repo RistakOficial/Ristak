@@ -397,6 +397,16 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     assert.equal(missingPaymentData.ok, false, JSON.stringify(missingPaymentData))
     assert.equal(missingPaymentData.needsData, true)
     assert.match(missingPaymentData.visibleReply, /correo/i)
+    const repeatedMissingPaymentData = await actionScopedPaymentTools
+      .find((item) => item.name === 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'accept',
+        reply: null,
+        agreedAmount: null,
+        ...terminalBookingArgs()
+      }))
+    assert.equal(repeatedMissingPaymentData.ok, false, JSON.stringify(repeatedMissingPaymentData))
+    assert.equal(repeatedMissingPaymentData.code, 'appointment_offer_already_adjudicated')
     assert.equal((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerEventId]
@@ -441,17 +451,23 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       [offerEventId]
     )).detail_json, activeOfferBeforePaymentPreflight.detail_json)
 
-    const acceptedWithAutomaticPayment = await createConversationalTools(acceptanceCtx)
+    const automaticPaymentResolver = createConversationalTools(acceptanceCtx)
       .find((item) => item.name === 'resolve_active_appointment_offer')
-      .invoke(null, JSON.stringify({
-        decision: 'accept',
-        reply: null,
-        agreedAmount: null,
-        ...terminalBookingArgs()
-      }))
+    const automaticPaymentPayload = JSON.stringify({
+      decision: 'accept',
+      reply: null,
+      agreedAmount: null,
+      ...terminalBookingArgs()
+    })
+    const [acceptedWithAutomaticPayment, concurrentAcceptanceBlocked] = await Promise.all([
+      automaticPaymentResolver.invoke(null, automaticPaymentPayload),
+      automaticPaymentResolver.invoke(null, automaticPaymentPayload)
+    ])
     assert.equal(acceptedWithAutomaticPayment.ok, true, JSON.stringify(acceptedWithAutomaticPayment))
     assert.equal(acceptedWithAutomaticPayment.terminal, true)
     assert.match(acceptedWithAutomaticPayment.visibleReply, /enlace de anticipo/i)
+    assert.equal(concurrentAcceptanceBlocked.ok, false, JSON.stringify(concurrentAcceptanceBlocked))
+    assert.equal(concurrentAcceptanceBlocked.code, 'appointment_offer_already_adjudicated')
     assert.equal(acceptanceCtx.actions.filter((action) => action.type === 'create_payment_link').length, 1)
 
     const boundBeforeConflictingReplay = await db.get(

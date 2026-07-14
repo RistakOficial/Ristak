@@ -314,7 +314,7 @@ const TEST_VOICE_MIME_CANDIDATES = [
 ]
 const TEST_TEXT_EXTENSIONS = new Set(['txt', 'csv', 'json', 'md', 'html', 'xml'])
 
-function createTestTrackingId(prefix: 'session' | 'message') {
+function createTestTrackingId(prefix: 'session' | 'message' | 'transcript') {
   const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -381,6 +381,7 @@ type TestAttachment = ConversationalAgentTestAttachment & PhoneChatPreviewAttach
   expiresAt?: number
 }
 type TestMessage = {
+  id?: string
   role: 'user' | 'assistant'
   content: string
   attachments?: TestAttachment[]
@@ -639,6 +640,7 @@ async function createTestAttachment(file: File): Promise<TestAttachment> {
 
 function toTestPayloadMessage(message: TestMessage): ConversationalAgentTestMessage {
   return {
+    ...(message.id ? { id: message.id } : {}),
     role: message.role,
     content: message.content,
     attachments: (message.attachments || []).map((attachment) => ({
@@ -2870,7 +2872,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       setTestMessages((current) => (
         deliveryKey && current.some((item) => item.deliveryKey === deliveryKey)
           ? current
-          : [...current, { ...message, ...(deliveryKey ? { deliveryKey } : {}) }]
+          : [...current, {
+              ...message,
+              id: message.id || createTestTrackingId('transcript'),
+              ...(deliveryKey ? { deliveryKey } : {})
+            }]
       ))
     }
     const responseDelayMs = includeResponseDelay ? normalizeTestResponseDelay(result.responseDelayMs) : 0
@@ -2930,6 +2936,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     }
 
     const userMessage: TestMessage = {
+      id: createTestTrackingId('transcript'),
       role: 'user',
       content,
       ...(attachments.length ? { attachments } : {})

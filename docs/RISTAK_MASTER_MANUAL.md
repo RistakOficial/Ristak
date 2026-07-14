@@ -3904,6 +3904,16 @@ telefono ni marcarlo como cliente anterior. Con los switches de prueba apagados,
 tools conservan `dryRun=true`: el telefono muestra decisiones y respuestas, pero
 no crea citas, pagos, asignaciones ni notificaciones.
 
+Cada burbuja de usuario o asistente del tester conserva un ID de transcript
+estable tanto en el editor como en el wizard. El backend lo valida y lo aisla
+dentro del `previewScopeId`; para clientes anteriores que todavía no mandan IDs,
+deriva uno determinista encadenando en orden rol, contenido y huellas de adjuntos.
+Agregar otra vuelta al final no cambia los IDs de mensajes anteriores. Esa
+identidad demuestra orden y visibilidad dentro de la conversación y es distinta
+del `executionId`/`testMessageId`, que identifica e idempotentiza el request que
+se está ejecutando. Nunca se vuelve a numerar el historial por posición ni se
+usa el ID del request actual como si fuera el ID durable de todas las vueltas.
+
 Cada capacidad guarda su propio **Modo test**. Citas sólo autoriza cita o entrega
 humana; Pagos autoriza exclusivamente el mecanismo configurado: link sandbox si
 es `payment_link`, o lectura real del adjunto sin crear dinero si es
@@ -3995,6 +4005,22 @@ el usuario reinicia manualmente la practica puede pedir limpieza inmediata; si
 cierra la pantalla, la limpieza durable de cinco minutos sigue siendo la fuente
 de verdad y no depende de que el navegador permanezca abierto.
 
+La observabilidad de agenda registra `appointment_transition` para cambios de
+estado y `loop_question_repeated` cuando la salida vuelve a pedir la misma
+categoría de dato; `reply_sent` conserva sólo un resumen técnico en lista blanca.
+Estos eventos pueden incluir IDs técnicos, canal, modo live/test, estado anterior
+y nuevo, tool, resultado/código, instantes UTC y conteo de reintentos, pero nunca
+serializan el texto visible, `ctx.actions`, nombres, teléfonos, correos, notas,
+participantes ni citas textuales del cliente. El texto de salida sólo se clasifica
+para reconocer qué pregunta intenta mostrar; nunca interpreta con regex la
+intención del usuario. Antes de renderizar o enviar, el estado durable decide si
+esa pregunta es imposible: una fecha ya conservada obliga a pedir únicamente la
+hora, una revalidación técnica conserva el día y una oferta activa vuelve a
+mostrar su confirmación canónica. En esos casos el servidor sustituye el borrador
+antes de entregarlo y registra `loop_question_repeated` con `outcome=prevented`.
+Las respuestas canónicas de una tool tienen prioridad para que texto, oferta y
+efecto no se desalineen.
+
 ### Herramientas y verdad operativa
 
 La lista de tools se construye sólo con capacidades `enabled` que ademas estan
@@ -4047,11 +4073,19 @@ nunca un booleano escrito por el modelo.
   `replace_selected_date` con un rango de un unico dia cuando la persona cambio
   explicitamente de fecha. Primero comprueba la disponibilidad base del nuevo
   dia: si el dia tiene slots pero la hora exacta solicitada no, guarda el dia
-  nuevo como `collecting_time`; si el dia completo esta cerrado o la consulta
-  falla, descarta el dia anterior y guarda `collecting_date` con `missingFields`
-  igual a `date`. Ese segundo estado conserva calendario, proposito y la cita
-  objetivo de una reagenda, pero no conserva ninguna fecha: la siguiente vuelta
-  pide un dia nuevo y una hora suelta no puede volver a pegarse al dia viejo.
+  nuevo como `collecting_time`. Si la consulta técnica falla al cambiar o
+  revalidar el día, conserva esa fecha, limpia cualquier hora/rango no verificado,
+  marca `availabilityVerificationRequired=true` y deja `availability` como el
+  dato faltante; la siguiente vuelta debe reconsultar ese mismo día y no volver a
+  pedir la fecha. Sólo una consulta real completada que demuestra que el día no
+  tiene ningún slot limpia la fecha y guarda `collecting_date` con
+  `missingFields=date`. Ese último estado conserva calendario, propósito y la
+  cita objetivo de una reagenda, pero no conserva ninguna fecha: entonces sí pide
+  un día nuevo y una hora suelta no puede volver a pegarse al día viejo. Una
+  revalidación exitosa elimina la marca técnica y continúa pidiendo únicamente la
+  hora que falta. El mismo registro guarda `lastError.code` y su instante cuando
+  existe un fallo técnico; nunca persiste el texto libre del proveedor y limpia
+  ese error al completar una revalidación real.
   `request_other_options` con alcance `different_date` o `open` entra por esta
   misma transicion: no borra el progreso ni pierde el `appointmentId` de una
   reagenda. Durante un despliegue gradual, una instancia anterior todavia puede
@@ -4125,9 +4159,33 @@ nunca un booleano escrito por el modelo.
   `conversational_agent_events`. La misma IA puede responder una duda, consultar
   precios o usar otra capacidad y luego regresar a esa oferta sin repetirla, pero
   no puede publicar otra lista u otro horario individual hasta resolver la oferta
-  vigente. `resolve_active_appointment_offer` sólo se usa cuando el mensaje
-  realmente decide sobre ella: aceptar, pedir otras opciones, rechazar o entregar
-  a una persona cuando handoff esté habilitado.
+  vigente. Cuando existe esa oferta, la primera acción del modelo se fuerza
+  exactamente a `resolve_active_appointment_offer`: debe adjudicar `accept`,
+  `request_other_options`, `decline`, `handoff` cuando aplique o `preserve` si la
+  persona preguntó otra cosa o su intención respecto al horario es ambigua.
+  `preserve` no cambia ni cierra el evento y, después de ejecutarse, el SDK vuelve
+  `toolChoice` a automático para responder la duda o usar otra capacidad en ese
+  mismo turno. La postcondición del Runner exige que la adjudicación corresponda
+  al ID de la oferta inicial. Si el modelo intenta contestar sin resolverla, o
+  escribe una confirmación sin que la terminal estructurada haya terminado con
+  éxito, el servidor reemplaza esa prosa por una respuesta segura y no afirma que
+  exista una cita. La confirmación positiva visible siempre se reconstruye desde
+  la acción real, nunca desde texto libre del modelo. Para `decline`, `handoff` y
+  `request_other_options` también se ignora la prosa libre y se usa la respuesta
+  estructurada del resolver. Sólo `preserve` puede conservar una respuesta lateral
+  del modelo: antes de mostrarla, una segunda llamada acotada al mismo proveedor y
+  modelo, forzada a una única tool de clasificación, comprueba que no afirme un
+  resultado de agenda ni vuelva a pedir una decisión sobre fecha u hora. Sólo
+  `safe_unrelated` pasa sin cambios; duda, timeout, tool ausente o cualquier otra
+  clasificación usan una respuesta determinista que deja claro que la oferta sigue
+  pendiente y que no se creó ni cambió una cita.
+  La adjudicación también se serializa dentro del turno antes del primer `await`:
+  dos invocaciones paralelas nunca pueden alcanzar dos terminales ni intercambiar
+  sus resultados. Si `accept` se detiene en un preflight recuperable por datos
+  faltantes, conserva esa salida como respuesta canónica y sólo permite reentrar
+  cuando cambió el fingerprint de argumentos o de la ficha efectiva; repetir la
+  misma llamada queda bloqueado. La reentrada está limitada a tres intentos y no
+  aplica a decisiones ya consumidas ni a mutaciones terminales.
   Mientras esa oferta individual esta activa, el modelo no recibe tambien
   `book_appointment`, `reschedule_appointment` ni `request_human_booking`: la
   unica puerta de decision es `resolve_active_appointment_offer`. Una aceptacion
@@ -4167,14 +4225,32 @@ nunca un booleano escrito por el modelo.
   el primer intento al proveedor falla con cero partes, el plan queda `pending` y
   la oferta tambien se conserva para que el retry no envie un horario que ya no
   pueda aceptarse. Una entrega `ambiguous` o con alguna parte enviada tampoco se
-  toca para no duplicar mensajes. Como defensa adicional, si un `si` llega pero el historial no
-  puede probar que la oferta exacta fue visible despues del mensaje entrante que
-  creo esa oferta concreta, el resolver no agenda, cierra esa oferta invisible y
-  vuelve a pedir solamente la hora en vez de dejarla en loop. Una oferta vieja con
-  texto identico no sirve como evidencia para una oferta nueva que nunca salio.
-  Una duda o respuesta ambigua no llama al resolver ni cambia el evento. No
-  existe detector de `ok`, listas de frases, regex, etapa ni tool `keep_open` que
-  sustituya el trabajo semantico del modelo. Pedir otras opciones cambia la
+  toca para no duplicar mensajes. Como defensa adicional, una confirmación se
+  liga a la cadena exacta mensaje origen de la oferta → burbuja canónica del
+  asistente → mensaje actual de confirmación. El evento conserva el ID estable y
+  la huella textual del mensaje origen; el resolver exige después la burbuja con
+  el texto exacto de esa oferta, su propio ID visible y el orden correcto antes
+  del `si`. Una oferta vieja con texto idéntico no sirve como evidencia para una
+  oferta nueva que nunca salió.
+
+  En live, si el límite físico de 64 KB dejó esa burbuja fuera del transcript, el
+  resolver puede recuperar únicamente la evidencia factual del ledger durable de
+  entrega. Para aceptarla exige el mismo contacto, agente, canal, mensaje origen
+  y prefijo de proveedor, plan `completed`, exactamente una parte `sent`, ID
+  externo verificable y coincidencia exacta de texto y hash con la oferta. Un
+  ledger pendiente, ambiguo, corrupto, con identidad distinta o con más/menos
+  partes falla cerrado. Este respaldo no aplica en preview ni en seguimientos y
+  no reemplaza la revalidación del calendario ni la decisión semántica del
+  resolver. Si ni transcript ni ledger prueban visibilidad, no agenda, cierra la
+  oferta invisible y vuelve a pedir solamente la hora en vez de dejarla en loop.
+  En preview, donde no existe ledger de entrega, el backend conserva por separado
+  el transcript normalizado completo sólo como evidencia de agenda, aunque el
+  contexto que se envía al modelo se recorte a 64 KB. Esa evidencia nunca se
+  agrega al prompt ni se reutiliza en live: únicamente permite demostrar que la
+  burbuja exacta fue visible en historiales largos del tester. Una duda o respuesta
+  ambigua se adjudica como `preserve` y deja el evento byte por byte idéntico. No
+  existe detector de `ok`, listas de frases, regex ni etapa que sustituya el
+  trabajo semántico del modelo. Pedir otras opciones cambia la
   oferta anterior a `superseded` y devuelve el control al mismo Runner para que
   pueda reconsultar con las restricciones nuevas y mostrar una lista o una
   oferta exacta en esa vuelta; rechazarla la cambia a
@@ -4195,10 +4271,12 @@ nunca un booleano escrito por el modelo.
   copiar `startTime`, `selectionEvidence`, el mensaje del cliente ni la etiqueta
   del horario. La llamada nativa expresa la decision semantica del modelo; el
   servidor recupera `startTime` desde la unica oferta vigente que guardo el
-  propio servidor y construye la evidencia con el mensaje completo mas reciente
-  del cliente y la oferta canonica visible despues del inbound `executionId` que
-  la origino. Puede haber una aclaración intermedia despues de esa oferta sin
-  perderla. Después
+  propio servidor y construye la evidencia con el mensaje completo más reciente
+  del cliente, el ID/huella del mensaje estable que originó la oferta y la burbuja
+  canónica exacta que quedó entre ambos. En preview, el `executionId` conserva la
+  idempotencia del request y el ID del transcript conserva el orden visible; no
+  se intercambian esos papeles. Puede haber una aclaración intermedia después de
+  esa oferta sin perderla. Después
   sólo comprueba identidad, orden y coincidencia literal contra el hilo; no usa
   regex ni reglas de palabras para adivinar intención. Una oferta ausente,
   vencida, tomada de otro turno, ambigua, ligada a otro slot o perteneciente a
@@ -4280,12 +4358,15 @@ nunca un booleano escrito por el modelo.
   transaccional del calendario, que serializa altas del agente contra citas
   manuales. El ledger de creacion usa token y lease: una caida recupera la cita
   real o libera el intento sin dejar el horario bloqueado para siempre. Si la
-  cita fue reprogramada, la tool relee fecha, hora y calendario canonicos y nunca
-  confirma el snapshot viejo. Ademas, antes de crear una cita v2 se busca cualquier
+  cita fue reprogramada, la tool relee fecha, hora y calendario canonicos, vuelve
+  a cercar la autoridad del inbound antes de devolverlos y nunca responde con ese
+  snapshot si ya llegó otra instrucción. Ademas, antes de crear una cita v2 se busca cualquier
   cita futura activa unida al mismo agente, contacto y calendario por su request
   durable. Si un crash creo la cita pero no alcanzo a sellar el cierre, incluso un
   inbound posterior que proponga otro slot repara la cita ya existente en lugar de
-  duplicarla. Una cita ajena o de otro calendario nunca se adopta como exito del
+  duplicarla. Esa recuperación ejecuta el fence, el consumo pendiente del anticipo,
+  la señal `appointment_booked` y su evento dentro de una sola transacción; un
+  inbound más nuevo revierte todo el cierre interno. Una cita ajena o de otro calendario nunca se adopta como exito del
   agente. La cita, su ID y su calendario canonicos son siempre locales de Ristak;
   los IDs de Google o HighLevel sólo identifican sus espejos. Un fallo de
   configuracion o de la BD local cierra en seguro; un fallo de espejo externo no
@@ -4312,7 +4393,74 @@ nunca un booleano escrito por el modelo.
   queda `pending`/`error` para conciliación sin invalidar el cierre del agente. Un
   retry devuelve la misma cita local y nunca crea otra.
 
-  Los reintentos de espejo tampoco hacen POST a ciegas. Google usa un ID remoto
+  La creación conversacional permite como máximo un reintento adicional —dos
+  intentos totales— y solamente alrededor de la llamada al controller de alta.
+  El segundo intento reutiliza el mismo objeto de request inmutable, el mismo
+  `clientRequestId` y el mismo contexto interno; no vuelve a pedirle una decisión
+  al modelo, no reconstruye la oferta ni abre otra selección. Sólo se activa ante
+  fallos transitorios explícitos (`408`, `425`, `429`, `500`, `502`, `503`, `504`
+  o códigos de red/timeout permitidos), espera 200 ms y registra
+  `appointment_creation_retry` con datos técnicos sanitizados. Un `409` u otro
+  `4xx` definitivo no se reintenta. Si el primer intento alcanzó a confirmar la
+  cita pero se perdió la respuesta, la idempotencia del controller reproduce esa
+  misma cita; si ambos intentos fallan, el agente cierra en seguro y no afirma que
+  quedó agendada. La materialización de citas del Modo test usa la misma política
+  acotada y la misma llave `conv-test:<effectId>`; una falla transitoria del
+  calendario no crea una divergencia artificial entre tester y conversación real.
+  El controller sólo reconoce esa identidad de prueba cuando el request interno,
+  `is_test=1` y `test_effect_id` coinciden exactamente. Una cita manual o live que
+  casualmente comparta contacto y horario jamás se adopta como replay del tester.
+  Dentro de la misma transacción del INSERT local, el ledger guarda primero el
+  `appointment_id`; así una caída posterior nunca puede crear una segunda cita y
+  la limpieza conserva la identidad exacta del registro parcial. Un checkpoint de
+  Modo test no se auto-promueve a éxito: si Google o HighLevel fallan después del
+  INSERT queda `failed/test_provider_sync_failed`; si vence el lease antes de
+  terminar queda `failed/test_checkpoint_interrupted`. En ambos casos conserva la
+  cita local para cleanup, responde error y un replay exacto no duplica ni inventa
+  una confirmación. Sólo una fila que ya alcanzó `completed` puede reproducir éxito.
+  Los estados `error_retryable` anteriores al INSERT sí pueden reabrirse; conflictos
+  y demás `4xx` definitivos permanecen cerrados.
+
+  Toda terminal live recibe además la identidad y el claim del inbound que la
+  originó. El precommit y el controller vuelven a comprobar el claim activo, su
+  lease y la fila canónica más reciente del canal. En PostgreSQL, todo writer
+  inbound sustantivo de WhatsApp/QR/Meta Direct, SMS/webchat de HighLevel,
+  Messenger/Instagram, comentarios y correo toma primero un
+  `pg_advisory_xact_lock` por `contacto + canal`, antes de insertar el mensaje.
+  Esto incluye syncs manuales/background con notificaciones apagadas y backfills
+  históricos: el historial también debe competir si descubre la instrucción más
+  reciente, aunque no incremente no leídos ni arranque notificaciones,
+  automatizaciones o runner. En SQLite, `BEGIN IMMEDIATE` aporta la serialización
+  equivalente. Los efectos vivos arrancan sólo después del commit. El controller
+  toma primero el candado del calendario, verifica disponibilidad sin tomar aún el
+  candado conversacional y lo adquiere una sola vez en el fence final,
+  inmediatamente antes del INSERT o UPDATE. Conserva ambos locks hasta el
+  commit: ése es el punto lineal de la decisión y no queda una ventana entre el
+  último `SELECT` y la escritura real. Si ya existe otro mensaje
+  sustantivo —por ejemplo `sí` seguido de `mejor a las 3`— el horario anterior no
+  se crea, la oferta se cierra conservando el día y el rerun procesa la instrucción
+  nueva. Un claim live que ya no conserva su fila canónica también pierde autoridad
+  y falla cerrado. Reacciones y stickers no revocan una confirmación sustantiva.
+  La identidad de contacto de una burbuja inbound es además write-once: un UPSERT
+  deduplicado conserva siempre el `contact_id` no nulo ya guardado y sólo puede
+  completar una fila legacy cuyo dueño era `NULL`. Un cambio real de dueño ocurre
+  exclusivamente mediante `mergeContactIds`, que toma los locks de origen y destino
+  para todos los canales canónicos en un orden global estable. Así un replay bajo el
+  lock del contacto B no puede sacar de A una corrección que el fence terminal de A
+  ya leyó.
+  Una caída técnica al releer agente, calendario, zona o SQL no se disfraza como un
+  cambio funcional ni quema la oferta: responde `503`
+  `appointment_authority_revalidation_failed`, conserva la evidencia para retry y
+  permite el segundo intento acotado del controller. Sólo una diferencia durable
+  comprobada produce `appointment_offer_scope_changed` y marca `superseded`.
+
+  Los reintentos de espejo tampoco hacen POST a ciegas. Cada request a HighLevel
+  tiene un deadline global de 30 segundos que cubre conexión, lectura del body y
+  esperas por `429`. Un GET puede reintentarse sólo dentro de ese mismo presupuesto;
+  un POST con timeout, error de transporte o `5xx` ambiguo no se repite porque el
+  proveedor pudo haber aplicado el cambio. El error `GHL_REQUEST_TIMEOUT` conserva
+  metadata de resultado ambiguo y libera los locks del tester para que la
+  conciliación o la limpieza durable continúen. Google usa un ID remoto
   determinista derivado del ID local y reconcilia ese mismo evento despues de un
   timeout o conflicto. HighLevel busca primero una cita remota equivalente; si el
   primer write tuvo resultado ambiguo y todavía no puede encontrarla, conserva la

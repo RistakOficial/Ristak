@@ -6,6 +6,7 @@ import {
   getConversationalCapability
 } from '../agents/conversational/nativeRuntimeConfig.js'
 import { invokeController, toToolResult } from '../agents/invokeController.js'
+import { runBoundedAppointmentControllerRequest } from './appointmentControllerRetryService.js'
 import { createAppointment } from '../controllers/calendarsController.js'
 import {
   cleanupConversationalAgentTestPaymentLink,
@@ -1141,7 +1142,7 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
 
         const testExpiresAt = toIso(Date.now() + 5 * 60 * 1000)
         await assertCurrentTestRunAuthority(claim.run, 'appointment')
-        const controllerResult = toToolResult(await invokeController(createAppointmentControllerImpl, {
+        const appointmentControllerRequest = {
           body: {
             calendarId: request.calendarId,
             contactId: runContext.contact.id,
@@ -1161,7 +1162,11 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
           },
           user: { userId: runContext.requestedByUserId },
           internalContext: { conversationalAgentTestAppointment: true }
-        }))
+        }
+        const controllerExecution = await runBoundedAppointmentControllerRequest({
+          invoke: () => invokeController(createAppointmentControllerImpl, appointmentControllerRequest)
+        })
+        const controllerResult = toToolResult(controllerExecution.result)
         if (!controllerResult.ok || !controllerResult.data?.id) {
           throw testError(
             controllerResult.error || 'El calendario no confirmó la cita temporal.',
@@ -1195,6 +1200,8 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
             safeTestRecord: true,
             appointmentCreated: true,
             appointmentId: appointment.id,
+            controllerAttempts: controllerExecution.attempts,
+            retried: controllerExecution.retried,
             testExpiresAt,
             cleanupDueAt: testExpiresAt,
             automationExecution,

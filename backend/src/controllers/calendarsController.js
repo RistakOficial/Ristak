@@ -41,7 +41,10 @@ import {
 } from '../services/publicPaymentGateService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js';
-import { runIdempotentAppointmentCreation } from '../services/appointmentCreationSafetyService.js';
+import {
+  markTestAppointmentProviderSyncFailure,
+  runIdempotentAppointmentCreation
+} from '../services/appointmentCreationSafetyService.js';
 import {
   assertConversationalAppointmentDepositReservationFence,
   claimConversationalTerminalMutationAuthority,
@@ -2584,8 +2587,20 @@ export async function createAppointment(req, res) {
         error: 'Selecciona un calendario para guardar la cita local y sincronizarla con las integraciones conectadas.'
       });
     }
+    const appointmentRequestId = clientRequestId || legacyClientRequestId || null;
+    if (carriesTestMetadata) {
+      const testEffectId = cleanString(appointmentData.testEffectId || appointmentData.test_effect_id);
+      const expectedTestRequestId = testEffectId ? `conv-test:${testEffectId}` : '';
+      if (!expectedTestRequestId || cleanString(appointmentRequestId) !== expectedTestRequestId) {
+        return res.status(409).json({
+          success: false,
+          code: 'test_appointment_idempotency_identity_mismatch',
+          error: 'La cita de prueba no conserva la identidad exacta de su efecto durable. Reinicia la prueba antes de continuar.'
+        });
+      }
+    }
     const createdAppointment = await runIdempotentAppointmentCreation({
-      clientRequestId: clientRequestId || legacyClientRequestId,
+      clientRequestId: appointmentRequestId,
       payload: strictAvailabilityCheck
         ? {
             calendarId: requestedCalendarId,
@@ -2606,7 +2621,6 @@ export async function createAppointment(req, res) {
       calendarError.code = 'calendar_not_found';
       throw calendarError;
     }
-    const appointmentRequestId = clientRequestId || legacyClientRequestId || null;
     // El render de variables de plantilla (título/notas) es cosmético y NUNCA debe
     // impedir crear la cita: si falla, degradamos a valores planos.
     let renderedTemplates;
@@ -2636,13 +2650,12 @@ export async function createAppointment(req, res) {
     const localCalendarId = localCalendar?.id || requestedCalendarId;
     const createLocalWithAvailability = async () => {
       // Orden único para evitar ciclos con una reagenda concurrente en Postgres:
-      // primero el advisory del calendario y después los locks semánticos del
-      // agente/oferta/calendario que toma el authority fence.
+      // primero el advisory del calendario. El lock inbound NO se toma aquí;
+      // se adquiere sólo en el fence terminal, después de disponibilidad y
+      // justo antes del INSERT, para que una corrección pueda persistirse
+      // mientras la consulta externa/local tarda.
       if (localCalendarId) {
         await lockCalendarAppointmentCreation(localCalendarId);
-      }
-      if (conversationalAppointmentAuthorityFence) {
-        await conversationalAppointmentAuthorityFence();
       }
       let depositFence = null;
       if (depositFenceProvided) {
@@ -2716,6 +2729,17 @@ export async function createAppointment(req, res) {
         }
       }
 
+      // La disponibilidad puede tardar lo suficiente para que entre otro
+      // mensaje del contacto. Repetimos la autoridad en el último punto antes
+      // del INSERT: éste es el orden lineal de la decisión terminal. Un inbound
+      // sustantivo ya persistido gana y el borrador anterior no crea nada.
+      if (conversationalAppointmentAuthorityFence) {
+        await conversationalAppointmentAuthorityFence({
+          lockForCommit: true,
+          phase: 'before_mutation'
+        });
+      }
+
       const localAppointment = await localCalendarService.createLocalAppointment({
         ...localAppointmentData,
         calendarId: localCalendar?.id || requestedCalendarId,
@@ -2738,16 +2762,23 @@ export async function createAppointment(req, res) {
           database: db
         });
       }
-      if (appointmentRequestId && !localAppointment.isTest) {
+      if (appointmentRequestId) {
         // La cita local es el commit canónico. Guardamos su ID antes de tocar
         // cualquier espejo o efecto posterior para que un crash recupere esta
         // misma cita y jamás vuelva a crearla.
-        await db.run(`
+        const checkpoint = await db.run(`
           UPDATE appointment_creation_requests
-          SET appointment_id = COALESCE(appointment_id, ?),
+          SET appointment_id = ?,
               updated_at = CURRENT_TIMESTAMP
           WHERE client_request_id = ? AND status = 'processing'
-        `, [localAppointment.id, appointmentRequestId]);
+            AND (appointment_id IS NULL OR appointment_id = ?)
+        `, [localAppointment.id, appointmentRequestId, localAppointment.id]);
+        if (Number(checkpoint?.changes || 0) !== 1) {
+          const checkpointError = new Error('No se pudo guardar la comprobación durable de la cita local. No se confirmó la creación.');
+          checkpointError.status = 503;
+          checkpointError.code = 'appointment_idempotency_checkpoint_failed';
+          throw checkpointError;
+        }
       }
       return localAppointment;
     };
@@ -2820,6 +2851,12 @@ export async function createAppointment(req, res) {
         if (error?.code === 'appointment_provider_response_stale') {
           appointment = await localCalendarService.getLocalAppointment(appointment.id) || appointment;
           logger.warn(`[Calendars Controller] El espejo GHL respondió para una versión anterior; la cita local vigente quedó pendiente.`);
+          if (appointment?.isTest) {
+            throw markTestAppointmentProviderSyncFailure(error, {
+              provider: 'highlevel',
+              appointmentId: appointment.id
+            });
+          }
         } else {
           const mirrorErrorMessage = !appointment?.isTest && highLevelAppointmentWriteStarted && highLevelMirrorWriteOutcomeIsAmbiguous(error)
             ? `${HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER} ${error.message}`
@@ -2834,7 +2871,12 @@ export async function createAppointment(req, res) {
             logger.error(`[Calendars Controller] No se pudo marcar el fallo del espejo GHL de la cita ${appointment?.id}: ${markError.message}`);
           });
           appointment = await localCalendarService.getLocalAppointment(appointment.id) || appointment;
-          if (appointment?.isTest) throw error;
+          if (appointment?.isTest) {
+            throw markTestAppointmentProviderSyncFailure(error, {
+              provider: 'highlevel',
+              appointmentId: appointment.id
+            });
+          }
           logger.warn(`[Calendars Controller] Cita local confirmada; espejo GHL pendiente/error: ${mirrorErrorMessage}`);
         }
       }
@@ -2872,7 +2914,12 @@ export async function createAppointment(req, res) {
           logger.error(`[Calendars Controller] No se pudo marcar el fallo del espejo Google de la cita ${appointment?.id}: ${markError.message}`);
         });
       }
-      if (appointment?.isTest) throw error;
+      if (appointment?.isTest) {
+        throw markTestAppointmentProviderSyncFailure(error, {
+          provider: 'google',
+          appointmentId: appointment.id
+        });
+      }
       logger.warn(`[Calendars Controller] Cita local confirmada; espejo Google pendiente/error: ${error.message}`);
     }
 
@@ -3084,9 +3131,6 @@ export async function updateAppointment(req, res) {
         }
         appointment = await db.transaction(async () => {
           await lockCalendarAppointmentCreation(calendarId);
-          if (conversationalAppointmentAuthorityFence) {
-            await conversationalAppointmentAuthorityFence();
-          }
           const current = await localCalendarService.getLocalAppointment(id);
           if (!current?.id) {
             const error = new Error('La cita dejó de existir mientras se reprogramaba.');
@@ -3145,6 +3189,12 @@ export async function updateAppointment(req, res) {
             throw error;
           }
           if (cancelRequested) {
+            if (conversationalAppointmentAuthorityFence) {
+              await conversationalAppointmentAuthorityFence({
+                lockForCommit: true,
+                phase: 'before_mutation'
+              });
+            }
             return localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
           }
           const availability = await localCalendarService.checkSlotAvailability(
@@ -3171,6 +3221,12 @@ export async function updateAppointment(req, res) {
             error.code = 'slot_unavailable';
             error.data = calendarAvailabilityFailureData(availability);
             throw error;
+          }
+          if (conversationalAppointmentAuthorityFence) {
+            await conversationalAppointmentAuthorityFence({
+              lockForCommit: true,
+              phase: 'before_mutation'
+            });
           }
           return localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
         });

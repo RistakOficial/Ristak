@@ -153,3 +153,116 @@ test('un mismo mensaje inbound concurrente reclama e incrementa unread una sola 
     await db.run('DELETE FROM users WHERE username = ?', [username]).catch(() => undefined)
   }
 })
+
+test('claimInboundChatMessage reutiliza la transacción inbound y rompe el ciclo de espera de la cola SQLite', async () => {
+  const marker = randomUUID()
+  const contactId = `chat_claim_tx_${marker}`
+  const transactionMessageId = `wa_claim_tx_${marker}`
+  const queuedMessageId = `wa_claim_queued_${marker}`
+  const username = `chat_claim_tx_user_${marker}`
+  let userId = null
+  let transactionPromise = null
+  let queuedClaimPromise = null
+
+  const deferred = () => {
+    let resolve
+    let reject
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise
+      reject = rejectPromise
+    })
+    return { promise, resolve, reject }
+  }
+  const transactionReady = deferred()
+  const startTransactionClaim = deferred()
+  const transactionClaimFinished = deferred()
+  const releaseTransaction = deferred()
+
+  const within = async (promise, timeoutMs) => {
+    let timeout
+    try {
+      return await Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('el claim transaccional quedó atrapado detrás de la cola SQLite')), timeoutMs)
+        })
+      ])
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  try {
+    await db.run(`
+      INSERT INTO users (username, password_hash, is_active)
+      VALUES (?, ?, 1)
+    `, [username, 'test-only-hash'])
+    userId = String((await db.get('SELECT id FROM users WHERE username = ?', [username])).id)
+
+    transactionPromise = db.transaction(async (transactionDatabase) => {
+      transactionReady.resolve()
+      await startTransactionClaim.promise
+      try {
+        const claim = await claimInboundChatMessage({
+          channel: 'whatsapp',
+          messageId: transactionMessageId,
+          contactId,
+          messageTimestamp: '2099-07-10T12:00:00.000Z',
+          database: transactionDatabase
+        })
+        transactionClaimFinished.resolve(claim)
+        await releaseTransaction.promise
+        return claim
+      } catch (error) {
+        transactionClaimFinished.reject(error)
+        throw error
+      }
+    })
+
+    await transactionReady.promise
+    // Nace fuera del contexto de la transacción anterior: encabeza la cola
+    // global y queda bloqueada por su BEGIN IMMEDIATE.
+    queuedClaimPromise = claimInboundChatMessage({
+      channel: 'whatsapp',
+      messageId: queuedMessageId,
+      contactId,
+      messageTimestamp: '2099-07-10T12:01:00.000Z'
+    })
+
+    startTransactionClaim.resolve()
+    const transactionClaim = await within(transactionClaimFinished.promise, 500)
+    assert.equal(transactionClaim.claimed, true)
+
+    releaseTransaction.resolve()
+    const [committedTransactionClaim, queuedClaim] = await Promise.all([
+      transactionPromise,
+      queuedClaimPromise
+    ])
+    assert.equal(committedTransactionClaim.claimed, true)
+    assert.equal(queuedClaim.claimed, true)
+    assert.equal(
+      await db.get(`
+        SELECT unread_count
+        FROM chat_read_states
+        WHERE user_id = ? AND contact_id = ?
+      `, [userId, contactId]).then(row => Number(row?.unread_count || 0)),
+      2
+    )
+    assert.equal(
+      await db.get(`
+        SELECT COUNT(*) AS total
+        FROM chat_inbound_message_claims
+        WHERE channel = 'whatsapp' AND message_id IN (?, ?)
+      `, [transactionMessageId, queuedMessageId]).then(row => Number(row?.total || 0)),
+      2
+    )
+  } finally {
+    startTransactionClaim.resolve()
+    releaseTransaction.resolve()
+    await transactionPromise?.catch(() => undefined)
+    await queuedClaimPromise?.catch(() => undefined)
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM users WHERE username = ?', [username]).catch(() => undefined)
+  }
+})

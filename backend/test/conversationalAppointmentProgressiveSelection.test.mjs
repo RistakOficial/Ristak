@@ -848,6 +848,7 @@ test('un cambio explícito a un día sin esa hora conserva el día nuevo para el
     assert.equal(closed.selectedDate, null)
     assert.equal(closed.missingField, 'date')
     assert.equal(closedCtx.appointmentSelectionProgress?.appointmentStatus, 'collecting_date')
+    assert.equal(closedCtx.appointmentSelectionProgress?.availabilityVerificationRequired, false)
     assert.deepEqual(closedCtx.appointmentSelectionProgress?.missingFields, ['date'])
 
     const afterClosedCtx = previewContext({
@@ -862,6 +863,7 @@ test('un cambio explícito a un día sin esa hora conserva el día nuevo para el
       config: fixture.config
     })
     assert.equal(afterClosedCtx.appointmentSelectionProgress?.selectedDate, null)
+    assert.equal(afterClosedCtx.appointmentSelectionProgress?.availabilityVerificationRequired, false)
     assert.deepEqual(afterClosedCtx.appointmentSelectionProgress?.missingFields, ['date'])
     const staleHour = await toolNamed(afterClosedCtx, 'get_free_slots').invoke(null, JSON.stringify(
       freeSlotsInput(fixture.secondDate, {
@@ -888,7 +890,7 @@ test('un cambio explícito a un día sin esa hora conserva el día nuevo para el
   }
 })
 
-test('si falla la consulta al cambiar de día, descarta la fecha vieja y conserva que falta una fecha', async () => {
+test('si falla técnicamente la consulta al cambiar de día, conserva la fecha nueva y exige revalidarla sin repreguntarla', async () => {
   const fixture = await createFixture('replace_date_lookup_failure')
   try {
     await selectDate(fixture, fixture.firstDate)
@@ -912,9 +914,11 @@ test('si falla la consulta al cambiar de día, descarta la fecha vieja y conserv
     assert.equal(result.ok, false, JSON.stringify(result))
     assert.equal(result.availabilityCheckFailed, true)
     assert.equal(result.transferRequired, true)
-    assert.equal(result.selectedDate, null)
-    assert.equal(result.missingField, 'date')
-    assert.match(result.note, /fecha anterior quedó descartada/i)
+    assert.equal(result.selectedDate, fixture.secondDate)
+    assert.equal(result.missingField, 'availability')
+    assert.equal(result.availabilityVerificationRequired, true)
+    assert.match(result.note, /conservé esa fecha/i)
+    assert.match(result.note, /no pidas la fecha otra vez/i)
 
     setNativeAppointmentAvailabilityLookupHookForTest(null)
     const nextCtx = previewContext({
@@ -928,11 +932,214 @@ test('si falla la consulta al cambiar de día, descarta la fecha vieja y conserv
       ctx: nextCtx,
       config: fixture.config
     })
-    assert.equal(nextCtx.appointmentSelectionProgress?.appointmentStatus, 'collecting_date')
-    assert.equal(nextCtx.appointmentSelectionProgress?.selectedDate, null)
-    assert.deepEqual(nextCtx.appointmentSelectionProgress?.missingFields, ['date'])
+    assert.equal(nextCtx.appointmentSelectionProgress?.appointmentStatus, 'collecting_time')
+    assert.equal(nextCtx.appointmentSelectionProgress?.selectedDate, fixture.secondDate)
+    assert.equal(nextCtx.appointmentSelectionProgress?.availabilityVerificationRequired, true)
+    assert.deepEqual(nextCtx.appointmentSelectionProgress?.missingFields, ['availability'])
+
+    let instructions = ''
+    await runToolCallingV2Turn({
+      config: fixture.config,
+      runtime: { modelProvider: {} },
+      messages: [{ id: nextCtx.executionId, role: 'user', content: 'sí, ese día' }],
+      contactId: fixture.contactId,
+      contactName: 'Contacto revalidación de fecha',
+      dryRun: true,
+      channel: 'whatsapp',
+      traceMessage: 'sí, ese día',
+      executionId: nextCtx.executionId,
+      previewScopeId: fixture.scopeId,
+      virtualContact: { id: fixture.contactId, fullName: 'Contacto revalidación de fecha' },
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      executeAgent: async ({ agent }) => {
+        instructions = String(agent.instructions || '')
+        return 'respuesta de prueba'
+      },
+      runInChannel: (_channel, callback) => callback()
+    })
+    assert.match(instructions, /falta revalidar disponibilidad real/i)
+    assert.match(instructions, /no vuelvas a pedir la fecha/i)
+    assert.doesNotMatch(instructions, /en esta fase falta la fecha/i)
+
+    const retried = await toolNamed(nextCtx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.secondDate, { progressDateAction: 'keep_selected_date' })
+    ))
+    assert.equal(retried.ok, true, JSON.stringify(retried))
+    assert.ok(retried.total > 0)
+    assert.equal(nextCtx.appointmentSelectionProgress?.availabilityVerificationRequired, false)
+    assert.deepEqual(nextCtx.appointmentSelectionProgress?.missingFields, ['time'])
   } finally {
     setNativeAppointmentAvailabilityLookupHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('si falla técnicamente la primera fecha exacta, la conserva y el retry exitoso continúa sin repreguntarla', async () => {
+  const fixture = await createFixture('initial_exact_date_lookup_failure')
+  try {
+    const ctx = previewContext({
+      config: fixture.config,
+      contactId: fixture.contactId,
+      scopeId: fixture.scopeId,
+      executionId: `initial-lookup-failure-${fixture.suffix}`
+    })
+    ctx.appointmentOfferDecision = null
+    ctx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx,
+      config: fixture.config
+    })
+    assert.equal(ctx.appointmentSelectionProgress, null)
+
+    setNativeAppointmentAvailabilityLookupHookForTest(async () => {
+      throw Object.assign(new Error('El proveedor de calendario no respondió.'), { statusCode: 503 })
+    })
+    const failed = await toolNamed(ctx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.firstDate)
+    ))
+    assert.equal(failed.ok, false, JSON.stringify(failed))
+    assert.equal(failed.availabilityCheckFailed, true)
+    assert.equal(failed.transferRequired, true)
+    assert.equal(failed.selectedDate, fixture.firstDate)
+    assert.equal(failed.missingField, 'availability')
+    assert.equal(failed.availabilityVerificationRequired, true)
+    assert.match(failed.note, /conservé esa fecha/i)
+    assert.match(failed.note, /no pidas la fecha otra vez/i)
+    assert.equal(ctx.appointmentSelectionProgress?.appointmentStatus, 'collecting_time')
+    assert.equal(ctx.appointmentSelectionProgress?.selectedDate, fixture.firstDate)
+    assert.equal(ctx.appointmentSelectionProgress?.availabilityVerificationRequired, true)
+    assert.deepEqual(ctx.appointmentSelectionProgress?.missingFields, ['availability'])
+    assert.equal(ctx.appointmentSelectionProgress?.lastError?.code, 'availability_http_503')
+    assert.ok(Number.isFinite(Date.parse(ctx.appointmentSelectionProgress?.lastError?.at || '')))
+
+    setNativeAppointmentAvailabilityLookupHookForTest(null)
+    const retryCtx = previewContext({
+      config: fixture.config,
+      contactId: fixture.contactId,
+      scopeId: fixture.scopeId,
+      executionId: `initial-lookup-retry-${fixture.suffix}`
+    })
+    retryCtx.appointmentOfferDecision = null
+    retryCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: retryCtx,
+      config: fixture.config
+    })
+    assert.equal(retryCtx.appointmentSelectionProgress?.selectedDate, fixture.firstDate)
+    assert.equal(retryCtx.appointmentSelectionProgress?.availabilityVerificationRequired, true)
+    assert.deepEqual(retryCtx.appointmentSelectionProgress?.missingFields, ['availability'])
+    assert.equal(retryCtx.appointmentSelectionProgress?.lastError?.code, 'availability_http_503')
+
+    let instructions = ''
+    await runToolCallingV2Turn({
+      config: fixture.config,
+      runtime: { modelProvider: {} },
+      messages: [{ id: retryCtx.executionId, role: 'user', content: 'ese día está bien' }],
+      contactId: fixture.contactId,
+      contactName: 'Contacto primera fecha exacta',
+      dryRun: true,
+      channel: 'whatsapp',
+      traceMessage: 'ese día está bien',
+      executionId: retryCtx.executionId,
+      previewScopeId: fixture.scopeId,
+      virtualContact: { id: fixture.contactId, fullName: 'Contacto primera fecha exacta' },
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      executeAgent: async ({ agent }) => {
+        instructions = String(agent.instructions || '')
+        return 'respuesta de prueba'
+      },
+      runInChannel: (_channel, callback) => callback()
+    })
+    assert.match(instructions, /falta revalidar disponibilidad real/i)
+    assert.match(instructions, /no vuelvas a pedir la fecha/i)
+    assert.doesNotMatch(instructions, /en esta fase falta la fecha/i)
+
+    const retried = await toolNamed(retryCtx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.firstDate)
+    ))
+    assert.equal(retried.ok, true, JSON.stringify(retried))
+    assert.ok(retried.total > 0)
+    assert.equal(retryCtx.appointmentSelectionProgress?.appointmentStatus, 'collecting_time')
+    assert.equal(retryCtx.appointmentSelectionProgress?.selectedDate, fixture.firstDate)
+    assert.equal(retryCtx.appointmentSelectionProgress?.availabilityVerificationRequired, false)
+    assert.deepEqual(retryCtx.appointmentSelectionProgress?.missingFields, ['time'])
+    assert.equal(retryCtx.appointmentSelectionProgress?.lastError, null)
+  } finally {
+    setNativeAppointmentAvailabilityLookupHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('si la primera fecha exacta sí fue verificada y no tiene slots, la descarta como fecha no disponible', async () => {
+  const fixture = await createFixture('initial_exact_date_without_slots')
+  try {
+    const ctx = previewContext({
+      config: fixture.config,
+      contactId: fixture.contactId,
+      scopeId: fixture.scopeId,
+      executionId: `initial-no-slots-${fixture.suffix}`
+    })
+    ctx.appointmentOfferDecision = null
+    ctx.appointmentSelectionProgress = null
+    setNativeAppointmentAvailabilityLookupHookForTest(async () => [])
+
+    const unavailable = await toolNamed(ctx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.firstDate)
+    ))
+    assert.equal(unavailable.ok, true, JSON.stringify(unavailable))
+    assert.equal(unavailable.total, 0)
+    assert.equal(unavailable.selectedDate, null)
+    assert.equal(unavailable.missingField, 'date')
+    assert.equal(unavailable.availabilityCheckFailed, undefined)
+    assert.equal(ctx.appointmentSelectionProgress?.appointmentStatus, 'collecting_date')
+    assert.equal(ctx.appointmentSelectionProgress?.selectedDate, null)
+    assert.equal(ctx.appointmentSelectionProgress?.availabilityVerificationRequired, false)
+    assert.deepEqual(ctx.appointmentSelectionProgress?.missingFields, ['date'])
+  } finally {
+    setNativeAppointmentAvailabilityLookupHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('fecha y hora juntas conservan la fecha si sólo esa hora no está disponible', async () => {
+  const fixture = await createFixture('initial_exact_date_and_unavailable_time')
+  try {
+    const ctx = previewContext({
+      config: fixture.config,
+      contactId: fixture.contactId,
+      scopeId: fixture.scopeId,
+      executionId: `initial-date-time-${fixture.suffix}`
+    })
+    ctx.appointmentOfferDecision = null
+    ctx.appointmentSelectionProgress = null
+
+    const unavailable = await toolNamed(ctx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.firstDate, {
+        earliestLocalTime: '10:00',
+        latestLocalTime: '10:00'
+      })
+    ))
+    assert.equal(unavailable.ok, true, JSON.stringify(unavailable))
+    assert.equal(unavailable.total, 0)
+    assert.equal(unavailable.selectedDate, fixture.firstDate)
+    assert.equal(unavailable.missingField, 'time')
+    assert.equal(unavailable.nextStep, 'requery_same_date_without_time_filter')
+    assert.match(unavailable.note, /mismo d[ií]a sin el filtro de hora/i)
+    assert.equal(ctx.appointmentSelectionProgress?.appointmentStatus, 'collecting_time')
+    assert.equal(ctx.appointmentSelectionProgress?.selectedDate, fixture.firstDate)
+    assert.equal(ctx.appointmentSelectionProgress?.selectedTime, null)
+    assert.equal(ctx.appointmentSelectionProgress?.availabilityVerificationRequired, false)
+    assert.deepEqual(ctx.appointmentSelectionProgress?.missingFields, ['time'])
+
+    const alternatives = await toolNamed(ctx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.firstDate, {
+        progressDateAction: 'keep_selected_date'
+      })
+    ))
+    assert.equal(alternatives.ok, true, JSON.stringify(alternatives))
+    assert.ok(alternatives.total > 1, JSON.stringify(alternatives))
+    assert.ok(alternatives.slots.every((day) => day.localDate === fixture.firstDate))
+  } finally {
     await cleanupFixture(fixture)
   }
 })
@@ -1065,7 +1272,10 @@ test('cambiar sólo la hora conserva la fecha; cambiar de día elimina la fecha 
     )
     assert.equal(missingScope.ok, false, JSON.stringify(missingScope))
     assert.equal(missingScope.code, 'appointment_next_preference_scope_required')
-    assert.match(missingScope.visibleReply, /mismo día|cambiar de fecha/i)
+    assert.equal(missingScope.terminal, false)
+    assert.equal(missingScope.visibleReply, null)
+    assert.match(missingScope.continueWith, /same_date|mismo turno/i)
+    assert.equal(changeTimeCtx.appointmentOfferAdjudication, undefined)
     const stillActive = await loadConversationalAppointmentOfferDecisionContext({
       ctx: changeTimeCtx,
       config: fixture.config
@@ -1633,8 +1843,9 @@ test('una reagenda que prueba un día cerrado conserva la cita objetivo mientras
       })
     ))
     assert.equal(failedReplacement.ok, false, JSON.stringify(failedReplacement))
-    assert.equal(failedReplacement.selectedDate, null)
-    assert.equal(failedReplacement.missingField, 'date')
+    assert.equal(failedReplacement.selectedDate, fixture.firstDate)
+    assert.equal(failedReplacement.missingField, 'availability')
+    assert.equal(failedReplacement.availabilityVerificationRequired, true)
     setNativeAppointmentAvailabilityLookupHookForTest(null)
 
     const afterFailureCtx = previewContext({
@@ -1648,7 +1859,10 @@ test('una reagenda que prueba un día cerrado conserva la cita objetivo mientras
       ctx: afterFailureCtx,
       config: fixture.config
     })
-    assert.equal(afterFailureCtx.appointmentSelectionProgress?.appointmentStatus, 'collecting_date')
+    assert.equal(afterFailureCtx.appointmentSelectionProgress?.appointmentStatus, 'collecting_time')
+    assert.equal(afterFailureCtx.appointmentSelectionProgress?.selectedDate, fixture.firstDate)
+    assert.equal(afterFailureCtx.appointmentSelectionProgress?.availabilityVerificationRequired, true)
+    assert.deepEqual(afterFailureCtx.appointmentSelectionProgress?.missingFields, ['availability'])
     assert.equal(afterFailureCtx.appointmentSelectionProgress?.purpose, 'reschedule')
     assert.equal(afterFailureCtx.appointmentSelectionProgress?.appointmentId, appointmentId)
   } finally {

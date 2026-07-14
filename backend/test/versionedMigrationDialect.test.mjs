@@ -169,3 +169,33 @@ test('el indice de identidad se crea aunque el bootstrap ya haya agregado la col
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('la migración de idempotencia agrega failure_kind a instalaciones existentes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-appointment-failure-kind-'))
+  const database = openMemoryDatabase()
+  const migration = new URL(
+    '../migrations/versioned/051_appointment_creation_failure_kind.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      CREATE TABLE appointment_creation_requests (
+        client_request_id TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_retryable INTEGER NOT NULL DEFAULT 0
+      );
+    `)
+    await copyFile(migration, join(directory, '051_appointment_creation_failure_kind.sql'))
+
+    const result = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(result, { applied: 1, skipped: 0 })
+
+    const columns = await database.all('PRAGMA table_info(appointment_creation_requests)')
+    assert.equal(columns.find((column) => column.name === 'failure_kind')?.type, 'TEXT')
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

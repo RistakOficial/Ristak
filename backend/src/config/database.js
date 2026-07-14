@@ -18,6 +18,7 @@ import {
   isConversationalAgentSafetyReferenceTable,
   mergeConversationalAgentSafetyContactReferences
 } from '../utils/conversationalAgentSafetyMerge.js'
+import { createPostgresAdapter } from './databasePostgresAdapter.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -436,66 +437,6 @@ if (usePostgres) {
       }
     }
   }
-
-  // Helper para convertir placeholders SQLite (?) a PostgreSQL ($1, $2, etc.)
-  // No toca los ? que van dentro de literales de texto '...' (p. ej. filtros LIKE)
-  const convertPlaceholders = (sql) => {
-    let index = 1
-    return sql.replace(/'(?:[^']|'')*'|\?/g, (match) => (match === '?' ? `$${index++}` : match))
-  }
-
-  const normalizePostgresSql = (sql) => (
-    sql
-      .replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
-      .replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
-      .replace(/DATETIME/g, 'TIMESTAMP')
-  )
-
-  // Postgres (a diferencia de SQLite) NO coacciona booleanos hacia las columnas
-  // INTEGER que usamos para TODOS los flags (required, *_enabled, *_verified, ...):
-  // el driver pg envía `true`/`false` como texto y Postgres lanza
-  // "invalid input syntax for type integer: true". El esquema no tiene columnas
-  // BOOLEAN reales, así que normalizamos aquí, en un solo lugar, cualquier bind
-  // booleano a 1/0 — mismo comportamiento que SQLite y misma data en ambos motores.
-  const toPostgresParams = (params) => (
-    Array.isArray(params)
-      ? params.map((value) => (value === true ? 1 : value === false ? 0 : value))
-      : params
-  )
-
-  const createPostgresAdapter = (client) => ({
-    run: async (sql, params = []) => {
-      sql = normalizePostgresSql(sql)
-      sql = convertPlaceholders(sql)
-
-      const result = await client.query(sql, toPostgresParams(params))
-      return {
-        lastID: result.rows[0]?.id || null,
-        changes: result.rowCount
-      }
-    },
-
-    get: async (sql, params = []) => {
-      sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-      sql = convertPlaceholders(sql)
-
-      const result = await client.query(sql, toPostgresParams(params))
-      return result.rows[0] || null
-    },
-
-    all: async (sql, params = []) => {
-      sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-      sql = convertPlaceholders(sql)
-
-      const result = await client.query(sql, toPostgresParams(params))
-      return result.rows
-    },
-
-    exec: async (sql) => {
-      sql = normalizePostgresSql(sql)
-      await client.query(sql)
-    }
-  })
 
   async function withPostgresClient(operation, { retryTransientRead = false, label = 'consulta' } = {}) {
     const maxAttempts = retryTransientRead ? 2 : 1
@@ -3932,12 +3873,16 @@ async function initTablesUnlocked() {
         appointment_id TEXT,
         response_json TEXT,
         error_status INTEGER,
+        error_retryable INTEGER NOT NULL DEFAULT 0,
+        failure_kind TEXT,
         error_message TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
     await db.run('ALTER TABLE appointment_creation_requests ADD COLUMN processing_token TEXT').catch(() => {})
+    await db.run('ALTER TABLE appointment_creation_requests ADD COLUMN error_retryable INTEGER NOT NULL DEFAULT 0').catch(() => {})
+    await db.run('ALTER TABLE appointment_creation_requests ADD COLUMN failure_kind TEXT').catch(() => {})
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_creation_request_appointment ON appointment_creation_requests(appointment_id)')
 
     // Calendarios locales de Ristak. Si un calendario viene de HighLevel,

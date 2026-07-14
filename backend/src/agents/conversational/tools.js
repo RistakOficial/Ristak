@@ -53,7 +53,9 @@ import {
   recordConversationalAgentEvent,
   createConversationGoalLink,
   DEFAULT_GOAL_TRACKING_PARAM,
-  getConversationalAgent
+  getConversationalAgent,
+  getConversationalReplyDeliveryPlan,
+  CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE
 } from '../../services/conversationalAgentService.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 import { logger } from '../../utils/logger.js'
@@ -88,6 +90,9 @@ import {
   buildConversationalAppointmentPreviewOfferEventId,
   isConversationalAppointmentPreviewScopeId
 } from '../../services/conversationalAppointmentPreviewOfferService.js'
+import { findNewerSubstantiveConversationalInbound } from '../../services/conversationalInboundAuthorityService.js'
+import { acquireConversationalInboundCommitLock } from '../../services/conversationalInboundCommitLockService.js'
+import { runBoundedAppointmentControllerRequest } from '../../services/appointmentControllerRetryService.js'
 
 /**
  * Tools del agente conversacional. Se crean por ejecución con una factory
@@ -1411,6 +1416,7 @@ let nativeAppointmentBeforeResolverTerminalHookForTest = null
 let nativeAppointmentAvailabilityLookupHookForTest = null
 let nativeAppointmentRuntimeAgentLookupHookForTest = null
 let nativeAppointmentAfterPreCommitAuthorityHookForTest = null
+let nativeAppointmentCreateControllerInvokeHookForTest = null
 
 export function setNativeHandoffAfterAssignmentHookForTest(hook = null) {
   nativeHandoffAfterAssignmentHookForTest = typeof hook === 'function' ? hook : null
@@ -1442,6 +1448,10 @@ export function setNativeAppointmentRuntimeAgentLookupHookForTest(hook = null) {
 
 export function setNativeAppointmentAfterPreCommitAuthorityHookForTest(hook = null) {
   nativeAppointmentAfterPreCommitAuthorityHookForTest = typeof hook === 'function' ? hook : null
+}
+
+export function setNativeAppointmentCreateControllerInvokeHookForTest(hook = null) {
+  nativeAppointmentCreateControllerInvokeHookForTest = typeof hook === 'function' ? hook : null
 }
 
 async function runNativeAppointmentAfterPreCommitAuthorityHook({
@@ -2307,6 +2317,8 @@ async function persistNativeAppointmentSelectionProgress({
   selectedStartTime = null,
   displayedRanges = [],
   availabilityCheckedAt = null,
+  availabilityVerificationRequired = false,
+  lastError = null,
   status = 'collecting_time',
   allowSelectedDateReplacement = false
 } = {}) {
@@ -2326,6 +2338,12 @@ async function persistNativeAppointmentSelectionProgress({
   const cleanSelectedDate = String(selectedDate || '').trim() || null
   const cleanSelectedTime = normalizeNativeAvailabilityTime(selectedTime) || null
   const cleanSelectedStartTime = String(selectedStartTime || '').trim() || null
+  const cleanAvailabilityVerificationRequired = availabilityVerificationRequired === true
+  const cleanLastErrorCode = String(lastError?.code || lastError || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]+/g, '_')
+    .slice(0, 120)
   const allowedStatuses = new Set([
     'browsing',
     'collecting_date',
@@ -2356,6 +2374,9 @@ async function persistNativeAppointmentSelectionProgress({
   if (cleanStatus === 'collecting_time' && !cleanSelectedDate) {
     throw new Error('El estado de cita pendiente de hora perdió la fecha seleccionada')
   }
+  if (cleanAvailabilityVerificationRequired && cleanStatus !== 'collecting_time') {
+    throw new Error('La revalidación de disponibilidad requiere conservar una fecha seleccionada')
+  }
   if (cleanStatus === 'collecting_date' && cleanSelectedDate) {
     throw new Error('El estado de cita pendiente de fecha no puede conservar un día anterior')
   }
@@ -2377,9 +2398,18 @@ async function persistNativeAppointmentSelectionProgress({
     selectedTimezone: resolvedTimezone,
     previouslyShownRanges: (Array.isArray(displayedRanges) ? displayedRanges : []).slice(0, 32),
     availabilityCheckedAt: availabilityCheckedAt || null,
+    availabilityVerificationRequired: cleanAvailabilityVerificationRequired,
+    lastError: cleanLastErrorCode
+      ? {
+          code: cleanLastErrorCode,
+          at: String(lastError?.at || updatedAt)
+        }
+      : null,
     appointmentStatus: cleanStatus,
-    missingFields: cleanStatus === 'collecting_time'
-      ? ['time']
+    missingFields: cleanAvailabilityVerificationRequired
+      ? ['availability']
+      : cleanStatus === 'collecting_time'
+        ? ['time']
       : (cleanStatus === 'collecting_date' ? ['date'] : []),
     sourceExecutionId: String(ctx?.executionId || '').trim() || null,
     updatedAt,
@@ -2411,6 +2441,7 @@ async function persistNativeAppointmentSelectionProgress({
     zone: String(currentDetail.selectedTimezone || resolvedTimezone)
   })
   const currentStatus = String(currentDetail.appointmentStatus || '')
+  const currentAvailabilityVerificationRequired = currentDetail.availabilityVerificationRequired === true
   const knownProgressStatuses = new Set(['browsing', 'collecting_date', 'collecting_time', 'restarted', 'cancelled', 'superseded'])
   const currentCollectingShapeIsValid = currentStatus === 'collecting_time'
     ? Boolean(
@@ -2418,7 +2449,10 @@ async function persistNativeAppointmentSelectionProgress({
         currentSelectedDateParsed.toISODate() === currentSelectedDate &&
         Array.isArray(currentDetail.missingFields) &&
         currentDetail.missingFields.length === 1 &&
-        currentDetail.missingFields[0] === 'time'
+        currentDetail.missingFields[0] === (
+          currentAvailabilityVerificationRequired ? 'availability' : 'time'
+        ) &&
+        (!currentAvailabilityVerificationRequired || !currentDetail.availabilityCheckedAt)
       )
     : currentStatus === 'collecting_date'
       ? Boolean(
@@ -2589,13 +2623,17 @@ export async function loadConversationalAppointmentSelectionProgressContext({ ct
     !INACTIVE_APPOINTMENT_STATUSES.has(nativeAppointmentStatus(rescheduleTarget))
   )
   const collectingStatus = String(detail.appointmentStatus || '')
+  const availabilityVerificationRequired = detail.availabilityVerificationRequired === true
   const collectingShapeIsValid = collectingStatus === 'collecting_time'
     ? Boolean(
         selectedDateIsValid &&
         selectedDate >= businessTodayDateOnly(currentTimezone) &&
         Array.isArray(detail.missingFields) &&
         detail.missingFields.length === 1 &&
-        detail.missingFields[0] === 'time'
+        detail.missingFields[0] === (
+          availabilityVerificationRequired ? 'availability' : 'time'
+        ) &&
+        (!availabilityVerificationRequired || !detail.availabilityCheckedAt)
       )
     : collectingStatus === 'collecting_date'
       ? Boolean(
@@ -2981,6 +3019,19 @@ function appointmentSelectionError(message, code = 'appointment_selection_requir
   return { ok: false, actionCompleted: false, confirmationRequired: true, code, error: message }
 }
 
+function appointmentAuthorityRevalidationUnavailable() {
+  return {
+    ok: false,
+    actionCompleted: false,
+    code: 'appointment_authority_revalidation_failed',
+    statusCode: 503,
+    retryable: true,
+    appointmentOfferInvalidated: false,
+    appointmentOfferRestoreSameDate: false,
+    error: 'No se pudo comprobar de forma segura que la confirmación siga vigente. No se aplicó ningún cambio; vuelve a intentarlo en un momento.'
+  }
+}
+
 async function lockNativeAppointmentPreviewAuthority({ ctx, config } = {}) {
   const previewScopeId = ctx?.dryRun && isConversationalAppointmentPreviewScopeId(ctx?.previewScopeId)
     ? String(ctx.previewScopeId).trim()
@@ -3112,6 +3163,7 @@ function appointmentAuthorityConflictTerminalResult({ ctx, fallback = '' } = {})
   const progress = ctx?.appointmentSelectionProgress
   if (progress?.active) {
     const needsDate = String(progress.appointmentStatus || '') === 'collecting_date'
+    const needsAvailabilityVerification = progress.availabilityVerificationRequired === true
     return {
       ok: false,
       actionCompleted: false,
@@ -3119,7 +3171,9 @@ function appointmentAuthorityConflictTerminalResult({ ctx, fallback = '' } = {})
       code: 'appointment_progress_state_conflict',
       visibleReply: needsDate
         ? 'la selección cambió mientras la guardaba. ¿qué día te gustaría revisar?'
-        : 'ya conservé ese día. ¿qué hora te funciona?'
+        : needsAvailabilityVerification
+          ? 'ya conservé ese día, pero todavía necesito revalidar la disponibilidad real antes de ofrecerte un horario'
+          : 'ya conservé ese día. ¿qué hora te funciona?'
     }
   }
   return {
@@ -3457,6 +3511,14 @@ async function persistNativeAppointmentOffer({
   const contactId = String(ctx?.contactId || '').trim()
   const executionId = String(ctx?.executionId || '').trim()
   const channel = normalizeNativeAppointmentChannel(ctx?.channel)
+  const offerSourceMessage = [...(Array.isArray(ctx?.conversationMessages) ? ctx.conversationMessages : [])]
+    .reverse()
+    .find((message) => isCustomerAppointmentMessage(message) && appointmentMessageText(message))
+  const offerSourceMessageId = String(offerSourceMessage?.id || executionId).trim()
+  const offerSourceMessageQuote = appointmentMessageText(offerSourceMessage)
+  const offerSourceMessageQuoteHash = offerSourceMessageQuote
+    ? createHash('sha256').update(offerSourceMessageQuote).digest('hex')
+    : ''
   const scheduleCapability = getNativeCapability(ctx, config, 'schedule_appointment')
   const terminalToolName = scheduleCapability?.bookingOwner === 'human'
     ? 'request_human_booking'
@@ -3510,6 +3572,8 @@ async function persistNativeAppointmentOffer({
     localLabel,
     timezone,
     executionId,
+    offerSourceMessageId,
+    offerSourceMessageQuoteHash,
     offerText: nativeAppointmentOfferText(localLabel),
     purpose: normalizedPurpose,
     appointmentId: normalizedAppointmentId || null,
@@ -4401,6 +4465,128 @@ export async function loadConversationalAppointmentOfferDecisionContext({ ctx, c
   }
 }
 
+function normalizeNativeAppointmentOfferDeliveryText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Prueba live de que el texto canónico de una oferta salió por la entrega
+ * durable correspondiente al mismo inbound. No sustituye el juicio semántico
+ * del resolver ni la revalidación de calendario: sólo permite recuperar la
+ * visibilidad factual cuando el sobre del modelo ya omitió ese turno antiguo.
+ */
+async function verifyNativeAppointmentOfferReplyDelivery({
+  ctx,
+  config,
+  offer,
+  evidence = null
+} = {}) {
+  if (ctx?.dryRun === true || ctx?.followUpMode === true || !offer?.detail) return null
+
+  const contactId = String(ctx?.contactId || '').trim()
+  const agentId = String(config?.id || ctx?.agentId || '').trim()
+  const channel = normalizeNativeAppointmentChannel(ctx?.channel)
+  const offerExecutionId = String(offer.detail.executionId || '').trim()
+  const persistedSourceMessageId = String(offer.detail.offerSourceMessageId || '').trim()
+  const sourceMessageId = persistedSourceMessageId || offerExecutionId
+  const currentExecutionId = String(ctx?.executionId || '').trim()
+  const expectedOfferText = String(offer.detail.offerText || '').trim()
+  const expectedOfferTextNormalized = normalizeNativeAppointmentOfferDeliveryText(expectedOfferText)
+  const expectedReplyHash = expectedOfferText
+    ? createHash('sha256').update(expectedOfferText).digest('hex')
+    : ''
+
+  if (
+    !contactId ||
+    !agentId ||
+    !channel ||
+    !sourceMessageId ||
+    !currentExecutionId ||
+    currentExecutionId === sourceMessageId ||
+    !expectedOfferTextNormalized ||
+    !expectedReplyHash ||
+    (persistedSourceMessageId && offerExecutionId && persistedSourceMessageId !== offerExecutionId) ||
+    String(offer.contact_id || '') !== contactId ||
+    String(offer.agent_id || '') !== agentId ||
+    !nativeAppointmentEventMatchesChannel(offer.detail, channel, { allowLegacy: false })
+  ) return null
+
+  let plan = null
+  try {
+    plan = await getConversationalReplyDeliveryPlan({
+      contactId,
+      agentId,
+      channel,
+      sourceMessageId,
+      externalIdPrefix: 'convagent'
+    })
+  } catch {
+    // La ausencia, corrupción o colisión del ledger falla cerrado igual que una
+    // oferta que nunca apareció en el transcript visible.
+    return null
+  }
+
+  const part = Array.isArray(plan?.parts) && plan.parts.length === 1
+    ? plan.parts[0]
+    : null
+  const completedAtMs = Date.parse(String(plan?.completedAt || ''))
+  const partText = String(part?.text || '').trim()
+  const partReplyHash = partText
+    ? createHash('sha256').update(partText).digest('hex')
+    : ''
+  const offerMessageId = String(part?.providerMessageId || part?.externalId || '').trim()
+  const offerTurnId = plan?.id ? `reply-delivery:${plan.id}` : ''
+  const exactPlan = Boolean(
+    plan?.eventType === CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE &&
+    String(plan?.contactId || '') === contactId &&
+    String(plan?.agentId || '') === agentId &&
+    normalizeNativeAppointmentChannel(plan?.channel) === channel &&
+    String(plan?.sourceMessageId || '') === sourceMessageId &&
+    String(plan?.externalIdPrefix || '') === 'convagent' &&
+    String(plan?.status || '') === 'completed' &&
+    Number.isFinite(completedAtMs) &&
+    completedAtMs <= Date.now() + 60_000 &&
+    part?.status === 'sent' &&
+    offerMessageId &&
+    String(plan?.replyHash || '') === expectedReplyHash &&
+    partReplyHash === expectedReplyHash &&
+    normalizeNativeAppointmentOfferDeliveryText(partText) === expectedOfferTextNormalized
+  )
+  if (!exactPlan) return null
+
+  const expectedPlanId = String(evidence?.offerDeliveryPlanId || '').trim()
+  const expectedEvidenceHash = String(evidence?.offerDeliveryReplyHash || '').trim()
+  const expectedCompletedAt = String(evidence?.offerDeliveryCompletedAt || '').trim()
+  const expectedMessageId = String(evidence?.offerMessageId || '').trim()
+  const expectedTurnId = String(evidence?.offerTurnId || '').trim()
+  const expectedTurnMessageIds = Array.isArray(evidence?.offerTurnMessageIds)
+    ? evidence.offerTurnMessageIds.map((value) => String(value || '').trim()).filter(Boolean)
+    : []
+  const expectedEvidenceSource = String(evidence?.offerVisibilityEvidenceSource || '').trim()
+  if (
+    (expectedPlanId && expectedPlanId !== plan.id) ||
+    (expectedEvidenceHash && expectedEvidenceHash !== plan.replyHash) ||
+    (expectedCompletedAt && expectedCompletedAt !== plan.completedAt) ||
+    (expectedMessageId && expectedMessageId !== offerMessageId) ||
+    (expectedTurnId && expectedTurnId !== offerTurnId) ||
+    (expectedTurnMessageIds.length && (
+      expectedTurnMessageIds.length !== 1 || expectedTurnMessageIds[0] !== offerMessageId
+    )) ||
+    (expectedEvidenceSource && expectedEvidenceSource !== 'reply_delivery_ledger')
+  ) return null
+
+  return {
+    offerMessageId,
+    offerTurnId,
+    offerTurnMessageIds: [offerMessageId],
+    offerDeliveryPlanId: String(plan.id || '').trim(),
+    offerDeliveryReplyHash: String(plan.replyHash || '').trim(),
+    offerDeliveryCompletedAt: String(plan.completedAt || '').trim(),
+    offerVisibilityEvidenceSource: 'reply_delivery_ledger',
+    offerSourceMessageId: sourceMessageId
+  }
+}
+
 async function verifyNativeAppointmentOfferEvent({ ctx, config, calendarId, startTime, evidence } = {}) {
   const agentId = String(config?.id || ctx?.agentId || '').trim()
   const contactId = String(ctx?.contactId || '').trim()
@@ -4452,6 +4638,9 @@ async function verifyNativeAppointmentOfferEvent({ ctx, config, calendarId, star
     .replace(/\s+/g, ' ')
     .trim()
   const expectedText = String(offer.detail.offerText || '').replace(/\s+/g, ' ').trim()
+  const durableOfferDelivery = evidence?.offerDeliveryPlanId
+    ? await verifyNativeAppointmentOfferReplyDelivery({ ctx, config, offer, evidence })
+    : null
   if (
     String(offer.detail.calendarId || '') !== String(calendarId || '') ||
     String(offer.detail.startTime || '') !== String(startTime || '') ||
@@ -4461,7 +4650,7 @@ async function verifyNativeAppointmentOfferEvent({ ctx, config, calendarId, star
       String(offer.detail.status || '') === 'active' &&
       (!Number.isFinite(Date.parse(offer.detail.expiresAt || '')) || Date.parse(offer.detail.expiresAt || '') <= Date.now())
     ) ||
-    offerTurnText !== expectedText
+    offerTurnText !== expectedText && !durableOfferDelivery
   ) {
     return appointmentSelectionError('La respuesta no confirma la oferta estructurada vigente o el agente agregó otro horario. Reofrece uno solo.', 'appointment_offer_mismatch')
   }
@@ -4481,15 +4670,14 @@ async function validateNativeAppointmentOfferRuntimeScope({
     isConversationalAppointmentPreviewScopeId(ctx?.previewScopeId)
   )
   let persistedConfig = null
-  let persistedLookupFailed = false
   if (!previewRuntime && agentId) {
     try {
       persistedConfig = nativeAppointmentRuntimeAgentLookupHookForTest
         ? await nativeAppointmentRuntimeAgentLookupHookForTest({ agentId })
         : await getConversationalAgent(agentId)
     } catch (error) {
-      persistedLookupFailed = true
       logger.warn(`[Agente conversacional] No se pudo revalidar el agente ${agentId} antes de cerrar la cita: ${error.message}`)
+      return appointmentAuthorityRevalidationUnavailable()
     }
   }
   // Un preview puede probar un borrador que todavía no existe o está apagado.
@@ -4511,8 +4699,8 @@ async function validateNativeAppointmentOfferRuntimeScope({
       : null
     currentTimezone = resolveTimezone(await getAccountTimezone({ forceRefresh: true, throwOnError: true }))
   } catch (error) {
-    persistedLookupFailed = true
     logger.warn(`[Agente conversacional] No se pudo revalidar calendario y zona antes de cerrar la cita: ${error.message}`)
+    return appointmentAuthorityRevalidationUnavailable()
   }
   const offeredTimezone = String(offerDetail?.timezone || '').trim()
   const offeredPurpose = String(offerDetail?.purpose || 'book').trim() === 'reschedule'
@@ -4523,7 +4711,6 @@ async function validateNativeAppointmentOfferRuntimeScope({
     ? buildNativeAppointmentTerminalBinding(scheduleCapability, storedTerminalBinding.terminalToolName)
     : null
   const scopeMatches = Boolean(
-    !persistedLookupFailed &&
     (previewRuntime || currentConfig?.enabled === true) &&
     scheduleCapability &&
     currentCalendar?.id &&
@@ -4571,7 +4758,94 @@ async function revalidateNativeAppointmentTerminalCommitAuthority({
   const offerEventId = String(confirmationEvidence?.offerEventId || '').trim()
   const agentId = String(config?.id || ctx?.agentId || '').trim()
   const startTime = String(confirmationEvidence?.selectedStartTime || '').trim()
+  const validateInboundClaim = async ({ lock = false } = {}) => {
+    const claimMessageId = String(ctx?.inboundClaim?.messageId || '').trim()
+    const claimToken = String(ctx?.inboundClaim?.claimToken || '').trim()
+    const executionId = String(ctx?.executionId || '').trim()
+    if (!claimMessageId && !claimToken) return { ok: true, checked: false }
+    if (!claimMessageId || !claimToken || claimMessageId !== executionId) {
+      return { ok: false, checked: true }
+    }
+    const lockClause = lock && process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const row = await db.get(`
+      SELECT status, signal, inbound_processing_message_id,
+             inbound_processing_status, inbound_processing_claim_token,
+             inbound_processing_lease_until_at
+      FROM conversational_agent_state
+      WHERE contact_id = ? AND agent_id = ?
+        AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+      LIMIT 1${lockClause}
+    `, [ctx?.contactId, agentId, normalizeNativeAppointmentChannel(ctx?.channel) || 'whatsapp'])
+    const leaseUntilMs = Date.parse(String(row?.inbound_processing_lease_until_at || ''))
+    return {
+      ok: Boolean(
+        row?.status === 'active' &&
+        !row?.signal &&
+        String(row?.inbound_processing_message_id || '') === executionId &&
+        row?.inbound_processing_status === 'processing' &&
+        String(row?.inbound_processing_claim_token || '') === claimToken &&
+        Number.isFinite(leaseUntilMs) &&
+        leaseUntilMs > Date.now()
+      ),
+      checked: true
+    }
+  }
   try {
+    if (!lockForCommit) {
+      const claimAuthority = await validateInboundClaim()
+      if (claimAuthority.checked && !claimAuthority.ok) {
+        return {
+          ...appointmentSelectionError(
+            'La ejecución que confirmó la cita perdió su autoridad antes de guardar. No se creó nada; retoma el último mensaje válido.',
+            'appointment_request_authority_lost'
+          ),
+          appointmentOfferInvalidated: true,
+          appointmentOfferRestoreSameDate: true
+        }
+      }
+    }
+    if (lockForCommit) {
+      // El controller invoca este fence dentro de la misma transacción que
+      // persiste la cita. Todo writer inbound toma la misma llave antes de su
+      // INSERT, así que la consulta canónica de abajo y el INSERT terminal son
+      // una sola decisión lineal, sin ventana TOCTOU en PostgreSQL.
+      await acquireConversationalInboundCommitLock({
+        contactId: ctx?.contactId,
+        channel: ctx?.channel || 'whatsapp',
+        database: db
+      })
+    }
+    if (!ctx?.dryRun) {
+      const inboundAuthority = await findNewerSubstantiveConversationalInbound({
+        contactId: ctx?.contactId,
+        handledMessageId: ctx?.executionId,
+        channel: ctx?.channel || 'whatsapp'
+      })
+      const inboundClaimExpected = Boolean(
+        String(ctx?.inboundClaim?.messageId || '').trim() ||
+        String(ctx?.inboundClaim?.claimToken || '').trim()
+      )
+      if (inboundClaimExpected && !inboundAuthority.checked) {
+        return {
+          ...appointmentSelectionError(
+            'La confirmación perdió su fila canónica antes de guardar. No se creó nada; retoma el último mensaje válido.',
+            'appointment_request_authority_lost'
+          ),
+          appointmentOfferInvalidated: true,
+          appointmentOfferRestoreSameDate: true
+        }
+      }
+      if (inboundAuthority.checked && inboundAuthority.newerMessage) {
+        return {
+          ...appointmentSelectionError(
+            'Llegó un mensaje nuevo mientras se cerraba la cita. No se guardó el horario anterior; procesa primero la instrucción más reciente.',
+            'appointment_request_superseded_by_newer_inbound'
+          ),
+          appointmentOfferInvalidated: true,
+          appointmentOfferRestoreSameDate: true
+        }
+      }
+    }
     if (lockForCommit) {
       const exclusiveLockClause = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
       const sharedLockClause = process.env.DATABASE_URL ? ' FOR SHARE' : ''
@@ -4625,6 +4899,17 @@ async function revalidateNativeAppointmentTerminalCommitAuthority({
         [calendarId, calendarId]
       )
       await db.get(`SELECT id FROM highlevel_config LIMIT 1${sharedLockClause}`)
+      const claimAuthority = await validateInboundClaim({ lock: true })
+      if (claimAuthority.checked && !claimAuthority.ok) {
+        return {
+          ...appointmentSelectionError(
+            'La ejecución que confirmó la cita perdió su autoridad dentro del guardado. No se creó nada; retoma el último mensaje válido.',
+            'appointment_request_authority_lost'
+          ),
+          appointmentOfferInvalidated: true,
+          appointmentOfferRestoreSameDate: true
+        }
+      }
     }
     const offerAuthorization = await verifyNativeAppointmentOfferEvent({
       ctx,
@@ -4670,14 +4955,7 @@ async function revalidateNativeAppointmentTerminalCommitAuthority({
     return runtimeScope
   } catch (error) {
     logger.warn(`[Agente conversacional] La autoridad terminal de la cita no pudo cercarse: ${error.message}`)
-    return {
-      ...appointmentSelectionError(
-        'La configuración de agenda cambió mientras se cerraba la cita. No se aplicó ningún cambio; vuelve a consultar disponibilidad.',
-        'appointment_offer_scope_changed'
-      ),
-      appointmentOfferInvalidated: true,
-      appointmentOfferRestoreSameDate: false
-    }
+    return appointmentAuthorityRevalidationUnavailable()
   }
 }
 
@@ -4688,10 +4966,15 @@ function buildNativeAppointmentTerminalCommitFence(options = {}) {
       lockForCommit: true
     })
     if (result.ok) return result
+    const statusCode = Number(result.statusCode) >= 400 && Number(result.statusCode) <= 599
+      ? Number(result.statusCode)
+      : 409
     throw Object.assign(new Error(result.error || 'La autoridad de la cita cambió antes del guardado.'), {
-      status: 409,
-      statusCode: 409,
+      status: statusCode,
+      statusCode,
       code: result.code || 'appointment_offer_scope_changed',
+      conversationalAppointmentAuthorityFailure: true,
+      retryable: result.retryable === true,
       appointmentOfferInvalidated: result.appointmentOfferInvalidated === true,
       appointmentOfferRestoreSameDate: result.appointmentOfferRestoreSameDate === true,
       data: {
@@ -4810,10 +5093,35 @@ async function persistNativeAppointmentSelection({
     ? evidence.offerTurnMessageIds.map((value) => String(value || '').trim()).filter(Boolean)
     : [offerMessageId].filter(Boolean)
   const offerTurnId = String(evidence?.offerTurnId || '').trim()
+  const offerVisibilityEvidenceSource = String(
+    evidence?.offerVisibilityEvidenceSource || 'conversation_history'
+  ).trim()
+  const offerDeliveryPlanId = String(evidence?.offerDeliveryPlanId || '').trim()
+  const offerDeliveryReplyHash = String(evidence?.offerDeliveryReplyHash || '').trim()
+  const offerDeliveryCompletedAt = String(evidence?.offerDeliveryCompletedAt || '').trim()
+  const hasAnyLedgerEvidence = Boolean(
+    offerDeliveryPlanId || offerDeliveryReplyHash || offerDeliveryCompletedAt
+  )
+  const hasCompleteLedgerEvidence = Boolean(
+    offerVisibilityEvidenceSource === 'reply_delivery_ledger' &&
+    /^cae_reply_delivery_[a-f0-9]{48}$/u.test(offerDeliveryPlanId) &&
+    /^[a-f0-9]{64}$/u.test(offerDeliveryReplyHash) &&
+    Number.isFinite(Date.parse(offerDeliveryCompletedAt))
+  )
   if (!agentId || !contactId || !calendarId || !startTime || !executionId || !customerMessageId || !latestCustomerMessageId || !offerMessageId || !offerTurnId || !offerEventId) {
     return appointmentSelectionError(
       'No se pudo identificar de forma durable la oferta y la respuesta que eligieron el horario. No se agendó nada.',
       'appointment_selection_identity_missing'
+    )
+  }
+  if (
+    !['conversation_history', 'reply_delivery_ledger'].includes(offerVisibilityEvidenceSource) ||
+    (hasAnyLedgerEvidence && offerVisibilityEvidenceSource !== 'reply_delivery_ledger') ||
+    (offerVisibilityEvidenceSource === 'reply_delivery_ledger' && !hasCompleteLedgerEvidence)
+  ) {
+    return appointmentSelectionError(
+      'La evidencia durable de entrega de la oferta está incompleta o no coincide. No se agendó nada.',
+      'appointment_selection_delivery_evidence_invalid'
     )
   }
   if (latestCustomerMessageId !== executionId) {
@@ -4853,6 +5161,10 @@ async function persistNativeAppointmentSelection({
     offerTurnId,
     offerTurnMessageIds,
     offerTurnMessageIdsHash,
+    offerVisibilityEvidenceSource,
+    offerDeliveryPlanId: hasCompleteLedgerEvidence ? offerDeliveryPlanId : null,
+    offerDeliveryReplyHash: hasCompleteLedgerEvidence ? offerDeliveryReplyHash : null,
+    offerDeliveryCompletedAt: hasCompleteLedgerEvidence ? offerDeliveryCompletedAt : null,
     selectionMode: 'accepted_prior_offer',
     localLabel: String(evidence?.localLabel || ''),
     timezone: String(evidence?.timezone || ''),
@@ -4963,7 +5275,7 @@ async function persistNativeAppointmentSelection({
     String(stored?.contact_id || '') === contactId &&
     String(stored?.agent_id || '') === agentId &&
     String(storedDetail.status || '') === 'active' &&
-    ['calendarId', 'startTime', 'channel', 'executionId', 'customerMessageId', 'customerMessageIdsHash', 'latestCustomerMessageId', 'offerMessageId', 'offerEventId', 'offerTurnId', 'offerTurnMessageIdsHash', 'localLabel', 'timezone', 'customerQuoteHash']
+    ['calendarId', 'startTime', 'channel', 'executionId', 'customerMessageId', 'customerMessageIdsHash', 'latestCustomerMessageId', 'offerMessageId', 'offerEventId', 'offerTurnId', 'offerTurnMessageIdsHash', 'offerVisibilityEvidenceSource', 'offerDeliveryPlanId', 'offerDeliveryReplyHash', 'offerDeliveryCompletedAt', 'localLabel', 'timezone', 'customerQuoteHash']
       .every((key) => String(storedDetail[key] || '') === String(detail[key] || ''))
   )
   if (!matches) {
@@ -6031,26 +6343,18 @@ async function resolveNativeAppointmentSelection({
     String(resolverAuthority.terminalToolName || '') === String(ctx?.appointmentOfferDecision?.terminalToolName || '')
   )
   if (resolverAuthorized) {
-    const conversationMessages = Array.isArray(ctx?.conversationMessages) ? ctx.conversationMessages : []
-    const offerSourceExecutionId = String(candidate.offer.detail.executionId || '').trim()
-    let offerSourceCustomerIndex = -1
-    for (let index = 0; index < conversationMessages.length; index += 1) {
-      const message = conversationMessages[index]
-      if (
-        isCustomerAppointmentMessage(message) &&
-        String(message?.id || '').trim() === offerSourceExecutionId &&
-        appointmentMessageText(message)
-      ) {
-        offerSourceCustomerIndex = index
-        break
-      }
-    }
+    const conversationMessages = ctx?.dryRun && Array.isArray(ctx?.appointmentTranscriptEvidenceMessages)
+      ? ctx.appointmentTranscriptEvidenceMessages
+      : (Array.isArray(ctx?.conversationMessages) ? ctx.conversationMessages : [])
+    const offerSourceMessageId = String(candidate.offer.detail.offerSourceMessageId || '').trim()
+    const legacyOfferSourceExecutionId = String(candidate.offer.detail.executionId || '').trim()
+    const offerSourceMessageQuoteHash = String(candidate.offer.detail.offerSourceMessageQuoteHash || '').trim()
     let latestCustomerIndex = -1
     for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
       const message = conversationMessages[index]
       if (
         isCustomerAppointmentMessage(message) &&
-        String(message?.id || '').trim() === executionId &&
+        (ctx?.dryRun || String(message?.id || '').trim() === executionId) &&
         appointmentMessageText(message)
       ) {
         latestCustomerIndex = index
@@ -6059,30 +6363,87 @@ async function resolveNativeAppointmentSelection({
     }
     const expectedOfferText = String(candidate.offer.detail.offerText || '').replace(/\s+/g, ' ').trim()
     let visibleOfferMessage = null
-    for (let index = latestCustomerIndex - 1; index > offerSourceCustomerIndex; index -= 1) {
+    let visibleOfferIndex = -1
+    for (let index = latestCustomerIndex - 1; index >= 0; index -= 1) {
       const message = conversationMessages[index]
       const messageText = appointmentMessageText(message).replace(/\s+/g, ' ').trim()
       if (String(message?.role || '').trim().toLowerCase() === 'assistant' && messageText === expectedOfferText) {
         visibleOfferMessage = message
+        visibleOfferIndex = index
         break
       }
     }
+    let offerSourceCustomerIndex = -1
+    const sourceIdentity = offerSourceMessageId || legacyOfferSourceExecutionId
+    for (let index = 0; index < visibleOfferIndex; index += 1) {
+      const message = conversationMessages[index]
+      if (
+        isCustomerAppointmentMessage(message) &&
+        String(message?.id || '').trim() === sourceIdentity &&
+        appointmentMessageText(message)
+      ) {
+        offerSourceCustomerIndex = index
+        break
+      }
+    }
+    // Compatibilidad de despliegue: las ofertas preview creadas antes de que el
+    // transcript tuviera identidad estable sólo guardaban el executionId del
+    // request. En dry-run la oferta durable ya está ligada a scope, agente,
+    // contacto, calendario y UTC; por eso podemos recuperar de forma segura el
+    // último mensaje de cliente anterior a la burbuja exacta de esa oferta.
+    if (offerSourceCustomerIndex < 0 && ctx?.dryRun && !offerSourceMessageId) {
+      for (let index = visibleOfferIndex - 1; index >= 0; index -= 1) {
+        const message = conversationMessages[index]
+        if (isCustomerAppointmentMessage(message) && appointmentMessageText(message)) {
+          offerSourceCustomerIndex = index
+          break
+        }
+      }
+    }
+    const offerSourceCustomerMessage = offerSourceCustomerIndex >= 0
+      ? conversationMessages[offerSourceCustomerIndex]
+      : null
+    const sourceQuote = appointmentMessageText(offerSourceCustomerMessage)
+    const sourceQuoteMatches = !offerSourceMessageQuoteHash || (
+      sourceQuote && createHash('sha256').update(sourceQuote).digest('hex') === offerSourceMessageQuoteHash
+    )
     const latestCustomerMessage = latestCustomerIndex >= 0 ? conversationMessages[latestCustomerIndex] : null
     const customerQuote = appointmentMessageText(latestCustomerMessage)
     const visibleOfferMessageId = String(visibleOfferMessage?.id || '').trim()
-    if (
-      !offerSourceExecutionId ||
-      offerSourceCustomerIndex < 0 ||
-      latestCustomerIndex <= offerSourceCustomerIndex ||
-      !customerQuote ||
-      !visibleOfferMessageId ||
-      !expectedOfferText
-    ) {
+    const historyOfferVisibilityVerified = Boolean(
+      sourceIdentity &&
+      offerSourceCustomerIndex >= 0 &&
+      sourceQuoteMatches &&
+      visibleOfferIndex > offerSourceCustomerIndex &&
+      latestCustomerIndex > offerSourceCustomerIndex &&
+      customerQuote &&
+      visibleOfferMessageId &&
+      expectedOfferText
+    )
+    const durableOfferDelivery = !historyOfferVisibilityVerified && customerQuote && expectedOfferText
+      ? await verifyNativeAppointmentOfferReplyDelivery({ ctx, config, offer: candidate.offer })
+      : null
+    if (!historyOfferVisibilityVerified && !durableOfferDelivery) {
       return appointmentSelectionError(
         'La resolución nativa no puede demostrar que la persona vio esta oferta exacta antes de responder. No se agendó nada.',
         'appointment_resolver_visible_offer_missing'
       )
     }
+    const offerVisibilityEvidence = historyOfferVisibilityVerified
+      ? {
+          offerMessageId: visibleOfferMessageId,
+          offerTurnId: String(
+            visibleOfferMessage?.turnId ||
+            visibleOfferMessage?.turn_id ||
+            visibleOfferMessage?.executionId ||
+            visibleOfferMessage?.execution_id ||
+            ''
+          ).trim() || `assistant-turn:${visibleOfferMessageId}`,
+          offerTurnMessageIds: [visibleOfferMessageId],
+          offerVisibilityEvidenceSource: 'conversation_history',
+          offerSourceMessageId: String(offerSourceCustomerMessage?.id || sourceIdentity).trim() || null
+        }
+      : durableOfferDelivery
     return {
       ok: true,
       evidenceVerified: true,
@@ -6097,15 +6458,7 @@ async function resolveNativeAppointmentSelection({
       assistantOfferQuote: candidate.offer.detail.localLabel || null,
       localLabel: candidate.offer.detail.localLabel || null,
       timezone: offerTimezone || null,
-      offerMessageId: visibleOfferMessageId,
-      offerTurnId: String(
-        visibleOfferMessage?.turnId ||
-        visibleOfferMessage?.turn_id ||
-        visibleOfferMessage?.executionId ||
-        visibleOfferMessage?.execution_id ||
-        ''
-      ).trim() || `assistant-turn:${visibleOfferMessageId}`,
-      offerTurnMessageIds: [visibleOfferMessageId],
+      ...offerVisibilityEvidence,
       offerEventId: candidate.offer.id,
       purpose: String(candidate.offer.detail.purpose || 'book') === 'reschedule' ? 'reschedule' : 'book',
       appointmentId: String(candidate.offer.detail.appointmentId || '').trim() || null
@@ -6127,13 +6480,17 @@ async function resolveNativeAppointmentSelection({
     messages: ctx?.conversationMessages,
     startTime,
     timezone: offerTimezone,
-    executionId,
+    // En producción el id del mensaje inbound ES el executionId. En preview
+    // son identidades separadas a propósito: executionId protege idempotencia
+    // del request y el id estable del transcript prueba el orden visible.
+    executionId: ctx?.dryRun ? '' : executionId,
     evidence: selectionEvidence
   })
   if (!verified.ok) return verified
   const evidence = {
     ...verified,
-    offerEventId: candidate.offer.id
+    offerEventId: candidate.offer.id,
+    offerSourceMessageId: String(candidate.offer.detail.offerSourceMessageId || '').trim() || null
   }
   const offerAuthorization = await verifyNativeAppointmentOfferEvent({
     ctx,
@@ -6659,7 +7016,9 @@ async function syncNativeAppointmentCompletion({
   config,
   appointment,
   calendarId,
-  terminalAuthorityToken = ''
+  terminalAuthorityToken = '',
+  authorityFence = null,
+  beforeDurableCommit = null
 }) {
   const appointmentId = String(appointment?.id || '').trim()
   const agentId = String(config?.id || ctx?.agentId || '').trim()
@@ -6674,46 +7033,53 @@ async function syncNativeAppointmentCompletion({
     .digest('hex')
     .slice(0, 48)
   const appointmentEventId = `cae_appointment_booked_${digest}`
-  const eventAlreadyRecorded = Boolean(await db.get(
-    'SELECT id FROM conversational_agent_events WHERE id = ?',
-    [appointmentEventId]
-  ).catch(() => null))
+  const cleanTerminalAuthorityToken = String(terminalAuthorityToken || '').trim()
+  let eventAlreadyRecorded = false
+
+  await db.transaction(async () => {
+    if (typeof authorityFence === 'function') await authorityFence()
+    eventAlreadyRecorded = Boolean(await db.get(
+      'SELECT id FROM conversational_agent_events WHERE id = ?',
+      [appointmentEventId]
+    ))
+    if (eventAlreadyRecorded) return
+    if (typeof beforeDurableCommit === 'function') await beforeDurableCommit()
+    if (cleanTerminalAuthorityToken) {
+      await claimConversationalTerminalMutationAuthority({
+        contactId: ctx.contactId,
+        agentId,
+        channel: ctx.channel || 'whatsapp',
+        authorityToken: cleanTerminalAuthorityToken,
+        database: db
+      })
+    }
+
+    await setConversationSignal(ctx.contactId, 'appointment_booked', {
+      reason: 'Cita agendada por el agente',
+      actionSummarySource: technicalSummary,
+      originalSummary: technicalSummary,
+      status: 'completed',
+      agentId,
+      channel: ctx.channel,
+      eventId: `cae_appointment_signal_${digest}`,
+      strictEvent: true,
+      expectedUpdatedBy: cleanTerminalAuthorityToken
+    })
+    await recordConversationalAgentEvent({
+      eventId: appointmentEventId,
+      contactId: ctx.contactId,
+      eventType: 'appointment_booked',
+      detail: {
+        agentId,
+        appointmentId,
+        startTime,
+        calendarId: appointment.calendar_id || appointment.calendarId || calendarId || null
+      },
+      throwOnError: true
+    })
+  })
 
   if (eventAlreadyRecorded) return { completed: true, replayed: true }
-  const cleanTerminalAuthorityToken = String(terminalAuthorityToken || '').trim()
-  if (cleanTerminalAuthorityToken) {
-    await claimConversationalTerminalMutationAuthority({
-      contactId: ctx.contactId,
-      agentId,
-      channel: ctx.channel || 'whatsapp',
-      authorityToken: cleanTerminalAuthorityToken,
-      database: db
-    })
-  }
-
-  await setConversationSignal(ctx.contactId, 'appointment_booked', {
-    reason: 'Cita agendada por el agente',
-    actionSummarySource: technicalSummary,
-    originalSummary: technicalSummary,
-    status: 'completed',
-    agentId,
-    channel: ctx.channel,
-    eventId: `cae_appointment_signal_${digest}`,
-    strictEvent: true,
-    expectedUpdatedBy: cleanTerminalAuthorityToken
-  })
-  await recordConversationalAgentEvent({
-    eventId: appointmentEventId,
-    contactId: ctx.contactId,
-    eventType: 'appointment_booked',
-    detail: {
-      agentId,
-      appointmentId,
-      startTime,
-      calendarId: appointment.calendar_id || appointment.calendarId || calendarId || null
-    },
-    throwOnError: true
-  })
   const paymentReconciliationId = String(ctx.paymentResumeClaim?.reconciliationId || '').trim()
   if (paymentReconciliationId) {
     await notifyConversationalAiBookingDeposit({
@@ -6796,6 +7162,62 @@ async function consumeReservedDepositForExistingNativeAppointment({ ctx, config,
 }
 
 const NATIVE_APPOINTMENT_BINDING_EVENT = 'appointment_creation_binding_v2'
+const NATIVE_APPOINTMENT_CREATION_RETRY_EVENT = 'appointment_creation_retry'
+
+function freezeNativeAppointmentControllerValue(value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value
+  seen.add(value)
+  for (const nested of Object.values(value)) {
+    freezeNativeAppointmentControllerValue(nested, seen)
+  }
+  return Object.freeze(value)
+}
+
+async function recordNativeAppointmentCreationRetry({
+  ctx,
+  config,
+  clientRequestId,
+  calendarId,
+  startTime,
+  failure
+} = {}) {
+  const agentId = String(config?.id || ctx?.agentId || '').trim()
+  const cleanClientRequestId = String(clientRequestId || '').trim()
+  if (!agentId || !ctx?.contactId || !cleanClientRequestId) return null
+  const digest = createHash('sha256')
+    .update([agentId, cleanClientRequestId, '2'].join('\u0000'))
+    .digest('hex')
+    .slice(0, 48)
+  try {
+    return await recordConversationalAgentEvent({
+      eventId: `cae_appointment_retry_${digest}`,
+      contactId: ctx.contactId,
+      eventType: NATIVE_APPOINTMENT_CREATION_RETRY_EVENT,
+      detail: {
+        agentId,
+        attempt: 2,
+        statusCode: failure?.statusCode || null,
+        code: String(failure?.code || 'controller_failure').slice(0, 120),
+        calendarId: String(calendarId || '').trim() || null,
+        startTime: String(startTime || '').trim() || null
+      }
+    })
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo auditar el retry de creación de cita: ${error.message}`)
+    return null
+  }
+}
+
+async function invokeNativeAppointmentCreateController(requestOptions, attempt) {
+  const invoke = () => invokeController(createAppointment, requestOptions)
+  if (!nativeAppointmentCreateControllerInvokeHookForTest) return invoke()
+  return nativeAppointmentCreateControllerInvokeHookForTest({
+    attempt,
+    body: requestOptions.body,
+    internalContext: requestOptions.internalContext,
+    invoke
+  })
+}
 
 function nativeAppointmentDepositContract(ctx, config) {
   const deposit = getDepositRequirementForRuntime(ctx, config)
@@ -7880,8 +8302,38 @@ export function createConversationalTools(ctx) {
         exactDateQuery &&
         cleanStartDate !== progressSelectedDate
       )
-      const persistReplacementAvailabilityState = async (hasBaseAvailability) => {
-        if (!replacingSelectedDate) return null
+      const selectingInitialExactDate = Boolean(
+        !progressScope &&
+        exactDateQuery
+      )
+      const revalidatingRetainedDate = Boolean(
+        progressScope?.availabilityVerificationRequired === true &&
+        normalizedProgressDateAction === 'keep_selected_date' &&
+        exactDateQuery &&
+        cleanStartDate === progressSelectedDate
+      )
+      const persistsExactDateState = selectingInitialExactDate ||
+        replacingSelectedDate ||
+        revalidatingRetainedDate
+      const persistDateAvailabilityState = async (
+        outcome,
+        failure = null,
+        { persistInitialAvailableDate = false } = {}
+      ) => {
+        if (!persistsExactDateState) return null
+        // Una primera consulta exitosa conserva el flujo previo: la fecha se
+        // vuelve durable cuando se presenta la lista/oferta. Sólo adelantamos
+        // esta escritura si el lookup falló, probó que el día no tiene slots o
+        // descartó únicamente la hora exacta solicitada. Así un runtime que no
+        // hidrató un estado concurrente no intenta pisarlo salvo que necesitemos
+        // conservar el día para buscar otra hora en ese mismo día.
+        if (
+          selectingInitialExactDate &&
+          outcome === 'available' &&
+          !persistInitialAvailableDate
+        ) return null
+        const verificationFailed = outcome === 'verification_failed'
+        const hasBaseAvailability = outcome === 'available'
         try {
           await db.transaction(async () => {
             if (await lockAndDetectPendingNativeAppointmentOffer({ ctx, config })) {
@@ -7897,13 +8349,26 @@ export function createConversationalTools(ctx) {
               purpose: rescheduledAppointment ? 'reschedule' : 'book',
               appointmentId: rescheduledAppointment?.id || '',
               timezone: accountTimezone,
-              selectedDate: hasBaseAvailability ? String(startDate).trim() : null,
+              selectedDate: hasBaseAvailability || verificationFailed
+                ? String(startDate).trim()
+                : null,
               selectedTime: null,
               selectedStartTime: null,
               displayedRanges: [],
               availabilityCheckedAt: null,
-              status: hasBaseAvailability ? 'collecting_time' : 'collecting_date',
-              allowSelectedDateReplacement: true
+              availabilityVerificationRequired: verificationFailed,
+              lastError: verificationFailed
+                ? {
+                    code: String(
+                      failure?.code ||
+                      (Number(failure?.statusCode || failure?.status) || 0
+                        ? `availability_http_${Number(failure?.statusCode || failure?.status)}`
+                        : 'availability_check_failed')
+                    )
+                  }
+                : null,
+              status: hasBaseAvailability || verificationFailed ? 'collecting_time' : 'collecting_date',
+              allowSelectedDateReplacement: replacingSelectedDate || !hasBaseAvailability
             })
           })
           return null
@@ -7939,8 +8404,11 @@ export function createConversationalTools(ctx) {
           availabilityOptions
         )
       } catch (error) {
-        const replacementConflict = await persistReplacementAvailabilityState(false)
+        const replacementConflict = await persistDateAvailabilityState('verification_failed', error)
         if (replacementConflict) return replacementConflict
+        if (persistsExactDateState) {
+          ctx.requireFreshAppointmentAvailability = true
+        }
         return {
           ok: false,
           total: 0,
@@ -7948,11 +8416,19 @@ export function createConversationalTools(ctx) {
           availabilityCheckFailed: true,
           transferRequired: Number(error?.statusCode || 0) >= 500,
           error: error?.message || 'No se pudo comprobar la disponibilidad real del calendario.',
-          ...(replacingSelectedDate
+          ...(selectingInitialExactDate || replacingSelectedDate
             ? {
-                selectedDate: null,
-                missingField: 'date',
-                note: `No se pudo verificar el día ${String(startDate).trim()}. La fecha anterior quedó descartada; pide otra fecha antes de interpretar una hora suelta.`
+                selectedDate: String(startDate).trim(),
+                missingField: 'availability',
+                availabilityVerificationRequired: true,
+                note: `No se pudo verificar el día ${String(startDate).trim()}. Conservé esa fecha, pero todavía falta revalidar su disponibilidad; no pidas la fecha otra vez.`
+              }
+            : revalidatingRetainedDate
+              ? {
+                  selectedDate: String(startDate).trim(),
+                  missingField: 'availability',
+                  availabilityVerificationRequired: true,
+                  note: `La disponibilidad del día ${String(startDate).trim()} sigue sin poder verificarse. Conserva esa fecha y vuelve a revalidarla; no pidas la fecha otra vez.`
               }
             : {})
         }
@@ -7961,7 +8437,9 @@ export function createConversationalTools(ctx) {
       const replacementHasBaseAvailability = baseSlotDays.some((day) => (
         Array.isArray(day?.options) && day.options.length > 0
       ))
-      const replacementConflict = await persistReplacementAvailabilityState(replacementHasBaseAvailability)
+      const replacementConflict = await persistDateAvailabilityState(
+        replacementHasBaseAvailability ? 'available' : 'unavailable'
+      )
       if (replacementConflict) return replacementConflict
 
       let relativeReference = null
@@ -8022,17 +8500,29 @@ export function createConversationalTools(ctx) {
       )
 
       if (!Array.isArray(slots) || !slots.length) {
+        if (selectingInitialExactDate && replacementHasBaseAvailability) {
+          const initialDateConflict = await persistDateAvailabilityState(
+            'available',
+            null,
+            { persistInitialAvailableDate: true }
+          )
+          if (initialDateConflict) return initialDateConflict
+        }
+        const exactDateStateWasPersisted = replacingSelectedDate ||
+          revalidatingRetainedDate ||
+          (selectingInitialExactDate && !replacementHasBaseAvailability)
         return {
           ok: true,
           total: 0,
           slots: [],
-          ...(replacingSelectedDate && replacementHasBaseAvailability
+          ...((selectingInitialExactDate || replacingSelectedDate || revalidatingRetainedDate) && replacementHasBaseAvailability
             ? {
                 selectedDate: String(startDate).trim(),
                 missingField: 'time',
-                note: `Sin horarios disponibles en ese rango. El día seleccionado cambió a ${String(startDate).trim()}; conserva esa fecha para la siguiente hora que proponga la persona.`
+                nextStep: 'requery_same_date_without_time_filter',
+                note: `La hora solicitada no está disponible, pero el día ${String(startDate).trim()} sí tiene otros horarios. Conservé esa fecha: reconsulta get_free_slots exactamente para el mismo día sin el filtro de hora y muestra alternativas con offer_appointment_options en modo collecting_time; no pidas la fecha otra vez.`
               }
-            : replacingSelectedDate
+            : exactDateStateWasPersisted
               ? {
                   selectedDate: null,
                   missingField: 'date',
@@ -8631,6 +9121,19 @@ export function createConversationalTools(ctx) {
         channel: ctx.channel,
         executionId: nativeExecutionId
       })
+      const prepareEarlyTerminalCommitAuthority = async () => {
+        const options = {
+          ctx,
+          config,
+          calendarId,
+          timezone: businessTimezone,
+          confirmationEvidence,
+          expectedCapabilitiesFingerprint: nativeAppointmentExpectedCapabilitiesFingerprint
+        }
+        const authority = await revalidateNativeAppointmentTerminalCommitAuthority(options)
+        if (authority.ok) options.expectedCalendarFingerprint = authority.calendarFingerprint
+        return { authority, options }
+      }
       // El replay exacto manda sobre el guard de cualquier cita futura: conserva
       // el contrato que informa reprogramación/cancelación de ese mismo intento.
       if (!ctx.dryRun) {
@@ -8646,6 +9149,8 @@ export function createConversationalTools(ctx) {
           }
         })
         if (changedReplay?.idempotencyReplay?.canonicalChanged) {
+          const replayCommitAuthority = await prepareEarlyTerminalCommitAuthority()
+          if (!replayCommitAuthority.authority.ok) return replayCommitAuthority.authority
           const replayState = changedReplay.idempotencyReplay.state
           const replayError = replayState === 'appointment_rescheduled'
             ? 'La cita vinculada a este intento ya fue reprogramada. No se reservó otra vez el horario anterior; usa únicamente la fecha y hora vigentes que aparecen en existingAppointment.'
@@ -8724,6 +9229,8 @@ export function createConversationalTools(ctx) {
         }
       }
       if (existing) {
+        const existingCommitAuthority = await prepareEarlyTerminalCommitAuthority()
+        if (!existingCommitAuthority.authority.ok) return existingCommitAuthority.authority
         if (!boundExisting) {
           return {
             ok: false,
@@ -8752,13 +9259,63 @@ export function createConversationalTools(ctx) {
           verifiedExistingAction: true,
           effect: { liveEffect: 'REUTILIZA la cita real existente y repara su cierre interno', marksObjectiveCompleted: true }
         })
-        if (boundExisting.detail.depositRequired === true) {
-          try {
-            const depositConsumption = await consumeReservedDepositForExistingNativeAppointment({ ctx, config, appointment: existing })
-            if (!depositConsumption?.consumed) {
-              throw new Error('La cita vinculada no conserva una reserva de anticipo válida')
+        await runNativeAppointmentAfterPreCommitAuthorityHook({
+          terminalToolName: 'book_appointment',
+          purpose: 'book',
+          ctx,
+          config,
+          calendarId,
+          appointmentId: existing.id,
+          preCommitAuthority: existingCommitAuthority.authority
+        })
+        let completionSyncWarning = false
+        try {
+          await syncNativeAppointmentCompletion({
+            ctx,
+            config,
+            appointment: existing,
+            calendarId: existing.calendar_id,
+            terminalAuthorityToken,
+            authorityFence: buildNativeAppointmentTerminalCommitFence(existingCommitAuthority.options),
+            beforeDurableCommit: boundExisting.detail.depositRequired === true
+              ? async () => {
+                  try {
+                    const depositConsumption = await consumeReservedDepositForExistingNativeAppointment({
+                      ctx,
+                      config,
+                      appointment: existing
+                    })
+                    if (!depositConsumption?.consumed) {
+                      throw new Error('La cita vinculada no conserva una reserva de anticipo válida')
+                    }
+                  } catch (error) {
+                    error.code = 'existing_appointment_deposit_invalid'
+                    throw error
+                  }
+                }
+              : null
+          })
+        } catch (error) {
+          if (error?.conversationalAppointmentAuthorityFailure === true) {
+            const authorityError = {
+              ok: false,
+              actionCompleted: false,
+              code: error.code || 'appointment_offer_scope_changed',
+              statusCode: Number(error.statusCode || error.status) || 409,
+              retryable: error.retryable === true,
+              appointmentOfferInvalidated: error.appointmentOfferInvalidated === true,
+              appointmentOfferRestoreSameDate: error.appointmentOfferRestoreSameDate === true,
+              error: error.message
             }
-          } catch (error) {
+            settleAction(existingAction, 'error', {
+              appointmentCreated: false,
+              verifiedExistingAction: true,
+              code: authorityError.code,
+              error: authorityError.error
+            })
+            return authorityError
+          }
+          if (error?.code === 'existing_appointment_deposit_invalid') {
             settleAction(existingAction, 'error', {
               appointmentCreated: false,
               verifiedExistingAction: false,
@@ -8774,17 +9331,6 @@ export function createConversationalTools(ctx) {
               error: 'La cita existe, pero no se pudo demostrar que su anticipo siga válido y ligado a ella. No se cerró el objetivo; pasa la conversación a una persona.'
             }
           }
-        }
-        let completionSyncWarning = false
-        try {
-          await syncNativeAppointmentCompletion({
-            ctx,
-            config,
-            appointment: existing,
-            calendarId: existing.calendar_id,
-            terminalAuthorityToken
-          })
-        } catch (error) {
           completionSyncWarning = true
           logger.error(`[Agente conversacional] La cita ${existing.id} ya existía, pero no se pudo reparar su cierre: ${error.message}`)
         }
@@ -9094,43 +9640,86 @@ export function createConversationalTools(ctx) {
         }
       }
 
+      const appointmentControllerBody = freezeNativeAppointmentControllerValue({
+        calendarId,
+        contactId: ctx.contactId,
+        title: finalTitle,
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        notes: participant.notes,
+        participants: participants.all,
+        clientRequestId,
+        strictAvailabilityCheck: true,
+        source: 'conversational_agent_v2',
+        ignoreAppointmentConflicts: overlapsAllowed,
+        ...(depositReservation?.reserved
+          ? {
+              depositReservationEventId: depositReservation.eventId,
+              depositReservationClaimToken: depositReservation.claimToken,
+              depositReservationAgentId: config.id || ctx.agentId || '',
+              depositReservationRequestDraftHash: confirmationEvidence.appointmentRequestDraftHash
+            }
+          : {}),
+        ...(terminalAuthorityToken
+          ? {
+              conversationTerminalAuthorityToken: terminalAuthorityToken,
+              conversationTerminalAgentId: config.id || ctx.agentId || '',
+              conversationTerminalChannel: ctx.channel || 'whatsapp'
+            }
+          : {})
+      })
+      const appointmentControllerInternalContext = Object.freeze({
+        conversationalAgentAppointment: true,
+        allowAppointmentOverlaps: overlapsAllowed,
+        conversationalAppointmentAuthorityFence: terminalCommitFence
+      })
+      const appointmentControllerRequestOptions = Object.freeze({
+        body: appointmentControllerBody,
+        internalContext: appointmentControllerInternalContext
+      })
+      let controllerAttempts = 0
+      let retriedController = false
+      let firstControllerFailureCode = null
+      const controllerOutcome = () => ({
+        controllerAttempts,
+        retried: retriedController,
+        firstFailureCode: firstControllerFailureCode
+      })
       let toolResult
       try {
-        const result = await invokeController(createAppointment, {
-          body: {
-            calendarId,
-            contactId: ctx.contactId,
-            title: finalTitle,
-            startTime: start.toISOString(),
-            endTime: end.toISOString(),
-            notes: participant.notes,
-            participants: participants.all,
-            clientRequestId,
-            strictAvailabilityCheck: true,
-            source: 'conversational_agent_v2',
-            ignoreAppointmentConflicts: overlapsAllowed,
-            ...(depositReservation?.reserved
-              ? {
-                  depositReservationEventId: depositReservation.eventId,
-                  depositReservationClaimToken: depositReservation.claimToken,
-                  depositReservationAgentId: config.id || ctx.agentId || '',
-                  depositReservationRequestDraftHash: confirmationEvidence.appointmentRequestDraftHash
-                }
-              : {}),
-            ...(terminalAuthorityToken
-              ? {
-                  conversationTerminalAuthorityToken: terminalAuthorityToken,
-                  conversationTerminalAgentId: config.id || ctx.agentId || '',
-                  conversationTerminalChannel: ctx.channel || 'whatsapp'
-                }
-              : {})
-          },
-          internalContext: {
-            conversationalAgentAppointment: true,
-            allowAppointmentOverlaps: overlapsAllowed,
-            conversationalAppointmentAuthorityFence: terminalCommitFence
-          }
-        })
+        let execution
+        try {
+          execution = await runBoundedAppointmentControllerRequest({
+            invoke: (attempt) => invokeNativeAppointmentCreateController(
+              appointmentControllerRequestOptions,
+              attempt
+            ),
+            onRetry: async ({ failure }) => {
+              await recordNativeAppointmentCreationRetry({
+                ctx,
+                config,
+                clientRequestId,
+                calendarId,
+                startTime: start.toISOString(),
+                failure
+              })
+            }
+          })
+        } catch (error) {
+          controllerAttempts = Number(error?.appointmentControllerAttempts) || 1
+          retriedController = error?.appointmentControllerRetried === true
+          firstControllerFailureCode = error?.appointmentControllerFirstFailure?.code || error?.code || null
+          throw error
+        }
+        const result = execution.result
+        controllerAttempts = execution.attempts
+        retriedController = execution.retried
+        firstControllerFailureCode = execution.firstFailure?.code || null
+        if (!result || typeof result !== 'object') {
+          throw Object.assign(new Error('El controller no devolvió una respuesta verificable.'), {
+            code: 'appointment_controller_response_missing'
+          })
+        }
         toolResult = toToolResult(result, (data) => ({
           id: data?.id,
           calendarId: data?.calendarId || data?.calendar_id,
@@ -9167,7 +9756,8 @@ export function createConversationalTools(ctx) {
           settleAction(action, 'error', {
             statusCode: result.statusCode,
             error: errorResult.error,
-            transferRequired: errorResult.transferRequired
+            transferRequired: errorResult.transferRequired,
+            ...controllerOutcome()
           })
           return errorResult
         }
@@ -9217,7 +9807,8 @@ export function createConversationalTools(ctx) {
                 startTime: toolResult.data.startTime || null,
                 endTime: toolResult.data.endTime || null,
                 status: toolResult.data.status || null
-              }
+              },
+              ...controllerOutcome()
             })
             return {
               ok: !completionSyncWarning,
@@ -9265,7 +9856,8 @@ export function createConversationalTools(ctx) {
               endTime: toolResult.data.endTime || null,
               status: toolResult.data.status || null
             },
-            error: replayError
+            error: replayError,
+            ...controllerOutcome()
           })
           return {
             ok: false,
@@ -9282,6 +9874,9 @@ export function createConversationalTools(ctx) {
           }
         }
       } catch (error) {
+        await releaseDepositReservationAfterDefinitiveFailure(
+          `appointment_controller_${firstControllerFailureCode || error?.code || 'failed'}`
+        )
         logger.error(`[Agente conversacional] Falló la creación real de la cita: ${error.message}`)
         const errorResult = {
           ok: false,
@@ -9291,7 +9886,8 @@ export function createConversationalTools(ctx) {
         }
         settleAction(action, 'error', {
           error: errorResult.error,
-          transferRequired: true
+          transferRequired: true,
+          ...controllerOutcome()
         })
         return errorResult
       }
@@ -9336,7 +9932,8 @@ export function createConversationalTools(ctx) {
         startTime: start.toISOString(),
         appointmentCreated: true,
         objectiveCompleted: !completionSyncWarning,
-        completionSyncWarning
+        completionSyncWarning,
+        ...controllerOutcome()
       })
       return {
         ok: !completionSyncWarning,
@@ -12042,17 +12639,18 @@ export function createConversationalTools(ctx) {
     }
   })
 
-  const resolveActiveAppointmentOfferTool = tool({
+  const rawResolveActiveAppointmentOfferTool = tool({
     name: 'resolve_active_appointment_offer',
     description: [
-      'Resuelve la única oferta estructurada de horario que Ristak ya dejó pendiente.',
-      `La MISMA IA decide semánticamente: accept si la persona acepta; request_other_options si rechaza ese horario pero quiere otro; decline si ya no quiere agendar; ${canResolveOfferWithHandoff ? 'handoff si pide explícitamente hablar con una persona. ' : ''}Si preguntó otra cosa o la respuesta es ambigua, NO llames esta herramienta: usa las demás tools necesarias y conserva la oferta vigente.`,
+      'Adjudica semánticamente la única oferta estructurada de horario que Ristak ya dejó pendiente. Cuando está disponible debe ser la primera herramienta del turno.',
+      `La MISMA IA decide: accept si la persona acepta; request_other_options si rechaza ese horario pero quiere otro; decline si ya no quiere agendar; ${canResolveOfferWithHandoff ? 'handoff si pide explícitamente hablar con una persona; ' : ''}preserve si preguntó otra cosa o si no está claro qué quiso hacer con la oferta.`,
+      'preserve no modifica ni cierra la oferta y permite continuar el turno para responder libremente o usar otra herramienta.',
       'Nunca uses accept por el simple hecho de que exista una oferta. No repitas ni reconstruyas fecha u hora; el servidor recupera el slot exacto y, si hay anticipo por link, prepara el enlace en este mismo flujo.'
     ].join(' '),
     parameters: z.object({
       decision: z.enum(canResolveOfferWithHandoff
-        ? ['accept', 'request_other_options', 'decline', 'handoff']
-        : ['accept', 'request_other_options', 'decline']),
+        ? ['accept', 'request_other_options', 'decline', 'handoff', 'preserve']
+        : ['accept', 'request_other_options', 'decline', 'preserve']),
       nextPreferenceScope: z.preprocess(
         (value) => value ?? null,
         z.enum(['same_date', 'different_date', 'open']).nullable()
@@ -12084,6 +12682,109 @@ export function createConversationalTools(ctx) {
       guests,
       agreedAmount
     }) => {
+      const expected = ctx.appointmentOfferDecision
+      const previousAdjudication = ctx.appointmentOfferAdjudication
+      const effectiveContact = decision === 'accept'
+        ? await getPaymentContact(ctx).catch(() => null)
+        : null
+      const preflightFingerprint = decision === 'accept'
+        ? createHash('sha256').update(JSON.stringify({
+            offerEventId: String(expected?.offerEventId || ''),
+            decision,
+            arguments: {
+              title: title ?? null,
+              notes: notes ?? null,
+              attendeeName: attendeeName ?? null,
+              attendeeContext: attendeeContext ?? null,
+              primaryAttendee: primaryAttendee ?? null,
+              guests: Array.isArray(guests) ? guests : [],
+              agreedAmount: agreedAmount ?? null
+            },
+            contact: effectiveContact
+              ? {
+                  fullName: effectiveContact.full_name || effectiveContact.fullName || null,
+                  firstName: effectiveContact.first_name || null,
+                  lastName: effectiveContact.last_name || null,
+                  phone: effectiveContact.phone || null,
+                  email: effectiveContact.email || null,
+                  customFields: effectiveContact.custom_fields || null
+                }
+              : null
+          })).digest('hex')
+        : null
+      const recoverableAcceptRetry = Boolean(
+        previousAdjudication?.completed === true &&
+        previousAdjudication?.source === 'resolver_tool' &&
+        previousAdjudication?.decision === 'accept' &&
+        decision === 'accept' &&
+        String(previousAdjudication?.offerEventId || '') === String(expected?.offerEventId || '') &&
+        previousAdjudication?.output?.ok === false &&
+        previousAdjudication?.output?.actionCompleted !== true &&
+        previousAdjudication?.output?.needsData === true &&
+        Number(previousAdjudication?.preflightRetryCount || 0) < 3 &&
+        Boolean(previousAdjudication?.preflightFingerprint) &&
+        previousAdjudication.preflightFingerprint !== preflightFingerprint
+      )
+      if (previousAdjudication?.completed === true && !recoverableAcceptRetry) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          terminal: false,
+          code: 'appointment_offer_already_adjudicated',
+          visibleReply: null,
+          continueWith: 'La oferta ya fue adjudicada en este turno. Continúa con la respuesta o con otra herramienta sin volver a resolverla.'
+        }
+      }
+      if (decision === 'request_other_options' && !nextPreferenceScope) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          terminal: false,
+          code: 'appointment_next_preference_scope_required',
+          visibleReply: null,
+          continueWith: 'Corrige los argumentos y vuelve a llamar resolve_active_appointment_offer en este mismo turno: usa nextPreferenceScope="same_date" si sólo cambió la hora, "different_date" si cambió el día u "open" si dejó la fecha abierta. Esta invocación no adjudicó ni modificó la oferta.'
+        }
+      }
+      ctx.appointmentOfferAdjudication = {
+        completed: true,
+        source: 'resolver_tool',
+        decision,
+        nextPreferenceScope: decision === 'request_other_options' ? nextPreferenceScope : null,
+        offerEventId: String(expected?.offerEventId || ''),
+        executionId: String(ctx.executionId || ''),
+        ...(decision === 'accept'
+          ? {
+              preflightFingerprint,
+              preflightRetryCount: recoverableAcceptRetry
+                ? Number(previousAdjudication?.preflightRetryCount || 0) + 1
+                : 0
+            }
+          : {})
+      }
+
+      if (decision === 'preserve') {
+        const action = pushAction(ctx, 'resolve_active_appointment_offer', {
+          decision: 'preserve',
+          offerEventId: String(expected?.offerEventId || '')
+        })
+        settleAction(action, ctx.dryRun ? 'simulated' : 'ok', {
+          actionCompleted: true,
+          terminal: false,
+          decision: 'preserve',
+          appointmentOfferPreserved: true
+        })
+        return {
+          ok: true,
+          ...(ctx.dryRun ? { simulated: true } : {}),
+          actionCompleted: true,
+          terminal: false,
+          decision: 'preserve',
+          appointmentOfferPreserved: true,
+          visibleReply: null,
+          continueWith: 'La oferta sigue vigente. Responde el otro tema o usa otra herramienta sin volver a adjudicarla en este turno.'
+        }
+      }
+
       const expiredOfferRestoredDateResult = () => {
         const progress = ctx.appointmentSelectionProgress
         const restoredInThisExecution = progress?.active === true &&
@@ -12101,7 +12802,6 @@ export function createConversationalTools(ctx) {
           visibleReply: 'ese horario ya expiró. conservé el día; dime la hora otra vez y la reviso sin agendar nada todavía'
         }
       }
-      const expected = ctx.appointmentOfferDecision
       const currentAuthority = await loadConversationalAppointmentOfferDecisionContext({ ctx, config })
       if (
         !expected?.active ||
@@ -12228,6 +12928,7 @@ export function createConversationalTools(ctx) {
               visibleReply: 'el equipo ya recibió el chat, pero necesito que revisen manualmente el horario antes de continuar'
             }
           }
+          ctx.appointmentOfferDecision = null
         } else {
           await db.run(
             'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND event_type = ? AND detail_json = ?',
@@ -12240,16 +12941,6 @@ export function createConversationalTools(ctx) {
           visibleReply: handoffResult?.ok
             ? 'claro, dejo este caso con el equipo para que continúe contigo'
             : (requiredDataVisibleReply(handoffResult) || 'no pude entregar el chat al equipo en este momento. necesito que lo revisen manualmente')
-        }
-      }
-
-      if (decision === 'request_other_options' && !nextPreferenceScope) {
-        return {
-          ok: false,
-          actionCompleted: false,
-          terminal: true,
-          code: 'appointment_next_preference_scope_required',
-          visibleReply: '¿quieres otra hora de ese mismo día o prefieres cambiar de fecha?'
         }
       }
 
@@ -12364,6 +13055,7 @@ export function createConversationalTools(ctx) {
               : 'Consulta disponibilidad según la nueva preferencia sin conservar la fecha anterior. Si pidió algo amplio, muestra opciones; si dio fecha y hora exactas, ofrece sólo ese slot real.'
           }
         }
+        ctx.appointmentOfferDecision = null
         return {
           ok: true,
           actionCompleted: true,
@@ -12571,6 +13263,9 @@ export function createConversationalTools(ctx) {
         const definitiveOfferFailure = bookingResult?.invalidSlot === true ||
           bookingResult?.appointmentOfferInvalidated === true
         if (definitiveOfferFailure) {
+          const supersededByNewerInbound = bookingResult?.code === 'appointment_request_superseded_by_newer_inbound'
+          const terminalAuthorityLost = bookingResult?.code === 'appointment_request_authority_lost'
+          const terminalPreempted = supersededByNewerInbound || terminalAuthorityLost
           const restoreSameDate = bookingResult?.invalidSlot === true ||
             bookingResult?.appointmentOfferRestoreSameDate === true
           let superseded = false
@@ -12581,7 +13276,11 @@ export function createConversationalTools(ctx) {
               candidate,
               expected,
               restoreSameDate,
-              reason: restoreSameDate ? 'slot_unavailable' : 'appointment_scope_changed'
+              reason: terminalPreempted
+                ? (supersededByNewerInbound
+                    ? 'newer_inbound_preempted_terminal_commit'
+                    : 'inbound_claim_authority_lost')
+                : (restoreSameDate ? 'slot_unavailable' : 'appointment_scope_changed')
             })
           } catch (error) {
             logger.error(`[Agente conversacional] No se pudo cerrar la oferta inválida: ${error.message}`)
@@ -12598,12 +13297,18 @@ export function createConversationalTools(ctx) {
             ok: false,
             actionCompleted: false,
             terminal: true,
-            code: restoreSameDate
-              ? 'appointment_offer_slot_unavailable'
-              : 'appointment_offer_scope_changed',
-            visibleReply: restoreSameDate
-              ? 'ese horario ya no está disponible. ya conservé el día; ¿qué otra hora te funciona?'
-              : 'esa cita o la configuración cambió desde que ofrecí el horario. no repetí ningún cambio; necesito revisar opciones nuevas'
+            code: terminalPreempted
+              ? bookingResult.code
+              : (restoreSameDate
+                  ? 'appointment_offer_slot_unavailable'
+                  : 'appointment_offer_scope_changed'),
+            visibleReply: terminalPreempted
+              ? (supersededByNewerInbound
+                  ? 'vi que mandaste una instrucción más nueva mientras cerraba la cita. no guardé el horario anterior; conservé el día y voy con tu último mensaje'
+                  : 'esa confirmación perdió su turno seguro antes de guardarse. no creé la cita; conservé el día y voy a retomar el mensaje vigente')
+              : (restoreSameDate
+                  ? 'ese horario ya no está disponible. ya conservé el día; ¿qué otra hora te funciona?'
+                  : 'esa cita o la configuración cambió desde que ofrecí el horario. no repetí ningún cambio; necesito revisar opciones nuevas')
           }
         }
         const missingDataReply = requiredDataVisibleReply(bookingResult)
@@ -12630,6 +13335,44 @@ export function createConversationalTools(ctx) {
       }
     }
   })
+
+  const resolveActiveAppointmentOfferInvoke = rawResolveActiveAppointmentOfferTool.invoke
+    .bind(rawResolveActiveAppointmentOfferTool)
+  const resolveActiveAppointmentOfferTool = {
+    ...rawResolveActiveAppointmentOfferTool,
+    invoke: async (...args) => {
+      // El SDK no debe ejecutar esta adjudicación en paralelo. El claim se
+      // instala antes del primer await y cubre también la publicación del
+      // output canónico; así una segunda llamada no puede entrar al terminal ni
+      // pegar su resultado sobre la adjudicación ganadora.
+      if (ctx.appointmentOfferAdjudicationInFlight) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          terminal: false,
+          code: 'appointment_offer_already_adjudicated',
+          visibleReply: null,
+          continueWith: 'La oferta ya está siendo adjudicada en este turno. Continúa con el resultado de esa llamada sin volver a resolverla.'
+        }
+      }
+      const invocationToken = {}
+      ctx.appointmentOfferAdjudicationInFlight = invocationToken
+      try {
+        const output = await resolveActiveAppointmentOfferInvoke(...args)
+        if (
+          ctx.appointmentOfferAdjudication?.source === 'resolver_tool' &&
+          !Object.hasOwn(ctx.appointmentOfferAdjudication, 'output')
+        ) {
+          ctx.appointmentOfferAdjudication.output = output
+        }
+        return output
+      } finally {
+        if (ctx.appointmentOfferAdjudicationInFlight === invocationToken) {
+          delete ctx.appointmentOfferAdjudicationInFlight
+        }
+      }
+    }
+  }
 
   const nativeTools = [getBusinessProfileTool, listProductsTool, getContactProfileTool]
 

@@ -6,6 +6,7 @@ import { createRistakId } from '../utils/idGenerator.js'
 import { mergeContactCustomFields, serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.js'
 import { formatContactName, normalizeContactNameFields } from '../utils/contactNameFormatter.js'
 import { mergeConversationalAgentSafetyContactReferences } from '../utils/conversationalAgentSafetyMerge.js'
+import { acquireConversationalInboundCommitLocks } from './conversationalInboundCommitLockService.js'
 
 // (CNT-002) Parser tolerante de tags almacenados como JSON array (o null/legacy).
 function parseStoredTags(raw) {
@@ -84,24 +85,41 @@ async function updateContactReferences(fromId, toId) {
     toContactId: toId
   })
 
+  let referenceIndex = 0
   for (const reference of references) {
     if (reference.mergeStrategy === 'conversational_agent_safety') continue
+    const savepoint = `contact_merge_reference_${referenceIndex++}`
+    await db.exec(`SAVEPOINT ${savepoint}`)
+    let updateError = null
     try {
       await db.run(
         `UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`,
         [toId, fromId]
       )
     } catch (error) {
-      if (reference.deleteOnConflict) {
-        await db.run(
-          `DELETE FROM ${reference.table} WHERE contact_id = ?`,
-          [fromId]
-        )
-        continue
-      }
-
-      logger.warn(`No se pudo reasignar ${reference.table}.contact_id de ${fromId} a ${toId}: ${error.message}`)
+      updateError = error
     }
+
+    if (!updateError) {
+      await db.exec(`RELEASE SAVEPOINT ${savepoint}`)
+      continue
+    }
+
+    // PostgreSQL deja la transacción en estado abortado después de cualquier
+    // error SQL. El savepoint conserva el comportamiento tolerante del merge
+    // sin soltar los advisory locks ni convertir una colisión aislada en un
+    // COMMIT parcial/inutilizable.
+    await db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`)
+    await db.exec(`RELEASE SAVEPOINT ${savepoint}`)
+    if (reference.deleteOnConflict) {
+      await db.run(
+        `DELETE FROM ${reference.table} WHERE contact_id = ?`,
+        [fromId]
+      )
+      continue
+    }
+
+    logger.warn(`No se pudo reasignar ${reference.table}.contact_id de ${fromId} a ${toId}: ${updateError.message}`)
   }
 }
 
@@ -370,7 +388,7 @@ export async function findContactByPhoneCandidates(phone, { excludeId = null } =
   return rows.sort(sortContactsByPriority)[0] || null
 }
 
-export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
+async function mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone = null }) {
   if (!fromId || !toId || fromId === toId) return toId
 
   const [fromContact, toContact] = await Promise.all([
@@ -500,6 +518,24 @@ export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
   logger.info(`Contactos fusionados por teléfono: ${fromId} -> ${toId}`)
 
   return toId
+}
+
+export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
+  if (!fromId || !toId || fromId === toId) return toId
+
+  return db.transaction(async (transactionDatabase) => {
+    // Un merge mueve filas inbound de fromId a toId. Debe competir tanto con
+    // writers del origen como con el fence terminal del destino; de otro modo
+    // una fila más nueva podría aparecer en el destino entre el último fence y
+    // el INSERT de la cita. Todas las llaves se toman antes de leer/mover datos
+    // y en el orden global definido por el servicio para evitar merge↔merge.
+    await acquireConversationalInboundCommitLocks({
+      contactIds: [fromId, toId],
+      database: transactionDatabase
+    })
+
+    return mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone })
+  })
 }
 
 export async function prepareContactPhoneUpsert({ contactId, phone }) {

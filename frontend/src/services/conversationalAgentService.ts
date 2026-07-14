@@ -554,6 +554,7 @@ export interface ConversationalAgentTestAttachment {
 }
 
 export interface ConversationalAgentTestMessage {
+  id?: string
   role: 'user' | 'assistant'
   content: string
   attachments?: ConversationalAgentTestAttachment[]

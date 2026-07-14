@@ -26,6 +26,169 @@ const MAX_RETRIES = 3
 const RETRY_DELAY = 1000 // 1 segundo
 const MAX_429_RETRIES = 5
 const DEFAULT_429_WAIT_MS = 60000 // 60s si no hay Retry-After header
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000
+const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504])
+
+function normalizeRequestTimeoutMs(value, fallback = DEFAULT_REQUEST_TIMEOUT_MS) {
+  const parsed = Math.trunc(Number(value))
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.min(parsed, 5 * 60 * 1000)
+}
+
+function isAbortError(error) {
+  return error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
+}
+
+function parseRetryAfterMs(value, now = Date.now()) {
+  const clean = cleanString(value)
+  if (!clean) return DEFAULT_429_WAIT_MS
+  const seconds = Number(clean)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000)
+  const retryAt = Date.parse(clean)
+  return Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : DEFAULT_429_WAIT_MS
+}
+
+function createGHLRequestTimeoutError({
+  method,
+  endpoint,
+  timeoutMs,
+  phase = 'request',
+  requestStarted = false,
+  responseReceived = false,
+  lastStatus = null,
+  cause = null
+} = {}) {
+  const normalizedMethod = cleanString(method).toUpperCase() || 'GET'
+  const mutationInFlight = !SAFE_RETRY_METHODS.has(normalizedMethod) &&
+    phase === 'request' && requestStarted === true
+  const error = new Error(
+    `HighLevel no respondió dentro del presupuesto de ${timeoutMs}ms para ${normalizedMethod} ${endpoint}.`,
+    cause ? { cause } : undefined
+  )
+  error.name = 'GHLRequestTimeoutError'
+  error.code = 'GHL_REQUEST_TIMEOUT'
+  error.status = 504
+  error.statusCode = 504
+  // El caller puede reintentar sólo después de respetar safeToRetry o de
+  // reconciliar el comando durable cuando reconciliationRequired=true.
+  error.retryable = true
+  error.safeToRetry = !mutationInFlight
+  error.remoteOutcomeAmbiguous = mutationInFlight
+  error.reconciliationRequired = mutationInFlight
+  error.requestMethod = normalizedMethod
+  error.requestEndpoint = cleanString(endpoint)
+  error.requestTimeoutMs = timeoutMs
+  error.timeoutPhase = phase
+  error.responseReceived = responseReceived === true
+  if (Number.isInteger(Number(lastStatus))) error.lastStatus = Number(lastStatus)
+  return error
+}
+
+function createGHLRequestAbortedError({
+  method,
+  endpoint,
+  phase = 'request',
+  requestStarted = false,
+  cause = null
+} = {}) {
+  const normalizedMethod = cleanString(method).toUpperCase() || 'GET'
+  const mutationInFlight = !SAFE_RETRY_METHODS.has(normalizedMethod) &&
+    phase === 'request' && requestStarted === true
+  const error = new Error(
+    `La solicitud ${normalizedMethod} ${endpoint} a HighLevel fue cancelada.`,
+    cause ? { cause } : undefined
+  )
+  error.name = 'GHLRequestAbortedError'
+  error.code = 'GHL_REQUEST_ABORTED'
+  error.status = 499
+  error.statusCode = 499
+  error.retryable = false
+  error.safeToRetry = !mutationInFlight
+  error.remoteOutcomeAmbiguous = mutationInFlight
+  error.reconciliationRequired = mutationInFlight
+  return error
+}
+
+function createGHLHttpError({ status, bodyText, method, endpoint } = {}) {
+  const normalizedStatus = Number(status) || 500
+  let errorData
+  try {
+    errorData = JSON.parse(String(bodyText || ''))
+  } catch {
+    errorData = { message: String(bodyText || '') }
+  }
+  const normalizedMethod = cleanString(method).toUpperCase() || 'GET'
+  const retryable = RETRYABLE_HTTP_STATUS_CODES.has(normalizedStatus)
+  const mutationOutcomeAmbiguous = !SAFE_RETRY_METHODS.has(normalizedMethod) &&
+    retryable && normalizedStatus !== 429
+  const error = new Error(`GHL API Error (${normalizedStatus}): ${JSON.stringify(errorData)}`)
+  error.code = `GHL_HTTP_${normalizedStatus}`
+  error.status = normalizedStatus
+  error.statusCode = normalizedStatus
+  error.retryable = retryable
+  error.safeToRetry = SAFE_RETRY_METHODS.has(normalizedMethod) || normalizedStatus === 429
+  error.remoteOutcomeAmbiguous = mutationOutcomeAmbiguous
+  error.reconciliationRequired = mutationOutcomeAmbiguous
+  error.requestMethod = normalizedMethod
+  error.requestEndpoint = cleanString(endpoint)
+  return error
+}
+
+function normalizeGHLTransportError(error, { method, endpoint, phase = 'request' } = {}) {
+  if (error?.code && (
+    String(error.code).startsWith('GHL_') ||
+    Number.isInteger(Number(error?.status))
+  )) return error
+
+  const normalizedMethod = cleanString(method).toUpperCase() || 'GET'
+  const mutationInFlight = !SAFE_RETRY_METHODS.has(normalizedMethod) && phase === 'request'
+  if (error && typeof error === 'object') {
+    error.status = Number(error.status || error.statusCode || 503)
+    error.statusCode = Number(error.statusCode || error.status || 503)
+    error.code = cleanString(error.code) || 'GHL_TRANSPORT_ERROR'
+    error.retryable = true
+    error.safeToRetry = !mutationInFlight
+    error.remoteOutcomeAmbiguous = mutationInFlight
+    error.reconciliationRequired = mutationInFlight
+    error.requestMethod = normalizedMethod
+    error.requestEndpoint = cleanString(endpoint)
+    return error
+  }
+
+  const wrapped = new Error('HighLevel no devolvió un error de transporte verificable.')
+  wrapped.code = 'GHL_TRANSPORT_ERROR'
+  wrapped.status = 503
+  wrapped.statusCode = 503
+  wrapped.retryable = true
+  wrapped.safeToRetry = !mutationInFlight
+  wrapped.remoteOutcomeAmbiguous = mutationInFlight
+  wrapped.reconciliationRequired = mutationInFlight
+  return wrapped
+}
+
+function waitWithAbort(ms, signal) {
+  const delayMs = Math.max(0, Math.trunc(Number(ms) || 0))
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason || Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal?.removeEventListener?.('abort', onAbort)
+      callback(value)
+    }
+    const onAbort = () => finish(
+      reject,
+      signal.reason || Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    )
+    const timer = setTimeout(() => finish(resolve), delayMs)
+    signal?.addEventListener?.('abort', onAbort, { once: true })
+  })
+}
 
 function cleanString(value) {
   return String(value || '').trim()
@@ -115,13 +278,15 @@ function normalizeInvoicePayload(data = {}) {
 }
 
 class GHLClient {
-  constructor(apiToken, locationId) {
+  constructor(apiToken, locationId, options = {}) {
     this.apiToken = apiToken
     this.locationId = locationId
+    this.fetchImpl = typeof options.fetchImpl === 'function' ? options.fetchImpl : fetch
+    this.requestTimeoutMs = normalizeRequestTimeoutMs(options.requestTimeoutMs)
   }
 
-  async sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms))
+  async sleep(ms, signal = null) {
+    return waitWithAbort(ms, signal)
   }
 
   buildUrl(endpoint, params = {}) {
@@ -139,75 +304,170 @@ class GHLClient {
   }
 
   async request(endpoint, options = {}) {
-    const { method = 'GET', body, params, version = GHL_API_VERSION } = options
+    const {
+      method = 'GET',
+      body,
+      params,
+      version = GHL_API_VERSION,
+      signal: callerSignal = null,
+      timeoutMs: requestedTimeoutMs = this.requestTimeoutMs
+    } = options
+    const normalizedMethod = cleanString(method).toUpperCase() || 'GET'
+    const timeoutMs = normalizeRequestTimeoutMs(requestedTimeoutMs, this.requestTimeoutMs)
     const url = this.buildUrl(endpoint, params)
+    // Serializar antes de marcar el request como enviado. Si el payload es
+    // inválido (por ejemplo, una referencia circular), no existe un resultado
+    // remoto ambiguo que reconciliar porque todavía no tocamos la red.
+    const serializedBody = body ? JSON.stringify(body) : undefined
+    const startedAt = Date.now()
+    const deadlineAt = startedAt + timeoutMs
+    const deadlineController = new AbortController()
+    let deadlineExpired = false
+    let phase = 'request'
+    let requestStarted = false
+    let responseReceived = false
+    let lastStatus = null
+    const timeoutId = setTimeout(() => {
+      deadlineExpired = true
+      deadlineController.abort(Object.assign(new Error('HighLevel request deadline exceeded'), {
+        name: 'AbortError',
+        code: 'GHL_REQUEST_TIMEOUT'
+      }))
+    }, timeoutMs)
+    const abortFromCaller = () => deadlineController.abort(
+      callerSignal?.reason || Object.assign(new Error('HighLevel request aborted by caller'), { name: 'AbortError' })
+    )
+    if (callerSignal?.aborted) abortFromCaller()
+    else callerSignal?.addEventListener?.('abort', abortFromCaller, { once: true })
 
     let lastError = null
     let retries429 = 0
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        const response = await fetch(url, {
-          method,
-          headers: {
-            'Authorization': `Bearer ${this.apiToken}`,
-            'Version': version,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          body: body ? JSON.stringify(body) : undefined,
-        })
+    const timeoutError = (cause = null) => createGHLRequestTimeoutError({
+      method: normalizedMethod,
+      endpoint,
+      timeoutMs,
+      phase,
+      requestStarted,
+      responseReceived,
+      lastStatus,
+      cause
+    })
+    const remainingBudget = () => Math.max(0, deadlineAt - Date.now())
 
-        // Manejar rate limiting (429) con espera y reintentos dedicados
-        if (response.status === 429) {
-          if (retries429 >= MAX_429_RETRIES) {
-            const errorText = await response.text().catch(() => '')
-            throw new Error(`GHL API Error (429): Too Many Requests. Se agotaron los reintentos.`)
+    try {
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+          requestStarted = false
+          if (remainingBudget() <= 0 || deadlineExpired) throw timeoutError()
+          phase = 'request'
+          responseReceived = false
+          lastStatus = null
+          requestStarted = true
+          const response = await this.fetchImpl(url, {
+            method: normalizedMethod,
+            headers: {
+              'Authorization': `Bearer ${this.apiToken}`,
+              'Version': version,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: serializedBody,
+            signal: deadlineController.signal
+          })
+          responseReceived = true
+          lastStatus = Number(response?.status) || null
+
+          // 429 es una negativa explícita del proveedor, no un POST ambiguo. Se
+          // puede esperar y reintentar, pero sólo si todavía cabe en el mismo
+          // presupuesto global del request.
+          if (response.status === 429) {
+            if (retries429 >= MAX_429_RETRIES) {
+              const errorText = await response.text().catch(() => '')
+              throw createGHLHttpError({
+                status: 429,
+                bodyText: errorText || 'Too Many Requests. Se agotaron los reintentos.',
+                method: normalizedMethod,
+                endpoint
+              })
+            }
+
+            const waitMs = parseRetryAfterMs(response.headers?.get?.('Retry-After'))
+            const waitSec = Math.round(waitMs / 1000)
+            retries429++
+            phase = 'rate_limit_wait'
+            logger.warn(`GHL rate limit (429) en ${endpoint}. Esperando ${waitSec}s (intento ${retries429}/${MAX_429_RETRIES})...`)
+            if (waitMs >= remainingBudget()) throw timeoutError()
+            await this.sleep(waitMs, deadlineController.signal)
+            attempt-- // No consumir un intento normal por un rate limit
+            continue
           }
 
-          const retryAfterHeader = response.headers.get('Retry-After')
-          const waitMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : DEFAULT_429_WAIT_MS
-          const waitSec = Math.round(waitMs / 1000)
+          if (!response.ok) {
+            const errorText = await response.text()
+            throw createGHLHttpError({
+              status: response.status,
+              bodyText: errorText,
+              method: normalizedMethod,
+              endpoint
+            })
+          }
 
-          retries429++
-          logger.warn(`GHL rate limit (429) en ${endpoint}. Esperando ${waitSec}s (intento ${retries429}/${MAX_429_RETRIES})...`)
-          await this.sleep(waitMs)
-          attempt-- // No consumir un intento normal por un rate limit
-          continue
-        }
+          // Algunos endpoints pueden no devolver body.
+          const contentType = response.headers?.get?.('content-type')
+          if (contentType && contentType.includes('application/json')) {
+            return await response.json()
+          }
 
-        if (!response.ok) {
-          const errorText = await response.text()
-          let errorData
+          return {}
+        } catch (rawError) {
+          if (rawError?.name === 'GHLRequestTimeoutError') throw rawError
+          if (deadlineExpired || (isAbortError(rawError) && remainingBudget() <= 0)) {
+            throw timeoutError(rawError)
+          }
+          if (callerSignal?.aborted || (isAbortError(rawError) && deadlineController.signal.aborted)) {
+            throw createGHLRequestAbortedError({
+              method: normalizedMethod,
+              endpoint,
+              phase,
+              requestStarted,
+              cause: rawError
+            })
+          }
+
+          const error = normalizeGHLTransportError(rawError, {
+            method: normalizedMethod,
+            endpoint,
+            phase
+          })
+          lastError = error
+          const safeInternalRetry = SAFE_RETRY_METHODS.has(normalizedMethod) && error.retryable === true
+          if (!safeInternalRetry || attempt === MAX_RETRIES - 1) throw error
+
+          const delayMs = RETRY_DELAY * Math.pow(2, attempt)
+          phase = 'retry_wait'
+          requestStarted = false
+          if (delayMs >= remainingBudget()) throw timeoutError(error)
           try {
-            errorData = JSON.parse(errorText)
-          } catch {
-            errorData = { message: errorText }
+            await this.sleep(delayMs, deadlineController.signal)
+          } catch (waitError) {
+            if (deadlineExpired || remainingBudget() <= 0) throw timeoutError(waitError)
+            throw createGHLRequestAbortedError({
+              method: normalizedMethod,
+              endpoint,
+              phase,
+              requestStarted: false,
+              cause: waitError
+            })
           }
-          throw new Error(`GHL API Error (${response.status}): ${JSON.stringify(errorData)}`)
         }
-
-        // Algunos endpoints pueden no devolver body
-        const contentType = response.headers.get('content-type')
-        if (contentType && contentType.includes('application/json')) {
-          return await response.json()
-        }
-
-        return {}
-      } catch (error) {
-        lastError = error
-
-        // Si es el último intento, lanzar el error
-        if (attempt === MAX_RETRIES - 1) {
-          throw lastError
-        }
-
-        // Esperar antes de reintentar (backoff exponencial)
-        await this.sleep(RETRY_DELAY * Math.pow(2, attempt))
       }
-    }
 
-    throw lastError
+      throw lastError || timeoutError()
+    } finally {
+      clearTimeout(timeoutId)
+      callerSignal?.removeEventListener?.('abort', abortFromCaller)
+    }
   }
 
   async sendConversationMessage(data = {}) {

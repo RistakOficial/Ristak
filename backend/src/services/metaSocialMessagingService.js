@@ -18,6 +18,7 @@ import {
 } from './whatsappApiService.js'
 import { downloadSafeOutboundMediaUrl } from './outboundMediaReferenceService.js'
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
+import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 // (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
@@ -2649,7 +2650,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     ON CONFLICT(id) DO UPDATE SET
       meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
       meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
-      contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
+      contact_id = COALESCE(meta_social_messages.contact_id, excluded.contact_id),
       sender_id = COALESCE(NULLIF(excluded.sender_id, ''), meta_social_messages.sender_id),
       recipient_id = COALESCE(NULLIF(excluded.recipient_id, ''), meta_social_messages.recipient_id),
       page_id = COALESCE(NULLIF(excluded.page_id, ''), meta_social_messages.page_id),
@@ -4289,7 +4290,10 @@ function getMetaSocialMessageLocalId(socialMessage = {}) {
   )
 }
 
-async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null, historyImport = false }) {
+// La identidad remota deduplica la burbuja, pero nunca autoriza cambiarla de
+// contacto. Un contact_id existente sólo se mueve mediante mergeContactIds,
+// bajo locks de origen y destino.
+export async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null, historyImport = false }) {
   let messageId = getMetaSocialMessageLocalId(socialMessage)
   const remoteMessageId = cleanString(socialMessage.metaMessageId)
   if (remoteMessageId && cleanString(socialMessage.direction).toLowerCase() === 'outbound') {
@@ -4326,104 +4330,122 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     }
   }
 
-  await db.run(`
-    INSERT INTO meta_social_messages (
-      id, platform, meta_message_id, meta_social_contact_id, contact_id,
-      sender_id, recipient_id, page_id, instagram_account_id,
-      direction, status, message_type, message_text, media_url, media_mime_type,
-      postback_payload, message_timestamp, raw_payload_json, referral_json,
-      comment_id, post_id, parent_comment_id, media_id, permalink, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(id) DO UPDATE SET
-      meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
-      meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
-      contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
-      sender_id = COALESCE(NULLIF(excluded.sender_id, ''), meta_social_messages.sender_id),
-      recipient_id = COALESCE(NULLIF(excluded.recipient_id, ''), meta_social_messages.recipient_id),
-      page_id = COALESCE(NULLIF(excluded.page_id, ''), meta_social_messages.page_id),
-      instagram_account_id = COALESCE(NULLIF(excluded.instagram_account_id, ''), meta_social_messages.instagram_account_id),
-      direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
-      status = CASE
-        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.status
-        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.status
-        ELSE COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status)
-      END,
-      message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
-      message_text = CASE
-        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.message_text
-        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.message_text
-        ELSE COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text)
-      END,
-      media_url = CASE
-        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.media_url
-        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN NULL
-        WHEN meta_social_messages.direction = 'outbound' AND COALESCE(meta_social_messages.media_url, '') != ''
-          THEN meta_social_messages.media_url
-        ELSE COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url)
-      END,
-      media_mime_type = CASE
-        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.media_mime_type
-        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN NULL
-        WHEN meta_social_messages.direction = 'outbound' AND COALESCE(meta_social_messages.media_mime_type, '') != ''
-          THEN meta_social_messages.media_mime_type
-        ELSE COALESCE(NULLIF(excluded.media_mime_type, ''), meta_social_messages.media_mime_type)
-      END,
-      postback_payload = COALESCE(NULLIF(excluded.postback_payload, ''), meta_social_messages.postback_payload),
-      message_timestamp = CASE
-        WHEN ? = 1 THEN meta_social_messages.message_timestamp
-        ELSE COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp)
-      END,
-      raw_payload_json = CASE
-        WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.raw_payload_json
-        WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.raw_payload_json
-        WHEN meta_social_messages.direction = 'outbound' AND excluded.direction = 'outbound'
-          THEN meta_social_messages.raw_payload_json
-        ELSE excluded.raw_payload_json
-      END,
-      referral_json = COALESCE(NULLIF(excluded.referral_json, 'null'), meta_social_messages.referral_json),
-      comment_id = COALESCE(NULLIF(excluded.comment_id, ''), meta_social_messages.comment_id),
-      post_id = COALESCE(NULLIF(excluded.post_id, ''), meta_social_messages.post_id),
-      parent_comment_id = COALESCE(NULLIF(excluded.parent_comment_id, ''), meta_social_messages.parent_comment_id),
-      media_id = COALESCE(NULLIF(excluded.media_id, ''), meta_social_messages.media_id),
-      permalink = COALESCE(NULLIF(excluded.permalink, ''), meta_social_messages.permalink),
-      updated_at = CURRENT_TIMESTAMP
-  `, [
-    messageId,
-    socialMessage.platform,
-    socialMessage.metaMessageId || null,
-    socialContactId,
-    contactId,
-    socialMessage.senderId || null,
-    socialMessage.recipientId || null,
-    socialMessage.pageId || null,
-    socialMessage.instagramAccountId || null,
-    socialMessage.direction,
-    socialMessage.status || null,
-    socialMessage.messageType || 'message',
-    socialMessage.messageText || null,
-    resolvedMediaUrl,
-    resolvedMediaMime,
-    socialMessage.postbackPayload || null,
-    socialMessage.messageTimestamp,
-    safeJson(socialMessage.raw),
-    safeJson(socialMessage.referral),
-    socialMessage.commentId || null,
-    socialMessage.postId || null,
-    socialMessage.parentCommentId || null,
-    socialMessage.mediaId || null,
-    socialMessage.permalink || null,
-    socialMessage.isMutation ? 1 : 0
-  ])
-
-  const inboundClaim = socialMessage.direction === 'inbound' && !socialMessage.isMutation
-    ? await claimInboundChatMessage({
-      channel: socialMessage.platform,
+  const persistMessageAndClaim = async (transactionDatabase = db) => {
+    const existingAtCommit = await db.get(
+      'SELECT id FROM meta_social_messages WHERE id = ?',
+      [messageId]
+    ).catch(() => existing)
+    await db.run(`
+      INSERT INTO meta_social_messages (
+        id, platform, meta_message_id, meta_social_contact_id, contact_id,
+        sender_id, recipient_id, page_id, instagram_account_id,
+        direction, status, message_type, message_text, media_url, media_mime_type,
+        postback_payload, message_timestamp, raw_payload_json, referral_json,
+        comment_id, post_id, parent_comment_id, media_id, permalink, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
+        meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
+        contact_id = COALESCE(meta_social_messages.contact_id, excluded.contact_id),
+        sender_id = COALESCE(NULLIF(excluded.sender_id, ''), meta_social_messages.sender_id),
+        recipient_id = COALESCE(NULLIF(excluded.recipient_id, ''), meta_social_messages.recipient_id),
+        page_id = COALESCE(NULLIF(excluded.page_id, ''), meta_social_messages.page_id),
+        instagram_account_id = COALESCE(NULLIF(excluded.instagram_account_id, ''), meta_social_messages.instagram_account_id),
+        direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
+        status = CASE
+          WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.status
+          WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.status
+          ELSE COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status)
+        END,
+        message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
+        message_text = CASE
+          WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.message_text
+          WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.message_text
+          ELSE COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text)
+        END,
+        media_url = CASE
+          WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.media_url
+          WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN NULL
+          WHEN meta_social_messages.direction = 'outbound' AND COALESCE(meta_social_messages.media_url, '') != ''
+            THEN meta_social_messages.media_url
+          ELSE COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url)
+        END,
+        media_mime_type = CASE
+          WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.media_mime_type
+          WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN NULL
+          WHEN meta_social_messages.direction = 'outbound' AND COALESCE(meta_social_messages.media_mime_type, '') != ''
+            THEN meta_social_messages.media_mime_type
+          ELSE COALESCE(NULLIF(excluded.media_mime_type, ''), meta_social_messages.media_mime_type)
+        END,
+        postback_payload = COALESCE(NULLIF(excluded.postback_payload, ''), meta_social_messages.postback_payload),
+        message_timestamp = CASE
+          WHEN ? = 1 THEN meta_social_messages.message_timestamp
+          ELSE COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp)
+        END,
+        raw_payload_json = CASE
+          WHEN LOWER(COALESCE(meta_social_messages.status, '')) = 'removed' THEN meta_social_messages.raw_payload_json
+          WHEN LOWER(COALESCE(excluded.status, '')) = 'removed' THEN excluded.raw_payload_json
+          WHEN meta_social_messages.direction = 'outbound' AND excluded.direction = 'outbound'
+            THEN meta_social_messages.raw_payload_json
+          ELSE excluded.raw_payload_json
+        END,
+        referral_json = COALESCE(NULLIF(excluded.referral_json, 'null'), meta_social_messages.referral_json),
+        comment_id = COALESCE(NULLIF(excluded.comment_id, ''), meta_social_messages.comment_id),
+        post_id = COALESCE(NULLIF(excluded.post_id, ''), meta_social_messages.post_id),
+        parent_comment_id = COALESCE(NULLIF(excluded.parent_comment_id, ''), meta_social_messages.parent_comment_id),
+        media_id = COALESCE(NULLIF(excluded.media_id, ''), meta_social_messages.media_id),
+        permalink = COALESCE(NULLIF(excluded.permalink, ''), meta_social_messages.permalink),
+        updated_at = CURRENT_TIMESTAMP
+    `, [
       messageId,
+      socialMessage.platform,
+      socialMessage.metaMessageId || null,
+      socialContactId,
       contactId,
-      messageTimestamp: socialMessage.messageTimestamp,
-      incrementUnread: !historyImport
-    })
-    : null
+      socialMessage.senderId || null,
+      socialMessage.recipientId || null,
+      socialMessage.pageId || null,
+      socialMessage.instagramAccountId || null,
+      socialMessage.direction,
+      socialMessage.status || null,
+      socialMessage.messageType || 'message',
+      socialMessage.messageText || null,
+      resolvedMediaUrl,
+      resolvedMediaMime,
+      socialMessage.postbackPayload || null,
+      socialMessage.messageTimestamp,
+      safeJson(socialMessage.raw),
+      safeJson(socialMessage.referral),
+      socialMessage.commentId || null,
+      socialMessage.postId || null,
+      socialMessage.parentCommentId || null,
+      socialMessage.mediaId || null,
+      socialMessage.permalink || null,
+      socialMessage.isMutation ? 1 : 0
+    ])
+
+    const inboundClaim = socialMessage.direction === 'inbound' && !socialMessage.isMutation
+      ? await claimInboundChatMessage({
+        channel: socialMessage.platform,
+        messageId,
+        contactId,
+        messageTimestamp: socialMessage.messageTimestamp,
+        incrementUnread: !historyImport,
+        database: transactionDatabase
+      })
+      : null
+    return { existingAtCommit, inboundClaim }
+  }
+  const messageType = cleanString(socialMessage.messageType).toLowerCase()
+  const isSubstantiveInbound = socialMessage.direction === 'inbound' &&
+    !socialMessage.isMutation && !['reaction', 'sticker'].includes(messageType)
+  const commentChannel = ['comment', 'comment_reply_public', 'comment_reply_private'].includes(messageType)
+    ? (socialMessage.platform === 'instagram' ? 'instagram_comment' : 'facebook_comment')
+    : socialMessage.platform
+  const persistence = isSubstantiveInbound
+    ? await withConversationalInboundCommitLock({ contactId, channel: commentChannel }, persistMessageAndClaim)
+    : await persistMessageAndClaim()
+  const { existingAtCommit, inboundClaim } = persistence
 
   return {
     messageId,
@@ -4433,7 +4455,7 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
       ? false
       : socialMessage.direction === 'inbound'
         ? Boolean(inboundClaim?.claimed)
-        : !existing
+        : !existingAtCommit
   }
 }
 

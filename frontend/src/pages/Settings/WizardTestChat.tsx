@@ -34,7 +34,7 @@ const VOICE_MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp
 const TEXT_EXTENSIONS = new Set(['txt', 'csv', 'json', 'md', 'html', 'xml'])
 const STATIC_BARS = Array.from({ length: 28 }, (_, i) => 6 + (i % 5) * 4)
 
-function createWizardTestTrackingId(kind: 'agent' | 'session' | 'message') {
+function createWizardTestTrackingId(kind: 'agent' | 'session' | 'message' | 'transcript') {
   const random = typeof globalThis.crypto?.randomUUID === 'function'
     ? globalThis.crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
@@ -43,6 +43,7 @@ function createWizardTestTrackingId(kind: 'agent' | 'session' | 'message') {
 
 type DraftAttachment = ConversationalAgentTestAttachment & { id: string }
 interface ChatMessage {
+  id?: string
   role: 'user' | 'assistant'
   content: string
   attachments?: DraftAttachment[]
@@ -116,6 +117,7 @@ function attachmentLabel(attachments: DraftAttachment[] = []) {
 
 function toPayload(message: ChatMessage): ConversationalAgentTestMessage {
   return {
+    ...(message.id ? { id: message.id } : {}),
     role: message.role,
     content: message.content,
     attachments: (message.attachments || []).map((a) => ({
@@ -201,7 +203,12 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
     const atts = opts.attachments || []
     if (sending || (!content && atts.length === 0)) return
 
-    const userMessage: ChatMessage = { role: 'user', content, ...(atts.length ? { attachments: atts } : {}) }
+    const userMessage: ChatMessage = {
+      id: createWizardTestTrackingId('transcript'),
+      role: 'user',
+      content,
+      ...(atts.length ? { attachments: atts } : {})
+    }
     const nextMessages = [...messages.filter((m) => !m.internal), userMessage]
 
     setMessages((current) => [...current, userMessage])
@@ -228,16 +235,25 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
         if (!actionMessage) continue
         setMessages((current) => [
           ...current,
-          { role: 'assistant', content: actionMessage, internal: true }
+          { id: createWizardTestTrackingId('transcript'), role: 'assistant', content: actionMessage, internal: true }
         ])
       }
       const replies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])
       if (replies.length) {
         for (const reply of replies) {
-          setMessages((current) => [...current, { role: 'assistant', content: reply }])
+          setMessages((current) => [...current, {
+            id: createWizardTestTrackingId('transcript'),
+            role: 'assistant',
+            content: reply
+          }])
         }
       } else {
-        setMessages((current) => [...current, { role: 'assistant', content: '⚠︎ La prueba no devolvió una respuesta válida. Vuelve a intentarlo.', internal: true }])
+        setMessages((current) => [...current, {
+          id: createWizardTestTrackingId('transcript'),
+          role: 'assistant',
+          content: '⚠︎ La prueba no devolvió una respuesta válida. Vuelve a intentarlo.',
+          internal: true
+        }])
       }
     } catch (error: any) {
       const status = error?.statusCode || error?.status
@@ -246,7 +262,12 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
       const message = needsAIConnection
         ? 'Conecta la IA seleccionada en Ajustes y vuelve a intentar.'
         : (raw || 'No se pudo probar el agente')
-      setMessages((current) => [...current, { role: 'assistant', content: `⚠︎ ${message}`, internal: true }])
+      setMessages((current) => [...current, {
+        id: createWizardTestTrackingId('transcript'),
+        role: 'assistant',
+        content: `⚠︎ ${message}`,
+        internal: true
+      }])
       showToast('error', 'No se pudo probar', message)
     } finally {
       setSending(false)

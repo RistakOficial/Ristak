@@ -48,6 +48,7 @@ import { renderTemplateVariables } from './templateVariablesService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { claimInboundChatMessage } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
+import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 import {
   clearWhatsAppApiIntegrationCredentials,
   clearWhatsAppMetaDirectIntegrationCredentials
@@ -7634,7 +7635,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       protocol_message_key_id = COALESCE(NULLIF(excluded.protocol_message_key_id, ''), whatsapp_api_messages.protocol_message_key_id),
       business_phone_number_id = COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id),
       whatsapp_api_contact_id = COALESCE(excluded.whatsapp_api_contact_id, whatsapp_api_messages.whatsapp_api_contact_id),
-      contact_id = COALESCE(excluded.contact_id, whatsapp_api_messages.contact_id),
+      contact_id = COALESCE(whatsapp_api_messages.contact_id, excluded.contact_id),
       phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
       from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
       to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
@@ -7758,48 +7759,76 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   ])
 
   const hadExistingMessage = Boolean(existingMessage)
-  const initialPersistenceResult = await persistWhatsAppMessage({
-    targetMessageId: messageId,
-    updateOnIdConflict: hadExistingMessage
-  })
-  const insertedByThisCall = !hadExistingMessage && Number(initialPersistenceResult?.changes || 0) > 0
-
-  // Si dos adaptadores hicieron el SELECT al mismo tiempo, el primero insertó
-  // y el segundo cayó en DO NOTHING. Resolvemos la fila ganadora por cualquiera
-  // de sus identidades y, si esta llamada no conocía una fila previa, repetimos
-  // por PK con un DO UPDATE válido tanto en PostgreSQL como en SQLite.
-  let canonicalMessage = await resolveWhatsAppCanonicalMessage({
-    messageId,
-    provider,
-    providerMessageId,
-    ycloudMessageId,
-    metaMessageId,
-    wamid,
-    protocolMessageKeyId
-  })
-
-  if (!canonicalMessage?.id) {
-    throw new Error('No se pudo resolver la fila canónica del mensaje de WhatsApp después de persistirlo.')
-  }
-
-  messageId = canonicalMessage.id
-  existingMessage = canonicalMessage
-
-  if (!hadExistingMessage) {
-    await persistWhatsAppMessage({
+  let insertedByThisCall = false
+  let canonicalMessage = null
+  let inboundClaim = null
+  const persistCanonicalMessageAndClaim = async (transactionDatabase = db) => {
+    const initialPersistenceResult = await persistWhatsAppMessage({
       targetMessageId: messageId,
-      updateOnIdConflict: true
+      updateOnIdConflict: hadExistingMessage
     })
-    canonicalMessage = await db.get(`
-      SELECT id, provider, source_adapter, origin, provider_message_id,
-             ycloud_message_id, meta_message_id, wamid, protocol_message_key_id,
-             contact_id, status, transport, routing_reason, message_type,
-             raw_payload_json, error_code, error_message
-      FROM whatsapp_api_messages
-      WHERE id = ?
-      LIMIT 1
-    `, [messageId]).catch(() => canonicalMessage)
-    existingMessage = canonicalMessage || existingMessage
+    insertedByThisCall = !hadExistingMessage && Number(initialPersistenceResult?.changes || 0) > 0
+
+    // Si dos adaptadores hicieron el SELECT al mismo tiempo, el primero insertó
+    // y el segundo cayó en DO NOTHING. Resolvemos la fila ganadora por cualquiera
+    // de sus identidades y, si esta llamada no conocía una fila previa, repetimos
+    // por PK con un DO UPDATE válido tanto en PostgreSQL como en SQLite.
+    canonicalMessage = await resolveWhatsAppCanonicalMessage({
+      messageId,
+      provider,
+      providerMessageId,
+      ycloudMessageId,
+      metaMessageId,
+      wamid,
+      protocolMessageKeyId
+    })
+
+    if (!canonicalMessage?.id) {
+      throw new Error('No se pudo resolver la fila canónica del mensaje de WhatsApp después de persistirlo.')
+    }
+
+    messageId = canonicalMessage.id
+    existingMessage = canonicalMessage
+
+    if (!hadExistingMessage) {
+      await persistWhatsAppMessage({
+        targetMessageId: messageId,
+        updateOnIdConflict: true
+      })
+      canonicalMessage = await db.get(`
+        SELECT id, provider, source_adapter, origin, provider_message_id,
+               ycloud_message_id, meta_message_id, wamid, protocol_message_key_id,
+               contact_id, status, transport, routing_reason, message_type,
+               raw_payload_json, error_code, error_message
+        FROM whatsapp_api_messages
+        WHERE id = ?
+        LIMIT 1
+      `, [messageId]).catch(() => canonicalMessage)
+      existingMessage = canonicalMessage || existingMessage
+    }
+
+    inboundClaim = identity.direction === 'inbound'
+      ? await claimInboundChatMessage({
+        channel: 'whatsapp',
+        messageId,
+        contactId: localContact.id,
+        messageTimestamp,
+        incrementUnread: !historyImport,
+        database: transactionDatabase
+      })
+      : null
+  }
+  const isSubstantiveInbound = identity.direction === 'inbound' &&
+    !['reaction', 'sticker'].includes(messageType.toLowerCase())
+  if (isSubstantiveInbound) {
+    // Ingesta y cita comparten el mismo advisory xact lock. La fila inbound no
+    // puede aparecer entre la revalidación terminal y el INSERT de la cita.
+    await withConversationalInboundCommitLock({
+      contactId: localContact.id,
+      channel: cleanTransport
+    }, persistCanonicalMessageAndClaim)
+  } else {
+    await persistCanonicalMessageAndClaim()
   }
 
   const canonicalQrFallbackApplied = existingQrFallbackApplied || (
@@ -7915,15 +7944,6 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ])
   }
 
-  const inboundClaim = identity.direction === 'inbound'
-    ? await claimInboundChatMessage({
-      channel: 'whatsapp',
-      messageId,
-      contactId: localContact.id,
-      messageTimestamp,
-      incrementUnread: !historyImport
-    })
-    : null
   const existingRenderableMessage = Boolean(
     existingMessageBeforePersistence && cleanString(existingMessageBeforePersistence.message_type).toLowerCase() !== 'status'
   )
