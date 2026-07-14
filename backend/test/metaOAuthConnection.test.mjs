@@ -781,6 +781,101 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
   })
 })
 
+test('Meta OAuth resuelve Datasets modernos por cuenta y exige reconexión si el User Token murió', async () => {
+  await initializeMasterKey()
+  await withIsolatedMeta(async () => {
+    const handoffMeta = {
+      connection_id: 'modern-dataset-connection',
+      access_token: 'modern-user-token',
+      appsecret_proof: 'modern-user-proof',
+      source: 'oauth_user',
+      debug_token_type: 'USER',
+      app_id: 'oauth-app',
+      config_id: 'flfb-user-config',
+      user_id: 'meta-user-modern',
+      scopes: [...META_OAUTH_REQUIRED_SCOPES],
+      assets: {
+        business_id: 'business-modern',
+        pages: [{
+          id: 'page-modern',
+          name: 'Página moderna',
+          business_id: 'business-modern',
+          tasks: ['ANALYZE', 'MESSAGING', 'MODERATE'],
+          page_access_token: 'page-modern-token',
+          page_appsecret_proof: 'page-modern-proof'
+        }],
+        ad_accounts: [{
+          id: 'act_321',
+          name: 'Cuenta moderna',
+          business_id: 'business-modern'
+        }],
+        pixels: [{
+          id: 'dataset-modern',
+          name: 'Dataset moderno',
+          business_id: 'business-modern'
+        }]
+      }
+    }
+    setMetaOAuthCentralClientForTest({
+      claimHandoff: async () => ({ payload: { meta: handoffMeta } })
+    })
+
+    let invalidateToken = false
+    const graphCalls = []
+    setMetaOAuthFetchForTest(async urlValue => {
+      const url = new URL(urlValue)
+      const path = url.pathname.replace(/^\/v\d+\.\d+/, '')
+      graphCalls.push(path)
+      assert.equal(url.searchParams.get('appsecret_proof'), 'modern-user-proof')
+      if (invalidateToken && path === '/act_321/adspixels') {
+        return graphResponse({
+          error: {
+            message: 'Error validating access token: session invalidated.',
+            type: 'OAuthException',
+            code: 190,
+            error_subcode: 460
+          }
+        }, 400)
+      }
+      if (path === '/act_321/adspixels') return graphResponse({ data: [] })
+      if (path === '/business-modern/ads_dataset') return graphResponse({ data: [{
+        id: 'dataset-modern',
+        name: 'Dataset moderno',
+        owner_business: { id: 'business-modern', name: 'Negocio moderno' }
+      }] })
+      if (path === '/business-modern/owned_pixels' || path === '/business-modern/client_pixels') {
+        return graphResponse({ data: [] })
+      }
+      if (path === '/dataset-modern/adaccounts') return graphResponse({
+        data: [{ id: 'act_321', account_id: '321', name: 'Cuenta moderna' }]
+      })
+      if (path === '/dataset-modern/shared_accounts') return graphResponse({ data: [] })
+      return graphResponse({ error: { message: `unexpected ${path}` } }, 404)
+    })
+
+    const completed = await prepareMetaOAuthConnection({ handoffToken: 'modern-dataset-handoff' })
+    assert.deepEqual(completed.adAccounts[0].pixels, [{
+      id: 'dataset-modern',
+      name: 'Dataset moderno',
+      businessId: 'business-modern'
+    }])
+    assert.equal(completed.datasets[0].adAccountId, '321')
+    assert.equal(graphCalls.includes('/business-modern/ads_dataset'), true)
+    assert.equal(graphCalls.includes('/dataset-modern/adaccounts'), true)
+
+    invalidateToken = true
+    handoffMeta.connection_id = 'invalidated-dataset-connection'
+    await assert.rejects(
+      prepareMetaOAuthConnection({ handoffToken: 'invalidated-dataset-handoff' }),
+      error => (
+        error.code === 'META_OAUTH_REAUTH_REQUIRED' &&
+        error.statusCode === 401 &&
+        /Vuelve a conectar Facebook/.test(error.message)
+      )
+    )
+  })
+})
+
 test('Meta OAuth USER guarda el handoff verificado aunque Graph esté limitado', async () => {
   await initializeMasterKey()
   await withIsolatedMeta(async () => {

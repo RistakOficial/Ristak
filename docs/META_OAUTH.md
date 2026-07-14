@@ -186,8 +186,10 @@ https://www.facebook.com/v25.0/dialog/oauth
    canjea el code, amplía el token cuando es `USER` y todavía es corto, y valida `is_valid`,
    `app_id`, tipo `USER|SYSTEM_USER`, portafolio, expiraciones, permisos y
    `granular_scopes`.
-5. Installer enumera Pages, Instagram y Ad Accounts autorizados; para cada Ad
-   Account obtiene únicamente sus Datasets por `/act_<ID>/adspixels`, crea
+5. Installer enumera Pages, Instagram y Ad Accounts autorizados. Combina los
+   pixels clásicos de `/act_<ID>/adspixels` con Datasets modernos de
+   `/{BUSINESS_ID}/ads_dataset`, y sólo enlaza un Dataset a una cuenta después de
+   confirmarlo por `/{DATASET_ID}/adaccounts` o `/shared_accounts`. Después crea
    el candidato y devuelve solamente un handoff opaco en el fragmento URL.
 6. Ristak reclama el handoff desde backend y usa directamente la identidad,
    permisos y allowlist que Installer ya validó durante el callback. No repite
@@ -237,13 +239,18 @@ Reglas no negociables:
 
 ### Descubrimiento y validacion del Dataset
 
-El selector usa una sola relación autoritativa: `/act_<AD_ACCOUNT_ID>/adspixels`.
-Los edges `/{BUSINESS_ID}/owned_pixels` y `client_pixels` describen el inventario
-completo del portafolio, no qué Dataset está conectado a una cuenta publicitaria;
-por eso nunca alimentan este selector. Cuando cambia la cuenta, Ristak muestra
-solamente los Datasets enlazados explícitamente a ella y limpia una selección
-anterior incompatible. Un Dataset compartido con varias cuentas conserva todas
-sus asignaciones y aparece únicamente en esas cuentas.
+El selector combina dos generaciones de Graph: `/act_<AD_ACCOUNT_ID>/adspixels`
+para pixels clásicos y `/{BUSINESS_ID}/ads_dataset` para Datasets modernos. Los
+edges `owned_pixels|client_pixels` sólo amplían el inventario candidato; nunca
+prueban por sí solos que un Dataset pertenece a la cuenta. La relación se
+confirma por `/{DATASET_ID}/adaccounts` y, cuando aplica, `/shared_accounts`.
+Cuando cambia la cuenta, Ristak muestra únicamente esos resultados confirmados y
+limpia una selección anterior incompatible. Un Dataset compartido conserva todas
+sus asignaciones y aparece sólo en esas cuentas.
+
+Si Graph responde `OAuth 190`, el flujo exige reconexión. Ese error no se atrapa
+como `[]`, porque una sesión inválida no significa “esta cuenta no tiene
+Datasets”.
 
 En una conexión System User, Installer sólo entrega un Dataset relacionado
 cuando el BISU aparece en `assigned_users` con `UPLOAD`; al
@@ -427,11 +434,12 @@ Installer, autenticado por licencia salvo callbacks publicos:
 5. Los selectores muestran el nombre de cada activo y su ID debajo sin llamar a
    Graph para pintarlos. Guardar Ad Account/Dataset no toca el relay social;
    guardar Page limpia Instagram incompatible y actualiza sólo su suscripcion/ruta.
-6. El dropdown de Dataset contiene sólo resultados de
-   `/act_<AD_ACCOUNT_ID>/adspixels`; un Dataset que sólo aparece en
-   `owned_pixels` o `client_pixels` no se ofrece. Cambiar de cuenta limpia un
-   Dataset incompatible. BISU además exige `UPLOAD`; USER usa la allowlist
-   firmada y nunca se confunde con un System User en `assigned_users`.
+6. El dropdown de Dataset contiene sólo relaciones confirmadas por
+   `adspixels`, `adaccounts` o `shared_accounts`; aparecer en `ads_dataset`,
+   `owned_pixels` o `client_pixels` sin relación de cuenta no basta. Cambiar de
+   cuenta limpia un Dataset incompatible. BISU además exige `UPLOAD`; USER usa
+   la allowlist firmada y nunca se confunde con un System User en
+   `assigned_users`.
 7. Sin tarea `UPLOAD` en modo BISU, finalizar falla y conserva la conexion
    anterior.
 8. Con Dataset validado, CAPI queda activa y Dataset Test puede enviar un evento
@@ -457,6 +465,8 @@ Installer, autenticado por licencia salvo callbacks publicos:
 - [Conversions API integration template](https://developers.facebook.com/documentation/facebook-login/facebook-login-for-business/conversions-api-integration-template/)
 - [Conversions API: using the API](https://developers.facebook.com/documentation/ads-commerce/conversions-api/using-the-api/)
 - [Ad Account `adspixels` edge (Business SDK oficial)](https://github.com/facebook/facebook-nodejs-business-sdk/blob/main/src/objects/ad-account.js)
+- [Business `ads_dataset` edge (Business SDK oficial)](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/business.py)
+- [Dataset/Pixel `adaccounts` y `shared_accounts` (Business SDK oficial)](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adspixel.py)
 - [Dataset/Pixel assigned users](https://developers.facebook.com/documentation/ads-commerce/marketing-api/reference/ads-pixel/assigned_users)
 - [Debug Token y granular scopes](https://developers.facebook.com/docs/graph-api/reference/debug_token/)
 - [Pages API overview](https://developers.facebook.com/documentation/pages-api/overview)
