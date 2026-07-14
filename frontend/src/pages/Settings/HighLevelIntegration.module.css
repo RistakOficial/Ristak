@@ -1859,6 +1859,12 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
   overflow: visible;
 }
 
+/* El encabezado ya es el dueño del separador de página. La primera sección
+   conserva su espaciado, pero no dibuja una segunda línea debajo del header. */
+.pageHeader + .section {
+  border-top: 0;
+}
+
 .paymentsConfigurationSection {
   margin-top: 0;
   padding-top: 0;

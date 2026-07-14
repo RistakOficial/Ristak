@@ -139,6 +139,13 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Header / contenedor de página | `<PageHeader>` / `<PageContainer>` | un header a mano |
 | Inputs nativos | ya están skineados globalmente; un `<input>` plano hereda el sistema | re-estilizarlos |
 
+**Separador único de página.** El encabezado es el dueño de la línea que separa
+el título del contenido. La primera sección que aparece inmediatamente después
+no debe volver a pintar `border-top`; las secciones posteriores sí pueden usar
+una línea para separar bloques. En pantallas legacy con `.pageHeader`, resuelve
+esta convivencia en el estilo compartido para que todas sus consumidoras
+mantengan una sola línea, sin quitar los divisores internos legítimos.
+
 Foco: `--ristak-focus-ring` / borde `--accent`. **Nunca** un ring de color a mano.
 
 Responsive: sí se permite ajustar ancho, densidad y orden visual para ventanas
