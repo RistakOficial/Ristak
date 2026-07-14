@@ -129,12 +129,14 @@ Notas:
 - Sin `accessToken` en el request, todas las rutas de block-slots operan sobre bloqueos
   **nativos locales** (tabla `blocked_slots`, APT-004). Con `accessToken` (flujo GHL) delegan a HighLevel.
 - Cálculo de slots libres (`getLocalFreeSlots`, `localCalendarService.js:4664-4750`):
-  - Genera slots en la zona pedida (o `account_timezone`) usando `openHours` del calendario.
+  - Genera los instantes usando `openHours` en `account_timezone`; la zona pedida
+    sólo cambia la fecha/hora con la que se agrupan y muestran al visitante.
   - `slotDuration` (default 60) = duración; `slotInterval` (default = duración) = paso.
   - Excluye: slots en el pasado (`slotStartMs >= now`), slots que chocan con citas existentes
     hasta el límite `appoinmentPerSlot` (sic, con typo, ver §3.1), y slots que tocan bloqueos nativos.
-  - Sin `openHours` configurados → default Lun–Vie 9:00–17:00; Sáb/Dom sin horario
-    (`getCalendarOpenIntervals`, `localCalendarService.js:4458-4500`). Días aceptan formato
+  - Un registro legacy sin `openHours` ni marca de configuración usa Lun–Vie
+    9:00–17:00. `openHours: []` configurado significa cerrado y un horario
+    explícito ilegible falla cerrado. Días aceptan formato
     `{ daysOfTheWeek:[1..5], hours:[{openHour,openMinute,closeHour,closeMinute}] }`, forma plana
     `{ day }`/`{ dayOfWeek }`, ISO 7→0 (0=domingo, como `Date.getDay()`).
   - Para calendarios GHL con `appoinmentPerSlot <= 1` el backend intenta primero los free-slots
@@ -349,7 +351,9 @@ al `startTime` y, con smart, encaja en la ventana `smartStart–smartEnd` de la 
     estados `cancelled/canceled/noshow/invalid` y, opcionalmente, `excludeAppointmentId`.
   - Si el slot toca un **bloqueo nativo** (tabla `blocked_slots`, del calendario o global
     `calendar_id IS NULL`) → no disponible (`blocked: true`).
-  - Fail-open: si la verificación revienta, se permite crear.
+  - La verificación normal de choques conserva compatibilidad fail-open ante un
+    error interno; la validación estricta de reglas solicitada por los flujos
+    `Por defecto`, público e IA no inventa disponibilidad.
   - Si no disponible → **409 `slot_unavailable`** salvo `ignoreAppointmentConflicts: true`
     o `confirmDoubleBooking: true`.
   - **El PUT de edición NO ejecuta este chequeo** (solo el POST).
@@ -362,10 +366,12 @@ al `startTime` y, con smart, encaja en la ventana `smartStart–smartEnd` de la 
 
 ### 5.2 Horas permitidas
 
-- `openHours` del calendario definen los slots ofertados en `free-slots`. Sin configuración:
-  Lun–Vie 9–17. Si `openHours` existe pero ningún día es parseable, degrada al default (anti-bloqueo).
-- **El backend NO rechaza** una cita creada por admin fuera de `openHours` (solo el flujo público
-  y el modo "Por defecto" restringen a slots disponibles). El modo "Personalizado" permite cualquier hora.
+- `openHours` del calendario define los slots ofertados en `free-slots`. Un arreglo
+  vacío configurado significa cerrado; sólo registros legacy sin configurar usan
+  Lun–Vie 9–17. Un formato explícito ilegible falla cerrado.
+- Al crear, web, RN e iOS solicitan validación estricta en modo `Por defecto`; URL
+  pública y agente también la aplican. El modo `Personalizado` permite cualquier
+  hora como override intencional. La edición conserva el contrato legacy del PUT.
 
 ### 5.3 Round Robin
 
@@ -561,9 +567,10 @@ detalles; si falla: alert `No se abrió la cita` / `El calendario abrió, pero l
 3. **El PUT de cita no valida choques**: solo el POST devuelve 409 `slot_unavailable`. Si iOS
    quiere paridad estricta con RN basta el pre-chequeo de bloqueos del cliente; si quiere
    protección real al reprogramar tendría que llamar `free-slots`/`blocked-slots` manualmente.
-4. **`allowBookingAfter`/`allowBookingFor`/`slotBuffer`/`preBuffer`/`appoinmentPerDay` NO se
-   aplican en la disponibilidad local** (solo `openHours`, citas existentes, bloqueos y "no pasado").
-   Solo cuentan cuando HighLevel calcula los slots. No prometer esas reglas en UI nativa.
+4. **Modo personalizado es un override real**: `openHours`, ventana de reserva,
+   límite diario y buffers se aplican al listar y al crear en modo `Por defecto`,
+   pero el modo `Personalizado` permite una hora manual. iOS debe mandar
+   `strictAvailabilityCheck` sólo al crear en modo `Por defecto` y no al editar.
 5. **Filtro de eventos por hora de inicio**: citas que cruzan medianoche pueden no aparecer en el
    día que terminan; la grilla debe agrupar por `startTime` como hace RN.
 6. **`GET /events` refresca remotos en segundo plano**: la primera respuesta puede no traer

@@ -522,6 +522,7 @@ async function verifyTestAppointmentAction(action, scheduleCapability) {
     timezone
   )
   const availability = await getLocalFreeSlots(calendarId, windowStart, windowEnd, timezone, {
+    allowDefaultOpenHours: false,
     ignoreAppointmentConflicts: false,
     appointmentLimit: 1
   })

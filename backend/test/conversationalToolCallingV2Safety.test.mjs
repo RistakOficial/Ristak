@@ -7756,7 +7756,7 @@ test('aceptar una oferta de reagendamiento conserva ID y participantes, mueve di
       source: 'ristak',
       allowReschedule: true,
       allowCancellation: true,
-      slotDuration: 60,
+      slotDuration: 90,
       slotInterval: 60,
       openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 9, openMinute: 0, closeHour: 16, closeMinute: 0 }] }]
     }, { source: 'ristak', syncStatus: 'synced' })

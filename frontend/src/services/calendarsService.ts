@@ -173,6 +173,7 @@ export interface Calendar {
   allowBookingFor?: number;
   allowBookingForUnit?: string;
   openHours?: OpenHours[];
+  availabilityScheduleConfigured?: boolean;
   autoConfirm?: boolean;
   allowReschedule?: boolean;
   allowCancellation?: boolean;
@@ -244,6 +245,7 @@ export interface CalendarEvent {
 export interface CreateAppointmentPayload extends Partial<CalendarEvent> {
   clientRequestId?: string;
   client_request_id?: string;
+  strictAvailabilityCheck?: true;
   [key: string]: unknown;
 }
 

@@ -6004,9 +6004,14 @@ export function createConversationalTools(ctx) {
         ignoreAppointmentConflicts: overlapsAllowed,
         appointmentLimit: overlapsAllowed ? undefined : 1,
         allowDefaultOpenHours: false,
-        ...(rescheduledAppointment
-          ? { excludeAppointmentId: rescheduledAppointment.id, durationMinutes: durationMs / 60000 }
-          : {})
+        durationMinutes: rescheduledAppointment
+          ? durationMs / 60000
+          : calendarDurationToMinutes(
+              nativeCalendar.slot_duration,
+              nativeCalendar.slot_duration_unit,
+              60
+            ),
+        ...(rescheduledAppointment ? { excludeAppointmentId: rescheduledAppointment.id } : {})
       }
       let rawSlots
       try {
@@ -6071,6 +6076,7 @@ export function createConversationalTools(ctx) {
         nativeCalendar?.slot_interval_unit,
         calendarDurationToMinutes(nativeCalendar?.slot_duration, nativeCalendar?.slot_duration_unit, 60)
       ))
+      const offeredDurationMinutes = availabilityOptions.durationMinutes
       ctx.nativeAppointmentAvailability = {
         calendarId: effectiveCalendarId,
         purpose: rescheduledAppointment ? 'reschedule' : 'book',
@@ -6079,6 +6085,7 @@ export function createConversationalTools(ctx) {
         slots,
         total,
         intervalMinutes,
+        durationMinutes: offeredDurationMinutes,
         startDate,
         endDate
       }
@@ -6090,7 +6097,7 @@ export function createConversationalTools(ctx) {
         overlapPolicy: overlapsAllowed ? 'allowed' : 'blocked',
         purpose: rescheduledAppointment ? 'reschedule' : 'book',
         appointmentId: rescheduledAppointment?.id || null,
-        durationMinutes: Number.isFinite(durationMs) ? durationMs / 60000 : null,
+        durationMinutes: offeredDurationMinutes,
         note: [
           overlapsAllowed
             ? 'Empalme permitido: estos horarios respetan horas de atención, pero pueden coincidir con citas existentes.'
@@ -6983,7 +6990,10 @@ export function createConversationalTools(ctx) {
                 }
               : {})
           },
-          internalContext: { conversationalAgentAppointment: true }
+          internalContext: {
+            conversationalAgentAppointment: true,
+            allowAppointmentOverlaps: overlapsAllowed
+          }
         })
         toolResult = toToolResult(result, (data) => ({
           id: data?.id,
@@ -8146,6 +8156,10 @@ export function createConversationalTools(ctx) {
           strictAvailabilityCheck: true,
           strictLifecycleMutation: 'reschedule',
           ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
+        },
+        internalContext: {
+          conversationalAgentAppointment: true,
+          allowAppointmentOverlaps: scheduleCapability?.allowOverlaps === true
         }
       })
       const result = toToolResult(response, (data) => ({

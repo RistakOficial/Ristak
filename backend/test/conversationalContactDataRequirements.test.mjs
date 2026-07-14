@@ -619,6 +619,10 @@ test('tools de agenda rechazan titular distinto y exceso de invitados antes de c
     source: 'ristak',
     slotDuration: 60,
     slotInterval: 60,
+    // Esta prueba valida participantes, no el borde temporal de la agenda. Dale
+    // una ventana explícita que no dependa de la hora exacta en que corre CI.
+    allowBookingFor: 60,
+    allowBookingForUnit: 'days',
     openHours: [{
       daysOfTheWeek: [slot.weekday],
       hours: [{ openHour: 10, openMinute: 0, closeHour: 11, closeMinute: 0 }]

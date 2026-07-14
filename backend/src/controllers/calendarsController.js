@@ -240,6 +240,22 @@ function withoutGoogleCalendarLinkMutation(input = {}) {
   return sanitized;
 }
 
+function normalizeCalendarAvailabilityWrite(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const hasOpenHours = Object.prototype.hasOwnProperty.call(source, 'openHours')
+    || Object.prototype.hasOwnProperty.call(source, 'open_hours');
+  if (!hasOpenHours) return source;
+
+  const normalized = { ...source };
+  normalized.openHours = localCalendarService.normalizeCalendarOpenHoursForWrite(
+    source.openHours ?? source.open_hours
+  );
+  normalized.availabilityScheduleConfigured = true;
+  delete normalized.open_hours;
+  delete normalized.availability_schedule_configured;
+  return normalized;
+}
+
 async function markAppointmentMirrorSyncError({
   appointmentId,
   provider,
@@ -858,12 +874,17 @@ async function ensurePublicCalendarRequest(req, slugOrId) {
   return { host, calendar };
 }
 
-async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }) {
+async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate }) {
+  const businessTimezone = await getAccountTimezone();
   return localCalendarService.getLocalFreeSlots(
     calendar.id,
-    startDate,
-    endDate,
-    timezone
+    // Entre UTC-12 y UTC+14 una misma hora puede caer dos fechas de calendario
+    // aparte. Calculamos ambos bordes y el cliente agrupa los instantes UTC en
+    // la zona del visitante.
+    addDateOnlyDays(startDate, -2),
+    addDateOnlyDays(endDate, 2),
+    businessTimezone,
+    { allowDefaultOpenHours: false }
   );
 }
 
@@ -881,6 +902,8 @@ function calendarAvailabilityFailureMessage(availability = {}, { reschedule = fa
   const reason = cleanString(availability.reason).toLowerCase();
   const baseMessage = reason === 'invalid_slot'
     ? 'Ese horario no es válido.'
+    : reason === 'slot_duration_mismatch'
+      ? `La cita debe durar exactamente ${Number(availability.expectedDurationMinutes) || 1} minutos según este calendario.`
     : reason === 'outside_booking_window'
       ? 'Ese horario está fuera del periodo permitido por el calendario.'
       : reason === 'daily_limit_reached'
@@ -903,6 +926,12 @@ function calendarAvailabilityFailureData(availability = {}) {
     ...(availability.appointmentsOnDay !== undefined ? { appointmentsOnDay: availability.appointmentsOnDay } : {}),
     ...(availability.earliestStart ? { earliestStart: availability.earliestStart } : {}),
     ...(availability.latestStart ? { latestStart: availability.latestStart } : {}),
+    ...(availability.expectedDurationMinutes !== undefined
+      ? { expectedDurationMinutes: availability.expectedDurationMinutes }
+      : {}),
+    ...(availability.actualDurationMinutes !== undefined
+      ? { actualDurationMinutes: availability.actualDurationMinutes }
+      : {}),
     ...(availability.blocked ? { blocked: true } : {})
   };
 }
@@ -980,12 +1009,15 @@ export async function resolveCalendarAvailabilitySlots({
   const provider = resolveCalendarAvailabilityProvider(calendar, requestedCalendarId);
   const localCalendarId = cleanString(calendar?.id || requestedCalendarId);
   const cleanAccessToken = cleanString(accessToken);
+  const localAvailabilityOptions = availabilityOptions.allowDefaultOpenHours === false
+    ? availabilityOptions
+    : { allowDefaultOpenHours: false, ...availabilityOptions };
   const loadLocalSlots = () => getLocalSlots(
     localCalendarId,
     startDate,
     endDate,
     timezone,
-    availabilityOptions
+    localAvailabilityOptions
   );
 
   const usesGoogle = provider.provider === 'google' || provider.provider === 'ghl_google';
@@ -1532,7 +1564,7 @@ export async function createCalendar(req, res) {
 
     const formSafeCalendarData = await enforceCalendarCustomFormAccess(
       {},
-      withoutGoogleCalendarLinkMutation(calendarData)
+      normalizeCalendarAvailabilityWrite(withoutGoogleCalendarLinkMutation(calendarData))
     );
     const safeCalendarData = await enforceCalendarPaymentConfigAccess({}, formSafeCalendarData);
 
@@ -1792,7 +1824,7 @@ export async function getAppointment(req, res) {
 export async function getPublicFreeSlots(req, res) {
   try {
     const { slug } = req.params;
-    const { startDate, endDate, timezone } = req.query;
+    const { startDate, endDate } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -1808,11 +1840,9 @@ export async function getPublicFreeSlots(req, res) {
       label: 'La disponibilidad'
     });
     const { calendar } = await ensurePublicCalendarRequest(req, slug);
-    const resolvedTimezone = cleanString(timezone) || await getAccountTimezone();
     const slots = await getCalendarFreeSlotsForPublic(calendar, {
       startDate: range.startDate,
-      endDate: range.endDate,
-      timezone: resolvedTimezone
+      endDate: range.endDate
     });
 
     res.json({
@@ -1882,18 +1912,18 @@ export async function createPublicAppointment(req, res) {
       });
     }
 
-    const timezone = cleanString(body.timezone) || await getAccountTimezone();
-    const startDate = dateKeyFromDate(start, timezone);
+    const businessTimezone = await getAccountTimezone();
+    const timezone = cleanString(body.timezone) || businessTimezone;
+    const startDate = dateKeyFromDate(start, businessTimezone);
     const endDate = addDateOnlyDays(startDate, 1);
     const availableSlots = await getCalendarFreeSlotsForPublic(calendar, {
       startDate,
-      endDate,
-      timezone
+      endDate
     });
     const requestedMs = start.getTime();
     const isAvailable = availableSlots
       .flatMap(day => Array.isArray(day.slots) ? day.slots : [])
-      .some(slot => Math.abs(new Date(slot).getTime() - requestedMs) <= 60000);
+      .some(slot => new Date(slot).getTime() === requestedMs);
 
     if (!isAvailable) {
       return res.status(409).json({
@@ -1973,7 +2003,7 @@ export async function createPublicAppointment(req, res) {
       status: calendar.autoConfirm ? 'confirmed' : 'pending',
       startTime: start.toISOString(),
       endTime: end.toISOString(),
-      timeZone: timezone,
+      timeZone: businessTimezone,
       notes: submittedNotes,
       formId: bookingSubmission.formId,
       formName: bookingSubmission.formName,
@@ -2005,15 +2035,38 @@ export async function createPublicAppointment(req, res) {
         notes: calendar.notes || publicAppointmentData.notes || ''
       };
     }
-    let appointment = await localCalendarService.createLocalAppointment({
-      ...publicAppointmentData,
-      locationId: context.locationId || calendar.locationId,
-      title: renderedTemplates.title,
-      notes: renderedTemplates.notes,
-      source: 'ristak'
-    }, {
-      locationId: context.locationId || calendar.locationId,
-      syncStatus: 'pending'
+    // Revalidación FINAL bajo el mismo candado transaccional del admin/agente.
+    // La lectura previa alimenta la UI y el gate de pago; no puede ser la única
+    // defensa porque otro request podría tomar el slot antes del INSERT.
+    let appointment = await db.transaction(async () => {
+      await lockCalendarAppointmentCreation(calendar.id);
+      const availability = await localCalendarService.checkSlotAvailability(
+        calendar.id,
+        publicAppointmentData.startTime,
+        publicAppointmentData.endTime,
+        {
+          enforceCalendarRules: true,
+          timezone: businessTimezone
+        }
+      );
+      if (!availability.available) {
+        const conflictError = new Error(calendarAvailabilityFailureMessage(availability));
+        conflictError.status = 409;
+        conflictError.code = 'slot_unavailable';
+        conflictError.data = calendarAvailabilityFailureData(availability);
+        throw conflictError;
+      }
+
+      return localCalendarService.createLocalAppointment({
+        ...publicAppointmentData,
+        locationId: context.locationId || calendar.locationId,
+        title: renderedTemplates.title,
+        notes: renderedTemplates.notes,
+        source: 'ristak'
+      }, {
+        locationId: context.locationId || calendar.locationId,
+        syncStatus: 'pending'
+      });
     });
 
     if (context.locationId && context.accessToken && calendar.ghlCalendarId) {
@@ -2221,12 +2274,18 @@ export async function getFreeSlots(req, res) {
     });
     const { accessToken } = await getHighLevelContext(req);
     const localCalendar = await localCalendarService.getLocalCalendar(id);
+    // `openHours` son horas de pared del negocio. El timezone solicitado sólo
+    // puede cambiar cómo se muestran los instantes, no reinterpretar 13:00 como
+    // 13:00 de la computadora o del agente que hizo la petición.
+    const availabilityTimezone = localCalendar
+      ? await getAccountTimezone()
+      : timezone;
     const slots = await resolveCalendarAvailabilitySlots({
       calendar: localCalendar,
       requestedCalendarId: id,
       startDate: range.startDate,
       endDate: range.endDate,
-      timezone,
+      timezone: availabilityTimezone,
       accessToken,
       requireVerifiedExternalAvailability,
       availabilityOptions
@@ -2445,8 +2504,14 @@ export async function createAppointment(req, res) {
         error: 'Las marcas de una cita de prueba sólo pueden crearse desde el tester interno.'
       });
     }
+    const internalAppointmentContext = req[INTERNAL_CONTROLLER_CONTEXT] || {};
     const strictAvailabilityCheck = appointmentData.strictAvailabilityCheck === true
       || appointmentData.source === 'conversational_agent_v2';
+    const strictConflictOverrideAuthorized = (
+      strictAvailabilityCheck
+      && internalAppointmentContext.conversationalAgentAppointment === true
+      && internalAppointmentContext.allowAppointmentOverlaps === true
+    );
     const depositFenceProvided = Boolean(
       depositReservationEventId || depositReservationClaimToken || depositReservationAgentId ||
       depositReservationRequestDraftHash
@@ -2563,7 +2628,10 @@ export async function createAppointment(req, res) {
             strictAvailabilityCheck
               ? {
                   enforceCalendarRules: true,
-                  ignoreAppointmentConflicts: appointmentData.ignoreAppointmentConflicts === true,
+                  // Una bandera del payload nunca basta para sobreagendar en modo
+                  // estricto. El único override válido viene del contexto interno
+                  // del agente después de leer su `allowOverlaps` configurado.
+                  ignoreAppointmentConflicts: strictConflictOverrideAuthorized,
                   timezone: localAppointmentData.timeZone || localAppointmentData.timezone
                 }
               : {}
@@ -2846,8 +2914,14 @@ export async function updateAppointment(req, res) {
   try {
     const { id } = req.params;
     const { accessToken, ...updateData } = req.body;
+    const internalAppointmentContext = req[INTERNAL_CONTROLLER_CONTEXT] || {};
     const strictAvailabilityCheck = updateData.strictAvailabilityCheck === true;
     const ignoreAppointmentConflicts = updateData.ignoreAppointmentConflicts === true;
+    const strictConflictOverrideAuthorized = (
+      strictAvailabilityCheck
+      && internalAppointmentContext.conversationalAgentAppointment === true
+      && internalAppointmentContext.allowAppointmentOverlaps === true
+    );
     const expectedStartTime = updateData.expectedStartTime || updateData.expected_start_time || null;
     const expectedEndTime = updateData.expectedEndTime || updateData.expected_end_time || null;
     const expectedAppointmentStatus = cleanString(
@@ -3005,7 +3079,9 @@ export async function updateAppointment(req, res) {
             requestedEnd,
             {
               excludeAppointmentId: current.id,
-              ignoreAppointmentConflicts,
+              ignoreAppointmentConflicts: strictAvailabilityCheck
+                ? strictConflictOverrideAuthorized
+                : ignoreAppointmentConflicts,
               ...(strictAvailabilityCheck
                 ? {
                     enforceCalendarRules: true,
@@ -3183,7 +3259,7 @@ export async function updateCalendar(req, res) {
 
     const formSafeUpdateData = await enforceCalendarCustomFormAccess(
       existing,
-      withoutGoogleCalendarLinkMutation(updateData)
+      normalizeCalendarAvailabilityWrite(withoutGoogleCalendarLinkMutation(updateData))
     );
     const safeUpdateData = await enforceCalendarPaymentConfigAccess(existing, formSafeUpdateData);
     const paymentSourceConflict = await findCalendarPaymentSourceConflict(existing, safeUpdateData);
@@ -3206,6 +3282,8 @@ export async function updateCalendar(req, res) {
           customEvents,
           antiTrackingEnabled,
           anti_tracking_enabled,
+          availabilityScheduleConfigured,
+          availability_schedule_configured,
           ...remoteUpdateData
         } = safeUpdateData;
         const preservedBookingForm = bookingForm || calendar?.bookingForm || existing?.bookingForm;
@@ -3213,12 +3291,19 @@ export async function updateCalendar(req, res) {
         const preservedBookingPayment = bookingPayment || calendar?.bookingPayment || existing?.bookingPayment;
         const preservedCustomEvents = customEvents || calendar?.customEvents || existing?.customEvents;
         const remote = await calendarService.updateCalendar(remoteCalendarId, remoteUpdateData, context.accessToken);
-        calendar = await localCalendarService.upsertLocalCalendar(remote.calendar || remote, {
+        const remoteCalendar = remote.calendar || remote;
+        calendar = await localCalendarService.upsertLocalCalendar({
+          ...(remoteCalendar && typeof remoteCalendar === 'object' ? remoteCalendar : {}),
+          ...calendar,
+          id: existing.id,
+          ghlCalendarId: remoteCalendarId
+        }, {
           id: existing.id,
           source: existing.source,
           ghlCalendarId: remoteCalendarId,
           locationId: context.locationId || existing.locationId,
           syncStatus: 'synced',
+          acknowledgeLocalWrite: true,
           rawJson: {
             ...(remote && typeof remote === 'object' ? remote : {}),
             bookingForm: preservedBookingForm,

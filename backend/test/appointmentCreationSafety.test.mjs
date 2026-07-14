@@ -830,6 +830,57 @@ test('el endpoint conversacional v2 falla cerrado si el calendario configurado n
   }
 })
 
+test('el candado estricto no permite sobreagendar aunque el payload también pida forzar', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const calendarId = `calendar_strict_wins_${suffix}`
+  const startTime = '2099-07-22T15:00:00.000Z'
+  const endTime = '2099-07-22T16:00:00.000Z'
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda con candado estricto',
+      source: 'ristak',
+      allowBookingFor: 36500,
+      allowBookingForUnit: 'days',
+      openHours: [{
+        daysOfTheWeek: [0, 1, 2, 3, 4, 5, 6],
+        hours: [{ openHour: 0, openMinute: 0, closeHour: 24, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await createLocalAppointment({
+      calendarId,
+      title: 'Cita existente',
+      startTime,
+      endTime,
+      appointmentStatus: 'confirmed'
+    })
+
+    const response = createResponse()
+    await createAppointmentController({
+      body: {
+        calendarId,
+        title: 'Intento de sobreagenda contradictorio',
+        startTime,
+        endTime,
+        strictAvailabilityCheck: true,
+        ignoreAppointmentConflicts: true
+      }
+    }, response)
+
+    assert.equal(response.statusCode, 409)
+    assert.equal(response.body?.code, 'slot_unavailable')
+    const stored = await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
+      [calendarId]
+    )
+    assert.equal(Number(stored?.total || 0), 1)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
 test('alta v2 y alta legacy concurrentes serializan check+insert y no duplican el slot', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
   const calendarId = `calendar_mixed_race_${suffix}`

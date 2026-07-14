@@ -15,7 +15,10 @@ require.extensions['.ts'] = (module, filename) => {
   module._compile(outputText, filename);
 };
 
-const { isCurrentCalendarSlotSelection } = require('../src/calendarState.ts');
+const {
+  getAppointmentAvailabilityRequestFields,
+  isCurrentCalendarSlotSelection,
+} = require('../src/calendarState.ts');
 
 const freeSlots = [{
   date: '2026-07-10',
@@ -65,6 +68,22 @@ test('rechaza un slot de otra fecha o que ya desaparecio de disponibilidad', () 
   }), false);
 });
 
+test('crea con candado de disponibilidad solo desde un horario libre', () => {
+  assert.deepEqual(getAppointmentAvailabilityRequestFields({
+    formMode: 'create',
+    scheduleMode: 'default',
+  }), { strictAvailabilityCheck: true });
+
+  assert.deepEqual(getAppointmentAvailabilityRequestFields({
+    formMode: 'create',
+    scheduleMode: 'custom',
+  }), {});
+  assert.deepEqual(getAppointmentAvailabilityRequestFields({
+    formMode: 'edit',
+    scheduleMode: 'default',
+  }), {});
+});
+
 test('los deep links de cita esperan el bootstrap real antes de consumirse', () => {
   const source = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
 
@@ -82,8 +101,11 @@ test('cada formulario móvil conserva la llave de cita durante timeout y reinten
   const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
   const apiSource = fs.readFileSync(require.resolve('../src/api.ts'), 'utf8');
 
+  assert.match(appSource, /onSave\(draft, scheduleMode\)/);
+  assert.match(appSource, /\.\.\.getAppointmentAvailabilityRequestFields\(\{\s+formMode: appointmentMode,\s+scheduleMode,\s+\}\)/);
   assert.match(apiSource, /createAppointment\(appointmentData: Record<string, unknown>, clientRequestId\?: string\)/);
   assert.match(apiSource, /\.\.\.\(clientRequestId \? \{ clientRequestId \} : \{\}\)/);
   assert.match(appSource, /appointmentCreateIntentRef\.current = createIntent;\s+await api\.createAppointment\(payload, createIntent\.clientRequestId\)/);
+  assert.match(appSource, /const createAppointmentForContact = async \(\) => \{[\s\S]*?getAppointmentAvailabilityRequestFields\(\{\s+formMode: 'create',\s+scheduleMode: 'custom',\s+\}\)[\s\S]*?await api\.createAppointment\(payload, intent\.clientRequestId\)/);
   assert.match(appSource, /quickAppointmentIntentRef\.current = intent;\s+await api\.createAppointment\(payload, intent\.clientRequestId\)/);
 });

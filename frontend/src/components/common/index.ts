@@ -22,6 +22,20 @@ export { ConversionFunnelChart } from './ConversionFunnelChart'
 
 // Componentes de fecha
 export { DateRangePicker } from './DateRangePicker'
+export {
+  WeeklyAvailabilityEditor,
+  calendarDurationToMinutes,
+  createDefaultWeeklyAvailability,
+  openHoursToWeeklyAvailability,
+  summarizeWeeklyAvailability,
+  validateWeeklyAvailability,
+  weeklyAvailabilityToOpenHours
+} from './WeeklyAvailabilityEditor'
+export type {
+  WeeklyAvailability,
+  WeeklyAvailabilityDay,
+  WeeklyAvailabilityTimeRange
+} from './WeeklyAvailabilityEditor'
 
 // Componentes de filtros
 export { TreeFilter } from './TreeFilter'

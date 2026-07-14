@@ -3973,6 +3973,7 @@ async function initTablesUnlocked() {
         allow_booking_for INTEGER DEFAULT 30,
         allow_booking_for_unit TEXT DEFAULT 'days',
         open_hours TEXT,
+        availability_schedule_configured INTEGER NOT NULL DEFAULT 0,
         auto_confirm INTEGER DEFAULT 1,
         allow_reschedule INTEGER DEFAULT 1,
         allow_cancellation INTEGER DEFAULT 1,
@@ -4107,6 +4108,7 @@ async function initTablesUnlocked() {
       ['allow_booking_for', 'INTEGER DEFAULT 30'],
       ['allow_booking_for_unit', "TEXT DEFAULT 'days'"],
       ['open_hours', 'TEXT'],
+      ['availability_schedule_configured', 'INTEGER NOT NULL DEFAULT 0'],
       ['auto_confirm', 'INTEGER DEFAULT 1'],
       ['allow_reschedule', 'INTEGER DEFAULT 1'],
       ['allow_cancellation', 'INTEGER DEFAULT 1'],
@@ -4127,6 +4129,30 @@ async function initTablesUnlocked() {
         // Columna ya existe, ignorar.
       }
     }
+
+    // Antes del editor semanal, `open_hours` vacío significaba implícitamente
+    // Lun–Vie 09:00–17:00 en algunas superficies y "sin horario" en otras.
+    // Congelamos ese comportamiento legacy como configuración explícita una sola
+    // vez. Después, flag=1 + [] sí representa intencionalmente cero disponibilidad.
+    const defaultCalendarOpenHours = JSON.stringify([
+      {
+        daysOfTheWeek: [1, 2, 3, 4, 5],
+        hours: [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+      }
+    ])
+    await db.run(`
+      UPDATE calendars
+      SET availability_schedule_configured = 1
+      WHERE COALESCE(availability_schedule_configured, 0) = 0
+        AND open_hours IS NOT NULL
+        AND TRIM(open_hours) NOT IN ('', '[]')
+    `)
+    await db.run(`
+      UPDATE calendars
+      SET open_hours = ?, availability_schedule_configured = 1
+      WHERE COALESCE(availability_schedule_configured, 0) = 0
+        AND (open_hours IS NULL OR TRIM(open_hours) IN ('', '[]'))
+    `, [defaultCalendarOpenHours])
 
     // Señales irreversibles para atribución de asistencia.
     // No alteran el estado operativo del calendario.

@@ -91,11 +91,11 @@ test('calendar custom forms require the Forms/Sites plan features', async () => 
   assert.match(calendarsController, /Los formularios personalizados de calendario no están incluidos en tu plan actual/)
   assert.match(
     calendarsController,
-    /const formSafeCalendarData = await enforceCalendarCustomFormAccess\(\s*\{\},\s*withoutGoogleCalendarLinkMutation\(calendarData\)\s*\)/
+    /const formSafeCalendarData = await enforceCalendarCustomFormAccess\(\s*\{\},\s*normalizeCalendarAvailabilityWrite\(withoutGoogleCalendarLinkMutation\(calendarData\)\)\s*\)/
   )
   assert.match(
     calendarsController,
-    /const formSafeUpdateData = await enforceCalendarCustomFormAccess\(\s*existing,\s*withoutGoogleCalendarLinkMutation\(updateData\)\s*\)/
+    /const formSafeUpdateData = await enforceCalendarCustomFormAccess\(\s*existing,\s*normalizeCalendarAvailabilityWrite\(withoutGoogleCalendarLinkMutation\(updateData\)\)\s*\)/
   )
 
   assert.match(localCalendarService, /export function normalizeCalendarBookingFormConfig\(value = \{\}\)/)
@@ -103,7 +103,7 @@ test('calendar custom forms require the Forms/Sites plan features', async () => 
   assert.match(localCalendarService, /config\.useCustomForm && config\.customFormId && await canUseCalendarCustomForms\(\)/)
 
   assert.match(calendarsConfiguration, /const hasCalendarCustomFormsAccess = hasLicenseFeature\(user, \['forms'\]\) && hasLicenseFeature\(user, \['sites'\]\)/)
-  assert.match(calendarsConfiguration, /label: 'Datos', description: 'Campos básicos y cierre\.'/)
+  assert.match(calendarsConfiguration, /label: 'URL y Datos', description: 'Enlace, preguntas y cierre\.'/)
   assert.match(calendarsConfiguration, /if \(!hasCalendarCustomFormsAccess\) \{[\s\S]*setFormSites\(\[\]\)/)
   assert.match(calendarsConfiguration, /hasCalendarCustomFormsAccess && bookingFormConfig\.useCustomForm/)
 })

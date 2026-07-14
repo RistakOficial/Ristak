@@ -1560,12 +1560,39 @@ Reglas base:
 - La base guarda instantes en UTC.
 - Fechas de calendario se interpretan en zona del negocio.
 - No dependas del timezone del navegador para datos CRM.
+- `calendars.open_hours` (API `openHours`) es la fuente de verdad del horario
+  semanal. Usa días `0..6` (`0=domingo`) y admite varios rangos no solapados por
+  día. `availability_schedule_configured=1` distingue una agenda explícita vacía
+  (calendario cerrado) de un registro legacy todavía sin configurar; un formato
+  explícito ilegible falla cerrado y nunca inventa disponibilidad.
+- Los calendarios existentes sin horario se migran una sola vez al horario legacy
+  visible de lunes a viernes, 09:00–17:00. Los calendarios nuevos nacen con ese
+  mismo horario explícito para que pueda editarse o apagarse desde el primer uso.
+- En Configuración > Calendarios el wizard mantiene este orden: `Detalles`,
+  `Disponibilidad`, `URL y Datos`, `Cobro`, `Mensajes automáticos`, `Avanzado`,
+  `Eventos` y `Estilos y diseños`. `Disponibilidad` contiene primero el editor
+  semanal y debajo duración, cadencia, reglas y espacios entre citas. `URL y
+  Datos` reúne el enlace público, formulario y acción posterior al agendado.
+- El mismo horario semanal gobierna `free-slots`, URL pública, calendarios
+  embebidos/Sites, agente conversacional y los modales web, Android e iOS cuando
+  usan el modo `Por defecto`. El modo `Personalizado` es el override intencional
+  para capturar una hora manual y no debe heredar esa restricción.
+- Los rangos del horario semanal son horas de pared de la zona del negocio. Una
+  zona elegida por el visitante sólo cambia cómo se muestran los mismos instantes;
+  no desplaza el horario ni se usa para calcular qué espacios existen.
+- Toda reserva pública vuelve a validar, dentro del candado/transacción del
+  calendario, horario semanal, ventana, cupo diario, buffers, bloqueos y choques
+  justo antes del INSERT. Dos solicitudes simultáneas al mismo espacio no pueden
+  terminar en dos citas. Los flujos con cobro aplican esa validación cuando
+  finalmente intentan crear la cita; el pago pendiente no reserva el espacio.
 - Los calendarios espejados desde HighLevel siguen siendo calendarios locales
   utilizables aunque HighLevel se desconecte. Sus URLs publicas, disponibilidad
   y bookings deben resolverse contra la DB de Ristak; las citas nuevas,
   ediciones y eliminaciones quedan en `sync_status` pendiente/error/
   `pending_delete` y se empujan a HighLevel cuando la integracion vuelva a
-  conectarse.
+  conectarse. Mientras una edición local está `pending` o `error`, un refresh
+  entrante de HighLevel no puede pisar su `openHours`; primero se reintenta el
+  cambio local y sólo después el espejo vuelve a quedar `synced`.
 - Si HighLevel ya esta desconectado, un calendario espejado de HighLevel puede
   eliminarse de Ristak como copia local junto con sus citas locales asociadas.
   Mientras HighLevel siga configurado, el borrado local queda bloqueado porque
@@ -2862,7 +2889,10 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   HTML importado, pero expone `window.ristakCalendarGetSlots(slotId, params)` y
   `window.ristakCalendarBook(slotId, payload)` para mapearlo a un calendario de
   Ristak. `payload.startTime` debe ser ISO UTC y `payload.timezone` la zona
-  horaria usada para la cita; el backend valida disponibilidad antes de crearla.
+  horaria usada para mostrar la cita; el backend calcula con la zona del negocio
+  y valida disponibilidad antes de crearla. Aunque `free-slots` agrupe resultados
+  por día, el bridge devuelve al calendario importado sólo la lista plana del día
+  solicitado; no inventa ni mezcla espacios de otras fechas.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
   de pagos del editor. El `Purchase` sale solo del pago confirmado.
 - `video`: renderiza el bloque de video real de Ristak con la misma subida/URL,
@@ -4090,6 +4120,9 @@ nunca un booleano escrito por el modelo.
   La opcion blindada `allowOverlaps` se aplica igual en consulta, oferta,
   validacion previa al cobro, confirmacion automatica y solicitud humana; apagada
   exige slot libre y encendida permite el empalme sin saltarse horas de atencion.
+  En confirmacion y reagendamiento estrictos, el override de conflictos sólo se
+  acepta desde el contexto interno del agente que leyó esa configuración; una
+  bandera `ignoreAppointmentConflicts` enviada por un cliente no lo autoriza.
   El contacto solicitante de la cita es siempre el contacto canonico del hilo.
   `appointment_participants` conserva snapshots separados para `requester`,
   `primary_attendee` y cualquier cantidad acotada de `guest`; nombre es el unico

@@ -339,7 +339,9 @@ struct AppointmentDraftRequest: Encodable, Sendable {
     var notes: String?
     var address: String?
     var assignedUserId: String?
-    /// `true` fuerza sobreagendar tras un 409 `slot_unavailable`.
+    /// `true` exige que el horario siga perteneciendo a la disponibilidad del calendario.
+    var strictAvailabilityCheck: Bool?
+    /// `true` fuerza sobreagendar tras un 409 sólo cuando no hay candado estricto.
     var ignoreAppointmentConflicts: Bool?
 
     init(
@@ -353,6 +355,7 @@ struct AppointmentDraftRequest: Encodable, Sendable {
         notes: String? = nil,
         address: String? = nil,
         assignedUserId: String? = nil,
+        strictAvailabilityCheck: Bool? = nil,
         ignoreAppointmentConflicts: Bool? = nil
     ) {
         self.calendarId = calendarId
@@ -365,6 +368,7 @@ struct AppointmentDraftRequest: Encodable, Sendable {
         self.notes = notes
         self.address = address
         self.assignedUserId = assignedUserId
+        self.strictAvailabilityCheck = strictAvailabilityCheck
         self.ignoreAppointmentConflicts = ignoreAppointmentConflicts
     }
 }
@@ -374,7 +378,8 @@ struct AppointmentDraftRequest: Encodable, Sendable {
 extension RistakAPIError {
     /// `POST /api/calendars/appointments` → 409 `code:"slot_unavailable"`.
     /// Mensaje del backend: «Ese horario ya alcanzó el límite de citas…».
-    /// Reintentar con `ignoreAppointmentConflicts: true` sobreagenda.
+    /// Reintentar con `ignoreAppointmentConflicts: true` sobreagenda únicamente
+    /// en modo personalizado/legacy; un request estricto no permite el override.
     var isSlotUnavailable: Bool {
         status == 409 && code == "slot_unavailable"
     }

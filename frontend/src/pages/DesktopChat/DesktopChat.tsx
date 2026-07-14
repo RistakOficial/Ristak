@@ -5758,7 +5758,10 @@ export const DesktopChat: React.FC = () => {
     setAppointmentOpen(true)
   }, [activeContact, contactInfoData, locationId, selectedCalendar, timezone])
 
-  const handleSaveAppointment = async (eventIdOrPayload: string | Partial<CalendarEvent>, updates?: Partial<CalendarEvent>) => {
+  const handleSaveAppointment = async (
+    eventIdOrPayload: string | (Partial<CalendarEvent> & { strictAvailabilityCheck?: true }),
+    updates?: Partial<CalendarEvent>
+  ) => {
     if (typeof eventIdOrPayload === 'string') {
       if (!updates) return
       await calendarsService.updateAppointment(eventIdOrPayload, updates, accessToken || undefined)

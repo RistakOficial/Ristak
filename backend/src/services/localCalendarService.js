@@ -35,6 +35,12 @@ import { getConversationalTestMode } from '../agents/conversational/nativeRuntim
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
 const DEFAULT_EVENT_COLOR = '#3b82f6'
+const DEFAULT_CALENDAR_OPEN_HOURS = [
+  {
+    daysOfTheWeek: [1, 2, 3, 4, 5],
+    hours: [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+  }
+]
 const DEFAULT_BOOKING_COMPLETION_MESSAGE = 'Listo. Tu cita quedo agendada.'
 const DEFAULT_CALENDAR_META_EVENT_NAME = 'Schedule'
 const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
@@ -106,6 +112,13 @@ const CALENDAR_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 
 const CALENDAR_FORM_ALL_BLOCK_TYPES = new Set([...CALENDAR_FORM_FIELD_TYPES, ...CALENDAR_FORM_CONTENT_BLOCK_TYPES])
 const CALENDAR_SLUG_MAX_LENGTH = 80
 const DEFAULT_CALENDAR_PHONE_LOCALE = { countryCode: 'MX', dialCode: '52' }
+
+export function createDefaultCalendarOpenHours() {
+  return DEFAULT_CALENDAR_OPEN_HOURS.map(schedule => ({
+    daysOfTheWeek: [...schedule.daysOfTheWeek],
+    hours: schedule.hours.map(hours => ({ ...hours }))
+  }))
+}
 
 function makeId(prefix) {
   return createEntityId(prefix)
@@ -1315,10 +1328,118 @@ function normalizeOpenHours(value) {
   return Array.isArray(parsed) ? parsed : []
 }
 
+function calendarAvailabilityRecord(value = {}) {
+  return value?.calendar && typeof value.calendar === 'object' ? value.calendar : value
+}
+
+function hasExplicitCalendarOpenHours(value = {}) {
+  const calendar = calendarAvailabilityRecord(value)
+  return Boolean(
+    calendar
+    && typeof calendar === 'object'
+    && (
+      Object.prototype.hasOwnProperty.call(calendar, 'openHours')
+      || Object.prototype.hasOwnProperty.call(calendar, 'open_hours')
+    )
+  )
+}
+
+function calendarAvailabilityInputError(message) {
+  const error = new Error(message)
+  error.status = 400
+  error.code = 'invalid_calendar_open_hours'
+  return error
+}
+
+function calendarOpenIntervalMinuteBounds(interval) {
+  return {
+    start: interval.openHour * 60 + interval.openMinute,
+    end: interval.closeHour * 60 + interval.closeMinute
+  }
+}
+
+/**
+ * Contrato estricto para escrituras desde Configuración/API.
+ * Devuelve una entrada canónica por día (0=domingo) y conserva múltiples rangos.
+ * Lecturas/importaciones históricas siguen siendo tolerantes y fallan cerrado al
+ * calcular slots si el proveedor trae un formato que no se puede interpretar.
+ */
+export function normalizeCalendarOpenHoursForWrite(value) {
+  const parsed = parseJson(value, value)
+  if (!Array.isArray(parsed)) {
+    throw calendarAvailabilityInputError('La disponibilidad semanal debe ser una lista de días y horarios.')
+  }
+  if (!parsed.length) return []
+
+  const rangesByDay = new Map()
+  for (const schedule of parsed) {
+    if (!schedule || typeof schedule !== 'object' || Array.isArray(schedule)) {
+      throw calendarAvailabilityInputError('Hay un día de disponibilidad con formato inválido.')
+    }
+
+    const rawDays = Array.isArray(schedule.daysOfTheWeek)
+      ? schedule.daysOfTheWeek
+      : schedule.day !== undefined
+        ? [schedule.day]
+        : schedule.dayOfWeek !== undefined
+          ? [schedule.dayOfWeek]
+          : []
+    const normalizedDays = rawDays.map(normalizeWeekDay)
+    if (normalizedDays.some(day => day === null)) {
+      throw calendarAvailabilityInputError('La disponibilidad contiene un día de la semana inválido.')
+    }
+    const days = [...new Set(normalizedDays)]
+    if (!days.length) {
+      throw calendarAvailabilityInputError('Cada horario disponible debe indicar al menos un día válido.')
+    }
+
+    const rawHours = Array.isArray(schedule.hours) ? schedule.hours : [schedule]
+    if (!rawHours.length) {
+      throw calendarAvailabilityInputError('Cada día activo debe tener al menos un rango de horas.')
+    }
+
+    const hours = rawHours.map((rawInterval) => {
+      const interval = normalizeCalendarOpenInterval(rawInterval, { allowFallback: false })
+      if (!interval) {
+        throw calendarAvailabilityInputError('Cada rango debe tener una hora inicial y final válidas dentro del mismo día.')
+      }
+      if (interval.closeHour === 24) {
+        throw calendarAvailabilityInputError('La hora final máxima es 11:59 PM para mantener compatibilidad con los calendarios conectados.')
+      }
+      return interval
+    })
+
+    for (const day of days) {
+      const current = rangesByDay.get(day) || []
+      current.push(...hours.map(interval => ({ ...interval })))
+      rangesByDay.set(day, current)
+    }
+  }
+
+  return [...rangesByDay.entries()]
+    .sort(([dayA], [dayB]) => dayA - dayB)
+    .map(([day, hours]) => {
+      const sorted = hours.sort((a, b) => {
+        const boundsA = calendarOpenIntervalMinuteBounds(a)
+        const boundsB = calendarOpenIntervalMinuteBounds(b)
+        return boundsA.start - boundsB.start || boundsA.end - boundsB.end
+      })
+      for (let index = 1; index < sorted.length; index += 1) {
+        const previous = calendarOpenIntervalMinuteBounds(sorted[index - 1])
+        const current = calendarOpenIntervalMinuteBounds(sorted[index])
+        if (current.start < previous.end) {
+          throw calendarAvailabilityInputError('Los rangos de un mismo día no pueden empalmarse.')
+        }
+      }
+      return { daysOfTheWeek: [day], hours: sorted }
+    })
+}
+
 function calendarRowToApi(row = {}) {
   const teamMembers = normalizeTeamMembers(row.team_members)
   const locationConfigurations = normalizeLocationConfigurations(row.location_configurations)
   const openHours = normalizeOpenHours(row.open_hours)
+  const availabilityScheduleConfigured = Number(row.availability_schedule_configured) === 1 || openHours.length > 0
   const rawJson = parseJson(row.raw_json, {})
 
   return {
@@ -1357,6 +1478,7 @@ function calendarRowToApi(row = {}) {
     allowBookingFor: toInt(row.allow_booking_for, 30),
     allowBookingForUnit: row.allow_booking_for_unit || 'days',
     openHours,
+    availabilityScheduleConfigured,
     autoConfirm: row.auto_confirm !== 0,
     allowReschedule: row.allow_reschedule !== 0,
     allowCancellation: row.allow_cancellation !== 0,
@@ -1385,6 +1507,11 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
     makeId(LOCAL_CALENDAR_PREFIX)
   const name = cleanString(calendar.name || calendar.title || calendar.calendarName || 'Calendario Ristak')
   const slotDuration = toInt(calendar.slotDuration ?? calendar.slot_duration, 60)
+  const openHours = normalizeOpenHours(calendar.openHours ?? calendar.open_hours)
+  const availabilityScheduleConfigured = toBoolInt(
+    calendar.availabilityScheduleConfigured ?? calendar.availability_schedule_configured,
+    hasExplicitCalendarOpenHours(calendar) || openHours.length > 0
+  )
   const explicitSlug = cleanString(calendar.slug || '')
   const explicitWidgetSlug = cleanString(calendar.widgetSlug || calendar.widget_slug || '')
   const generatedSlug = slugify(name, id)
@@ -1424,7 +1551,8 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
     allowBookingAfterUnit: cleanString(calendar.allowBookingAfterUnit || calendar.allow_booking_after_unit || 'hours') || 'hours',
     allowBookingFor: toInt(calendar.allowBookingFor ?? calendar.allow_booking_for, 30),
     allowBookingForUnit: cleanString(calendar.allowBookingForUnit || calendar.allow_booking_for_unit || 'days') || 'days',
-    openHours: normalizeOpenHours(calendar.openHours || calendar.open_hours),
+    openHours,
+    availabilityScheduleConfigured,
     autoConfirm: toBoolInt(calendar.autoConfirm ?? calendar.auto_confirm, true),
     allowReschedule: toBoolInt(calendar.allowReschedule ?? calendar.allow_reschedule, true),
     allowCancellation: toBoolInt(calendar.allowCancellation ?? calendar.allow_cancellation, true),
@@ -1519,6 +1647,33 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
     ? existingByGhl
     : await db.get('SELECT * FROM calendars WHERE id = ?', [normalized.id])
 
+  const pendingLocalWrite = existingById
+    && ['pending', 'error'].includes(cleanString(existingById.sync_status).toLowerCase())
+  const incomingMirrorWithoutWriteAck = pendingLocalWrite
+    && cleanString(options.syncStatus).toLowerCase() === 'synced'
+    && options.acknowledgeLocalWrite !== true
+  if (incomingMirrorWithoutWriteAck) {
+    // Un GET/refresh de HighLevel no es confirmación de nuestro PUT pendiente.
+    // Ignorarlo completo evita que una respuesta vieja borre horarios, duración
+    // u otras ediciones locales y, además, conserva vivo el retry.
+    return calendarRowToApi(existingById)
+  }
+
+  // Respuestas de espejos externos pueden omitir `openHours`. Esa omisión no
+  // autoriza a borrar la agenda semanal que el negocio configuró en Ristak.
+  const pendingLocalAvailability = pendingLocalWrite
+    && (
+      Number(existingById.availability_schedule_configured) === 1
+      || normalizeOpenHours(existingById.open_hours).length > 0
+    )
+  if (existingById && (!hasExplicitCalendarOpenHours(raw) || pendingLocalAvailability)) {
+    normalized.openHours = normalizeOpenHours(existingById.open_hours)
+    normalized.availabilityScheduleConfigured = (
+      Number(existingById.availability_schedule_configured) === 1
+      || normalized.openHours.length > 0
+    ) ? 1 : 0
+  }
+
   if (existingById && !hasExplicitGoogleCalendarLinkInput(raw, options)) {
     preserveExistingGoogleCalendarMetadata(normalized, existingById)
   }
@@ -1550,10 +1705,11 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
       slot_interval, slot_interval_unit, slot_buffer, slot_buffer_unit,
       pre_buffer, pre_buffer_unit, appoinment_per_slot, appoinment_per_day,
       allow_booking_after, allow_booking_after_unit, allow_booking_for,
-      allow_booking_for_unit, open_hours, auto_confirm, allow_reschedule,
+      allow_booking_for_unit, open_hours, availability_schedule_configured,
+      auto_confirm, allow_reschedule,
       allow_cancellation, notes, availability_type, anti_tracking_enabled, source, sync_status,
       sync_error, last_synced_at, raw_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT (id) DO UPDATE SET
       ghl_calendar_id = COALESCE(excluded.ghl_calendar_id, calendars.ghl_calendar_id),
       location_id = COALESCE(excluded.location_id, calendars.location_id),
@@ -1583,6 +1739,7 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
       allow_booking_for = excluded.allow_booking_for,
       allow_booking_for_unit = excluded.allow_booking_for_unit,
       open_hours = COALESCE(excluded.open_hours, calendars.open_hours),
+      availability_schedule_configured = excluded.availability_schedule_configured,
       auto_confirm = excluded.auto_confirm,
       allow_reschedule = excluded.allow_reschedule,
       allow_cancellation = excluded.allow_cancellation,
@@ -1628,6 +1785,7 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
     normalized.allowBookingFor,
     normalized.allowBookingForUnit,
     jsonOrNull(normalized.openHours),
+    normalized.availabilityScheduleConfigured,
     normalized.autoConfirm,
     normalized.allowReschedule,
     normalized.allowCancellation,
@@ -1648,6 +1806,10 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
 
 export async function createLocalCalendar(calendarData = {}, { allowGoogleSyncMetadata = false } = {}) {
   const connectedMetaDataset = await hasConnectedMetaDatasetConfig()
+  const hasAvailabilityInput = hasExplicitCalendarOpenHours(calendarData)
+  const openHours = hasAvailabilityInput
+    ? normalizeOpenHours(calendarData.openHours ?? calendarData.open_hours)
+    : createDefaultCalendarOpenHours()
   const customEvents = connectedMetaDataset
     ? {
         ...normalizeCalendarCustomEventsConfig(
@@ -1664,6 +1826,10 @@ export async function createLocalCalendar(calendarData = {}, { allowGoogleSyncMe
   return upsertLocalCalendar({
     ...calendarData,
     ...(connectedMetaDataset ? { customEvents } : {}),
+    openHours,
+    availabilityScheduleConfigured: calendarData.availabilityScheduleConfigured
+      ?? calendarData.availability_schedule_configured
+      ?? true,
     id: calendarData.id || makeId(LOCAL_CALENDAR_PREFIX),
     source: 'ristak'
   }, {
@@ -6074,22 +6240,29 @@ export async function resolveOrCreateContactForGoogleAppointment({ email, name, 
 // Normaliza un día a número 0..6 (igual que Date.getDay(): 0=domingo).
 // Acepta number o string ("1") y la convención ISO 7=domingo -> 0.
 function normalizeWeekDay(value) {
+  if (value === null || value === undefined || typeof value === 'boolean' || cleanString(value) === '') return null
   const n = Number(value)
-  if (!Number.isFinite(n)) return null
+  if (!Number.isInteger(n)) return null
   if (n === 7) return 0
   return n >= 0 && n <= 6 ? n : null
 }
 
 function getCalendarOpenIntervals(calendar, date, { allowDefault = true } = {}) {
   const openHours = normalizeOpenHours(calendar.openHours || calendar.open_hours)
+  const availabilityScheduleConfigured = (
+    calendar.availabilityScheduleConfigured === true
+    || Number(calendar.availability_schedule_configured) === 1
+    || openHours.length > 0
+  )
   const jsDay = date.getDay()
 
-  // Horario por defecto (Lun-Vie 9-17) cuando NO hay openHours configurados.
+  // Compatibilidad exclusiva para registros legacy que todavía no pasaron por el
+  // backfill. Una agenda explícitamente configurada como [] significa cerrada.
   const defaultIntervalsForDay = () =>
     (jsDay === 0 || jsDay === 6) ? [] : [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
 
   if (!openHours.length) {
-    return allowDefault ? defaultIntervalsForDay() : []
+    return allowDefault && !availabilityScheduleConfigured ? defaultIntervalsForDay() : []
   }
 
   let matchedAnyDay = false
@@ -6114,11 +6287,10 @@ function getCalendarOpenIntervals(calendar, date, { allowDefault = true } = {}) 
     intervals.push(...hours)
   }
 
-  // Salvaguarda anti-bloqueo: si había openHours pero NINGUNA entrada tenía días
-  // utilizables (formato no reconocido), degradamos al horario por defecto en vez de
-  // dejar el calendario público sin un solo día agendable.
+  // Un formato configurado pero ilegible falla cerrado. No inventamos 9–17 si el
+  // usuario o un proveedor guardó una agenda explícita que no podemos interpretar.
   if (!matchedAnyDay) {
-    return allowDefault ? defaultIntervalsForDay() : []
+    return allowDefault && !availabilityScheduleConfigured ? defaultIntervalsForDay() : []
   }
 
   return intervals
@@ -6135,6 +6307,19 @@ function normalizeCalendarOpenInterval(interval, { allowFallback = true } = {}) 
       closeMinute: toInt(interval.closeMinute, 0)
     }
   }
+
+  const rawParts = [
+    interval.openHour,
+    interval.openMinute,
+    interval.closeHour,
+    interval.closeMinute
+  ]
+  if (rawParts.some(value => (
+    value === null
+    || value === undefined
+    || typeof value === 'boolean'
+    || cleanString(value) === ''
+  ))) return null
 
   const normalized = {
     openHour: Number(interval.openHour),
@@ -6159,6 +6344,22 @@ function checkStrictSlotOpenHours(calendar, slotStartMs, slotEndMs, zone) {
   const slotEnd = DateTime.fromMillis(slotEndMs, { zone })
   if (!slotStart.isValid || !slotEnd.isValid) {
     return { available: false, reason: 'invalid_slot' }
+  }
+
+  const expectedDurationMinutes = Math.max(1, calendarDurationToMinutes(
+    calendar.slotDuration,
+    calendar.slotDurationUnit,
+    60
+  ))
+  const expectedDurationMs = expectedDurationMinutes * 60 * 1000
+  const actualDurationMs = slotEndMs - slotStartMs
+  if (actualDurationMs !== expectedDurationMs) {
+    return {
+      available: false,
+      reason: 'slot_duration_mismatch',
+      expectedDurationMinutes,
+      actualDurationMinutes: actualDurationMs / (60 * 1000)
+    }
   }
 
   const intervals = getCalendarOpenIntervals(
@@ -6357,7 +6558,13 @@ export async function checkSlotAvailability(calendarId, startTime, endTime, opti
         available: false,
         limit,
         overlapping: 0,
-        reason: openHoursCheck.reason
+        reason: openHoursCheck.reason,
+        ...(openHoursCheck.expectedDurationMinutes !== undefined
+          ? { expectedDurationMinutes: openHoursCheck.expectedDurationMinutes }
+          : {}),
+        ...(openHoursCheck.actualDurationMinutes !== undefined
+          ? { actualDurationMinutes: openHoursCheck.actualDurationMinutes }
+          : {})
       }
     }
   }
@@ -6673,7 +6880,15 @@ function buildHighLevelCalendarPayload(calendar = {}, locationId) {
 
   if (teamMembers.length) payload.teamMembers = teamMembers
   if (locationConfigurations.length) payload.locationConfigurations = locationConfigurations
-  if (normalizeOpenHours(calendar.openHours).length) payload.openHours = normalizeOpenHours(calendar.openHours)
+  const openHours = normalizeOpenHours(calendar.openHours)
+  if (
+    calendar.availabilityScheduleConfigured === true
+    || Number(calendar.availability_schedule_configured) === 1
+    || Number(calendar.availabilityScheduleConfigured) === 1
+    || openHours.length
+  ) {
+    payload.openHours = openHours
+  }
   if (calendar.notes) payload.notes = calendar.notes
   if (calendar.availabilityType !== undefined) payload.availabilityType = calendar.availabilityType
   if (calendar.preBuffer) payload.preBuffer = calendar.preBuffer
@@ -6758,7 +6973,10 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
       }
 
       if (response) {
-        // Ya encontramos un calendario remoto equivalente; solo ligamos IDs.
+        // El match evita duplicar, pero todavía debemos aplicar la versión local
+        // antes de reconocer el write como sincronizado.
+        response = await highlevelCalendarService.updateCalendar(ghlCalendarId, payload, apiToken)
+        updated += 1
       } else if (ghlCalendarId) {
         response = await highlevelCalendarService.updateCalendar(ghlCalendarId, payload, apiToken)
         updated += 1
@@ -6775,8 +6993,8 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
       }
 
       await upsertLocalCalendar({
-        ...calendar,
         ...remoteCalendar,
+        ...calendar,
         id: calendar.id,
         ghlCalendarId,
         locationId,
@@ -6788,6 +7006,7 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
         ghlCalendarId,
         locationId,
         syncStatus: 'synced',
+        acknowledgeLocalWrite: true,
         rawJson: remoteCalendar
       })
     } catch (error) {

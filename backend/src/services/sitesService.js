@@ -23596,8 +23596,42 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       }
       return data;
     };
-    const slotStartValue = (slot) => String(slot && (slot.startTime || slot.start_time || slot.start || slot.iso || slot.value) || '');
-    const slotLabel = (slot) => String(slot && (slot.label || slot.display || slot.localTime || slot.local_time || slotStartValue(slot)) || 'Horario');
+    const slotStartValue = (slot) => typeof slot === 'string'
+      ? slot
+      : String(slot && (slot.startTime || slot.start_time || slot.start || slot.iso || slot.value) || '');
+    const slotLabel = (slot) => typeof slot === 'string'
+      ? slot
+      : String(slot && (slot.label || slot.display || slot.localTime || slot.local_time || slotStartValue(slot)) || 'Horario');
+    const slotDateInTimezone = (slot, timezone) => {
+      const startValue = slotStartValue(slot);
+      const instant = new Date(startValue);
+      if (!startValue || Number.isNaN(instant.getTime())) return '';
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          ...(timezone ? { timeZone: timezone } : {}),
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).formatToParts(instant);
+        const values = {};
+        parts.forEach(part => {
+          if (part.type !== 'literal') values[part.type] = part.value;
+        });
+        return values.year && values.month && values.day
+          ? values.year + '-' + values.month + '-' + values.day
+          : '';
+      } catch {
+        return '';
+      }
+    };
+    const slotsForSelectedDate = (slots, selectedDate, timezone) => {
+      const list = Array.isArray(slots) ? slots : [];
+      const hasDayGroups = list.some(day => day && typeof day === 'object' && Array.isArray(day.slots));
+      if (!hasDayGroups) return list;
+      return list
+        .flatMap(day => Array.isArray(day && day.slots) ? day.slots : [])
+        .filter(slot => slotDateInTimezone(slot, timezone) === selectedDate);
+    };
     const wireDeclarativeCalendar = (root) => {
       if (!root || root.dataset.rstkCalendarWired === 'true') return;
       const slotId = root.getAttribute('data-rstk-native-slot-id') || '';
@@ -23627,9 +23661,9 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
             endDate: String(endDateInput && endDateInput.value || startDate),
             timezone: config.timezone || ''
           });
-          const list = Array.isArray(slots) ? slots : [];
+          const list = slotsForSelectedDate(slots, startDate, config.timezone || '')
+            .filter(slot => slotStartValue(slot));
           slotsField.innerHTML = '<option value="">Selecciona un horario</option>' + list
-            .filter(slot => slotStartValue(slot))
             .map(slot => '<option value="' + slotStartValue(slot).replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">' + slotLabel(slot).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</option>')
             .join('');
           setMessage(list.length ? '' : 'No hay horarios disponibles para esa fecha.', list.length ? '' : 'empty');

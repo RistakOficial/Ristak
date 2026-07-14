@@ -1,9 +1,15 @@
 import { tool } from '@openai/agents'
 import { z } from 'zod'
 import { db } from '../../config/database.js'
-import { listLocalCalendars, getLocalFreeSlots } from '../../services/localCalendarService.js'
+import {
+  calendarDurationToMinutes,
+  getLocalCalendar,
+  getLocalFreeSlots,
+  listLocalCalendars
+} from '../../services/localCalendarService.js'
 import { createAppointment, updateAppointment, deleteEvent } from '../../controllers/calendarsController.js'
 import { invokeController, toToolResult } from '../invokeController.js'
+import { getAccountTimezone } from '../../utils/dateUtils.js'
 
 const APPOINTMENT_FIELDS = (row) => ({
   id: row.id,
@@ -78,11 +84,32 @@ export const getFreeSlotsTool = tool({
     endDate: z.string().describe('Fecha final YYYY-MM-DD')
   }),
   execute: async ({ calendarId, startDate, endDate }) => {
-    const slots = await getLocalFreeSlots(calendarId, startDate, endDate, null)
-    if (!Array.isArray(slots) || !slots.length) {
+    const calendar = await getLocalCalendar(calendarId)
+    if (!calendar) {
       return { ok: true, total: 0, slots: [], note: 'Sin horarios disponibles en ese rango (o el calendario no existe).' }
     }
-    return { ok: true, total: slots.length, slots }
+    const durationMinutes = Math.max(1, calendarDurationToMinutes(
+      calendar.slotDuration,
+      calendar.slotDurationUnit,
+      60
+    ))
+    const timezone = await getAccountTimezone()
+    const slots = await getLocalFreeSlots(calendarId, startDate, endDate, timezone, {
+      allowDefaultOpenHours: false
+    })
+    const availableDays = (Array.isArray(slots) ? slots : [])
+      .filter((day) => Array.isArray(day?.slots) && day.slots.length > 0)
+    const total = availableDays.reduce((sum, day) => sum + day.slots.length, 0)
+    if (!total) {
+      return {
+        ok: true,
+        total: 0,
+        durationMinutes,
+        slots: [],
+        note: 'Sin horarios disponibles en ese rango.'
+      }
+    }
+    return { ok: true, total, durationMinutes, slots: availableDays }
   }
 })
 
@@ -94,18 +121,38 @@ export const createAppointmentTool = tool({
     contactId: z.string().describe('ID del contacto'),
     title: z.string().describe('Título de la cita'),
     startTime: z.string().describe('Inicio en ISO 8601 con zona horaria (ej. 2026-06-15T10:00:00-06:00)'),
-    endTime: z.string().describe('Fin en ISO 8601 con zona horaria'),
+    endTime: z.preprocess(
+      (value) => value ?? null,
+      z.string().nullable()
+    ).describe('Fin sugerido por compatibilidad; Ristak siempre lo recalcula con la duración configurada del calendario'),
     notes: z.string().nullable().describe('Notas opcionales de la cita')
   }),
-  execute: async ({ calendarId, contactId, title, startTime, endTime, notes }) => {
+  execute: async ({ calendarId, contactId, title, startTime, notes }) => {
+    const calendar = await getLocalCalendar(calendarId)
+    if (!calendar) {
+      return { ok: false, error: 'Calendario no encontrado: usa list_calendars para obtener el ID real.' }
+    }
+    const startMs = new Date(startTime).getTime()
+    if (!Number.isFinite(startMs)) {
+      return { ok: false, error: 'La hora de inicio no es válida. Consulta get_free_slots y usa uno de sus horarios exactos.' }
+    }
+    const durationMinutes = Math.max(1, calendarDurationToMinutes(
+      calendar.slotDuration,
+      calendar.slotDurationUnit,
+      60
+    ))
+    const configuredEndTime = new Date(startMs + durationMinutes * 60 * 1000).toISOString()
     const result = await invokeController(createAppointment, {
       body: {
         calendarId,
         contactId,
         title,
         startTime,
-        endTime,
-        notes: notes || undefined
+        endTime: configuredEndTime,
+        notes: notes || undefined,
+        strictAvailabilityCheck: true,
+        ignoreAppointmentConflicts: false,
+        source: 'general_agent'
       }
     })
     return toToolResult(result, (data) => ({
@@ -113,6 +160,7 @@ export const createAppointmentTool = tool({
       title: data?.title,
       startTime: data?.startTime || data?.start_time,
       endTime: data?.endTime || data?.end_time,
+      durationMinutes,
       status: data?.appointmentStatus || data?.appointment_status || data?.status
     }))
   }
@@ -120,22 +168,58 @@ export const createAppointmentTool = tool({
 
 export const updateAppointmentTool = tool({
   name: 'update_appointment',
-  description: 'Reprograma o modifica una cita existente (horario, título, notas o estatus). Solo envía los campos que cambian. Estatus válidos: confirmed, pending, cancelled, showed, noshow.',
+  description: 'Reprograma o modifica una cita existente (horario, título, notas o estatus). Para cambiar el horario manda startTime; Ristak deriva el fin con la duración configurada del calendario. Solo envía los campos que cambian. Estatus válidos: confirmed, pending, cancelled, showed, noshow.',
   parameters: z.object({
     appointmentId: z.string().describe('ID de la cita (usa list_appointments para obtenerlo)'),
     title: z.string().nullable().describe('Nuevo título'),
     startTime: z.string().nullable().describe('Nuevo inicio ISO 8601 con zona horaria'),
-    endTime: z.string().nullable().describe('Nuevo fin ISO 8601 con zona horaria'),
+    endTime: z.string().nullable().describe('Fin sugerido por compatibilidad; al reagendar Ristak lo recalcula desde startTime'),
     notes: z.string().nullable().describe('Nuevas notas'),
     appointmentStatus: z.string().nullable().describe('Nuevo estatus: confirmed | pending | cancelled | showed | noshow')
   }),
   execute: async ({ appointmentId, title, startTime, endTime, notes, appointmentStatus }) => {
     const body = {}
     if (title !== null && title !== undefined) body.title = title
-    if (startTime !== null && startTime !== undefined) body.startTime = startTime
-    if (endTime !== null && endTime !== undefined) body.endTime = endTime
     if (notes !== null && notes !== undefined) body.notes = notes
     if (appointmentStatus !== null && appointmentStatus !== undefined) body.appointmentStatus = appointmentStatus
+
+    const changesStartTime = startTime !== null && startTime !== undefined
+    const changesEndTime = endTime !== null && endTime !== undefined
+    let durationMinutes = null
+    if (changesEndTime && !changesStartTime) {
+      return {
+        ok: false,
+        error: 'Para reagendar envía startTime. El fin se calcula con la duración configurada del calendario.'
+      }
+    }
+    if (changesStartTime) {
+      const appointment = await db.get(
+        `SELECT id, calendar_id FROM appointments
+         WHERE id = ? AND deleted_at IS NULL
+         LIMIT 1`,
+        [appointmentId]
+      )
+      if (!appointment?.calendar_id) {
+        return { ok: false, error: 'No se encontró la cita o ya no pertenece a un calendario activo.' }
+      }
+      const calendar = await getLocalCalendar(appointment.calendar_id)
+      if (!calendar) {
+        return { ok: false, error: 'El calendario de la cita ya no existe o no está disponible.' }
+      }
+      const startMs = new Date(startTime).getTime()
+      if (!Number.isFinite(startMs)) {
+        return { ok: false, error: 'La nueva hora de inicio no es válida.' }
+      }
+      durationMinutes = Math.max(1, calendarDurationToMinutes(
+        calendar.slotDuration,
+        calendar.slotDurationUnit,
+        60
+      ))
+      body.startTime = startTime
+      body.endTime = new Date(startMs + durationMinutes * 60 * 1000).toISOString()
+      body.strictAvailabilityCheck = true
+      body.ignoreAppointmentConflicts = false
+    }
 
     if (!Object.keys(body).length) {
       return { ok: false, error: 'No enviaste ningún campo a actualizar' }
@@ -147,6 +231,7 @@ export const updateAppointmentTool = tool({
       title: data?.title,
       startTime: data?.startTime || data?.start_time,
       endTime: data?.endTime || data?.end_time,
+      ...(durationMinutes ? { durationMinutes } : {}),
       status: data?.appointmentStatus || data?.appointment_status || data?.status
     }))
   }
