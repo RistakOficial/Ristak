@@ -840,7 +840,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {showUserMenu && (
             <div
               data-ristak-user-menu
-              className="absolute left-2 top-[calc(100%_-_0.5rem)] z-[var(--z-index-popover)] flex max-h-[calc(100vh_-_var(--header-height)_-_1rem)] w-[min(22rem,calc(100vw_-_1rem))] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-pop)]"
+              className="absolute left-[calc(100%_+_0.5rem)] top-2 z-[var(--z-index-popover)] flex max-h-[calc(100vh_-_1rem)] w-[min(22rem,calc(100vw_-_100%_-_1rem))] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-pop)]"
               role="menu"
             >
               <div className="border-b border-[var(--border)] p-4">

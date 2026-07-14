@@ -146,6 +146,12 @@ chicas usando `flex`, `grid`, `minmax`, `clamp`, `min-width: 0`, container/media
 queries y variables del componente. Lo que no se permite es crear otro estilo
 visual por página para "resolver" pantallas chicas.
 
+**Menú de usuario del sidebar:** el panel de cuenta y temas se abre como popover
+lateral, anclado al borde exterior derecho del sidebar y alineado con el bloque
+del usuario. Nunca debe desplegarse encima de la navegación. Su ancho se limita
+al espacio disponible del viewport y su contenido puede desplazarse verticalmente
+cuando la ventana es chica.
+
 ### 4.1 Confirmaciones destructivas (borrar / desconectar / revocar) — el ÚNICO patrón
 
 Toda confirmación previa a una acción **destructiva o irreversible** usa **el mismo
