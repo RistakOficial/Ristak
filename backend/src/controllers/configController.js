@@ -6,7 +6,11 @@ import {
   ACCOUNT_DIAL_CODE_CONFIG_KEY,
   getAccountLocaleSettings
 } from '../utils/accountLocale.js'
-import { ACCOUNT_TIMEZONE_CONFIG_KEY, getAccountTimezone } from '../utils/dateUtils.js'
+import {
+  ACCOUNT_TIMEZONE_CONFIG_KEY,
+  getAccountTimezone,
+  invalidateTimezoneCache
+} from '../utils/dateUtils.js'
 
 const SENSITIVE_CONFIG_KEY_PATTERN = /(private_key|secret|password|api_token|access_token|refresh_token|service_account|client_secret|webhook_secret)/i
 const META_SOCIAL_MESSAGING_PLATFORM_BY_KEY = {
@@ -124,6 +128,7 @@ export async function getConfig(req, res) {
 // limpiamos el timestamp.
 async function setAppConfigStamped(k, v) {
   await setAppConfig(k, v)
+  if (k === ACCOUNT_TIMEZONE_CONFIG_KEY) invalidateTimezoneCache()
   if (k === 'meta_test_event_code') {
     await setAppConfig('meta_test_event_code_set_at', String(v ?? '').trim() ? String(Date.now()) : '')
   }
@@ -237,7 +242,12 @@ export async function deleteConfig(req, res) {
     const keyArray = keys.split(',').map(k => k.trim())
 
     for (const key of keyArray) {
-      await db.run('DELETE FROM app_config WHERE config_key = ?', [key])
+      if (key === ACCOUNT_TIMEZONE_CONFIG_KEY) {
+        await setAppConfig(key, null)
+        invalidateTimezoneCache()
+      } else {
+        await db.run('DELETE FROM app_config WHERE config_key = ?', [key])
+      }
     }
 
     logger.info(`${keyArray.length} configuraciones eliminadas: ${keyArray.join(', ')}`)

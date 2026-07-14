@@ -57,7 +57,16 @@ export const setTimezone = async (req, res) => {
 
     // Permitir limpiar el override (volver a HighLevel/default)
     if (timezone === null || timezone === '' || timezone === undefined) {
-      await db.run('DELETE FROM app_config WHERE config_key = ?', [ACCOUNT_TIMEZONE_CONFIG_KEY]);
+      // La fila NULL es también el candado estable que serializa cambios de zona
+      // contra el commit terminal de una cita. NULL sigue significando "sin
+      // override" y evita reabrir una carrera de primer INSERT en PostgreSQL.
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value, updated_at)
+        VALUES (?, NULL, CURRENT_TIMESTAMP)
+        ON CONFLICT(config_key) DO UPDATE SET
+          config_value = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      `, [ACCOUNT_TIMEZONE_CONFIG_KEY]);
       invalidateTimezoneCache();
       const resolved = await getAccountTimezone();
       return res.json({ success: true, timezone: resolved, source: 'highlevel' });

@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { db } from '../config/database.js'
 
 export const CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT = 'appointment_slot_preview_offer_created'
+export const CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT = 'appointment_selection_progress'
+export const CONVERSATIONAL_APPOINTMENT_PREVIEW_AUTHORITY_EVENT = 'appointment_preview_authority_lock'
 
 const TEST_SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{12,160}$/
 const TEST_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{8,160}$/
@@ -34,6 +36,13 @@ export function buildConversationalAppointmentPreviewOfferEventId(previewScopeId
     : ''
 }
 
+export function buildConversationalAppointmentPreviewAuthorityEventId(previewScopeId = '') {
+  const scopeId = String(previewScopeId || '').trim()
+  return isConversationalAppointmentPreviewScopeId(scopeId)
+    ? `cae_appointment_preview_authority_${scopeId}`
+    : ''
+}
+
 export function buildConversationalAppointmentPreviewExecutionId({
   previewScopeId = '',
   testMessageId = ''
@@ -55,7 +64,34 @@ export async function cleanupConversationalAppointmentPreviewOffers({
     'DELETE FROM conversational_agent_events WHERE id = ? AND agent_id = ? AND event_type = ?',
     [eventId, cleanAgentId, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT]
   )
-  return { deleted: Number(result?.changes ?? result?.rowCount ?? 0) }
+  let deleted = Number(result?.changes ?? result?.rowCount ?? 0)
+  const authorityEventId = buildConversationalAppointmentPreviewAuthorityEventId(previewScopeId)
+  const authorityResult = await db.run(
+    'DELETE FROM conversational_agent_events WHERE id = ? AND agent_id = ? AND event_type = ?',
+    [authorityEventId, cleanAgentId, CONVERSATIONAL_APPOINTMENT_PREVIEW_AUTHORITY_EVENT]
+  )
+  deleted += Number(authorityResult?.changes ?? authorityResult?.rowCount ?? 0)
+  const progressRows = await db.all(
+    `SELECT id, detail_json FROM conversational_agent_events
+     WHERE agent_id = ? AND event_type = ?`,
+    [cleanAgentId, CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT]
+  )
+  for (const row of progressRows || []) {
+    let detail = {}
+    try {
+      detail = row.detail_json ? JSON.parse(row.detail_json) : {}
+    } catch {
+      detail = {}
+    }
+    if (String(detail.previewScopeId || '') !== String(previewScopeId || '').trim()) continue
+    const removed = await db.run(
+      `DELETE FROM conversational_agent_events
+       WHERE id = ? AND agent_id = ? AND event_type = ? AND detail_json = ?`,
+      [row.id, cleanAgentId, CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT, row.detail_json]
+    )
+    deleted += Number(removed?.changes ?? removed?.rowCount ?? 0)
+  }
+  return { deleted }
 }
 
 export async function cleanupExpiredConversationalAppointmentPreviewOffers({
@@ -65,11 +101,36 @@ export async function cleanupExpiredConversationalAppointmentPreviewOffers({
   const cutoff = now instanceof Date ? now : new Date(now)
   if (Number.isNaN(cutoff.getTime())) throw new Error('La fecha de limpieza de ofertas preview no es válida')
   const safeLimit = Math.min(500, Math.max(1, Number(limit) || 200))
-  const rows = await db.all(
+  const offerRows = await db.all(
     `SELECT id, detail_json FROM conversational_agent_events
      WHERE event_type = ? ORDER BY created_at ASC, id ASC LIMIT ?`,
     [CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT, safeLimit]
   )
+  const progressRows = await db.all(
+    `SELECT id, detail_json FROM conversational_agent_events
+     WHERE event_type = ? AND detail_json LIKE ?
+     ORDER BY created_at ASC, id ASC LIMIT ?`,
+    [
+      CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
+      '%"previewScopeId":"appointment_preview_%',
+      safeLimit
+    ]
+  )
+  const authorityRows = await db.all(
+    `SELECT id, detail_json FROM conversational_agent_events
+     WHERE event_type = ? AND detail_json LIKE ?
+     ORDER BY created_at ASC, id ASC LIMIT ?`,
+    [
+      CONVERSATIONAL_APPOINTMENT_PREVIEW_AUTHORITY_EVENT,
+      '%"previewScopeId":"appointment_preview_%',
+      safeLimit
+    ]
+  )
+  const rows = [
+    ...(offerRows || []).map((row) => ({ ...row, eventType: CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT })),
+    ...(progressRows || []).map((row) => ({ ...row, eventType: CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT })),
+    ...(authorityRows || []).map((row) => ({ ...row, eventType: CONVERSATIONAL_APPOINTMENT_PREVIEW_AUTHORITY_EVENT }))
+  ]
   let deleted = 0
   for (const row of rows || []) {
     let detail = {}
@@ -80,14 +141,21 @@ export async function cleanupExpiredConversationalAppointmentPreviewOffers({
     }
     const expiresAtMs = Date.parse(detail?.expiresAt || '')
     if (Number.isFinite(expiresAtMs) && expiresAtMs > cutoff.getTime()) continue
+    if (
+      [
+        CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
+        CONVERSATIONAL_APPOINTMENT_PREVIEW_AUTHORITY_EVENT
+      ].includes(row.eventType) &&
+      !isConversationalAppointmentPreviewScopeId(detail?.previewScopeId)
+    ) continue
     const result = await db.run(
       `DELETE FROM conversational_agent_events
        WHERE id = ? AND event_type = ? AND detail_json = ?`,
-      [row.id, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT, row.detail_json]
+      [row.id, row.eventType, row.detail_json]
     )
     deleted += Number(result?.changes ?? result?.rowCount ?? 0)
   }
-  return { processed: rows?.length || 0, deleted }
+  return { processed: rows.length, deleted }
 }
 
 export const __conversationalAppointmentPreviewOfferServiceTestHooks = Object.freeze({

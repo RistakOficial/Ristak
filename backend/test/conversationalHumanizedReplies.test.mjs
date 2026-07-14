@@ -40,6 +40,7 @@ import {
 } from '../src/services/localCalendarService.js'
 import {
   buildReplyPartDelaySchedule,
+  canDeclareConversationalReplyUndeliveredBeforeSend,
   normalizeConversationalChannel,
   RECOVERABLE_CONVERSATIONAL_CHANNELS,
   getConversationalFollowUpTiming,
@@ -1240,6 +1241,30 @@ test('envio real espera antes de cada globo posterior', async () => {
   ])
 })
 
+test('un retry pre-send no declara invisible una respuesta que ya tiene plan durable', async () => {
+  const identity = {
+    contactId: 'contacto-retry-plan-existente',
+    agentId: 'agente-retry-plan-existente',
+    channel: 'whatsapp',
+    sourceMessageId: 'mensaje-retry-plan-existente'
+  }
+  assert.equal(await canDeclareConversationalReplyUndeliveredBeforeSend({
+    ...identity,
+    loadPlan: async () => null
+  }), true)
+  assert.equal(await canDeclareConversationalReplyUndeliveredBeforeSend({
+    ...identity,
+    loadPlan: async () => ({
+      status: 'completed',
+      parts: [{ status: 'sent', attempts: 1 }]
+    })
+  }), false)
+  assert.equal(await canDeclareConversationalReplyUndeliveredBeforeSend({
+    ...identity,
+    loadPlan: async () => { throw new Error('ledger temporalmente ilegible') }
+  }), false)
+})
+
 test('un retry reutiliza el plan durable y continúa sólo con los globos pendientes', async () => {
   const suffix = randomUUID()
   const contactId = `contacto-plan-${suffix}`
@@ -1324,6 +1349,71 @@ test('un retry reutiliza el plan durable y continúa sólo con los globos pendie
     assert.equal(completedRetry.resumed, true)
     assert.equal(completedRetry.durableStatus, 'completed')
     assert.equal(sent.length, 3)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('un fallo antes del primer envío conserva el plan pending para reenviar la misma oferta', async () => {
+  const suffix = randomUUID()
+  const contactId = `contacto-plan-primer-envio-${suffix}`
+  const agentId = `agente-plan-primer-envio-${suffix}`
+  const latest = { id: `mensaje-plan-primer-envio-${suffix}`, phone: '+526561111111' }
+  const originalReply = 'El martes a las 4:00 p.m. está disponible. ¿Te funciona ese horario?'
+  const sent = []
+  let failBeforeProvider = true
+  const replyDeliveryLedger = {
+    get: getConversationalReplyDeliveryPlan,
+    create: getOrCreateConversationalReplyDeliveryPlan,
+    claim: claimConversationalReplyDelivery,
+    checkpoint: checkpointConversationalReplyDelivery,
+    settle: settleConversationalReplyDelivery
+  }
+  const base = {
+    contactId,
+    phone: latest.phone,
+    latest,
+    agentConfig: {
+      id: agentId,
+      replyDelivery: { mode: 'single', splitMessagesEnabled: false }
+    },
+    reply: originalReply,
+    dependencies: {
+      replyDeliveryLedger,
+      forceSingleMessage: true,
+      sendTextMessage: async ({ text }) => {
+        sent.push(text)
+        return { id: `provider-${suffix}` }
+      },
+      loadNewerInbound: async () => {
+        if (failBeforeProvider) {
+          failBeforeProvider = false
+          throw new Error('fallo_antes_de_llamar_al_proveedor')
+        }
+        return null
+      },
+      recordEvent: async () => {},
+      markReplyComplete: async () => {}
+    }
+  }
+
+  try {
+    let failure = null
+    await assert.rejects(sendReplyParts(base), (error) => {
+      failure = error
+      return /fallo_antes_de_llamar_al_proveedor/.test(String(error?.message || ''))
+    })
+    assert.equal(failure.conversationalReplyDelivery?.sentParts, 0)
+    assert.equal(failure.conversationalReplyDelivery?.durableStatus, 'pending')
+    assert.ok(failure.conversationalReplyDelivery?.planId)
+
+    const retry = await sendReplyParts({
+      ...base,
+      reply: 'Este texto nuevo no debe reemplazar la oferta durable.'
+    })
+    assert.deepEqual(sent, [originalReply])
+    assert.equal(retry.durableStatus, 'completed')
+    assert.equal(retry.resumed, undefined)
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
   }

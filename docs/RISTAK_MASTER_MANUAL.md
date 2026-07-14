@@ -3997,8 +3997,11 @@ nunca un booleano escrito por el modelo.
   negritas y compacta slots consecutivos como ventanas legibles indicando su
   cadencia (`cada hora`, `cada 30 min`, etc.) para no inventar inicios intermedios. La lista es
   informativa: no crea una oferta durable, no aparta ningun horario y un `ok`
-  posterior no identifica cual opcion eligio. El agente debe pedir dia y hora;
-  cuando la persona elige uno, vuelve a consultar esa preferencia exacta.
+  posterior no identifica cual opcion eligio. Dia y hora pueden llegar en
+  mensajes distintos. Cuando la persona elige solamente un dia, el agente
+  reconsulta esa fecha exacta y llama `offer_appointment_options` con
+  `selectionMode=collecting_time`; el servidor muestra solo los horarios de ese
+  dia y pregunta unicamente la hora faltante.
   `weekdays` usa numeracion ISO de lunes 1 a domingo 7,
   `earliestLocalTime`/`latestLocalTime` acotan horas locales y
   `relativeToPreviousOffer` permite negociar "mas tarde" o "mas temprano" sin
@@ -4006,13 +4009,88 @@ nunca un booleano escrito por el modelo.
   mensajes, la lista guarda durante 24 horas una referencia interna minima y
   maxima con instante exacto, fecha, hora y zona originales, ademas de identidad
   de agente, contacto, canal, calendario, proposito y sesion de prueba; no guarda
-  una oferta aceptable ni convierte un `ok` en seleccion. "Mas tarde" y "mas
+  una oferta aceptable ni convierte un `ok` en seleccion.
+
+  La seleccion parcial vive en `appointment_selection_progress` dentro de
+  `conversational_agent_events`. Conserva agente, contacto, canal, calendario,
+  proposito, cita de origen cuando es reagenda, fecha local cuando ya existe,
+  zona del negocio,
+  rangos que realmente se mostraron, estado y vencimiento. Se aisla por agente,
+  contacto, canal y sesion de preview; cada hilo recupera solamente su propio
+  estado. Se invalida si cambia el calendario o la zona, vence el TTL, el dia ya
+  paso o deja de ser valida la cita o el permiso de una reagenda. En la siguiente
+  vuelta el Runner rehidrata el alcance como hecho estructurado. En estado
+  `collecting_time`, si llega solo una hora, la combina con el dia guardado,
+  reconsulta exactamente ese punto y despues crea la oferta individual. Con
+  fecha activa, `get_free_slots` exige
+  `progressDateAction=keep_selected_date` para una hora suelta; solo acepta
+  `replace_selected_date` con un rango de un unico dia cuando la persona cambio
+  explicitamente de fecha. Primero comprueba la disponibilidad base del nuevo
+  dia: si el dia tiene slots pero la hora exacta solicitada no, guarda el dia
+  nuevo como `collecting_time`; si el dia completo esta cerrado o la consulta
+  falla, descarta el dia anterior y guarda `collecting_date` con `missingFields`
+  igual a `date`. Ese segundo estado conserva calendario, proposito y la cita
+  objetivo de una reagenda, pero no conserva ninguna fecha: la siguiente vuelta
+  pide un dia nuevo y una hora suelta no puede volver a pegarse al dia viejo.
+  `request_other_options` con alcance `different_date` o `open` entra por esta
+  misma transicion: no borra el progreso ni pierde el `appointmentId` de una
+  reagenda. Durante un despliegue gradual, una instancia anterior todavia puede
+  alcanzar a crear una oferta sin cerrar este progreso. El lector nuevo reconcilia
+  ambas filas dentro del mismo candado: la oferta solo gana si es posterior y
+  conserva exactamente identidad, canal, calendario, zona, fecha, texto canonico,
+  proposito y forma de alta o reagenda; entonces liga el responsable terminal y
+  marca el progreso como reemplazado. Una oferta distinta, incompleta o mas vieja
+  se cierra por CAS y deja ganar al progreso. Formas desconocidas, estados no
+  reconocidos y versiones futuras del ledger fallan cerrado incluso si aparentan
+  estar terminados o vencidos, para no degradar una operacion futura a una cita
+  nueva ni agendar una hora distinta de la mostrada.
+  Tambien permite explorar varios dias sin convertir una reagenda en cita nueva.
+  La transicion se guarda por CAS y la transicion final a oferta vuelve a
+  comprobar la fecha, por lo que el modelo no puede consultar o confirmar
+  silenciosamente otro dia. Si la persona si cambia el dia, reemplaza la fecha sin
+  arrastrar una hora anterior; una pregunta intermedia no borra la seleccion. En una reagenda,
+  `purpose` y `appointmentId`
+  se derivan del estado durable en servidor aunque el modelo mande `null`; un ID
+  distinto falla cerrado para no convertir una reagenda en cita nueva ni al
+  reves. Antes de rehidratar una reagenda, el backend vuelve a comprobar que la
+  cita siga siendo futura, activa, del contacto y del calendario, y que la agenda
+  todavia permita reagendar; si cualquiera de esos hechos cambia, cierra el
+  progreso por CAS en vez de preguntar la misma fecha indefinidamente. Un fallo
+  transitorio de base no invalida la seleccion: falla cerrado y permite que la
+  siguiente vuelta reintente la lectura. Los rangos guardados permiten razonar sobre
+  referencias como "el ultimo", "ese dia" o "el de las cuatro", pero nunca
+  prueban disponibilidad vigente. Reiniciar o abandonar cierra el estado parcial
+  con `resolve_active_appointment_selection`; sus escrituras usan CAS para que
+  dos ejecuciones no se pisen y el estado expira a las 24 horas. Una fecha que ya
+  quedo en el pasado, un TTL vencido o un cambio de calendario o zona se marca
+  `superseded` por CAS antes de empezar de nuevo: no bloquea el chat y tampoco
+  revive si vuelve la configuracion anterior. Versiones desconocidas del esquema
+  no se sobrescriben ni se degradan durante un despliegue gradual. La referencia de la lista y el
+  progreso se guardan en una sola transaccion; el salto de progreso a oferta
+  individual tambien crea la oferta y cierra la fecha parcial atomicamente. Si
+  una mitad falla, no queda una lista fantasma ni se pierde el dia elegido. El
+  mismo candado por contacto obliga a que una oferta individual y una lista
+  concurrentes tengan una sola autoridad: el turno viejo revierte su escritura,
+  recarga el estado ganador y termina esa vuelta con una respuesta canonica, sin
+  reintentar sobre el mismo fingerprint ni abrir otro loop. El
+  preview usa una fila centinela por sesion para conservar esa misma exclusion
+  mutua en PostgreSQL incluso cuando todavia no existe una oferta o un progreso
+  que pueda bloquearse. El
+  reset y el job de limpieza del tester eliminan tambien el progreso de preview.
+  "Mas tarde" y "mas
   temprano" comparan la hora local que vio la persona: la misma hora de otro dia
   no cuenta como posterior o anterior. El instante sólo desempata dos horas
   repetidas del mismo dia y la misma zona durante un cambio DST. Si despues se
   rechaza una oferta individual, esa referencia mas reciente manda sobre la lista
-  anterior. Una oferta individual vencida deja de ser confirmable, pero conserva
-  durante 24 horas la referencia semantica necesaria para pedir otra hora.
+  anterior. Una oferta individual vencida deja de ser confirmable: el loader la
+  cierra por CAS, recupera el dia como `collecting_time` cuando calendario y zona
+  siguen vigentes y no veta el slot, porque expirar no equivale a que la persona
+  lo rechazara. Si habia varias expiradas, `offeredAt` con precision de
+  milisegundos decide cual fue realmente la mas reciente aunque `created_at` empate;
+  se cierran de la mas vieja a la mas nueva y solo la mas reciente puede restaurar el dia. Ya cerrada, la oferta
+  expirada conserva durante 24 horas su instante como referencia semantica para
+  interpretar "mas tarde" o "mas temprano" sin caer de nuevo en una lista u
+  oferta anterior.
 
   Incluso si el cliente propone dia y hora exactos, el agente debe consultar
   `get_free_slots` y llamar `offer_appointment_slot` con un solo `startTime`.
@@ -4030,6 +4108,50 @@ nunca un booleano escrito por el modelo.
   vigente. `resolve_active_appointment_offer` sólo se usa cuando el mensaje
   realmente decide sobre ella: aceptar, pedir otras opciones, rechazar o entregar
   a una persona cuando handoff esté habilitado.
+  Mientras esa oferta individual esta activa, el modelo no recibe tambien
+  `book_appointment`, `reschedule_appointment` ni `request_human_booking`: la
+  unica puerta de decision es `resolve_active_appointment_offer`. Una aceptacion
+  natural como "si", "va" o "confirmo" entra como `accept`; el resolver recupera
+  la oferta exacta y ejecuta internamente la terminal correcta segun proposito y
+  `bookingOwner`. Esto evita que la confirmacion caiga en una tool incompatible,
+  vuelva a pedir fecha u hora o deje la cita sin crear. Pedir otro horario declara
+  si conserva el mismo dia, cambia de fecha o deja la busqueda abierta; solo el
+  primer caso restaura la fecha parcial y ninguno reutiliza la hora rechazada.
+  Cada oferta nueva queda ligada tambien al calendario, la zona del negocio y el
+  responsable terminal vigentes al mostrarla. El backend revalida esos tres
+  hechos al hidratarla, justo antes de resolverla y otra vez dentro de la terminal
+  antes de sellar o materializar la seleccion. Esa ultima comprobacion vuelve a
+  leer la configuracion durable del agente, sin dejar que el snapshot viejo del
+  turno la tape, exige que el agente siga existiendo y habilitado y compara
+  calendario, `account_timezone`, `bookingOwner` y tool terminal contra la
+  oferta. En el borde de commit usa un fingerprint semantico de las reglas que
+  cambian disponibilidad —duracion, intervalo, buffers, horario abierto, cupos,
+  ventana de reservacion y permisos— y repite la comprobacion dentro de la misma
+  transaccion que crea, reagenda o entrega la solicitud humana. Primero toma el
+  candado del calendario y despues los locks de autoridad para mantener un orden
+  unico en PostgreSQL. `app_config.account_timezone` conserva una fila sentinel
+  con valor `NULL` cuando no hay override: sigue usando HighLevel/default, pero
+  permite bloquear tambien el primer cambio concurrente de zona sin serializar
+  citas distintas entre si. Si la capacidad se
+  apaga o cambia calendario, zona o `bookingOwner`, marca la oferta `superseded`
+  por CAS. Asi un `si` posterior no agenda un UTC cuyo significado local cambio;
+  la cierra sin esperar el TTL y no la revive aunque vuelva la configuracion.
+  Persistir la oferta
+  no basta para volverla autoridad visible: si el fence de entrega demuestra que
+  salieron cero partes por un mensaje nuevo, una medida preventiva, un estado
+  externo o un fallo durable previo al envio, el Runner cierra exactamente la
+  oferta creada por esa ejecucion y restaura el dia sin marcar la hora como
+  rechazada. Antes de un cierre previo al envio comprueba el plan durable de
+  entrega: si ya existe o no puede leerse, conserva la oferta porque otro intento
+  pudo haberla enviado o todavia puede reintentar exactamente ese mismo texto. Si
+  el primer intento al proveedor falla con cero partes, el plan queda `pending` y
+  la oferta tambien se conserva para que el retry no envie un horario que ya no
+  pueda aceptarse. Una entrega `ambiguous` o con alguna parte enviada tampoco se
+  toca para no duplicar mensajes. Como defensa adicional, si un `si` llega pero el historial no
+  puede probar que la oferta exacta fue visible despues del mensaje entrante que
+  creo esa oferta concreta, el resolver no agenda, cierra esa oferta invisible y
+  vuelve a pedir solamente la hora en vez de dejarla en loop. Una oferta vieja con
+  texto identico no sirve como evidencia para una oferta nueva que nunca salio.
   Una duda o respuesta ambigua no llama al resolver ni cambia el evento. No
   existe detector de `ok`, listas de frases, regex, etapa ni tool `keep_open` que
   sustituya el trabajo semantico del modelo. Pedir otras opciones cambia la
@@ -4054,8 +4176,9 @@ nunca un booleano escrito por el modelo.
   del horario. La llamada nativa expresa la decision semantica del modelo; el
   servidor recupera `startTime` desde la unica oferta vigente que guardo el
   propio servidor y construye la evidencia con el mensaje completo mas reciente
-  del cliente y la oferta canonica que ya fue visible en el hilo. Puede haber una
-  aclaración intermedia sin perder la oferta. Después
+  del cliente y la oferta canonica visible despues del inbound `executionId` que
+  la origino. Puede haber una aclaración intermedia despues de esa oferta sin
+  perderla. Después
   sólo comprueba identidad, orden y coincidencia literal contra el hilo; no usa
   regex ni reglas de palabras para adivinar intención. Una oferta ausente,
   vencida, tomada de otro turno, ambigua, ligada a otro slot o perteneciente a

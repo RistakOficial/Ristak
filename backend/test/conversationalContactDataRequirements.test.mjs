@@ -581,7 +581,9 @@ test('prompt blindado respeta titular distinto apagado y límite de invitados si
 test('tools de agenda rechazan titular distinto y exceso de invitados antes de cualquier cita', async () => {
   const calendarId = `calendar_participant_policy_${randomUUID()}`
   const timezone = await getAccountTimezone()
-  const baseDay = DateTime.now().setZone(timezone).plus({ days: 30 }).startOf('day')
+  // Mantenerlo dentro de la ventana default de 30 días sin depender de la hora
+  // exacta en la que corra la suite (día +30 a las 10 puede quedar unas horas fuera).
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 29 }).startOf('day')
   const slot = baseDay.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
   const selectedStartTime = slot.toUTC().toISO()
   const localLabel = buildNativeFreeSlotDays([{

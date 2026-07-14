@@ -9,6 +9,7 @@ import {
   buildNativeFreeSlotDays,
   createConversationalTools,
   loadConversationalAppointmentOfferDecisionContext,
+  setNativeAppointmentAfterPreCommitAuthorityHookForTest,
   setNativeHandoffAfterAssignmentHookForTest,
   setNativeHumanBookingAfterCommitHookForTest,
   setNativePaymentResumeBeforeTerminalCommitHookForTest,
@@ -55,8 +56,10 @@ test.beforeEach(() => {
   setConversationalPaymentTerminalReplyHandlerForTest(async () => ({ sent: true, testDelivery: true }))
 })
 
-test.afterEach(() => {
+test.afterEach(async () => {
   setConversationalPaymentTerminalReplyHandlerForTest(null)
+  setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+  await db.run("DELETE FROM conversational_agents WHERE name = 'Agente fixture live'").catch(() => {})
 })
 
 // Estas pruebas aíslan candados conversacionales, no el horizonte de reservación.
@@ -105,6 +108,22 @@ function v2Context(items, overrides = {}) {
   }
 }
 
+async function persistLiveAgentConfig(ctx) {
+  if (ctx?.dryRun) return
+  const agentId = String(ctx?.config?.id || ctx?.agentId || '').trim()
+  assert.ok(agentId, 'el fixture live necesita agentId')
+  await db.run(
+    `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+     VALUES (?, 'Agente fixture live', 1, 'tool_calling_v2', ?)
+     ON CONFLICT(id) DO UPDATE SET
+       enabled = 1,
+       runtime_mode = 'tool_calling_v2',
+       capabilities_config = excluded.capabilities_config,
+       updated_at = CURRENT_TIMESTAMP`,
+    [agentId, JSON.stringify(ctx.config.capabilitiesConfig)]
+  )
+}
+
 function confirmedAppointmentSelection(ctx, startTime, timezone, customerQuote = 'sí, ese horario está bien') {
   const selectedStartTime = String(startTime)
   const localLabel = buildNativeFreeSlotDays([{
@@ -127,6 +146,7 @@ function confirmedAppointmentSelection(ctx, startTime, timezone, customerQuote =
 }
 
 async function authorizeAppointmentOffer(ctx, startTime, timezone, customerQuote = 'sí, ese horario está bien') {
+  await persistLiveAgentConfig(ctx)
   const confirmationExecutionId = String(ctx.executionId || `message_confirmation_${randomUUID()}`)
   ctx.executionId = `${confirmationExecutionId}_offer`
   const offered = await createConversationalTools(ctx)
@@ -228,6 +248,7 @@ async function createLiveDepositSelection({ calendarId, contactId, agentId, star
     accountLocale: { currency }
   })
   ctx.config.id = agentId
+  await persistLiveAgentConfig(ctx)
   const offerResult = await createConversationalTools(ctx)
     .find((item) => item.name === 'offer_appointment_slot')
     .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
@@ -256,7 +277,7 @@ async function createLiveDepositSelection({ calendarId, contactId, agentId, star
       guests: []
     }))
   assert.equal(result.ok, false, JSON.stringify(result))
-  assert.equal(result.paymentEvidenceRequired, true)
+  assert.equal(result.paymentEvidenceRequired, true, JSON.stringify(result))
   return { ctx, capabilities, currency }
 }
 
@@ -308,6 +329,11 @@ async function createPaymentResumeTerminalRaceFixture({
     `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
      VALUES (?, 'Cliente carrera de anticipo', '+526560001234', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [contactId]
+  )
+  await db.run(
+    `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+     VALUES (?, 'Agente carrera de anticipo', 1, 'tool_calling_v2', ?)`,
+    [agentId, JSON.stringify({ schemaVersion: 3, items: capabilities })]
   )
 
   const selectionCtx = v2Context(capabilities, {
@@ -454,6 +480,7 @@ async function invokePaymentResumeTerminalFixture(fixture, claimToken = fixture.
 
 async function cleanupPaymentResumeTerminalRaceFixture(fixture) {
   setNativePaymentResumeBeforeTerminalCommitHookForTest(null)
+  setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
   const requestIds = fixture.contexts
     .flatMap((ctx) => ctx.actions || [])
     .map((action) => String(action?.clientRequestId || '').trim())
@@ -471,6 +498,7 @@ async function cleanupPaymentResumeTerminalRaceFixture(fixture) {
   await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
   await db.run('DELETE FROM payments WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
   await db.run('DELETE FROM calendars WHERE id = ?', [fixture.calendarId]).catch(() => {})
+  await db.run('DELETE FROM conversational_agents WHERE id = ?', [fixture.agentId]).catch(() => {})
   await db.run('DELETE FROM contacts WHERE id = ?', [fixture.contactId]).catch(() => {})
 }
 
@@ -625,6 +653,93 @@ for (const bookingOwner of ['ai', 'human']) {
     }
   })
 
+  test(`cambiar el responsable justo antes de ${terminalToolName} bloquea el efecto pagado`, async () => {
+    let fixture = null
+    try {
+      fixture = await createPaymentResumeTerminalRaceFixture({ bookingOwner })
+      const changedCapabilities = structuredClone(fixture.capabilities)
+      changedCapabilities.find((item) => item.id === 'schedule_appointment').bookingOwner = bookingOwner === 'ai'
+        ? 'human'
+        : 'ai'
+      setNativePaymentResumeBeforeTerminalCommitHookForTest(async () => {
+        await db.run(
+          `UPDATE conversational_agents
+           SET capabilities_config = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [JSON.stringify({ schemaVersion: 3, items: changedCapabilities }), fixture.agentId]
+        )
+      })
+
+      const attempt = await invokePaymentResumeTerminalFixture(fixture)
+      assert.equal(attempt.result.ok, false, JSON.stringify(attempt.result))
+      assert.equal(attempt.result.code, 'appointment_offer_scope_changed')
+      assert.equal(attempt.result.appointmentOfferInvalidated, true)
+      assert.equal(Number((await db.get(
+        'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+        [fixture.contactId]
+      )).total), 0)
+      assert.equal(Number((await db.get(
+        `SELECT COUNT(*) AS total FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
+        [fixture.contactId]
+      )).total), 0)
+      const state = await db.get(
+        `SELECT status, signal FROM conversational_agent_state
+         WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+        [fixture.contactId, fixture.agentId]
+      )
+      assert.equal(state.status, 'active')
+      assert.equal(state.signal, null)
+    } finally {
+      if (fixture) await cleanupPaymentResumeTerminalRaceFixture(fixture)
+      else setNativePaymentResumeBeforeTerminalCommitHookForTest(null)
+    }
+  })
+
+  test(`cambiar reglas del calendario después del precommit bloquea ${terminalToolName} dentro del commit`, async () => {
+    let fixture = null
+    try {
+      fixture = await createPaymentResumeTerminalRaceFixture({ bookingOwner })
+      let hookCalls = 0
+      setNativeAppointmentAfterPreCommitAuthorityHookForTest(async (hookContext) => {
+        hookCalls += 1
+        assert.equal(hookContext.terminalToolName, terminalToolName)
+        assert.equal(hookContext.calendarId, fixture.calendarId)
+        assert.match(String(hookContext.calendarFingerprint || ''), /^[a-f0-9]{64}$/i)
+        const updated = await db.run(
+          'UPDATE calendars SET slot_interval = 30 WHERE id = ?',
+          [fixture.calendarId]
+        )
+        assert.equal(Number(updated?.changes ?? updated?.rowCount ?? 0), 1)
+      })
+
+      const attempt = await invokePaymentResumeTerminalFixture(fixture)
+      assert.equal(hookCalls, 1)
+      assert.equal(attempt.result.ok, false, JSON.stringify(attempt.result))
+      assert.equal(attempt.result.code, 'appointment_offer_scope_changed')
+      assert.equal(attempt.result.appointmentOfferInvalidated, true)
+      assert.equal(Number((await db.get(
+        'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+        [fixture.contactId]
+      )).total), 0)
+      assert.equal(Number((await db.get(
+        `SELECT COUNT(*) AS total FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
+        [fixture.contactId]
+      )).total), 0)
+      const state = await db.get(
+        `SELECT status, signal FROM conversational_agent_state
+         WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+        [fixture.contactId, fixture.agentId]
+      )
+      assert.equal(state.status, 'active')
+      assert.equal(state.signal, null)
+    } finally {
+      if (fixture) await cleanupPaymentResumeTerminalRaceFixture(fixture)
+      else setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+    }
+  })
+
   for (const takeoverStatus of ['human', 'paused']) {
     test(`takeover ${takeoverStatus} justo antes de ${terminalToolName} conserva el control y bloquea todo efecto`, async () => {
       let fixture = null
@@ -686,6 +801,167 @@ for (const bookingOwner of ['ai', 'human']) {
       }
     })
   }
+}
+
+async function createRescheduleCommitFenceFixture({ bookingOwner = 'ai' } = {}) {
+  const suffix = randomUUID()
+  const calendarId = `calendar_reschedule_fence_${bookingOwner}_${suffix}`
+  const contactId = `contact_reschedule_fence_${bookingOwner}_${suffix}`
+  const agentId = `agent_reschedule_fence_${bookingOwner}_${suffix}`
+  const appointmentId = `appointment_reschedule_fence_${bookingOwner}_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 49 }).startOf('day')
+  const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const originalStart = monday.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
+  const targetStart = monday.set({ hour: 13, minute: 0, second: 0, millisecond: 0 })
+  const capabilities = [{
+    id: 'schedule_appointment',
+    enabled: true,
+    calendarId,
+    bookingOwner,
+    allowOverlaps: false
+  }]
+
+  await upsertLocalCalendar({
+    id: calendarId,
+    name: `Agenda fence reagenda ${bookingOwner}`,
+    source: 'ristak',
+    allowReschedule: true,
+    slotDuration: 60,
+    slotInterval: 60,
+    openHours: [{
+      daysOfTheWeek: [1],
+      hours: [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+    }]
+  }, { source: 'ristak', syncStatus: 'synced' })
+  await db.run(
+    `INSERT INTO contacts (id, full_name, created_at, updated_at)
+     VALUES (?, 'Cliente fence de reagenda', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId]
+  )
+  await db.run(
+    `INSERT INTO appointments (
+       id, calendar_id, contact_id, title, status, appointment_status,
+       start_time, end_time, source, sync_status, date_added, date_updated
+     ) VALUES (?, ?, ?, 'Cita protegida por fence', 'confirmed', 'confirmed', ?, ?, 'ristak', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      appointmentId,
+      calendarId,
+      contactId,
+      originalStart.toUTC().toISO(),
+      originalStart.plus({ hours: 1 }).toUTC().toISO()
+    ]
+  )
+
+  const offerExecutionId = `offer_reschedule_fence_${bookingOwner}_${suffix}`
+  const ctx = v2Context(capabilities, {
+    contactId,
+    agentId,
+    dryRun: false,
+    executionId: offerExecutionId
+  })
+  ctx.config.id = agentId
+  await persistLiveAgentConfig(ctx)
+  const tools = createConversationalTools(ctx)
+  const availability = await tools.find((item) => item.name === 'get_free_slots').invoke(null, JSON.stringify({
+    startDate: monday.toISODate(),
+    endDate: monday.toISODate(),
+    appointmentId
+  }))
+  assert.equal(availability.ok, true, JSON.stringify(availability))
+  const offered = await tools.find((item) => item.name === 'offer_appointment_slot').invoke(null, JSON.stringify({
+    startTime: targetStart.toUTC().toISO(),
+    appointmentId
+  }))
+  assert.equal(offered.ok, true, JSON.stringify(offered))
+
+  const confirmationExecutionId = `confirm_reschedule_fence_${bookingOwner}_${suffix}`
+  ctx.executionId = confirmationExecutionId
+  ctx.actions = []
+  ctx.conversationMessages = [
+    { id: offerExecutionId, role: 'user', content: 'Quiero mover mi cita a la una.' },
+    { id: `visible_${offerExecutionId}`, role: 'assistant', content: offered.visibleReply },
+    { id: confirmationExecutionId, role: 'user', content: 'Sí, ese horario está bien.' }
+  ]
+  ctx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+    ctx,
+    config: ctx.config
+  })
+  assert.equal(ctx.appointmentOfferDecision?.purpose, 'reschedule')
+  return {
+    bookingOwner,
+    calendarId,
+    contactId,
+    agentId,
+    appointmentId,
+    originalStart,
+    ctx
+  }
+}
+
+async function cleanupRescheduleCommitFenceFixture(fixture) {
+  setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [fixture.appointmentId]).catch(() => {})
+  await db.run('DELETE FROM appointments WHERE id = ?', [fixture.appointmentId]).catch(() => {})
+  await db.run('DELETE FROM conversational_agents WHERE id = ?', [fixture.agentId]).catch(() => {})
+  await db.run('DELETE FROM calendars WHERE id = ?', [fixture.calendarId]).catch(() => {})
+  await db.run('DELETE FROM contacts WHERE id = ?', [fixture.contactId]).catch(() => {})
+}
+
+for (const bookingOwner of ['ai', 'human']) {
+  test(`desactivar reagenda después del precommit bloquea el cierre ${bookingOwner} sin mover ni entregar la cita`, async () => {
+    let fixture = null
+    try {
+      fixture = await createRescheduleCommitFenceFixture({ bookingOwner })
+      let hookCalls = 0
+      setNativeAppointmentAfterPreCommitAuthorityHookForTest(async (hookContext) => {
+        hookCalls += 1
+        assert.equal(hookContext.purpose, 'reschedule')
+        assert.equal(hookContext.calendarId, fixture.calendarId)
+        assert.equal(hookContext.appointmentId, fixture.appointmentId)
+        assert.equal(
+          hookContext.terminalToolName,
+          bookingOwner === 'human' ? 'request_human_booking' : 'reschedule_appointment'
+        )
+        await db.run('UPDATE calendars SET allow_reschedule = 0 WHERE id = ?', [fixture.calendarId])
+      })
+
+      const resolved = await createConversationalTools(fixture.ctx)
+        .find((item) => item.name === 'resolve_active_appointment_offer')
+        .invoke(null, JSON.stringify({
+          decision: 'accept',
+          reply: null,
+          title: null,
+          notes: null,
+          attendeeName: null,
+          attendeeContext: null,
+          primaryAttendee: null,
+          guests: [],
+          agreedAmount: null
+        }))
+      assert.equal(hookCalls, 1)
+      assert.equal(resolved.ok, false, JSON.stringify(resolved))
+      assert.equal(resolved.code, 'appointment_offer_scope_changed')
+      assert.equal(resolved.appointmentOfferInvalidated, true)
+      const appointment = await db.get(
+        'SELECT start_time, end_time, appointment_status FROM appointments WHERE id = ?',
+        [fixture.appointmentId]
+      )
+      assert.equal(new Date(appointment.start_time).toISOString(), fixture.originalStart.toUTC().toISO())
+      assert.equal(new Date(appointment.end_time).toISOString(), fixture.originalStart.plus({ hours: 1 }).toUTC().toISO())
+      assert.equal(appointment.appointment_status, 'confirmed')
+      assert.equal(Number((await db.get(
+        `SELECT COUNT(*) AS total FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'human_reschedule_requested'`,
+        [fixture.contactId]
+      )).total), 0)
+    } finally {
+      if (fixture) await cleanupRescheduleCommitFenceFixture(fixture)
+      else setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+    }
+  })
 }
 
 test('v2 presenta la hora local del servidor y conserva el startTime UTC sin recalcularlo', () => {
@@ -1401,6 +1677,7 @@ test('una oferta estructurada adulterada con otro horario jamás autoriza la cit
       { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
     ], { contactId, agentId, dryRun: false, executionId: `${confirmationId}_offer` })
     ctx.config.id = agentId
+    await persistLiveAgentConfig(ctx)
     const tools = createConversationalTools(ctx)
     const offered = await tools.find((item) => item.name === 'offer_appointment_slot')
       .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
@@ -7787,6 +8064,7 @@ test('aceptar una oferta de reagendamiento conserva ID y participantes, mueve di
       accountLocale: { currency }
     })
     ctx.config.id = agentId
+    await persistLiveAgentConfig(ctx)
     const rescheduleAvailability = await createConversationalTools(ctx)
       .find((item) => item.name === 'get_free_slots')
       .invoke(null, JSON.stringify({
@@ -7813,6 +8091,7 @@ test('aceptar una oferta de reagendamiento conserva ID y participantes, mueve di
     ctx.executionId = confirmationExecutionId
     ctx.actions = []
     ctx.conversationMessages = [
+      { id: `offer_reschedule_${suffix}`, role: 'user', content: 'Quiero mover esa cita a las doce.' },
       { id: `visible_offer_reschedule_${suffix}`, role: 'assistant', content: offered.visibleReply },
       { id: confirmationExecutionId, role: 'user', content: 'Sí, mejor cámbiamela a ese horario.' }
     ]
@@ -7823,18 +8102,11 @@ test('aceptar una oferta de reagendamiento conserva ID y participantes, mueve di
     assert.equal(ctx.appointmentOfferDecision?.purpose, 'reschedule')
     assert.equal(ctx.appointmentOfferDecision?.appointmentId, appointmentId)
 
-    const wrongBook = await createConversationalTools(ctx)
-      .find((item) => item.name === 'book_appointment')
-      .invoke(null, JSON.stringify({
-        title: null,
-        notes: null,
-        attendeeName: null,
-        attendeeContext: null,
-        primaryAttendee: null,
-        guests: []
-      }))
-    assert.equal(wrongBook.ok, false, JSON.stringify(wrongBook))
-    assert.equal(wrongBook.code, 'appointment_reschedule_terminal_mismatch')
+    const confirmationTools = createConversationalTools(ctx)
+    assert.equal(confirmationTools.some((item) => item.name === 'book_appointment'), false)
+    assert.equal(confirmationTools.some((item) => item.name === 'reschedule_appointment'), false)
+    assert.equal(confirmationTools.some((item) => item.name === 'request_human_booking'), false)
+    assert.ok(confirmationTools.some((item) => item.name === 'resolve_active_appointment_offer'))
     assert.equal(Number((await db.get(
       'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
       [calendarId]
@@ -7990,6 +8262,7 @@ test('agenda humana entrega un reagendamiento confirmado sin exponer la tool que
       executionId: `offer_human_reschedule_${suffix}`
     })
     ctx.config.id = agentId
+    await persistLiveAgentConfig(ctx)
     const initialTools = createConversationalTools(ctx)
     assert.ok(initialTools.some((item) => item.name === 'request_human_booking'))
     assert.equal(initialTools.some((item) => item.name === 'reschedule_appointment'), false)
@@ -8021,6 +8294,7 @@ test('agenda humana entrega un reagendamiento confirmado sin exponer la tool que
     ctx.executionId = confirmationExecutionId
     ctx.actions = []
     ctx.conversationMessages = [
+      { id: `offer_human_reschedule_${suffix}`, role: 'user', content: 'Quiero mover esa cita a la una.' },
       { id: `visible_human_reschedule_${suffix}`, role: 'assistant', content: offered.visibleReply },
       { id: confirmationExecutionId, role: 'user', content: 'Sí, ese nuevo horario me funciona.' }
     ]

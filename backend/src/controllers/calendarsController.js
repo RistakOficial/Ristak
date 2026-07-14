@@ -2505,6 +2505,9 @@ export async function createAppointment(req, res) {
       });
     }
     const internalAppointmentContext = req[INTERNAL_CONTROLLER_CONTEXT] || {};
+    const conversationalAppointmentAuthorityFence = typeof internalAppointmentContext.conversationalAppointmentAuthorityFence === 'function'
+      ? internalAppointmentContext.conversationalAppointmentAuthorityFence
+      : null;
     const strictAvailabilityCheck = appointmentData.strictAvailabilityCheck === true
       || appointmentData.source === 'conversational_agent_v2';
     const strictConflictOverrideAuthorized = (
@@ -2590,6 +2593,15 @@ export async function createAppointment(req, res) {
       || appointmentData.confirmDoubleBooking === true;
     const localCalendarId = localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id;
     const createLocalWithAvailability = async () => {
+      // Orden único para evitar ciclos con una reagenda concurrente en Postgres:
+      // primero el advisory del calendario y después los locks semánticos del
+      // agente/oferta/calendario que toma el authority fence.
+      if ((!forceDoubleBooking || strictAvailabilityCheck) && localCalendarId) {
+        await lockCalendarAppointmentCreation(localCalendarId);
+      }
+      if (conversationalAppointmentAuthorityFence) {
+        await conversationalAppointmentAuthorityFence();
+      }
       let depositFence = null;
       if (depositFenceProvided) {
         depositFence = await assertConversationalAppointmentDepositReservationFence({
@@ -2616,7 +2628,6 @@ export async function createAppointment(req, res) {
         });
       }
       if ((!forceDoubleBooking || strictAvailabilityCheck) && localCalendarId) {
-        await lockCalendarAppointmentCreation(localCalendarId);
         // Legacy conserva el contrato fail-open del modal. El runtime conversacional v2
         // falla cerrado: si no podemos comprobar el horario real, no inventamos una cita.
         let availability = { available: true };
@@ -2915,6 +2926,9 @@ export async function updateAppointment(req, res) {
     const { id } = req.params;
     const { accessToken, ...updateData } = req.body;
     const internalAppointmentContext = req[INTERNAL_CONTROLLER_CONTEXT] || {};
+    const conversationalAppointmentAuthorityFence = typeof internalAppointmentContext.conversationalAppointmentAuthorityFence === 'function'
+      ? internalAppointmentContext.conversationalAppointmentAuthorityFence
+      : null;
     const strictAvailabilityCheck = updateData.strictAvailabilityCheck === true;
     const ignoreAppointmentConflicts = updateData.ignoreAppointmentConflicts === true;
     const strictConflictOverrideAuthorized = (
@@ -3013,6 +3027,9 @@ export async function updateAppointment(req, res) {
         }
         appointment = await db.transaction(async () => {
           await lockCalendarAppointmentCreation(calendarId);
+          if (conversationalAppointmentAuthorityFence) {
+            await conversationalAppointmentAuthorityFence();
+          }
           const current = await localCalendarService.getLocalAppointment(id);
           if (!current?.id) {
             const error = new Error('La cita dejó de existir mientras se reprogramaba.');
@@ -3235,6 +3252,7 @@ export async function updateAppointment(req, res) {
     res.status(Number(error.status || error.statusCode || 500)).json({
       success: false,
       ...(error.code ? { code: error.code } : {}),
+      ...(error.data && typeof error.data === 'object' ? { data: error.data } : {}),
       error: error.message
     });
   }

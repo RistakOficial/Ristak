@@ -11,7 +11,8 @@ import {
   buildNativeFreeSlotDays,
   createConversationalTools,
   filterNativeFreeSlotDays,
-  loadConversationalAppointmentOfferDecisionContext
+  loadConversationalAppointmentOfferDecisionContext,
+  loadConversationalAppointmentSelectionProgressContext
 } from '../src/agents/conversational/tools.js'
 import { ensureToolCallingV2VisibleReply } from '../src/agents/conversational/runner.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
@@ -475,6 +476,10 @@ test('un horario individual rechazado más recientemente manda sobre la lista an
       contactId,
       previewScopeId,
       executionId: `execution_offer_${suffix}`
+    })
+    offerCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: offerCtx,
+      config
     })
     const exact = await toolByName(offerCtx, 'get_free_slots').invoke(null, JSON.stringify(freeSlotsInput(
       day.toISODate(),

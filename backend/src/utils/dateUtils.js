@@ -63,9 +63,9 @@ export function invalidateTimezoneCache() {
  * que HighLevel esté conectado: usuarios sin GHL pueden fijar su zona en Ristak.
  * INCLUYE CACHE para evitar queries repetidas a la DB.
  */
-export async function getAccountTimezone() {
+export async function getAccountTimezone({ forceRefresh = false, throwOnError = false } = {}) {
   const now = Date.now()
-  if (cachedTimezone && cacheTimestamp && (now - cacheTimestamp) < CACHE_TTL_MS) {
+  if (!forceRefresh && cachedTimezone && cacheTimestamp && (now - cacheTimestamp) < CACHE_TTL_MS) {
     return cachedTimezone
   }
 
@@ -91,6 +91,7 @@ export async function getAccountTimezone() {
       }
     }
   } catch (error) {
+    if (throwOnError) throw error
     // 3) Ante cualquier error, usar el default
     timezone = DEFAULT_TIMEZONE
   }
