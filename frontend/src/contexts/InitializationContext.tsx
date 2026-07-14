@@ -1,16 +1,11 @@
 import React, { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAppConfig, useIntegrationsStatus } from '@/hooks'
+import { useAuth } from '@/contexts/AuthContext'
 import type { IntegrationsStatus } from '@/services/integrationsService'
+import { hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
 
 export type InitStepId =
-  | 'facebook-page'
-  | 'instagram'
-  | 'ad-account'
-  | 'pixel'
-  | 'whatsapp'
-  | 'meta-app'
-  | 'meta-connect'
-  | 'whatsapp-api'
+  | 'meta'
   | 'openai'
   | 'google-calendar'
 
@@ -20,8 +15,6 @@ export interface InitStep {
   required: boolean
   /** Si el paso ya está conectado/completado. */
   done: boolean
-  /** Paso manual: el usuario lo marca a mano (no hay señal técnica). */
-  manual?: boolean
 }
 
 interface InitializationContextValue {
@@ -35,44 +28,43 @@ interface InitializationContextValue {
   requiredTotal: number
   hidden: boolean
   setHidden: (value: boolean) => Promise<void>
-  metaAppDone: boolean
-  setMetaAppDone: (value: boolean) => Promise<void>
   refresh: () => Promise<void>
 }
 
 const InitializationContext = createContext<InitializationContextValue | null>(null)
 
-function buildSteps(status: IntegrationsStatus | null, metaAppDone: boolean): InitStep[] {
-  const meta = status?.meta
+const STEP_PERMISSION_KEYS: Record<InitStepId, PermissionKey> = {
+  meta: 'campaigns',
+  openai: 'ai_agent',
+  'google-calendar': 'settings_calendars'
+}
+
+function buildSteps(status: IntegrationsStatus | null): InitStep[] {
   return [
-    { id: 'facebook-page', required: true, done: Boolean(meta?.pageId) },
-    { id: 'instagram', required: false, done: Boolean(meta?.instagramAccountId) },
-    { id: 'ad-account', required: true, done: Boolean(meta?.adAccountId) },
-    { id: 'pixel', required: true, done: Boolean(meta?.pixelId) },
-    { id: 'whatsapp', required: true, done: Boolean(status?.whatsapp?.connected) },
-    { id: 'meta-app', required: false, done: metaAppDone, manual: true },
-    { id: 'meta-connect', required: true, done: Boolean(meta?.connected) },
-    { id: 'whatsapp-api', required: true, done: Boolean(status?.whatsapp?.connected && meta?.connected) },
+    { id: 'meta', required: true, done: Boolean(status?.meta?.connected) },
+    { id: 'google-calendar', required: true, done: Boolean(status?.googleCalendar?.connected) },
     { id: 'openai', required: true, done: Boolean(status?.openai?.configured) },
-    { id: 'google-calendar', required: false, done: Boolean(status?.googleCalendar?.connected) }
   ]
 }
 
 export const InitializationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth()
   const [hidden, setHiddenConfig] = useAppConfig<boolean>('initialization_hidden', false)
-  const [metaAppDone, setMetaAppDoneConfig] = useAppConfig<boolean>('init_meta_app_done', false)
   const { status, loading, refresh: refreshStatus } = useIntegrationsStatus()
 
   const refresh = useCallback(async () => {
     await refreshStatus()
   }, [refreshStatus])
 
-  const steps = useMemo(() => buildSteps(status, Boolean(metaAppDone)), [status, metaAppDone])
+  const steps = useMemo(
+    () => buildSteps(status).filter(step => hasModuleAccess(user, STEP_PERMISSION_KEYS[step.id], 'read')),
+    [status, user]
+  )
 
   const requiredSteps = steps.filter(step => step.required)
   const requiredDone = requiredSteps.filter(step => step.done).length
   const requiredTotal = requiredSteps.length
-  const allRequiredDone = requiredTotal > 0 && requiredDone === requiredTotal
+  const allRequiredDone = requiredTotal === 0 || requiredDone === requiredTotal
   const isInitialized = Boolean(hidden) || allRequiredDone
 
   const value: InitializationContextValue = {
@@ -84,8 +76,6 @@ export const InitializationProvider: React.FC<{ children: React.ReactNode }> = (
     requiredTotal,
     hidden: Boolean(hidden),
     setHidden: (v: boolean) => setHiddenConfig(v),
-    metaAppDone: Boolean(metaAppDone),
-    setMetaAppDone: (v: boolean) => setMetaAppDoneConfig(v),
     refresh
   }
 

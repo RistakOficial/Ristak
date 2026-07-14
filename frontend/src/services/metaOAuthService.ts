@@ -163,12 +163,12 @@ async function requestMetaOAuth<T>(url: string, init?: RequestInit): Promise<T> 
 export const metaOAuthService = {
   getStatus: () => requestMetaOAuth<MetaOAuthStatus>('/api/meta/oauth/status'),
 
-  createConnectUrl: () => requestMetaOAuth<{ connectUrl: string; redirectUri?: string; expiresAt?: string }>(
+  createConnectUrl: (returnPath = '/settings/meta-ads/cuenta') => requestMetaOAuth<{ connectUrl: string; redirectUri?: string; expiresAt?: string }>(
     '/api/meta/oauth/connect-url',
     {
       method: 'POST',
       body: JSON.stringify({
-        returnPath: '/settings/meta-ads/cuenta'
+        returnPath
       })
     }
   ),

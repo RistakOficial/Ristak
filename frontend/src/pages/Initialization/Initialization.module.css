@@ -1,269 +1,191 @@
-.page {
-  position: relative;
-  max-width: 920px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem 4rem;
+.content {
+  display: grid;
+  gap: 18px;
+  padding-top: 24px;
 }
 
-/* ---- Hero ---- */
-.hero {
-  position: relative;
-  overflow: hidden;
-  border-radius: 24px;
-  padding: 2rem;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background:
-    radial-gradient(120% 140% at 0% 0%, rgba(var(--color-primary-rgb), 0.18), transparent 55%),
-    radial-gradient(120% 140% at 100% 0%, rgba(99, 102, 241, 0.16), transparent 55%),
-    var(--color-background-secondary);
-  animation: rise 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+.progress {
+  display: grid;
+  gap: 10px;
 }
 
-.heroGlow {
-  position: absolute;
-  inset: -40% -10% auto -10%;
-  height: 70%;
-  background: radial-gradient(60% 60% at 50% 0%, rgba(var(--color-primary-rgb), 0.25), transparent 70%);
-  filter: blur(20px);
-  pointer-events: none;
-  animation: float 8s ease-in-out infinite;
-}
-
-.heroBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.8rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--color-text-secondary);
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-}
-
-.heroTitle {
-  margin: 1rem 0 0.2rem;
-  font-size: 1.9rem;
-  line-height: 1.15;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
-.heroLogo {
-  --ristak-logo-width: 136px;
-  --ristak-logo-height: 42px;
-
-  margin-bottom: 0.55rem;
-}
-
-.heroSubtitle {
-  max-width: 46ch;
-  font-size: 0.95rem;
-  line-height: 1.55;
-  color: var(--color-text-tertiary);
-}
-
-/* ---- Progreso ---- */
-.progressWrap {
-  margin-top: 1.6rem;
-}
-
-.progressMeta {
+.progressCopy {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 0.6rem;
+  gap: 16px;
+  color: var(--text-dim);
+  font-size: 13px;
 }
 
-.progressLabel {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-}
-
-.progressPct {
-  font-size: 1.4rem;
+.progressCopy strong {
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 15px;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-primary);
 }
 
-.progressTrack {
-  position: relative;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.16);
+.progressSegments {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 8px;
+}
+
+.progressSegment {
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  transition: background 180ms ease;
+}
+
+.progressSegmentDone {
+  background: var(--accent);
+}
+
+.connectionSurface {
   overflow: hidden;
 }
 
-.progressBar {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(var(--color-primary-rgb), 0.9), rgba(99, 102, 241, 0.9));
-  transition: width 0.7s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.progressBar::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
-  animation: shimmer 2.2s linear infinite;
-}
-
-/* ---- Lista de pasos ---- */
-.steps {
-  margin-top: 1.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.step {
-  --step-accent: rgba(148, 163, 184, 0.5);
-  display: flex;
+.connectionRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 1rem;
-  padding: 1.05rem 1.15rem;
-  border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background: var(--color-background-secondary);
-  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, opacity 0.25s ease;
-  animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: var(--delay, 0ms);
+  gap: 16px;
+  padding: 20px;
 }
 
-.step:hover {
-  transform: translateY(-2px);
-  border-color: rgba(148, 163, 184, 0.28);
-  box-shadow: 0 18px 40px -28px rgba(15, 23, 42, 0.4);
+.connectionRow + .connectionRow {
+  border-top: 1px solid var(--border);
 }
 
-.stepDone {
-  opacity: 0.72;
-}
-
-.stepDone:hover {
-  transform: none;
-}
-
-.stepIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.connectionIcon {
+  display: grid;
   width: 44px;
   height: 44px;
-  flex-shrink: 0;
-  border-radius: 12px;
-  color: var(--color-text-secondary);
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  transition: background 0.25s ease, color 0.25s ease;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
-.stepIconDone {
-  color: var(--color-status-success);
-  background: color-mix(in srgb, var(--color-status-success) 16%, transparent);
-  border-color: color-mix(in srgb, var(--color-status-success) 30%, transparent);
-}
-
-.stepBody {
+.connectionCopy {
   min-width: 0;
-  flex: 1;
 }
 
-.stepTitleRow {
+.connectionHeading {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.stepTitle {
-  font-size: 0.98rem;
+.connectionHeading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
   font-weight: 600;
-  color: var(--color-text-primary);
 }
 
-.stepDesc {
-  margin-top: 0.2rem;
-  font-size: 0.83rem;
-  line-height: 1.45;
-  color: var(--color-text-tertiary);
+.connectionCopy p {
+  max-width: 64ch;
+  margin: 5px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
-.stepAction {
-  flex-shrink: 0;
+.connectionAction {
+  justify-self: end;
 }
 
-.checkDone {
-  display: flex;
+.connectedText {
+  display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.82rem;
+  gap: 6px;
+  color: var(--pos);
+  font-size: 13px;
   font-weight: 600;
-  color: var(--color-status-success);
-  animation: pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* ---- Footer / ocultar ---- */
+.securityNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--text-mute);
+}
+
+.securityNote svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.securityNote p,
+.footer p,
+.credentialHint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+}
+
 .footer {
-  margin-top: 2.4rem;
-  padding-top: 1.4rem;
-  border-top: 1px dashed rgba(148, 163, 184, 0.2);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  color: var(--text-mute);
 }
 
-.footerText {
-  font-size: 0.82rem;
-  line-height: 1.5;
-  color: var(--color-text-tertiary);
-  max-width: 52ch;
+.credentialForm {
+  display: grid;
+  gap: 12px;
 }
 
-.toolbar {
+.credentialForm label {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.credentialForm input {
+  width: 100%;
+}
+
+.credentialHint {
+  color: var(--text-mute);
+}
+
+.credentialActions {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 1.2rem;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 6px;
 }
 
-.linkBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-}
+@media (max-width: 720px) {
+  .connectionRow {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+  }
 
-/* ---- Animaciones ---- */
-@keyframes rise {
-  from { opacity: 0; transform: translateY(14px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+  .connectionAction {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
 
-@keyframes pop {
-  from { opacity: 0; transform: scale(0.8); }
-  to { opacity: 1; transform: scale(1); }
-}
+  .connectionAction [data-btn] {
+    width: 100%;
+  }
 
-@keyframes shimmer {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(100%); }
-}
-
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(10px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hero, .step, .checkDone { animation: none; }
-  .progressBar::after, .heroGlow { animation: none; }
-  .progressBar { transition: none; }
+  .footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }

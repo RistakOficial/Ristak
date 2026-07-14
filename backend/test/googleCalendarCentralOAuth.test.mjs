@@ -396,25 +396,29 @@ test('Google Calendar OAuth conserva return_path de calendarios y bloquea rutas 
     assert.equal(requests[0].body.return_path, calendarPath)
     assert.equal(requests[0].body.app_url, 'https://raulgomez.onrender.com')
 
-    await callConnectUrl({ returnPath: '/settings/payments' })
-    assert.equal(requests[1].body.return_path, '/settings/calendars/google')
+    await callConnectUrl({ returnPath: '/initialization' })
+    assert.equal(requests[1].body.return_path, '/initialization')
     assert.equal(requests[1].body.app_url, 'https://raulgomez.onrender.com')
 
-    await callConnectUrl({ returnPath: 'https://evil.test/settings/calendars/google' })
+    await callConnectUrl({ returnPath: '/settings/payments' })
     assert.equal(requests[2].body.return_path, '/settings/calendars/google')
     assert.equal(requests[2].body.app_url, 'https://raulgomez.onrender.com')
+
+    await callConnectUrl({ returnPath: 'https://evil.test/settings/calendars/google' })
+    assert.equal(requests[3].body.return_path, '/settings/calendars/google')
+    assert.equal(requests[3].body.app_url, 'https://raulgomez.onrender.com')
 
     await callConnectUrl(
       { returnPath: calendarPath, appUrl: 'https://body-tenant.onrender.com/settings/calendars/google' },
       {}
     )
-    assert.equal(requests[3].body.app_url, 'https://body-tenant.onrender.com')
+    assert.equal(requests[4].body.app_url, 'https://body-tenant.onrender.com')
 
     await callConnectUrl(
       { returnPath: calendarPath },
       { 'x-forwarded-host': 'proxy-tenant.onrender.com', 'x-forwarded-proto': 'https' }
     )
-    assert.equal(requests[4].body.app_url, 'https://proxy-tenant.onrender.com')
+    assert.equal(requests[5].body.app_url, 'https://proxy-tenant.onrender.com')
   } finally {
     server.closeAllConnections?.()
     server.close()
