@@ -763,7 +763,10 @@ test('video action meta event endpoint sends configured CAPI event', async () =>
           params: { fbclid: 'fbclid-video-action' },
           eventTime: 1700000000000,
           visitorId: 'visitor-video-action',
-          fbp: 'fbp-test'
+          fbp: 'fbp-test',
+          // El servidor no debe confiar en metadata de trigger fabricada por el browser.
+          videoActionTriggerType: 'unique_watched_percent',
+          videoActionTriggerValue: 99
         }
       }
     )
@@ -783,6 +786,8 @@ test('video action meta event endpoint sends configured CAPI event', async () =>
     assert.equal(payload.data[0].custom_data.video_block_id, videoBlock.id)
     assert.equal(payload.data[0].custom_data.video_action_id, 'meta-event-at-75')
     assert.equal(payload.data[0].custom_data.video_action_time_seconds, 75)
+    assert.equal(payload.data[0].custom_data.video_action_trigger_type, 'timeline_reached')
+    assert.equal(payload.data[0].custom_data.video_action_trigger_value, 75)
     assert.equal(payload.data[0].custom_data.predicted_ltv, 450)
     assert.equal(payload.data[0].custom_data.status, 'watched_75')
   } finally {
@@ -1002,7 +1007,18 @@ test('video player keeps Storage preview and uses Bunny Stream for the live rend
       ...options
     })
     const plainSite = baseSite({ ...visualSettings, mediaUrl: plainUrl })
-    const streamSite = baseSite({ ...visualSettings, mediaUrl: storageUrl })
+    const streamSite = baseSite({
+      ...visualSettings,
+      mediaUrl: storageUrl,
+      videoActions: [{
+        id: 'stream-coverage',
+        triggerType: 'unique_watched_percent',
+        triggerValue: 50,
+        action: 'show',
+        targetBlockId: 'oferta-stream',
+        before: 'hidden'
+      }]
+    })
 
     const plainPreviewHtml = await render(plainSite, { trackingEnabled: false, preview: true })
     const plainLiveHtml = await render(plainSite, { trackingEnabled: true, preview: false })
@@ -1023,6 +1039,9 @@ test('video player keeps Storage preview and uses Bunny Stream for the live rend
     assert.match(streamLiveHtml, new RegExp(`data-rstk-stream-video-id="${escapeRegExp(streamVideoId)}"`))
     assert.doesNotMatch(streamPreviewHtml, /<iframe[^>]+player\.mediadelivery\.net\/embed/)
     assert.match(streamLiveHtml, new RegExp(`<iframe[^>]+iframe\\.mediadelivery\\.net/embed/123456/${escapeRegExp(streamVideoId)}`))
+    assert.match(streamLiveHtml, /data-rstk-stream-action-proxy/)
+    assert.match(streamLiveHtml, /player\.getDuration/)
+    assert.match(streamLiveHtml, /proxy\.dispatchEvent\(new Event\('seeked'\)\)/)
 
     const autoplayHtml = await render(baseSite({
       ...visualSettings,

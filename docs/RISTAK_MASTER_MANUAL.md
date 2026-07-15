@@ -4119,6 +4119,61 @@ arranca con estado "Mantener oculto", el render importado marca el target con
 `data-rstk-video-action-hidden="true"` desde el HTML inicial para evitar
 parpadeos entre preview y sitio publicado.
 
+El panel de acciones ofrece las mismas tres condiciones para un video nativo del
+editor visual y para un slot `data-rstk-native-element="video"` de HTML
+importado:
+
+- `timeline_reached` (**Llegó al minuto X**) compara la posición actual del
+  reproductor. Adelantar el video hasta ese punto sí cuenta como cumplimiento.
+- `playback_seconds` (**Reprodujo X tiempo**) acumula solamente tiempo real de
+  reloj mientras la reproducción está activa. Pausas, buffering y saltos por
+  seek no suman; volver a reproducir un fragmento sí acumula tiempo adicional.
+- `unique_watched_percent` (**Vio X% del video**) calcula la union de los
+  fragmentos que realmente se reprodujeron contra la duración total. Saltar a
+  otra posición no rellena el tramo omitido y repetir una zona ya vista no infla
+  el porcentaje.
+
+El contrato declarativo para pedir estas acciones desde código es
+`data-rstk-video-rules` sobre el slot de video nativo. Cada regla necesita un
+`id` estable, `triggerType`, `triggerValue`, la `action` y sus
+`targetBlockIds` cuando la acción opera sobre elementos. El target recomendado declara también una identidad estable
+con `data-rstk-video-action-target`; por ejemplo:
+
+`triggerValue` se expresa en segundos para `timeline_reached` y
+`playback_seconds` (`3 minutos = 180`), y como porcentaje de `1` a `100` para
+`unique_watched_percent`.
+
+```html
+<div
+  data-rstk-native-element="video"
+  data-rstk-native-id="video-principal"
+  data-rstk-label="Video principal"
+  data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'
+></div>
+<section
+  id="oferta-final"
+  data-rstk-video-action-target="oferta-final"
+  data-rstk-label="Oferta final"
+>...</section>
+```
+
+La IA y el HTML solo declaran reglas; nunca deben inyectar JavaScript arbitrario
+para escuchar el reproductor o manipular la página. Reescribir el código no debe
+borrar configuración por accidente: quitar el atributo completo u omitir una
+regla conserva las acciones ya asociadas. Para eliminar intencionalmente una
+regla declarada se usa su mismo ID con el tombstone
+`{"id":"mostrar-oferta","deleted":true}`. Ristak conserva la última declaración
+por ID y hace una reconciliación de tres vías entre esa declaración anterior, el
+HTML nuevo y la configuración actual del panel. Si el usuario personalizó una
+regla en el panel y la declaración no cambió esa propiedad, la personalización se
+mantiene; si el código cambia expresamente una propiedad declarada, solo esa
+parte se actualiza.
+
+Estas acciones sirven para controlar la experiencia visible de la página, por
+ejemplo revelar una oferta, formulario, botón o sección conforme avanza el video.
+No son una barrera de seguridad, autorización, paywall ni control de acceso: el
+contenido realmente privado debe protegerse en backend.
+
 En el editor HTML importado, el Panel de contenido ocupa el inspector derecho y
 administra en una sola vista todo lo que el codigo de la pagina activa ya
 contiene. El listado se calcula por pagina, no con totales de todo el sitio, y

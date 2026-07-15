@@ -6,6 +6,7 @@
     "dev": "vite",
     "design:audit": "node scripts/audit-design-system.mjs",
     "test:chat-reconciliation": "node scripts/test-chat-message-reconciliation.mjs",
+    "test:sites-video-rule-contract": "node scripts/test-sites-video-rule-contract.mjs",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",
