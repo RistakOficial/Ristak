@@ -1168,6 +1168,43 @@
   padding: 12px;
 }
 
+.metaPaymentSetup {
+  display: grid;
+  gap: 14px;
+}
+
+.metaPaymentSetup p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.metaPaymentSetup .metaPaymentNote {
+  color: var(--text-mute);
+  font-size: 12px;
+}
+
+.metaPaymentActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.metaPaymentLater[data-btn] {
+  height: auto;
+  padding: 8px 4px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.metaPaymentLater[data-btn]:hover {
+  background: transparent;
+  color: var(--accent);
+}
+
 /* Modal de QR en grande */
 .qrModalBody {
   display: flex;
@@ -1258,6 +1295,7 @@
   }
 
   .qrDripControls,
+  .metaPaymentActions,
   .qrModalActions {
     justify-content: flex-start;
     flex-wrap: wrap;

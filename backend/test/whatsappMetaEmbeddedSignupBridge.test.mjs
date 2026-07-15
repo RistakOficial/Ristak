@@ -126,3 +126,25 @@ test('los callbacks HMAC quedan antes de auth y las rutas humanas siguen protegi
   assert.doesNotMatch(settingsSource, /window\.open\([^\n]*ristak-whatsapp-meta/)
   assert.match(settingsSource, /window\.location\.assign\(connectUrl/)
 })
+
+test('el frontend pide configurar pagos después de conectar Meta por cualquiera de los dos callbacks', async () => {
+  const settingsSource = await readFile(
+    join(testDir, '../../frontend/src/pages/Settings/WhatsAppSettings.tsx'),
+    'utf8'
+  )
+
+  assert.ok(settingsSource.includes("const [metaPaymentSetupOpen, setMetaPaymentSetupOpen] = useState(false)"))
+  assert.equal(
+    settingsSource.match(/finally\(\(\) => setMetaPaymentSetupOpen\(true\)\)/g)?.length,
+    2,
+    'los callbacks meta_connected y whatsapp_meta deben mostrar el mismo siguiente paso'
+  )
+  assert.ok(settingsSource.includes('Configura los pagos de WhatsApp Business'))
+  assert.ok(settingsSource.includes('Configurar después'))
+  assert.ok(settingsSource.includes('Configurar ahora'))
+  assert.match(settingsSource, /variant="ghost"[\s\S]*?Configurar después/)
+  assert.match(settingsSource, /apiStatus\?\.metaDirect\?\.businessId/)
+  assert.match(settingsSource, /apiStatus\?\.metaDirect\?\.wabaId/)
+  assert.doesNotMatch(settingsSource, /const ycloudAssetId/)
+  assert.doesNotMatch(settingsSource, /metaBusinessAccountId/)
+})

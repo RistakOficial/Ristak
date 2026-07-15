@@ -1388,6 +1388,14 @@ Installer conserva temporalmente el resultado cifrado y una sesión nueva de la
 misma instalación lo retoma sin volver a autorizar ni exponer el token al
 navegador.
 
+Al regresar de una conexión Meta exitosa, la pantalla abre un modal para
+configurar el método de pago de ese WABA. El usuario elige **Configurar después**
+como acción de texto o **Configurar ahora** como acción principal. La segunda
+abre la configuración de WhatsApp Business en Meta con el Business ID y WABA ID
+de la conexión directa; Ristak no recibe ni guarda los datos de la tarjeta. Si se
+pospone, la liga sigue disponible en Más acciones > Configurar pagos de Meta. El
+aviso pertenece solo a Meta directo y nunca debe mostrarse al conectar YCloud.
+
 Meta exige un sitio web por defecto. La casilla **Mi empresa no cuenta con sitio
 web ni una página de perfil** sólo aparece para Solution Partners Select o
 Premier aprobados para Partner-led Business Verification; no se habilita por

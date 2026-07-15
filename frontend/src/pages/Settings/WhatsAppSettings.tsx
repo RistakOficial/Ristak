@@ -279,7 +279,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [apiRefreshing, setApiRefreshing] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [selectedPhoneId, setSelectedPhoneId] = useState('')
-  const [metaBusinessAccountId, setMetaBusinessAccountId] = useState('')
+  const [metaPaymentSetupOpen, setMetaPaymentSetupOpen] = useState(false)
   const [qrConnectingPhoneId, setQrConnectingPhoneId] = useState('')
   const [disconnectingConnectionKey, setDisconnectingConnectionKey] = useState('')
   const [qrConsentPhone, setQrConsentPhone] = useState<WhatsAppApiPhoneNumber | null>(null)
@@ -347,7 +347,9 @@ export const WhatsAppSettings: React.FC = () => {
       visiblePhoneNumbers[0] ||
       null
   }, [apiStatus?.selectedPhone, hasWhatsAppApiAccess, selectedPhoneId, visiblePhoneNumbers])
-  const ycloudAssetId = selectedPhone?.waba_id || apiStatus?.sender.wabaId || ''
+  const selectedMetaWabaId = String(selectedPhone?.provider || '').toLowerCase() === 'meta_direct'
+    ? selectedPhone?.waba_id || ''
+    : ''
 
   const qrSessionsByPhoneId = useMemo(() => {
     return new Map<string, WhatsAppQrSession>(
@@ -377,19 +379,24 @@ export const WhatsAppSettings: React.FC = () => {
   }
 
   const paymentConfigUrl = useMemo(() => {
-    const businessId = metaBusinessAccountId.trim()
-    const assetId = ycloudAssetId.trim()
+    const businessId = String(apiStatus?.metaDirect?.businessId || '').trim()
+    const assetId = String(apiStatus?.metaDirect?.wabaId || selectedMetaWabaId).trim()
+    const params = new URLSearchParams()
 
-    if (!businessId || !assetId) return ''
+    if (businessId) params.set('business_id', businessId)
+    if (assetId) {
+      params.set('selected_asset_id', assetId)
+      params.set('selected_asset_type', 'whatsapp-business-account')
+    }
 
-    const params = new URLSearchParams({
-      business_id: businessId,
-      selected_asset_id: assetId,
-      selected_asset_type: 'whatsapp-business-account'
-    })
+    const query = params.toString()
+    return query ? `${META_WHATSAPP_PAYMENT_CONFIG_URL}?${query}` : META_WHATSAPP_PAYMENT_CONFIG_URL
+  }, [apiStatus?.metaDirect?.businessId, apiStatus?.metaDirect?.wabaId, selectedMetaWabaId])
 
-    return `${META_WHATSAPP_PAYMENT_CONFIG_URL}?${params.toString()}`
-  }, [metaBusinessAccountId, ycloudAssetId])
+  const openMetaPaymentConfiguration = () => {
+    window.open(paymentConfigUrl, '_blank', 'noopener,noreferrer')
+    setMetaPaymentSetupOpen(false)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -421,7 +428,9 @@ export const WhatsAppSettings: React.FC = () => {
     if (connected === '1') {
       showToast('success', 'Meta conectado', 'La conexión directa quedó guardada. Actívala cuando quieras usarla para enviar.')
       invalidateIntegrationsStatus()
-      loadApiStatus().catch(() => null)
+      loadApiStatus()
+        .catch(() => null)
+        .finally(() => setMetaPaymentSetupOpen(true))
     } else {
       showToast('error', 'Meta no se conectó', params.get('meta_error') || 'Revisa la configuración en el portal.')
     }
@@ -440,31 +449,11 @@ export const WhatsAppSettings: React.FC = () => {
 
     showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak.')
     invalidateIntegrationsStatus()
-    loadApiStatus().catch(() => null)
+    loadApiStatus()
+      .catch(() => null)
+      .finally(() => setMetaPaymentSetupOpen(true))
     navigate({ pathname: location.pathname, search: location.search, hash: '' }, { replace: true })
   }, [location.hash, location.pathname, location.search, navigate, showToast])
-
-  useEffect(() => {
-    let cancelled = false
-
-    const loadMetaBusinessAccount = async () => {
-      try {
-        const data = await whatsappApiService.getMetaBusinessAccount()
-
-        if (!cancelled) setMetaBusinessAccountId(String(data.whatsappBusinessAccountId || '').trim())
-      } catch {
-        if (!cancelled) {
-          setMetaBusinessAccountId('')
-        }
-      }
-    }
-
-    loadMetaBusinessAccount()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   useEffect(() => {
     const hasPendingQr = visiblePhoneNumbers.some((phone) => {
@@ -1119,7 +1108,7 @@ export const WhatsAppSettings: React.FC = () => {
       ].some((value) => String(value || '').toLowerCase().includes(query))
     })
     const balanceLabel = balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'
-    const hasAdvancedActions = hasWhatsAppApiAccess && Boolean(paymentConfigUrl || ycloudConnected)
+    const hasAdvancedActions = hasWhatsAppApiAccess && Boolean((metaDirectConnected && paymentConfigUrl) || ycloudConnected)
 
     return (
       <div className={styles.layout}>
@@ -1181,7 +1170,7 @@ export const WhatsAppSettings: React.FC = () => {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className={styles.actionsMenu}>
-                    {paymentConfigUrl && (
+                    {metaDirectConnected && paymentConfigUrl && (
                       <DropdownMenuItem asChild>
                         <a href={paymentConfigUrl} target="_blank" rel="noopener noreferrer">
                           <ExternalLink size={15} />
@@ -1650,6 +1639,39 @@ export const WhatsAppSettings: React.FC = () => {
               ? renderAlertsStage()
               : renderNumbersStage()}
       </div>
+
+      <Modal
+        isOpen={metaPaymentSetupOpen}
+        onClose={() => setMetaPaymentSetupOpen(false)}
+        title="Configura los pagos de WhatsApp Business"
+        type="custom"
+        size="sm"
+        showCloseButton={false}
+        closeOnBackdropClick={false}
+        closeOnEscape={false}
+      >
+        <div className={styles.metaPaymentSetup}>
+          <p>
+            Meta necesita un método de pago para cobrar los mensajes enviados con plantillas.
+            Configúralo en la cuenta de WhatsApp Business que acabas de conectar.
+          </p>
+          <p className={styles.metaPaymentNote}>
+            La tarjeta se registra directamente en Meta. Ristak no puede verla ni guardarla.
+          </p>
+          <div className={styles.metaPaymentActions}>
+            <Button
+              variant="ghost"
+              className={styles.metaPaymentLater}
+              onClick={() => setMetaPaymentSetupOpen(false)}
+            >
+              Configurar después
+            </Button>
+            <Button variant="primary" onClick={openMetaPaymentConfiguration}>
+              Configurar ahora
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={addNumberModalOpen}

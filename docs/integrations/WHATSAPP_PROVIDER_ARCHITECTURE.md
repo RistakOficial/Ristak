@@ -228,6 +228,13 @@ plantillas por Graph. Una identidad histórica YCloud no cuenta como identidad
 Meta ni puede impedir ese envío. El arranque normal solo repara la copia local y
 nunca llama a Graph o YCloud.
 
+Después de completar Embedded Signup de Meta directo, Configuración > WhatsApp
+abre un paso de pagos exclusivo de Meta. **Configurar ahora** abre la pantalla de
+la cuenta correcta en Meta usando el `business_id` y el WABA guardados por ese
+callback; **Configurar después** cierra el aviso y la misma liga permanece en
+Más acciones. La tarjeta se registra únicamente en Meta y nunca pasa por Ristak.
+Este paso no usa IDs, estados ni credenciales YCloud.
+
 ## Contratos de webhook
 
 ### YCloud
