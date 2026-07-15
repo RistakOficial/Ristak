@@ -50,12 +50,10 @@ test('Sites abre con summaries paginados y un solo cargador de detalle compartid
   assert.match(backendSource, /if \(includeTrackingStats\) \{[\s\S]{0,120}getSiteTrackingStats/)
   assert.match(controllerSource, /includeTrackingStats:[\s\S]{0,120}!== '0'/)
   assert.match(routeSource, /const LazySitesWorkspace = React\.lazy/)
-  assert.match(routeSource, /prewarmSitesRoute\(location\.pathname\)/)
-  assert.match(routeSource, /void prefetchSitesWorkspace\(\)\.then/)
-  assert.doesNotMatch(routeSource, /sitesService\.|warmup\.critical|Promise\.all\(/)
+  assert.match(routeSource, /<React\.Suspense fallback=\{<Loading page="sites" message="Abriendo Sitios\.\.\." \/>\}>/)
+  assert.doesNotMatch(routeSource, /SitesRouteShell|PageContainer|PageHeader|TabList|prewarmSitesRoute/)
+  assert.doesNotMatch(routeSource, /sitesService\.|warmup\.critical|Promise\.all\(|useEffect|useLocation|useNavigate/)
   assert.doesNotMatch(routeSource, /limit: 120|folderId: '__root__'|includeFacets: true/)
-  assert.match(routeSource, /return <SitesRouteShell warmup=\{warmup\} \/>/)
-  assert.doesNotMatch(routeSource, /fallback=\{<Loading/)
 })
 
 test('listSites agrega métricas por lote y no conserva subqueries correlacionadas por site', async () => {

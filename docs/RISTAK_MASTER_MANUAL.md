@@ -214,8 +214,8 @@ separado. `frontend/src/routing/routeModules.tsx` es el registro canonico de
 chunks para rutas desktop, moviles y publicas. El sidebar inicia la descarga al
 detectar intencion real de navegar: el pointer exige 150 ms de permanencia y se
 cancela al salir, mientras foco, touch y pointer-down son inmediatos. En Sites esa
-precarga trae solamente el shell de ruta; el workspace/editor pesado se importa
-al entrar realmente a Sites y nunca durante el idle global. Configuracion hace lo
+precarga trae solamente la compuerta liviana de ruta; el workspace/editor pesado
+se importa al entrar realmente a Sites y nunca durante el idle global. Configuracion hace lo
 mismo con cada panel interno y navega directamente al primero permitido. Los
 redirects de login/inicio precargan su destino, y el panel del asistente AI queda
 en un chunk separado del shell. No se permite volver a importar todas las
@@ -804,14 +804,16 @@ independientes. Cambiar tipo, carpeta, busqueda o abandonar la ruta aborta la
 promesa anterior; una promesa de otra llave nunca se reutiliza para la consulta
 nueva ni queda consumiendo backend fuera de pantalla.
 
-La ruta de Sites tiene un shell propio y liviano. Pinta de inmediato encabezado y
-secciones mientras descarga una sola vez el chunk del workspace. El menu puede
-precargar ese chunk con intencion real, pero nunca dispara biblioteca, carpetas,
-dominio ni documento de edicion antes de montar Sites. El workspace es el unico
-owner de esas lecturas, todas con deadline y cancelacion; asi no se duplican datos
-ni una API lenta impide abrir o abandonar la ruta. Un fallo transitorio del chunk
-limpia su promesa y permite reintentar. El editor pesado nunca forma parte del
-shell global ni bloquea una transicion hacia otro modulo.
+La ruta de Sites tiene una compuerta propia y liviana. Mientras descarga una sola
+vez el chunk del workspace muestra únicamente el cargador global de Ristak; no
+pinta encabezados, tabs, bibliotecas ni controles provisionales que parezcan una
+versión anterior antes de montar la interfaz real. El menú precarga solamente la
+compuerta con intención real y nunca dispara biblioteca, carpetas, dominio ni
+documento de edición antes de montar Sites. El workspace es el único owner de
+esas lecturas, todas con deadline y cancelación; así no se duplican datos ni una
+API lenta impide abrir o abandonar la ruta. Un fallo transitorio del chunk limpia
+su promesa y permite reintentar. El editor pesado nunca forma parte del shell
+global ni bloquea una transición hacia otro módulo.
 El documento de edicion se solicita con `includeTrackingStats=0`: abrir,
 previsualizar, guardar o recibir respuestas no ejecuta conteos historicos de
 sesiones. El API directo conserva `includeTrackingStats=1` por compatibilidad,
