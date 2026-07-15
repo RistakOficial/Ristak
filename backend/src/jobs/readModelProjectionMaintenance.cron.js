@@ -14,6 +14,11 @@ import {
   scheduleMessageFirstSeenProjectionBackfill
 } from '../services/messageFirstSeenProjectionService.js'
 import {
+  MESSAGE_ANALYTICS_PROJECTION_VERSION,
+  readMessageAnalyticsProjectionState,
+  scheduleMessageAnalyticsProjectionBackfill
+} from '../services/messageAnalyticsProjectionService.js'
+import {
   CONTACT_PERSON_IDENTITY_PROJECTION_VERSION,
   readContactPersonIdentityProjectionState,
   scheduleContactPersonIdentityProjectionBackfill
@@ -23,6 +28,21 @@ import {
   readTrackingVisitorProjectionState,
   scheduleTrackingVisitorProjectionBackfill
 } from '../services/trackingVisitorProjectionService.js'
+import {
+  TRACKING_ANALYTICS_PROJECTION_VERSION,
+  readTrackingAnalyticsProjectionState,
+  scheduleTrackingAnalyticsProjectionBackfill
+} from '../services/trackingAnalyticsProjectionService.js'
+import {
+  TRACKING_CONVERSION_PROJECTION_VERSION,
+  readTrackingConversionProjectionState,
+  scheduleTrackingConversionProjectionBackfill
+} from '../services/trackingConversionProjectionService.js'
+import {
+  CONTACT_ORIGIN_PROJECTION_VERSION,
+  readContactOriginProjectionState,
+  scheduleContactOriginProjectionBackfill
+} from '../services/contactOriginProjectionService.js'
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 import { logger as defaultLogger } from '../utils/logger.js'
 
@@ -48,6 +68,13 @@ const defaultProjections = Object.freeze([
     schedule: scheduleMessageFirstSeenProjectionBackfill
   },
   {
+    key: 'message-analytics',
+    version: MESSAGE_ANALYTICS_PROJECTION_VERSION,
+    readState: readMessageAnalyticsProjectionState,
+    schedule: scheduleMessageAnalyticsProjectionBackfill,
+    continuous: true
+  },
+  {
     key: 'conversational-agent-metrics',
     version: CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION,
     readState: readConversationalAgentMetricsProjectionState,
@@ -58,6 +85,30 @@ const defaultProjections = Object.freeze([
     version: TRACKING_VISITOR_PROJECTION_VERSION,
     readState: readTrackingVisitorProjectionState,
     schedule: scheduleTrackingVisitorProjectionBackfill
+  },
+  {
+    key: 'tracking-analytics',
+    version: TRACKING_ANALYTICS_PROJECTION_VERSION,
+    readState: readTrackingAnalyticsProjectionState,
+    schedule: scheduleTrackingAnalyticsProjectionBackfill,
+    // A diferencia de un backfill cerrado, esta proyección tiene una cola de
+    // cambios que sigue recibiendo eventos después de publicar `ready`.
+    // El tick de 30 s es sólo el watchdog; el servicio mantiene su poll corto.
+    continuous: true
+  },
+  {
+    key: 'tracking-conversion',
+    version: TRACKING_CONVERSION_PROJECTION_VERSION,
+    readState: readTrackingConversionProjectionState,
+    schedule: scheduleTrackingConversionProjectionBackfill,
+    continuous: true
+  },
+  {
+    key: 'contact-origin',
+    version: CONTACT_ORIGIN_PROJECTION_VERSION,
+    readState: readContactOriginProjectionState,
+    schedule: scheduleContactOriginProjectionBackfill,
+    continuous: true
   }
 ])
 
@@ -95,7 +146,7 @@ export function createReadModelProjectionMaintenanceScheduler({
         if (!state) continue
         const ready = Number(state.projection_version) === Number(projection.version) &&
           String(state.status || '').toLowerCase() === 'ready'
-        if (ready) continue
+        if (ready && !projection.continuous) continue
         try {
           const queued = projection.schedule()
           scheduled.push({ key: projection.key, queued: Boolean(queued?.scheduled) })

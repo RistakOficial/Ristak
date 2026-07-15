@@ -143,6 +143,331 @@ export async function loadFirstWhatsAppAttributions(contactIds = []) {
   return byContact
 }
 
+async function loadFirstWhatsAppAttributionsForProjection(contactIds = [], {
+  database = db,
+  signal
+} = {}) {
+  const ids = Array.from(new Set(contactIds.filter(Boolean)))
+  const byContact = new Map()
+  if (!ids.length) return byContact
+
+  const placeholders = ids.map(() => '?').join(', ')
+
+  const officialRows = databaseDialect === 'postgres'
+    ? await database.all(`
+      SELECT DISTINCT ON (contact_id)
+        contact_id,
+        referral_source_url,
+        referral_source_type,
+        referral_source_id,
+        referral_headline,
+        referral_body,
+        referral_ctwa_clid,
+        ad_id_thru_message,
+        NULL as referral_source_app,
+        NULL as referral_entry_point,
+        created_at,
+        'whatsapp_attribution' as attribution_source
+      FROM whatsapp_attribution
+      WHERE contact_id IN (${placeholders})
+      ORDER BY contact_id, created_at ASC, id ASC
+    `, ids, { signal })
+    : await database.all(`
+      WITH ranked AS (
+        SELECT
+          contact_id,
+          referral_source_url,
+          referral_source_type,
+          referral_source_id,
+          referral_headline,
+          referral_body,
+          referral_ctwa_clid,
+          ad_id_thru_message,
+          created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY contact_id
+            ORDER BY created_at ASC, id ASC
+          ) AS source_rank
+        FROM whatsapp_attribution
+        WHERE contact_id IN (${placeholders})
+      )
+      SELECT
+        contact_id,
+        referral_source_url,
+        referral_source_type,
+        referral_source_id,
+        referral_headline,
+        referral_body,
+        referral_ctwa_clid,
+        ad_id_thru_message,
+        NULL as referral_source_app,
+        NULL as referral_entry_point,
+        created_at,
+        'whatsapp_attribution' as attribution_source
+      FROM ranked
+      WHERE source_rank = 1
+    `, ids, { signal })
+
+  officialRows.forEach(row => {
+    if (row.contact_id && !byContact.has(row.contact_id)) {
+      byContact.set(row.contact_id, row)
+    }
+  })
+
+  const apiRows = databaseDialect === 'postgres'
+    ? await database.all(`
+      SELECT DISTINCT ON (msg.contact_id)
+        msg.contact_id,
+        COALESCE(attr.detected_source_url, msg.detected_source_url) as referral_source_url,
+        COALESCE(attr.detected_source_type, msg.detected_source_type) as referral_source_type,
+        COALESCE(attr.detected_source_id, msg.detected_source_id) as referral_source_id,
+        COALESCE(attr.detected_headline, msg.detected_headline) as referral_headline,
+        COALESCE(attr.detected_body, msg.detected_body) as referral_body,
+        COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as referral_ctwa_clid,
+        COALESCE(attr.detected_source_id, msg.detected_source_id) as ad_id_thru_message,
+        COALESCE(attr.detected_source_app, msg.detected_source_app) as referral_source_app,
+        COALESCE(attr.detected_entry_point, msg.detected_entry_point) as referral_entry_point,
+        COALESCE(msg.message_timestamp, msg.created_at) as created_at,
+        'whatsapp_api' as attribution_source
+      FROM whatsapp_api_messages msg
+      LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
+      WHERE msg.contact_id IN (${placeholders})
+        AND LOWER(COALESCE(msg.direction, '')) = 'inbound'
+        AND (
+          attr.id IS NOT NULL
+          OR NULLIF(TRIM(COALESCE(msg.detected_ctwa_clid, '')), '') IS NOT NULL
+          OR NULLIF(TRIM(COALESCE(msg.detected_source_id, '')), '') IS NOT NULL
+          OR NULLIF(TRIM(COALESCE(msg.detected_source_url, '')), '') IS NOT NULL
+          OR NULLIF(TRIM(COALESCE(msg.detected_source_type, '')), '') IS NOT NULL
+          OR NULLIF(TRIM(COALESCE(msg.detected_source_app, '')), '') IS NOT NULL
+          OR NULLIF(TRIM(COALESCE(msg.detected_entry_point, '')), '') IS NOT NULL
+          OR NULLIF(TRIM(COALESCE(msg.detected_headline, '')), '') IS NOT NULL
+        )
+      ORDER BY msg.contact_id, COALESCE(msg.message_timestamp, msg.created_at) ASC,
+        msg.id ASC, attr.created_at ASC, attr.id ASC
+    `, ids, { signal })
+    : await database.all(`
+      WITH ranked AS (
+        SELECT
+          msg.contact_id,
+          COALESCE(attr.detected_source_url, msg.detected_source_url) as referral_source_url,
+          COALESCE(attr.detected_source_type, msg.detected_source_type) as referral_source_type,
+          COALESCE(attr.detected_source_id, msg.detected_source_id) as referral_source_id,
+          COALESCE(attr.detected_headline, msg.detected_headline) as referral_headline,
+          COALESCE(attr.detected_body, msg.detected_body) as referral_body,
+          COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as referral_ctwa_clid,
+          COALESCE(attr.detected_source_id, msg.detected_source_id) as ad_id_thru_message,
+          COALESCE(attr.detected_source_app, msg.detected_source_app) as referral_source_app,
+          COALESCE(attr.detected_entry_point, msg.detected_entry_point) as referral_entry_point,
+          COALESCE(msg.message_timestamp, msg.created_at) as created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY msg.contact_id
+            ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC,
+              msg.id ASC, attr.created_at ASC, attr.id ASC
+          ) AS source_rank
+        FROM whatsapp_api_messages msg
+        LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
+        WHERE msg.contact_id IN (${placeholders})
+          AND LOWER(COALESCE(msg.direction, '')) = 'inbound'
+          AND (
+            attr.id IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(msg.detected_ctwa_clid, '')), '') IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(msg.detected_source_id, '')), '') IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(msg.detected_source_url, '')), '') IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(msg.detected_source_type, '')), '') IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(msg.detected_source_app, '')), '') IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(msg.detected_entry_point, '')), '') IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(msg.detected_headline, '')), '') IS NOT NULL
+          )
+      )
+      SELECT
+        contact_id,
+        referral_source_url,
+        referral_source_type,
+        referral_source_id,
+        referral_headline,
+        referral_body,
+        referral_ctwa_clid,
+        ad_id_thru_message,
+        referral_source_app,
+        referral_entry_point,
+        created_at,
+        'whatsapp_api' as attribution_source
+      FROM ranked
+      WHERE source_rank = 1
+    `, ids, { signal })
+
+  apiRows.forEach(row => {
+    if (row.contact_id && !byContact.has(row.contact_id)) {
+      byContact.set(row.contact_id, row)
+    }
+  })
+
+  return byContact
+}
+
+/**
+ * Resuelve la fuente canónica de un lote pequeño de contactos sin transportar
+ * historiales completos. Esta variante existe para read models: hace los mismos
+ * probes acotados que el desglose SQL, pero devuelve una fila por contacto para
+ * poder materializarla una sola vez fuera del request path.
+ */
+export async function loadResolvedContactSources(contactIds = [], {
+  database = db,
+  signal
+} = {}) {
+  const ids = Array.from(new Set(contactIds.filter(Boolean).map(String)))
+  if (!ids.length) return new Map()
+
+  const placeholders = ids.map(() => '?').join(', ')
+  const contacts = await database.all(`
+    SELECT ${CONTACT_SOURCE_SELECTION_COLUMNS}, c.created_at
+    FROM contacts c
+    WHERE c.id IN (${placeholders})
+  `, ids, { signal })
+  if (!contacts.length) return new Map()
+
+  const firstSessions = databaseDialect === 'postgres'
+    ? await database.all(`
+      SELECT
+        sc.id AS selected_contact_id,
+        matched.referrer_url,
+        matched.site_source_name,
+        matched.utm_source,
+        matched.source_platform
+      FROM contacts sc
+      LEFT JOIN LATERAL (
+        SELECT candidates.*
+        FROM (
+          SELECT by_contact.*
+          FROM (
+            SELECT
+              s.id, s.referrer_url, s.site_source_name, s.utm_source,
+              s.source_platform, s.started_at, s.created_at, 1 AS match_priority
+            FROM sessions s
+            WHERE s.contact_id = sc.id
+            ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
+            LIMIT 1
+          ) by_contact
+
+          UNION ALL
+
+          SELECT by_visitor.*
+          FROM (
+            SELECT
+              s.id, s.referrer_url, s.site_source_name, s.utm_source,
+              s.source_platform, s.started_at, s.created_at, 2 AS match_priority
+            FROM sessions s
+            WHERE sc.visitor_id IS NOT NULL
+              AND sc.visitor_id != ''
+              AND s.visitor_id = sc.visitor_id
+            ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
+            LIMIT 1
+          ) by_visitor
+
+          UNION ALL
+
+          SELECT by_email.*
+          FROM (
+            SELECT
+              s.id, s.referrer_url, s.site_source_name, s.utm_source,
+              s.source_platform, s.started_at, s.created_at, 3 AS match_priority
+            FROM sessions s
+            WHERE sc.email IS NOT NULL
+              AND sc.email != ''
+              AND LOWER(s.email) = LOWER(sc.email)
+            ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
+            LIMIT 1
+          ) by_email
+        ) candidates
+        ORDER BY match_priority ASC, started_at ASC, created_at ASC, id ASC
+        LIMIT 1
+      ) matched ON TRUE
+      WHERE sc.id IN (${placeholders})
+    `, ids, { signal })
+    : await database.all(`
+      WITH selected_contacts AS (
+        SELECT id, visitor_id, email
+        FROM contacts
+        WHERE id IN (${placeholders})
+      ), session_matches AS (
+        SELECT
+          sc.id AS selected_contact_id,
+          s.id,
+          s.referrer_url,
+          s.site_source_name,
+          s.utm_source,
+          s.source_platform,
+          s.started_at,
+          s.created_at,
+          1 AS match_priority
+        FROM selected_contacts sc
+        INNER JOIN sessions s ON s.contact_id = sc.id
+
+        UNION ALL
+
+        SELECT
+          sc.id AS selected_contact_id,
+          s.id,
+          s.referrer_url,
+          s.site_source_name,
+          s.utm_source,
+          s.source_platform,
+          s.started_at,
+          s.created_at,
+          2 AS match_priority
+        FROM selected_contacts sc
+        INNER JOIN sessions s
+          ON sc.visitor_id IS NOT NULL
+         AND sc.visitor_id != ''
+         AND s.visitor_id = sc.visitor_id
+
+        UNION ALL
+
+        SELECT
+          sc.id AS selected_contact_id,
+          s.id,
+          s.referrer_url,
+          s.site_source_name,
+          s.utm_source,
+          s.source_platform,
+          s.started_at,
+          s.created_at,
+          3 AS match_priority
+        FROM selected_contacts sc
+        INNER JOIN sessions s
+          ON sc.email IS NOT NULL
+         AND sc.email != ''
+         AND LOWER(s.email) = LOWER(sc.email)
+      ), ranked AS (
+        SELECT
+          session_matches.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY selected_contact_id
+            ORDER BY match_priority ASC, started_at ASC, created_at ASC, id ASC
+          ) AS source_rank
+        FROM session_matches
+      )
+      SELECT selected_contact_id, referrer_url, site_source_name, utm_source, source_platform
+      FROM ranked
+      WHERE source_rank = 1
+    `, ids, { signal })
+
+  const sessionsByContact = new Map(firstSessions.map(row => [String(row.selected_contact_id), row]))
+  const whatsappByContact = await loadFirstWhatsAppAttributionsForProjection(ids, { database, signal })
+  return new Map(contacts.map(contact => [
+    String(contact.id),
+    {
+      contact,
+      source: resolveContactSource(
+        contact,
+        sessionsByContact.get(String(contact.id)) || null,
+        whatsappByContact.get(String(contact.id)) || null
+      )
+    }
+  ]))
+}
+
 /**
  * Combina campos de atribución del contacto + atribución de WhatsApp en los
  * campos normalizados que consume el frontend, e infiere la plataforma

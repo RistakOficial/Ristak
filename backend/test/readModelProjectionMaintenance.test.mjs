@@ -81,6 +81,29 @@ test('el scheduler no encola ready y usa un intervalo conservador', async () => 
   assert.equal(cleared, true)
 })
 
+test('una proyección incremental continuous se revisa aunque su último estado sea ready', async () => {
+  let schedules = 0
+  const scheduler = createReadModelProjectionMaintenanceScheduler({
+    projections: [{
+      key: 'tracking-analytics',
+      version: 1,
+      continuous: true,
+      async readState() {
+        return { projection_version: 1, status: 'ready' }
+      },
+      schedule() {
+        schedules += 1
+        return { scheduled: true }
+      }
+    }],
+    shuttingDown: () => false
+  })
+
+  const result = await scheduler.tick()
+  assert.equal(schedules, 1)
+  assert.deepEqual(result.scheduled, [{ key: 'tracking-analytics', queued: true }])
+})
+
 test('los tres read paths no convierten GET en comando de backfill', async () => {
   const [contacts, metrics, firstSeen, origin, server] = await Promise.all([
     readFile(new URL('../src/controllers/contactsController.js', import.meta.url), 'utf8'),
