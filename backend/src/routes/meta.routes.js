@@ -30,6 +30,7 @@ import {
   getPixels,
   getPages,
   getSocialProfiles,
+  refreshSocialProfiles,
   refreshMetaAssets,
   deleteMetaConfig,
   sendMetaTestEvent,
@@ -107,6 +108,7 @@ router.get('/ad-accounts', getAdAccounts)
 router.get('/pixels', getPixels)
 router.get('/pages', getPages)
 router.get('/social-profiles', getSocialProfiles)
+router.post('/social-profiles/refresh', refreshSocialProfiles)
 
 // Custom Values de HighLevel
 router.get('/custom-values', getMetaCustomValues)

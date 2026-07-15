@@ -320,6 +320,12 @@ relistar el portafolio. El contrato es:
 - El estado social se sirve con permisos ya validados y la suscripción guardada
   localmente. Al elegir una Page se hace el POST de suscripción y una sola
   lectura de confirmación; después el polling no toca esos endpoints.
+- El catálogo **Perfil de red social** de Sites usa
+  `POST /api/meta/social-profiles/refresh` al solicitar datos actuales. Recorre
+  la allowlist local y consulta cada Page con su Page Token/proof; el `GET`
+  `/api/meta/social-profiles` permanece pasivo. Foto, identidad y seguidores se
+  recuperan por grupos tolerantes a fallos para que un field rechazado no borre
+  los demás. Un conteo ausente es desconocido (`null`), no cero.
 - El encabezado actualiza automáticamente sólo avisos locales. La revisión en
   vivo de Meta queda detrás del botón **Actualizar** de Notificaciones.
 - Los mensajes nuevos entran por webhook y el chat consulta la base local. El
@@ -367,6 +373,7 @@ Ristak instalado, autenticado y protegido por el modulo `campaigns`:
 - `POST /api/meta/oauth/complete`;
 - `POST /api/meta/oauth/finalize`;
 - `POST /api/meta/oauth/disconnect`;
+- `POST /api/meta/social-profiles/refresh`;
 - `POST /webhooks/meta/installer-relay`, publico, firmado y anti-replay.
 
 Los endpoints `/api/meta/oauth/:integrationKind/*` con `social|ads` se conservan
@@ -460,6 +467,9 @@ Installer, autenticado por licencia salvo callbacks publicos:
 14. Las dos secciones son los unicos selectores internos. **Autorizar nuevos
     activos** abre Meta y actualiza la allowlist; cambiar entre los ya autorizados
     no abre OAuth.
+15. El perfil social de Sites muestra avatar y seguidores reales con OAuth USER,
+    conserva el último snapshot si Graph falla y nunca presenta `0` cuando Meta
+    no devolvió el conteo.
 
 ## Fuentes oficiales
 

@@ -5,6 +5,8 @@ import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, businessTodayDateOnly, getAccountTimezone } from '../utils/dateUtils.js'
 import { getMetaSocialConfig } from './metaAdsService.js'
+import { getMetaOAuthAuthorizedAssetsSnapshot } from './metaOAuthService.js'
+import { getMetaAssetSnapshot, saveMetaAssetSnapshot } from './metaAssetSnapshotService.js'
 
 const THREADS_GRAPH_URL = 'https://graph.threads.net/v1.0'
 const META_PROFILE_PLATFORMS = new Set(['facebook', 'instagram'])
@@ -28,6 +30,7 @@ function jsonString(value) {
 }
 
 function normalizeCount(value) {
+  if (value === null || value === undefined || value === '') return null
   const number = Number(value)
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : null
 }
@@ -249,18 +252,203 @@ async function fetchMetaPages(accessToken, params, appSecretProof = '') {
   return pages
 }
 
-async function fetchOAuthConfiguredPage(pageId, accessToken, appSecretProof, fields) {
+async function fetchMetaGraphObject(objectId, accessToken, appSecretProof, fields) {
   const params = new URLSearchParams({ fields, access_token: accessToken })
   if (appSecretProof) params.set('appsecret_proof', appSecretProof)
   let response
   try {
-    response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(pageId)}?${params.toString()}`)
+    response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(objectId)}?${params.toString()}`)
   } catch (error) {
     throw new Error(safeMetaGraphTransportError(error))
   }
   const data = await response.json().catch(() => ({}))
   if (!response.ok || data?.error) throw new Error(data?.error?.message || `Meta respondió ${response.status}`)
-  return data?.id ? [data] : []
+  return data?.id ? data : null
+}
+
+async function fetchOptionalMetaGraphObject(objectId, accessToken, appSecretProof, fields, label) {
+  try {
+    return await fetchMetaGraphObject(objectId, accessToken, appSecretProof, fields)
+  } catch (error) {
+    logger.warn(`Meta no devolvió ${label}: ${safeMetaGraphTransportError(error)}`)
+    return null
+  }
+}
+
+function mergeUsefulFields(base = {}, extra = {}) {
+  const useful = Object.fromEntries(Object.entries(extra || {}).filter(([, value]) => (
+    value !== null && value !== undefined && value !== ''
+  )))
+  return { ...base, ...useful }
+}
+
+async function enrichOAuthInstagramAccount(account, accessToken, appSecretProof) {
+  const instagramId = cleanString(account?.id)
+  if (!instagramId) return account
+  const hasAvatar = Boolean(cleanString(account?.profile_picture_url))
+  const hasFollowers = normalizeCount(account?.followers_count) !== null
+  if (hasAvatar && hasFollowers) return account
+
+  let details = await fetchOptionalMetaGraphObject(
+    instagramId,
+    accessToken,
+    appSecretProof,
+    'id,username,name,profile_picture_url,followers_count',
+    `el perfil completo de Instagram ${instagramId}`
+  )
+  if (!details) {
+    const [identity, followers] = await Promise.all([
+      fetchOptionalMetaGraphObject(
+        instagramId,
+        accessToken,
+        appSecretProof,
+        'id,username,name,profile_picture_url',
+        `el avatar de Instagram ${instagramId}`
+      ),
+      fetchOptionalMetaGraphObject(
+        instagramId,
+        accessToken,
+        appSecretProof,
+        'id,followers_count',
+        `los seguidores de Instagram ${instagramId}`
+      )
+    ])
+    details = mergeUsefulFields(identity || {}, followers || {})
+  }
+  return mergeUsefulFields(account, details)
+}
+
+async function fetchOAuthConfiguredPage(pageId, accessToken, appSecretProof, richFields) {
+  let page
+  try {
+    page = await fetchMetaGraphObject(pageId, accessToken, appSecretProof, richFields)
+  } catch (error) {
+    logger.warn(`Meta no devolvió el perfil social completo de la Page ${pageId}: ${safeMetaGraphTransportError(error)}`)
+    page = await fetchMetaGraphObject(
+      pageId,
+      accessToken,
+      appSecretProof,
+      'id,name,category,picture{url}'
+    )
+  }
+  if (!page) return []
+
+  if (normalizeCount(page.followers_count ?? page.fan_count) === null) {
+    const [followers, fans] = await Promise.all([
+      fetchOptionalMetaGraphObject(
+        pageId,
+        accessToken,
+        appSecretProof,
+        'id,followers_count',
+        `los seguidores de la Page ${pageId}`
+      ),
+      fetchOptionalMetaGraphObject(
+        pageId,
+        accessToken,
+        appSecretProof,
+        'id,fan_count',
+        `los Me gusta de la Page ${pageId}`
+      )
+    ])
+    page = mergeUsefulFields(mergeUsefulFields(page, fans || {}), followers || {})
+  }
+
+  if (!page.instagram_business_account?.id && !page.connected_instagram_account?.id) {
+    const linkedInstagram = await fetchOptionalMetaGraphObject(
+      pageId,
+      accessToken,
+      appSecretProof,
+      'id,instagram_business_account{id,username,name},connected_instagram_account{id,username,name}',
+      `la cuenta de Instagram enlazada a la Page ${pageId}`
+    )
+    page = mergeUsefulFields(page, linkedInstagram || {})
+  }
+
+  for (const key of ['instagram_business_account', 'connected_instagram_account']) {
+    if (!page[key]?.id) continue
+    page[key] = await enrichOAuthInstagramAccount(page[key], accessToken, appSecretProof)
+  }
+
+  return [page]
+}
+
+function authorizedPageAsGraphPage(page = {}) {
+  const instagram = Array.isArray(page.instagramAccounts) ? page.instagramAccounts[0] : null
+  const followers = normalizeCount(page.followers)
+  return {
+    id: cleanString(page.id),
+    name: cleanString(page.name),
+    category: cleanString(page.category),
+    ...(cleanString(page.pictureUrl) ? { picture: { data: { url: cleanString(page.pictureUrl) } } } : {}),
+    ...(followers !== null ? { followers_count: followers } : {}),
+    ...(instagram?.id ? {
+      instagram_business_account: {
+        id: cleanString(instagram.id),
+        username: cleanString(instagram.username),
+        name: cleanString(instagram.name),
+        profile_picture_url: cleanString(instagram.avatarUrl),
+        followers_count: normalizeCount(instagram.followers)
+      }
+    } : {})
+  }
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const source = [...items]
+  if (!source.length) return []
+  const results = new Array(source.length)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(Math.max(Number(limit) || 1, 1), source.length) }, async () => {
+    while (cursor < source.length) {
+      const index = cursor
+      cursor += 1
+      results[index] = await mapper(source[index], index)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+async function fetchOAuthPages({
+  config,
+  configuredPageId,
+  pageAccessToken,
+  pageAppSecretProof,
+  richFields,
+  restrictToConfiguredProfiles
+}) {
+  const authorized = restrictToConfiguredProfiles
+    ? null
+    : await getMetaOAuthAuthorizedAssetsSnapshot().catch(error => {
+      logger.warn(`No se pudo leer el inventario OAuth para perfiles sociales: ${error.message}`)
+      return null
+    })
+  const authorizedMatchesConnection = Boolean(
+    authorized && cleanString(authorized.connectionMode) === cleanString(config?.connection_mode)
+  )
+  const candidates = authorizedMatchesConnection && Array.isArray(authorized.pages) && authorized.pages.length
+    ? authorized.pages
+    : configuredPageId
+      ? [{ id: configuredPageId, name: configuredPageId }]
+      : []
+
+  return mapWithConcurrency(candidates, 4, async candidate => {
+    const candidateId = cleanString(candidate?.id)
+    const savedSecrets = authorized?.pageSecrets?.[candidateId] || {}
+    const token = cleanString(
+      savedSecrets.pageAccessToken || (candidateId === configuredPageId ? pageAccessToken : '')
+    )
+    const proof = cleanString(
+      savedSecrets.pageAppSecretProof || (candidateId === configuredPageId ? pageAppSecretProof : '')
+    )
+    if (!candidateId || !token || !proof) return authorizedPageAsGraphPage(candidate)
+    try {
+      return (await fetchOAuthConfiguredPage(candidateId, token, proof, richFields))[0] || authorizedPageAsGraphPage(candidate)
+    } catch (error) {
+      logger.warn(`No se pudo refrescar el perfil OAuth de la Page ${candidateId}: ${safeMetaGraphTransportError(error)}`)
+      return authorizedPageAsGraphPage(candidate)
+    }
+  })
 }
 
 export async function getConnectedMetaSocialProfiles(options = {}) {
@@ -294,7 +482,11 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
     return { connected: false, updatedAt, profiles: [], message: 'Meta no tiene token guardado' }
   }
 
-  if (isOAuth && (!configuredPageId || !pageAccessToken || !pageAppSecretProof)) {
+  if (
+    isOAuth &&
+    restrictToConfiguredProfiles &&
+    (!configuredPageId || !pageAccessToken || !pageAppSecretProof)
+  ) {
     return { connected: false, updatedAt, profiles: [], message: 'La Página OAuth no tiene acceso operativo completo' }
   }
 
@@ -336,15 +528,29 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
 
   let pages = []
   try {
-    pages = isOAuth && configuredPageId && pageAccessToken
-      ? await fetchOAuthConfiguredPage(configuredPageId, pageAccessToken, pageAppSecretProof, richFields)
+    pages = isOAuth
+      ? await fetchOAuthPages({
+          config,
+          configuredPageId,
+          pageAccessToken,
+          pageAppSecretProof,
+          richFields,
+          restrictToConfiguredProfiles
+        })
       : await fetchMetaPages(accessToken, params, appSecretProof)
   } catch (error) {
     logger.warn(`Meta no devolvio todos los campos de perfil social: ${safeMetaGraphTransportError(error)}`)
     params.set('fields', fallbackFields)
     try {
-      pages = isOAuth && configuredPageId && pageAccessToken
-        ? await fetchOAuthConfiguredPage(configuredPageId, pageAccessToken, pageAppSecretProof, fallbackFields)
+      pages = isOAuth
+        ? await fetchOAuthPages({
+            config,
+            configuredPageId,
+            pageAccessToken,
+            pageAppSecretProof,
+            richFields: fallbackFields,
+            restrictToConfiguredProfiles
+          })
         : await fetchMetaPages(accessToken, params, appSecretProof)
     } catch (fallbackError) {
       logger.warn(`No se pudieron leer páginas Meta conectadas: ${safeMetaGraphTransportError(fallbackError)}`)
@@ -360,7 +566,7 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
     if (instagram && (!restrictToConfiguredProfiles || instagram.sourceId === configuredInstagramAccountId)) profiles.push(instagram)
   }
 
-  if (!restrictToConfiguredProfiles) {
+  if (!restrictToConfiguredProfiles && options.includeThreads === true) {
     try {
       const threads = await fetchThreadsProfile(accessToken, updatedAt)
       if (threads) profiles.push(threads)
@@ -374,6 +580,37 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
     updatedAt,
     profiles: dedupeProfiles(profiles)
   }
+}
+
+export async function refreshMetaSocialProfileSnapshot() {
+  const result = await getConnectedMetaSocialProfiles({ restrictToConfiguredProfiles: false })
+  if (!result.connected || result.profiles.length === 0) return result
+  const current = await getMetaAssetSnapshot().catch(() => ({ profiles: [] }))
+  const incomingById = new Map(result.profiles.map(profile => [profile.id, profile]))
+  const profileIds = new Set([
+    ...(current.profiles || []).map(profile => profile.id),
+    ...incomingById.keys()
+  ])
+  const profiles = [...profileIds].flatMap(id => {
+    const incoming = incomingById.get(id)
+    const previous = (current.profiles || []).find(profile => profile.id === id)
+    if (!incoming) return previous ? [previous] : []
+    const incomingFollowers = normalizeCount(incoming.followers)
+    return [{
+      ...(previous || {}),
+      ...incoming,
+      avatarUrl: cleanString(incoming.avatarUrl) || previous?.avatarUrl || '',
+      followers: incomingFollowers ?? previous?.followers ?? null,
+      followersLabel: incomingFollowers !== null
+        ? incoming.followersLabel
+        : previous?.followersLabel || ''
+    }]
+  })
+  await saveMetaAssetSnapshot({
+    updatedAt: result.updatedAt,
+    profiles
+  })
+  return result
 }
 
 function applyProfileToSettings(settings = {}, profile) {

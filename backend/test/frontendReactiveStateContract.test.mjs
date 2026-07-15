@@ -156,6 +156,8 @@ test('Sites no depende de permisos Meta y evita loops al cargar perfiles opciona
   assert.match(source, /return metaPixelConnectedRef\.current/)
   assert.doesNotMatch(source, /campaignsService\.getMetaConfig\(\)/)
   assert.match(source, /connectedSocialProfilesRef\.current/)
+  assert.match(source, /campaignsService\.refreshConnectedSocialProfiles\(\)/)
+  assert.match(source, /if \(!response\.success\) response = await campaignsService\.getConnectedSocialProfiles\(\)/)
   assert.match(source, /loadConnectedSocialProfiles[\s\S]*?\}, \[\]\)/)
   assert.doesNotMatch(source, /catch\(\(\) => \{[\s\S]{0,180}setConnectedSocialProfiles\(\[\]\)/)
 })

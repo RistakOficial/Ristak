@@ -3337,10 +3337,14 @@ Ristak usa Meta en varias areas:
   conexion para que un cambio de token no pueda reutilizar activos ajenos. El
   snapshot guarda sólo metadata de cuentas, Datasets, Pages y perfiles; jamás
   tokens. Se muestra aun si está vencido para que la interfaz abra de inmediato,
-  se reemplaza atomicamente al refrescar y se invalida al desconectar.
+  se reemplaza atomicamente al refrescar y se invalida al desconectar. Una
+  cantidad de seguidores no disponible se conserva como `null`; nunca se
+  convierte artificialmente en cero.
 - Las operaciones remotas son intencionales y usan `POST`:
   `/api/meta/assets/refresh` consulta identidad una vez y carga cuentas, Pages y
   los Datasets de la cuenta elegida en paralelo;
+  `/api/meta/social-profiles/refresh` actualiza foto y seguidores con los Page
+  tokens/proofs cifrados de cada Page autorizada;
   `/api/meta/oauth/status/refresh` verifica Installer; y
   `/api/meta/sync-from-highlevel` hace una sola lectura de Custom Values. Un
   HighLevel vacío o incompleto en dirección `from_highlevel` nunca dispara el
@@ -3421,7 +3425,12 @@ Ristak usa Meta en varias areas:
   final los campos manuales `page_id`, `instagram_account_id` y `access_token`.
   El endpoint no debe interpretar el JWT de sesion de Ristak
   como token de Meta; solo usa `X-Meta-Access-Token` durante el wizard manual
-  cuando se esta probando un token explicito. En sitios publicados, el
+  cuando se esta probando un token explicito. Al cargar el catálogo del editor,
+  Sites ejecuta una mutación explícita de refresh y luego consume el snapshot
+  local: cada Page OAuth usa su propio Page Token y `appsecret_proof`, y las
+  lecturas de Facebook e Instagram separan identidad/avatar de conteos si Meta
+  rechaza un grupo de fields. Si el refresh falla, conserva el último valor real
+  guardado en vez de reemplazarlo por vacíos o ceros. En sitios publicados, el
   refresh diario de Meta actualiza avatar, nombre y seguidores de bloques con
   `socialAutoSync=true`; si un bloque legacy no tiene `socialSourceProfileId`,
   puede adoptar el perfil configurado que coincida con su plataforma. Cuando el

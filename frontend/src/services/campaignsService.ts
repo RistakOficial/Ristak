@@ -851,6 +851,30 @@ class CampaignsService {
     }
   }
 
+  async refreshConnectedSocialProfiles(): Promise<{
+    success: boolean
+    connected: boolean
+    updatedAt: string | null
+    profiles: ConnectedSocialProfile[]
+    error?: string
+  }> {
+    try {
+      const data = await apiClient.post('/meta/social-profiles/refresh') as {
+        connected?: boolean
+        updatedAt?: string
+        profiles?: ConnectedSocialProfile[]
+      }
+      return {
+        success: true,
+        connected: Boolean(data.connected),
+        updatedAt: data.updatedAt || null,
+        profiles: Array.isArray(data.profiles) ? data.profiles : []
+      }
+    } catch (error) {
+      return { success: false, connected: false, updatedAt: null, profiles: [] }
+    }
+  }
+
   async syncMetaAds(): Promise<{
     success: boolean
     message?: string

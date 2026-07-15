@@ -10,6 +10,12 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function optionalCount(value) {
+  if (value === null || value === undefined || value === '') return null
+  const count = Number(value)
+  return Number.isFinite(count) && count >= 0 ? count : null
+}
+
 function normalizeConnectionMode(value) {
   const mode = cleanString(value).toLowerCase()
   return ['oauth_user', 'oauth_bisu'].includes(mode) ? mode : 'manual_system_user'
@@ -57,7 +63,7 @@ function normalizeInstagramAccount(account = {}, pageId = '') {
     name: cleanString(account.name) || cleanString(account.username) || id,
     pageId: cleanString(account.pageId || pageId),
     avatarUrl: cleanString(account.avatarUrl || account.profile_picture_url),
-    followers: Number.isFinite(Number(account.followers)) ? Number(account.followers) : null
+    followers: optionalCount(account.followers ?? account.followers_count)
   }
 }
 
@@ -73,7 +79,7 @@ function normalizePage(page = {}) {
     category: cleanString(page.category) || null,
     pictureUrl: cleanString(page.pictureUrl || page.picture_url) || null,
     businessId: cleanString(page.businessId || page.business_id),
-    followers: Number.isFinite(Number(page.followers)) ? Number(page.followers) : null,
+    followers: optionalCount(page.followers ?? page.followers_count ?? page.fan_count),
     instagramAccounts
   }
 }
@@ -92,7 +98,7 @@ function normalizeProfile(profile = {}, updatedAt = '') {
     username: cleanString(profile.username),
     category: cleanString(profile.category) || null,
     avatarUrl: cleanString(profile.avatarUrl || profile.avatar_url) || null,
-    followers: Number.isFinite(Number(profile.followers)) ? Number(profile.followers) : null,
+    followers: optionalCount(profile.followers),
     followersLabel: cleanString(profile.followersLabel || profile.followers_label),
     isConfiguredPage: profile.isConfiguredPage === true,
     isConfiguredInstagram: profile.isConfiguredInstagram === true,

@@ -646,11 +646,18 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
         pages: [{
           id: 'page-user',
           name: 'Página User Token',
+          picture_url: 'https://cdn.example.test/page-user.jpg',
+          followers_count: 4321,
           business_id: 'business-social',
           tasks: ['ANALYZE', 'MESSAGING', 'MODERATE'],
           page_access_token: 'page-user-token',
           page_appsecret_proof: 'page-user-proof',
-          instagram_business_account: { id: 'ig-user', username: 'user_demo' }
+          instagram_business_account: {
+            id: 'ig-user',
+            username: 'user_demo',
+            profile_picture_url: 'https://cdn.example.test/ig-user.jpg',
+            followers_count: 9876
+          }
         }],
         ad_accounts: [{ id: '777', name: 'Ads User', business_id: 'business-ads' }],
         pixels: [{
@@ -723,6 +730,10 @@ test('Meta OAuth maestro reconoce USER aunque Installer conserve source oauth_bi
 
     const completed = await prepareMetaOAuthConnection({ handoffToken: 'user-handoff' })
     assert.equal(completed.connectionMode, 'oauth_user')
+    assert.equal(completed.pages[0].pictureUrl, 'https://cdn.example.test/page-user.jpg')
+    assert.equal(completed.pages[0].followers, 4321)
+    assert.equal(completed.pages[0].instagramAccounts[0].avatarUrl, 'https://cdn.example.test/ig-user.jpg')
+    assert.equal(completed.pages[0].instagramAccounts[0].followers, 9876)
     assert.deepEqual(completed.businesses.map(item => item.id).sort(), [
       'business-ads',
       'business-app-owner',

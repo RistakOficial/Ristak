@@ -143,6 +143,12 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function optionalCount(value) {
+  if (value === null || value === undefined || value === '') return null
+  const count = Number(value)
+  return Number.isFinite(count) && count >= 0 ? count : null
+}
+
 function isMetaOAuthConnectionMode(value) {
   return ['oauth_user', 'oauth_bisu'].includes(normalizeMetaConnectionMode(value))
 }
@@ -440,7 +446,9 @@ function normalizeHintAssets(value = {}) {
         id: cleanString(account?.id),
         username: cleanString(account?.username),
         name: cleanString(account?.name),
-        pageId
+        pageId,
+        avatarUrl: cleanString(account?.profile_picture_url || account?.avatarUrl),
+        followers: optionalCount(account?.followers_count ?? account?.followers)
       })),
       flatInstagram
         .filter(account => cleanString(account?.page_id || account?.pageId) === pageId)
@@ -448,13 +456,19 @@ function normalizeHintAssets(value = {}) {
           id: cleanString(account?.id),
           username: cleanString(account?.username),
           name: cleanString(account?.name),
-          pageId
+          pageId,
+          avatarUrl: cleanString(account?.profile_picture_url || account?.avatarUrl),
+          followers: optionalCount(account?.followers_count ?? account?.followers)
         }))
     )
     return {
       id: pageId,
       name: cleanString(page?.name),
       category: cleanString(page?.category),
+      pictureUrl: cleanString(
+        page?.picture_url || page?.pictureUrl || page?.picture?.data?.url || page?.picture?.url
+      ),
+      followers: optionalCount(page?.followers_count ?? page?.fan_count ?? page?.followers),
       businessId: cleanString(page?.business_id || page?.businessId || page?.business?.id),
       tasksAvailable: page?.tasks_available === true || Array.isArray(page?.tasks),
       tasks: Array.isArray(page?.tasks) ? toStringArray(page.tasks).map(task => task.toUpperCase()) : [],
@@ -1476,6 +1490,11 @@ function buildLocalAuthorizedAssetSnapshot(config = null, authorized = null) {
     adAccounts: Array.isArray(authorized.adAccounts) ? authorized.adAccounts : [],
     datasets: Array.isArray(authorized.datasets) ? authorized.datasets : [],
     pages: Array.isArray(authorized.pages) ? authorized.pages : [],
+    // Sólo lo consumen servicios backend que refrescan metadata Page-scoped.
+    // metaAssetSnapshotFromOAuth() no serializa este mapa al frontend.
+    pageSecrets: authorized.pageSecrets && typeof authorized.pageSecrets === 'object'
+      ? authorized.pageSecrets
+      : {},
     defaults: {
       businessId: cleanString(config.oauth_business_id || config.meta_business_id),
       adAccountId: normalizeAdAccountId(config.ad_account_id),

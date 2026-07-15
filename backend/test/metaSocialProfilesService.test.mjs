@@ -2,9 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 
-import { db } from '../src/config/database.js'
+import { db, getAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
-import { getSocialProfiles } from '../src/controllers/metaController.js'
+import { getSocialProfiles, refreshSocialProfiles } from '../src/controllers/metaController.js'
 import { saveMetaAssetSnapshot, clearMetaAssetSnapshot } from '../src/services/metaAssetSnapshotService.js'
 import { refreshConnectedSocialProfileBlocks } from '../src/services/metaSocialProfilesService.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
@@ -28,11 +28,42 @@ async function snapshotMetaConfig(callback) {
   }
 }
 
+async function snapshotOAuthAssetState(callback) {
+  const previousAuthorized = await db.all('SELECT * FROM meta_oauth_authorized_assets')
+  const previousSnapshot = await db.get(
+    'SELECT * FROM app_config WHERE config_key = ?',
+    ['meta_asset_snapshot_v1']
+  )
+  try {
+    await db.run('DELETE FROM meta_oauth_authorized_assets')
+    await db.run('DELETE FROM app_config WHERE config_key = ?', ['meta_asset_snapshot_v1'])
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM meta_oauth_authorized_assets')
+    for (const row of previousAuthorized) {
+      const columns = Object.keys(row)
+      await db.run(
+        `INSERT INTO meta_oauth_authorized_assets (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        columns.map(column => row[column])
+      )
+    }
+    await db.run('DELETE FROM app_config WHERE config_key = ?', ['meta_asset_snapshot_v1'])
+    if (previousSnapshot) {
+      const columns = Object.keys(previousSnapshot)
+      await db.run(
+        `INSERT INTO app_config (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        columns.map(column => previousSnapshot[column])
+      )
+    }
+  }
+}
+
 async function insertMetaConfig({
   token = 'meta-token-db',
   pageId = 'page_1',
   instagramAccountId = 'ig_1',
   connectionMode = 'manual_system_user',
+  oauthConnectionId = '',
   pageToken = '',
   pageProof = ''
 } = {}) {
@@ -41,17 +72,19 @@ async function insertMetaConfig({
       ad_account_id,
       access_token,
       connection_mode,
+      oauth_connection_id,
       page_id,
       instagram_account_id,
       oauth_page_access_token,
       oauth_page_appsecret_proof,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     'act_meta_social_profiles',
     encrypt(token),
     connectionMode,
+    oauthConnectionId || null,
     pageId,
     instagramAccountId,
     pageToken ? encrypt(pageToken) : null,
@@ -103,7 +136,7 @@ async function seedMetaAssetSnapshot() {
   })
 }
 
-async function withFakeMetaGraph(callback) {
+async function withFakeMetaGraph(callback, { rejectCombinedProfileFields = false } = {}) {
   const calls = []
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   let server
@@ -117,8 +150,8 @@ async function withFakeMetaGraph(callback) {
         appSecretProof: url.searchParams.get('appsecret_proof')
       })
 
-      if (url.pathname === '/me/accounts' || url.pathname === '/page_1') {
-        const oauthPageRequest = url.pathname === '/page_1'
+      if (url.pathname === '/me/accounts' || url.pathname === '/page_1' || url.pathname === '/ig_1') {
+        const oauthPageRequest = url.pathname === '/page_1' || url.pathname === '/ig_1'
         const expectedToken = oauthPageRequest ? 'oauth-page-token' : 'meta-token-db'
         const expectedProof = oauthPageRequest ? 'oauth-page-proof' : null
         if (
@@ -130,7 +163,29 @@ async function withFakeMetaGraph(callback) {
           return
         }
 
+        const fields = url.searchParams.get('fields') || ''
+        if (
+          rejectCombinedProfileFields &&
+          url.pathname === '/page_1' &&
+          fields.includes('connected_instagram_account') &&
+          fields.includes('followers_count')
+        ) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: { message: 'unsupported combined fields' } }))
+          return
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' })
+        if (url.pathname === '/ig_1') {
+          res.end(JSON.stringify({
+            id: 'ig_1',
+            username: 'raulgomezjj',
+            name: 'Raul Gomez IG',
+            profile_picture_url: 'https://example.test/instagram.webp',
+            followers_count: 24000
+          }))
+          return
+        }
         const page = {
               id: 'page_1',
               name: 'Raul Gomez',
@@ -145,6 +200,36 @@ async function withFakeMetaGraph(callback) {
                 followers_count: 24000
               }
             }
+        if (rejectCombinedProfileFields && oauthPageRequest) {
+          if (fields === 'id,name,category,picture{url}') {
+            res.end(JSON.stringify({
+              id: page.id,
+              name: page.name,
+              category: page.category,
+              picture: page.picture
+            }))
+            return
+          }
+          if (fields === 'id,followers_count') {
+            res.end(JSON.stringify({ id: page.id, followers_count: page.followers_count }))
+            return
+          }
+          if (fields === 'id,fan_count') {
+            res.end(JSON.stringify({ id: page.id, fan_count: 1500 }))
+            return
+          }
+          if (fields.includes('instagram_business_account')) {
+            res.end(JSON.stringify({
+              id: page.id,
+              instagram_business_account: {
+                id: 'ig_1',
+                username: 'raulgomezjj',
+                name: 'Raul Gomez IG'
+              }
+            }))
+            return
+          }
+        }
         res.end(JSON.stringify(oauthPageRequest ? page : { data: [page] }))
         return
       }
@@ -222,6 +307,36 @@ test('Meta social profiles endpoint uses saved Meta config instead of the Ristak
     })
 
     await clearMetaAssetSnapshot()
+  })
+})
+
+test('Meta asset snapshot keeps an unknown follower count as null instead of inventing zero', async () => {
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await insertMetaConfig()
+    await saveMetaAssetSnapshot({
+      updatedAt: '2026-07-14T00:00:00.000Z',
+      profiles: [{
+        id: 'facebook:page_1',
+        platform: 'facebook',
+        sourceId: 'page_1',
+        pageId: 'page_1',
+        name: 'Raul Gomez',
+        followers: null,
+        followersLabel: ''
+      }]
+    })
+
+    try {
+      const res = createJsonResponse()
+      await getSocialProfiles({ headers: {}, query: {} }, res)
+      assert.equal(res.statusCode, 200)
+      assert.equal(res.body.data.profiles[0].followers, null)
+      assert.equal(res.body.data.profiles[0].followersLabel, '')
+    } finally {
+      await clearMetaAssetSnapshot()
+    }
   })
 })
 
@@ -311,5 +426,107 @@ test('OAuth social profiles uses the stored Page token and matching Page proof',
     })
 
     await clearMetaAssetSnapshot()
+  })
+})
+
+test('OAuth social profile refresh recovers avatars and followers with each saved Page credential', async () => {
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await snapshotOAuthAssetState(async () => {
+      await insertMetaConfig({
+        connectionMode: 'oauth_user',
+        oauthConnectionId: 'oauth-social-rich-profile',
+        pageToken: 'oauth-page-token',
+        pageProof: 'oauth-page-proof'
+      })
+      await db.run(
+        `INSERT INTO meta_oauth_authorized_assets (id, connection_id, payload_encrypted)
+         VALUES (?, ?, ?)`,
+        [
+          'unified',
+          'oauth-social-rich-profile',
+          encrypt(JSON.stringify({
+            connectionId: 'oauth-social-rich-profile',
+            connectionMode: 'oauth_user',
+            pages: [{
+              id: 'page_1',
+              name: 'Raul Gomez',
+              category: 'Marketing',
+              pictureUrl: '',
+              followers: null,
+              instagramAccounts: [{
+                id: 'ig_1',
+                username: 'raulgomezjj',
+                name: 'Raul Gomez IG',
+                avatarUrl: '',
+                followers: null
+              }]
+            }],
+            pageSecrets: {
+              page_1: {
+                pageAccessToken: 'oauth-page-token',
+                pageAppSecretProof: 'oauth-page-proof'
+              }
+            }
+          }))
+        ]
+      )
+
+      await withFakeMetaGraph(async calls => {
+        const res = createJsonResponse()
+        await refreshSocialProfiles({ headers: {}, query: {} }, res)
+
+        assert.equal(res.statusCode, 200)
+        assert.equal(res.body.success, true)
+        assert.equal(calls.length, 1)
+        assert.deepEqual(calls[0], {
+          pathname: '/page_1',
+          accessToken: 'oauth-page-token',
+          appSecretProof: 'oauth-page-proof'
+        })
+
+        const facebook = res.body.data.profiles.find(profile => profile.id === 'facebook:page_1')
+        const instagram = res.body.data.profiles.find(profile => profile.id === 'instagram:ig_1')
+        assert.equal(facebook.avatarUrl, 'https://example.test/page.webp')
+        assert.equal(facebook.followers, 1532)
+        assert.equal(facebook.followersLabel, '1,5 mil')
+        assert.equal(instagram.avatarUrl, 'https://example.test/instagram.webp')
+        assert.equal(instagram.followers, 24000)
+        assert.equal(instagram.followersLabel, '24 mil')
+
+        const storedSnapshot = JSON.parse(await getAppConfig('meta_asset_snapshot_v1'))
+        assert.equal(storedSnapshot.profiles.some(profile => profile.followers === 24000), true)
+      })
+    })
+  })
+})
+
+test('OAuth social profile refresh isolates fields when Meta rejects the combined Page query', async () => {
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await snapshotOAuthAssetState(async () => {
+      await insertMetaConfig({
+        connectionMode: 'oauth_user',
+        oauthConnectionId: 'oauth-social-partial-fields',
+        pageToken: 'oauth-page-token',
+        pageProof: 'oauth-page-proof'
+      })
+
+      await withFakeMetaGraph(async calls => {
+        const res = createJsonResponse()
+        await refreshSocialProfiles({ headers: {}, query: {} }, res)
+
+        assert.equal(res.statusCode, 200)
+        assert.equal(calls.some(call => call.pathname === '/ig_1'), true)
+        const facebook = res.body.data.profiles.find(profile => profile.id === 'facebook:page_1')
+        const instagram = res.body.data.profiles.find(profile => profile.id === 'instagram:ig_1')
+        assert.equal(facebook.avatarUrl, 'https://example.test/page.webp')
+        assert.equal(facebook.followers, 1532)
+        assert.equal(instagram.avatarUrl, 'https://example.test/instagram.webp')
+        assert.equal(instagram.followers, 24000)
+      }, { rejectCombinedProfileFields: true })
+    })
   })
 })

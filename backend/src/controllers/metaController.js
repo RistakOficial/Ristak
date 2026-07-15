@@ -63,6 +63,7 @@ import {
   getMetaAssetSnapshot,
   saveMetaAssetSnapshot
 } from '../services/metaAssetSnapshotService.js';
+import { refreshMetaSocialProfileSnapshot } from '../services/metaSocialProfilesService.js';
 import {
   DEFAULT_META_ADS_SYNC_INTERVAL_MINUTES,
   MAX_META_ADS_SYNC_INTERVAL_MINUTES,
@@ -3754,24 +3755,26 @@ function normalizeMetaAssetPage(page = {}) {
       name: cleanString(account.name) || cleanString(account.username) || id,
       pageId: normalized.id,
       avatarUrl: cleanString(account.profile_picture_url || account.avatarUrl),
-      followers: Number.isFinite(Number(account.followers_count ?? account.followers))
-        ? Number(account.followers_count ?? account.followers)
-        : null
+      followers: optionalMetaFollowerCount(account.followers_count ?? account.followers)
     });
   });
   return {
     ...normalized,
     businessId: cleanString(page.businessId || page.business_id || page.business?.id),
-    followers: Number.isFinite(Number(page.followers_count ?? page.fan_count ?? page.followers))
-      ? Number(page.followers_count ?? page.fan_count ?? page.followers)
-      : null,
+    followers: optionalMetaFollowerCount(page.followers_count ?? page.fan_count ?? page.followers),
     instagramAccounts: [...instagramById.values()]
   };
 }
 
-function compactFollowers(value) {
+function optionalMetaFollowerCount(value) {
+  if (value === null || value === undefined || value === '') return null;
   const count = Number(value);
-  if (!Number.isFinite(count) || count < 0) return '';
+  return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
+function compactFollowers(value) {
+  const count = optionalMetaFollowerCount(value);
+  if (count === null) return '';
   if (count < 1000) return String(Math.round(count));
   if (count < 1_000_000) return `${Number((count / 1000).toFixed(1))} mil`;
   return `${Number((count / 1_000_000).toFixed(1))} millones`;
@@ -3791,7 +3794,7 @@ function buildMetaProfilesFromPages(pages = [], updatedAt = new Date().toISOStri
       username: '',
       category: page.category || '',
       avatarUrl: page.pictureUrl || '',
-      followers: Number.isFinite(Number(page.followers)) ? Number(page.followers) : null,
+      followers: optionalMetaFollowerCount(page.followers),
       followersLabel: compactFollowers(page.followers),
       updatedAt
     });
@@ -3806,7 +3809,7 @@ function buildMetaProfilesFromPages(pages = [], updatedAt = new Date().toISOStri
         username: account.username || '',
         category: 'Instagram',
         avatarUrl: account.avatarUrl || '',
-        followers: Number.isFinite(Number(account.followers)) ? Number(account.followers) : null,
+        followers: optionalMetaFollowerCount(account.followers),
         followersLabel: compactFollowers(account.followers),
         updatedAt
       });
@@ -3850,11 +3853,69 @@ function metaAssetSnapshotFromOAuth(session) {
   };
 }
 
+function mergeMetaAssetCollection(base = [], overlay = [], keyOf, mergeItem = (current, next) => ({ ...current, ...next })) {
+  const byId = new Map();
+  for (const item of [...base, ...overlay]) {
+    const key = cleanString(keyOf(item));
+    if (!key) continue;
+    byId.set(key, mergeItem(byId.get(key) || {}, item));
+  }
+  return [...byId.values()];
+}
+
+function mergeMetaAssetPage(current = {}, next = {}) {
+  return {
+    ...current,
+    ...next,
+    instagramAccounts: mergeMetaAssetCollection(
+      current.instagramAccounts || [],
+      next.instagramAccounts || [],
+      account => account?.id
+    )
+  };
+}
+
+function mergeMetaAssetSnapshots(base, overlay) {
+  return {
+    ...base,
+    ...overlay,
+    updatedAt: overlay.updatedAt || base.updatedAt || null,
+    stale: overlay.stale ?? base.stale ?? true,
+    adAccounts: mergeMetaAssetCollection(
+      base.adAccounts || [],
+      overlay.adAccounts || [],
+      account => account?.account_id || account?.id
+    ),
+    pixelsByAdAccount: {
+      ...(base.pixelsByAdAccount || {}),
+      ...(overlay.pixelsByAdAccount || {})
+    },
+    pages: mergeMetaAssetCollection(
+      base.pages || [],
+      overlay.pages || [],
+      page => page?.id,
+      mergeMetaAssetPage
+    ),
+    profiles: mergeMetaAssetCollection(
+      base.profiles || [],
+      overlay.profiles || [],
+      profile => profile?.id || `${profile?.platform}:${profile?.sourceId}`
+    )
+  };
+}
+
 async function readLocalMetaAssetSnapshot(req) {
   const explicitAccessToken = extractMetaAccessToken(req) || '';
   const cached = await getMetaAssetSnapshot({ explicitAccessToken });
   const hasCachedAssets = cached.updatedAt || cached.adAccounts.length || cached.pages.length || cached.profiles.length;
-  if (hasCachedAssets) return { ...cached, source: 'local_cache' };
+  if (hasCachedAssets) {
+    if (explicitAccessToken) return { ...cached, source: 'local_cache' };
+    const oauthSnapshot = metaAssetSnapshotFromOAuth(await getMetaOAuthAuthorizedAssetsSnapshot());
+    return {
+      ...(oauthSnapshot ? mergeMetaAssetSnapshots(oauthSnapshot, cached) : cached),
+      source: 'local_cache'
+    };
+  }
   if (explicitAccessToken) return { ...cached, source: 'empty' };
 
   const oauthSnapshot = metaAssetSnapshotFromOAuth(await getMetaOAuthAuthorizedAssetsSnapshot());
@@ -4109,7 +4170,7 @@ function normalizeMetaPage(page = {}) {
     id: cleanString(page.id),
     name: cleanString(page.name),
     category: cleanString(page.category) || null,
-    pictureUrl: page.picture?.data?.url || page.picture?.url || null
+    pictureUrl: page.picture?.data?.url || page.picture?.url || page.pictureUrl || page.picture_url || null
   };
 }
 
@@ -4203,6 +4264,43 @@ export const getSocialProfiles = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Error al leer perfiles sociales guardados'
+    });
+  }
+};
+
+/**
+ * Refresca explícitamente la metadata de perfiles sociales y luego responde
+ * desde el snapshot local. El GET hermano permanece estrictamente pasivo.
+ * POST /api/meta/social-profiles/refresh
+ */
+export const refreshSocialProfiles = async (req, res) => {
+  try {
+    await refreshMetaSocialProfileSnapshot();
+    const snapshot = await readLocalMetaAssetSnapshot(req);
+    const configuredPageId = cleanString(req.query?.pageId);
+    const configuredInstagramAccountId = cleanString(req.query?.instagramAccountId);
+    const profiles = snapshot.profiles.map(profile => ({
+      ...profile,
+      isConfiguredPage: Boolean(configuredPageId && profile.pageId === configuredPageId),
+      isConfiguredInstagram: Boolean(
+        configuredInstagramAccountId && profile.sourceId === configuredInstagramAccountId
+      )
+    }));
+    res.json({
+      success: true,
+      data: {
+        connected: profiles.length > 0,
+        updatedAt: snapshot.updatedAt,
+        stale: snapshot.stale,
+        source: 'remote_refresh',
+        profiles
+      }
+    });
+  } catch (error) {
+    logger.warn(`No se pudieron refrescar perfiles sociales Meta: ${safeMetaGraphTransportError(error)}`);
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudieron actualizar los perfiles sociales de Meta'
     });
   }
 };

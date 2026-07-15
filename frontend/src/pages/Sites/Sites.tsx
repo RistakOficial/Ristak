@@ -11081,8 +11081,9 @@ export const Sites: React.FC = () => {
     if (socialProfilesRequestRef.current) return socialProfilesRequestRef.current
 
     if (builderResourcesMountedRef.current) setLoadingSocialProfiles(true)
-    const request = campaignsService.getConnectedSocialProfiles()
-      .then(response => {
+    const request = campaignsService.refreshConnectedSocialProfiles()
+      .then(async response => {
+        if (!response.success) response = await campaignsService.getConnectedSocialProfiles()
         if (!response.success) throw new Error('No se pudieron consultar los perfiles sociales')
         const profiles = response.profiles || []
         socialProfilesLoadedRef.current = true
