@@ -80,7 +80,7 @@ const CORE_SCHEMA_BOOTSTRAP_VERSION = '2026-07-12-v1'
 const STARTUP_DATA_MAINTENANCE_CONFIG_KEY = 'startup_data_maintenance_version'
 const STARTUP_DATA_MAINTENANCE_VERSION = '2026-07-12-v1'
 const CONTACT_REENGAGEMENT_REPAIR_CONFIG_KEY = 'contact_reengagement_repair_version'
-const CONTACT_REENGAGEMENT_REPAIR_VERSION = '2026-07-15-v1'
+const CONTACT_REENGAGEMENT_REPAIR_VERSION = '2026-07-15-v2'
 const STARTUP_DATA_BATCH_SIZE = 250
 const STARTUP_SCHEMA_LOCK_NAME = 'startup-schema-bootstrap'
 const STARTUP_SCHEMA_LOCK_WAIT_MS = 120_000
@@ -8240,7 +8240,11 @@ export async function repairSoftDeletedContactsWithNewInboundActivity() {
   const emailInboundSort = timestampSortExpression('COALESCE(message_timestamp, created_at)')
   const deletedAtSort = timestampSortExpression('c.deleted_at')
   const rows = await db.all(`
-    SELECT c.id, c.deleted_at, MAX(activity.last_inbound_sort) AS last_inbound_sort
+    SELECT
+      c.id,
+      c.deleted_at,
+      CAST(c.deleted_at AS TEXT) AS deleted_at_token,
+      MAX(activity.last_inbound_sort) AS last_inbound_sort
     FROM contacts c
     JOIN (
       SELECT contact_id, MAX(${whatsappInboundSort}) AS last_inbound_sort
@@ -8269,8 +8273,10 @@ export async function repairSoftDeletedContactsWithNewInboundActivity() {
     const result = await db.run(`
       UPDATE contacts
       SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND deleted_at = ?
-    `, [row.id, row.deleted_at])
+      WHERE id = ?
+        AND deleted_at IS NOT NULL
+        AND CAST(deleted_at AS TEXT) = ?
+    `, [row.id, row.deleted_at_token])
     if (Number(result?.changes || 0) > 0) restored += 1
   }
 

@@ -5,6 +5,7 @@ import {
   databaseReady,
   db,
   getAppConfig,
+  repairSoftDeletedContactsWithNewInboundActivity,
   runCoreSchemaBootstrap,
   runStartupDataMaintenance
 } from '../src/config/database.js'
@@ -108,7 +109,7 @@ test('el mantenimiento histórico corre fuera del bootstrap, por lotes y una sol
     assert.equal(await getAppConfig('startup_data_maintenance_version'), '2026-07-12-v1')
     const reengagedContact = await db.get('SELECT deleted_at FROM contacts WHERE id = ?', [reengagedContactId])
     assert.equal(reengagedContact?.deleted_at, null)
-    assert.equal(await getAppConfig('contact_reengagement_repair_version'), '2026-07-15-v1')
+    assert.equal(await getAppConfig('contact_reengagement_repair_version'), '2026-07-15-v2')
 
     const secondRun = await runStartupDataMaintenance()
     assert.equal(secondRun.skipped, true)
@@ -143,5 +144,44 @@ test('la reparación de reactivación no marca versión cuando la consulta falla
   } finally {
     mock.restoreAll()
     await db.run('DELETE FROM app_config WHERE config_key = ?', [configKey])
+  }
+})
+
+test('la reparación usa un token SQL estable y no reenvía Date al comparar deleted_at', async () => {
+  await databaseReady
+  const realAll = db.all.bind(db)
+  const realRun = db.run.bind(db)
+  const deletedAtToken = '2026-07-14 06:24:27.81046'
+  let capturedSql = ''
+  let capturedParams = []
+
+  mock.method(db, 'all', async (sql, params, options) => {
+    if (String(sql).includes('MAX(activity.last_inbound_sort)')) {
+      return [{
+        id: 'contact_postgres_timestamp_roundtrip',
+        deleted_at: new Date('2026-07-14T06:24:27.810Z'),
+        deleted_at_token: deletedAtToken,
+        last_inbound_sort: '1784135628.064000'
+      }]
+    }
+    return realAll(sql, params, options)
+  })
+  mock.method(db, 'run', async (sql, params, options) => {
+    if (String(sql).includes('SET deleted_at = NULL')) {
+      capturedSql = String(sql)
+      capturedParams = params
+      return { changes: 1 }
+    }
+    return realRun(sql, params, options)
+  })
+
+  try {
+    const result = await repairSoftDeletedContactsWithNewInboundActivity()
+    assert.equal(result.restored, 1)
+    assert.match(capturedSql, /CAST\(deleted_at AS TEXT\) = \?/)
+    assert.deepEqual(capturedParams, ['contact_postgres_timestamp_roundtrip', deletedAtToken])
+    assert.equal(capturedParams.some(value => value instanceof Date), false)
+  } finally {
+    mock.restoreAll()
   }
 })
