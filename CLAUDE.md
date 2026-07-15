@@ -43,5 +43,9 @@ nueva DEBE usarlo — no hay excepción de "es nueva".
 ## Otras convenciones
 
 - `AGENTS.md` tiene las reglas de git/publishing (`main` es el único target).
+- Para investigar u optimizar pixel externo, CORS, Cloudflare, dominios públicos
+  o tracking nativo de Sites, aplica la compuerta de `AGENTS.md` y lee completo
+  [`docs/TRACKING_PIXEL.md`](docs/TRACKING_PIXEL.md) antes de cambiar código o
+  configuración.
 - App: frontend Vite (`frontend/`, dev `:3000`) + backend Node/SQLite
   (`backend/`, `:3001`). Sin secretos en el repo.

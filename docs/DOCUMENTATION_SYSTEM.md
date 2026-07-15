@@ -54,7 +54,7 @@ decirlo explicitamente.
 | Meta OAuth, BISU, permisos, handoff y broker multi-tenant de webhooks | `docs/META_OAUTH.md` |
 | Soporte interno MCP para investigar clientes instalados via Installer | `docs/support-mcp-operations.md` |
 | WhatsApp YCloud, Meta directo, Coexistence, webhooks, IDs y Baileys | `docs/integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md` y seccion Chat del manual maestro |
-| Pixel/tracking/conversiones | `docs/TRACKING_PIXEL.md`, `docs/PIXEL_SETUP.md` y seccion Meta/pagos del manual |
+| Pixel/tracking/conversiones, CORS público, Cloudflare/CDN y tracking nativo de Sites | `docs/TRACKING_PIXEL.md`, `docs/PIXEL_SETUP.md` y seccion Meta/pagos del manual |
 | Media/Bunny | `docs/MEDIA_STORAGE_BUNNY.md` |
 | Movil/web, Android `mobile/`, Apple `ios/app` y store release via Installer/MCP | `docs/MOBILE_APP.md`, `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`, `docs/MOBILE_STORE_RELEASES.md`, `mobile/README.md`, `ios/README.md` |
 | Bridge MDP | `docs/mdp-program-bridge.md` |

@@ -102,6 +102,27 @@
   controller debe llamar `syncRegisteredIntegrationCronsForProvider(...)` para
   prender/apagar el cron sin reiniciar el backend.
 
+## Tracking público, CORS y Sites — OBLIGATORIO
+
+- **ALTO antes de investigar o cambiar tracking.** Antes de optimizar, auditar
+  seguridad o modificar pixel externo, `/snip.js`, `/collect`, CORS, Cloudflare,
+  CDN, cookies/storage, dominios públicos, renderer de Sites, sesiones o
+  atribución web, lee **`docs/TRACKING_PIXEL.md`** completo.
+- Existen dos tuberías distintas: el pixel de páginas externas usa normalmente
+  CORS y `tracking_source=external_pixel`; las páginas públicas de Sites usan
+  tracking nativo first-party y `tracking_source=native_site`. No las mezcles ni
+  instales el pixel externo sobre Sites por reflejo.
+- `www.tudominio.com` y `track.tudominio.com` comparten dominio raíz, pero son
+  orígenes distintos para el navegador. Nunca “arregles” eso abriendo el CORS de
+  APIs privadas, activando credenciales públicas o agregando cada landing como
+  secret de Render.
+- Preview/editor de Sites apaga tracking intencionalmente. Una validación real
+  exige URL pública publicada, navegador real y confirmación en la base de datos;
+  reporta eventos y sesiones únicas por separado.
+- CORS no autentica la ingesta pública. Cualquier hardening debe conservar el
+  aislamiento de rutas privadas y evaluar abuso/rate limiting o un diseño
+  firmado de servidor; un secret fijo dentro de JavaScript público no es secret.
+
 ## Soporte MCP / Installer — OBLIGATORIO
 
 - Si Raul pide revisar un cliente, error, chat, IA, logs o datos de una cuenta

@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-14.
+Ultima consolidacion: 2026-07-15.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -3814,7 +3814,18 @@ Tracking:
   depende de `CORS_ALLOWED_ORIGINS` ni de agregar dominios manualmente en Render.
 - `sessions` conserva evento/sesion/visitante, UTMs, click IDs, geo, device,
   identidad y matching.
-- Sites y formularios pueden emitir eventos Meta y Ristak.
+- `tracking_source` distingue el pixel instalado en páginas externas
+  (`external_pixel`) del renderer público nativo de Sites (`native_site`) y del
+  tracking de sus videos (`native_site_video`). No se deben mezclar ni contar
+  filas como si cada evento fuera una sesión nueva.
+- Sites y formularios publicados emiten tracking nativo en su dominio público.
+  El editor, las sesiones de preview y los modos `no_track` lo desactivan a
+  propósito; una prueba real exige dominio conectado, Site publicado, navegador
+  real y confirmación en DB.
+- El incidente de CORS del 15 de julio de 2026, la frontera de seguridad, las
+  reglas para Cloudflare/CDN y el procedimiento end-to-end viven en
+  `docs/TRACKING_PIXEL.md`. Cualquier agente que optimice o audite esta tubería
+  debe leer ese contrato antes de cambiar CORS, cookies, caché, dominios o rutas.
 
 Documentos:
 

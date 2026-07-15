@@ -5,8 +5,14 @@ Esta documentación describe el comportamiento real del código en:
 - `backend/src/controllers/trackingController.js`
 - `backend/src/services/trackingService.js`
 - `backend/src/routes/tracking.routes.js`
+- `backend/src/middleware/publicTrackingCors.js`
+- `backend/src/controllers/sitesController.js`
+- `backend/src/services/sitesService.js`
 - `frontend/src/pages/Settings/WebTracking.tsx`
 - `frontend/src/services/trackingService.ts`
+- `backend/test/publicTrackingCors.test.mjs`
+- `backend/test/sitesVideoPlayer.test.mjs`
+- `backend/test/sitesFormHeadersPixel.test.mjs`
 
 ## Resumen
 
@@ -20,6 +26,238 @@ credenciales y limitado a orígenes web `http(s)`, mientras la allowlist global
 del dashboard sigue protegiendo las APIs privadas.
 
 Cada evento recibido se inserta como una fila nueva en la tabla `sessions`. No es una tabla agregada por sesión: `session_start`, `page_view`, `session_end` y eventos custom pueden compartir `session_id`, pero cada evento tiene su propio `id`.
+
+## Contrato Operativo Para Investigaciones Futuras
+
+Esta sección es lectura obligatoria antes de optimizar, endurecer seguridad o
+diagnosticar tracking. Aplica tanto a humanos como a agentes como Codex o Claude.
+El objetivo es no confundir dos tuberías distintas ni convertir una revisión de
+seguridad en un bloqueo de producción.
+
+### Las Dos Tuberías De Tracking
+
+| Superficie | Dónde se ejecuta | Cómo llega a Ristak | `tracking_source` esperado | Prueba válida |
+| --- | --- | --- | --- | --- |
+| Pixel externo | HighLevel, Squarespace, una tienda o cualquier página que cargue `snip.js` | La página llama al dominio de tracking; normalmente es cross-origin | `external_pixel` | Navegar la URL externa real y confirmar Network + DB |
+| Site público de Ristak | Página publicada por Sites en un dominio público conectado | El renderer nativo usa `fetch('/collect')` en el mismo origen | `native_site` | Navegar la URL pública publicada y confirmar DB |
+| Video dentro de Site público | Reproductor publicado de Sites | El runtime envía eventos a `/video-event` | `native_site_video` | Reproducir el video público y confirmar sus eventos |
+
+Una página nativa de Sites ya incluye tracking propio cuando se publica. No se
+debe insertar además `snip.js` por reflejo: hacerlo puede duplicar vistas y
+mezclar `external_pixel` con `native_site` para la misma navegación.
+
+### “Es El Mismo Dominio” No Significa “Es El Mismo Origen”
+
+El navegador define un origen con tres piezas: protocolo, hostname y puerto.
+Por eso estos dos URLs comparten dominio raíz, pero **no** origen:
+
+- página: `https://www.ejemplo.com`
+- colector: `https://track.ejemplo.com/collect`
+
+`www` y `track` son hostnames diferentes. El navegador puede hacer un preflight
+`OPTIONS` antes del `POST`; la respuesta debe incluir
+`Access-Control-Allow-Origin` para el origen exacto de la página.
+
+Cambiar DNS de Squarespace a Cloudflare no elimina ni crea esta regla. DNS sólo
+decide a dónde resuelve un hostname. Cloudflare puede dejar al descubierto un
+problema de enrutamiento, caché o headers, pero el CORS final sigue siendo un
+contrato entre el navegador y la respuesta del servidor que recibe `/collect`.
+
+### Incidente De Referencia: 15 De Julio De 2026
+
+Superficie afectada:
+
+- página externa: `https://www.raulgomez.com.mx/quiero-pacientes`
+- colector: `https://track.raulgomez.com.mx/collect`
+
+Síntoma real: el `OPTIONS /collect` respondía, pero sin
+`Access-Control-Allow-Origin`; por eso el navegador cancelaba el `POST` y no
+entraban eventos. El mensaje de consola decía que la solicitud había sido
+bloqueada por CORS.
+
+Causa raíz: las rutas públicas del pixel no aplicaban su propio CORS y quedaban
+bajo el contrato de la allowlist privada del dashboard. El culpable técnico era
+el backend de Ristak, no HighLevel, Cloudflare ni el navegador. El cambio de DNS
+coincidió con el síntoma y ayudó a exponerlo, pero no justificaba abrir todas las
+APIs privadas.
+
+Solución: el commit `5825ffddf` agregó `publicTrackingCorsMiddleware`, limitado a
+rutas públicas exactas y sin credenciales. Después del deploy se abrió la página
+real con una marca única; la base pasó de cero coincidencias a tres eventos bajo
+un solo `session_id`. Tres filas eran tres eventos de carga/recarga, no tres
+sesiones distintas.
+
+Mensajes como `ERR_BLOCKED_BY_CLIENT` para Facebook/DoubleClick, APIs deprecadas
+de HighLevel, `MutationObserver` o avisos de Tracking Prevention pueden aparecer
+al mismo tiempo, pero no prueban que `/collect` haya fallado. El veredicto se
+toma con Network y la base de datos, no contando líneas rojas de la consola.
+
+### Contrato De Sites Públicos
+
+El tracking nativo de Sites sólo debe considerarse probado en vivo cuando:
+
+1. existe un registro de dominio público verificado en `public_site_domains` o
+   el dominio primario compatible en `app_config.sites_public_domain`;
+2. el Site tiene `status = 'published'`;
+3. la URL pública resuelve a la página correcta;
+4. la navegación no usa un modo de preview o bypass de tracking.
+
+El renderer público inyecta el runtime nativo con
+`tracking_source = 'native_site'`, contexto del Site y de la página, cookies first-party
+`ristak_vid`/`ristak_sid`, UTMs, click IDs y datos del navegador. La vista genera
+`native_site_view`; una conversión válida puede generar
+`native_site_conversion` y vincularse al contacto.
+
+El editor y las sesiones temporales de preview usan `trackingEnabled: false`.
+También desactivan tracking los modos reservados como `no_track=1`,
+`preview=1`, `editor_preview=1`, ciertos valores de `tracking`, las banderas de
+preview y rutas de prueba. Esto es intencional: editar o previsualizar no debe
+ensuciar Analytics ni mandar conversiones reales.
+
+Por lo tanto:
+
+- una captura del editor no prueba tracking;
+- un preview sin filas nuevas es comportamiento correcto;
+- no se debe quitar el bypass para “hacer que la prueba pase”;
+- si no hay dominio público y Site publicado, la prueba end-to-end todavía no
+  existe, aunque las pruebas automatizadas del renderer pasen;
+- publicar un borrador o cambiar DNS requiere autorización explícita del dueño.
+
+### Frontera De Seguridad
+
+Las rutas del pixel son públicas porque un navegador anónimo debe poder cargar
+el script y mandar una visita. Actualmente el CORS público:
+
+- sólo se aplica a paths exactos como `/snip.js`, `/collect`, `/video-event`,
+  `/sync-visitor` y `/link-visitor`;
+- acepta orígenes web `http(s)` bien formados y requests sin `Origin` para
+  clientes no navegador;
+- permite `GET`, `HEAD`, `POST` y `OPTIONS`, y sólo el header `Content-Type`;
+- usa `credentials: false`;
+- conserva `Vary: Origin` y un preflight con cache máximo de 24 horas;
+- no se hereda por `/sessions`, `/analytics`, `/config` ni otras APIs privadas.
+
+Las APIs privadas siguen exigiendo autenticación, módulo y licencia. Nunca se
+debe resolver un problema del pixel con alguna de estas salidas rápidas:
+
+- abrir `CORS_ALLOWED_ORIGINS` para todo el dashboard;
+- activar credenciales en el CORS público;
+- aplicar `Access-Control-Allow-Origin: *` a rutas privadas;
+- agregar cada landing como secret de Render;
+- desactivar CORS en el navegador;
+- poner un secret compartido dentro de `snip.js` o del HTML público.
+
+CORS **no es autenticación**. Un cliente no navegador puede llamar `/collect`
+sin header `Origin`, y un origen permitido puede fabricar eventos. La protección
+actual rechaza requests cuyo `Content-Length` declarado supera 50 KB, valida
+campos obligatorios, verifica contra la DB cualquier `contact_id` recibido antes
+de vincular identidad y mantiene las APIs de lectura/escritura privadas fuera
+del CORS público. El límite de 50 KB no es un límite de stream independiente del
+parser: una auditoría de abuso/DoS no debe presentarlo como protección completa.
+Aun así, una auditoría de seguridad debe considerar spam o contaminación
+analítica como riesgo de una ingesta pública.
+
+Si en el futuro hace falta mayor integridad, un allowlist de `Origin` sólo reduce
+ruido de navegadores; no detiene solicitudes server-to-server. Una solución
+fuerte debe diseñar rate limiting, detección de abuso o tokens efímeros firmados
+por servidor/relay first-party. Un token fijo incrustado en JavaScript público no
+es un secret y no resuelve el problema.
+
+### Reglas De Optimización
+
+- `snip.js` puede cachearse como asset según su contrato actual; `/collect` y sus
+  respuestas no deben meterse en una regla de caché de contenido.
+- Si Cloudflare u otro CDN toca `OPTIONS`, debe preservar `Origin`,
+  `Access-Control-Request-*`, `Access-Control-Allow-Origin` y `Vary: Origin`.
+- No proxies el tracking hacia otro hostname sin volver a probar el origen real,
+  el endpoint generado por `snip.js` y la DB destino.
+- No confundas una mejora de privacidad o bloqueo de terceros con la eliminación
+  del tracking first-party de Sites. Evalúa identidad, atribución y conversiones
+  por separado.
+- Una optimización que cambia cookies, storage, caché, headers, dominio público,
+  renderer o rutas debe repetir las pruebas externa y nativa.
+- No cuentes filas como sesiones. Usa `COUNT(*)` para eventos y
+  `COUNT(DISTINCT session_id)` para sesiones.
+
+### Prueba End-To-End Obligatoria
+
+Una validación seria usa navegador real y base real. `curl` sirve para revisar
+headers, pero no sustituye la ejecución del pixel, storage, cookies y
+navegación del browser.
+
+1. Elige la superficie exacta: landing externa o Site público publicado.
+2. Agrega una marca única inocua a la URL, por ejemplo
+   `codex_tracking_test=20260715T0715Z_external`.
+3. Confirma en la DB que la marca todavía tiene cero filas.
+4. Abre la URL pública real en un navegador normal. No uses editor ni preview.
+5. En Network filtra `collect`.
+   - Pixel externo: `OPTIONS` debe responder `204` con
+     `Access-Control-Allow-Origin` igual al origen de la página y el `POST` debe
+     responder `200`.
+   - Site nativo: el `POST /collect` suele ser same-origin; que no exista
+     preflight es válido.
+6. Consulta la DB y conserva `id`, `session_id`, `event_name`,
+   `tracking_source`, contexto de Site/página, `page_url` y `started_at`.
+7. Reporta por separado cantidad de eventos y cantidad de sesiones únicas.
+8. Guarda una captura de la página real y, cuando sea posible, evidencia de
+   Network o del resultado exacto de DB sin exponer credenciales.
+
+Consulta de comprobación, reemplazando `<MARCA_UNICA>`:
+
+```sql
+SELECT
+  id,
+  session_id,
+  event_name,
+  tracking_source,
+  site_id,
+  public_page_id,
+  page_url,
+  started_at
+FROM sessions
+WHERE page_url LIKE '%<MARCA_UNICA>%'
+ORDER BY started_at DESC;
+```
+
+Conteo correcto:
+
+```sql
+SELECT
+  COUNT(*) AS events,
+  COUNT(DISTINCT session_id) AS unique_sessions
+FROM sessions
+WHERE page_url LIKE '%<MARCA_UNICA>%';
+```
+
+`started_at` se guarda como instante de base de datos. Para comunicar una hora
+de negocio, conviértela con el timezone configurado y declara cuál se usó; no
+deduzcas la fecha por el reloj o timezone del navegador.
+
+### Matriz Rápida De Diagnóstico
+
+| Síntoma | Lectura correcta | Qué verificar |
+| --- | --- | --- |
+| `OPTIONS` responde pero falta `Access-Control-Allow-Origin` | CORS público roto o interceptado | Middleware, CDN/proxy y `Vary: Origin` |
+| `POST /collect` da `200`, pero la DB consultada no tiene filas | Posible DB/servicio equivocado, bypass o query incorrecta | Host destino, deployment, `no_track`, marker y base de esa instalación |
+| Preview de Sites no genera eventos | Esperado | Publicar y probar la URL pública real |
+| Varias filas comparten `session_id` | Son eventos de una sesión | Contar distintos `session_id` |
+| `ERR_BLOCKED_BY_CLIENT` en Meta/Google | Bloqueador o Tracking Prevention de tercero | Revisar `/collect` por separado |
+| `ERR_NAME_NOT_RESOLVED` | DNS del hostname exacto | CNAME, Render custom domain y propagación |
+| La tabla Analytics falla, pero hay filas en DB | Problema del endpoint/UI de lectura, no necesariamente de ingesta | Separar `/collect` de `/api/tracking/analytics/*` |
+| Site público devuelve 404 | Dominio no conectado, Site en draft o ruta no publicada | `public_site_domains`, status y resolución de página |
+
+### Pruebas Que Deben Correr Después De Cambios
+
+```bash
+cd backend
+node --test --test-concurrency=1 test/publicTrackingCors.test.mjs
+node --test --test-concurrency=1 test/sitesVideoPlayer.test.mjs test/sitesFormHeadersPixel.test.mjs
+```
+
+Las pruebas automatizadas protegen el contrato de CORS, el aislamiento de rutas
+privadas, la diferencia preview/publicado, cookies first-party y tracking Meta de
+Sites. No reemplazan la prueba end-to-end cuando cambia DNS, Cloudflare, Render,
+el dominio público o la instalación productiva.
 
 ## Datos Que Captura
 

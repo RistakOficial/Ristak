@@ -37,7 +37,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | Conexion de Meta OAuth, convivencia manual y relay central de Messenger/Instagram/comentarios | [META_OAUTH.md](./META_OAUTH.md) |
 | Soporte interno MCP via Ristak Installer para clientes instalados | [support-mcp-operations.md](./support-mcp-operations.md) |
 | WhatsApp YCloud, Meta directo, Coexistence, webhooks, IDs y Baileys | [integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md](./integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md) y la seccion Chat del manual |
-| Pixel, tracking, sesiones, conversiones y rastreo web | [TRACKING_PIXEL.md](./TRACKING_PIXEL.md) y [PIXEL_SETUP.md](./PIXEL_SETUP.md) |
+| Pixel, tracking, sesiones, conversiones, CORS público, Cloudflare/CDN, Sites públicos y rastreo web | [TRACKING_PIXEL.md](./TRACKING_PIXEL.md) y [PIXEL_SETUP.md](./PIXEL_SETUP.md) |
 | Atribucion de compras/citas, ultimo paid touch, superficie y payload Meta CAPI | [CONVERSION_ATTRIBUTION.md](./CONVERSION_ATTRIBUTION.md) |
 | Media, Bunny Storage, Bunny Stream y cuotas | [MEDIA_STORAGE_BUNNY.md](./MEDIA_STORAGE_BUNNY.md) |
 | Rutas moviles, `/movil` web y app Android `mobile/` | [MOBILE_APP.md](./MOBILE_APP.md) y [MOBILE_NATIVE_PARITY_CHECKLIST.md](./MOBILE_NATIVE_PARITY_CHECKLIST.md) |
