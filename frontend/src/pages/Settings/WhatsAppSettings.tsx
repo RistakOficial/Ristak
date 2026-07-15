@@ -127,11 +127,11 @@ function getPhoneLabel(phone: WhatsAppApiPhoneNumber) {
 
 function getWhatsAppSendLabel(phone: WhatsAppApiPhoneNumber, apiEnabled: boolean, qrConnected: boolean) {
   if (isStandaloneQrPhone(phone) || (!apiEnabled && qrConnected)) return 'WhatsApp Web'
-  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'WhatsApp API' : 'YCloud'
+  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'WhatsApp API con Meta' : 'YCloud'
 }
 
 function getDisconnectApiLabel(phone: WhatsAppApiPhoneNumber) {
-  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'API' : 'YCloud'
+  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'WhatsApp API con Meta' : 'YCloud'
 }
 
 function getPhoneProfile(phone?: WhatsAppApiPhoneNumber | null) {
@@ -494,7 +494,7 @@ export const WhatsAppSettings: React.FC = () => {
       setApiKey('')
       selectSection('numbers')
 
-      showToast('success', 'WhatsApp conectado', 'Ristak sincronizo los números disponibles de WhatsApp API')
+      showToast('success', 'YCloud conectado', 'Ristak sincronizó los números disponibles de YCloud')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo conectar WhatsApp Business')
     } finally {
@@ -524,7 +524,7 @@ export const WhatsAppSettings: React.FC = () => {
     try {
       const nextStatus = await whatsappApiService.refresh()
       setApiStatus(nextStatus)
-      showToast('success', 'Actualizado', 'WhatsApp se sincronizo con WhatsApp API')
+      showToast('success', 'Actualizado', 'WhatsApp se sincronizó con YCloud')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo actualizar WhatsApp')
     } finally {
@@ -715,11 +715,12 @@ export const WhatsAppSettings: React.FC = () => {
   const disconnectPhoneConnection = (phone: WhatsAppApiPhoneNumber, connection: 'api' | 'qr') => {
     const standaloneQr = isStandaloneQrPhone(phone)
     const apiLabel = getDisconnectApiLabel(phone)
+    const isMetaDirect = String(phone.provider || '').toLowerCase() === 'meta_direct'
     const title = connection === 'api'
       ? `Desconectar ${apiLabel}`
       : 'Desconectar QR'
     const detail = connection === 'api'
-      ? `${getPhoneLabel(phone)} dejará de enviar y recibir mediante ${apiLabel === 'API' ? 'la API oficial' : 'YCloud'}. El número seguirá registrado en ${apiLabel === 'API' ? 'Meta' : 'YCloud'} y tus mensajes, contactos y plantillas guardadas se quedan intactos.`
+      ? `${getPhoneLabel(phone)} dejará de enviar y recibir mediante ${isMetaDirect ? 'WhatsApp API con Meta' : 'YCloud'}. El número seguirá registrado en ${isMetaDirect ? 'Meta' : 'YCloud'} y tus mensajes, contactos y plantillas guardadas se quedan intactos.`
       : standaloneQr
         ? `Se cerrará la sesión local de WhatsApp Web de ${getPhoneLabel(phone)} y el número se quitará de esta lista. No se eliminará el número de WhatsApp y tus mensajes y contactos guardados se quedan intactos.`
         : `Se cerrará únicamente el QR de ${getPhoneLabel(phone)}. La conexión oficial, el número real y tus mensajes guardados se quedan intactos.`
@@ -815,7 +816,7 @@ export const WhatsAppSettings: React.FC = () => {
   const renderApiForm = () => (
     <form className={styles.apiConnectForm} onSubmit={connectApi}>
       <label className={styles.fieldLabel}>
-        <span>Llave de conexión de WhatsApp API</span>
+        <span>Llave de conexión de YCloud</span>
         <div className={styles.apiKeyRow}>
           <div className={styles.inputWrap} data-ristak-unstyled>
             <KeyRound size={17} />
@@ -825,7 +826,7 @@ export const WhatsAppSettings: React.FC = () => {
               onChange={(event) => {
                 setApiKey(event.target.value)
               }}
-              placeholder={apiStatus?.credentials.hasApiKey ? 'Llave guardada' : 'Pega tu llave de WhatsApp API'}
+              placeholder={apiStatus?.credentials.hasApiKey ? 'Llave de YCloud guardada' : 'Pega tu llave de YCloud'}
               autoComplete="off"
             />
           </div>
@@ -834,7 +835,7 @@ export const WhatsAppSettings: React.FC = () => {
 
       <Button type="submit" loading={apiConnecting} disabled={!canSubmitApi}>
         <Cloud size={18} />
-        {ycloudConnected ? 'Actualizar conexión' : 'Conectar WhatsApp API'}
+        {ycloudConnected ? 'Actualizar YCloud' : 'Conectar YCloud'}
       </Button>
     </form>
   )
@@ -887,8 +888,8 @@ export const WhatsAppSettings: React.FC = () => {
       {hasWhatsAppApiAccess && (
         <button type="button" className={styles.connectionCard} onClick={() => onSelect('api')}>
           <Cloud size={22} />
-          <strong>WhatsApp API</strong>
-          <span>Conexión oficial para plantillas, revisión de Meta y envío estable.</span>
+          <strong>Meta o YCloud</strong>
+          <span>Elige WhatsApp API con Meta o conecta tu cuenta de YCloud.</span>
         </button>
       )}
       <button type="button" className={styles.connectionCard} onClick={() => onSelect('qr')} disabled={qrCreatingPhone}>
@@ -913,7 +914,7 @@ export const WhatsAppSettings: React.FC = () => {
           loading={metaConnecting}
         >
           <Link2 size={17} />
-          Conectar con Meta
+              Conectar WhatsApp API con Meta
         </Button>
       </div>
       <p className={styles.metaSignupNote}>
@@ -956,7 +957,7 @@ export const WhatsAppSettings: React.FC = () => {
   const renderApiConnectionOptions = () => (
     <div className={styles.connectionOptions}>
       <section className={styles.connectionOption}>
-        <p className={styles.connectionOptionTitle}>Conectar directo con Meta</p>
+        <p className={styles.connectionOptionTitle}>WhatsApp API con Meta</p>
         {renderMetaSignup()}
       </section>
 
@@ -965,7 +966,7 @@ export const WhatsAppSettings: React.FC = () => {
       </div>
 
       <section className={styles.connectionOption}>
-        <p className={styles.connectionOptionTitle}>Ingresa usando YCloud</p>
+        <p className={styles.connectionOptionTitle}>YCloud</p>
         {renderApiForm()}
       </section>
     </div>
@@ -1059,7 +1060,7 @@ export const WhatsAppSettings: React.FC = () => {
         <div className={styles.connectCopy}>
           <p className={styles.eyebrow}>Conexión</p>
           <h3>Conecta WhatsApp Business</h3>
-          <span>Usa WhatsApp API para enviar mensajes oficiales, revisar saldo y mandar plantillas a Meta.</span>
+          <span>Elige WhatsApp API con Meta o YCloud. Cada conexión conserva sus propios números, credenciales y plantillas.</span>
         </div>
         {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
         <div className={styles.connectContent}>

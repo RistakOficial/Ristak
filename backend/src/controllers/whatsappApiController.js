@@ -144,12 +144,20 @@ function getWebhookUrl(req) {
   return `${getPublicBaseUrl(req)}${getWhatsAppApiWebhookPath()}`
 }
 
-async function ensureDefaultTemplatesForWhatsAppApi(req) {
+async function ensureDefaultTemplatesForActiveWhatsAppProvider(req) {
   try {
-    return await ensureDefaultWhatsAppApiMessageTemplates({
-      submitToYCloud: true,
+    const result = await ensureDefaultWhatsAppApiMessageTemplates({
+      submitToActiveProvider: true,
       publicBaseUrl: getPublicBaseUrl(req)
     })
+    if (result.errors > 0) {
+      const failedNames = result.templates
+        .filter(template => template.error)
+        .map(template => template.name)
+        .join(', ')
+      logger.warn(`WhatsApp API conectado, pero ${result.errors} plantilla(s) default fallaron con el proveedor activo: ${failedNames}`)
+    }
+    return result
   } catch (error) {
     logger.warn(`WhatsApp API conectado, pero no se pudieron preparar plantillas default: ${error.message}`)
     return null
@@ -196,7 +204,7 @@ export async function connectWhatsAppApiView(req, res) {
       wabaId: req.body?.wabaId,
       webhookUrl: getWebhookUrl(req)
     })
-    await ensureDefaultTemplatesForWhatsAppApi(req)
+    await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
     await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-api-connected' })
 
     res.json({ success: true, data: await getWhatsAppApiStatus() })
@@ -212,7 +220,7 @@ export async function connectWhatsAppApiView(req, res) {
 export async function refreshWhatsAppApiView(req, res) {
   try {
     await refreshWhatsAppApi()
-    await ensureDefaultTemplatesForWhatsAppApi(req)
+    await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
     await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-api-refreshed' })
     res.json({ success: true, data: await getWhatsAppApiStatus() })
   } catch (error) {
@@ -390,7 +398,7 @@ export async function completeMetaDirectEmbeddedSignupView(req, res) {
       code: req.body?.code,
       signupData: req.body?.signupData || req.body?.signup_data || {}
     })
-    await ensureDefaultTemplatesForWhatsAppApi(req)
+    await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error finalizando Embedded Signup de Meta: ${error.message}`)
@@ -409,7 +417,7 @@ export async function completeMetaDirectConnectionView(req, res) {
       rawBody: req.rawBody || JSON.stringify(req.body || {}),
       headers: getInstallerSignatureHeaders(req)
     })
-    await ensureDefaultTemplatesForWhatsAppApi(req)
+    await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error completando Meta directo: ${error.message}`)
@@ -1118,7 +1126,7 @@ export async function getWhatsAppApiTemplatesView(req, res) {
 export async function repairDefaultWhatsAppApiTemplatesView(req, res) {
   try {
     const data = await ensureDefaultWhatsAppApiMessageTemplates({
-      submitToYCloud: true,
+      submitToActiveProvider: true,
       publicBaseUrl: getPublicBaseUrl(req)
     })
     res.json({ success: true, data })

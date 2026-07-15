@@ -2125,6 +2125,19 @@ de YCloud. Los webhooks Meta `message_template_status_update`,
 `template_category_update` y `message_template_quality_update` actualizan tanto
 el catálogo remoto como la copia local, sin fingir eventos YCloud.
 
+Esta separación aplica también fuera del editor: la lista de plantillas, filtros,
+bloqueo de edición, envío de prueba y recordatorios de citas leen
+`provider_status`, `provider_template_id` y `provider_template_name`. Meta directo
+nunca cae a campos `ycloud_*`; esos campos solo sirven al adaptador YCloud y a su
+compatibilidad histórica. El contrato interno de envío se llama
+`submitToActiveProvider`, resuelve `meta_direct` o `ycloud` explícitamente y no
+conserva aliases compartidos con nombre de un proveedor.
+
+La nomenclatura visible separa **WhatsApp API con Meta** de **YCloud**. El
+formulario de llave, los botones de conexión/desconexión y la etiqueta del canal
+usan el nombre real del proveedor para que una conexión directa de Meta nunca se
+presente como YCloud ni una llave de YCloud se presente como Meta Direct.
+
 En plantillas con encabezado multimedia, YCloud usa `header_url`, mientras Meta
 directo exige un `header_handle` cargado previamente a Graph. Ristak guarda ese
 handle en `meta_header_handle` y jamás convierte una URL YCloud en handle. Hasta

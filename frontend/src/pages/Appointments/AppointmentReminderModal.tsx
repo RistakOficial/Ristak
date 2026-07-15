@@ -13,7 +13,10 @@ import {
   type ReminderTimingAnchor,
   formatReminderOffsetLabel
 } from '@/services/appointmentRemindersService'
-import type { MessageTemplate } from '@/services/messageTemplatesService'
+import {
+  getMessageTemplateProviderStatus,
+  type MessageTemplate
+} from '@/services/messageTemplatesService'
 import {
   getWhatsAppSenderConnectionAvailability
 } from '@/utils/whatsappQrFallbackWarning'
@@ -116,7 +119,7 @@ const NO_CONFIRM_ACTION_OPTIONS: { value: ReminderNoConfirmAction; label: string
   }
 ]
 
-const getTemplateReviewStatus = (template?: MessageTemplate | null) => String(template?.ycloudStatus || '').toUpperCase()
+const getTemplateReviewStatus = (template?: MessageTemplate | null) => getMessageTemplateProviderStatus(template)
 
 const getTemplateStatusLabel = (template?: MessageTemplate | null) => {
   const status = getTemplateReviewStatus(template)

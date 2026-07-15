@@ -13,6 +13,7 @@ import {
 } from '../src/services/whatsappApiService.js'
 import {
   createMessageTemplate,
+  sendMessageTemplateTest,
   submitMessageTemplateToActiveProvider
 } from '../src/services/messageTemplatesService.js'
 
@@ -59,6 +60,7 @@ test('CRUD y sincronización de plantillas Meta directo usan Graph e identidad n
     keys.metaStatus,
     keys.metaWabaId,
     keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
     keys.metaSystemUserToken
   ], async () => {
     await setAppConfig(keys.provider, 'meta_direct')
@@ -154,20 +156,30 @@ test('el flujo local envía a Meta directo sin escribir el ID en columnas YCloud
   const wabaId = `waba_meta_local_${suffix}`
   const templateId = `meta_local_${suffix}`
   const templateName = `plantilla_local_meta_${suffix}`
+  const requests = []
 
   await snapshotConfig([
     keys.provider,
     keys.metaStatus,
     keys.metaWabaId,
     keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
     keys.metaSystemUserToken
   ], async () => {
     await setAppConfig(keys.provider, 'meta_direct')
     await setAppConfig(keys.metaStatus, 'connected')
     await setAppConfig(keys.metaWabaId, wabaId)
     await setAppConfig(keys.metaPhoneNumberId, `phone_local_${suffix}`)
+    await setAppConfig(keys.metaDisplayPhoneNumber, '+526561112233')
     await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_local_template_token'))
-    setMetaDirectFetchForTest(async () => graphResponse({ id: templateId, status: 'PENDING', category: 'UTILITY' }))
+    setMetaDirectFetchForTest(async (url, options = {}) => {
+      const requestUrl = new URL(url)
+      requests.push({ path: requestUrl.pathname, method: options.method || 'GET' })
+      if (requestUrl.pathname.endsWith(`/phone_local_${suffix}/messages`)) {
+        return graphResponse({ messages: [{ id: `wamid_test_${suffix}`, message_status: 'accepted' }] })
+      }
+      return graphResponse({ id: templateId, status: 'PENDING', category: 'UTILITY' })
+    })
 
     const local = await createMessageTemplate({
       name: templateName,
@@ -183,6 +195,9 @@ test('el flujo local envía a Meta directo sin escribir el ID en columnas YCloud
       variableExamples: {},
       variableBindings: { headerText: {}, bodyText: {} }
     })
+    assert.equal(local.templateProvider, 'meta_direct')
+    assert.equal(local.ycloudTemplateId, null)
+    assert.equal(local.ycloudStatus, null)
 
     try {
       const result = await submitMessageTemplateToActiveProvider(local.id)
@@ -192,6 +207,18 @@ test('el flujo local envía a Meta directo sin escribir el ID en columnas YCloud
       assert.equal(result.template.providerStatus, 'PENDING')
       assert.equal(result.template.ycloudTemplateId, null)
       assert.equal(result.template.ycloudStatus, null)
+
+      await db.run(
+        "UPDATE whatsapp_message_templates SET provider_status = 'APPROVED' WHERE id = ?",
+        [local.id]
+      )
+      await db.run(
+        "UPDATE whatsapp_api_templates SET status = 'APPROVED' WHERE provider = 'meta_direct' AND provider_template_id = ?",
+        [templateId]
+      )
+      const testSend = await sendMessageTemplateTest(local.id, { to: '+526561234567' })
+      assert.equal(testSend.sent, true)
+      assert.ok(requests.some(request => request.path.endsWith(`/phone_local_${suffix}/messages`)))
     } finally {
       await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [local.id])
       await db.run('DELETE FROM whatsapp_api_templates WHERE name = ? AND language = ?', [templateName, 'es_MX'])

@@ -2,6 +2,7 @@ import apiClient from './apiClient'
 
 export type MessageTemplateCategory = 'utility' | 'marketing' | 'authentication' | 'service'
 export type MessageTemplateStatus = 'draft' | 'active' | 'archived'
+export type MessageTemplateProvider = 'ycloud' | 'meta_direct'
 export type MessageTemplateHeaderType = 'none' | 'text' | 'image' | 'video' | 'document' | 'location'
 export type MessageTemplateButtonType = 'quick_reply' | 'website' | 'phone' | 'whatsapp_call'
 export type MessageTemplateTextVariableTarget = 'headerText' | 'bodyText'
@@ -72,15 +73,16 @@ export interface MessageTemplate {
   variables: string[]
   variableExamples: Record<string, string>
   variableBindings: MessageTemplateVariableBindings
-  ycloudTemplateName?: string | null
-  ycloudTemplateId?: string | null
-  ycloudStatus?: string | null
-  ycloudReason?: string | null
-  ycloudStatusUpdateEvent?: string | null
-  ycloudQualityRating?: string | null
-  ycloudRawPayload?: Record<string, any> | null
-  ycloudSubmittedAt?: string | null
-  ycloudSyncedAt?: string | null
+  templateProvider?: MessageTemplateProvider | null
+  providerTemplateName?: string | null
+  providerTemplateId?: string | null
+  providerStatus?: string | null
+  providerReason?: string | null
+  providerStatusUpdateEvent?: string | null
+  providerQualityRating?: string | null
+  providerRawPayload?: Record<string, any> | null
+  providerSubmittedAt?: string | null
+  providerSyncedAt?: string | null
   lastError?: string | null
   createdAt?: string | null
   updatedAt?: string | null
@@ -97,16 +99,28 @@ export type MessageTemplatePayload = Omit<
   MessageTemplate,
   | 'id'
   | 'variables'
-  | 'ycloudReason'
-  | 'ycloudStatusUpdateEvent'
-  | 'ycloudQualityRating'
-  | 'ycloudRawPayload'
-  | 'ycloudSubmittedAt'
-  | 'ycloudSyncedAt'
+  | 'templateProvider'
+  | 'providerTemplateName'
+  | 'providerTemplateId'
+  | 'providerStatus'
+  | 'providerReason'
+  | 'providerStatusUpdateEvent'
+  | 'providerQualityRating'
+  | 'providerRawPayload'
+  | 'providerSubmittedAt'
+  | 'providerSyncedAt'
   | 'lastError'
   | 'createdAt'
   | 'updatedAt'
 >
+
+export function getMessageTemplateProviderStatus(template?: MessageTemplate | null) {
+  return String(template?.providerStatus || '').trim().toUpperCase()
+}
+
+export function getMessageTemplateProviderName(template?: MessageTemplate | null) {
+  return String(template?.providerTemplateName || template?.name || '').trim()
+}
 
 export interface MessageTemplateBundle {
   folders: MessageTemplateFolder[]
@@ -123,9 +137,12 @@ export interface MessageTemplatePreview {
   variablesUsed: string[]
 }
 
-export interface MessageTemplateYCloudResult {
+export interface MessageTemplateProviderResult {
   template: MessageTemplate
+  provider?: MessageTemplateProvider
+  providerResponse?: Record<string, any>
   ycloud?: Record<string, any>
+  metaDirect?: Record<string, any>
   message: string
 }
 
@@ -161,10 +178,10 @@ export const messageTemplatesService = {
     apiClient.put<MessageTemplate>(`/settings/message-templates/${id}`, payload)
   ),
   submitTemplate: (id: string) => (
-    apiClient.post<MessageTemplateYCloudResult>(`/settings/message-templates/${id}/submit`)
+    apiClient.post<MessageTemplateProviderResult>(`/settings/message-templates/${id}/submit`)
   ),
   syncTemplate: (id: string) => (
-    apiClient.post<MessageTemplateYCloudResult>(`/settings/message-templates/${id}/sync`)
+    apiClient.post<MessageTemplateProviderResult>(`/settings/message-templates/${id}/sync`)
   ),
   syncAll: () => apiClient.post<MessageTemplateBundle>('/settings/message-templates/sync'),
   sendTest: (id: string, payload: { to: string; from?: string; externalId?: string }) => (

@@ -6,7 +6,7 @@ import {
   createMessageTemplate,
   createTemplateFolder,
   deleteTemplateFolder,
-  submitMessageTemplateToYCloud,
+  submitMessageTemplateToActiveProvider,
   updateMessageTemplate
 } from '../src/services/messageTemplatesService.js'
 import {
@@ -187,7 +187,7 @@ test('rechaza enviar a revisión cuando una variable no tiene ejemplo para Meta'
     })
 
     await assert.rejects(
-      () => submitMessageTemplateToYCloud(template.id),
+      () => submitMessageTemplateToActiveProvider(template.id),
       /ejemplo que Meta revisara para \{\{1\}\} en el cuerpo/i
     )
   } finally {
@@ -236,7 +236,7 @@ test('edita en YCloud una plantilla existente en vez de crear otra con el mismo 
         ...payload,
         bodyText: 'Hola {{1}}, ya puedes descargar tu comprobante.'
       })
-      const result = await submitMessageTemplateToYCloud(saved.id)
+      const result = await submitMessageTemplateToActiveProvider(saved.id)
 
       assert.equal(requests.length, 1)
       assert.equal(requests[0].method, 'PATCH')
@@ -294,7 +294,7 @@ test('si YCloud dice que la plantilla ya existe, reintenta como edición por nom
 
     try {
       const template = await createMessageTemplate(buildReviewableTemplatePayload(templateName))
-      const result = await submitMessageTemplateToYCloud(template.id)
+      const result = await submitMessageTemplateToActiveProvider(template.id)
 
       assert.deepEqual(requests.map((request) => request.method), ['POST', 'PATCH'])
       assert.ok(requests[0].path.endsWith('/whatsapp/templates'))

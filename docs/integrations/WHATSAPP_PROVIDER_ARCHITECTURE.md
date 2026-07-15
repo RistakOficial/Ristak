@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-07-14.
+Ultima actualizacion: 2026-07-15.
 
 ## Proposito
 
@@ -186,12 +186,23 @@ Modelo local neutral:
 - Las columnas `ycloud_*` se conservan para compatibilidad y diagnóstico. Solo
   se actualizan cuando `template_provider=ycloud`. Un ID de Meta jamás se guarda
   en `ycloud_template_id`.
+- El código compartido usa nombres neutrales (`submitToActiveProvider`,
+  `providerStatus`, `providerTemplateId`, `providerTemplateName`). No se permiten
+  aliases genéricos con nombre YCloud. La rama `meta_direct` nunca consulta
+  `ycloud_status`, `ycloud_template_id`, `ycloud_template_name` ni payloads
+  YCloud para decidir si puede crear, editar, mostrar, probar o enviar una
+  plantilla.
 - `whatsapp_api_templates` conserva `provider`, `source_adapter` y
   `provider_template_id`. `official_template_id` sigue disponible como alias
   histórico del ID remoto.
 - Cambiar el proveedor activo no convierte una plantilla existente: si la copia
   remota pertenece a YCloud y se envía por Meta directo, se crea una identidad
   Meta nueva. Nunca se manda el ID YCloud al endpoint Graph.
+
+En la interfaz los nombres también son deliberadamente distintos:
+**WhatsApp API con Meta** identifica la conexión directa y **YCloud** identifica
+al intermediario. La llave, los botones de conexión, las confirmaciones y la
+ruta de envío visible no deben llamar "WhatsApp API" a YCloud.
 
 Encabezados multimedia:
 
@@ -209,6 +220,13 @@ Encabezados multimedia:
 Coexistence no cambia estos endpoints. Sirve para mantener WhatsApp Business App
 y Cloud API sobre el mismo número, pero las plantillas siguen perteneciendo al
 WABA y se administran mediante el proveedor activo una sola vez.
+
+Al completar una conexión o refresco oficial, Ristak prepara las seis plantillas
+default y las envía al proveedor que acaba de quedar activo. El callback de Meta
+directo debe guardar primero `template_provider=meta_direct` y después crear las
+plantillas por Graph. Una identidad histórica YCloud no cuenta como identidad
+Meta ni puede impedir ese envío. El arranque normal solo repara la copia local y
+nunca llama a Graph o YCloud.
 
 ## Contratos de webhook
 

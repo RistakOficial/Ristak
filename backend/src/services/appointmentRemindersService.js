@@ -11,7 +11,10 @@ import {
   isMetaSocialMessagingEnabled,
   sendMetaSocialTextMessage
 } from './metaSocialMessagingService.js'
-import { ensureDefaultAppointmentMessageTemplates } from './messageTemplatesService.js'
+import {
+  ensureDefaultAppointmentMessageTemplates,
+  getMessageTemplateProviderState
+} from './messageTemplatesService.js'
 import { logger } from '../utils/logger.js'
 import { createInternalNotification } from './notificationsService.js'
 import {
@@ -224,9 +227,13 @@ function mapReminderTemplateRow(row = {}) {
     footerText: cleanString(row.footer_text),
     buttons: parseJson(row.buttons_json, []),
     variableBindings: parseJson(row.variable_bindings_json, { headerText: {}, bodyText: {} }),
-    ycloudTemplateName: cleanString(row.ycloud_template_name) || null,
-    ycloudTemplateId: cleanString(row.ycloud_template_id) || null,
-    ycloudStatus: normalizeTemplateStatus(row.ycloud_status)
+    templateProvider: cleanString(row.template_provider) || null,
+    providerTemplateName: cleanString(row.provider_template_name) || null,
+    providerTemplateId: cleanString(row.provider_template_id) || null,
+    providerStatus: normalizeTemplateStatus(row.provider_status),
+    providerSubmittedAt: cleanString(row.provider_submitted_at) || null,
+    providerSyncedAt: cleanString(row.provider_synced_at) || null,
+    providerRawPayload: parseJson(row.provider_raw_payload_json, null)
   }
 }
 
@@ -293,7 +300,7 @@ async function resolveReminderTemplateSelection(data = {}) {
 }
 
 async function backfillMissingReminderTemplates() {
-  await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+  await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
   const rows = await db.all(`
     SELECT id, message_type, timing_anchor
     FROM appointment_reminders
@@ -517,7 +524,7 @@ function buildReminderDeliveryHealth(reminder, template, senders = [], channelSt
   if (contentMode === 'template' && !template) {
     errors.push('Selecciona una plantilla de WhatsApp para este recordatorio.')
   } else if (contentMode === 'template') {
-    const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
+    const templateStatus = getMessageTemplateProviderState(template).status
     if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus) && !qrPrimaryAvailable) {
       const statusLabel = describeTemplateStatus(templateStatus)
       errors.push(`La plantilla ${template.name} está ${statusLabel}; debe estar APPROVED para enviarse por WhatsApp API.`)
@@ -683,7 +690,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
 }
 
 export async function createAppointmentReminder(input = {}) {
-  await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+  await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
   const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input))
   const id = createReminderId()
   const positionRow = await db.get('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM appointment_reminders')
@@ -758,7 +765,7 @@ export async function deleteAppointmentReminder(reminderId) {
  * Usa una bandera en app_config para no recrearlo si el usuario lo borra.
  */
 export async function ensureDefaultAppointmentReminder() {
-  await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+  await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
   const seeded = await getAppConfig(SEEDED_CONFIG_KEY)
   if (seeded) {
     await backfillMissingReminderTemplates()
@@ -1171,7 +1178,8 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
     throw new Error('Selecciona una plantilla de WhatsApp para este recordatorio.')
   }
 
-  const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
+  const providerState = getMessageTemplateProviderState(template)
+  const templateStatus = providerState.status
   const useQrPrimary = !sender.apiEnabled && sender.qrReady
   if (useQrPrimary) {
     return sendReminderViaQr({
@@ -1205,7 +1213,7 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
   return sendWhatsAppApiTemplateMessage({
     to: appointment.phone,
     from: sender.fromPhone || undefined,
-    templateName: template.ycloudTemplateName || template.name,
+    templateName: providerState.name,
     language: template.language,
     ...(components.length ? { components } : {}),
     contactId: appointment.contact_id,

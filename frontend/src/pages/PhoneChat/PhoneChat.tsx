@@ -2744,9 +2744,7 @@ function createQuickTemplatePayload({
     footerText: '',
     buttons: [],
     variableExamples: {},
-    variableBindings: { headerText: {}, bodyText: {} },
-    ycloudTemplateId: null,
-    ycloudStatus: null
+    variableBindings: { headerText: {}, bodyText: {} }
   }
 }
 

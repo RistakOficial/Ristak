@@ -236,8 +236,16 @@ async function createReminderTemplate({ suffix, ycloudStatus = 'APPROVED' }) {
   })
 
   await db.run(
-    'UPDATE whatsapp_message_templates SET ycloud_status = ?, ycloud_template_id = ? WHERE id = ?',
-    [ycloudStatus, `official_${name}`, template.id]
+    `UPDATE whatsapp_message_templates
+     SET template_provider = 'ycloud',
+         provider_status = ?,
+         provider_template_id = ?,
+         provider_template_name = ?,
+         ycloud_status = ?,
+         ycloud_template_id = ?,
+         ycloud_template_name = ?
+     WHERE id = ?`,
+    [ycloudStatus, `official_${name}`, name, ycloudStatus, `official_${name}`, name, template.id]
   )
 
   if (ycloudStatus === 'APPROVED') {

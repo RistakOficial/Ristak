@@ -245,11 +245,10 @@ test('los GET de plantillas no reparan, sincronizan ni refrescan implícitamente
   const apiGet = whatsappController.match(/export async function getWhatsAppApiTemplatesView[\s\S]*?\n}\n/)?.[0] || ''
   const catalogGet = automationsService.match(/export async function listAutomationWhatsAppTemplatesCatalog[\s\S]*?\n}\n/)?.[0] || ''
 
-  assert.doesNotMatch(settingsGet, /repairDefault|ensureDefault|submitToYCloud/)
+  assert.doesNotMatch(settingsGet, /repairDefault|ensureDefault|submitToActiveProvider/)
   assert.doesNotMatch(apiGet, /ensureDefault|repairDefault|refreshWhatsApp/)
   assert.doesNotMatch(catalogGet, /syncLocalMessageTemplateSnapshots|syncWhatsApp|refreshWhatsApp/)
   assert.doesNotMatch(frontendCatalog, /await\s+whatsappApiService\.refresh\(\)/)
   assert.match(settingsController, /repairDefaultMessageTemplatesView/)
   assert.match(whatsappController, /repairDefaultWhatsAppApiTemplatesView/)
 })
-

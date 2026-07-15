@@ -544,7 +544,7 @@
   background: rgba(148, 163, 184, 0.045);
 }
 
-.collectionTable .ycloudBadge {
+.collectionTable .providerBadge {
   margin-top: 0;
 }
 
@@ -660,7 +660,7 @@
   width: 100%;
 }
 
-.ycloudBadge {
+.providerBadge {
   display: inline-flex;
   align-items: center;
   width: max-content;
@@ -672,22 +672,22 @@
   font-weight: 600;
 }
 
-.ycloudBadgeSuccess {
+.providerBadgeSuccess {
   color: #047857;
   background: rgba(16, 185, 129, 0.12);
 }
 
-.ycloudBadgeWarning {
+.providerBadgeWarning {
   color: #a16207;
   background: rgba(234, 179, 8, 0.14);
 }
 
-.ycloudBadgeDanger {
+.providerBadgeDanger {
   color: #be123c;
   background: rgba(244, 63, 94, 0.12);
 }
 
-.ycloudBadgeNeutral {
+.providerBadgeNeutral {
   color: var(--color-text-secondary);
   background: rgba(148, 163, 184, 0.14);
 }

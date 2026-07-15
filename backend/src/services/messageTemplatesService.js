@@ -760,11 +760,7 @@ function getBuiltinDefaultMessageTemplateForSend({ templateName, language, publi
   return {
     ...template,
     id: null,
-    folderId: null,
-    ycloudTemplateName: template.name,
-    ycloudTemplateId: null,
-    ycloudStatus: null,
-    ycloudRawPayload: null
+    folderId: null
   }
 }
 
@@ -864,7 +860,7 @@ function getTemplateErrorMessage(error, fallback) {
   ) || fallback
 }
 
-function normalizeYCloudTemplateStatus(value) {
+function normalizeProviderTemplateStatus(value) {
   const status = cleanString(value).toUpperCase()
   return status || null
 }
@@ -873,7 +869,7 @@ const TEMPLATE_LOCKED_REVIEW_STATES = new Set(['PENDING', 'IN_APPEAL', 'IN_REVIE
 const TEMPLATE_PROVIDER_EDITABLE_STATES = new Set(['APPROVED', 'REJECTED', 'PAUSED'])
 
 function isTemplateLockedForEditing(status) {
-  return TEMPLATE_LOCKED_REVIEW_STATES.has(normalizeYCloudTemplateStatus(status))
+  return TEMPLATE_LOCKED_REVIEW_STATES.has(normalizeProviderTemplateStatus(status))
 }
 
 function stableJson(value) {
@@ -892,7 +888,7 @@ function stableJson(value) {
   return JSON.stringify(normalize(value ?? null))
 }
 
-function normalizeYCloudCategory(category) {
+function normalizeProviderTemplateCategory(category) {
   const normalized = normalizeCategory(category).toUpperCase()
   if (normalized === 'SERVICE') return 'UTILITY'
   return normalized
@@ -905,68 +901,105 @@ function getYCloudTemplateName(template = {}) {
   return cleanString(template.ycloudTemplateName || raw.name || template.name)
 }
 
-function getYCloudTemplateProviderIdentity(template = {}) {
-  const raw = template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
-    ? template.ycloudRawPayload
-    : {}
-  return {
-    wabaId: cleanString(raw.wabaId || raw.waba_id),
-    officialTemplateId: cleanString(template.ycloudTemplateId || raw.officialTemplateId || raw.id)
-  }
-}
-
 async function getActiveTemplateProvider() {
   return normalizeWhatsAppProvider(await getAppConfig('whatsapp_api_provider'), WHATSAPP_PROVIDER_YCLOUD)
 }
 
-function getTemplateProviderIdentity(template = {}) {
-  const providerRaw = template.providerRawPayload && typeof template.providerRawPayload === 'object'
+function getTemplateProviderLabel(provider) {
+  return normalizeWhatsAppProvider(provider, WHATSAPP_PROVIDER_YCLOUD) === WHATSAPP_PROVIDER_META_DIRECT
+    ? 'WhatsApp API con Meta'
+    : 'YCloud'
+}
+
+export function getMessageTemplateProviderState(template = {}, provider = template.templateProvider) {
+  const targetProvider = normalizeWhatsAppProvider(provider, WHATSAPP_PROVIDER_YCLOUD)
+  const ownerProvider = normalizeWhatsAppProvider(template.templateProvider, WHATSAPP_PROVIDER_YCLOUD)
+  const neutralOwnedByTarget = ownerProvider === targetProvider
+  const providerRaw = neutralOwnedByTarget && template.providerRawPayload && typeof template.providerRawPayload === 'object'
     ? template.providerRawPayload
     : {}
-  const ycloudIdentity = getYCloudTemplateProviderIdentity(template)
+
+  if (targetProvider === WHATSAPP_PROVIDER_META_DIRECT) {
+    return {
+      provider: targetProvider,
+      name: cleanString(neutralOwnedByTarget ? template.providerTemplateName : '') || cleanString(template.name),
+      templateId: cleanString(neutralOwnedByTarget ? template.providerTemplateId : ''),
+      status: normalizeProviderTemplateStatus(neutralOwnedByTarget ? template.providerStatus : ''),
+      reason: cleanString(neutralOwnedByTarget ? template.providerReason : '') || null,
+      statusUpdateEvent: normalizeProviderTemplateStatus(neutralOwnedByTarget ? template.providerStatusUpdateEvent : ''),
+      qualityRating: normalizeProviderTemplateStatus(neutralOwnedByTarget ? template.providerQualityRating : ''),
+      submittedAt: cleanString(neutralOwnedByTarget ? template.providerSubmittedAt : '') || null,
+      syncedAt: cleanString(neutralOwnedByTarget ? template.providerSyncedAt : '') || null,
+      rawPayload: providerRaw
+    }
+  }
+
+  const ycloudRaw = template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
+    ? template.ycloudRawPayload
+    : {}
   return {
-    wabaId: cleanString(providerRaw.wabaId || providerRaw.waba_id || ycloudIdentity.wabaId),
-    providerTemplateId: cleanString(template.providerTemplateId || providerRaw.providerTemplateId || providerRaw.officialTemplateId || providerRaw.id || ycloudIdentity.officialTemplateId),
-    officialTemplateId: cleanString(template.providerTemplateId || providerRaw.officialTemplateId || providerRaw.id || ycloudIdentity.officialTemplateId)
+    provider: targetProvider,
+    name: cleanString(
+      (neutralOwnedByTarget ? template.providerTemplateName : '') ||
+      template.ycloudTemplateName ||
+      ycloudRaw.name ||
+      template.name
+    ),
+    templateId: cleanString(
+      (neutralOwnedByTarget ? template.providerTemplateId : '') ||
+      template.ycloudTemplateId ||
+      ycloudRaw.officialTemplateId ||
+      ycloudRaw.id
+    ),
+    status: normalizeProviderTemplateStatus(
+      (neutralOwnedByTarget ? template.providerStatus : '') || template.ycloudStatus
+    ),
+    reason: cleanString((neutralOwnedByTarget ? template.providerReason : '') || template.ycloudReason) || null,
+    statusUpdateEvent: normalizeProviderTemplateStatus(
+      (neutralOwnedByTarget ? template.providerStatusUpdateEvent : '') || template.ycloudStatusUpdateEvent
+    ),
+    qualityRating: normalizeProviderTemplateStatus(
+      (neutralOwnedByTarget ? template.providerQualityRating : '') || template.ycloudQualityRating
+    ),
+    submittedAt: cleanString((neutralOwnedByTarget ? template.providerSubmittedAt : '') || template.ycloudSubmittedAt) || null,
+    syncedAt: cleanString((neutralOwnedByTarget ? template.providerSyncedAt : '') || template.ycloudSyncedAt) || null,
+    rawPayload: Object.keys(providerRaw).length ? providerRaw : ycloudRaw
+  }
+}
+
+function getTemplateProviderIdentity(template = {}, provider = template.templateProvider) {
+  const state = getMessageTemplateProviderState(template, provider)
+  const raw = state.rawPayload
+  return {
+    wabaId: cleanString(raw.wabaId || raw.waba_id),
+    providerTemplateId: state.templateId,
+    officialTemplateId: state.templateId
   }
 }
 
 function hasTemplateProviderFootprint(template = {}, provider = WHATSAPP_PROVIDER_YCLOUD) {
-  const owner = normalizeWhatsAppProvider(template.templateProvider, WHATSAPP_PROVIDER_YCLOUD)
-  if (owner !== provider) return false
+  const state = getMessageTemplateProviderState(template, provider)
   return Boolean(
-    cleanString(template.providerTemplateId) ||
-    cleanString(template.providerStatus) ||
-    cleanString(template.providerSubmittedAt) ||
-    hasYCloudTemplateProviderFootprint(template)
+    state.templateId ||
+    state.status ||
+    state.submittedAt ||
+    Object.keys(state.rawPayload).length
   )
 }
 
 function shouldEditExistingProviderTemplate(template = {}, provider = WHATSAPP_PROVIDER_YCLOUD) {
   if (!hasTemplateProviderFootprint(template, provider)) return false
-  const status = normalizeYCloudTemplateStatus(template.providerStatus || template.ycloudStatus)
+  const status = getMessageTemplateProviderState(template, provider).status
   if (isTemplateLockedForEditing(status)) {
-    throw new Error(`Esta plantilla ya está en revisión en Meta por ${provider === WHATSAPP_PROVIDER_META_DIRECT ? 'Meta directo' : 'YCloud'}. Espera el resultado antes de reenviarla.`)
+    throw new Error(`Esta plantilla ya está en revisión con ${getTemplateProviderLabel(provider)}. Espera el resultado antes de reenviarla.`)
   }
   if (status === 'ARCHIVED') {
-    throw new Error('Esta plantilla está archivada en Meta y no se puede editar. Crea una nueva con otro nombre.')
+    throw new Error(`Esta plantilla está archivada en ${getTemplateProviderLabel(provider)} y no se puede editar. Crea una nueva con otro nombre.`)
   }
   if (status && !TEMPLATE_PROVIDER_EDITABLE_STATES.has(status)) {
-    throw new Error(`Esta plantilla está en estado ${status} en Meta y no se puede editar. Crea una nueva con otro nombre.`)
+    throw new Error(`Esta plantilla está en estado ${status} en ${getTemplateProviderLabel(provider)} y no se puede editar. Crea una nueva con otro nombre.`)
   }
   return true
-}
-
-function hasYCloudTemplateProviderFootprint(template = {}) {
-  const raw = template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
-    ? template.ycloudRawPayload
-    : {}
-  return Boolean(
-    cleanString(template.ycloudTemplateId) ||
-    cleanString(template.ycloudStatus) ||
-    cleanString(template.ycloudSubmittedAt) ||
-    cleanString(raw.officialTemplateId || raw.id || raw.name)
-  )
 }
 
 function isYCloudTemplateAlreadyExistsError(error) {
@@ -1002,7 +1035,7 @@ function assertMetaVariableSyntax(text, label) {
   for (const match of content.matchAll(VARIABLE_PATTERN)) {
     const key = cleanString(match[1])
     if (!/^\d+$/.test(key)) {
-      throw new Error(`${label} usa ${match[0]}. Para Meta/YCloud las variables deben ser {{1}}, {{2}}, {{3}}.`)
+      throw new Error(`${label} usa ${match[0]}. Para plantillas oficiales de WhatsApp las variables deben ser {{1}}, {{2}}, {{3}}.`)
     }
   }
 }
@@ -1082,16 +1115,15 @@ const TEMPLATE_REVIEW_LOCK_FIELDS = [
   'footerText',
   'buttons',
   'variableExamples',
-  'variableBindings',
-  'ycloudTemplateName',
-  'ycloudTemplateId',
-  'ycloudStatus'
+  'variableBindings'
 ]
 
 function assertTemplateReviewLockAllowsUpdate(existingRow, nextTemplate) {
-  if (!isTemplateLockedForEditing(existingRow.provider_status || existingRow.ycloud_status)) return
+  const mappedExistingTemplate = mapTemplate(existingRow)
+  const providerState = getMessageTemplateProviderState(mappedExistingTemplate)
+  if (!isTemplateLockedForEditing(providerState.status)) return
 
-  const existingTemplate = normalizeTemplatePayload(mapTemplate(existingRow))
+  const existingTemplate = normalizeTemplatePayload(mappedExistingTemplate)
   const changedLockedField = TEMPLATE_REVIEW_LOCK_FIELDS.some((field) => (
     stableJson(existingTemplate[field]) !== stableJson(nextTemplate[field])
   ))
@@ -1103,7 +1135,7 @@ function assertTemplateReviewLockAllowsUpdate(existingRow, nextTemplate) {
   throw error
 }
 
-function buildProviderTemplatePayload(template) {
+function buildProviderTemplatePayload(template, provider = template.templateProvider) {
   assertMetaVariableSyntax(template.headerText, 'El encabezado')
   assertMetaVariableSyntax(template.bodyText, 'El cuerpo')
 
@@ -1174,9 +1206,9 @@ function buildProviderTemplatePayload(template) {
   }
 
   return {
-    name: getYCloudTemplateName(template),
+    name: getMessageTemplateProviderState(template, provider).name,
     language: template.language,
-    category: normalizeYCloudCategory(template.category),
+    category: normalizeProviderTemplateCategory(template.category),
     components
   }
 }
@@ -1242,13 +1274,10 @@ function buildSnapshotComponents(template) {
 }
 
 function buildWhatsAppApiSnapshot(template) {
-  const raw = template.providerRawPayload && typeof template.providerRawPayload === 'object'
-    ? template.providerRawPayload
-    : template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
-      ? template.ycloudRawPayload
-      : {}
-  const provider = normalizeWhatsAppProvider(template.templateProvider || raw.provider, WHATSAPP_PROVIDER_YCLOUD)
-  const officialTemplateId = cleanString(template.providerTemplateId || template.ycloudTemplateId || raw.providerTemplateId || raw.officialTemplateId || raw.id)
+  const provider = normalizeWhatsAppProvider(template.templateProvider, WHATSAPP_PROVIDER_YCLOUD)
+  const providerState = getMessageTemplateProviderState(template, provider)
+  const raw = providerState.rawPayload
+  const officialTemplateId = providerState.templateId
   const components = buildSnapshotComponents(template)
 
   return {
@@ -1257,13 +1286,13 @@ function buildWhatsAppApiSnapshot(template) {
     providerTemplateId: officialTemplateId,
     provider,
     wabaId: cleanString(raw.wabaId || raw.waba_id),
-    name: cleanString(template.providerTemplateName || getYCloudTemplateName(template)),
+    name: providerState.name,
     language: template.language,
-    category: normalizeYCloudCategory(template.category),
-    status: normalizeYCloudTemplateStatus(template.providerStatus || template.ycloudStatus || template.status),
-    qualityRating: normalizeYCloudTemplateStatus(template.providerQualityRating || template.ycloudQualityRating),
-    reason: template.providerReason || template.ycloudReason,
-    statusUpdateEvent: normalizeYCloudTemplateStatus(template.providerStatusUpdateEvent || template.ycloudStatusUpdateEvent),
+    category: normalizeProviderTemplateCategory(template.category),
+    status: providerState.status || normalizeProviderTemplateStatus(template.status),
+    qualityRating: providerState.qualityRating,
+    reason: providerState.reason,
+    statusUpdateEvent: providerState.statusUpdateEvent,
     components,
     raw: {
       ...raw,
@@ -1289,7 +1318,7 @@ async function persistWhatsAppApiSnapshot(template) {
 export async function syncLocalMessageTemplateSnapshots({ onlyApproved = false } = {}) {
   const rows = await db.all(`
     SELECT * FROM whatsapp_message_templates
-    ${onlyApproved ? "WHERE UPPER(COALESCE(provider_status, ycloud_status, '')) = 'APPROVED'" : ''}
+    ${onlyApproved ? "WHERE UPPER(COALESCE(provider_status, CASE WHEN template_provider = 'ycloud' THEN ycloud_status END, '')) = 'APPROVED'" : ''}
     ORDER BY updated_at DESC
   `)
   let synced = 0
@@ -1302,14 +1331,14 @@ export async function syncLocalMessageTemplateSnapshots({ onlyApproved = false }
   return { synced }
 }
 
-function normalizeYCloudTemplateResponse(record = {}) {
+function normalizeProviderTemplateResponse(record = {}) {
   return {
     officialTemplateId: cleanString(record.officialTemplateId || record.id) || null,
     name: cleanString(record.name) || null,
-    status: normalizeYCloudTemplateStatus(record.status),
+    status: normalizeProviderTemplateStatus(record.status),
     reason: cleanString(record.reason || record.whatsappApiError?.error_user_msg || record.whatsappApiError?.message || record.whatsappApiError?.error_data) || null,
-    statusUpdateEvent: normalizeYCloudTemplateStatus(record.statusUpdateEvent),
-    qualityRating: normalizeYCloudTemplateStatus(record.qualityRating),
+    statusUpdateEvent: normalizeProviderTemplateStatus(record.statusUpdateEvent),
+    qualityRating: normalizeProviderTemplateStatus(record.qualityRating),
     raw: record
   }
 }
@@ -1325,7 +1354,7 @@ async function getMessageTemplateById(id) {
 }
 
 async function applyProviderTemplateResponse(id, record = {}, { submitted = false, provider = WHATSAPP_PROVIDER_YCLOUD } = {}) {
-  const normalized = normalizeYCloudTemplateResponse(record)
+  const normalized = normalizeProviderTemplateResponse(record)
   const nextStatus = normalized.status || (submitted ? 'PENDING' : null)
   const cleanProvider = normalizeWhatsAppProvider(record.provider || provider, WHATSAPP_PROVIDER_YCLOUD)
   const isYCloud = cleanProvider === WHATSAPP_PROVIDER_YCLOUD
@@ -1403,6 +1432,11 @@ export async function createMessageTemplate(payload = {}) {
   const template = normalizeTemplatePayload(payload)
   await assertFolderExists(template.folderId)
   const id = makeId('tmpl')
+  const templateProvider = await getActiveTemplateProvider()
+  const isYCloud = templateProvider === WHATSAPP_PROVIDER_YCLOUD
+  const providerTemplateName = isYCloud ? template.ycloudTemplateName : null
+  const providerTemplateId = isYCloud ? template.ycloudTemplateId : null
+  const providerStatus = isYCloud ? template.ycloudStatus : null
 
   try {
     await db.run(`
@@ -1410,9 +1444,11 @@ export async function createMessageTemplate(payload = {}) {
         id, folder_id, name, description, category, language, status,
         header_enabled, header_type, header_text, header_media_url, meta_header_handle, header_location_json,
         body_text, footer_text, buttons_json, variables_json, variable_examples_json,
-        variable_bindings_json, ycloud_template_name, ycloud_template_id, ycloud_status, created_at, updated_at
+        variable_bindings_json, template_provider,
+        provider_template_name, provider_template_id, provider_status,
+        ycloud_template_name, ycloud_template_id, ycloud_status, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [
       id,
       template.folderId,
@@ -1433,9 +1469,13 @@ export async function createMessageTemplate(payload = {}) {
       jsonString(template.variables),
       jsonString(template.variableExamples),
       jsonString(template.variableBindings),
-      template.ycloudTemplateName,
-      template.ycloudTemplateId,
-      template.ycloudStatus
+      templateProvider,
+      providerTemplateName,
+      providerTemplateId,
+      providerStatus,
+      isYCloud ? template.ycloudTemplateName : null,
+      isYCloud ? template.ycloudTemplateId : null,
+      isYCloud ? template.ycloudStatus : null
     ])
   } catch (error) {
     if (error.message?.includes('UNIQUE') || error.message?.includes('unique')) {
@@ -1611,7 +1651,7 @@ async function ensureDefaultTemplateFolder() {
   return ensureTemplateFolder(DEFAULT_APPOINTMENT_TEMPLATE_FOLDER, -100)
 }
 
-async function ensureDefaultMessageTemplate(definition, folderId) {
+async function ensureDefaultMessageTemplate(definition, folderId, { provider } = {}) {
   const name = normalizeTemplateName(definition.name)
   const language = normalizeLanguage(definition.language)
   const existing = await findMessageTemplateByNameLanguage(name, language)
@@ -1622,7 +1662,8 @@ async function ensureDefaultMessageTemplate(definition, folderId) {
     const shouldRefreshDefault = shouldRefreshDefaultMessageTemplate(existing, definition, folderId)
 
     if (shouldRefreshDefault) {
-      if (isTemplateLockedForEditing(existing.ycloudStatus)) {
+      const providerState = getMessageTemplateProviderState(existing, provider || existing.templateProvider)
+      if (isTemplateLockedForEditing(providerState.status)) {
         refreshSkippedLocked = true
       } else {
         template = await updateMessageTemplate(existing.id, {
@@ -1687,8 +1728,8 @@ function parseTimestampMs(value) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function isStaleDefaultAppointmentReview(template = {}, nowMs = Date.now()) {
-  const status = normalizeYCloudTemplateStatus(template.ycloudStatus)
+function isStaleYCloudDefaultAppointmentReview(template = {}, nowMs = Date.now()) {
+  const status = normalizeProviderTemplateStatus(template.ycloudStatus)
   if (!TEMPLATE_RETRYABLE_REVIEW_STATES.has(status)) return false
 
   const submittedAt = parseTimestampMs(template.ycloudSubmittedAt || template.ycloudSyncedAt || template.updatedAt)
@@ -1697,19 +1738,19 @@ function isStaleDefaultAppointmentReview(template = {}, nowMs = Date.now()) {
   return nowMs - submittedAt >= DEFAULT_APPOINTMENT_REVIEW_RETRY_TIMEOUT_MS
 }
 
-function isRejectedDefaultAppointmentReview(template = {}) {
-  return TEMPLATE_RETRYABLE_FAILURE_STATES.has(normalizeYCloudTemplateStatus(template.ycloudStatus))
+function isRejectedYCloudDefaultAppointmentReview(template = {}) {
+  return TEMPLATE_RETRYABLE_FAILURE_STATES.has(normalizeProviderTemplateStatus(template.ycloudStatus))
 }
 
-function haveDefaultAppointmentPeersAccepted(template = {}, templates = []) {
+function haveYCloudDefaultAppointmentPeersAccepted(template = {}, templates = []) {
   const peers = templates.filter((candidate) => (
     candidate.id !== template.id &&
     isDefaultAppointmentTemplate(candidate)
   ))
-  return peers.length > 0 && peers.every((peer) => normalizeYCloudTemplateStatus(peer.ycloudStatus) === 'APPROVED')
+  return peers.length > 0 && peers.every((peer) => normalizeProviderTemplateStatus(peer.ycloudStatus) === 'APPROVED')
 }
 
-async function upsertDefaultAppointmentReviewRetryAlert(template = {}) {
+async function upsertYCloudDefaultAppointmentReviewRetryAlert(template = {}) {
   const alertType = DEFAULT_APPOINTMENT_REVIEW_RETRY_ALERT_TYPE
   const entityType = 'template'
   const entityId = cleanString(template.id || `${template.name}:${template.language}`)
@@ -1719,7 +1760,7 @@ async function upsertDefaultAppointmentReviewRetryAlert(template = {}) {
   const name = cleanString(template.name) || 'plantilla de recordatorio'
   const language = cleanString(template.language) || DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE
   const retryCount = Number(template.ycloudReviewRetryCount || 0)
-  const status = normalizeYCloudTemplateStatus(template.ycloudStatus) || 'sin estado'
+  const status = normalizeProviderTemplateStatus(template.ycloudStatus) || 'sin estado'
 
   await db.run(`
     INSERT INTO whatsapp_api_alerts (
@@ -1756,7 +1797,7 @@ async function upsertDefaultAppointmentReviewRetryAlert(template = {}) {
   return id
 }
 
-async function resolveDefaultAppointmentReviewRetryAlert(template = {}) {
+async function resolveYCloudDefaultAppointmentReviewRetryAlert(template = {}) {
   const entityId = cleanString(template.id || `${template.name}:${template.language}`)
   if (!entityId) return
 
@@ -1770,7 +1811,7 @@ async function resolveDefaultAppointmentReviewRetryAlert(template = {}) {
   `, [DEFAULT_APPOINTMENT_REVIEW_RETRY_ALERT_TYPE, entityId])
 }
 
-async function retryDefaultAppointmentTemplateReview(template = {}) {
+async function retryYCloudDefaultAppointmentTemplateReview(template = {}) {
   const retryNumber = Number(template.ycloudReviewRetryCount || 0) + 1
   const definition = getDefaultAppointmentDefinition(template.name)
   if (!definition) {
@@ -1849,8 +1890,8 @@ async function retryDefaultAppointmentTemplateReview(template = {}) {
     template.id
   ])
 
-  const result = await submitMessageTemplateToYCloud(template.id)
-  await resolveDefaultAppointmentReviewRetryAlert(result.template)
+  const result = await submitMessageTemplateToActiveProvider(template.id)
+  await resolveYCloudDefaultAppointmentReviewRetryAlert(result.template)
   return {
     template: result.template,
     ycloud: result.ycloud,
@@ -1858,7 +1899,7 @@ async function retryDefaultAppointmentTemplateReview(template = {}) {
   }
 }
 
-async function shouldSubmitDefaultAppointmentTemplates() {
+async function canSubmitDefaultTemplatesToActiveProvider() {
   const provider = await getActiveTemplateProvider()
   if (provider === WHATSAPP_PROVIDER_META_DIRECT) {
     const [status, wabaId, phoneNumberId, token] = await Promise.all([
@@ -1878,29 +1919,33 @@ async function shouldSubmitDefaultAppointmentTemplates() {
   return enabled !== '0' && Boolean(cleanString(apiKey))
 }
 
-export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud = false } = {}) {
+export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider = false } = {}) {
   const results = []
   const folder = await ensureDefaultTemplateFolder()
+  const provider = await getActiveTemplateProvider()
   const ensuredTemplates = []
 
   for (const definition of DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES) {
-    ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id))
+    ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id, {
+      provider: submitToActiveProvider ? provider : undefined
+    }))
   }
   const templates = ensuredTemplates.map((ensured) => ensured.template)
 
   for (let index = 0; index < templates.length; index += 1) {
     let template = templates[index]
     const ensured = ensuredTemplates[index]
-    const ycloudStatus = normalizeYCloudTemplateStatus(template.ycloudStatus)
+    let providerState = getMessageTemplateProviderState(template, provider)
     let submitted = false
     let retried = false
     let retryAlerted = false
     let error = null
 
-    if (submitToYCloud && ensured.refreshed && !isTemplateLockedForEditing(ycloudStatus)) {
+    if (submitToActiveProvider && ensured.refreshed && !isTemplateLockedForEditing(providerState.status)) {
       try {
-        const result = await submitMessageTemplateToYCloud(template.id)
+        const result = await submitMessageTemplateToActiveProvider(template.id)
         template = result.template
+        providerState = getMessageTemplateProviderState(template, provider)
         templates[index] = template
         ensuredTemplates[index] = { ...ensured, template }
         submitted = true
@@ -1908,14 +1953,24 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
         error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
         logger.warn(`No se pudo reenviar plantilla default ${template.name}/${template.language} a revisión después del backfill: ${error}`)
       }
-    } else if (submitToYCloud && ycloudStatus === 'APPROVED') {
-      await resolveDefaultAppointmentReviewRetryAlert(template)
+    } else if (
+      submitToActiveProvider &&
+      provider === WHATSAPP_PROVIDER_YCLOUD &&
+      providerState.status === 'APPROVED'
+    ) {
+      await resolveYCloudDefaultAppointmentReviewRetryAlert(template)
     }
 
-    if (!submitted && submitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
+    if (
+      !submitted &&
+      submitToActiveProvider &&
+      !TEMPLATE_REVIEW_STATES.has(providerState.status) &&
+      !providerState.templateId
+    ) {
       try {
-        const result = await submitMessageTemplateToYCloud(template.id)
+        const result = await submitMessageTemplateToActiveProvider(template.id)
         template = result.template
+        providerState = getMessageTemplateProviderState(template, provider)
         templates[index] = template
         ensuredTemplates[index] = { ...ensuredTemplates[index], template }
         submitted = true
@@ -1924,24 +1979,26 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
         logger.warn(`No se pudo enviar plantilla default ${template.name}/${template.language} a revisión: ${error}`)
       }
     } else if (
-      submitToYCloud &&
+      submitToActiveProvider &&
+      provider === WHATSAPP_PROVIDER_YCLOUD &&
       isDefaultAppointmentTemplate(template) &&
       (
-        isRejectedDefaultAppointmentReview(template) ||
+        isRejectedYCloudDefaultAppointmentReview(template) ||
         (
-          isStaleDefaultAppointmentReview(template) &&
-          haveDefaultAppointmentPeersAccepted(template, templates)
+          isStaleYCloudDefaultAppointmentReview(template) &&
+          haveYCloudDefaultAppointmentPeersAccepted(template, templates)
         )
       )
     ) {
       const retryCount = Number(template.ycloudReviewRetryCount || 0)
       if (retryCount >= DEFAULT_APPOINTMENT_REVIEW_MAX_RETRIES) {
-        await upsertDefaultAppointmentReviewRetryAlert(template)
+        await upsertYCloudDefaultAppointmentReviewRetryAlert(template)
         retryAlerted = true
       } else {
         try {
-          const result = await retryDefaultAppointmentTemplateReview(template)
+          const result = await retryYCloudDefaultAppointmentTemplateReview(template)
           template = result.template
+          providerState = getMessageTemplateProviderState(template, provider)
           templates[index] = template
           submitted = true
           retried = true
@@ -1956,8 +2013,9 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
       id: template.id,
       name: template.name,
       language: template.language,
-      ycloudStatus: template.ycloudStatus || null,
-      reviewRetryCount: template.ycloudReviewRetryCount || 0,
+      provider,
+      providerStatus: providerState.status,
+      reviewRetryCount: provider === WHATSAPP_PROVIDER_YCLOUD ? template.ycloudReviewRetryCount || 0 : 0,
       refreshed: ensured.refreshed,
       refreshSkippedLocked: ensured.refreshSkippedLocked,
       submitted,
@@ -1975,28 +2033,32 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
   }
 }
 
-export async function ensureDefaultPaymentMessageTemplates({ submitToYCloud = false, publicBaseUrl = '' } = {}) {
+export async function ensureDefaultPaymentMessageTemplates({ submitToActiveProvider = false, publicBaseUrl = '' } = {}) {
   const results = []
   const folder = await ensureTemplateFolder(DEFAULT_PAYMENT_TEMPLATE_FOLDER, -90)
+  const provider = await getActiveTemplateProvider()
   const ensuredTemplates = []
-  const canSubmitToYCloud = submitToYCloud && Boolean(normalizePublicBaseUrl(publicBaseUrl))
+  const canSubmitToActiveProvider = submitToActiveProvider && Boolean(normalizePublicBaseUrl(publicBaseUrl))
 
   for (const definition of getDefaultPaymentMessageTemplates({ publicBaseUrl })) {
-    ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id))
+    ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id, {
+      provider: canSubmitToActiveProvider ? provider : undefined
+    }))
   }
   const templates = ensuredTemplates.map((ensured) => ensured.template)
 
   for (let index = 0; index < templates.length; index += 1) {
     let template = templates[index]
     const ensured = ensuredTemplates[index]
-    const ycloudStatus = normalizeYCloudTemplateStatus(template.ycloudStatus)
+    let providerState = getMessageTemplateProviderState(template, provider)
     let submitted = false
     let error = null
 
-    if (canSubmitToYCloud && ensured.refreshed && !isTemplateLockedForEditing(ycloudStatus)) {
+    if (canSubmitToActiveProvider && ensured.refreshed && !isTemplateLockedForEditing(providerState.status)) {
       try {
-        const result = await submitMessageTemplateToYCloud(template.id)
+        const result = await submitMessageTemplateToActiveProvider(template.id)
         template = result.template
+        providerState = getMessageTemplateProviderState(template, provider)
         templates[index] = template
         ensuredTemplates[index] = { ...ensured, template }
         submitted = true
@@ -2004,10 +2066,15 @@ export async function ensureDefaultPaymentMessageTemplates({ submitToYCloud = fa
         error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
         logger.warn(`No se pudo reenviar plantilla default de pago ${template.name}/${template.language} a revisión después del backfill: ${error}`)
       }
-    } else if (canSubmitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
+    } else if (
+      canSubmitToActiveProvider &&
+      !TEMPLATE_REVIEW_STATES.has(providerState.status) &&
+      !providerState.templateId
+    ) {
       try {
-        const result = await submitMessageTemplateToYCloud(template.id)
+        const result = await submitMessageTemplateToActiveProvider(template.id)
         template = result.template
+        providerState = getMessageTemplateProviderState(template, provider)
         templates[index] = template
         ensuredTemplates[index] = { ...ensured, template }
         submitted = true
@@ -2021,8 +2088,9 @@ export async function ensureDefaultPaymentMessageTemplates({ submitToYCloud = fa
       id: template.id,
       name: template.name,
       language: template.language,
-      ycloudStatus: template.ycloudStatus || null,
-      reviewRetryCount: template.ycloudReviewRetryCount || 0,
+      provider,
+      providerStatus: providerState.status,
+      reviewRetryCount: provider === WHATSAPP_PROVIDER_YCLOUD ? template.ycloudReviewRetryCount || 0 : 0,
       refreshed: ensured.refreshed,
       refreshSkippedLocked: ensured.refreshSkippedLocked,
       submitted,
@@ -2050,21 +2118,21 @@ function combineDefaultTemplateResults(results = []) {
   }
 }
 
-export async function ensureDefaultWhatsAppApiMessageTemplates({ submitToYCloud = false, publicBaseUrl = '' } = {}) {
-  const appointmentResult = await ensureDefaultAppointmentMessageTemplates({ submitToYCloud })
-  const paymentResult = await ensureDefaultPaymentMessageTemplates({ submitToYCloud, publicBaseUrl })
+export async function ensureDefaultWhatsAppApiMessageTemplates({ submitToActiveProvider = false, publicBaseUrl = '' } = {}) {
+  const appointmentResult = await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider })
+  const paymentResult = await ensureDefaultPaymentMessageTemplates({ submitToActiveProvider, publicBaseUrl })
   return combineDefaultTemplateResults([appointmentResult, paymentResult])
 }
 
 export async function repairDefaultAppointmentMessageTemplatesForCurrentConnection() {
-  const submitToYCloud = await shouldSubmitDefaultAppointmentTemplates()
-  return ensureDefaultAppointmentMessageTemplates({ submitToYCloud })
+  const submitToActiveProvider = await canSubmitDefaultTemplatesToActiveProvider()
+  return ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider })
 }
 
 export async function repairDefaultMessageTemplatesForCurrentConnection({ publicBaseUrl = '' } = {}) {
-  const submitToYCloud = await shouldSubmitDefaultAppointmentTemplates()
+  const submitToActiveProvider = await canSubmitDefaultTemplatesToActiveProvider()
   return ensureDefaultWhatsAppApiMessageTemplates({
-    submitToYCloud,
+    submitToActiveProvider,
     publicBaseUrl: publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || ''
   })
 }
@@ -2072,9 +2140,9 @@ export async function repairDefaultMessageTemplatesForCurrentConnection({ public
 export async function submitMessageTemplateToActiveProvider(id) {
   const template = await getMessageTemplateById(id)
   const provider = await getActiveTemplateProvider()
-  const providerPayload = buildProviderTemplatePayload(template)
+  const providerPayload = buildProviderTemplatePayload(template, provider)
   const providerIdentity = hasTemplateProviderFootprint(template, provider)
-    ? getTemplateProviderIdentity(template)
+    ? getTemplateProviderIdentity(template, provider)
     : { wabaId: '', providerTemplateId: '', officialTemplateId: '' }
   const editPayload = {
     ...providerPayload,
@@ -2088,21 +2156,22 @@ export async function submitMessageTemplateToActiveProvider(id) {
     const response = shouldEdit
       ? await editWhatsAppApiTemplate(editPayload)
       : await createWhatsAppApiTemplate({ ...providerPayload, provider })
-    const label = provider === WHATSAPP_PROVIDER_META_DIRECT ? 'Meta directo' : 'YCloud'
+    const label = getTemplateProviderLabel(provider)
     return {
       template: await applyProviderTemplateResponse(id, response, { submitted: true, provider }),
       provider,
       providerResponse: response,
       ...(provider === WHATSAPP_PROVIDER_YCLOUD ? { ycloud: response } : { metaDirect: response }),
       message: shouldEdit
-        ? `Plantilla existente actualizada y reenviada a revisión de Meta por ${label}.`
-        : `Plantilla enviada a revisión de Meta por ${label}.`
+        ? `Plantilla existente actualizada y reenviada a revisión con ${label}.`
+        : `Plantilla enviada a revisión con ${label}.`
     }
   } catch (error) {
     if (
       !shouldEdit &&
+      provider === WHATSAPP_PROVIDER_YCLOUD &&
       isYCloudTemplateAlreadyExistsError(error) &&
-      (provider === WHATSAPP_PROVIDER_YCLOUD || providerIdentity.officialTemplateId)
+      (providerIdentity.officialTemplateId || providerPayload.name)
     ) {
       try {
         const response = await editWhatsAppApiTemplate(editPayload)
@@ -2123,29 +2192,24 @@ export async function submitMessageTemplateToActiveProvider(id) {
   }
 }
 
-// Alias de compatibilidad: la ruta histórica conserva el nombre, pero el envío
-// se resuelve con el proveedor oficial activo y nunca mezcla sus identificadores.
-export async function submitMessageTemplateToYCloud(id) {
-  return submitMessageTemplateToActiveProvider(id)
-}
-
 export async function syncMessageTemplateStatus(id) {
   const template = await getMessageTemplateById(id)
   const provider = normalizeWhatsAppProvider(template.templateProvider || await getActiveTemplateProvider(), WHATSAPP_PROVIDER_YCLOUD)
+  const providerState = getMessageTemplateProviderState(template, provider)
 
   try {
     const response = await retrieveWhatsAppApiTemplate({
-      name: template.name,
+      name: providerState.name,
       language: template.language,
       provider,
-      ...getTemplateProviderIdentity(template)
+      ...getTemplateProviderIdentity(template, provider)
     })
     return {
       template: await applyProviderTemplateResponse(id, response, { provider }),
       provider,
       providerResponse: response,
       ...(provider === WHATSAPP_PROVIDER_YCLOUD ? { ycloud: response } : { metaDirect: response }),
-      message: `Estado sincronizado con ${provider === WHATSAPP_PROVIDER_META_DIRECT ? 'Meta directo' : 'YCloud'}.`
+      message: `Estado sincronizado con ${getTemplateProviderLabel(provider)}.`
     }
   } catch (error) {
     const message = await saveTemplateLastError(id, error)
@@ -2159,10 +2223,6 @@ export async function syncAllMessageTemplatesWithActiveProvider() {
   return getMessageTemplateBundle()
 }
 
-export async function syncAllMessageTemplatesWithYCloud() {
-  return syncAllMessageTemplatesWithActiveProvider()
-}
-
 async function findMessageTemplateForSendDefaults({ templateId, templateName, language } = {}) {
   const cleanTemplateId = cleanString(templateId)
   const cleanTemplateName = cleanString(templateName)
@@ -2173,14 +2233,15 @@ async function findMessageTemplateForSendDefaults({ templateId, templateName, la
       SELECT *
       FROM whatsapp_message_templates
       WHERE id = ?
-        OR ycloud_template_id = ?
+        OR provider_template_id = ?
+        OR (template_provider = 'ycloud' AND ycloud_template_id = ?)
       ORDER BY updated_at DESC
       LIMIT 1
-    `, [cleanTemplateId, cleanTemplateId])
+    `, [cleanTemplateId, cleanTemplateId, cleanTemplateId])
     if (direct) return mapTemplate(direct)
 
     const apiTemplate = await db.get(`
-      SELECT id, official_template_id, name, language
+      SELECT id, official_template_id, provider_template_id, provider, name, language
       FROM whatsapp_api_templates
       WHERE id = ? OR official_template_id = ?
       ORDER BY updated_at DESC
@@ -2193,26 +2254,38 @@ async function findMessageTemplateForSendDefaults({ templateId, templateName, la
         FROM whatsapp_message_templates
         WHERE language = ?
           AND (
-            ycloud_template_id = ?
-            OR ycloud_template_id = ?
-            OR ycloud_template_name = ?
+            provider_template_id = ?
+            OR provider_template_id = ?
+            OR provider_template_name = ?
+            OR (
+              template_provider = 'ycloud'
+              AND (ycloud_template_id = ? OR ycloud_template_id = ? OR ycloud_template_name = ?)
+            )
             OR name = ?
           )
         ORDER BY
           CASE
-            WHEN ycloud_template_id = ? OR ycloud_template_id = ? THEN 0
-            WHEN ycloud_template_name = ? THEN 1
+            WHEN provider_template_id = ? OR provider_template_id = ? THEN 0
+            WHEN provider_template_name = ? THEN 1
+            WHEN template_provider = 'ycloud' AND (ycloud_template_id = ? OR ycloud_template_id = ?) THEN 2
+            WHEN template_provider = 'ycloud' AND ycloud_template_name = ? THEN 3
             ELSE 2
           END,
           updated_at DESC
         LIMIT 1
       `, [
         apiTemplate.language,
-        apiTemplate.id,
+        apiTemplate.provider_template_id || apiTemplate.id,
+        apiTemplate.official_template_id,
+        apiTemplate.name,
+        apiTemplate.provider_template_id || apiTemplate.id,
         apiTemplate.official_template_id,
         apiTemplate.name,
         apiTemplate.name,
-        apiTemplate.id,
+        apiTemplate.provider_template_id || apiTemplate.id,
+        apiTemplate.official_template_id,
+        apiTemplate.name,
+        apiTemplate.provider_template_id || apiTemplate.id,
         apiTemplate.official_template_id,
         apiTemplate.name
       ])
@@ -2221,20 +2294,26 @@ async function findMessageTemplateForSendDefaults({ templateId, templateName, la
   }
 
   if (!cleanTemplateName) return null
-  const params = [cleanTemplateName, cleanTemplateName]
   const languageClause = cleanLanguage ? 'AND language = ?' : ''
-  if (cleanLanguage) params.push(cleanLanguage)
 
   const byName = await db.get(`
     SELECT *
     FROM whatsapp_message_templates
-    WHERE (ycloud_template_name = ? OR name = ?)
+    WHERE (
+      provider_template_name = ?
+      OR name = ?
+      OR (template_provider = 'ycloud' AND ycloud_template_name = ?)
+    )
       ${languageClause}
     ORDER BY
-      CASE WHEN ycloud_template_name = ? THEN 0 ELSE 1 END,
+      CASE
+        WHEN provider_template_name = ? THEN 0
+        WHEN name = ? THEN 1
+        ELSE 2
+      END,
       updated_at DESC
     LIMIT 1
-  `, [...params, cleanTemplateName])
+  `, [cleanTemplateName, cleanTemplateName, cleanTemplateName, ...(cleanLanguage ? [cleanLanguage] : []), cleanTemplateName, cleanTemplateName])
 
   return byName ? mapTemplate(byName) : null
 }
@@ -2446,8 +2525,9 @@ async function buildSendComponentsFromTemplate(template) {
 
 export async function sendMessageTemplateTest(id, payload = {}) {
   const template = await getMessageTemplateById(id)
-  if (normalizeYCloudTemplateStatus(template.ycloudStatus) !== 'APPROVED') {
-    throw new Error('Meta/YCloud todavia no aprobaron esta plantilla. Solo se pueden enviar plantillas APPROVED.')
+  const providerState = getMessageTemplateProviderState(template)
+  if (providerState.status !== 'APPROVED') {
+    throw new Error(`${getTemplateProviderLabel(providerState.provider)} todavía no aprobó esta plantilla. Solo se pueden enviar plantillas APPROVED.`)
   }
 
   const to = cleanString(payload.to)
@@ -2457,7 +2537,7 @@ export async function sendMessageTemplateTest(id, payload = {}) {
     const response = await sendWhatsAppApiTemplateMessage({
       to,
       from: payload.from,
-      templateName: getYCloudTemplateName(template),
+      templateName: providerState.name,
       language: template.language,
       components: await buildSendComponentsFromTemplate(template),
       externalId: payload.externalId
@@ -2473,24 +2553,18 @@ export async function sendMessageTemplateTest(id, payload = {}) {
   }
 }
 
-function getTemplateWabaId(template = {}) {
-  const raw = template.providerRawPayload && typeof template.providerRawPayload === 'object'
-    ? template.providerRawPayload
-    : template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
-      ? template.ycloudRawPayload
-      : {}
+function getTemplateWabaId(template = {}, provider = template.templateProvider) {
+  const raw = getMessageTemplateProviderState(template, provider).rawPayload
   return cleanString(template.wabaId || template.waba_id || raw.wabaId || raw.waba_id)
 }
 
-function shouldDeleteTemplateFromProvider(template = {}) {
+function shouldDeleteTemplateFromProvider(template = {}, provider = template.templateProvider) {
+  const providerState = getMessageTemplateProviderState(template, provider)
   return Boolean(
-    cleanString(template.providerTemplateId) ||
-    cleanString(template.providerStatus) ||
-    cleanString(template.providerSubmittedAt) ||
-    cleanString(template.ycloudTemplateId) ||
-    cleanString(template.ycloudStatus) ||
-    cleanString(template.ycloudSubmittedAt) ||
-    template.ycloudRawPayload
+    providerState.templateId ||
+    providerState.status ||
+    providerState.submittedAt ||
+    Object.keys(providerState.rawPayload).length
   )
 }
 
@@ -2500,17 +2574,18 @@ export async function deleteMessageTemplate(id) {
 
   const template = mapTemplate(row)
   const provider = normalizeWhatsAppProvider(template.templateProvider || await getActiveTemplateProvider(), WHATSAPP_PROVIDER_YCLOUD)
+  const providerState = getMessageTemplateProviderState(template, provider)
   let providerResponse = null
 
-  if (shouldDeleteTemplateFromProvider(template)) {
+  if (shouldDeleteTemplateFromProvider(template, provider)) {
     try {
       providerResponse = await deleteWhatsAppApiTemplate({
         provider,
-        wabaId: getTemplateWabaId(template),
-        name: cleanString(template.providerTemplateName || getYCloudTemplateName(template)),
+        wabaId: getTemplateWabaId(template, provider),
+        name: providerState.name,
         language: template.language,
-        providerTemplateId: template.providerTemplateId || template.ycloudTemplateId,
-        officialTemplateId: template.providerTemplateId || template.ycloudTemplateId
+        providerTemplateId: providerState.templateId,
+        officialTemplateId: providerState.templateId
       })
     } catch (error) {
       const message = await saveTemplateLastError(id, error)
@@ -2519,10 +2594,10 @@ export async function deleteMessageTemplate(id) {
   }
 
   const snapshot = providerResponse?.snapshot || await deleteWhatsAppApiTemplateSnapshot({
-    wabaId: getTemplateWabaId(template),
-    name: cleanString(template.providerTemplateName || getYCloudTemplateName(template)),
+    wabaId: getTemplateWabaId(template, provider),
+    name: providerState.name,
     language: template.language,
-    ids: [template.id, template.providerTemplateId, template.ycloudTemplateId]
+    ids: [template.id, providerState.templateId]
   })
   const result = await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [id])
   return {

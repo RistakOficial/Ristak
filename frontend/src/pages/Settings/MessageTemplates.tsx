@@ -50,6 +50,7 @@ import { PhoneChatPreview, type PhoneChatPreviewMessage } from '@/components/pho
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
+  getMessageTemplateProviderStatus,
   messageTemplatesService,
   type MessageTemplate,
   type MessageTemplateBundle,
@@ -145,7 +146,8 @@ const buttonTypeOptions: Array<{ value: MessageTemplateButtonType; label: string
 
 type MessageTemplateDraft = MessageTemplatePayload & Partial<Pick<
   MessageTemplate,
-  'ycloudReason' | 'ycloudStatusUpdateEvent' | 'ycloudQualityRating' | 'ycloudSubmittedAt' | 'ycloudSyncedAt' | 'lastError'
+  'templateProvider' | 'providerTemplateName' | 'providerTemplateId' | 'providerStatus' | 'providerReason' |
+  'providerStatusUpdateEvent' | 'providerQualityRating' | 'providerSubmittedAt' | 'providerSyncedAt' | 'lastError'
 >>
 
 function createEmptyDraft(folderId: string | null): MessageTemplateDraft {
@@ -165,10 +167,7 @@ function createEmptyDraft(folderId: string | null): MessageTemplateDraft {
     footerText: '',
     buttons: [],
     variableExamples: {},
-    variableBindings: { headerText: {}, bodyText: {} },
-    ycloudTemplateName: null,
-    ycloudTemplateId: null,
-    ycloudStatus: null
+    variableBindings: { headerText: {}, bodyText: {} }
   }
 }
 
@@ -190,14 +189,15 @@ function templateToDraft(template: MessageTemplate): MessageTemplateDraft {
     buttons: template.buttons || [],
     variableExamples: template.variableExamples || {},
     variableBindings: template.variableBindings || { headerText: {}, bodyText: {} },
-    ycloudTemplateName: template.ycloudTemplateName || null,
-    ycloudTemplateId: template.ycloudTemplateId || null,
-    ycloudStatus: template.ycloudStatus || null,
-    ycloudReason: template.ycloudReason || null,
-    ycloudStatusUpdateEvent: template.ycloudStatusUpdateEvent || null,
-    ycloudQualityRating: template.ycloudQualityRating || null,
-    ycloudSubmittedAt: template.ycloudSubmittedAt || null,
-    ycloudSyncedAt: template.ycloudSyncedAt || null,
+    templateProvider: template.templateProvider || null,
+    providerTemplateName: template.providerTemplateName || null,
+    providerTemplateId: template.providerTemplateId || null,
+    providerStatus: template.providerStatus || null,
+    providerReason: template.providerReason || null,
+    providerStatusUpdateEvent: template.providerStatusUpdateEvent || null,
+    providerQualityRating: template.providerQualityRating || null,
+    providerSubmittedAt: template.providerSubmittedAt || null,
+    providerSyncedAt: template.providerSyncedAt || null,
     lastError: template.lastError || null
   }
 }
@@ -219,10 +219,7 @@ function templateToPayload(template: MessageTemplate, folderId: string | null): 
     footerText: template.footerText || '',
     buttons: template.buttons || [],
     variableExamples: template.variableExamples || {},
-    variableBindings: template.variableBindings || { headerText: {}, bodyText: {} },
-    ycloudTemplateName: template.ycloudTemplateName || null,
-    ycloudTemplateId: template.ycloudTemplateId || null,
-    ycloudStatus: template.ycloudStatus || null
+    variableBindings: template.variableBindings || { headerText: {}, bodyText: {} }
   }
 }
 
@@ -307,7 +304,7 @@ function getCategoryLabel(category: MessageTemplateCategory) {
   return categoryOptions.find((option) => option.value === category)?.label || category
 }
 
-function getYCloudStatusTone(status?: string | null) {
+function getProviderStatusTone(status?: string | null) {
   const normalized = (status || '').toUpperCase()
   if (normalized === 'APPROVED') return 'Success'
   if (normalized === 'REJECTED' || normalized === 'DISABLED' || normalized === 'PAUSED') return 'Danger'
@@ -315,7 +312,7 @@ function getYCloudStatusTone(status?: string | null) {
   return 'Neutral'
 }
 
-function getYCloudStatusLabel(status?: string | null) {
+function getProviderStatusLabel(status?: string | null) {
   const normalized = (status || '').toUpperCase()
   if (!normalized) return 'Sin enviar'
   if (normalized === 'APPROVED') return 'Aprobada'
@@ -356,13 +353,13 @@ function cleanDisplayName(value?: string | null) {
 }
 
 function getTemplateReviewStatus(template: MessageTemplate): TemplateReviewStatusFilter {
-  const ycloudStatus = String(template.ycloudStatus || '').toUpperCase()
+  const providerStatus = getMessageTemplateProviderStatus(template)
 
-  if (ycloudStatus === 'APPROVED') return 'active'
-  if (isTemplateUnderReviewStatus(ycloudStatus)) return 'pending'
-  if (ycloudStatus === 'REJECTED') return 'rejected'
-  if (ycloudStatus === 'PAUSED' || ycloudStatus === 'DISABLED') return 'paused'
-  if (ycloudStatus === 'ARCHIVED') return 'archived'
+  if (providerStatus === 'APPROVED') return 'active'
+  if (isTemplateUnderReviewStatus(providerStatus)) return 'pending'
+  if (providerStatus === 'REJECTED') return 'rejected'
+  if (providerStatus === 'PAUSED' || providerStatus === 'DISABLED') return 'paused'
+  if (providerStatus === 'ARCHIVED') return 'archived'
   if (template.status === 'archived') return 'archived'
   if (template.status === 'active') return 'active'
   return 'draft'
@@ -395,7 +392,7 @@ function collectAssociationValues(source: unknown, keys: Set<string>, depth = 0,
 function templateMatchesPhone(template: MessageTemplate, phone?: WhatsAppApiPhoneNumber | null) {
   if (!phone) return true
 
-  const rawPayload = template.ycloudRawPayload || null
+  const rawPayload = template.providerRawPayload || null
   const templateWabaIds = collectAssociationValues(rawPayload, templateAssociationKeys.waba)
   const templatePhoneIds = collectAssociationValues(rawPayload, templateAssociationKeys.phone)
   const selectedWabaId = normalizeFilterValue(phone.waba_id)
@@ -615,7 +612,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         template.headerText || '',
         template.footerText || '',
         getCategoryLabel(template.category),
-        getYCloudStatusLabel(template.ycloudStatus),
+        getProviderStatusLabel(getMessageTemplateProviderStatus(template)),
         folderMap.get(template.folderId || '')?.name || ''
       ].some((value) => value.toLowerCase().includes(query))
 
@@ -725,7 +722,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }
 
   const editTemplate = (template: MessageTemplate) => {
-    if (isTemplateUnderReviewStatus(template.ycloudStatus)) {
+    if (isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(template))) {
       showToast('warning', 'Plantilla en revisión', 'Meta está revisando esta plantilla. Puedes eliminarla o sincronizar el estado, pero no editarla todavía.')
       return
     }
@@ -763,7 +760,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     const normalizedName = templateName.trim().toLowerCase()
     const targetTemplate = bundle.templates.find((template) => (
       template.id === templateId ||
-      template.ycloudTemplateId === templateId ||
+      template.providerTemplateId === templateId ||
       (normalizedName && template.name.toLowerCase() === normalizedName)
     ))
 
@@ -981,7 +978,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       const result = await messageTemplatesService.syncTemplate(selectedTemplateId)
       setDraft(templateToDraft(result.template))
       await loadBundle()
-      if (isTemplateUnderReviewStatus(result.template.ycloudStatus)) {
+      if (isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(result.template))) {
         setSelectedTemplateId(null)
         setView('list')
       }
@@ -1627,7 +1624,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         key: 'name',
         header: 'Plantilla',
         render: (_value, template) => {
-          const templateLockedForEditing = isTemplateUnderReviewStatus(template.ycloudStatus)
+          const templateLockedForEditing = isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(template))
           return (
             <button
               type="button"
@@ -1662,11 +1659,11 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         header: 'Idioma'
       },
       {
-        key: 'ycloudStatus',
+        key: 'providerStatus',
         header: 'Estado',
         render: (_value, template) => (
-          <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(template.ycloudStatus)}`]}`}>
-            {getYCloudStatusLabel(template.ycloudStatus)}
+          <span className={`${styles.providerBadge} ${styles[`providerBadge${getProviderStatusTone(getMessageTemplateProviderStatus(template))}`]}`}>
+            {getProviderStatusLabel(getMessageTemplateProviderStatus(template))}
           </span>
         )
       },
@@ -1676,7 +1673,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         searchable: false,
         sortable: false,
         render: (_value, template) => {
-          const templateLockedForEditing = isTemplateUnderReviewStatus(template.ycloudStatus)
+          const templateLockedForEditing = isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(template))
           return (
             <div className={styles.collectionTableActions}>
               <button
@@ -1906,7 +1903,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
               selectAllLabel: 'Seleccionar todas las plantillas'
             }}
             getRowProps={(template) => ({
-              className: isTemplateUnderReviewStatus(template.ycloudStatus) ? styles.collectionRowLocked : '',
+              className: isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(template)) ? styles.collectionRowLocked : '',
               draggable: true,
               onDragStart: (event) => handleDragStart(event, template.id),
               onDragEnd: () => {
@@ -2011,7 +2008,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }
 
   const renderEditor = () => {
-    const draftLockedForEditing = isTemplateUnderReviewStatus(draft.ycloudStatus)
+    const draftLockedForEditing = isTemplateUnderReviewStatus(draft.providerStatus)
 
     return (
       <div className={styles.editorGrid}>
@@ -2172,7 +2169,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           )}
         </div>
 
-        {(draft.ycloudStatus || '').toUpperCase() === 'APPROVED' && (
+        {(draft.providerStatus || '').toUpperCase() === 'APPROVED' && (
           <div className={styles.formSection}>
             <div className={styles.sectionHeading}>
               <strong>Enviar prueba</strong>

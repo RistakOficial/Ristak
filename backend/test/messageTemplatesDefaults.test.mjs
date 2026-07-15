@@ -12,6 +12,7 @@ import {
 } from '../src/services/messageTemplatesService.js'
 import {
   getWhatsAppApiConfigKeys,
+  setMetaDirectFetchForTest,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 
@@ -34,6 +35,14 @@ function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
     status,
     statusText,
     text: async () => JSON.stringify(body)
+  }
+}
+
+function graphJsonResponse(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body
   }
 }
 
@@ -181,12 +190,95 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       const components = JSON.parse(apiTemplate.components_json)
       assert.deepEqual(components.map((component) => component.type), ['BODY'])
 
-      const secondRun = await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: true })
+      const secondRun = await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: true })
       assert.equal(secondRun.submitted, 0)
       assert.equal(captures.length, 3)
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()
+    }
+  })
+})
+
+test('Meta directo envía las seis plantillas aunque exista identidad previa de YCloud', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const wabaId = `waba_meta_defaults_${Date.now()}`
+  const captures = []
+
+  await snapshotAppConfig([
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaSystemUserToken
+  ], async () => {
+    await deleteAllDefaultTemplates()
+    await setAppConfig(keys.provider, 'ycloud')
+    await ensureDefaultWhatsAppApiMessageTemplates({
+      submitToActiveProvider: false,
+      publicBaseUrl: 'https://pagos.ristak.test'
+    })
+    await db.run(`
+      UPDATE whatsapp_message_templates
+      SET template_provider = 'ycloud',
+          provider_template_id = 'ycloud_' || name,
+          provider_template_name = name,
+          provider_status = 'APPROVED',
+          ycloud_template_id = 'ycloud_' || name,
+          ycloud_template_name = name,
+          ycloud_status = 'APPROVED'
+      WHERE name IN (${[...DEFAULT_TEMPLATE_NAMES, ...DEFAULT_PAYMENT_TEMPLATE_NAMES].map(() => '?').join(', ')})
+    `, [...DEFAULT_TEMPLATE_NAMES, ...DEFAULT_PAYMENT_TEMPLATE_NAMES])
+
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, wabaId)
+    await setAppConfig(keys.metaPhoneNumberId, `phone_meta_defaults_${Date.now()}`)
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_defaults_test_token'))
+
+    setMetaDirectFetchForTest(async (url, options = {}) => {
+      const requestUrl = new URL(url)
+      const method = String(options.method || 'GET').toUpperCase()
+      const body = options.body ? JSON.parse(options.body) : null
+      captures.push({ method, path: requestUrl.pathname, body })
+      return graphJsonResponse({
+        id: `meta_${body?.name || captures.length}`,
+        status: 'PENDING',
+        category: body?.category || 'UTILITY'
+      })
+    })
+
+    try {
+      const result = await ensureDefaultWhatsAppApiMessageTemplates({
+        submitToActiveProvider: true,
+        publicBaseUrl: 'https://pagos.ristak.test'
+      })
+
+      assert.equal(result.total, 6)
+      assert.equal(result.submitted, 6)
+      assert.equal(result.errors, 0)
+      assert.ok(result.templates.every(template => template.provider === 'meta_direct'))
+      assert.ok(result.templates.every(template => template.providerStatus === 'PENDING'))
+      assert.equal(captures.length, 6)
+      assert.ok(captures.every(request => request.method === 'POST'))
+      assert.ok(captures.every(request => request.path.endsWith(`/${wabaId}/message_templates`)))
+      assert.ok(captures.every(request => !Object.hasOwn(request.body || {}, 'wabaId')))
+
+      const stored = await db.all(`
+        SELECT template_provider, provider_status, provider_template_id, ycloud_status, ycloud_template_id
+        FROM whatsapp_message_templates
+        WHERE name IN (${[...DEFAULT_TEMPLATE_NAMES, ...DEFAULT_PAYMENT_TEMPLATE_NAMES].map(() => '?').join(', ')})
+      `, [...DEFAULT_TEMPLATE_NAMES, ...DEFAULT_PAYMENT_TEMPLATE_NAMES])
+      assert.equal(stored.length, 6)
+      assert.ok(stored.every(template => template.template_provider === 'meta_direct'))
+      assert.ok(stored.every(template => template.provider_status === 'PENDING'))
+      assert.ok(stored.every(template => String(template.provider_template_id || '').startsWith('meta_')))
+      assert.ok(stored.every(template => template.ycloud_status === 'APPROVED'))
+      assert.ok(stored.every(template => String(template.ycloud_template_id || '').startsWith('ycloud_')))
+    } finally {
+      setMetaDirectFetchForTest(null)
+      await deleteAllDefaultTemplates()
     }
   })
 })
@@ -226,7 +318,7 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
 
     try {
       const result = await ensureDefaultWhatsAppApiMessageTemplates({
-        submitToYCloud: true,
+        submitToActiveProvider: true,
         publicBaseUrl: 'https://pagos.ristak.test'
       })
       assert.equal(result.total, 6)
@@ -388,7 +480,7 @@ test('backfill actualiza pago fallido aprobado con binding dinamico del boton y 
 
     try {
       await ensureDefaultPaymentMessageTemplates({
-        submitToYCloud: false,
+        submitToActiveProvider: false,
         publicBaseUrl: 'https://pagos.ristak.test'
       })
       await db.run(`
@@ -439,7 +531,7 @@ test('backfill actualiza pago fallido aprobado con binding dinamico del boton y 
       ])
 
       const result = await ensureDefaultPaymentMessageTemplates({
-        submitToYCloud: true,
+        submitToActiveProvider: true,
         publicBaseUrl: 'https://pagos.ristak.test'
       })
 
@@ -505,7 +597,7 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
     })
 
     try {
-      await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+      await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
       await db.run(`
         UPDATE whatsapp_message_templates
         SET ycloud_status = 'APPROVED', ycloud_template_id = 'official_recordatorio_cita_un_dia_antes'
@@ -588,7 +680,7 @@ test('recrea una plantilla default atorada en revisión después de seis horas',
     })
 
     try {
-      await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+      await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
       await db.run(`
         UPDATE whatsapp_message_templates
         SET ycloud_status = 'APPROVED',
@@ -686,7 +778,7 @@ test('reintenta una plantilla default rechazada con nombre técnico nuevo sin du
     })
 
     try {
-      await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+      await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
       await db.run(`
         UPDATE whatsapp_message_templates
         SET ycloud_status = 'APPROVED',
@@ -772,7 +864,7 @@ test('crea alerta y no reintenta cuando la plantilla default ya agotó dos reint
     })
 
     try {
-      await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+      await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
       await db.run(`
         UPDATE whatsapp_message_templates
         SET ycloud_status = 'APPROVED',
