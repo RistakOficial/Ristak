@@ -1626,6 +1626,7 @@ const POPUP_SURFACE_ID = 'site-popup'
 const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID || id === POPUP_SELECTED_ID
 type VideoActionKind = 'show' | 'hide' | 'open_form' | 'open_video_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout' | 'meta_event' | 'reveal_form_action'
 type VideoActionBeforeState = 'hidden' | 'visible' | 'unchanged'
+type VideoActionTriggerType = 'timeline_reached' | 'playback_seconds' | 'unique_watched_percent'
 type VideoFormGateAnimation = 'fade' | 'instant' | 'slide_up'
 type VideoFormGateCompletionAction = 'continue_video' | 'redirect' | 'show_targets' | 'hide_targets'
 type VideoFormGateRepeatMode = 'every_visit' | 'session' | 'remember_visitor'
@@ -1634,6 +1635,8 @@ type VideoFormGateStorageUnit = 'days' | 'months'
 interface VideoActionRule {
   id: string
   timeSeconds: number
+  triggerType: VideoActionTriggerType
+  triggerValue: number
   targetBlockId: string
   targetBlockIds?: string[]
   action: VideoActionKind
@@ -1663,6 +1666,7 @@ const VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS = 600
 const VIDEO_ACTION_TIMELINE_PADDING_SECONDS = 60
 const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event', 'reveal_form_action']
 const videoActionBeforeStates: VideoActionBeforeState[] = ['hidden', 'visible', 'unchanged']
+const videoActionTriggerTypes: VideoActionTriggerType[] = ['timeline_reached', 'playback_seconds', 'unique_watched_percent']
 const primaryVideoActionKinds: VideoActionKind[] = ['reveal_form_action', 'show', 'hide', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'meta_event']
 const videoActionTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 const videoActionMultiTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form'])
@@ -1704,6 +1708,12 @@ const videoActionBeforeLabels: Record<VideoActionBeforeState, string> = {
   visible: 'Mantener visible',
   unchanged: 'No cambiar nada'
 }
+
+const videoActionTriggerTypeOptions: Array<{ value: VideoActionTriggerType; label: string }> = [
+  { value: 'timeline_reached', label: 'Llegó al momento X del video' },
+  { value: 'playback_seconds', label: 'Reprodujo durante X tiempo' },
+  { value: 'unique_watched_percent', label: 'Vio X% distinto del video' }
+]
 
 const videoFormGateAnimationOptions: Array<{ value: VideoFormGateAnimation; label: string }> = [
   { value: 'fade', label: 'Degradada' },
@@ -1864,6 +1874,9 @@ type ImportedNativeElementSlot = {
   renderMode: ImportedNativeElementRenderMode
   label: string
   tagName: string
+  declaredVideoActions?: VideoActionRule[]
+  videoRulesAttributePresent?: boolean
+  videoRulesError?: string
 }
 type ImportedNativeElementSaveOptions = {
   notify?: boolean
@@ -2262,6 +2275,59 @@ const getImportedNativeElementLabel = (element: Element, type: ImportedNativeEle
   return `${importedNativeElementTypeLabels[type]} ${id}`
 }
 
+const importedHtmlVideoRuleAttributeNames = [
+  'data-rstk-video-rules',
+  'data-ristak-video-rules',
+  'data-ristack-video-rules'
+]
+
+const parseImportedNativeVideoRuleManifest = (
+  element: Element,
+  type: ImportedNativeElementType,
+  explicitSlotId: string
+) => {
+  if (type !== 'video') return { present: false, rules: [] as VideoActionRule[], error: '' }
+  const attributeName = importedHtmlVideoRuleAttributeNames.find(name => element.hasAttribute(name))
+  if (!attributeName) return { present: false, rules: [] as VideoActionRule[], error: '' }
+  if (!explicitSlotId) {
+    return {
+      present: true,
+      rules: [] as VideoActionRule[],
+      error: 'El video con data-rstk-video-rules necesita un data-rstk-native-id estable.'
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(element.getAttribute(attributeName) || '')
+    if (!Array.isArray(parsed) || parsed.length > 100) {
+      return { present: true, rules: [] as VideoActionRule[], error: 'data-rstk-video-rules debe contener una lista JSON de máximo 100 reglas.' }
+    }
+    const seenIds = new Set<string>()
+    const rules: VideoActionRule[] = []
+    for (let index = 0; index < parsed.length; index += 1) {
+      const source = parsed[index]
+      if (!source || typeof source !== 'object' || Array.isArray(source)) {
+        return { present: true, rules: [] as VideoActionRule[], error: 'Cada regla de video debe ser un objeto JSON.' }
+      }
+      const id = String((source as Record<string, unknown>).id || '').trim()
+      if (!id || id.length > 160 || seenIds.has(id)) {
+        return { present: true, rules: [] as VideoActionRule[], error: 'Cada regla de video necesita un id estable, único y de máximo 160 caracteres.' }
+      }
+      seenIds.add(id)
+      const deleted = (source as Record<string, unknown>).deleted
+      if (deleted === true || deleted === 1 || deleted === 'true') continue
+      const normalized = normalizeVideoActionRule({ ...(source as Record<string, unknown>), id }, index)
+      if (!normalized || (videoActionTargetKinds.has(normalized.action) && !normalized.targetBlockId)) {
+        return { present: true, rules: [] as VideoActionRule[], error: `La regla de video ${id} está incompleta o no tiene un target válido.` }
+      }
+      rules.push(normalized)
+    }
+    return { present: true, rules, error: '' }
+  } catch {
+    return { present: true, rules: [] as VideoActionRule[], error: 'data-rstk-video-rules no contiene JSON válido.' }
+  }
+}
+
 const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[] => {
   if (!html || typeof DOMParser === 'undefined') return []
   try {
@@ -2272,6 +2338,8 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
         const type = getImportedNativeElementTypeFromElement(element)
         if (!type) return null
         const id = getImportedNativeElementSlotId(element, type, index)
+        const explicitSlotId = getImportedNativeElementExplicitSlotId(element)
+        const videoRuleManifest = parseImportedNativeVideoRuleManifest(element, type, explicitSlotId)
         const key = `${type}:${id}`
         if (seen.has(key)) return null
         seen.add(key)
@@ -2281,7 +2349,12 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
           type,
           renderMode: getImportedNativeElementRenderMode(element, type),
           label: getImportedNativeElementLabel(element, type, id),
-          tagName: element.tagName.toLowerCase()
+          tagName: element.tagName.toLowerCase(),
+          ...(videoRuleManifest.present ? {
+            videoRulesAttributePresent: true,
+            declaredVideoActions: videoRuleManifest.rules,
+            videoRulesError: videoRuleManifest.error
+          } : {})
         }
       })
       .filter(Boolean) as ImportedNativeElementSlot[]
@@ -2429,8 +2502,11 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
 - Para calendario HTML conectado a Ristak usa un contenedor data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom". Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton con data-rstk-calendar-load-slots y form con data-rstk-calendar-book-form. Nombre/email/telefono usan data-rstk-calendar-name/email/phone y el mensaje data-rstk-calendar-message. No escribas JavaScript: Ristak conecta disponibilidad y reserva de forma segura con la zona horaria del negocio.
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
-- Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, acciones por tiempo, formulario de video y eventos Meta/CAPI configurados.
-- Targets para acciones de video: todo botón, contenedor, imagen, sección o formulario que quieras mostrar/ocultar debe tener id único. Ejemplo: <button id="cta-final">Continuar</button>.
+- Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, las tres condiciones de acciones, formulario de video y eventos Meta/CAPI configurados.
+- Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
+- Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y seek/buffering no cuentan; unique_watched_percent = vio X% de fragmentos distintos y adelantar/repetir no infla el porcentaje. triggerValue usa segundos en las dos primeras (3 minutos = 180) y un número de 1 a 100 en porcentaje.
+- Targets para acciones de video: marca cada botón, contenedor, imagen, sección o formulario con id y data-rstk-video-action-target estables. Ejemplo: <section id="oferta-final" data-rstk-video-action-target="oferta-final" data-rstk-label="Oferta final">...</section>.
+- Nunca agregues JavaScript para medir el video u ocultar/mostrar targets. Ristak ejecuta las reglas. Conserva data-rstk-video-rules al editar otra cosa; quitar el atributo o una regla de la lista no borra configuraciones. Para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.
 - Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
 - Para cita agendada usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC si ya conoces la hora exacta.
@@ -2446,7 +2522,7 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Un descargable puede asociar cualquier archivo de Media: imagen, audio, video, PDF o ZIP. No pongas data-rstk-asset-id en div o picture; usa los tags canónicos anteriores para que Ristak pueda escribir la URL real.
 - Las claves multimedia son globales al sitio: usa una clave única por contenido y repítela solo si varias zonas deben mostrar exactamente el mismo archivo. Nunca sustituyas una clave por la URL física de Storage o Bunny.
 - Para video configurable, reproductor, acciones y formularios sobre video usa siempre el slot nativo de video. Un video HTML propio queda opaco y no se configura desde Ristak.
-- Secciones que sean targets de video deben usar id único.
+- Secciones que sean targets de video deben usar id y data-rstk-video-action-target únicos.
 - Evita navegación automática, submits automáticos y window.open.`.trim()
 
 const BLANK_IMPORTED_HTML = `<!doctype html>
@@ -5738,6 +5814,9 @@ const isVideoActionKind = (value: unknown): value is VideoActionKind =>
 const isVideoActionBeforeState = (value: unknown): value is VideoActionBeforeState =>
   videoActionBeforeStates.includes(value as VideoActionBeforeState)
 
+const isVideoActionTriggerType = (value: unknown): value is VideoActionTriggerType =>
+  videoActionTriggerTypes.includes(value as VideoActionTriggerType)
+
 const makeVideoActionId = () => createRistakId('site_video_action')
 
 const clampVideoActionTime = (value: unknown) => {
@@ -5745,6 +5824,15 @@ const clampVideoActionTime = (value: unknown) => {
   if (!Number.isFinite(number)) return 0
   return Math.max(0, Math.min(86399, Math.round(number)))
 }
+
+const clampVideoActionPercent = (value: unknown) => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 50
+  return Math.max(1, Math.min(100, Math.round(number)))
+}
+
+const normalizeVideoActionTriggerType = (value: unknown): VideoActionTriggerType =>
+  isVideoActionTriggerType(value) ? value : 'timeline_reached'
 
 const getRecommendedVideoActionBefore = (action: VideoActionKind): VideoActionBeforeState => {
   if (action === 'show' || action === 'show_popup' || action === 'open_form' || action === 'reveal_form_action') return 'hidden'
@@ -5863,11 +5951,18 @@ const getVideoActionTargetIdsFromSource = (source: Record<string, unknown>) => {
     ? source.targetBlockIds
     : Array.isArray(source.target_block_ids)
       ? source.target_block_ids
-      : []
+      : Array.isArray(source.targetIds)
+        ? source.targetIds
+        : Array.isArray(source.target_ids)
+          ? source.target_ids
+          : []
   const ids = rawIds
     .map(value => String(value || '').trim())
     .filter(Boolean)
-  const singleId = getSettingString(source, 'targetBlockId') || getSettingString(source, 'target_block_id')
+  const singleId = getSettingString(source, 'targetBlockId') ||
+    getSettingString(source, 'target_block_id') ||
+    getSettingString(source, 'targetId') ||
+    getSettingString(source, 'target_id')
   if (singleId) ids.unshift(singleId)
   return [...new Set(ids)]
 }
@@ -5875,7 +5970,22 @@ const getVideoActionTargetIdsFromSource = (source: Record<string, unknown>) => {
 const normalizeVideoActionRule = (value: unknown, _index = 0): VideoActionRule | null => {
   if (!value || typeof value !== 'object') return null
   const source = value as Record<string, unknown>
+  const trigger = source.trigger && typeof source.trigger === 'object'
+    ? source.trigger as Record<string, unknown>
+    : {}
+  const triggerType = normalizeVideoActionTriggerType(
+    source.triggerType ?? source.trigger_type ?? trigger.type
+  )
+  const legacyTimeSeconds = clampVideoActionTime(source.timeSeconds ?? source.time_seconds ?? source.time)
+  const rawTriggerValue = source.triggerValue ?? source.trigger_value ?? trigger.value
+  const triggerValue = triggerType === 'unique_watched_percent'
+    ? clampVideoActionPercent(rawTriggerValue ?? 50)
+    : clampVideoActionTime(rawTriggerValue ?? legacyTimeSeconds)
   const action = isVideoActionKind(source.action) ? source.action : 'show'
+  const normalizedTriggerType: VideoActionTriggerType = action === 'open_video_form' ? 'timeline_reached' : triggerType
+  const normalizedTriggerValue = action === 'open_video_form' && triggerType !== 'timeline_reached'
+    ? legacyTimeSeconds
+    : triggerValue
   const sourceTargetBlockIds = getVideoActionTargetIdsFromSource(source)
   const targetBlockIds = action === 'show_popup'
     ? [POPUP_SURFACE_ID]
@@ -5901,7 +6011,9 @@ const normalizeVideoActionRule = (value: unknown, _index = 0): VideoActionRule |
 
   return {
     id,
-    timeSeconds: clampVideoActionTime(source.timeSeconds ?? source.time_seconds ?? source.time),
+    timeSeconds: normalizedTriggerType === 'timeline_reached' ? normalizedTriggerValue : legacyTimeSeconds,
+    triggerType: normalizedTriggerType,
+    triggerValue: normalizedTriggerValue,
     targetBlockId,
     targetBlockIds,
     action,
@@ -5957,6 +6069,32 @@ const parseVideoActionTimeInput = (value = '') => {
   const seconds = Number(parts[1])
   if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return 0
   return clampVideoActionTime(minutes * 60 + seconds)
+}
+
+const formatVideoActionTriggerValue = (rule: VideoActionRule) => (
+  rule.triggerType === 'unique_watched_percent'
+    ? `${clampVideoActionPercent(rule.triggerValue)}%`
+    : formatVideoActionTime(rule.triggerValue)
+)
+
+const getVideoActionTriggerConditionText = (rule: VideoActionRule, videoLabel = 'video') => {
+  if (rule.triggerType === 'playback_seconds') {
+    return `el visitante haya reproducido el ${videoLabel} durante ${formatVideoActionTime(rule.triggerValue)}`
+  }
+  if (rule.triggerType === 'unique_watched_percent') {
+    return `el visitante haya visto ${clampVideoActionPercent(rule.triggerValue)}% del contenido del ${videoLabel}`
+  }
+  return `el ${videoLabel} llegue a ${formatVideoActionTime(rule.triggerValue)}`
+}
+
+const getVideoActionTriggerHint = (triggerType: VideoActionTriggerType) => {
+  if (triggerType === 'playback_seconds') {
+    return 'Solo suma mientras el video se reproduce; adelantar la barra no cuenta.'
+  }
+  if (triggerType === 'unique_watched_percent') {
+    return 'Cuenta fragmentos distintos vistos; adelantar o repetir la misma parte no aumenta el porcentaje.'
+  }
+  return 'Se activa al llegar a ese punto del video; adelantar la barra hasta ahí también cuenta.'
 }
 
 const getVideoActionTargetKindLabel = (block: SiteBlock) => {
@@ -6055,26 +6193,27 @@ const getVideoActionPageLabel = (pageId: string | undefined, pages: SitePage[]) 
 
 const getVideoActionRuleText = (rule: VideoActionRule, targets: VideoActionTargetOption[], pages: SitePage[] = []) => {
   const targetLabel = getVideoActionTargetsLabel(rule, targets)
+  const triggerCondition = getVideoActionTriggerConditionText(rule)
   if (rule.action === 'open_video_form') {
-    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, abrir formulario de video.`
+    return `Cuando ${triggerCondition}, abrir formulario de video.`
   }
   if (rule.action === 'show_popup') {
-    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, mostrar popup.`
+    return `Cuando ${triggerCondition}, mostrar popup.`
   }
   if (rule.action === 'site_page') {
-    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, redirigir a ${getVideoActionPageLabel(rule.targetPageId, pages)}.`
+    return `Cuando ${triggerCondition}, redirigir a ${getVideoActionPageLabel(rule.targetPageId, pages)}.`
   }
   if (rule.action === 'redirect') {
-    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, redirigir a ${rule.redirectUrl || 'URL destino'}.`
+    return `Cuando ${triggerCondition}, redirigir a ${rule.redirectUrl || 'URL destino'}.`
   }
   if (rule.action === 'meta_event') {
-    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, disparar ${normalizeMetaEventName(rule.metaEventName, 'Lead')}.`
+    return `Cuando ${triggerCondition}, disparar ${normalizeMetaEventName(rule.metaEventName, 'Lead')}.`
   }
   if (rule.action === 'reveal_form_action') {
-    return `El botón de enviar aparece cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}.`
+    return `El botón de enviar aparece cuando ${triggerCondition}.`
   }
   const actionText = videoActionRuleLabels[rule.action]
-  return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, ${actionText} ${targetLabel}.`
+  return `Cuando ${triggerCondition}, ${actionText} ${targetLabel}.`
 }
 
 const escapeEditorVideoSelectorValue = (value: string) => {
@@ -6151,7 +6290,9 @@ const seekEditorVideoToTime = (blockId: string, timeSeconds: unknown) => {
 const getVideoActionTimelineMax = (rules: VideoActionRule[], durationSeconds = 0) => {
   const videoDuration = clampVideoActionTime(durationSeconds)
   if (videoDuration > 0) return videoDuration
-  const maxRuleTime = rules.reduce((max, rule) => Math.max(max, rule.timeSeconds), 0)
+  const maxRuleTime = rules
+    .filter(rule => rule.triggerType === 'timeline_reached')
+    .reduce((max, rule) => Math.max(max, rule.triggerValue), 0)
   return Math.max(VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS, maxRuleTime + VIDEO_ACTION_TIMELINE_PADDING_SECONDS)
 }
 
@@ -6171,7 +6312,7 @@ const buildVideoActionHiddenNotes = (blocks: SiteBlock[]) => {
         getVideoActionTargetIds(rule).forEach(targetId => {
           if (!targetId || targetId === POPUP_SURFACE_ID || !blockById.has(targetId)) return
           if (notes.has(targetId)) return
-          notes.set(targetId, `Oculto hasta ${formatVideoActionTime(rule.timeSeconds)} del ${videoLabel}`)
+          notes.set(targetId, `Oculto hasta que ${getVideoActionTriggerConditionText(rule, videoLabel)}`)
         })
       })
     })
@@ -21239,6 +21380,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     const formCounts = new Map<string, number>()
     const duplicateFieldIds = new Set<string>()
     const duplicateNativeElementIds = new Set<string>()
+    const invalidVideoRuleDeclarations = new Set<string>()
 
     effectiveImportedHtmlFiles.forEach(file => {
       if (!file.html || typeof DOMParser === 'undefined') return
@@ -21279,6 +21421,9 @@ const ImportedHtmlEditorPanel: React.FC<{
         detectImportedNativeElementDuplicateIds(file.html).forEach(id => {
           duplicateNativeElementIds.add(`${file.label} · ${id}`)
         })
+        detectImportedNativeElementSlots(file.html).forEach(slot => {
+          if (slot.videoRulesError) invalidVideoRuleDeclarations.add(`${file.label} · ${slot.label}: ${slot.videoRulesError}`)
+        })
       } catch {
         // Diagnostics are best-effort; the backend still sanitizes and validates.
       }
@@ -21287,7 +21432,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     return {
       duplicateFormIds: [...formCounts.entries()].filter(([, count]) => count > 1).map(([id]) => id),
       duplicateFieldIds: [...duplicateFieldIds],
-      duplicateNativeElementIds: [...duplicateNativeElementIds]
+      duplicateNativeElementIds: [...duplicateNativeElementIds],
+      invalidVideoRuleDeclarations: [...invalidVideoRuleDeclarations]
     }
   }, [effectiveImportedHtmlFiles])
   const importedDuplicateFormIds = importedEditorIdentityDiagnostics.duplicateFormIds
@@ -21301,13 +21447,16 @@ const ImportedHtmlEditorPanel: React.FC<{
         : '',
       importedEditorIdentityDiagnostics.duplicateNativeElementIds.length
         ? `Zonas Ristak duplicadas: ${importedEditorIdentityDiagnostics.duplicateNativeElementIds.slice(0, 3).join(', ')}.`
+        : '',
+      importedEditorIdentityDiagnostics.invalidVideoRuleDeclarations.length
+        ? `Reglas de video inválidas: ${importedEditorIdentityDiagnostics.invalidVideoRuleDeclarations.slice(0, 2).join(', ')}.`
         : ''
     ].filter(Boolean)
     return details.length
       ? {
         valid: false,
-        title: 'Corrige los IDs del HTML',
-        message: `${details.join(' ')} Cada elemento necesita una clave estable y sin ambigüedad antes de guardar o publicar.`
+        title: 'Corrige las reglas del HTML',
+        message: `${details.join(' ')} Cada elemento necesita una clave estable y cada regla debe usar JSON válido antes de guardar o publicar.`
       }
       : { valid: true }
   }, [importedEditorIdentityDiagnostics])
@@ -21559,6 +21708,12 @@ const ImportedHtmlEditorPanel: React.FC<{
       return {
         ...baseSettings,
         calendarDesignMode: slot.renderMode === 'custom' ? 'original' : getSettingString(baseSettings, 'calendarDesignMode') || 'original'
+      }
+    }
+    if (slot.type === 'video' && slot.videoRulesAttributePresent && !slot.videoRulesError) {
+      return {
+        ...baseSettings,
+        videoActions: slot.declaredVideoActions || []
       }
     }
     return baseSettings
@@ -21896,15 +22051,18 @@ const ImportedHtmlEditorPanel: React.FC<{
     return () => onNativeSaveFlusher(site.id, null)
   }, [flushImportedNativeElementSaves, onNativeSaveFlusher, site.id])
 
-  useEffect(() => () => {
-    importedNativeElementMountedRef.current = false
-    Object.values(importedNativeElementAutosaveTimersRef.current).forEach(timer => window.clearTimeout(timer))
-    importedNativeElementAutosaveTimersRef.current = {}
-    importedNativeElementScheduledSavesRef.current = {}
-    importedNativeElementPendingSavesRef.current = {}
-    importedNativeElementDeferredSavesRef.current = {}
-    importedNativeElementDraftSlotsRef.current = {}
-    onNativeDraftDirtyChange(site.id, false)
+  useEffect(() => {
+    importedNativeElementMountedRef.current = true
+    return () => {
+      importedNativeElementMountedRef.current = false
+      Object.values(importedNativeElementAutosaveTimersRef.current).forEach(timer => window.clearTimeout(timer))
+      importedNativeElementAutosaveTimersRef.current = {}
+      importedNativeElementScheduledSavesRef.current = {}
+      importedNativeElementPendingSavesRef.current = {}
+      importedNativeElementDeferredSavesRef.current = {}
+      importedNativeElementDraftSlotsRef.current = {}
+      onNativeDraftDirtyChange(site.id, false)
+    }
   }, [onNativeDraftDirtyChange, site.id])
 
   useEffect(() => {
@@ -22875,7 +23033,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       'No respondas al prompt dentro del HTML. Prohibido agregar "Claro", "Aquí tienes", resúmenes, explicaciones, notas del asistente o la solicitud del usuario como texto visible en la página.',
       'Trabaja en silencio: solo modifica el código necesario y devuelve el HTML final.',
       'No existe edición visual por elemento. Conserva todo lo que el usuario no haya pedido cambiar.',
-      'Conserva atributos data-rstk/data-ristak, formularios, tracking, referencias multimedia y slots nativos salvo que el usuario pida cambiarlos.',
+      'Conserva atributos data-rstk/data-ristak, formularios, tracking, referencias multimedia, data-rstk-video-rules, targets de video y slots nativos salvo que el usuario pida cambiarlos.',
       `Archivo activo: ${activeCodeFile.label || activeCodeFile.path || 'HTML principal'}.`,
       popupCodeActive ? 'Superficie activa: Pop up.' : `Página activa: ${activeImportedPage?.title || 'Página actual'}.`,
       selectedContext,
@@ -27891,7 +28049,12 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       'Video:',
       '- La página usará video nativo de Ristak.',
       '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>.',
-      '- Ristak configurará el video real, controles, diseño, acciones por tiempo y eventos desde el editor.',
+      '- Ristak configurará el video real, controles, diseño, acciones y eventos desde el editor.',
+      '- Si mi solicitud condiciona elementos al video, declara las reglas en data-rstk-video-rules dentro del mismo slot. Cada regla necesita id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique.',
+      '- Usa timeline_reached para "llegó al minuto X" (adelantar sí cuenta), playback_seconds para "reprodujo X tiempo" (seek y buffering no cuentan) y unique_watched_percent para "vio X% real" (solo fragmentos distintos; repetir no infla). triggerValue usa segundos en las dos primeras (3 minutos = 180) y de 1 a 100 en porcentaje.',
+      '- Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules=\'[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]\'></div>.',
+      '- Marca cada target con id y data-rstk-video-action-target iguales, por ejemplo <section id="oferta-final" data-rstk-video-action-target="oferta-final">...</section>.',
+      '- No escribas JavaScript para medir o reaccionar al video. Conserva data-rstk-video-rules al editar; para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.',
       ''
     )
   } else if (answers.video === 'html') {
@@ -41039,6 +41202,8 @@ const VideoActionsPanel: React.FC<{
     const nextRule = normalizeVideoActionRule({
       id: makeVideoActionId(),
       timeSeconds,
+      triggerType: 'timeline_reached',
+      triggerValue: timeSeconds,
       targetBlockId: targetBlockIds[0] || '',
       targetBlockIds,
       action: defaultAction,
@@ -41077,6 +41242,7 @@ const VideoActionsPanel: React.FC<{
       : videoActionTargetKinds.has(action)
         ? (videoActionMultiTargetKinds.has(action) ? validCurrentTargetIds : validCurrentTargetIds.slice(0, 1))
         : []
+    const nextTimelineValue = clampVideoActionTime(rule.timeSeconds)
 
     patchRule(rule.id, {
       action,
@@ -41086,6 +41252,11 @@ const VideoActionsPanel: React.FC<{
       targetPageId: action === 'site_page' ? rule.targetPageId || pageTargets[0]?.id || '' : '',
       redirectUrl: action === 'redirect' ? rule.redirectUrl || '' : '',
       pauseUntilComplete: action === 'open_form' ? rule.pauseUntilComplete !== false : false,
+      ...(action === 'open_video_form' ? {
+        triggerType: 'timeline_reached' as VideoActionTriggerType,
+        triggerValue: nextTimelineValue,
+        timeSeconds: nextTimelineValue
+      } : {}),
       ...(action === 'meta_event' ? {
         metaCapiEnabled: rule.metaCapiEnabled !== false,
         metaEventName: normalizeEnabledMetaEventName(rule.metaEventName),
@@ -41100,7 +41271,7 @@ const VideoActionsPanel: React.FC<{
 
   const handleTimelineTimeChange = useCallback((ruleId: string, timeSeconds: number) => {
     const nextTime = Math.min(timelineMaxSeconds, clampVideoActionTime(timeSeconds))
-    patchRules(rules.map(rule => rule.id === ruleId ? { ...rule, timeSeconds: nextTime } : rule))
+    patchRules(rules.map(rule => rule.id === ruleId ? { ...rule, timeSeconds: nextTime, triggerValue: nextTime } : rule))
     setTimeInputs(current => ({ ...current, [ruleId]: formatVideoActionTime(nextTime) }))
     setExpandedRuleId(ruleId)
     seekEditorVideoToTime(block.id, nextTime)
@@ -41108,13 +41279,43 @@ const VideoActionsPanel: React.FC<{
 
   const handleTimeInputChange = useCallback((rule: VideoActionRule, value: string) => {
     setTimeInputs(current => ({ ...current, [rule.id]: value }))
-    const nextTime = Math.min(timelineMaxSeconds, parseVideoActionTimeInput(value))
-    patchRule(rule.id, { timeSeconds: nextTime }, { seek: true })
+    const parsedTime = parseVideoActionTimeInput(value)
+    const nextTime = rule.triggerType === 'timeline_reached'
+      ? Math.min(timelineMaxSeconds, parsedTime)
+      : parsedTime
+    patchRule(
+      rule.id,
+      rule.triggerType === 'timeline_reached'
+        ? { timeSeconds: nextTime, triggerValue: nextTime }
+        : { triggerValue: nextTime },
+      { seek: rule.triggerType === 'timeline_reached' }
+    )
   }, [patchRule, timelineMaxSeconds])
 
   const handleTimeInputBlur = useCallback((rule: VideoActionRule) => {
-    setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.timeSeconds) }))
+    setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.triggerValue) }))
   }, [])
+
+  const handleChangeTriggerType = useCallback((rule: VideoActionRule, triggerType: VideoActionTriggerType) => {
+    if (rule.action === 'open_video_form') return
+    if (triggerType === 'unique_watched_percent') {
+      patchRule(rule.id, { triggerType, triggerValue: 50 })
+      return
+    }
+
+    const triggerValue = rule.triggerType === 'unique_watched_percent'
+      ? clampVideoActionTime(rule.timeSeconds)
+      : clampVideoActionTime(rule.triggerValue)
+    const nextValue = triggerType === 'timeline_reached'
+      ? Math.min(timelineMaxSeconds, triggerValue)
+      : triggerValue
+    patchRule(
+      rule.id,
+      { triggerType, triggerValue: nextValue, ...(triggerType === 'timeline_reached' ? { timeSeconds: nextValue } : {}) },
+      { seek: triggerType === 'timeline_reached' }
+    )
+    setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(nextValue) }))
+  }, [patchRule, timelineMaxSeconds])
 
   const handleCloseRuleEditor = useCallback(() => {
     onSave()
@@ -41206,23 +41407,27 @@ const VideoActionsPanel: React.FC<{
   }
 
   const renderRuleEditor = (rule: VideoActionRule) => {
-    const timeInput = timeInputs[rule.id] ?? formatVideoActionTime(rule.timeSeconds)
+    const timeInput = timeInputs[rule.id] ?? formatVideoActionTime(rule.triggerValue)
+    const isTimelineTrigger = rule.triggerType === 'timeline_reached'
+    const isPercentTrigger = rule.triggerType === 'unique_watched_percent'
     const videoFormActionTaken = rule.action !== 'open_video_form' && rules.some(item => item.action === 'open_video_form')
 
     return (
       <div className={`${styles.videoActionInlineEditor} ${rule.action === 'open_video_form' ? styles.videoActionInlineEditorVideoForm : ''}`}>
         <div className={styles.videoActionTimeControl}>
           <div className={styles.videoActionTimeRow}>
-            <label className={styles.videoActionTimeMeta}>
-              <span className={styles.videoActionTimeLabel}>Cuando llegue a:</span>
-              <input
-                className={styles.videoActionTimeInput}
-                value={timeInput}
-                placeholder="03:45"
-                inputMode="numeric"
-                onChange={(event) => handleTimeInputChange(rule, event.target.value)}
-                onBlur={() => handleTimeInputBlur(rule)}
-              />
+            <label className={styles.field}>
+              <span>Condición para activar</span>
+              <CustomSelect
+                value={rule.triggerType}
+                disabled={rule.action === 'open_video_form'}
+                onChange={(event) => handleChangeTriggerType(rule, event.target.value as VideoActionTriggerType)}
+                onBlur={onSave}
+              >
+                {videoActionTriggerTypeOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
             </label>
             <Button
               type="button"
@@ -41235,11 +41440,48 @@ const VideoActionsPanel: React.FC<{
               Cerrar y guardar
             </Button>
           </div>
-          <VideoActionTimeScale
-            timeSeconds={rule.timeSeconds}
-            maxSeconds={timelineMaxSeconds}
-            onChangeTime={(timeSeconds) => handleTimelineTimeChange(rule.id, timeSeconds)}
-          />
+          <p className={styles.videoActionHint}>
+            {rule.action === 'open_video_form'
+              ? 'El formulario de video se abre por momento del video; las demás acciones permiten elegir cualquiera de las tres condiciones.'
+              : getVideoActionTriggerHint(rule.triggerType)}
+          </p>
+          {isPercentTrigger ? (
+            <label className={styles.field}>
+              <span>Porcentaje distinto visto</span>
+              <NumberInput
+                value={clampVideoActionPercent(rule.triggerValue)}
+                min={1}
+                max={100}
+                step={1}
+                maxFractionDigits={0}
+                aria-label="Porcentaje distinto del video visto"
+                onValueChange={(value) => patchRule(rule.id, { triggerValue: clampVideoActionPercent(value) })}
+                onBlur={onSave}
+              />
+            </label>
+          ) : (
+            <label className={styles.videoActionTimeMeta}>
+              <span className={styles.videoActionTimeLabel}>
+                {isTimelineTrigger ? 'Momento del video:' : 'Tiempo reproducido:'}
+              </span>
+              <input
+                className={styles.videoActionTimeInput}
+                value={timeInput}
+                placeholder="03:45"
+                inputMode="numeric"
+                aria-label={isTimelineTrigger ? 'Momento del video' : 'Tiempo reproducido'}
+                onChange={(event) => handleTimeInputChange(rule, event.target.value)}
+                onBlur={() => handleTimeInputBlur(rule)}
+              />
+            </label>
+          )}
+          {isTimelineTrigger && (
+            <VideoActionTimeScale
+              timeSeconds={rule.triggerValue}
+              maxSeconds={timelineMaxSeconds}
+              onChangeTime={(timeSeconds) => handleTimelineTimeChange(rule.id, timeSeconds)}
+            />
+          )}
         </div>
 
         <label className={styles.field}>
@@ -41263,7 +41505,7 @@ const VideoActionsPanel: React.FC<{
 
         {rule.action !== 'open_video_form' && rule.action !== 'meta_event' && rule.action !== 'reveal_form_action' && (
           <label className={styles.field}>
-            <span>Antes de este momento</span>
+            <span>Antes de que se cumpla</span>
             <CustomSelect
               value={rule.before}
               onChange={(event) => patchRule(rule.id, { before: event.target.value as VideoActionBeforeState })}
@@ -41361,7 +41603,7 @@ const VideoActionsPanel: React.FC<{
             </div>
             <MetaVideoEventSettings
               title="Meta Pixel + CAPI"
-              description="Se dispara cuando el video llegue a este momento"
+              description={`Se dispara cuando ${getVideoActionTriggerConditionText(rule)}`}
               siteMetaEnabled={Boolean(site.metaCapiEnabled)}
               metaPixelConnected={metaPixelConnected}
               eventEnabled={rule.metaCapiEnabled !== false}
@@ -41460,13 +41702,17 @@ const VideoActionsPanel: React.FC<{
       className={styles.videoActionRuleSummary}
       onClick={() => {
         setExpandedRuleId(rule.id)
-        setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.timeSeconds) }))
-        seekEditorVideoToTime(block.id, rule.timeSeconds)
+        if (rule.triggerType !== 'unique_watched_percent') {
+          setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.triggerValue) }))
+        }
+        if (rule.triggerType === 'timeline_reached') {
+          seekEditorVideoToTime(block.id, rule.triggerValue)
+        }
       }}
     >
       <span className={styles.videoActionRuleSummaryTime}>
         <Clock3 size={13} />
-        {formatVideoActionTime(rule.timeSeconds)}
+        {formatVideoActionTriggerValue(rule)}
       </span>
       <span className={styles.videoActionRuleSummaryText}>
         <strong>{videoActionLabels[rule.action]}</strong>

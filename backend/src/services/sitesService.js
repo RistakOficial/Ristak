@@ -7109,7 +7109,11 @@ Contrato de código cerrado y contenido:
 - Ejemplo de descarte a página: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
 - Si cualquier opción puede descalificar, agrega data-rstk-conversion-condition="qualified_only" al <form> final. Ristak guarda todos los submits, pero solo manda Pixel/CAPI cuando el resultado sea calificado.
 - Nunca llames fbq, gtag, dataLayer ni eventos de conversión manuales desde el HTML por click o submit. Ristak emite la conversión después del veredicto del backend.
-- Marca targets de acciones de video con id único y estable.
+- Acciones declarativas de video: escribe data-rstk-video-rules como una lista JSON en el MISMO slot nativo de video. Cada regla necesita id estable, triggerType, triggerValue, action y targetBlockIds cuando la acción usa elementos de la página. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
+- Condiciones válidas: timeline_reached significa "llegó al minuto X" y adelantar la barra sí cuenta; playback_seconds significa "reprodujo X segundos/minutos" y solo suma reproducción activa, no seek ni buffering; unique_watched_percent significa "vio X% real del contenido" y suma la unión de fragmentos reproducidos, sin inflar por adelantar o repetir. triggerValue siempre va en segundos para timeline_reached/playback_seconds (3 minutos = 180) y de 1 a 100 para unique_watched_percent.
+- Marca cada target con data-rstk-video-action-target e id semántico estable. Ejemplo: <section id="oferta-final" data-rstk-video-action-target="oferta-final" data-rstk-label="Oferta final">...</section>.
+- No escribas JavaScript para escuchar el video, ocultar, mostrar o medir progreso. Ristak interpreta las reglas y permite afinarlas en el panel.
+- Conserva data-rstk-video-rules y los ids de sus reglas cuando edites otra cosa. Quitar el atributo o una regla de la lista NO borra configuraciones; para borrar una regla declarada usa explícitamente {"id":"mostrar-oferta","deleted":true}.
 
 Convenciones de formularios para Ristak:
 - Estas convenciones aplican a formularios HTML propios; si usas data-rstk-native-element="form", no crees un <form> propio para esa zona.
@@ -7132,7 +7136,7 @@ Conversiones Meta/CAPI para HTML importado:
 - Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
 - Calendario con frontend propio: usa <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">. Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton data-rstk-calendar-load-slots, form data-rstk-calendar-book-form, campos data-rstk-calendar-name/email/phone y mensaje data-rstk-calendar-message. No agregues JavaScript: Ristak conecta esos hooks al calendario configurado, usa la zona horaria del negocio y manda el slot confirmado como ISO UTC.
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
-- Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI configurados.
+- Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
@@ -7199,7 +7203,7 @@ Modo edición:
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
 - Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-video-rules, data-rstk-video-action-target, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 - En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
@@ -12412,6 +12416,7 @@ async function replaceImportedSiteHtmlUnlocked(siteId, input = {}) {
     ])
 
     await syncAndPersistImportedFormSourceSites(siteId)
+    await reconcileImportedHtmlVideoRulesForSite(siteId)
 
     return {
       site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -12474,6 +12479,7 @@ async function replaceImportedSiteHtmlUnlocked(siteId, input = {}) {
   ])
 
   await syncAndPersistImportedFormSourceSites(siteId)
+  await reconcileImportedHtmlVideoRulesForSite(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -12606,6 +12612,7 @@ async function updateImportedSiteEditableContentUnlocked(siteId, input = {}) {
   ])
 
   await syncAndPersistImportedFormSourceSites(siteId)
+  await reconcileImportedHtmlVideoRulesForSite(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -12842,6 +12849,7 @@ async function updateImportedSiteCodeFilesUnlocked(siteId, input = {}) {
   ])
 
   await syncAndPersistImportedFormSourceSites(siteId)
+  await reconcileImportedHtmlVideoRulesForSite(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -13730,6 +13738,8 @@ export async function createBlock(siteId, input = {}) {
     settings = applyCalendarEmbedCreateDefaults(site, settings)
   } else if (blockType === 'payment') {
     settings = applyPaymentBlockCreateDefaults(site, settings)
+  } else if (blockType === 'video' && normalizeBoolean(settings.importedHtmlNativeElement || settings.imported_html_native_element)) {
+    settings = await applyImportedHtmlVideoRulesToSettings(site, settings)
   }
   await assertUniqueSystemFieldForInput(siteId, site, { settings }, blockType)
 
@@ -13776,6 +13786,9 @@ export async function updateBlock(siteId, blockId, input = {}) {
       : {}
   if (blockType === 'payment') {
     nextSettings = applyPaymentBlockCreateDefaults(site, nextSettings)
+  }
+  if (blockType === 'video' && normalizeBoolean(nextSettings.importedHtmlNativeElement || nextSettings.imported_html_native_element)) {
+    nextSettings = await applyImportedHtmlVideoRulesToSettings(site, nextSettings)
   }
   await assertUniqueSystemFieldForInput(siteId, site, { settings: nextSettings }, blockType, blockId)
 
@@ -15588,11 +15601,49 @@ function buildVideoTrackingAttributes({ enabled = false, block = {}, asset = nul
 const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event', 'reveal_form_action'])
 const VIDEO_ACTION_BEFORE_STATES = new Set(['hidden', 'visible', 'unchanged'])
 const VIDEO_ACTION_TARGET_KINDS = new Set(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
+const VIDEO_ACTION_TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_percent'])
 
 function normalizeVideoActionTime(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0
   return Math.max(0, Math.min(86399, Math.round(number)))
+}
+
+function normalizeVideoActionTriggerType(value) {
+  const triggerType = cleanString(value)
+  return VIDEO_ACTION_TRIGGER_TYPES.has(triggerType) ? triggerType : 'timeline_reached'
+}
+
+function normalizeVideoActionTriggerValue(value, triggerType = 'timeline_reached') {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return triggerType === 'unique_watched_percent' ? 1 : 0
+  if (triggerType === 'unique_watched_percent') {
+    return Math.max(1, Math.min(100, Math.round(number * 1000) / 1000))
+  }
+  return normalizeVideoActionTime(number)
+}
+
+function getVideoActionTriggerConfig(source = {}) {
+  const nestedTrigger = source.trigger && typeof source.trigger === 'object' ? source.trigger : {}
+  const triggerType = normalizeVideoActionTriggerType(
+    source.triggerType ?? source.trigger_type ?? nestedTrigger.type
+  )
+  const legacyTimeSeconds = normalizeVideoActionTime(source.timeSeconds ?? source.time_seconds ?? source.time)
+  const rawTriggerValue = source.triggerValue ?? source.trigger_value ?? nestedTrigger.value
+  const triggerValue = normalizeVideoActionTriggerValue(
+    rawTriggerValue === undefined || rawTriggerValue === null || rawTriggerValue === ''
+      ? legacyTimeSeconds
+      : rawTriggerValue,
+    triggerType
+  )
+
+  return {
+    triggerType,
+    triggerValue,
+    // `timeSeconds` permanece en el payload para no romper reglas/editor legacy.
+    // En reglas nuevas distintas de timeline sólo es metadata de compatibilidad.
+    timeSeconds: triggerType === 'timeline_reached' ? triggerValue : legacyTimeSeconds
+  }
 }
 
 function getRecommendedVideoActionBefore(action) {
@@ -15627,9 +15678,13 @@ function getVideoActionTargetIdsFromSource(source = {}) {
     ? source.targetBlockIds
     : Array.isArray(source.target_block_ids)
       ? source.target_block_ids
-      : []
+      : Array.isArray(source.targetIds)
+        ? source.targetIds
+        : Array.isArray(source.target_ids)
+          ? source.target_ids
+          : []
   const ids = rawIds.map(cleanString).filter(Boolean)
-  const targetBlockId = cleanString(source.targetBlockId || source.target_block_id)
+  const targetBlockId = cleanString(source.targetBlockId || source.target_block_id || source.targetId || source.target_id)
   if (targetBlockId) ids.unshift(targetBlockId)
   return [...new Set(ids)]
 }
@@ -15647,10 +15702,13 @@ function normalizeVideoActionRule(value, index = 0) {
     ? normalizeSiteMetaEventName(source.metaEventName || source.meta_event_name, { allowNone: true, fallback: 'Lead' })
     : SITE_META_NO_EVENT
   const metaEventParametersSource = source.metaEventParameters || source.meta_event_parameters || {}
+  const trigger = getVideoActionTriggerConfig(source)
 
   return {
     id: cleanString(source.id) || `video-action-${index + 1}`,
-    timeSeconds: normalizeVideoActionTime(source.timeSeconds ?? source.time_seconds ?? source.time),
+    timeSeconds: trigger.timeSeconds,
+    triggerType: trigger.triggerType,
+    triggerValue: trigger.triggerValue,
     targetBlockId,
     targetBlockIds,
     action,
@@ -15921,15 +15979,26 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const POPUP_ID = ${JSON.stringify(POPUP_SURFACE_ID)};
       const PREVIEW_SAFE = ${options.previewSafe ? 'true' : 'false'};
       const PREVIEW_SAFE_ACTIONS = new Set(['show', 'hide', 'scroll_to']);
+      const TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_percent']);
       const attached = new WeakSet();
+      const normalizeParsedAction = action => {
+        const triggerType = TRIGGER_TYPES.has(String(action.triggerType || ''))
+          ? String(action.triggerType)
+          : 'timeline_reached';
+        const legacyTimeSeconds = Math.max(0, Number(action.timeSeconds) || 0);
+        const rawTriggerValue = Number(action.triggerValue);
+        const fallbackValue = triggerType === 'timeline_reached' ? legacyTimeSeconds : 0;
+        const value = Number.isFinite(rawTriggerValue) ? Math.max(0, rawTriggerValue) : fallbackValue;
+        const triggerValue = triggerType === 'unique_watched_percent' ? Math.max(1, Math.min(100, value)) : value;
+        return { ...action, timeSeconds: legacyTimeSeconds, triggerType, triggerValue };
+      };
       const parseActions = video => {
         try {
           const parsed = JSON.parse(video.getAttribute('data-rstk-video-actions') || '[]');
           return Array.isArray(parsed)
             ? parsed
-              .filter(action => action && action.id && action.action && Number.isFinite(Number(action.timeSeconds)) && (!PREVIEW_SAFE || PREVIEW_SAFE_ACTIONS.has(String(action.action || ''))))
-              .map(action => ({ ...action, timeSeconds: Math.max(0, Number(action.timeSeconds) || 0) }))
-              .sort((a, b) => a.timeSeconds - b.timeSeconds)
+              .filter(action => action && action.id && action.action && (!PREVIEW_SAFE || PREVIEW_SAFE_ACTIONS.has(String(action.action || ''))))
+              .map(normalizeParsedAction)
             : [];
         } catch (_) {
           return [];
@@ -15997,6 +16066,116 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         if (!video || isPreviewPlayback(video) || video.paused || video.ended) return false;
         return markRealPlayback(video);
       };
+      const monotonicNowSeconds = () => {
+        try {
+          if (window.performance && typeof window.performance.now === 'function') return window.performance.now() / 1000;
+        } catch (_) {}
+        return Date.now() / 1000;
+      };
+      const finiteMediaTime = video => {
+        const value = Number(video && video.currentTime);
+        return Number.isFinite(value) ? Math.max(0, value) : 0;
+      };
+      const finiteMediaDuration = video => {
+        const value = Number(video && video.duration);
+        return Number.isFinite(value) && value > 0 ? value : 0;
+      };
+      const finitePlaybackRate = video => {
+        const value = Number(video && video.playbackRate);
+        return Number.isFinite(value) && value > 0 ? Math.min(4, Math.max(0.25, value)) : 1;
+      };
+      const resetMeasurementBaseline = state => {
+        state.lastMeasurementMediaTime = finiteMediaTime(state.video);
+        state.lastMeasurementWallTime = monotonicNowSeconds();
+      };
+      const mergeWatchedRange = (ranges, startValue, endValue, duration = 0) => {
+        let start = Math.max(0, Math.min(Number(startValue) || 0, Number(endValue) || 0));
+        let end = Math.max(0, Math.max(Number(startValue) || 0, Number(endValue) || 0));
+        if (duration > 0) {
+          start = Math.min(duration, start);
+          end = Math.min(duration, end);
+        }
+        if (!(end > start)) return ranges;
+        const next = [];
+        let inserted = false;
+        ranges.forEach(range => {
+          if (!Array.isArray(range) || range.length < 2) return;
+          const rangeStart = Math.max(0, Number(range[0]) || 0);
+          const rangeEnd = Math.max(rangeStart, Number(range[1]) || 0);
+          if (rangeEnd < start - 0.05) {
+            next.push([rangeStart, rangeEnd]);
+            return;
+          }
+          if (end < rangeStart - 0.05) {
+            if (!inserted) {
+              next.push([start, end]);
+              inserted = true;
+            }
+            next.push([rangeStart, rangeEnd]);
+            return;
+          }
+          start = Math.min(start, rangeStart);
+          end = Math.max(end, rangeEnd);
+        });
+        if (!inserted) next.push([start, end]);
+        return next;
+      };
+      const watchedSeconds = state => state.watchedRanges.reduce((total, range) => (
+        total + Math.max(0, Number(range[1] || 0) - Number(range[0] || 0))
+      ), 0);
+      const samplePlaybackProgress = (state, realPlaybackStarted) => {
+        const mediaTime = finiteMediaTime(state.video);
+        const wallTime = monotonicNowSeconds();
+        const previousMediaTime = Number(state.lastMeasurementMediaTime);
+        const previousWallTime = Number(state.lastMeasurementWallTime);
+        if (!Number.isFinite(previousMediaTime) || !Number.isFinite(previousWallTime)) {
+          state.lastMeasurementMediaTime = mediaTime;
+          state.lastMeasurementWallTime = wallTime;
+          return;
+        }
+        if (!realPlaybackStarted || !state.playbackActive || state.seeking || state.buffering || isPreviewPlayback(state.video)) {
+          state.lastMeasurementMediaTime = mediaTime;
+          state.lastMeasurementWallTime = wallTime;
+          return;
+        }
+
+        const mediaDelta = mediaTime - previousMediaTime;
+        if (Math.abs(mediaDelta) < 0.0001) return;
+        const wallDelta = Math.max(0, wallTime - previousWallTime);
+        const playbackRate = finitePlaybackRate(state.video);
+        // Un salto de barra puede llegar sin evento seeking en players dentro
+        // de iframe. Sólo acreditamos avances compatibles con reproducción real.
+        const plausibleWallWindow = Math.min(4, wallDelta);
+        const maxNaturalMediaDelta = Math.max(2, plausibleWallWindow * playbackRate * 2.5 + 0.75);
+        state.lastMeasurementMediaTime = mediaTime;
+        state.lastMeasurementWallTime = wallTime;
+        if (mediaDelta <= 0 || wallDelta <= 0 || mediaDelta > maxNaturalMediaDelta) return;
+
+        const realPlaybackDelta = Math.min(wallDelta, mediaDelta / playbackRate);
+        if (realPlaybackDelta > 0) state.playbackSeconds += realPlaybackDelta;
+        // La posición puede avanzar sin que llegue el evento seeking (por ejemplo en
+        // Player.js). En ese caso no podemos asumir que todo el salto fue visto:
+        // sólo acreditamos la distancia que cabe en el tiempo real reproducido.
+        const creditedMediaDelta = Math.min(mediaDelta, realPlaybackDelta * playbackRate);
+        if (!(creditedMediaDelta > 0)) return;
+        state.watchedRanges = mergeWatchedRange(
+          state.watchedRanges,
+          previousMediaTime,
+          previousMediaTime + creditedMediaDelta,
+          finiteMediaDuration(state.video)
+        );
+      };
+      const getActionProgress = (state, action) => {
+        if (action.triggerType === 'playback_seconds') return state.playbackSeconds;
+        if (action.triggerType === 'unique_watched_percent') {
+          const duration = finiteMediaDuration(state.video);
+          return duration > 0 ? Math.min(100, (watchedSeconds(state) / duration) * 100) : 0;
+        }
+        return finiteMediaTime(state.video);
+      };
+      const actionReached = (state, action, realPlaybackStarted) => (
+        realPlaybackStarted && getActionProgress(state, action) + 0.0001 >= Number(action.triggerValue || 0)
+      );
       const applyBeforeState = (action, targets) => {
         if (action.before === 'hidden') targets.forEach(target => setTargetHidden(target, true));
         if (action.before === 'visible') targets.forEach(target => setTargetHidden(target, false));
@@ -16045,7 +16224,9 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           public_page_id: pageId,
           video_block_id: videoBlockId,
           video_action_id: action.id || '',
-          video_action_time_seconds: Math.max(0, Number(action.timeSeconds || 0) || 0)
+          video_action_time_seconds: Math.max(0, Number(action.timeSeconds || 0) || 0),
+          video_action_trigger_type: action.triggerType || 'timeline_reached',
+          video_action_trigger_value: Math.max(0, Number(action.triggerValue || 0) || 0)
         });
         if (typeof window.ristakMetaTrackSiteEvent === 'function') {
           window.ristakMetaTrackSiteEvent(eventName, eventId, customData);
@@ -16064,7 +16245,9 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
               params: getCurrentParams(),
               fbp: getCookie('_fbp') || null,
               fbc: getCookie('_fbc') || null,
-              videoActionTimeSeconds: Math.max(0, Number(action.timeSeconds || 0) || 0)
+              videoActionTimeSeconds: Math.max(0, Number(action.timeSeconds || 0) || 0),
+              videoActionTriggerType: action.triggerType || 'timeline_reached',
+              videoActionTriggerValue: Math.max(0, Number(action.triggerValue || 0) || 0)
             }
           });
         }
@@ -16136,9 +16319,12 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       };
       const syncState = state => {
         const realPlaybackStarted = ensureRealPlaybackStarted(state.video);
-        const time = realPlaybackStarted ? Number(state.video.currentTime || 0) : 0;
+        if (realPlaybackStarted && !state.video.paused && !state.video.ended && !state.seeking && !state.buffering && !isPreviewPlayback(state.video)) {
+          state.playbackActive = true;
+        }
+        samplePlaybackProgress(state, realPlaybackStarted);
         state.actions.forEach(action => {
-          const reached = realPlaybackStarted && time >= Number(action.timeSeconds || 0);
+          const reached = actionReached(state, action, realPlaybackStarted);
           if (action.action === 'show_popup') {
             if (reached) {
               if (!state.triggered.has(action.id) && typeof window.ristakOpenSitePopup === 'function') {
@@ -16210,7 +16396,21 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         if (!video || attached.has(video)) return;
         const actions = parseActions(video);
         if (!actions.length) return;
-        const state = { video, actions, triggered: new Set(), openedPopups: new Set(), blockedForms: new Set(), completedForms: new Set() };
+        const state = {
+          video,
+          actions,
+          triggered: new Set(),
+          openedPopups: new Set(),
+          blockedForms: new Set(),
+          completedForms: new Set(),
+          playbackActive: false,
+          buffering: false,
+          seeking: false,
+          playbackSeconds: 0,
+          watchedRanges: [],
+          lastMeasurementMediaTime: null,
+          lastMeasurementWallTime: null
+        };
         let frameId = 0;
         const stopFrameSync = () => {
           if (!frameId) return;
@@ -16218,7 +16418,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           frameId = 0;
         };
         const startFrameSync = () => {
-          if (frameId || video.paused || video.ended || isPreviewPlayback(video) || !hasRealPlaybackStarted(video)) return;
+          if (frameId || video.paused || video.ended || state.buffering || state.seeking || isPreviewPlayback(video) || !hasRealPlaybackStarted(video)) return;
           frameId = window.requestAnimationFrame(() => {
             frameId = 0;
             sync();
@@ -16226,15 +16426,56 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         };
         const sync = () => {
           syncState(state);
-          if (!video.paused && !video.ended && !isPreviewPlayback(video) && hasRealPlaybackStarted(video)) startFrameSync();
+          if (!video.paused && !video.ended && !state.buffering && !state.seeking && !isPreviewPlayback(video) && hasRealPlaybackStarted(video)) startFrameSync();
           else stopFrameSync();
         };
         const handlePlay = () => {
           markRealPlayback(video);
+          state.buffering = false;
+          state.seeking = false;
+          state.playbackActive = !isPreviewPlayback(video);
+          resetMeasurementBaseline(state);
           sync();
         };
-        ['loadedmetadata', 'durationchange', 'timeupdate', 'seeked', 'seeking', 'playing', 'pause', 'ended'].forEach(eventName => video.addEventListener(eventName, sync, { passive: true }));
+        const handlePlaying = () => {
+          state.buffering = false;
+          state.playbackActive = hasRealPlaybackStarted(video) && !isPreviewPlayback(video);
+          resetMeasurementBaseline(state);
+          sync();
+        };
+        const handleBuffering = () => {
+          syncState(state);
+          state.buffering = true;
+          state.playbackActive = false;
+          resetMeasurementBaseline(state);
+          stopFrameSync();
+        };
+        const handleSeeking = () => {
+          state.seeking = true;
+          state.playbackActive = false;
+          resetMeasurementBaseline(state);
+          sync();
+        };
+        const handleSeeked = () => {
+          state.seeking = false;
+          state.playbackActive = hasRealPlaybackStarted(video) && !video.paused && !video.ended && !state.buffering && !isPreviewPlayback(video);
+          resetMeasurementBaseline(state);
+          sync();
+        };
+        const handleInactive = () => {
+          syncState(state);
+          state.playbackActive = false;
+          resetMeasurementBaseline(state);
+          stopFrameSync();
+        };
+        ['loadedmetadata', 'durationchange', 'timeupdate'].forEach(eventName => video.addEventListener(eventName, sync, { passive: true }));
         video.addEventListener('play', handlePlay, { passive: true });
+        video.addEventListener('playing', handlePlaying, { passive: true });
+        ['waiting', 'stalled'].forEach(eventName => video.addEventListener(eventName, handleBuffering, { passive: true }));
+        video.addEventListener('seeking', handleSeeking, { passive: true });
+        video.addEventListener('seeked', handleSeeked, { passive: true });
+        ['pause', 'ended'].forEach(eventName => video.addEventListener(eventName, handleInactive, { passive: true }));
+        resetMeasurementBaseline(state);
         sync();
         attached.add(video);
       };
@@ -17633,9 +17874,11 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, 
         const proxy = host && host.querySelector('video[data-rstk-stream-action-proxy]');
         if (!frame || !proxy) return;
         let currentTime = 0;
+        let duration = 0;
         let paused = true;
         try {
           Object.defineProperty(proxy, 'currentTime', { configurable: true, get: () => currentTime, set: value => { currentTime = Number(value || 0) || 0; } });
+          Object.defineProperty(proxy, 'duration', { configurable: true, get: () => duration });
           Object.defineProperty(proxy, 'paused', { configurable: true, get: () => paused });
         } catch (_) {}
         const connect = () => {
@@ -17643,11 +17886,41 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, 
           const player = new window.playerjs.Player(frame);
           proxy.pause = () => { try { player.pause(); } catch (_) {} };
           proxy.play = () => { try { player.play(); } catch (_) {} return Promise.resolve(); };
+          player.on('ready', () => {
+            if (!player.getDuration) return;
+            player.getDuration(value => {
+              const nextDuration = Number(value || 0);
+              if (!Number.isFinite(nextDuration) || nextDuration <= 0) return;
+              duration = nextDuration;
+              proxy.dispatchEvent(new Event('durationchange'));
+            });
+          });
           player.on('play', () => { paused = false; proxy.dataset.rstkVideoRealPlayed = 'true'; proxy.dispatchEvent(new Event('play')); });
           player.on('pause', () => { paused = true; proxy.dispatchEvent(new Event('pause')); });
-          player.on('ended', () => { paused = true; proxy.dispatchEvent(new Event('ended')); });
+          player.on('ended', timing => {
+            const nextDuration = Number(timing && (timing.duration || timing.total || timing.totalSeconds) || duration);
+            if (Number.isFinite(nextDuration) && nextDuration > 0) duration = nextDuration;
+            const nextCurrentTime = Number(timing && (timing.seconds || timing.currentTime || timing.time));
+            currentTime = Number.isFinite(nextCurrentTime) && nextCurrentTime >= 0
+              ? nextCurrentTime
+              : duration > 0
+                ? duration
+                : currentTime;
+            paused = true;
+            // Cierra el último tramo antes de detener la medición. Sin este
+            // evento, un 100% o el tiempo total exacto podía quedarse en 99.x.
+            proxy.dispatchEvent(new Event('timeupdate'));
+            proxy.dispatchEvent(new Event('ended'));
+          });
+          player.on('seeked', timing => {
+            currentTime = Number(timing && (timing.seconds || timing.currentTime || timing.time) || currentTime) || 0;
+            proxy.dispatchEvent(new Event('seeking'));
+            proxy.dispatchEvent(new Event('seeked'));
+          });
           player.on('timeupdate', timing => {
             currentTime = Number(timing && (timing.seconds || timing.currentTime || timing.time) || 0) || 0;
+            const nextDuration = Number(timing && (timing.duration || timing.total || timing.totalSeconds) || 0);
+            if (Number.isFinite(nextDuration) && nextDuration > 0) duration = nextDuration;
             proxy.dispatchEvent(new Event('timeupdate'));
           });
         };
@@ -25145,6 +25418,318 @@ function getImportedNativeElementSlot(attrs = {}, index = 0) {
   }
 }
 
+const IMPORTED_HTML_VIDEO_RULE_ATTR_NAMES = [
+  'data-rstk-video-rules',
+  'data-ristak-video-rules',
+  'data-ristack-video-rules'
+]
+
+const IMPORTED_HTML_NATIVE_ID_ATTR_NAMES = [
+  'data-rstk-native-id',
+  'data-ristak-native-id',
+  'data-ristack-native-id',
+  'data-rstk-element-id',
+  'data-ristak-element-id',
+  'data-ristack-element-id',
+  'data-rstk-edit-id',
+  'data-ristak-edit-id',
+  'data-ristack-edit-id',
+  'id'
+]
+
+const IMPORTED_HTML_VIDEO_RULE_PATCH_KEYS = [
+  'timeSeconds',
+  'triggerType',
+  'triggerValue',
+  'targetBlockId',
+  'targetBlockIds',
+  'action',
+  'before',
+  'value',
+  'targetPageId',
+  'redirectUrl',
+  'pauseUntilComplete',
+  'metaCapiEnabled',
+  'metaEventName',
+  'metaEventParameters',
+  'repeatMode',
+  'storageValue',
+  'storageUnit'
+]
+
+function getImportedHtmlVideoRuleAttribute(attrs = {}) {
+  for (const name of IMPORTED_HTML_VIDEO_RULE_ATTR_NAMES) {
+    if (Object.prototype.hasOwnProperty.call(attrs, name)) {
+      return { present: true, name, value: String(attrs[name] ?? '') }
+    }
+  }
+  return { present: false, name: '', value: '' }
+}
+
+function normalizeImportedHtmlVideoRuleManifest(value = '') {
+  let parsed
+  try {
+    parsed = JSON.parse(String(value || ''))
+  } catch {
+    return { valid: false, declarations: {}, tombstones: [] }
+  }
+  if (!Array.isArray(parsed) || parsed.length > 100) {
+    return { valid: false, declarations: {}, tombstones: [] }
+  }
+
+  const declarations = {}
+  const tombstones = []
+  const seenIds = new Set()
+  for (let index = 0; index < parsed.length; index += 1) {
+    const source = parsed[index]
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return { valid: false, declarations: {}, tombstones: [] }
+    }
+    const id = cleanString(source.id)
+    if (!id || id.length > 160 || seenIds.has(id)) {
+      return { valid: false, declarations: {}, tombstones: [] }
+    }
+    seenIds.add(id)
+    if (normalizeBoolean(source.deleted) === 1) {
+      tombstones.push(id)
+      continue
+    }
+    const normalized = normalizeVideoActionRule({ ...source, id }, index)
+    if (!normalized) {
+      return { valid: false, declarations: {}, tombstones: [] }
+    }
+    declarations[id] = normalized
+  }
+
+  return { valid: true, declarations, tombstones }
+}
+
+function importedHtmlVideoRuleSlotKey(pageId = '', slotId = '') {
+  return `${cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID}\u0000${cleanString(slotId)}`
+}
+
+function scanImportedHtmlOpeningTags(html = '') {
+  const source = String(html || '')
+  const tags = []
+  const rawTextTags = new Set(['script', 'style', 'template', 'textarea', 'title'])
+  let cursor = 0
+
+  while (cursor < source.length) {
+    const openIndex = source.indexOf('<', cursor)
+    if (openIndex < 0) break
+
+    if (source.startsWith('<!--', openIndex)) {
+      const commentEnd = source.indexOf('-->', openIndex + 4)
+      cursor = commentEnd >= 0 ? commentEnd + 3 : source.length
+      continue
+    }
+
+    const firstNameCharacter = source[openIndex + 1] || ''
+    if (!/[a-z]/i.test(firstNameCharacter)) {
+      cursor = openIndex + 1
+      continue
+    }
+
+    let nameEnd = openIndex + 2
+    while (nameEnd < source.length && /[\w:-]/.test(source[nameEnd])) nameEnd += 1
+    const tagName = source.slice(openIndex + 1, nameEnd).toLowerCase()
+    let tagEnd = nameEnd
+    let quote = ''
+    while (tagEnd < source.length) {
+      const character = source[tagEnd]
+      if (quote) {
+        if (character === quote) quote = ''
+      } else if (character === '"' || character === "'") {
+        quote = character
+      } else if (character === '>') {
+        break
+      }
+      tagEnd += 1
+    }
+    if (tagEnd >= source.length) break
+
+    tags.push({ tagName, attrsText: source.slice(nameEnd, tagEnd) })
+    cursor = tagEnd + 1
+
+    if (rawTextTags.has(tagName)) {
+      const closePattern = new RegExp(`</${escapeRegExp(tagName)}\\s*>`, 'ig')
+      closePattern.lastIndex = cursor
+      const closeMatch = closePattern.exec(source)
+      cursor = closeMatch ? closePattern.lastIndex : source.length
+    }
+  }
+
+  return tags
+}
+
+function collectImportedHtmlVideoRuleDeclarations(html = '', pageId = '') {
+  const declarations = new Map()
+  const ambiguousKeys = new Set()
+  let nativeIndex = 0
+  for (const { attrsText } of scanImportedHtmlOpeningTags(html)) {
+    if (!IMPORTED_NATIVE_ELEMENT_ATTR_PATTERN.test(attrsText)) continue
+    const attrs = parseHtmlAttributes(attrsText)
+    const slot = getImportedNativeElementSlot(attrs, nativeIndex)
+    nativeIndex += 1
+    if (!slot || slot.type !== 'video') continue
+
+    const rulesAttribute = getImportedHtmlVideoRuleAttribute(attrs)
+    if (!rulesAttribute.present) continue
+    const explicitSlotId = firstImportedNativeAttr(attrs, IMPORTED_HTML_NATIVE_ID_ATTR_NAMES)
+    if (!explicitSlotId) continue
+    const manifest = normalizeImportedHtmlVideoRuleManifest(rulesAttribute.value)
+    if (!manifest.valid) continue
+
+    const key = importedHtmlVideoRuleSlotKey(pageId, explicitSlotId)
+    if (declarations.has(key)) {
+      declarations.delete(key)
+      ambiguousKeys.add(key)
+      continue
+    }
+    if (ambiguousKeys.has(key)) continue
+    declarations.set(key, {
+      pageId: cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID,
+      slotId: explicitSlotId,
+      declarations: manifest.declarations,
+      tombstones: manifest.tombstones
+    })
+  }
+  return declarations
+}
+
+async function collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSite = null) {
+  if (!site?.id) return new Map()
+  const currentImport = importedSite || await getImportedSiteBySiteId(site.id)
+  if (!currentImport) return new Map()
+  const pages = await getImportedSitePagesForAIContext(site, currentImport, { htmlLimit: 0 })
+  const declarations = new Map()
+  for (const page of pages) {
+    const pageDeclarations = collectImportedHtmlVideoRuleDeclarations(page.html, page.id)
+    for (const [key, payload] of pageDeclarations) {
+      if (declarations.has(key)) {
+        declarations.delete(key)
+        continue
+      }
+      declarations.set(key, payload)
+    }
+  }
+  return declarations
+}
+
+function importedHtmlVideoRuleValuesEqual(left, right) {
+  return jsonString(left) === jsonString(right)
+}
+
+function reconcileImportedHtmlVideoRuleSettings(settings = {}, manifest = null) {
+  if (!manifest) return settings
+  const currentRules = (
+    Array.isArray(settings.videoActions)
+      ? settings.videoActions
+      : Array.isArray(settings.video_actions)
+        ? settings.video_actions
+        : []
+  ).filter(rule => rule && typeof rule === 'object' && !Array.isArray(rule))
+    .map(rule => ({ ...rule }))
+  const previousDeclarations = isPlainObject(settings.importedHtmlVideoRuleDeclarations)
+    ? settings.importedHtmlVideoRuleDeclarations
+    : {}
+  const nextDeclarations = { ...previousDeclarations }
+
+  for (const id of manifest.tombstones || []) {
+    for (let index = currentRules.length - 1; index >= 0; index -= 1) {
+      if (cleanString(currentRules[index]?.id) === id) currentRules.splice(index, 1)
+    }
+    delete nextDeclarations[id]
+  }
+
+  for (const [id, nextDeclaration] of Object.entries(manifest.declarations || {})) {
+    const previousDeclaration = isPlainObject(previousDeclarations[id]) ? previousDeclarations[id] : null
+    let currentIndex = currentRules.findIndex(rule => cleanString(rule?.id) === id)
+
+    if (!previousDeclaration) {
+      if (currentIndex >= 0) {
+        // El frontend usa la declaración como default antes de crear el bloque.
+        // Si el usuario ya la ajustó en ese draft, su versión actual gana; el
+        // manifiesto sólo completa propiedades faltantes y queda como baseline.
+        currentRules[currentIndex] = { ...nextDeclaration, ...currentRules[currentIndex], id }
+      } else {
+        currentRules.push({ ...nextDeclaration, id })
+      }
+      nextDeclarations[id] = nextDeclaration
+      continue
+    }
+
+    if (!importedHtmlVideoRuleValuesEqual(previousDeclaration, nextDeclaration)) {
+      if (currentIndex < 0) {
+        currentRules.push({ ...nextDeclaration, id })
+        currentIndex = currentRules.length - 1
+      } else {
+        const patchedRule = { ...currentRules[currentIndex], id }
+        for (const key of IMPORTED_HTML_VIDEO_RULE_PATCH_KEYS) {
+          if (importedHtmlVideoRuleValuesEqual(previousDeclaration[key], nextDeclaration[key])) continue
+          if (Object.prototype.hasOwnProperty.call(nextDeclaration, key)) patchedRule[key] = nextDeclaration[key]
+          else delete patchedRule[key]
+        }
+        currentRules[currentIndex] = patchedRule
+      }
+    }
+    nextDeclarations[id] = nextDeclaration
+  }
+
+  const declarationIds = Object.keys(nextDeclarations).sort((left, right) => left.localeCompare(right))
+  const orderedDeclarations = Object.fromEntries(declarationIds.map(id => [id, nextDeclarations[id]]))
+  return {
+    ...settings,
+    videoActions: currentRules,
+    importedHtmlVideoRuleDeclarations: orderedDeclarations,
+    importedHtmlVideoRuleIds: declarationIds,
+    importedHtmlVideoRulesSignature: jsonString(declarationIds.map(id => orderedDeclarations[id]))
+  }
+}
+
+function findImportedHtmlVideoRuleManifestForSettings(declarations = new Map(), settings = {}) {
+  if (!normalizeBoolean(settings.importedHtmlNativeElement || settings.imported_html_native_element)) return null
+  if (cleanString(settings.importedHtmlNativeType || settings.imported_html_native_type) !== 'video') return null
+  const slotId = cleanString(settings.importedHtmlNativeSlotId || settings.imported_html_native_slot_id)
+  if (!slotId) return null
+  const pageId = cleanString(settings.pageId || settings.page_id) || DEFAULT_FUNNEL_PAGE_ID
+  const exact = declarations.get(importedHtmlVideoRuleSlotKey(pageId, slotId))
+  if (exact) return exact
+  const candidates = [...declarations.values()].filter(item => item.slotId === slotId)
+  return candidates.length === 1 ? candidates[0] : null
+}
+
+async function applyImportedHtmlVideoRulesToSettings(site, settings = {}) {
+  const importedSite = await getImportedSiteBySiteId(site?.id)
+  if (!importedSite) return settings
+  const declarations = await collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSite)
+  const manifest = findImportedHtmlVideoRuleManifestForSettings(declarations, settings)
+  return manifest ? reconcileImportedHtmlVideoRuleSettings(settings, manifest) : settings
+}
+
+async function reconcileImportedHtmlVideoRulesForSite(siteId) {
+  const site = await getSite(siteId, { includeBlocks: true, includeSubmissions: false })
+  if (!site) return
+  const importedSite = await getImportedSiteBySiteId(siteId)
+  if (!importedSite) return
+  const declarations = await collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSite)
+  if (!declarations.size) return
+
+  for (const block of site.blocks || []) {
+    if (block.blockType !== 'video') continue
+    const settings = isPlainObject(block.settings) ? block.settings : {}
+    const manifest = findImportedHtmlVideoRuleManifestForSettings(declarations, settings)
+    if (!manifest) continue
+    const nextSettings = reconcileImportedHtmlVideoRuleSettings(settings, manifest)
+    if (jsonString(nextSettings) === jsonString(settings)) continue
+    await db.run(`
+      UPDATE public_site_blocks
+      SET settings_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND site_id = ?
+    `, [jsonString(nextSettings), block.id, siteId])
+  }
+}
+
 function isImportedNativeElementBlock(block = {}, slot = {}) {
   const settings = block.settings || {}
   const slotPageId = cleanString(slot.pageId || slot.page_id)
@@ -29892,12 +30477,16 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
           public_page_title: page?.title || '',
           video_block_id: block?.id || '',
           video_block_label: block?.label || '',
-	          video_action_id: rule?.id || '',
-	          video_action_time_seconds: Number(rule?.timeSeconds || requestMeta.meta?.videoActionTimeSeconds || 0) || 0,
-	          currency: accountLocale?.currency || 'MXN',
-	          content_name: block?.label || page?.title || site.title || site.name
-	        }, buildSiteMetaConfiguredCustomData(parameters, eventName, templateContext))
-	      }
+          video_action_id: rule?.id || '',
+          // La configuración guardada del Site es la fuente confiable. No
+          // aceptamos que el navegador fabrique el tipo/umbral del evento.
+          video_action_time_seconds: Number(rule?.timeSeconds || 0) || 0,
+          video_action_trigger_type: normalizeVideoActionTriggerType(rule?.triggerType),
+          video_action_trigger_value: normalizeVideoActionTriggerValue(rule?.triggerValue, normalizeVideoActionTriggerType(rule?.triggerType)),
+          currency: accountLocale?.currency || 'MXN',
+          content_name: block?.label || page?.title || site.title || site.name
+        }, buildSiteMetaConfiguredCustomData(parameters, eventName, templateContext))
+      }
     ]
   }
 

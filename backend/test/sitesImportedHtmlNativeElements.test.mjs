@@ -7,7 +7,9 @@ import {
   createSite,
   deleteSite,
   getSite,
-  renderPublicSiteHtml
+  renderPublicSiteHtml,
+  updateBlock,
+  updateImportedSiteCodeFiles
 } from '../src/services/sitesService.js'
 
 async function createImportedNativeSite(html, name) {
@@ -633,6 +635,276 @@ test('imported HTML native video slots render the real Ristak player and video a
     const previewHtml = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: true })
     assert.match(previewHtml, /const PREVIEW_SAFE = true;/)
     assert.match(previewHtml, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('declarative HTML video rules reconcile by stable id without deleting manual actions', async () => {
+  let siteId = ''
+
+  const renderPage = (rulesAttribute = '') => `
+    <!doctype html>
+    <html>
+      <body>
+        <main>
+          <div
+            data-rstk-native-element="video"
+            data-rstk-native-id="video-principal"
+            data-rstk-label="Video principal"
+            ${rulesAttribute}
+          ></div>
+          <section data-rstk-video-action-target="oferta-final" data-rstk-label="Oferta final">
+            <button id="comprar-ahora">Comprar ahora</button>
+          </section>
+        </main>
+      </body>
+    </html>
+  `
+
+  const rulesAttribute = rules => `data-rstk-video-rules='${JSON.stringify(rules)}'`
+
+  try {
+    const site = await createImportedNativeSite(
+      renderPage(),
+      `HTML declarative video rules ${Date.now()}`
+    )
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/declarative-video.mp4',
+        videoActions: [{
+          id: 'accion-manual',
+          action: 'redirect',
+          timeSeconds: 12,
+          redirectUrl: 'https://example.test/manual'
+        }]
+      }
+    })
+
+    const initialRules = [{
+      id: 'mostrar-oferta',
+      triggerType: 'unique_watched_percent',
+      triggerValue: 50,
+      action: 'show',
+      targetBlockIds: ['oferta-final'],
+      before: 'hidden'
+    }]
+
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{ path: '', content: renderPage(rulesAttribute(initialRules)) }]
+    })
+
+    let currentSite = await getSite(site.id, { includeBlocks: true })
+    let videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.ok(videoBlock)
+    assert.deepEqual(videoBlock.settings.importedHtmlVideoRuleIds, ['mostrar-oferta'])
+    assert.equal(typeof videoBlock.settings.importedHtmlVideoRulesSignature, 'string')
+    assert.ok(videoBlock.settings.importedHtmlVideoRulesSignature)
+    assert.equal(videoBlock.settings.videoActions.length, 2)
+    assert.equal(videoBlock.settings.videoActions.find(rule => rule.id === 'accion-manual')?.redirectUrl, 'https://example.test/manual')
+    assert.equal(videoBlock.settings.videoActions.find(rule => rule.id === 'mostrar-oferta')?.triggerType, 'unique_watched_percent')
+    assert.equal(videoBlock.settings.videoActions.find(rule => rule.id === 'mostrar-oferta')?.triggerValue, 50)
+
+    await updateBlock(site.id, videoBlock.id, {
+      settings: {
+        ...videoBlock.settings,
+        videoActions: videoBlock.settings.videoActions.map(rule => rule.id === 'mostrar-oferta'
+          ? {
+            ...rule,
+            action: 'hide',
+            before: 'visible',
+            targetBlockId: 'comprar-ahora',
+            targetBlockIds: ['comprar-ahora']
+          }
+          : rule)
+      }
+    })
+
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{ path: '', content: renderPage(rulesAttribute(initialRules)) }]
+    })
+
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.equal(videoBlock.settings.videoActions.find(rule => rule.id === 'mostrar-oferta')?.action, 'hide')
+    assert.deepEqual(videoBlock.settings.videoActions.find(rule => rule.id === 'mostrar-oferta')?.targetBlockIds, ['comprar-ahora'])
+
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{ path: '', content: renderPage() }]
+    })
+
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.equal(videoBlock.settings.videoActions.length, 2)
+    assert.ok(videoBlock.settings.videoActions.some(rule => rule.id === 'mostrar-oferta'))
+
+    const updatedRules = [{
+      id: 'mostrar-oferta',
+      trigger: { type: 'playback_seconds', value: 180 },
+      action: 'show',
+      targetIds: ['oferta-final'],
+      before: 'hidden'
+    }, {
+      id: 'ocultar-oferta',
+      triggerType: 'timeline_reached',
+      triggerValue: 300,
+      action: 'hide',
+      targetBlockIds: ['oferta-final'],
+      before: 'visible'
+    }]
+
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{ path: '', content: renderPage(rulesAttribute(updatedRules)) }]
+    })
+
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.equal(videoBlock.settings.videoActions.length, 3)
+    assert.equal(videoBlock.settings.videoActions.find(rule => rule.id === 'mostrar-oferta')?.triggerType, 'playback_seconds')
+    assert.equal(videoBlock.settings.videoActions.find(rule => rule.id === 'mostrar-oferta')?.triggerValue, 180)
+    assert.equal(videoBlock.settings.videoActions.find(rule => rule.id === 'mostrar-oferta')?.action, 'hide')
+    assert.deepEqual(videoBlock.settings.videoActions.find(rule => rule.id === 'mostrar-oferta')?.targetBlockIds, ['comprar-ahora'])
+    assert.equal(videoBlock.settings.videoActions.find(rule => rule.id === 'ocultar-oferta')?.timeSeconds, 300)
+
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{
+        path: '',
+        content: renderPage(rulesAttribute([{ id: 'mostrar-oferta', deleted: true }, { id: 'ocultar-oferta', deleted: true }]))
+      }]
+    })
+
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.deepEqual(videoBlock.settings.importedHtmlVideoRuleIds, [])
+    assert.deepEqual(videoBlock.settings.videoActions.map(rule => rule.id), ['accion-manual'])
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('a newly connected imported video inherits declarative rules already present in the HTML', async () => {
+  let siteId = ''
+
+  try {
+    const rules = [{
+      id: 'mostrar-formulario',
+      triggerType: 'playback_seconds',
+      triggerValue: 180,
+      action: 'show',
+      targetBlockIds: ['formulario-oferta'],
+      before: 'hidden',
+      value: 'Oferta > formulario'
+    }]
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <div
+            data-rstk-native-element="video"
+            data-rstk-native-id="video-principal"
+            data-rstk-video-rules='${JSON.stringify(rules)}'
+          ></div>
+          <form id="formulario-oferta" data-rstk-form-id="formulario-oferta"></form>
+        </body>
+      </html>
+    `, `HTML video rules before mapping ${Date.now()}`)
+    siteId = site.id
+
+    const saved = await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/video-before-mapping.mp4'
+      }
+    })
+
+    const videoBlock = saved.blocks.find(block => block.blockType === 'video')
+    assert.ok(videoBlock)
+    assert.equal(videoBlock.settings.videoActions.length, 1)
+    assert.equal(videoBlock.settings.videoActions[0].id, 'mostrar-formulario')
+    assert.equal(videoBlock.settings.videoActions[0].triggerType, 'playback_seconds')
+    assert.equal(videoBlock.settings.videoActions[0].triggerValue, 180)
+    assert.equal(videoBlock.settings.videoActions[0].value, 'Oferta > formulario')
+    assert.deepEqual(videoBlock.settings.importedHtmlVideoRuleIds, ['mostrar-formulario'])
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('draft changes made before connecting an imported video override declarative defaults', async () => {
+  let siteId = ''
+
+  try {
+    const rules = [{
+      id: 'mostrar-oferta',
+      triggerType: 'unique_watched_percent',
+      triggerValue: 50,
+      action: 'show',
+      targetBlockIds: ['oferta-final'],
+      before: 'hidden'
+    }]
+    const html = `
+      <!doctype html>
+      <html>
+        <body>
+          <div
+            data-rstk-native-element="video"
+            data-rstk-native-id="video-principal"
+            data-rstk-video-rules='${JSON.stringify(rules)}'
+          ></div>
+          <section id="oferta-final" data-rstk-video-action-target="oferta-final"></section>
+        </body>
+      </html>
+    `
+    const site = await createImportedNativeSite(html, `HTML video draft override ${Date.now()}`)
+    siteId = site.id
+
+    const saved = await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/video-draft-override.mp4',
+        videoActions: [{
+          ...rules[0],
+          triggerValue: 65,
+          action: 'hide',
+          before: 'visible'
+        }]
+      }
+    })
+
+    let videoBlock = saved.blocks.find(block => block.blockType === 'video')
+    assert.ok(videoBlock)
+    assert.equal(videoBlock.settings.videoActions[0].triggerValue, 65)
+    assert.equal(videoBlock.settings.videoActions[0].action, 'hide')
+    assert.equal(videoBlock.settings.importedHtmlVideoRuleDeclarations['mostrar-oferta'].triggerValue, 50)
+
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{ path: '', content: html }]
+    })
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.equal(videoBlock.settings.videoActions[0].triggerValue, 65)
+    assert.equal(videoBlock.settings.videoActions[0].action, 'hide')
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
