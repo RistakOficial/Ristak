@@ -174,13 +174,26 @@ SELECT COUNT(*) FROM sessions;
 
 ### CORS
 
-El pixel está pensado para same-origin. Carga el script y envía `/collect` desde el mismo host:
+Aunque `snip.js` y `/collect` vivan en el mismo host de tracking, el código se
+ejecuta dentro de la página del negocio. Para el navegador,
+`www.tudominio.com -> track.tudominio.com` es una llamada cross-origin porque los
+subdominios son distintos.
+
+Las rutas públicas del pixel tienen CORS propio, sin credenciales, para aceptar
+orígenes web `http(s)` sin abrir la allowlist privada del dashboard. No agregues
+el sitio del negocio a `CORS_ALLOWED_ORIGINS`: esa variable pertenece a la app
+privada y el tracking externo no debe depender de configuración manual en
+Render.
+
+Carga el script desde el dominio verificado de tracking:
 
 ```html
 <script async src="https://collect.tudominio.com/snip.js"></script>
 ```
 
-No mezcles `snip.js` de un dominio con `collect` de otro.
+El script genera `/collect` en ese mismo host. En DevTools, el preflight
+`OPTIONS` debe devolver `Access-Control-Allow-Origin` con el origen de la página
+y el `POST /collect` debe terminar en `200`.
 
 ### Analíticas no aparecen
 

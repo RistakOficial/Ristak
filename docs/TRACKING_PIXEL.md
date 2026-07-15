@@ -12,6 +12,13 @@ Esta documentación describe el comportamiento real del código en:
 
 El backend sirve un pixel JavaScript dinámico en `GET /snip.js`. Ese pixel envía eventos a `POST /collect` en el mismo host donde se cargó el script.
 
+El host del script y del colector puede ser el mismo, pero el origen del
+navegador es la página que ejecuta el pixel. Por ejemplo,
+`https://www.ejemplo.com` hacia `https://track.ejemplo.com/collect` es
+cross-origin. `publicTrackingRoutes` aplica CORS público específico, sin
+credenciales y limitado a orígenes web `http(s)`, mientras la allowlist global
+del dashboard sigue protegiendo las APIs privadas.
+
 Cada evento recibido se inserta como una fila nueva en la tabla `sessions`. No es una tabla agregada por sesión: `session_start`, `page_view`, `session_end` y eventos custom pueden compartir `session_id`, pero cada evento tiene su propio `id`.
 
 ## Datos Que Captura
@@ -53,6 +60,11 @@ curl http://localhost:3001/snip.js
 ### `POST /collect`
 
 Recibe eventos del pixel. Límite real: 50 KB por request validado con `content-length`.
+
+El preflight `OPTIONS /collect` acepta el origen web externo y responde `204`
+con `Access-Control-Allow-Origin`. Este contrato no depende de `APP_URL`,
+`RENDER_EXTERNAL_URL` ni `CORS_ALLOWED_ORIGINS`; esas variables controlan la
+superficie privada de la aplicación, no el transporte público del pixel.
 
 Body mínimo:
 
@@ -550,8 +562,8 @@ curl 'http://localhost:3001/api/tracking/sessions?limit=10'
 
 ## Producción
 
-Para same-origin real, usa un dominio o CNAME que llegue al mismo servicio donde
-vive Ristak. Después de darlo de alta en Render, entra a **Configuración ->
+Usa un dominio o CNAME que llegue al mismo servicio donde vive Ristak. Después
+de darlo de alta en Render, entra a **Configuración ->
 Rastreo Web**, escríbelo en **Dominio personalizado** y presiona **Validar y
 guardar**. El pixel aparece en esa misma pantalla en cuanto Ristak confirma que
 el dominio ya responde con la identidad de esta instalación; no necesitas abrir
@@ -564,6 +576,11 @@ Ejemplo:
 ```
 
 Si el sitio es HighLevel, puedes guardar el snippet con **Configuración -> Rastreo Web -> Sincronizar** y luego usar el custom value `rstktrack`.
+
+El sitio que ejecuta el pixel y el subdominio de tracking normalmente son
+orígenes diferentes. Las rutas públicas de tracking resuelven ese cruce con
+CORS propio; nunca abras por reflejo el CORS privado de toda la app ni agregues
+dominios de páginas como secrets de Render.
 
 ## Notas De Seguridad Y Privacidad
 

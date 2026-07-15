@@ -3565,6 +3565,11 @@ Tracking:
 
 - `/snip.js` instala el pixel Ristak.
 - `/collect` y rutas de tracking guardan eventos.
+- El pixel se ejecuta en el origen de la página, aunque `snip.js` y `/collect`
+  compartan host. `publicTrackingRoutes` usa CORS público propio, sin
+  credenciales y limitado a orígenes web `http(s)`; la allowlist CORS global
+  sigue reservada para el dashboard y las APIs privadas. El tracking externo no
+  depende de `CORS_ALLOWED_ORIGINS` ni de agregar dominios manualmente en Render.
 - `sessions` conserva evento/sesion/visitante, UTMs, click IDs, geo, device,
   identidad y matching.
 - Sites y formularios pueden emitir eventos Meta y Ristak.

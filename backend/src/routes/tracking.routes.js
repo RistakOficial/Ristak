@@ -30,9 +30,15 @@ import {
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { publicTrackingCorsMiddleware } from '../middleware/publicTrackingCors.js'
 
 export const publicTrackingRoutes = express.Router()
 const router = express.Router()
+
+// El pixel corre en dominios externos (HighLevel, Sites, tiendas, etc.). Su
+// transporte publico necesita CORS propio y sin credenciales; no debe heredar la
+// allowlist privada del dashboard ni depender de variables manuales de Render.
+publicTrackingRoutes.use(publicTrackingCorsMiddleware)
 
 // Servir pixel JavaScript
 publicTrackingRoutes.get('/snip.js', servePixel)
