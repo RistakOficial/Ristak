@@ -38,9 +38,13 @@ test('PhoneChat ofrece rutas explicitas de HighLevel junto a cada WhatsApp nativ
   assert.match(source, /HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID = '__highlevel_whatsapp__'/)
   assert.match(source, /value: 'whatsapp_api', label: 'WhatsApp · HighLevel'/)
   assert.match(source, /value: 'sms_qr', label: 'SMS · HighLevel'/)
-  assert.match(source, /\.\.\.whatsappOptions,[\s\S]*?\.\.\.baseComposerMessageChannelOptions/)
+  assert.match(source, /HIGHLEVEL_SMS_ROUTE_PREFIX = 'sms:highlevel:'/)
+  assert.match(source, /highLevelPhoneNumbers\.map\(\(phone\)[\s\S]*?description: phone\.phoneNumber/)
+  assert.match(source, /\.\.\.whatsappOptions,[\s\S]*?\.\.\.highLevelSmsOptions,[\s\S]*?\.\.\.baseOptions/)
   assert.match(source, /value === 'whatsapp_api'[\s\S]*?!highLevelConnected/)
   assert.match(source, /nextChannel === 'sms_qr'[\s\S]*?HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID/)
+  assert.match(source, /fromNumber: requestedChannel === 'sms_qr' \? selectedHighLevelFromNumber/)
+  assert.match(source, /fromPhone: provider === 'highlevel'[\s\S]*?selectedHighLevelFromNumber/)
 })
 
 test('DesktopChat no usa HighLevel como rescate silencioso de un numero nativo', async () => {
@@ -71,6 +75,8 @@ test('DesktopChat permite elegir WhatsApp o SMS de HighLevel aunque existan nume
   assert.match(source, /HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID = '__highlevel_whatsapp__'/)
   assert.match(source, /HIGHLEVEL_WHATSAPP_COMPOSER_VALUE = 'whatsapp:highlevel'/)
   assert.match(source, /value: 'sms', label: 'SMS · HighLevel'/)
+  assert.match(source, /HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX = 'sms:highlevel:'/)
+  assert.match(source, /highLevelPhoneNumbers\.map\(\(phone\)[\s\S]*?phone\.phoneNumber/)
   assert.match(source, /label: 'WhatsApp · HighLevel'/)
   assert.match(source, /if \(channel === 'sms'\) return 'sms_qr'/)
   assert.match(source, /nextBusinessPhoneId === 'highlevel'[\s\S]*?HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID/)
@@ -78,5 +84,18 @@ test('DesktopChat permite elegir WhatsApp o SMS de HighLevel aunque existan nume
   assert.match(sendSource, /sendAttachmentsThroughHighLevel[\s\S]*?composerChannel === 'sms'/)
   assert.match(sendSource, /sendVoiceThroughHighLevel[\s\S]*?composerChannel === 'sms'/)
   assert.match(sendSource, /composerChannel === 'whatsapp' && !selectedBusinessPhone/)
-  assert.doesNotMatch(sendSource, /highLevelService\.sendConversationMessage\(\{[\s\S]{0,500}?fromNumber: selectedBusinessPhoneValue/)
+  assert.match(sendSource, /fromNumber: activeConversationChannel === 'sms_qr' \? selectedHighLevelFromNumber/)
+  assert.doesNotMatch(sendSource, /fromNumber: selectedBusinessPhoneValue/)
+})
+
+test('apps nativas separan WhatsApp HighLevel de cada remitente SMS de HighLevel', async () => {
+  const android = await readSource('mobile/src/App.tsx')
+  const ios = await readSource('ios/app/Ristak/Features/Chats/Thread/ConversationViewModel.swift')
+
+  assert.match(android, /value: `highlevel:sms:\$\{phone\.id \|\| index\}`/)
+  assert.match(android, /fromNumber: selectedHighLevelFromNumber/)
+  assert.match(android, /label: 'WhatsApp · HighLevel'/)
+  assert.match(ios, /\.sms\(fromNumber: phone\.phoneNumber\)/)
+  assert.match(ios, /fromNumber: selectedChannel\.highLevelFromNumber/)
+  assert.match(ios, /title: "WhatsApp · HighLevel"/)
 })

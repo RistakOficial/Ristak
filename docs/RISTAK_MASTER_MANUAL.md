@@ -1333,16 +1333,21 @@ histórica de YCloud; Meta directo se valida con
 fila nativa de WhatsApp coexisten, elegir esa fila conserva la ruta nativa:
 HighLevel sólo puede manejar WhatsApp cuando el usuario elige explícitamente
 `WhatsApp · HighLevel`, nunca como fallback silencioso de una fila
-indisponible. Con HighLevel conectado, el selector muestra además
-`SMS · HighLevel` sin ocultar las filas nativas. Cada selección limpia o conserva
-el remitente nativo según la ruta elegida, de modo que texto, adjuntos, audio y
-programación salgan por el proveedor visible. La
+indisponible. Con HighLevel conectado, el selector agrega `WhatsApp · HighLevel`
+y consulta el inventario activo de LC Phone para mostrar cada remitente SMS como
+`SMS · <etiqueta> · <numero>` sin ocultar las filas nativas. Elegir un SMS pasa
+su `fromNumber` a HighLevel en texto, adjuntos, audio y programación. Si el token
+instalado todavía no tiene `phonenumbers.read`, o HighLevel no devuelve números,
+el selector conserva `SMS · HighLevel` como fallback y deja que la cuenta resuelva
+su remitente predeterminado. Cada selección limpia o conserva el remitente nativo
+según la ruta elegida, de modo que el envío salga por el proveedor visible. La
 ventana de 24 horas se calcula para el número elegido y, al cerrarse, el composer
 debe exigir plantilla oficial. Texto, adjuntos, audio, reacciones y programación
 mantienen esa misma decisión de proveedor.
 
-Los envíos por HighLevel no incluyen el remitente nativo seleccionado en Ristak:
-HighLevel resuelve su propio número y conversación. Si el `ghl_contact_id`
+Los envíos por HighLevel nunca incluyen el remitente de una fila nativa de
+WhatsApp. `WhatsApp · HighLevel` y el fallback genérico resuelven su número en la
+cuenta; sólo una fila SMS explícita incluye su propio `fromNumber`. Si el `ghl_contact_id`
 guardado ya no existe, Ristak busca o recrea el contacto por teléfono/correo,
 persiste el vínculo reparado y reintenta el envío una sola vez únicamente ante
 `CONVERSATIONS_CONTACT_NOT_FOUND`.
@@ -1586,8 +1591,10 @@ En el chat movil, el selector de canal del composer no debe mostrar rutas
 fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia el
 `phoneNumberId` elegido en texto, adjuntos, ubicacion y mensajes programados.
 Si HighLevel está conectado, esas opciones nativas coexisten con
-`WhatsApp · HighLevel` y `SMS · HighLevel`; elegir una ruta HighLevel no arrastra
-el `phoneNumberId` nativo anterior. Elegir un WhatsApp nativo desde el botón
+`WhatsApp · HighLevel` y una fila por cada número SMS activo de HighLevel; elegir
+una de esas filas aplica su `fromNumber`, y elegir cualquier ruta HighLevel no
+arrastra el `phoneNumberId` nativo anterior. Sin permiso/catálogo de números se
+mantiene el fallback `SMS · HighLevel`. Elegir un WhatsApp nativo desde el botón
 inferior guarda `preferred_whatsapp_phone_number_id` en el contacto; `/movil`,
 React Native Android e iOS deben abrir después con el mismo remitente. En iOS el
 botón vive en el panel inferior antes de `+`, además del acceso equivalente

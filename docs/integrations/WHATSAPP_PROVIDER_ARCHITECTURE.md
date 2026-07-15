@@ -66,9 +66,11 @@ permanece autoritativa aunque HighLevel también esté conectado. HighLevel sól
 es ruta de WhatsApp cuando el usuario elige explícitamente `WhatsApp · HighLevel`;
 nunca es respaldo silencioso de una fila Meta directo, YCloud o QR indisponible.
 Cuando HighLevel está conectado, el selector conserva todas las filas nativas y
-agrega dos rutas propias e independientes: `WhatsApp · HighLevel` y
-`SMS · HighLevel`. Elegir una de esas rutas limpia el remitente nativo del envío
-para que HighLevel use la conversación y el número configurados en su cuenta.
+agrega una ruta `WhatsApp · HighLevel` y una fila por cada número SMS activo de
+LC Phone. Una fila SMS manda su teléfono como `fromNumber`; WhatsApp HighLevel
+nunca reutiliza el número nativo seleccionado. Si el OAuth instalado carece de
+`phonenumbers.read` o el inventario viene vacío, aparece el fallback
+`SMS · HighLevel` y la cuenta resuelve su remitente predeterminado.
 Si el vínculo `ghl_contact_id` quedó obsoleto porque el contacto fue eliminado o
 la cuenta cambió, el primer `CONVERSATIONS_CONTACT_NOT_FOUND` obliga a buscar o
 recrear el contacto por teléfono/correo, guardar el vínculo nuevo y reintentar

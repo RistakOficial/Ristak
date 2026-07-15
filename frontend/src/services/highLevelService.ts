@@ -17,6 +17,21 @@ interface HighLevelConfig {
 
 export type HighLevelChatChannel = 'whatsapp_api' | 'sms_qr' | 'messenger' | 'instagram' | 'email'
 
+export interface HighLevelPhoneNumber {
+  id: string
+  phoneNumber: string
+  label: string
+  isDefault: boolean
+}
+
+export interface HighLevelPhoneNumberCatalog {
+  success: boolean
+  phoneNumbers: HighLevelPhoneNumber[]
+  selectable: boolean
+  fallbackToAccountDefault: boolean
+  reason?: string | null
+}
+
 export interface HighLevelAttachmentDataUrl {
   dataUrl: string
   filename?: string
@@ -134,6 +149,22 @@ class HighLevelService {
     } catch (error) {
       // TODO: Implement proper logging service
       return { configured: false }
+    }
+  }
+
+  async getPhoneNumbers(): Promise<HighLevelPhoneNumberCatalog> {
+    const response = await fetch(apiUrl('/api/highlevel/phone-numbers'))
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.error || 'No se pudieron consultar los números SMS de HighLevel')
+    }
+
+    return {
+      success: data.success !== false,
+      phoneNumbers: Array.isArray(data.phoneNumbers) ? data.phoneNumbers : [],
+      selectable: Boolean(data.selectable),
+      fallbackToAccountDefault: data.fallbackToAccountDefault !== false,
+      reason: data.reason || null
     }
   }
 

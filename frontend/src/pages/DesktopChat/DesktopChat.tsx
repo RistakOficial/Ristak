@@ -112,7 +112,7 @@ import {
 } from '@/services/contactsService'
 import { subscribeToChatLiveEvents, reportViewing, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
 import { emailService } from '@/services/emailService'
-import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
+import { highLevelService, type HighLevelChatChannel, type HighLevelPhoneNumber } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
   messageTemplatesService,
@@ -615,6 +615,7 @@ const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
 const HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID = '__highlevel_whatsapp__'
 const HIGHLEVEL_WHATSAPP_COMPOSER_VALUE = 'whatsapp:highlevel'
+const HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX = 'sms:highlevel:'
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CANCELED_APPOINTMENT_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'invalid', 'failed', 'missed', 'deleted', 'void', 'voided'])
 const COMPOSER_CHANNEL_OPTIONS: Array<{ value: ComposerChannel; label: string }> = [
@@ -3346,6 +3347,7 @@ export const DesktopChat: React.FC = () => {
   // seleccionado o del botón de la tarjeta, que fija el target exacto.
   const [commentReplyTarget, setCommentReplyTarget] = useState<CommentReplyTarget | null>(null)
   const [composerBusinessPhoneId, setComposerBusinessPhoneId] = useState('')
+  const [composerHighLevelFromNumber, setComposerHighLevelFromNumber] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
   const [emailBodyHtml, setEmailBodyHtml] = useState('')
   const [emailIncludeSignature, setEmailIncludeSignature] = useState(true)
@@ -3383,6 +3385,7 @@ export const DesktopChat: React.FC = () => {
   const [messageReactionMenu, setMessageReactionMenu] = useState<MessageReactionMenuState | null>(null)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
+  const [highLevelPhoneNumbers, setHighLevelPhoneNumbers] = useState<HighLevelPhoneNumber[]>([])
   const [metaMessengerConnected, setMetaMessengerConnected] = useState(false)
   const [metaInstagramConnected, setMetaInstagramConnected] = useState(false)
   const [emailConnected, setEmailConnected] = useState(false)
@@ -3479,6 +3482,15 @@ export const DesktopChat: React.FC = () => {
     ? getBusinessPhoneDisplay(whatsappPreferenceRoutePhone)
     : 'Sin número configurado'
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
+  const defaultHighLevelPhoneNumber = useMemo(() => (
+    highLevelPhoneNumbers.find((phone) => phone.isDefault) || highLevelPhoneNumbers[0] || null
+  ), [highLevelPhoneNumbers])
+  const selectedHighLevelFromNumber = composerChannel === 'sms'
+    ? composerHighLevelFromNumber || defaultHighLevelPhoneNumber?.phoneNumber || ''
+    : ''
+  const selectedHighLevelPhoneNumber = selectedHighLevelFromNumber
+    ? highLevelPhoneNumbers.find((phone) => phone.phoneNumber === selectedHighLevelFromNumber) || null
+    : null
   const whatsappConnected = Boolean(
     selectedBusinessPhoneValue && isWhatsAppPhoneApiAvailable(selectedBusinessPhone, whatsappStatus)
   )
@@ -3553,6 +3565,7 @@ export const DesktopChat: React.FC = () => {
     if (!activeContact) {
       setComposerChannel('whatsapp')
       setComposerBusinessPhoneId('')
+      setComposerHighLevelFromNumber('')
       setEmailSubject('')
       setEmailBodyHtml('')
       setEmailIncludeSignature(true)
@@ -3569,10 +3582,11 @@ export const DesktopChat: React.FC = () => {
         ? HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
         : defaultComposerBusinessPhone?.id || ''
     )
+    setComposerHighLevelFromNumber(defaultChannel === 'sms' ? defaultHighLevelPhoneNumber?.phoneNumber || '' : '')
     setEmailSubject('')
     setEmailBodyHtml('')
     setEmailIncludeSignature(true)
-  }, [activeContact?.id, defaultComposerBusinessPhone?.id, highLevelConnected])
+  }, [activeContact?.id, defaultComposerBusinessPhone?.id, defaultHighLevelPhoneNumber?.phoneNumber, highLevelConnected])
   useEffect(() => {
     setComposerBusinessPhoneId((current) => {
       if (!activeContact) return ''
@@ -3581,6 +3595,13 @@ export const DesktopChat: React.FC = () => {
       return defaultComposerBusinessPhone?.id || ''
     })
   }, [activeContact, businessPhones, defaultComposerBusinessPhone?.id, highLevelConnected])
+  useEffect(() => {
+    setComposerHighLevelFromNumber((current) => {
+      if (!highLevelConnected || highLevelPhoneNumbers.length === 0) return ''
+      if (current && highLevelPhoneNumbers.some((phone) => phone.phoneNumber === current)) return current
+      return defaultHighLevelPhoneNumber?.phoneNumber || ''
+    })
+  }, [defaultHighLevelPhoneNumber?.phoneNumber, highLevelConnected, highLevelPhoneNumbers])
   const filteredTemplates = useMemo(() => {
     const query = templateSearch.trim().toLowerCase()
     if (!query) return templates
@@ -4108,11 +4129,19 @@ export const DesktopChat: React.FC = () => {
       ]
     }
     if (option.value === 'sms') {
-      return [{
-        ...option,
+      const highLevelSmsOptions = highLevelPhoneNumbers.map((phone) => ({
+        value: `${HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX}${phone.id}`,
+        label: `SMS · ${phone.label} · ${phone.phoneNumber}`,
         icon: renderComposerChannelIcon(option.value),
         disabled: !activeContact?.phone || !highLevelConnected
-      }]
+      }))
+      return highLevelSmsOptions.length > 0
+        ? highLevelSmsOptions
+        : [{
+            ...option,
+            icon: renderComposerChannelIcon(option.value),
+            disabled: !activeContact?.phone || !highLevelConnected
+          }]
     }
     if (option.value === 'email') {
       if (!hasEmailAccess) return []
@@ -4138,7 +4167,9 @@ export const DesktopChat: React.FC = () => {
         : highLevelConnected
           ? HIGHLEVEL_WHATSAPP_COMPOSER_VALUE
           : composerChannel
-    : composerChannel
+    : composerChannel === 'sms' && selectedHighLevelPhoneNumber
+      ? `${HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX}${selectedHighLevelPhoneNumber.id}`
+      : composerChannel
   const composerChannelReady = isEmailComposer
     ? Boolean(hasEmailAccess && activeContact?.email && emailChannelConnected)
     : isCommentComposerChannel(composerChannel)
@@ -4771,9 +4802,18 @@ export const DesktopChat: React.FC = () => {
         calendarsService.getCalendars(locationId, accessToken).catch(() => []),
         conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
       ])
+      const highLevelIsConnected = Boolean(integrationsStatus?.highlevel?.connected)
+      const highLevelPhoneCatalog = highLevelIsConnected
+        ? await highLevelService.getPhoneNumbers().catch(() => null)
+        : null
       const stateList = await conversationalAgentService.listStates().catch(() => [] as ConversationAgentState[])
       setWhatsappStatus(status)
-      setHighLevelConnected(Boolean(integrationsStatus?.highlevel?.connected))
+      setHighLevelConnected(highLevelIsConnected)
+      setHighLevelPhoneNumbers(
+        highLevelIsConnected && Array.isArray(highLevelPhoneCatalog?.phoneNumbers)
+          ? highLevelPhoneCatalog.phoneNumbers
+          : []
+      )
       setMetaMessengerConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.pageId))
       setMetaInstagramConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.instagramAccountId))
       setEmailConnected(Boolean(emailStatus?.connected))
@@ -5629,7 +5669,10 @@ export const DesktopChat: React.FC = () => {
   }, [activeContact, automaticWhatsAppRoutePhone, contactInfoData, savingWhatsAppPreference, showToast])
 
   const handleComposerChannelChange = useCallback((value: string) => {
-    const nextChannel = normalizeComposerChannel(value)
+    const highLevelSmsPhoneId = value.startsWith(HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX)
+      ? value.slice(HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX.length)
+      : ''
+    const nextChannel = highLevelSmsPhoneId ? 'sms' : normalizeComposerChannel(value)
     if (!isCommentComposerChannel(nextChannel)) {
       setCommentReplyTarget(null)
     }
@@ -5652,6 +5695,10 @@ export const DesktopChat: React.FC = () => {
       }
     } else if (nextChannel === 'sms') {
       setComposerBusinessPhoneId(HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID)
+      const nextHighLevelPhone = highLevelSmsPhoneId
+        ? highLevelPhoneNumbers.find((phone) => phone.id === highLevelSmsPhoneId)
+        : defaultHighLevelPhoneNumber
+      setComposerHighLevelFromNumber(nextHighLevelPhone?.phoneNumber || '')
     }
     setComposerMenuOpen(false)
     closeTemplatePanel()
@@ -5661,7 +5708,7 @@ export const DesktopChat: React.FC = () => {
       setVoiceDraft(null)
       setVoiceElapsedMs(0)
     }
-  }, [closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, emailBodyHtml, handleUpdatePreferredWhatsAppPhoneNumber])
+  }, [closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, defaultHighLevelPhoneNumber, emailBodyHtml, handleUpdatePreferredWhatsAppPhoneNumber, highLevelPhoneNumbers])
 
   const handleOpenTemplatePanel = useCallback(() => {
     setComposerMenuOpen(false)
@@ -6135,7 +6182,9 @@ export const DesktopChat: React.FC = () => {
         transport,
         text,
         toPhone: activeContact.phone || undefined,
-        fromPhone: provider === 'highlevel' ? undefined : selectedBusinessPhoneValue || undefined,
+        fromPhone: provider === 'highlevel'
+          ? channel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined
+          : selectedBusinessPhoneValue || undefined,
         businessPhoneNumberId: selectedBusinessPhone?.id || undefined,
         scheduledAt: scheduledDate.toISOString(),
         externalId: editingScheduledMessageId || undefined
@@ -6196,6 +6245,7 @@ export const DesktopChat: React.FC = () => {
     schedulingMessage,
     selectedBusinessPhone?.id,
     selectedBusinessPhoneValue,
+    selectedHighLevelFromNumber,
     showToast,
     voiceDraft,
     whatsappConnected
@@ -7095,6 +7145,7 @@ export const DesktopChat: React.FC = () => {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
           channel: activeConversationChannel,
+          fromNumber: activeConversationChannel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined,
           message: '',
           audioDataUrl: voiceToSend.dataUrl,
           durationMs: voiceToSend.durationMs,
@@ -7165,6 +7216,7 @@ export const DesktopChat: React.FC = () => {
           const result = await highLevelService.sendConversationMessage({
             contactId: activeContact.id,
             channel: activeConversationChannel,
+            fromNumber: activeConversationChannel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined,
             message: text,
             attachmentDataUrls: attachmentsToSend.map((attachment) => ({
               dataUrl: attachment.dataUrl,
@@ -7448,6 +7500,7 @@ export const DesktopChat: React.FC = () => {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
           channel: activeConversationChannel,
+          fromNumber: activeConversationChannel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined,
           message: text,
           toNumber: activeContact.phone || undefined,
           externalId: optimisticId

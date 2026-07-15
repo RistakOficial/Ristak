@@ -276,9 +276,9 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     avatar/foto/inicial sin aro de canal, badge nativo, nombre del contacto,
     detalle principal y acciones de agente, etiqueta y busqueda en el header. El
     agente conversacional ya tiene boton compacto, alerta visual y banner de
-    estado cuando aplica. Falta replicar estado online exacto y selector de
-    numero/remitente de
-    `/movil`.
+    estado cuando aplica. El selector inferior ya replica cada WhatsApp nativo,
+    `WhatsApp · HighLevel` y cada remitente SMS activo de HighLevel; falta
+    replicar el estado online exacto.
 - [ ] Timeline con globos inbound/outbound, email desplegable, media, ubicacion,
   notas de voz, documentos y comentarios FB/IG.
   - Avance: el parser nativo de `buildMessagesFromJourney` ya entiende
@@ -307,14 +307,12 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     enviar, quitar del agente y enviar o cancelar. Falta voice note real,
     ubicacion, sugerencia IA, plantillas, picker avanzado de fecha/hora y
     soporte de video/audio/documento desde el picker.
-- [ ] Envio por canal correcto: WhatsApp API, QR, HighLevel, Messenger,
+- [x] Envio por canal correcto: WhatsApp API, QR, HighLevel, Messenger,
   Instagram, email/SMS cuando aplique.
-  - Avance: texto nativo usa `/whatsapp-api/messages/text`; fotos del composer
-    usan `/whatsapp-api/messages/image`; programacion usa
-    `/whatsapp-api/messages/scheduled`; reacciones intentan
-    `/whatsapp-api/messages/reaction`. Falta rutas QR/Baileys, HighLevel,
-    Messenger/Instagram Meta nativo, email/SMS y fallback por ventana de 24h
-    como en `/movil`.
+  - Avance: el composer separa WhatsApp API/QR, HighLevel WhatsApp, cada número
+    SMS de HighLevel y Messenger/Instagram; texto, media, ubicación y programación
+    conservan la ruta elegida. WhatsApp nativo mantiene su ventana de 24 horas y
+    plantillas, mientras SMS HighLevel pasa el `fromNumber` seleccionado.
 - [ ] Info de mensaje, receipts, errores, pendientes y reintentos.
   - Avance: long press sobre globo abre bottom sheet con preview, reacciones
     rapidas, responder e informacion de canal/estado/hora. Los globos muestran

@@ -39,7 +39,7 @@ async function cleanupContact(contactId, marker) {
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
 }
 
-test('HighLevel conversation sender supports WhatsApp, Messenger, Instagram and Email mirrors', async () => {
+test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, Instagram and Email routes', async () => {
   const marker = randomUUID().replace(/-/g, '')
   const contactId = `contact_send_channels_${marker}`
   const phone = `+52656${marker.slice(0, 10).replace(/[a-f]/g, '7')}`
@@ -78,6 +78,13 @@ test('HighLevel conversation sender supports WhatsApp, Messenger, Instagram and 
         channel: 'whatsapp_api',
         message: 'Hola por WhatsApp'
       }, { markHumanTakeover: false })
+      const smsFromNumber = '+19155550199'
+      const sms = await sendHighLevelConversationMessageCore({
+        contactId,
+        channel: 'sms_qr',
+        fromNumber: smsFromNumber,
+        message: 'Hola por SMS'
+      }, { markHumanTakeover: false })
       const messenger = await sendHighLevelConversationMessageCore({
         contactId,
         channel: 'messenger',
@@ -96,14 +103,16 @@ test('HighLevel conversation sender supports WhatsApp, Messenger, Instagram and 
         html: '<p>Hola por correo</p>'
       }, { markHumanTakeover: false })
 
-      assert.deepEqual(sentPayloads.map(payload => payload.type), ['WhatsApp', 'FB', 'IG', 'Email'])
-      assert.deepEqual([whatsapp.status, messenger.status, instagram.status, email.status], ['sent', 'sent', 'sent', 'sent'])
+      assert.deepEqual(sentPayloads.map(payload => payload.type), ['WhatsApp', 'SMS', 'FB', 'IG', 'Email'])
+      assert.deepEqual([whatsapp.status, sms.status, messenger.status, instagram.status, email.status], ['sent', 'sent', 'sent', 'sent', 'sent'])
       assert.equal(whatsapp.channel, 'whatsapp_api')
+      assert.equal(sms.channel, 'sms_qr')
+      assert.equal(sentPayloads[1].fromNumber, smsFromNumber)
       assert.equal(messenger.channel, 'messenger')
       assert.equal(instagram.channel, 'instagram')
       assert.equal(email.channel, 'email')
 
-      const emailPayload = sentPayloads[3]
+      const emailPayload = sentPayloads[4]
       assert.equal(emailPayload.subject, 'Asunto por correo')
       assert.equal(emailPayload.message, 'Hola por correo')
       assert.equal(emailPayload.html, '<p>Hola por correo</p>')

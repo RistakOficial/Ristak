@@ -359,6 +359,14 @@ ID real en `serverMessageId`. El refresh silencioso empareja ambos IDs y absorbe
 la copia persistida dentro del globo existente; nunca debe borrar el optimista
 para insertar otra fila.
 
+El botón de canal del composer inferior mantiene el mismo catálogo en `/movil`,
+React Native Android e iOS: cada WhatsApp nativo, `WhatsApp · HighLevel` y cada
+número SMS activo de HighLevel aparecen como rutas independientes. Seleccionar un
+SMS pasa su `fromNumber` en texto, archivos, audio, ubicación y programación. Si
+el token HighLevel no permite leer números, el fallback `SMS · HighLevel` sigue
+operativo con el remitente predeterminado de la cuenta. Ninguna ruta HighLevel
+puede heredar el `phoneNumberId` de un WhatsApp nativo.
+
 Los comentarios de Facebook e Instagram en la conversacion nativa deben mantener
 la misma paridad que escritorio y `/movil`: el globo muestra si fue comentario,
 respuesta publica o respuesta privada, y cuando el backend entrega contexto de
