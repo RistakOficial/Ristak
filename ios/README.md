@@ -101,7 +101,8 @@ solo en capa flotante; copy en español.
 - **Chats** (pantalla principal): bandeja con paginación/merge, búsqueda,
   chips de filtro reales + manager persistido en `app_config`, números de
   WhatsApp, presets condicionales, archivados y silenciados (locales), fila
-  fija del Asistente AI, selección múltiple con acciones masivas, long-press
+  fija del Asistente AI, selección múltiple con alcance visible o todo el inbox
+  (incluidas conversaciones no cargadas) y acciones masivas, long-press
   → Más acciones (agente, cita, pago, programar, etiqueta, leído, archivar),
   swipe nativo por fila: izquierda **Más → Archivar/Restaurar** y derecha
   **No leído → Fijar/Desfijar**, con fijados arriba y estado local persistente,

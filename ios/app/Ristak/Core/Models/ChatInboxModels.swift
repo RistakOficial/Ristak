@@ -197,6 +197,36 @@ struct ChatInboxPage: Sendable {
     let hasMore: Bool
 }
 
+/// Estado puro de selección de bandeja. Mantiene ids fuera de la página
+/// renderizada para que "Seleccionar todos" no se degrade a "todos los que ya
+/// cargué" cuando la bandeja está paginada.
+enum ChatInboxSelection {
+    static func normalizedIDs<S: Sequence>(_ candidates: S) -> [String] where S.Element == String {
+        var result: [String] = []
+        var seen: Set<String> = []
+
+        for candidate in candidates {
+            let id = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty, seen.insert(id).inserted else { continue }
+            result.append(id)
+        }
+        return result
+    }
+
+    static func selectingAll(_ ids: [String]) -> Set<String> {
+        Set(normalizedIDs(ids))
+    }
+
+    static func togglingVisible(selected: Set<String>, visible: [String]) -> Set<String> {
+        let visibleIDs = Set(normalizedIDs(visible))
+        guard !visibleIDs.isEmpty else { return selected }
+        if visibleIDs.isSubset(of: selected) {
+            return selected.subtracting(visibleIDs)
+        }
+        return selected.union(visibleIDs)
+    }
+}
+
 /// Helpers de paginación/merge de la bandeja (doc 03 §4.9 y §6.3):
 /// `/contacts/chats` no devuelve total ni cursores; el cliente DEBE deduplicar
 /// por `contact.id` y fusionar páginas conservando avatares ya hidratados.

@@ -61,6 +61,7 @@ import type {
 } from './types';
 import * as FileSystem from 'expo-file-system/legacy';
 import { cleanBaseUrl } from './format';
+import { normalizeChatSelectionIds } from './chatSelectionState';
 
 declare const process: { env?: Record<string, string | undefined> } | undefined;
 
@@ -488,6 +489,47 @@ export class RistakApiClient {
         beforeContactId: options.beforeContactId?.trim() || undefined,
       },
     });
+  }
+
+  async getAllChatIds() {
+    const pageSize = 100;
+    const response = await this.request<Array<string | ChatContact>>('/contacts/chats', {
+      timeoutMs: DEFAULT_API_MUTATION_TIMEOUT_MS,
+      params: {
+        idsOnly: true,
+        limit: pageSize,
+        warmProfilePictures: false,
+      },
+    });
+
+    // Backend actual: arreglo ligero de ids sin limite. Compatibilidad con
+    // instalaciones anteriores: si ignoraron idsOnly, recibimos la primera
+    // pagina de ChatContact y completamos el universo por paginacion.
+    if (response.every((item) => typeof item === 'string')) {
+      return normalizeChatSelectionIds(response);
+    }
+
+    let page = response.filter((item): item is ChatContact => typeof item !== 'string');
+    let offset = page.length;
+    const ids = normalizeChatSelectionIds(page);
+    const seen = new Set(ids);
+
+    while (page.length >= pageSize) {
+      page = await this.getChats('', offset, pageSize, { warmProfilePictures: false });
+      const pageIds = normalizeChatSelectionIds(page);
+      const previousCount = seen.size;
+      pageIds.forEach((id) => {
+        if (seen.has(id)) return;
+        seen.add(id);
+        ids.push(id);
+      });
+      offset += page.length;
+
+      // Un backend legacy que ignore offset no debe crear un loop eterno.
+      if (page.length >= pageSize && seen.size === previousCount) break;
+    }
+
+    return ids;
   }
 
   subscribeToChatLiveEvents(options: ChatLiveSubscribeOptions) {

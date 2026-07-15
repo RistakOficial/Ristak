@@ -140,7 +140,9 @@ struct InboxScreen: View {
                 ChatSelectionPanel(
                     selectedCount: viewModel.selectedIDs.count,
                     allVisibleSelected: viewModel.allVisibleSelected,
+                    isSelectingAll: viewModel.isSelectingAll,
                     isArchivedView: viewModel.archivedViewActive,
+                    onSelectAll: { viewModel.selectAll() },
                     onMarkRead: { viewModel.markSelectedRead() },
                     onArchiveOrRestore: {
                         viewModel.archivedViewActive ? viewModel.restoreSelected() : viewModel.archiveSelected()

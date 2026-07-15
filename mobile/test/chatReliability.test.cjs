@@ -26,6 +26,10 @@ const {
 const { parseSortableDateValue, resolveChatMessageReactions } = require('../src/format.ts');
 const { buildUserCustomFieldRows } = require('../src/contactCustomFields.ts');
 const {
+  normalizeChatSelectionIds,
+  toggleVisibleChatSelectionIds,
+} = require('../src/chatSelectionState.ts');
+const {
   NATIVE_LOCAL_OUTBOX_RETENTION_MS,
   getOldestConversationHistoryCursor,
   hasNewRenderableConversationHistoryMessage,
@@ -53,6 +57,26 @@ function contact(id, lastMessageDate, overrides = {}) {
     ...overrides,
   };
 }
+
+test('seleccionar todos conserva ids que no estan en la pagina visible', () => {
+  const allIds = normalizeChatSelectionIds([
+    { id: 'visible-1' },
+    { id: 'offscreen-1' },
+    'offscreen-2',
+    { id: 'offscreen-1' },
+    { id: '  ' },
+  ]);
+
+  assert.deepEqual(allIds, ['visible-1', 'offscreen-1', 'offscreen-2']);
+  assert.deepEqual(
+    toggleVisibleChatSelectionIds(allIds, ['visible-1']),
+    ['offscreen-1', 'offscreen-2'],
+  );
+  assert.deepEqual(
+    toggleVisibleChatSelectionIds(['offscreen-1'], ['visible-1', 'visible-2']),
+    ['offscreen-1', 'visible-1', 'visible-2'],
+  );
+});
 
 test('info de contacto solo muestra campos definidos por el usuario', () => {
   const rows = buildUserCustomFieldRows([

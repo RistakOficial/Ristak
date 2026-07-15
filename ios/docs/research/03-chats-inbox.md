@@ -557,7 +557,11 @@ Entrada: long-press en fila (háptico) o `Más acciones > Seleccionar`. Durante
 selección: chips ocultos; check circular a la izquierda de cada fila; el panel
 compacto de selección reemplaza la fila `Archivados` (debajo del asistente).
 Controles: conteo seleccionados, `Cancelar`, `Seleccionar visibles` /
-`Deseleccionar visibles`, y menú `Más acciones` con:
+`Deseleccionar visibles`, `Seleccionar todos`, y menú `Más acciones` con:
+- `Seleccionar todos` obtiene el universo completo mediante
+  `GET /contacts/chats?idsOnly=true`: incluye conversaciones paginadas y las
+  ocultas por el filtro actual, y excluye el asistente AI/filas no-chat. Las
+  acciones posteriores usan esos ids aunque sus filas no estén montadas.
 - `Marcar como leídos` — «Quita pendientes de los chats seleccionados.» → optimista + `POST /contacts/chats/read {contactIds}`.
 - `Archivar chats` / `Restaurar chats` — «Mándalos fuera de la bandeja principal.» / «Devuelve estos chats a conversaciones.» (local).
 - `Silenciar chats` / `Quitar silencio` (local).

@@ -167,6 +167,7 @@ import {
   patchChatContactList,
   sortChatContactsByRecency,
 } from './chatListState';
+import { toggleVisibleChatSelectionIds } from './chatSelectionState';
 import {
   getOldestConversationHistoryCursor,
   hasNewRenderableConversationHistoryMessage,
@@ -2706,6 +2707,8 @@ function ChatScreen({
   const [chatPrefsHydrated, setChatPrefsHydrated] = useState(false);
   const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
   const [selectionActionsOpen, setSelectionActionsOpen] = useState(false);
+  const [selectingAllChats, setSelectingAllChats] = useState(false);
+  const selectAllRequestGenerationRef = useRef(0);
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [activeSheet, setActiveSheet] = useState<ChatSheetMode>(null);
   const [closingSheet, setClosingSheet] = useState<ChatSheetMode>(null);
@@ -3475,15 +3478,9 @@ function ChatScreen({
       : sortChatContactsByRecency(nextChats);
     return sortedChats.slice().sort((left, right) => Number(pinnedChatIdSet.has(right.id)) - Number(pinnedChatIdSet.has(left.id)));
   }, [activeFilter, archivedViewOpen, listBaseChats, phoneChatConditionEvalContext, pinnedChatIdSet, settings.sortMode]);
-  const visibleChatIdSet = useMemo(() => new Set(filteredChats.map((contact) => contact.id)), [filteredChats]);
   const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds]);
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds]);
-  const selectedChatContacts = useMemo(
-    () => filteredChats.filter((contact) => selectedChatIdSet.has(contact.id)),
-    [filteredChats, selectedChatIdSet],
-  );
   const selectionActive = selectedChatIds.length > 0;
-  const selectedVisibleChatCount = selectedChatContacts.length;
   const allVisibleChatsSelected = filteredChats.length > 0 && filteredChats.every((contact) => selectedChatIdSet.has(contact.id));
   const archivedChatCount = archivedChatIds.length;
   const canPaginateChatList = !(archivedViewOpen && archivedChatCount === 0);
@@ -4174,6 +4171,8 @@ function ChatScreen({
   };
 
   const clearChatSelection = () => {
+    selectAllRequestGenerationRef.current += 1;
+    setSelectingAllChats(false);
     setSelectedChatIds([]);
     setSelectionActionsOpen(false);
   };
@@ -4189,6 +4188,7 @@ function ChatScreen({
   };
 
   const toggleChatSelection = (contact: ChatContact) => {
+    if (selectingAllChats) return;
     setSelectedChatIds((current) => (
       current.includes(contact.id)
         ? current.filter((id) => id !== contact.id)
@@ -4197,14 +4197,36 @@ function ChatScreen({
   };
 
   const toggleVisibleChatSelection = () => {
+    if (selectingAllChats) return;
     const visibleIds = filteredChats.map((contact) => contact.id);
     setSelectionActionsOpen(false);
-    setSelectedChatIds((current) => {
-      if (visibleIds.length && visibleIds.every((id) => current.includes(id))) {
-        return current.filter((id) => !visibleChatIdSet.has(id));
+    setSelectedChatIds((current) => toggleVisibleChatSelectionIds(current, visibleIds));
+  };
+
+  const selectAllChats = async () => {
+    if (selectingAllChats || bulkActionBusy) return;
+    const requestGeneration = selectAllRequestGenerationRef.current + 1;
+    selectAllRequestGenerationRef.current = requestGeneration;
+    setSelectingAllChats(true);
+    setSelectionActionsOpen(false);
+
+    try {
+      const contactIds = await api.getAllChatIds();
+      if (!chatMountedRef.current || requestGeneration !== selectAllRequestGenerationRef.current) return;
+      if (!contactIds.length) {
+        Alert.alert('Seleccionar todos', 'No hay conversaciones para seleccionar.');
+        return;
       }
-      return Array.from(new Set([...current, ...visibleIds]));
-    });
+      setSelectedChatIds(contactIds);
+      void Haptics.selectionAsync().catch(() => Vibration.vibrate(12));
+    } catch (err) {
+      if (!chatMountedRef.current || requestGeneration !== selectAllRequestGenerationRef.current) return;
+      Alert.alert('Seleccionar todos', err instanceof Error ? err.message : 'No se pudieron cargar todos los contactos.');
+    } finally {
+      if (chatMountedRef.current && requestGeneration === selectAllRequestGenerationRef.current) {
+        setSelectingAllChats(false);
+      }
+    }
   };
 
   const handleChatPress = (contact: ChatContact) => {
@@ -4230,7 +4252,7 @@ function ChatScreen({
   }, []);
 
   const markSelectedChatsAsRead = async () => {
-    const contactIds = selectedChatContacts.map((contact) => contact.id);
+    const contactIds = selectedChatIds;
     if (!contactIds.length || bulkActionBusy) return;
     setBulkActionBusy(true);
     setChats((current) => current.map((contact) => (
@@ -4248,7 +4270,7 @@ function ChatScreen({
   };
 
   const muteSelectedChats = () => {
-    const contactIds = selectedChatContacts.map((contact) => contact.id);
+    const contactIds = selectedChatIds;
     if (!contactIds.length) return;
     // If every selected chat is already muted, unmute them; otherwise mute all.
     const allMuted = contactIds.every((id) => mutedChatIdSet.has(id));
@@ -4264,7 +4286,7 @@ function ChatScreen({
   };
 
   const archiveSelectedChats = () => {
-    const contactIds = selectedChatContacts.map((contact) => contact.id);
+    const contactIds = selectedChatIds;
     if (!contactIds.length) return;
     setArchivedChatIds((current) => {
       const selectedSet = new Set(contactIds);
@@ -4277,20 +4299,15 @@ function ChatScreen({
   };
 
   useEffect(() => {
+    selectAllRequestGenerationRef.current += 1;
+    setSelectingAllChats(false);
     setSelectedChatIds([]);
     setSelectionActionsOpen(false);
   }, [activeFilter, archivedViewOpen, query]);
 
   useEffect(() => {
-    if (!selectionActive) {
-      setSelectionActionsOpen(false);
-      return;
-    }
-    setSelectedChatIds((current) => {
-      const next = current.filter((id) => visibleChatIdSet.has(id));
-      return next.length === current.length ? current : next;
-    });
-  }, [selectionActive, visibleChatIdSet]);
+    if (!selectionActive) setSelectionActionsOpen(false);
+  }, [selectionActive]);
 
   if (assistantOpen) {
     return <AssistantConversationScreen api={api} onBack={() => setAssistantOpen(false)} />;
@@ -4344,16 +4361,18 @@ function ChatScreen({
         <ChatSelectionPanel
           allVisibleSelected={allVisibleChatsSelected}
           archiveLabel={archivedViewOpen ? 'Restaurar seleccionados' : 'Archivar seleccionados'}
-          muteLabel={selectedChatContacts.length > 0 && selectedChatContacts.every((contact) => mutedChatIdSet.has(contact.id)) ? 'Reactivar seleccionados' : 'Silenciar seleccionados'}
-          busy={bulkActionBusy}
-          count={selectedVisibleChatCount}
+          muteLabel={selectedChatIds.length > 0 && selectedChatIds.every((id) => mutedChatIdSet.has(id)) ? 'Reactivar seleccionados' : 'Silenciar seleccionados'}
+          busy={bulkActionBusy || selectingAllChats}
+          count={selectedChatIds.length}
           menuOpen={selectionActionsOpen}
           onArchiveSelected={archiveSelectedChats}
           onClear={clearChatSelection}
           onMarkRead={() => void markSelectedChatsAsRead()}
           onMuteSelected={muteSelectedChats}
+          onSelectAll={() => void selectAllChats()}
           onToggleMenu={() => setSelectionActionsOpen((current) => !current)}
           onToggleVisible={toggleVisibleChatSelection}
+          selectingAll={selectingAllChats}
         />
       ) : showArchiveRow ? (
         <ArchiveRow
@@ -20650,8 +20669,10 @@ function ChatSelectionPanel({
   onClear,
   onMarkRead,
   onMuteSelected,
+  onSelectAll,
   onToggleMenu,
   onToggleVisible,
+  selectingAll,
 }: {
   allVisibleSelected: boolean;
   archiveLabel: string;
@@ -20663,8 +20684,10 @@ function ChatSelectionPanel({
   onClear: () => void;
   onMarkRead: () => void;
   onMuteSelected: () => void;
+  onSelectAll: () => void;
   onToggleMenu: () => void;
   onToggleVisible: () => void;
+  selectingAll: boolean;
 }) {
   return (
       <View style={styles.chatSelectionPanel}>
@@ -20679,13 +20702,6 @@ function ChatSelectionPanel({
           </Text>
           <Text numberOfLines={1} style={styles.chatSelectionHint}>Selección</Text>
         </View>
-        <Pressable accessibilityRole="button" accessibilityState={{ selected: allVisibleSelected }} onPress={onToggleVisible} style={styles.chatSelectionSelectAll}>
-          <LiquidControlBackground selected={allVisibleSelected} />
-          <ListChecks size={16} color={allVisibleSelected ? COLORS.white : COLORS.text} strokeWidth={2.6} />
-          <Text numberOfLines={1} style={[styles.chatSelectionSelectAllText, allVisibleSelected && styles.chatSelectionSelectAllTextActive]}>
-            {allVisibleSelected ? 'Quitar' : 'Visibles'}
-          </Text>
-        </Pressable>
         <Pressable
           accessibilityRole="button"
           disabled={busy}
@@ -20694,6 +20710,37 @@ function ChatSelectionPanel({
         >
           <LiquidControlBackground selected={menuOpen} variant="soft" />
           <MoreHorizontal size={24} color={COLORS.text} strokeWidth={2.55} />
+        </Pressable>
+      </View>
+      <View style={styles.chatSelectionScopeRow}>
+        <Pressable
+          accessibilityLabel="Seleccionar todos los contactos"
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={onSelectAll}
+          style={[styles.chatSelectionSelectAll, busy && styles.disabledButton]}
+        >
+          <LiquidControlBackground />
+          {selectingAll
+            ? <ActivityIndicator color={COLORS.accent} size="small" />
+            : <Users size={16} color={COLORS.text} strokeWidth={2.5} />}
+          <Text numberOfLines={1} style={styles.chatSelectionSelectAllText}>
+            {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityLabel={allVisibleSelected ? 'Deseleccionar contactos visibles' : 'Seleccionar contactos visibles'}
+          accessibilityRole="button"
+          accessibilityState={{ selected: allVisibleSelected }}
+          disabled={busy}
+          onPress={onToggleVisible}
+          style={[styles.chatSelectionSelectAll, busy && styles.disabledButton]}
+        >
+          <LiquidControlBackground selected={allVisibleSelected} />
+          <ListChecks size={16} color={allVisibleSelected ? COLORS.white : COLORS.text} strokeWidth={2.6} />
+          <Text numberOfLines={1} style={[styles.chatSelectionSelectAllText, allVisibleSelected && styles.chatSelectionSelectAllTextActive]}>
+            {allVisibleSelected ? 'Quitar visibles' : 'Visibles'}
+          </Text>
         </Pressable>
       </View>
       {menuOpen ? (
@@ -32843,14 +32890,21 @@ function createAppStyles() {
     justifyContent: 'center',
   },
   chatSelectionSelectAll: {
+    flex: 1,
     minHeight: 38,
-    maxWidth: 112,
     borderRadius: 19,
     ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 7,
     paddingHorizontal: 10,
+  },
+  chatSelectionScopeRow: {
+    flexDirection: 'row',
+    gap: 9,
+    paddingHorizontal: 13,
+    paddingBottom: 10,
   },
   chatSelectionSelectAllText: {
     color: COLORS.text,

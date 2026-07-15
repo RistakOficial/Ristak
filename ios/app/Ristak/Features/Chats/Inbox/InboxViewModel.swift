@@ -168,6 +168,8 @@ final class InboxViewModel {
 
     private(set) var isSelecting = false
     private(set) var selectedIDs: Set<String> = []
+    private(set) var isSelectingAll = false
+    private var selectionRequestGeneration: UInt64 = 0
 
     // MARK: Feedback de UI
 
@@ -260,6 +262,8 @@ final class InboxViewModel {
         searchServerUnavailable = false
         selectedIDs = []
         isSelecting = false
+        isSelectingAll = false
+        selectionRequestGeneration &+= 1
         whatsAppStatus = nil
         customLabels = .defaults
         openAIConfigured = false
@@ -1345,6 +1349,8 @@ final class InboxViewModel {
     // MARK: - Selección múltiple (doc 03 §4.7)
 
     func enterSelection(with contactID: String? = nil) {
+        selectionRequestGeneration &+= 1
+        isSelectingAll = false
         isSelecting = true
         selectedIDs = []
         if let contactID { selectedIDs.insert(contactID) }
@@ -1352,11 +1358,14 @@ final class InboxViewModel {
     }
 
     func cancelSelection() {
+        selectionRequestGeneration &+= 1
+        isSelectingAll = false
         isSelecting = false
         selectedIDs = []
     }
 
     func toggleSelected(contactID: String) {
+        guard !isSelectingAll else { return }
         if selectedIDs.contains(contactID) {
             selectedIDs.remove(contactID)
         } else {
@@ -1370,11 +1379,48 @@ final class InboxViewModel {
     }
 
     func selectVisible() {
-        selectedIDs.formUnion(displayRows.map(\.id))
+        guard !isSelectingAll else { return }
+        selectedIDs = ChatInboxSelection.togglingVisible(
+            selected: selectedIDs,
+            visible: displayRows.map(\.id)
+        )
     }
 
     func deselectVisible() {
+        guard !isSelectingAll else { return }
         selectedIDs.subtract(displayRows.map(\.id))
+    }
+
+    func selectAll() {
+        guard isSelecting, !isSelectingAll else { return }
+        selectionRequestGeneration &+= 1
+        let requestGeneration = selectionRequestGeneration
+        let service = chatsService
+        isSelectingAll = true
+
+        Task { [weak self] in
+            do {
+                let ids = try await service.fetchAllChatIDs()
+                guard let self,
+                      self.isSelecting,
+                      self.selectionRequestGeneration == requestGeneration else { return }
+                guard !ids.isEmpty else {
+                    self.isSelectingAll = false
+                    self.transientAlertMessage = "No hay conversaciones para seleccionar."
+                    return
+                }
+                self.selectedIDs = ChatInboxSelection.selectingAll(ids)
+                self.isSelectingAll = false
+                self.selectionHapticTick &+= 1
+            } catch is CancellationError {
+                guard let self, self.selectionRequestGeneration == requestGeneration else { return }
+                self.isSelectingAll = false
+            } catch {
+                guard let self, self.selectionRequestGeneration == requestGeneration else { return }
+                self.isSelectingAll = false
+                self.transientAlertMessage = "No se pudieron cargar todos los contactos. Intenta de nuevo."
+            }
+        }
     }
 
     /// Bulk `POST /contacts/chats/read` (no dispara vistos de proveedor).

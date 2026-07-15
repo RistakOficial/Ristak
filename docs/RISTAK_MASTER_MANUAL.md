@@ -5798,6 +5798,14 @@ sheets o preview en `/movil`, se debe revisar el equivalente en
 esta activo, enviar un mensaje manual debe pedir primero que el usuario pause el
 agente 24 horas, quite el contacto del agente o cancele; el menu `+` debe poner
 los controles del agente al inicio cuando haya estado de agente asignado.
+
+En iPhone y Android, el modo de seleccion multiple ofrece dos alcances
+distintos: `Visibles` alterna solamente las filas mostradas y `Seleccionar
+todos` incluye literalmente todas las conversaciones seleccionables del inbox,
+aunque esten fuera de pantalla, paginadas o escondidas por el filtro actual. El
+backend expone ese universo como ids ligeros con
+`GET /contacts/chats?idsOnly=true`; las acciones masivas operan sobre la
+seleccion completa y no deben reconstruirla a partir de las filas visibles.
 La bandeja Android expone el Hub del agente conversacional desde el robot de la
 esquina superior izquierda, con control individual para encender/pausar,
 reiniciar omisiones y editar la configuracion principal. Dentro de un chat con

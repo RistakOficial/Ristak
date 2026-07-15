@@ -2907,6 +2907,7 @@ export const getChatContacts = async (req, res) => {
       activityProjection: chatActivityProjection.status,
       complete: chatActivityProjection.ready
     }
+    const selectionIdsOnly = isTruthyQueryValue(req.query.idsOnly || req.query.selectionIdsOnly)
     if (!chatActivityProjection.available) {
       const fallbackConditions = [...conditions]
       const fallbackParams = [...params]
@@ -2919,6 +2920,10 @@ export const getChatContacts = async (req, res) => {
         fallbackParams.push(businessPhoneFilter, businessPhone)
       }
       const fallbackWhere = fallbackConditions.length ? `WHERE ${fallbackConditions.join(' AND ')}` : ''
+      const fallbackLimitSql = selectionIdsOnly ? '' : 'LIMIT ? OFFSET ?'
+      const fallbackQueryParams = selectionIdsOnly
+        ? fallbackParams
+        : [...fallbackParams, limitNumber, offsetNumber]
       const fallbackRows = await db.all(`
         WITH latest_whatsapp AS (
           SELECT
@@ -2987,8 +2992,18 @@ export const getChatContacts = async (req, res) => {
         JOIN contacts c ON c.id = latest_whatsapp.contact_id
         WHERE latest_whatsapp.row_rank = 1
         ORDER BY latest_whatsapp.message_sort DESC, c.id DESC
-        LIMIT ? OFFSET ?
-      `, [...fallbackParams, limitNumber, offsetNumber])
+        ${fallbackLimitSql}
+      `, fallbackQueryParams)
+      if (selectionIdsOnly) {
+        return res.json({
+          success: true,
+          data: [...new Set(fallbackRows.map(row => cleanString(row.id)).filter(Boolean).map(String))],
+          performance: {
+            ...chatProjectionMetadata,
+            fallback: 'bounded-whatsapp'
+          }
+        })
+      }
       const responseRowsWithPhones = await attachContactPhoneNumbers(fallbackRows)
       return res.json({
         success: true,
@@ -3092,6 +3107,39 @@ export const getChatContacts = async (req, res) => {
           FROM chat_contact_activity
         )
       `
+
+    // Selección masiva nativa: devuelve el universo completo de conversaciones
+    // como ids ligeros. No aplica limit/offset porque "Seleccionar todos" debe
+    // incluir también las páginas que todavía no se renderizaron.
+    if (selectionIdsOnly) {
+      const selectionRows = await db.all(`
+        WITH
+        ${chatStatsCtesSql}
+        SELECT chat_stats.contact_id AS id
+        FROM chat_stats
+        JOIN contacts c ON c.id = chat_stats.contact_id
+        ${whereClause}
+        ORDER BY chat_stats.last_message_sort DESC, chat_stats.contact_id DESC
+      `, requestedBusinessScope
+        ? [
+            ...chatActivityScopeKeys.flatMap(scopeKey => [
+              scopeKey,
+              ...params,
+              projectedScopeCandidateLimit
+            ]),
+            ...chatActivityScopeKeys,
+            ...params
+          ]
+        : [
+            ...params
+          ])
+
+      return res.json({
+        success: true,
+        data: [...new Set(selectionRows.map(row => cleanString(row.id)).filter(Boolean).map(String))]
+      })
+    }
+
     // En scoped, el cursor se aplica primero a cada índice para obtener
     // candidatos y se vuelve a aplicar sobre el MAX consolidado. Sin la segunda
     // compuerta, un contacto con un scope nuevo y otro viejo podría reaparecer.
