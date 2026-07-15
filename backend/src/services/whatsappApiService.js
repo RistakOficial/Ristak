@@ -5415,6 +5415,63 @@ function extractMessageText(message = {}) {
   )
 }
 
+// Detecta variables sin resolver ({{1}}, {{nombre}}, ...) para no dar por bueno un
+// cuerpo que quedó a medio renderizar.
+function templateTextHasUnresolvedVariables(text = '') {
+  return /\{\{\s*[\w.]+\s*\}\}/.test(cleanString(text))
+}
+
+async function findLatestTemplateSnapshotComponents({ name, language } = {}) {
+  const cleanName = cleanString(name)
+  if (!cleanName) return null
+  const cleanLanguage = cleanString(language)
+  if (cleanLanguage) {
+    const exact = await db.get(`
+      SELECT components_json
+      FROM whatsapp_api_templates
+      WHERE name = ? AND language = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `, [cleanName, cleanLanguage]).catch(() => null)
+    if (exact?.components_json) return exact
+  }
+  return db.get(`
+    SELECT components_json
+    FROM whatsapp_api_templates
+    WHERE name = ?
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [cleanName]).catch(() => null)
+}
+
+// Reconstruye el cuerpo real de una plantilla (YCloud o Meta) cuando el proveedor solo
+// entrega el nombre interno (p. ej. "recordatorio_cita_un_dia_antes"). Devuelve el texto
+// que ve el cliente usando el snapshot aprobado + los parámetros realmente enviados; si
+// no alcanza para un cuerpo completo devuelve '' para no pisar un texto ya guardado.
+async function resolveTemplateMessageBody(template = {}) {
+  if (!isPlainObject(template)) return ''
+
+  // 1) Texto ya embebido en el propio payload (echoes/QR que traen el contenido).
+  const embedded = extractTemplateMessageText(template)
+  if (embedded && !templateTextHasUnresolvedVariables(embedded)) return embedded
+
+  // 2) Render desde el snapshot aprobado con los parámetros del envío.
+  const snapshot = await findLatestTemplateSnapshotComponents({
+    name: template.name || template.templateName,
+    language: template.language?.code || template.language || template.languageCode
+  })
+  if (snapshot?.components_json) {
+    const rendered = buildRenderedTemplateText({
+      template: snapshot,
+      components: Array.isArray(template.components) ? template.components : [],
+      variables: []
+    })
+    if (rendered && !templateTextHasUnresolvedVariables(rendered)) return rendered
+  }
+
+  return embedded || ''
+}
+
 function normalizeWhatsAppLocation({ latitude, longitude, name, address } = {}) {
   const lat = Number(latitude)
   const lng = Number(longitude)
@@ -7523,6 +7580,22 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     payload.fallbackReason ||
     payload.routingReason
   )
+  // Plantillas API (YCloud / Meta): el echo y los eventos de estado no incluyen el
+  // cuerpo renderizado, solo el nombre interno de la plantilla. Reconstruimos el texto
+  // real desde el snapshot aprobado para que el chat muestre el mensaje enviado y no un
+  // identificador como "recordatorio_cita_un_dia_antes".
+  if (
+    isPlainObject(normalizedMessage.template) &&
+    !cleanString(normalizeMessageTextObject(normalizedMessage.text)?.body)
+  ) {
+    const renderedTemplateBody = await resolveTemplateMessageBody(normalizedMessage.template)
+    if (renderedTemplateBody) {
+      normalizedMessage.text = {
+        ...(isPlainObject(normalizedMessage.text) ? normalizedMessage.text : {}),
+        body: renderedTemplateBody
+      }
+    }
+  }
   const rawMessageText = extractMessageText(normalizedMessage)
   const messageTimestamp = toDateTime(normalizedMessage.sendTime || normalizedMessage.createTime || normalizedMessage.updateTime || payload.createTime) || nowIso()
   const profileName = extractWhatsAppProfileName(normalizedMessage, identity.phone)
@@ -7545,7 +7618,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     extractAttribution(payload, normalizedMessage, rawMessageText),
     messageTimestamp
   )
-  const messageText = stripRistakAdIdMarkersFromText(rawMessageText)
+  let messageText = stripRistakAdIdMarkersFromText(rawMessageText)
   attribution = {
     ...attribution,
     headline: stripRistakAdIdMarkersFromText(attribution.headline),
@@ -7597,6 +7670,15 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const existingMessageBeforePersistence = existingMessage
     ? { ...existingMessage }
     : null
+  // Última barrera: si lo único que pudimos extraer fue el nombre interno de la
+  // plantilla (el echo/estado no traía el texto renderizado), conservamos el cuerpo
+  // real que ya estaba guardado en vez de sobrescribirlo con "recordatorio_...".
+  const incomingTemplateName = cleanString(
+    normalizedMessage.template?.name || normalizedMessage.template?.templateName
+  )
+  if (incomingTemplateName && messageText === incomingTemplateName) {
+    messageText = cleanString(existingMessage?.message_text) || messageText
+  }
   let messageId = existingMessage?.id || computedMessageId
   if (attribution.imageUrl || attribution.thumbnailUrl) {
     attribution = await persistWhatsAppAttributionPreview(attribution, messageId).catch(error => {
