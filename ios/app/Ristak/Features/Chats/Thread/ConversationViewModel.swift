@@ -174,6 +174,7 @@ final class ConversationViewModel {
     private(set) var whatsAppStatus: WhatsAppAPIStatus?
     private(set) var selectedChannel: ComposerChannel = .whatsapp(phoneNumberId: "")
     private var channelResolved = false
+    private(set) var isSavingChannelSelection = false
 
     private(set) var agentStates: [ConversationAgentState] = []
     private(set) var agentActionInFlight = false
@@ -194,6 +195,7 @@ final class ConversationViewModel {
     var scheduleSheet: ScheduleSheetState?
     var infoMessage: ChatMessage?
     var isChannelSheetPresented = false
+    var isComposerChannelSheetPresented = false
     var isTagSheetPresented = false
     var isAttachmentSheetPresented = false
 
@@ -994,13 +996,49 @@ final class ConversationViewModel {
         return options
     }
 
+    var selectedChannelTitle: String {
+        channelOptions.first(where: { $0.channel == selectedChannel })?.title ?? "Canal de envío"
+    }
+
     func selectChannel(_ option: ComposerChannelOption) {
         if let reason = option.disabledReason {
             alert = ConversationAlert(title: "Canal no disponible", message: reason)
             return
         }
+        guard !isSavingChannelSelection else { return }
+
+        let previousChannel = selectedChannel
         selectedChannel = option.channel
         isChannelSheetPresented = false
+        isComposerChannelSheetPresented = false
+
+        guard case .whatsapp(let phoneNumberId) = option.channel,
+              !phoneNumberId.isEmpty else { return }
+        let previousPreferredPhoneNumberId = contactDetail?.preferredWhatsAppPhoneNumberId
+            ?? seedContact?.preferredWhatsAppPhoneNumberId
+            ?? ""
+        guard previousPreferredPhoneNumberId != phoneNumberId else { return }
+
+        isSavingChannelSelection = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isSavingChannelSelection = false }
+            do {
+                self.contactDetail = try await self.contactsService.setPreferredWhatsAppPhoneNumber(
+                    contactId: self.contactID,
+                    phoneNumberId: phoneNumberId,
+                    routingReason: "Cambio desde selector inferior o ficha del chat"
+                )
+            } catch {
+                if self.selectedChannel == option.channel {
+                    self.selectedChannel = previousChannel
+                }
+                self.alert = ConversationAlert(
+                    title: "No se guardó el WhatsApp de respuesta",
+                    message: (error as? RistakAPIError)?.message ?? "Intenta otra vez."
+                )
+            }
+        }
     }
 
     // MARK: - Ventana de 24 h (preflight cliente, doc 05 §1.1)

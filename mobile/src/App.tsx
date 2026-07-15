@@ -22021,6 +22021,7 @@ function NativeConversationScreen({
   const [selectedSendChannel, setSelectedSendChannel] = useState<ComposerChannelRouteValue>(() => getDefaultComposerChannel(contact));
   const selectedSendContactIdRef = useRef(contact.id);
   const selectedSendManuallyRef = useRef(false);
+  const composerChannelPreferenceSavingRef = useRef(false);
   const [composerFocused, setComposerFocused] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<ConversationDraftAttachment[]>([]);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
@@ -24126,6 +24127,64 @@ function NativeConversationScreen({
     closeSheet();
   };
 
+  const selectComposerChannel = useCallback(async (channel: ComposerChannelRouteValue) => {
+    const option = composerChannelOptions.find((item) => item.value === channel);
+    if (option?.disabledReason) {
+      Alert.alert('Canal no disponible', option.disabledReason);
+      return;
+    }
+    if (composerChannelPreferenceSavingRef.current) return;
+
+    if (isCommentComposerRoute(channel)) {
+      if (!latestEligibleCommentReplyTarget || latestEligibleCommentReplyTarget.platform !== getCommentComposerPlatform(channel)) {
+        Alert.alert('Canal no disponible', 'Para responder en la publicación toca el comentario exacto.');
+        return;
+      }
+      setCommentReplyTarget(latestEligibleCommentReplyTarget);
+      setReplyingToMessage(null);
+    } else {
+      setCommentReplyTarget(null);
+    }
+
+    const previousChannel = selectedSendChannel;
+    selectedSendManuallyRef.current = true;
+    setSelectedSendChannel(channel);
+    closeSheet();
+
+    const phoneNumberId = getComposerRoutePhoneId(channel);
+    if (!phoneNumberId) return;
+    const previousPreferredPhoneNumberId = contact.preferredWhatsAppPhoneNumberId
+      || contact.preferred_whatsapp_phone_number_id
+      || '';
+    if (previousPreferredPhoneNumberId === phoneNumberId) return;
+
+    const preferencePatch: Partial<ChatContact> = {
+      preferredWhatsAppPhoneNumberId: phoneNumberId,
+      preferred_whatsapp_phone_number_id: phoneNumberId,
+    };
+    composerChannelPreferenceSavingRef.current = true;
+    onContactPatch(contact.id, preferencePatch);
+
+    try {
+      const updated = await api.updateContact(contact.id, {
+        ...preferencePatch,
+        routingSource: 'manual',
+        routingReason: 'Cambio desde selector inferior del chat',
+      });
+      onContactPatch(contact.id, { ...updated, ...preferencePatch });
+    } catch (err) {
+      const rollbackPatch: Partial<ChatContact> = {
+        preferredWhatsAppPhoneNumberId: previousPreferredPhoneNumberId,
+        preferred_whatsapp_phone_number_id: previousPreferredPhoneNumberId,
+      };
+      onContactPatch(contact.id, rollbackPatch);
+      setSelectedSendChannel((current) => current === channel ? previousChannel : current);
+      Alert.alert('No se guardó el WhatsApp de respuesta', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      composerChannelPreferenceSavingRef.current = false;
+    }
+  }, [api, closeSheet, composerChannelOptions, contact, latestEligibleCommentReplyTarget, onContactPatch, selectedSendChannel]);
+
   if (contactInfoOpen) {
     return (
       <NativeContactDetailScreen
@@ -24580,26 +24639,7 @@ function NativeConversationScreen({
         open={activeSheet === 'channel' || closingSheet === 'channel'}
         selected={selectedSendChannel}
         onClose={closeSheet}
-        onSelect={(channel) => {
-          const option = composerChannelOptions.find((item) => item.value === channel);
-          if (option?.disabledReason) {
-            Alert.alert('Canal no disponible', option.disabledReason);
-            return;
-          }
-          if (isCommentComposerRoute(channel)) {
-            if (!latestEligibleCommentReplyTarget || latestEligibleCommentReplyTarget.platform !== getCommentComposerPlatform(channel)) {
-              Alert.alert('Canal no disponible', 'Para responder en la publicación toca el comentario exacto.');
-              return;
-            }
-            setCommentReplyTarget(latestEligibleCommentReplyTarget);
-            setReplyingToMessage(null);
-          } else {
-            setCommentReplyTarget(null);
-          }
-          selectedSendManuallyRef.current = true;
-          setSelectedSendChannel(channel);
-          closeSheet();
-        }}
+        onSelect={(channel) => { void selectComposerChannel(channel); }}
       />
 
       <NativeMessageActionSheet

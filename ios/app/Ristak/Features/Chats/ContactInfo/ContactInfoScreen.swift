@@ -39,8 +39,8 @@ struct ContactInfoScreen: View {
     private let localFlags = ContactLocalFlagsStore.shared
 
     /// ViewModel de la conversación abierta (el hilo la pushea). Aporta el canal
-    /// de ENVÍO actual y su selector, que ahora se elige AQUÍ (bajo el nombre) en
-    /// vez del composer. `nil` si la ficha se abre fuera de un hilo → sin selector.
+    /// de ENVÍO actual y el selector compartido con el botón inferior del composer.
+    /// `nil` si la ficha se abre fuera de un hilo → sin selector.
     private let conversation: ConversationViewModel?
 
     init(contactID: String, conversation: ConversationViewModel? = nil) {
@@ -164,8 +164,8 @@ struct ContactInfoScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
-        // Selector de canal de envío (movido aquí desde el composer). Se presenta
-        // desde la ficha porque el hilo queda detrás mientras esta está en pantalla.
+        // Selector compartido con el botón inferior del composer. Se presenta aquí
+        // también porque el hilo queda detrás mientras esta ficha está en pantalla.
         .sheet(isPresented: channelPickerBinding) {
             if let conversation {
                 ChannelPickerSheet(viewModel: conversation)
@@ -333,9 +333,8 @@ struct ContactInfoScreen: View {
                     .foregroundStyle(RistakTheme.textDim)
             }
 
-            // Canal de ENVÍO: se ELIGE aquí (ya no en el composer). Píldora con
-            // badge + nombre + chevron, justo bajo el nombre y encima de la
-            // etiqueta de estado; al tocarla abre el selector de canal.
+            // Canal de ENVÍO: esta píldora y el botón inferior del composer abren
+            // el mismo selector persistente para el contacto.
             if let conversation {
                 let channel = conversation.selectedChannel.badgeChannel
                 Button {

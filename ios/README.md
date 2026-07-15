@@ -125,7 +125,9 @@ solo en capa flotante; copy en español.
   Composer: cámara directa junto al micrófono para foto/video (se oculta al
   empezar a escribir), envío con flecha inmediata sin transición, adjuntos
   (galería/documentos/ubicación), notas de voz,
-  plantillas cuando la ventana de 24h está cerrada, selector de número/canal,
+  plantillas cuando la ventana de 24h está cerrada, selector inferior de
+  número/canal antes de `+` con preferencia persistente por contacto y compartida
+  con web/Android,
   sugerencia IA opt-in y apagada por default desde Ajustes, controles del agente
   (pausar/tomar/omitir/continuar + confirm
   de envío manual). Info del contacto: edición, tags, campos personalizados

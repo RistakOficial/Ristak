@@ -1408,8 +1408,10 @@ payloads y handles multimedia permanecen etiquetados por proveedor.
 
 El selector de canal del composer desktop muestra cada WhatsApp con su número
 exacto además de la etiqueta o nombre verificado. Dos filas del mismo negocio no
-pueden verse idénticas; la opción elegida conserva su `phoneNumberId` y por tanto
-su proveedor y transporte reales.
+pueden verse idénticas; la opción elegida conserva su `phoneNumberId`, lo guarda
+como remitente preferido de ese contacto y por tanto mantiene su proveedor y
+transporte reales al reabrir el chat en desktop o móvil. Si no se puede guardar,
+la UI restaura el número anterior y no finge que el cambio quedó aplicado.
 
 Cuando el agente conversacional envia una respuesta, los servicios de salida
 deben persistir la marca `sentByAgent`/`agentId` en el payload local y el journey
@@ -1574,7 +1576,11 @@ En el chat movil, el selector de canal del composer no debe mostrar rutas
 fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia el
 `phoneNumberId` elegido en texto, adjuntos, ubicacion y mensajes programados.
 SMS aparece solo si HighLevel esta conectado, y Messenger/Instagram solo cuando
-Meta esta conectado y el contacto pertenece a ese canal.
+Meta esta conectado y el contacto pertenece a ese canal. Elegir un WhatsApp
+desde el botón inferior guarda `preferred_whatsapp_phone_number_id` en el
+contacto; `/movil`, React Native Android e iOS deben abrir después con el mismo
+remitente. En iOS el botón vive en el panel inferior antes de `+`, además del
+acceso equivalente dentro de la ficha del contacto.
 
 Los comentarios de Facebook e Instagram son un canal publico distinto de
 Messenger/Instagram DM. Si un contacto nace desde un comentario, el composer debe
@@ -2269,10 +2275,10 @@ automatico usa el numero por donde llego la conversacion cuando existe historial
 de WhatsApp; si no hay historial, usa el principal actual. Si el usuario elige un
 numero fijo, Ristak guarda
 `preferred_whatsapp_phone_number_id` en el contacto y el composer empieza a
-enviar desde ese remitente por default. El selector del composer puede seguir
-cambiando el envio puntual, incluyendo cada WhatsApp conectado como opcion
-separada, pero el panel/info del contacto es la fuente visible para decidir el
-remitente preferido del contacto.
+enviar desde ese remitente por default. El selector inferior del composer y el
+panel/info del contacto son dos accesos al mismo remitente preferido persistente:
+ambos incluyen cada WhatsApp conectado como opcion separada y el ultimo cambio
+se refleja al reabrir el contacto en `/chat`, `/movil`, Android o iOS.
 
 En las listas de chat, los mensajes del dia actual muestran la hora exacta en la
 zona horaria del negocio; no muestran `Hoy` en la fila. Los del dia anterior

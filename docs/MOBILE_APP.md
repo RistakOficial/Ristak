@@ -930,14 +930,18 @@ viejo ni duplique la fila.
 
 En `/movil`, el boton de canal del composer debe listar cada WhatsApp conectado
 como opcion separada cuando la cuenta tiene mas de un remitente. Elegir
-`WhatsApp · <nombre/numero>` cambia el envio puntual del chat abierto y el
-mensaje sale con ese `phoneNumberId`; no debe obligar al usuario a ir al
-desktop para elegir entre WhatsApp 1, WhatsApp 2, etc.
+`WhatsApp · <nombre/numero>` cambia el remitente del chat abierto, guarda ese
+`phoneNumberId` como `preferred_whatsapp_phone_number_id` del contacto y lo
+mantiene al reabrirlo desde cualquier superficie; no debe obligar al usuario a
+ir al desktop o a la ficha para elegir entre WhatsApp 1, WhatsApp 2, etc. Si el
+guardado falla, el selector regresa al remitente anterior y muestra el error.
 La conversacion nativa en `mobile/` debe aplicar el mismo contrato: el selector
 del composer solo muestra rutas realmente conectadas para ese chat, lista cada
 numero de WhatsApp disponible por separado y agrega Messenger/Instagram solo si
 la integracion Meta correspondiente esta conectada y el contacto pertenece a
-ese canal.
+ese canal. `ios/app` conserva ese mismo boton de canal en el panel inferior,
+antes del boton `+`, y comparte la preferencia persistente con `/movil`, Android
+y la ficha `Contactando desde`.
 
 La selección de transporte es idéntica en `/movil`, React Native Android y iOS:
 si la fila elegida tiene API disponible, el envío usa `transport=api` aunque el
@@ -952,8 +956,9 @@ el webhook oficial es la única fuente. Esto evita el globo transitorio duplicad
 en iOS/Android sin usar deduplicación por texto o tiempo. HistorySync QR sí puede
 importar mensajes antiguos por identidad exacta.
 
-La info del contacto muestra "Contactando desde". Ese sheet es el control
-persistente del contacto: `Automatico` limpia `preferred_whatsapp_phone_number_id`
+La info del contacto muestra "Contactando desde". Ese sheet y el boton de canal
+inferior son controles persistentes del mismo contacto: `Automatico` limpia
+`preferred_whatsapp_phone_number_id`
 para usar el numero por donde llego la conversacion o el principal actual; elegir
 un numero fijo guarda `preferred_whatsapp_phone_number_id` en el contacto. Si el
 numero mostrado por automatico coincide con el que el usuario toca, igual debe

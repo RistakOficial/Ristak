@@ -5517,6 +5517,68 @@ export const DesktopChat: React.FC = () => {
     setTemplatePanelOpen(false)
   }, [])
 
+  const handleUpdatePreferredWhatsAppPhoneNumber = useCallback(async (
+    phoneNumberId: string,
+    source: 'composer' | 'contact_info' = 'contact_info'
+  ) => {
+    const contactId = activeContact?.id || ''
+    const previousContact = contactInfoData || activeContact
+    if (!contactId || savingWhatsAppPreference) return
+
+    const previousPreferredId = getPreferredWhatsAppPhoneNumberId(previousContact)
+    const nextPreferredId = String(phoneNumberId || '').trim()
+    if (previousPreferredId === nextPreferredId) return
+    const patch = {
+      preferredWhatsAppPhoneNumberId: nextPreferredId,
+      preferred_whatsapp_phone_number_id: nextPreferredId
+    } as Partial<Contact>
+
+    setWhatsappPreferenceError('')
+    setSavingWhatsAppPreference(true)
+    setComposerBusinessPhoneId(nextPreferredId)
+    setContactInfoData((current) => current?.id === contactId ? { ...current, ...patch } : current)
+    setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...patch } : contact))
+
+    try {
+      const updatedContact = await contactsService.updateContact(contactId, {
+        ...patch,
+        routingReason: nextPreferredId
+          ? source === 'composer'
+            ? 'Cambio desde selector inferior del chat'
+            : 'Cambio desde panel derecho del chat'
+          : 'Automático desde panel derecho del chat',
+        routingSource: 'manual'
+      } as Partial<Contact> & Record<string, unknown>)
+      const nextPatch = {
+        ...updatedContact,
+        ...patch
+      }
+      setContactInfoData((current) => current?.id === contactId ? { ...current, ...nextPatch } : current)
+      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...nextPatch } : contact))
+      showToast(
+        'success',
+        nextPreferredId ? 'WhatsApp de respuesta actualizado' : 'Respuesta automática activada',
+        nextPreferredId
+          ? 'Este contacto quedará ligado a ese número para responder por WhatsApp.'
+          : automaticWhatsAppRoutePhone
+          ? 'Ristak volverá a usar el número por donde llegó la conversación.'
+          : 'Ristak usará el remitente principal mientras no haya historial de WhatsApp.'
+      )
+    } catch (error: any) {
+      const rollbackPatch = {
+        preferredWhatsAppPhoneNumberId: previousPreferredId,
+        preferred_whatsapp_phone_number_id: previousPreferredId
+      } as Partial<Contact>
+      setComposerBusinessPhoneId(previousPreferredId)
+      setContactInfoData((current) => current?.id === contactId ? { ...current, ...rollbackPatch } : current)
+      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...rollbackPatch } : contact))
+      setWhatsappPreferenceError(error?.message || 'No se pudo guardar el número de respuesta.')
+      showToast('error', 'No se guardó el WhatsApp de respuesta', error?.message || 'Intenta otra vez.')
+    } finally {
+      setSavingWhatsAppPreference(false)
+    }
+  }, [activeContact, automaticWhatsAppRoutePhone, contactInfoData, savingWhatsAppPreference, showToast])
+
   const handleComposerChannelChange = useCallback((value: string) => {
     const nextChannel = normalizeComposerChannel(value)
     if (!isCommentComposerChannel(nextChannel)) {
@@ -5533,7 +5595,10 @@ export const DesktopChat: React.FC = () => {
     setComposerChannel(nextChannel)
     if (nextChannel === 'whatsapp') {
       const nextBusinessPhoneId = value.startsWith('whatsapp:') ? value.slice('whatsapp:'.length) : ''
-      if (nextBusinessPhoneId) setComposerBusinessPhoneId(nextBusinessPhoneId)
+      if (nextBusinessPhoneId) {
+        setComposerBusinessPhoneId(nextBusinessPhoneId)
+        void handleUpdatePreferredWhatsAppPhoneNumber(nextBusinessPhoneId, 'composer')
+      }
     }
     setComposerMenuOpen(false)
     closeTemplatePanel()
@@ -5543,7 +5608,7 @@ export const DesktopChat: React.FC = () => {
       setVoiceDraft(null)
       setVoiceElapsedMs(0)
     }
-  }, [closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, emailBodyHtml])
+  }, [closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, emailBodyHtml, handleUpdatePreferredWhatsAppPhoneNumber])
 
   const handleOpenTemplatePanel = useCallback(() => {
     setComposerMenuOpen(false)
@@ -5797,63 +5862,6 @@ export const DesktopChat: React.FC = () => {
       throw error
     }
   }, [activeContact, contactInfoData, showToast])
-
-  const handleUpdatePreferredWhatsAppPhoneNumber = useCallback(async (phoneNumberId: string) => {
-    const contactId = activeContact?.id || ''
-    const previousContact = contactInfoData || activeContact
-    if (!contactId || savingWhatsAppPreference) return
-
-    const previousPreferredId = getPreferredWhatsAppPhoneNumberId(previousContact)
-    const nextPreferredId = String(phoneNumberId || '').trim()
-    if (previousPreferredId === nextPreferredId) return
-    const patch = {
-      preferredWhatsAppPhoneNumberId: nextPreferredId,
-      preferred_whatsapp_phone_number_id: nextPreferredId
-    } as Partial<Contact>
-
-    setWhatsappPreferenceError('')
-    setSavingWhatsAppPreference(true)
-    setComposerBusinessPhoneId(nextPreferredId)
-    setContactInfoData((current) => current?.id === contactId ? { ...current, ...patch } : current)
-    setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...patch } : contact))
-
-    try {
-      const updatedContact = await contactsService.updateContact(contactId, {
-        ...patch,
-        routingReason: nextPreferredId
-          ? 'Cambio desde panel derecho del chat'
-          : 'Automático desde panel derecho del chat',
-        routingSource: 'manual'
-      } as Partial<Contact> & Record<string, unknown>)
-      const nextPatch = {
-        ...updatedContact,
-        ...patch
-      }
-      setContactInfoData((current) => current?.id === contactId ? { ...current, ...nextPatch } : current)
-      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...nextPatch } : contact))
-      showToast(
-        'success',
-        nextPreferredId ? 'WhatsApp de respuesta actualizado' : 'Respuesta automática activada',
-        nextPreferredId
-          ? 'Este contacto quedará ligado a ese número para responder por WhatsApp.'
-          : automaticWhatsAppRoutePhone
-          ? 'Ristak volverá a usar el número por donde llegó la conversación.'
-          : 'Ristak usará el remitente principal mientras no haya historial de WhatsApp.'
-      )
-    } catch (error: any) {
-      const rollbackPatch = {
-        preferredWhatsAppPhoneNumberId: previousPreferredId,
-        preferred_whatsapp_phone_number_id: previousPreferredId
-      } as Partial<Contact>
-      setComposerBusinessPhoneId(previousPreferredId)
-      setContactInfoData((current) => current?.id === contactId ? { ...current, ...rollbackPatch } : current)
-      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...rollbackPatch } : contact))
-      setWhatsappPreferenceError(error?.message || 'No se pudo guardar el número de respuesta.')
-      showToast('error', 'No se guardó el WhatsApp de respuesta', error?.message || 'Intenta otra vez.')
-    } finally {
-      setSavingWhatsAppPreference(false)
-    }
-  }, [activeContact, automaticWhatsAppRoutePhone, contactInfoData, savingWhatsAppPreference, showToast])
 
   const handleMakePrimaryPhone = useCallback(async (phone: string) => {
     const nextPhone = String(phone || '').trim()

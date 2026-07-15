@@ -5595,6 +5595,7 @@ export const PhoneChat: React.FC = () => {
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
   const [conversationAgentDropdownOpen, setConversationAgentDropdownOpen] = useState(false)
   const [composerChannelPickerOpen, setComposerChannelPickerOpen] = useState(false)
+  const [composerChannelSaving, setComposerChannelSaving] = useState(false)
   const [chatTags, setChatTags] = useState<ContactTag[]>([])
   const [chatTagsLoading, setChatTagsLoading] = useState(false)
   const [chatTagSearch, setChatTagSearch] = useState('')
@@ -17307,13 +17308,13 @@ export const PhoneChat: React.FC = () => {
     return ''
   }
 
-  const handleComposerMessageChannelSelect = (value: ComposerMessageRouteValue) => {
+  const handleComposerMessageChannelSelect = async (value: ComposerMessageRouteValue) => {
     if (value === 'email') {
       showToast('info', 'Correo electrónico', 'Para enviar correos usa la vista completa de chats.')
       return
     }
 
-    if (!activeContact?.id) return
+    if (!activeContact?.id || composerChannelSaving) return
     const disabledReason = getComposerMessageChannelDisabledReason(value)
     if (disabledReason) {
       showToast('warning', 'Canal no disponible', disabledReason)
@@ -17328,26 +17329,79 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    const contactId = activeContact.id
+    const previousPreferredPhoneId = activeContact.preferredWhatsAppPhoneNumberId ||
+      activeContact.preferred_whatsapp_phone_number_id ||
+      ''
+    const previousBusinessPhoneOverride = contactBusinessPhoneOverrides[contactId]
+    const previousHighLevelChannelOverride = contactHighLevelChannelOverrides[contactId]
+    const previousHighLevelChannel = activeHighLevelChatChannel
     const nextChannel = getComposerRouteChannel(value)
     setCommentReplyTarget(null)
     setContactHighLevelChannelOverrides((current) => ({
       ...current,
-      [activeContact.id]: nextChannel as HighLevelChatChannel
+      [contactId]: nextChannel as HighLevelChatChannel
     }))
     if (isWhatsAppComposerRoute(value)) {
       const routePhoneId = getComposerRoutePhoneId(value)
       setContactBusinessPhoneOverrides((current) => {
         if (!routePhoneId) {
           const next = { ...current }
-          delete next[activeContact.id]
+          delete next[contactId]
           return next
         }
         return {
           ...current,
-          [activeContact.id]: routePhoneId
+          [contactId]: routePhoneId
         }
       })
       saveConfigPreference(setSelectedHighLevelChatChannel, 'whatsapp_api')
+      setComposerChannelPickerOpen(false)
+
+      if (!routePhoneId || routePhoneId === previousPreferredPhoneId) return
+
+      const preferencePatch = {
+        preferredWhatsAppPhoneNumberId: routePhoneId,
+        preferred_whatsapp_phone_number_id: routePhoneId
+      } as Partial<Contact>
+      setComposerChannelSaving(true)
+      setContactInfoContact((current) => current?.id === contactId ? { ...current, ...preferencePatch } : current)
+      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...preferencePatch } : contact))
+
+      try {
+        const updatedContact = await contactsService.updateContact(contactId, {
+          ...preferencePatch,
+          routingSource: 'manual',
+          routingReason: 'Cambio desde selector inferior del chat'
+        } as Partial<Contact>)
+        const nextPatch = { ...updatedContact, ...preferencePatch }
+        setContactInfoContact((current) => current?.id === contactId ? { ...current, ...nextPatch } : current)
+        setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...nextPatch } : contact))
+      } catch (error: any) {
+        const rollbackPatch = {
+          preferredWhatsAppPhoneNumberId: previousPreferredPhoneId,
+          preferred_whatsapp_phone_number_id: previousPreferredPhoneId
+        } as Partial<Contact>
+        setContactInfoContact((current) => current?.id === contactId ? { ...current, ...rollbackPatch } : current)
+        setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...rollbackPatch } : contact))
+        setContactBusinessPhoneOverrides((current) => {
+          const next = { ...current }
+          if (previousBusinessPhoneOverride) next[contactId] = previousBusinessPhoneOverride
+          else delete next[contactId]
+          return next
+        })
+        setContactHighLevelChannelOverrides((current) => {
+          const next = { ...current }
+          if (previousHighLevelChannelOverride) next[contactId] = previousHighLevelChannelOverride
+          else delete next[contactId]
+          return next
+        })
+        saveConfigPreference(setSelectedHighLevelChatChannel, previousHighLevelChannel)
+        showToast('error', 'No se guardó el WhatsApp de respuesta', getErrorMessage(error, 'Intenta otra vez.'))
+      } finally {
+        setComposerChannelSaving(false)
+      }
+      return
     } else {
       saveConfigPreference(setSelectedHighLevelChatChannel, nextChannel as HighLevelChatChannel)
     }
@@ -17398,8 +17452,8 @@ export const PhoneChat: React.FC = () => {
                   key={option.value}
                   type="button"
                   className={`${styles.composerChannelOption} ${active ? styles.composerChannelOptionActive : ''}`}
-                  onClick={() => handleComposerMessageChannelSelect(option.value)}
-                  disabled={disabled}
+                  onClick={() => { void handleComposerMessageChannelSelect(option.value) }}
+                  disabled={disabled || composerChannelSaving}
                   role="menuitem"
                   title={disabledReason || option.description}
                 >

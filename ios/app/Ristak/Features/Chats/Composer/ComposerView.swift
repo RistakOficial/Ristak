@@ -3,9 +3,9 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Barra del composer (doc research/05 §7): botón `+`, campo multilinea,
-/// reloj para programar, cámara directa, mic/enviar, tray de adjuntos,
-/// barra de respuesta, banner del agente y sugerencia IA.
+/// Barra del composer (doc research/05 §7): selector de canal/número, botón `+`,
+/// campo multilinea, reloj para programar, cámara directa, mic/enviar, tray de
+/// adjuntos, barra de respuesta, banner del agente y sugerencia IA.
 ///
 /// Va montada con `safeAreaInset(edge: .bottom)` — un solo dueño del teclado
 /// (memoria del proyecto): sin avoidance anidado.
@@ -109,6 +109,9 @@ struct ComposerView: View {
         .sheet(isPresented: $viewModel.isAttachmentSheetPresented) {
             attachmentActionsSheet
                 .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $viewModel.isComposerChannelSheetPresented) {
+            ChannelPickerSheet(viewModel: viewModel)
         }
         // UN SOLO modal (alert): el `.confirmationDialog` de iOS separa "Cancelar"
         // en su propio contenedor —se veía como "dos modales" en un globo—; el
@@ -400,8 +403,17 @@ struct ComposerView: View {
 
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: RistakTheme.Spacing.xs) {
-            // El canal de envío se ELIGE ahora desde la Info del contacto (bajo el
-            // nombre), no aquí — así el composer queda más limpio.
+            Button {
+                viewModel.isComposerChannelSheetPresented = true
+            } label: {
+                ChannelBadgeView(channel: viewModel.selectedChannel.badgeChannel, size: 22)
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Canal de envío: \(viewModel.selectedChannelTitle). Toca para cambiar.")
+            .disabled(viewModel.isSending || viewModel.isSavingChannelSelection)
+
             Button {
                 viewModel.isAttachmentSheetPresented = true
             } label: {

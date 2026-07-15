@@ -768,9 +768,7 @@ etiqueta («Clasificar este chat con una etiqueta.»), Silenciar/Quitar silencio
 
 De izquierda a derecha (`PhoneChat.tsx`, render del composer ~16150+):
 
-1. **Botón `+`** (`composerPlus`) — abre el sheet de adjuntos anclado
-   (`attachmentSheetAnchor` con posición left/bottom del botón).
-2. **Botón de canal** (`composerChannelButton`): glifo del canal activo (WhatsApp =
+1. **Botón de canal** (`composerChannelButton`): glifo del canal activo (WhatsApp =
    FaWhatsapp fino, sin disco), `aria-label "Canal de envío: <label>"`. Abre dropdown
    `Elegir canal de envío` con opciones:
    - Un item por CADA número de WhatsApp conectado:
@@ -786,8 +784,14 @@ De izquierda a derecha (`PhoneChat.tsx`, render del composer ~16150+):
    WhatsApp todavía no tiene número detectado.», «Conecta WhatsApp API o QR para
    responder.», «Activa una integración con SMS para usar este canal.», «Activa
    Messenger/Instagram en Configuración > Meta Ads para responder desde Ristak.»
-   Elegir un `whatsapp:<phoneId>` fija el override de número PARA ESE CHAT
-   (en memoria/preferencia), no cambia el default global.
+   Elegir un `whatsapp:<phoneId>` guarda
+   `preferred_whatsapp_phone_number_id` PARA ESE CONTACTO mediante
+   `PATCH /api/contacts/:id`; no cambia el default global. Desktop, `/movil`,
+   React Native Android e iOS comparten esa preferencia y restauran el número
+   anterior si el guardado falla. En iOS este botón también vive antes de `+` en
+   el panel inferior; la ficha del contacto abre el mismo selector persistente.
+2. **Botón `+`** (`composerPlus`) — abre el sheet de adjuntos anclado
+   (`attachmentSheetAnchor` con posición left/bottom del botón).
 3. **Campo de texto** multilinea (contentEditable en web; en nativo: TextField
    multilinea), placeholder, autocorrección y capitalización de oraciones. Enter
    envía (Shift+Enter = salto de línea) en teclado físico; en móvil el envío es por
@@ -910,10 +914,11 @@ Ids optimistas usados como `externalId` (útiles para idempotencia/reconciliaci�
    realtime (`/api/chat-events`, módulo aparte).
 4. **Takeover humano**: implícito en todo envío manual (§6.3); scheduled dispatch NO
    lo dispara.
-5. **Selección de ruta por chat**: el override de canal y de número es POR CONTACTO
-   (front-only + `preferred_whatsapp_phone_number_id` persistido vía
+5. **Selección de ruta por chat**: el override de canal es local, pero elegir un
+   número de WhatsApp desde el composer o desde `Contactando desde` es POR CONTACTO
+   (`preferred_whatsapp_phone_number_id` persistido vía
    `PATCH /api/contacts/:id` con `{ preferredWhatsAppPhoneNumberId, routingSource:
-   'manual', routingReason }` desde "Contactando desde").
+   'manual', routingReason }`).
 6. **Permisos**: los envíos WhatsApp requieren solo sesión + feature de licencia
    `whatsapp`; email feature `email`; agente conversacional módulo `ai_agent` (los
    usuarios restringidos por `requireModuleAccess` no ven esos controles).
