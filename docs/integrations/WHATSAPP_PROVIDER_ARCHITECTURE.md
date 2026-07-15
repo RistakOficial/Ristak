@@ -63,8 +63,16 @@ API: cada chat debe leer primero `phone.availability.apiAvailable` y, cuando ese
 campo no exista por compatibilidad, resolver `phone.provider=meta_direct` contra
 `status.metaDirect.connected`. Si el usuario eligió una fila nativa, esa fila
 permanece autoritativa aunque HighLevel también esté conectado. HighLevel sólo
-es ruta de WhatsApp cuando no existe una fila nativa seleccionable; nunca es
-respaldo silencioso de una fila Meta directo, YCloud o QR indisponible.
+es ruta de WhatsApp cuando el usuario elige explícitamente `WhatsApp · HighLevel`;
+nunca es respaldo silencioso de una fila Meta directo, YCloud o QR indisponible.
+Cuando HighLevel está conectado, el selector conserva todas las filas nativas y
+agrega dos rutas propias e independientes: `WhatsApp · HighLevel` y
+`SMS · HighLevel`. Elegir una de esas rutas limpia el remitente nativo del envío
+para que HighLevel use la conversación y el número configurados en su cuenta.
+Si el vínculo `ghl_contact_id` quedó obsoleto porque el contacto fue eliminado o
+la cuenta cambió, el primer `CONVERSATIONS_CONTACT_NOT_FOUND` obliga a buscar o
+recrear el contacto por teléfono/correo, guardar el vínculo nuevo y reintentar
+una sola vez; otros errores no autorizan reintentos ciegos.
 
 Por lo tanto, seleccionar un número Meta directo sano mantiene el composer en
 WhatsApp API y calcula su ventana de 24 horas con los mensajes entrantes de ese

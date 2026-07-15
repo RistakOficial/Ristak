@@ -1331,11 +1331,21 @@ seleccionada. El `connected` superior del status corresponde a la conexión
 histórica de YCloud; Meta directo se valida con
 `phone.availability.apiAvailable` y `metaDirect.connected`. Si HighLevel y una
 fila nativa de WhatsApp coexisten, elegir esa fila conserva la ruta nativa:
-HighLevel sólo puede manejar WhatsApp cuando no hay un número nativo
-seleccionado, nunca como fallback silencioso de una fila indisponible. La
+HighLevel sólo puede manejar WhatsApp cuando el usuario elige explícitamente
+`WhatsApp · HighLevel`, nunca como fallback silencioso de una fila
+indisponible. Con HighLevel conectado, el selector muestra además
+`SMS · HighLevel` sin ocultar las filas nativas. Cada selección limpia o conserva
+el remitente nativo según la ruta elegida, de modo que texto, adjuntos, audio y
+programación salgan por el proveedor visible. La
 ventana de 24 horas se calcula para el número elegido y, al cerrarse, el composer
 debe exigir plantilla oficial. Texto, adjuntos, audio, reacciones y programación
 mantienen esa misma decisión de proveedor.
+
+Los envíos por HighLevel no incluyen el remitente nativo seleccionado en Ristak:
+HighLevel resuelve su propio número y conversación. Si el `ghl_contact_id`
+guardado ya no existe, Ristak busca o recrea el contacto por teléfono/correo,
+persiste el vínculo reparado y reintenta el envío una sola vez únicamente ante
+`CONVERSATIONS_CONTACT_NOT_FOUND`.
 
 Un webhook sólo concilia estado y puede marcar la API como restringida para
 solicitudes futuras; nunca origina por sí mismo un reenvío QR. Campañas y
@@ -1575,12 +1585,14 @@ API/YCloud, WhatsApp QR/Baileys, Messenger ni Instagram.
 En el chat movil, el selector de canal del composer no debe mostrar rutas
 fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia el
 `phoneNumberId` elegido en texto, adjuntos, ubicacion y mensajes programados.
-SMS aparece solo si HighLevel esta conectado, y Messenger/Instagram solo cuando
-Meta esta conectado y el contacto pertenece a ese canal. Elegir un WhatsApp
-desde el botón inferior guarda `preferred_whatsapp_phone_number_id` en el
-contacto; `/movil`, React Native Android e iOS deben abrir después con el mismo
-remitente. En iOS el botón vive en el panel inferior antes de `+`, además del
-acceso equivalente dentro de la ficha del contacto.
+Si HighLevel está conectado, esas opciones nativas coexisten con
+`WhatsApp · HighLevel` y `SMS · HighLevel`; elegir una ruta HighLevel no arrastra
+el `phoneNumberId` nativo anterior. Elegir un WhatsApp nativo desde el botón
+inferior guarda `preferred_whatsapp_phone_number_id` en el contacto; `/movil`,
+React Native Android e iOS deben abrir después con el mismo remitente. En iOS el
+botón vive en el panel inferior antes de `+`, además del acceso equivalente
+dentro de la ficha del contacto. Messenger/Instagram aparecen cuando el
+proveedor correspondiente está conectado y el contacto pertenece a ese canal.
 
 Los comentarios de Facebook e Instagram son un canal publico distinto de
 Messenger/Instagram DM. Si un contacto nace desde un comentario, el composer debe

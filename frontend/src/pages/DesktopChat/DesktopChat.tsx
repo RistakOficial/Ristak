@@ -167,7 +167,7 @@ type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' 
 type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
 type CommentComposerChannel = 'facebook_comment' | 'instagram_comment'
-type ComposerChannel = 'whatsapp' | 'messenger' | 'instagram' | 'email' | CommentComposerChannel
+type ComposerChannel = 'whatsapp' | 'sms' | 'messenger' | 'instagram' | 'email' | CommentComposerChannel
 type CommentReplyTarget = { messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string }
 type ContactIdentityField = 'name' | 'email' | 'phone'
 type ManualAgentInterruptionAction = 'pause' | 'skip'
@@ -613,10 +613,13 @@ const PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'envia
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['desktop-chat-', 'desktop-email-', 'desktop-template-']
 const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
+const HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID = '__highlevel_whatsapp__'
+const HIGHLEVEL_WHATSAPP_COMPOSER_VALUE = 'whatsapp:highlevel'
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CANCELED_APPOINTMENT_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'invalid', 'failed', 'missed', 'deleted', 'void', 'voided'])
 const COMPOSER_CHANNEL_OPTIONS: Array<{ value: ComposerChannel; label: string }> = [
   { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'sms', label: 'SMS · HighLevel' },
   { value: 'messenger', label: 'Messenger' },
   { value: 'instagram', label: 'Instagram' },
   { value: 'email', label: 'Correo' }
@@ -2923,6 +2926,7 @@ function normalizeComposerChannel(value?: string | null): ComposerChannel {
   if ((normalized.includes('facebook') || normalized.includes('comment')) && normalized.includes('comment')) return 'facebook_comment'
   if (normalized.includes('instagram')) return 'instagram'
   if (normalized.includes('messenger') || normalized.includes('facebook')) return 'messenger'
+  if (normalized === 'sms' || normalized === 'sms_qr' || normalized === 'ghl_sms') return 'sms'
   if (normalized.includes('email') || normalized.includes('correo') || normalized.includes('mail') || normalized === 'smtp') return 'email'
   return 'whatsapp'
 }
@@ -2937,13 +2941,14 @@ function getDefaultComposerChannel(contact?: DesktopChatContact | null): Compose
     return inferred === 'instagram_comment' ? 'instagram' : 'messenger'
   }
   if (inferred === 'email' && contact.email) return 'email'
-  if (inferred === 'messenger' || inferred === 'instagram') return inferred
+  if (inferred === 'sms' || inferred === 'messenger' || inferred === 'instagram') return inferred
   if (contact.phone) return 'whatsapp'
   if (contact.email) return 'email'
   return inferred
 }
 
 function getHighLevelChannelForComposer(channel: ComposerChannel): HighLevelChatChannel {
+  if (channel === 'sms') return 'sms_qr'
   if (channel === 'email') return 'email'
   if (channel === 'messenger' || channel === 'instagram') return channel
   if (channel === 'facebook_comment') return 'messenger'
@@ -2997,6 +3002,7 @@ function findBusinessPhoneByRoute(
 
 function renderComposerChannelIcon(channel: ComposerChannel) {
   if (channel === 'whatsapp') return <FaWhatsapp className={styles.composerChannelBrandIcon} aria-hidden="true" />
+  if (channel === 'sms') return <PhoneMessageChannelIcon channel="sms_qr" size={18} />
   if (channel === 'facebook_comment') return <FaFacebook className={styles.composerChannelBrandIcon} aria-hidden="true" />
   if (channel === 'messenger') return <FaFacebookMessenger className={styles.composerChannelBrandIcon} aria-hidden="true" />
   if (channel === 'instagram') return <FaInstagram className={styles.composerChannelBrandIcon} aria-hidden="true" />
@@ -3425,11 +3431,13 @@ export const DesktopChat: React.FC = () => {
   const activeInfoContactHasPhone = activeContactPhones.length > 0
   const businessPhones = useMemo(() => whatsappStatus?.phoneNumbers || [], [whatsappStatus?.phoneNumbers])
   const defaultComposerBusinessPhone = useMemo(() => getComposerBusinessPhone(whatsappStatus, activeContact), [activeContact, whatsappStatus])
-  const selectedBusinessPhone = useMemo(() => (
-    businessPhones.find((phone) => phone.id === composerBusinessPhoneId) ||
-    defaultComposerBusinessPhone ||
-    null
-  ), [businessPhones, composerBusinessPhoneId, defaultComposerBusinessPhone])
+  const selectedBusinessPhone = useMemo(() => {
+    if (composerChannel === 'sms' || composerBusinessPhoneId === HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID) return null
+
+    return businessPhones.find((phone) => phone.id === composerBusinessPhoneId) ||
+      defaultComposerBusinessPhone ||
+      null
+  }, [businessPhones, composerBusinessPhoneId, composerChannel, defaultComposerBusinessPhone])
   const preferredWhatsAppPhoneNumberId = getPreferredWhatsAppPhoneNumberId(activeInfoContact)
   const automaticWhatsAppRoutePhone = useMemo(() => {
     const routedMessage = [...messages]
@@ -3550,19 +3558,29 @@ export const DesktopChat: React.FC = () => {
       setEmailIncludeSignature(true)
       return
     }
-    setComposerChannel(getDefaultComposerChannel(activeContact))
-    setComposerBusinessPhoneId(defaultComposerBusinessPhone?.id || '')
+    const defaultChannel = getDefaultComposerChannel(activeContact)
+    const lastMessageTransport = String(activeContact.lastMessageTransport || '').trim().toLowerCase()
+    setComposerChannel(defaultChannel)
+    setComposerBusinessPhoneId(
+      highLevelConnected && (
+        defaultChannel === 'sms' ||
+        (defaultChannel === 'whatsapp' && lastMessageTransport.startsWith('ghl_whatsapp'))
+      )
+        ? HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
+        : defaultComposerBusinessPhone?.id || ''
+    )
     setEmailSubject('')
     setEmailBodyHtml('')
     setEmailIncludeSignature(true)
-  }, [activeContact?.id, defaultComposerBusinessPhone?.id])
+  }, [activeContact?.id, defaultComposerBusinessPhone?.id, highLevelConnected])
   useEffect(() => {
     setComposerBusinessPhoneId((current) => {
-      if (!activeContact || !businessPhones.length) return ''
+      if (!activeContact) return ''
+      if (current === HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID && highLevelConnected) return current
       if (current && businessPhones.some((phone) => phone.id === current)) return current
       return defaultComposerBusinessPhone?.id || ''
     })
-  }, [activeContact, businessPhones, defaultComposerBusinessPhone?.id])
+  }, [activeContact, businessPhones, defaultComposerBusinessPhone?.id, highLevelConnected])
   const filteredTemplates = useMemo(() => {
     const query = templateSearch.trim().toLowerCase()
     if (!query) return templates
@@ -4039,6 +4057,12 @@ export const DesktopChat: React.FC = () => {
     activeNativeMetaChannel ||
     ((composerChannel === 'messenger' || composerChannel === 'instagram') && highLevelConnected)
   )
+  const highLevelPhoneVoiceChannelReady = Boolean(
+    highLevelConnected && (
+      composerChannel === 'sms' ||
+      (composerChannel === 'whatsapp' && !selectedBusinessPhone)
+    )
+  )
   const canSendSelectedCommentPlatform = selectedCommentComposerPlatform === 'instagram'
     ? Boolean(metaInstagramConnected && instagramCommentsEnabled)
     : selectedCommentComposerPlatform === 'messenger'
@@ -4067,15 +4091,28 @@ export const DesktopChat: React.FC = () => {
     }
     if (option.value === 'whatsapp') {
       const whatsappDisabled = !activeContact?.phone
-      if (whatsappComposerPhones.length === 0) {
-        return [{ ...option, icon: renderComposerChannelIcon(option.value), disabled: whatsappDisabled || !highLevelConnected }]
-      }
-      return whatsappComposerPhones.map((phone) => ({
+      const nativeWhatsAppOptions = whatsappComposerPhones.map((phone) => ({
         value: `whatsapp:${phone.id}`,
         label: `${option.label} · ${getBusinessPhoneDisplay(phone)}`,
         icon: renderComposerChannelIcon(option.value),
         disabled: whatsappDisabled || !getBusinessPhoneValue(phone) || (!isPhoneApiEnabled(phone, whatsappStatus) && !isPhoneQrReadyForSend(phone))
       }))
+      return [
+        ...nativeWhatsAppOptions,
+        {
+          value: HIGHLEVEL_WHATSAPP_COMPOSER_VALUE,
+          label: 'WhatsApp · HighLevel',
+          icon: renderComposerChannelIcon(option.value),
+          disabled: whatsappDisabled || !highLevelConnected
+        }
+      ]
+    }
+    if (option.value === 'sms') {
+      return [{
+        ...option,
+        icon: renderComposerChannelIcon(option.value),
+        disabled: !activeContact?.phone || !highLevelConnected
+      }]
     }
     if (option.value === 'email') {
       if (!hasEmailAccess) return []
@@ -4093,8 +4130,14 @@ export const DesktopChat: React.FC = () => {
         : !hasDetectedInstagram || !canSendInstagram
     }]
   })
-  const composerRouteValue = composerChannel === 'whatsapp' && selectedBusinessPhone?.id
-    ? `whatsapp:${selectedBusinessPhone.id}`
+  const composerRouteValue = composerChannel === 'whatsapp'
+    ? composerBusinessPhoneId === HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
+      ? HIGHLEVEL_WHATSAPP_COMPOSER_VALUE
+      : selectedBusinessPhone?.id
+        ? `whatsapp:${selectedBusinessPhone.id}`
+        : highLevelConnected
+          ? HIGHLEVEL_WHATSAPP_COMPOSER_VALUE
+          : composerChannel
     : composerChannel
   const composerChannelReady = isEmailComposer
     ? Boolean(hasEmailAccess && activeContact?.email && emailChannelConnected)
@@ -4106,6 +4149,8 @@ export const DesktopChat: React.FC = () => {
         ? whatsappConnected || selectedQrReady
         : highLevelConnected
     ))
+    : composerChannel === 'sms'
+    ? Boolean(activeContact?.phone && highLevelConnected)
     : composerChannel === 'messenger'
     ? Boolean(hasDetectedMessenger && canSendMessenger)
     : Boolean(hasDetectedInstagram && canSendInstagram)
@@ -4119,6 +4164,10 @@ export const DesktopChat: React.FC = () => {
     ? 'Conecta HighLevel o tu correo de envío en Configuración > Correos.'
     : composerChannel === 'whatsapp' && !activeContact.phone
     ? 'Este contacto no tiene teléfono guardado.'
+    : composerChannel === 'sms' && !activeContact.phone
+    ? 'Este contacto no tiene teléfono guardado.'
+    : composerChannel === 'sms' && !highLevelConnected
+    ? 'Conecta HighLevel para enviar SMS.'
     : composerChannel === 'whatsapp' && selectedBusinessPhone && !whatsappConnected && !selectedQrReady
     ? selectedBusinessPhone.availability?.apiReason || 'El WhatsApp seleccionado no tiene una conexión disponible para enviar.'
     : composerChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
@@ -5143,7 +5192,7 @@ export const DesktopChat: React.FC = () => {
         return
       }
 
-      if (!whatsappConnected && !selectedQrReady) {
+      if (!highLevelPhoneVoiceChannelReady && !whatsappConnected && !selectedQrReady) {
         showToast('warning', 'Conecta el canal para audio', 'Conecta WhatsApp API o QR antes de mandar una nota de voz.')
         return
       }
@@ -5244,7 +5293,7 @@ export const DesktopChat: React.FC = () => {
       setVoiceProcessing(false)
       showToast('error', 'No se abrió el micrófono', error?.message || 'Revisa permisos del navegador.')
     }
-  }, [activeContact?.phone, clearVoiceTimer, composerChannel, composerText, draftAttachments.length, selectedQrReady, showToast, socialVoiceChannelReady, stopVoiceStream, voiceDraft, voiceProcessing, voiceRecording, whatsappConnected])
+  }, [activeContact?.phone, clearVoiceTimer, composerChannel, composerText, draftAttachments.length, highLevelPhoneVoiceChannelReady, selectedQrReady, showToast, socialVoiceChannelReady, stopVoiceStream, voiceDraft, voiceProcessing, voiceRecording, whatsappConnected])
 
   const stopVoiceRecording = useCallback(() => {
     const recorder = voiceRecorderRef.current
@@ -5595,10 +5644,14 @@ export const DesktopChat: React.FC = () => {
     setComposerChannel(nextChannel)
     if (nextChannel === 'whatsapp') {
       const nextBusinessPhoneId = value.startsWith('whatsapp:') ? value.slice('whatsapp:'.length) : ''
-      if (nextBusinessPhoneId) {
+      if (nextBusinessPhoneId === 'highlevel') {
+        setComposerBusinessPhoneId(HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID)
+      } else if (nextBusinessPhoneId) {
         setComposerBusinessPhoneId(nextBusinessPhoneId)
         void handleUpdatePreferredWhatsAppPhoneNumber(nextBusinessPhoneId, 'composer')
       }
+    } else if (nextChannel === 'sms') {
+      setComposerBusinessPhoneId(HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID)
     }
     setComposerMenuOpen(false)
     closeTemplatePanel()
@@ -6082,7 +6135,7 @@ export const DesktopChat: React.FC = () => {
         transport,
         text,
         toPhone: activeContact.phone || undefined,
-        fromPhone: selectedBusinessPhoneValue || undefined,
+        fromPhone: provider === 'highlevel' ? undefined : selectedBusinessPhoneValue || undefined,
         businessPhoneNumberId: selectedBusinessPhone?.id || undefined,
         scheduledAt: scheduledDate.toISOString(),
         externalId: editingScheduledMessageId || undefined
@@ -6834,6 +6887,7 @@ export const DesktopChat: React.FC = () => {
 	    }
 
     const sendAttachmentsThroughHighLevel = attachmentsToSend.length > 0 && !activeNativeMetaChannel && highLevelConnected && (
+      composerChannel === 'sms' ||
       composerChannel === 'messenger' ||
       composerChannel === 'instagram' ||
       (composerChannel === 'whatsapp' && !selectedBusinessPhone)
@@ -6843,7 +6897,12 @@ export const DesktopChat: React.FC = () => {
       voiceToSend &&
       !activeNativeMetaChannel &&
       highLevelConnected &&
-      (composerChannel === 'messenger' || composerChannel === 'instagram')
+      (
+        composerChannel === 'sms' ||
+        composerChannel === 'messenger' ||
+        composerChannel === 'instagram' ||
+        (composerChannel === 'whatsapp' && !selectedBusinessPhone)
+      )
     )
     const sendAttachmentsThroughNativeMeta = attachmentsToSend.length > 0 && Boolean(activeNativeMetaChannel)
     const nativeMetaAudio = sendVoiceThroughNativeMeta ? voiceToSend : null
@@ -7039,7 +7098,6 @@ export const DesktopChat: React.FC = () => {
           message: '',
           audioDataUrl: voiceToSend.dataUrl,
           durationMs: voiceToSend.durationMs,
-          fromNumber: selectedBusinessPhoneValue || undefined,
           toNumber: activeContact.phone || undefined,
           externalId: `${optimisticId}-audio`
         })
@@ -7114,7 +7172,6 @@ export const DesktopChat: React.FC = () => {
               mimeType: attachment.mimeType,
               kind: attachment.deliveryMode === 'document' ? 'document' : attachment.kind
             })),
-            fromNumber: selectedBusinessPhoneValue || undefined,
             toNumber: activeContact.phone || undefined,
             externalId: optimisticId
           })
@@ -7392,7 +7449,6 @@ export const DesktopChat: React.FC = () => {
           contactId: activeContact.id,
           channel: activeConversationChannel,
           message: text,
-          fromNumber: selectedBusinessPhoneValue || undefined,
           toNumber: activeContact.phone || undefined,
           externalId: optimisticId
         })

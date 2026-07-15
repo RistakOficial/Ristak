@@ -27,9 +27,20 @@ test('PhoneChat conserva el numero nativo seleccionado y aplica plantillas fuera
   assert.match(source, /activeHighLevelChatChannel === 'whatsapp_api' && !selectedBusinessPhone/)
   assert.match(source, /const selectedApiUnavailable = Boolean\(selectedBusinessPhone && !whatsappConnected\)/)
   assert.match(source, /message\.businessPhoneNumberId === selectedBusinessPhone\.id/)
-  assert.match(source, /const composerBlockedByReplyWindow = Boolean\(outsideReplyWindow && !selectedApiUnavailable && !sendingThroughHighLevel/)
+  assert.match(source, /const composerBlockedByReplyWindow = Boolean\(outsideReplyWindow && !selectedApiUnavailable && !highLevelChannelRequired/)
   assert.doesNotMatch(source, /Boolean\(whatsappStatus\?\.connected && whatsappStatus\?\.configured\)/)
   assert.doesNotMatch(source, /activeHighLevelChatChannel === 'whatsapp_api' && !whatsappConnected && !selectedQrReady/)
+})
+
+test('PhoneChat ofrece rutas explicitas de HighLevel junto a cada WhatsApp nativo', async () => {
+  const source = await readSource('frontend/src/pages/PhoneChat/PhoneChat.tsx')
+
+  assert.match(source, /HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID = '__highlevel_whatsapp__'/)
+  assert.match(source, /value: 'whatsapp_api', label: 'WhatsApp · HighLevel'/)
+  assert.match(source, /value: 'sms_qr', label: 'SMS · HighLevel'/)
+  assert.match(source, /\.\.\.whatsappOptions,[\s\S]*?\.\.\.baseComposerMessageChannelOptions/)
+  assert.match(source, /value === 'whatsapp_api'[\s\S]*?!highLevelConnected/)
+  assert.match(source, /nextChannel === 'sms_qr'[\s\S]*?HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID/)
 })
 
 test('DesktopChat no usa HighLevel como rescate silencioso de un numero nativo', async () => {
@@ -47,4 +58,25 @@ test('DesktopChat no usa HighLevel como rescate silencioso de un numero nativo',
   assert.match(sendSource, /!apiReplyWindowOpen[\s\S]*?Usa una plantilla/)
   assert.doesNotMatch(source, /Boolean\(whatsappStatus\?\.connected && selectedBusinessPhoneValue\)/)
   assert.doesNotMatch(sendSource, /composerChannel === 'whatsapp' && !whatsappConnected && !selectedQrReady/)
+})
+
+test('DesktopChat permite elegir WhatsApp o SMS de HighLevel aunque existan numeros nativos', async () => {
+  const source = await readSource('frontend/src/pages/DesktopChat/DesktopChat.tsx')
+  const sendStart = source.indexOf('const handleSendMessage = async')
+  const sendEnd = source.indexOf('const handleReactToMessage = async', sendStart)
+
+  assert.ok(sendStart >= 0 && sendEnd > sendStart, 'No se encontro la ruta de envio de DesktopChat')
+  const sendSource = source.slice(sendStart, sendEnd)
+
+  assert.match(source, /HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID = '__highlevel_whatsapp__'/)
+  assert.match(source, /HIGHLEVEL_WHATSAPP_COMPOSER_VALUE = 'whatsapp:highlevel'/)
+  assert.match(source, /value: 'sms', label: 'SMS · HighLevel'/)
+  assert.match(source, /label: 'WhatsApp · HighLevel'/)
+  assert.match(source, /if \(channel === 'sms'\) return 'sms_qr'/)
+  assert.match(source, /nextBusinessPhoneId === 'highlevel'[\s\S]*?HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID/)
+  assert.match(source, /highLevelPhoneVoiceChannelReady[\s\S]*?composerChannel === 'sms'/)
+  assert.match(sendSource, /sendAttachmentsThroughHighLevel[\s\S]*?composerChannel === 'sms'/)
+  assert.match(sendSource, /sendVoiceThroughHighLevel[\s\S]*?composerChannel === 'sms'/)
+  assert.match(sendSource, /composerChannel === 'whatsapp' && !selectedBusinessPhone/)
+  assert.doesNotMatch(sendSource, /highLevelService\.sendConversationMessage\(\{[\s\S]{0,500}?fromNumber: selectedBusinessPhoneValue/)
 })

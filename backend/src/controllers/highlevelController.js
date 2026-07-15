@@ -56,6 +56,7 @@ import { parseSortableTimestamp } from '../utils/sqlTimestampSort.js';
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js';
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js';
 import { getCachedPaymentListSummary } from '../services/paymentListSummaryCacheService.js';
+import { isHighLevelConversationContactNotFoundError } from '../utils/highLevelConversationErrors.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -687,6 +688,7 @@ async function resolveHighLevelChatChannelForReply({ requestedChannel, contact, 
   try {
     remoteRecent = await findRecentHighLevelWhatsAppInbound({ ghlClient, highLevelContactId });
   } catch (error) {
+    if (isHighLevelConversationContactNotFoundError(error)) throw error;
     remoteError = error;
     logger.warn(`[HighLevel Conversations] No se pudo confirmar ventana WhatsApp en HighLevel para ${highLevelContactId}: ${error.message}`);
   }
@@ -2349,7 +2351,7 @@ async function getLocalContactForHighLevelMessage(contactId) {
   );
 }
 
-async function resolveHighLevelContactIdForChat({ contact, ghlClient }) {
+async function resolveHighLevelContactIdForChat({ contact, ghlClient, forceRefresh = false }) {
   const localContactId = cleanString(contact?.id);
   if (!localContactId) {
     throw new Error('El contacto no existe en Ristak.');
@@ -2357,11 +2359,11 @@ async function resolveHighLevelContactIdForChat({ contact, ghlClient }) {
 
   // Vínculo explícito con HighLevel (ghl_contact_id) tiene prioridad.
   const linkedGhlId = cleanString(contact?.ghl_contact_id);
-  if (linkedGhlId) {
+  if (linkedGhlId && !forceRefresh) {
     return linkedGhlId;
   }
 
-  if (!isLocalOnlyContactId(localContactId)) {
+  if (!forceRefresh && !isLocalOnlyContactId(localContactId)) {
     // Legacy: la primary key era el ID de GHL.
     return localContactId;
   }
@@ -2817,7 +2819,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
   }
 
   const ghlClient = await getGHLClient();
-  const highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient });
+  let highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient });
   const cleanFromNumber = normalizePhoneForStorage(fromNumber) || cleanString(fromNumber);
   const cleanToNumber = normalizePhoneForStorage(toNumber || contact.phone) || cleanString(toNumber || contact.phone);
   const renderedText = await renderTemplateVariables(text, {
@@ -2848,12 +2850,25 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
   if (!cleanString(renderedText) && resolvedAttachmentUrls.length === 0) {
     throw createHighLevelChatError('El mensaje quedó vacío después de resolver parámetros.');
   }
-  const channelResolution = await resolveHighLevelChatChannelForReply({
-    requestedChannel: channelConfig,
-    contact,
-    ghlClient,
-    highLevelContactId
-  });
+  let channelResolution;
+  try {
+    channelResolution = await resolveHighLevelChatChannelForReply({
+      requestedChannel: channelConfig,
+      contact,
+      ghlClient,
+      highLevelContactId
+    });
+  } catch (error) {
+    if (!isHighLevelConversationContactNotFoundError(error)) throw error;
+    logger.warn(`[HighLevel Conversations] El vínculo ${highLevelContactId} ya no existe; se buscará o recreará antes de enviar.`);
+    highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient, forceRefresh: true });
+    channelResolution = await resolveHighLevelChatChannelForReply({
+      requestedChannel: channelConfig,
+      contact,
+      ghlClient,
+      highLevelContactId
+    });
+  }
   const effectiveChannel = channelResolution.channel;
   const shouldIncludePhoneFields = effectiveChannel.key !== 'email';
   const requestBody = {
@@ -2868,7 +2883,16 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     ...(shouldIncludePhoneFields && cleanToNumber && { toNumber: cleanToNumber }),
     ...(cleanString(conversationProviderId) && { conversationProviderId: cleanString(conversationProviderId) })
   };
-  const response = await ghlClient.sendConversationMessage(requestBody);
+  let response;
+  try {
+    response = await ghlClient.sendConversationMessage(requestBody);
+  } catch (error) {
+    if (!isHighLevelConversationContactNotFoundError(error)) throw error;
+    logger.warn(`[HighLevel Conversations] HighLevel rechazó el contacto ${highLevelContactId}; se reparará el vínculo y se reintentará una vez.`);
+    highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient, forceRefresh: true });
+    requestBody.contactId = highLevelContactId;
+    response = await ghlClient.sendConversationMessage(requestBody);
+  }
   let localMirror;
   if (effectiveChannel.localTable === 'meta') {
     localMirror = await saveHighLevelMetaMirror({

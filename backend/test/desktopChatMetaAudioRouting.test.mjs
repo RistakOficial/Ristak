@@ -38,7 +38,8 @@ test('DesktopChat permite grabar voz en Meta nativo o HighLevel sin exigir telef
   assert.match(source, /const activeNativeMetaChannel:[^=]+=[\s\S]*?composerChannel === 'messenger' && metaMessengerConnected[\s\S]*?composerChannel === 'instagram' && metaInstagramConnected/)
   assert.match(source, /const socialVoiceChannelReady = Boolean\([\s\S]*?activeNativeMetaChannel[\s\S]*?highLevelConnected/)
   assert.match(recordingSource, /if \(composerChannel === 'messenger' \|\| composerChannel === 'instagram'\) \{[\s\S]*?if \(!socialVoiceChannelReady\)/)
-  assert.match(recordingSource, /if \(!whatsappConnected && !selectedQrReady\)/)
+  assert.match(source, /const highLevelPhoneVoiceChannelReady = Boolean\([\s\S]*?composerChannel === 'sms'[\s\S]*?composerChannel === 'whatsapp' && !selectedBusinessPhone/)
+  assert.match(recordingSource, /if \(!highLevelPhoneVoiceChannelReady && !whatsappConnected && !selectedQrReady\)/)
 })
 
 test('DesktopChat prioriza Meta nativo y envia voz y adjuntos multimedia en secuencia', async () => {
