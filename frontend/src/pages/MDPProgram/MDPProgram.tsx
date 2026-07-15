@@ -257,8 +257,12 @@ export const MDPProgram: React.FC = () => {
   }, [launchItem?.launchUrl, mdpThemePayload])
 
   React.useEffect(() => {
+    if (navigation) {
+      setLaunchItem(selectItem(navigation.items || [], requestedItemId))
+      return
+    }
     void load(requestedItemId)
-  }, [requestedItemId, load])
+  }, [requestedItemId, load, navigation])
 
   React.useEffect(() => {
     if (!launchItem?.launchUrl) {

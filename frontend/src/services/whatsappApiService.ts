@@ -746,7 +746,8 @@ export const whatsappApiService = {
     ...options,
     params: status ? { status } : undefined
   }),
-  getScheduledMessages: (contactId: string) => apiClient.get<ScheduledChatMessage[]>('/whatsapp-api/messages/scheduled', {
+  getScheduledMessages: (contactId: string, options: { signal?: AbortSignal } = {}) => apiClient.get<ScheduledChatMessage[]>('/whatsapp-api/messages/scheduled', {
+    signal: options.signal,
     params: { contactId }
   }),
   scheduleMessage: (payload: ScheduleChatMessagePayload) => apiClient.post<ScheduledChatMessage>('/whatsapp-api/messages/scheduled', payload),

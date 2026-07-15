@@ -307,3 +307,224 @@ test('el resumen multicanal no solapa el agregado pesado con lecturas auxiliares
     observer.restore()
   }
 })
+
+test('el resumen multicanal reduce auxiliares a dos olas acotadas sin cambiar el payload', { concurrency: false }, async () => {
+  const originals = { all: db.all, get: db.get }
+  const calls = []
+  let active = 0
+  let maxActive = 0
+  let aggregateActive = false
+  let auxiliaryOverlap = 0
+
+  const enter = async (sql) => {
+    const text = String(sql || '')
+    const aggregate = /WITH\s+message_base\s+AS/i.test(text)
+    if (!aggregate && aggregateActive) auxiliaryOverlap += 1
+    if (aggregate) aggregateActive = true
+    active += 1
+    maxActive = Math.max(maxActive, active)
+    calls.push(text)
+    await new Promise(resolve => setTimeout(resolve, 8))
+    return aggregate
+  }
+  const leave = (aggregate) => {
+    active -= 1
+    if (aggregate) aggregateActive = false
+  }
+
+  db.all = async function boundedAnalyticsAll(sql) {
+    const aggregate = await enter(sql)
+    try {
+      if (/FROM\s+hidden_contact_filters/i.test(String(sql || ''))) return []
+      if (aggregate) {
+        return [
+          {
+            row_type: 'metrics',
+            label: '',
+            value: '',
+            count_value: 4,
+            secondary_value: 3,
+            tertiary_value: 1,
+            all_messages_value: 4
+          },
+          {
+            row_type: 'trend',
+            label: '2097-06-01',
+            value: '',
+            count_value: 4,
+            secondary_value: 0,
+            tertiary_value: 0,
+            all_messages_value: 0
+          },
+          {
+            row_type: 'channel_filter',
+            label: 'WhatsApp',
+            value: 'whatsapp',
+            count_value: 3,
+            secondary_value: 0,
+            tertiary_value: 0,
+            all_messages_value: 0
+          },
+          {
+            row_type: 'source_filter',
+            label: 'Meta Ads',
+            value: 'Meta Ads',
+            count_value: 1,
+            secondary_value: 0,
+            tertiary_value: 0,
+            all_messages_value: 0
+          }
+        ]
+      }
+      throw new Error(`Lectura all inesperada en prueba: ${String(sql || '').slice(0, 120)}`)
+    } finally {
+      leave(aggregate)
+    }
+  }
+
+  db.get = async function boundedAnalyticsGet(sql) {
+    const aggregate = await enter(sql)
+    try {
+      const text = String(sql || '')
+      if (/AS\s+whatsapp_total[\s\S]+AS\s+meta_contact_total[\s\S]+AS\s+email_config_value/i.test(text)) {
+        return {
+          whatsapp_total: 1,
+          meta_contact_total: 0,
+          email_config_value: JSON.stringify({ connected: true })
+        }
+      }
+      if (/SELECT\s+\*\s+FROM\s+meta_config\s+LIMIT\s+1/i.test(text)) return null
+      if (/FROM\s+meta_oauth_integrations/i.test(text)) {
+        return {
+          id: 'social-fixture',
+          integration_kind: 'social',
+          status: 'active',
+          connection_id: 'social-fixture',
+          page_id: 'page-fixture',
+          instagram_account_id: 'instagram-fixture',
+          granted_scopes_json: '[]',
+          missing_scopes_json: '[]',
+          granular_scopes_json: '[]'
+        }
+      }
+      if (/FROM\s+message_first_seen_projection_state/i.test(text)) {
+        return { singleton_id: 1, projection_version: 1, status: 'ready', last_error: null }
+      }
+      if (/FROM\s+message_identity_first_seen_global/i.test(text)) return { total: 2 }
+      throw new Error(`Lectura get inesperada en prueba: ${text.slice(0, 120)}`)
+    } finally {
+      leave(aggregate)
+    }
+  }
+
+  try {
+    const summary = await getMessageAnalyticsSummary({
+      startUtc: '2097-06-01T00:00:00.000Z',
+      endUtc: '2097-06-01T23:59:59.999Z',
+      appliedTimezone: 'UTC'
+    }, { groupBy: 'day' })
+
+    assert.deepEqual(summary, {
+      metrics: {
+        inboundMessages: 4,
+        conversations: 3,
+        contacts: 2,
+        attributionRate: 33.3
+      },
+      trend: [{ label: '2097-06-01', messages: 4 }],
+      filters: {
+        channels: [{ name: 'WhatsApp', value: 'whatsapp', count: 3 }],
+        sources: [{ name: 'Meta Ads', value: 'Meta Ads', count: 1 }]
+      },
+      status: {
+        connected: true,
+        hasData: true,
+        channels: {
+          whatsapp: true,
+          messenger: true,
+          instagram: true,
+          email: true
+        },
+        firstSeenProjection: 'ready',
+        firstSeenProjectionComplete: true
+      }
+    })
+    assert.equal(auxiliaryOverlap, 0, 'ninguna lectura auxiliar debe empezar mientras corre el agregado')
+    assert.equal(maxActive, 3, 'first-seen mas el par interno Meta deben quedar acotados a tres conexiones')
+
+    const localStatusCalls = calls.filter(sql => (
+      /whatsapp_api_phone_numbers/i.test(sql) &&
+      /meta_social_contacts/i.test(sql) &&
+      /email_smtp_config/i.test(sql)
+    ))
+    assert.equal(localStatusCalls.length, 1, 'los tres estados locales deben compartir un solo SELECT')
+    assert.equal(calls.length, 7, 'hidden, agregado y cinco lecturas auxiliares forman el camino completo')
+  } finally {
+    db.all = originals.all
+    db.get = originals.get
+  }
+})
+
+test('cancelar el resumen multicanal aborta el SELECT auxiliar combinado', { concurrency: false }, async () => {
+  const originals = { all: db.all, get: db.get }
+  let resolveAuxiliaryStarted
+  const auxiliaryStarted = new Promise(resolve => {
+    resolveAuxiliaryStarted = resolve
+  })
+  let auxiliarySignal = null
+  let metaConfigReads = 0
+
+  db.all = async function cancellableAnalyticsAll(sql) {
+    if (/FROM\s+hidden_contact_filters/i.test(String(sql || ''))) return []
+    if (/WITH\s+message_base\s+AS/i.test(String(sql || ''))) {
+      return [{
+        row_type: 'metrics',
+        count_value: 0,
+        secondary_value: 0,
+        tertiary_value: 0,
+        all_messages_value: 0
+      }]
+    }
+    return originals.all.apply(this, arguments)
+  }
+
+  db.get = async function cancellableAnalyticsGet(sql, params, options) {
+    const text = String(sql || '')
+    if (/AS\s+whatsapp_total[\s\S]+AS\s+meta_contact_total[\s\S]+AS\s+email_config_value/i.test(text)) {
+      auxiliarySignal = options?.signal || null
+      resolveAuxiliaryStarted()
+      return new Promise((resolve, reject) => {
+        const onAbort = () => reject(Object.assign(new Error('aborted'), {
+          name: 'AbortError',
+          code: 'ABORT_ERR'
+        }))
+        auxiliarySignal?.addEventListener('abort', onAbort, { once: true })
+      })
+    }
+    if (/meta_config|meta_oauth_integrations/i.test(text)) metaConfigReads += 1
+    return originals.get.apply(this, arguments)
+  }
+
+  try {
+    const controller = new AbortController()
+    const request = getMessageAnalyticsSummary({
+      startUtc: '2097-06-02T00:00:00.000Z',
+      endUtc: '2097-06-02T23:59:59.999Z',
+      appliedTimezone: 'UTC'
+    }, {
+      groupBy: 'day',
+      filters: { channels: ['whatsapp'] },
+      signal: controller.signal
+    })
+
+    await auxiliaryStarted
+    controller.abort()
+
+    await assert.rejects(request, error => error?.name === 'AbortError' || error?.code === 'ABORT_ERR')
+    assert.equal(auxiliarySignal?.aborted, true, 'la señal del request debe llegar al SELECT combinado')
+    assert.equal(metaConfigReads, 0, 'después de abortar no debe abrirse la siguiente ola Meta')
+  } finally {
+    db.all = originals.all
+    db.get = originals.get
+  }
+})

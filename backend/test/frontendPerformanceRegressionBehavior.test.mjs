@@ -943,3 +943,72 @@ test('el prefetch del shell de Sites no inicia el workspace pesado', async () =>
   assert.doesNotMatch(sitesLoader, /prefetchSitesWorkspace|\.then\s*\(/)
   assert.doesNotMatch(sitesLoader, /import\('@\/pages\/Sites\/Sites'\)/)
 })
+
+test('Contactos monta una sola vez la tabla que sincroniza table_contacts_v2 durante la carga inicial', async () => {
+  const [contactsSource, tableSource, appConfigSource, appConfigServiceSource] = await Promise.all([
+    repoFile('frontend/src/pages/Contacts/Contacts.tsx'),
+    repoFile('frontend/src/components/common/Table/Table.tsx'),
+    repoFile('frontend/src/hooks/useAppConfig.ts'),
+    repoFile('frontend/src/services/appConfigService.ts')
+  ])
+
+  const initialLoadingMatch = contactsSource.match(
+    /const \[loading, setLoading\] = useState\((true|false)\)/
+  )
+  const initialLoadedMatch = contactsSource.match(
+    /const \[hasLoadedContacts, setHasLoadedContacts\] = useState\((true|false)\)/
+  )
+
+  assert.ok(initialLoadingMatch, 'Contactos debe declarar su estado de carga inicial')
+  assert.ok(initialLoadedMatch, 'Contactos debe distinguir la primera carga de los refresh posteriores')
+  assert.match(
+    contactsSource,
+    /if \(loading && !hasLoadedContacts\)\s*{[\s\S]*?<PageHeader[\s\S]*?title="Contactos"[\s\S]*?<Loading message="Cargando contactos\.\.\."/,
+    'Contactos debe pintar su cabecera antes de esperar la primera página'
+  )
+  assert.equal((contactsSource.match(/tableId="contacts_v2"/g) || []).length, 1)
+  assert.match(tableSource, /useTableConfig\(tableId \|\| 'default'\)/)
+  assert.match(appConfigSource, /const key = `table_\$\{tableId\}`/)
+  assert.match(appConfigSource, /getAppConfigValues\(\[key\]\)/)
+  assert.match(appConfigServiceSource, /new URLSearchParams\(\{ keys: normalizedKeys\.join\(','\) \}\)/)
+  assert.match(appConfigServiceSource, /fetch\(apiUrl\(`\/api\/config\?\$\{params\.toString\(\)\}`\)/)
+
+  const lifecycle = [
+    {
+      loading: initialLoadingMatch[1] === 'true',
+      hasLoadedContacts: initialLoadedMatch[1] === 'true'
+    },
+    { loading: true, hasLoadedContacts: false },
+    { loading: false, hasLoadedContacts: true }
+  ]
+  let tableMounted = false
+  let tableConfigReads = 0
+
+  for (const state of lifecycle) {
+    const nextTableMounted = !(state.loading && !state.hasLoadedContacts)
+    if (nextTableMounted && !tableMounted) tableConfigReads += 1
+    tableMounted = nextTableMounted
+  }
+
+  assert.equal(
+    tableConfigReads,
+    1,
+    'la tabla no debe montar, desmontar y repetir GET /api/config?keys=table_contacts_v2'
+  )
+})
+
+test('Magnetismo reutiliza la navegación al sincronizar la ruta del iframe', async () => {
+  const page = await repoFile('frontend/src/pages/MDPProgram/MDPProgram.tsx')
+  const navigationEffect = page.slice(
+    page.indexOf('React.useEffect(() => {\n    if (navigation)'),
+    page.indexOf('React.useEffect(() => {\n    if (!launchItem?.launchUrl)')
+  )
+
+  assert.match(navigationEffect, /if \(navigation\) \{[\s\S]*setLaunchItem\(selectItem\(navigation\.items \|\| \[\], requestedItemId\)\)[\s\S]*return/)
+  assert.equal(
+    (navigationEffect.match(/void load\(requestedItemId\)/g) || []).length,
+    1,
+    'la navegación remota sólo debe consultarse cuando todavía no existe snapshot local'
+  )
+  assert.match(navigationEffect, /\[requestedItemId, load, navigation\]/)
+})

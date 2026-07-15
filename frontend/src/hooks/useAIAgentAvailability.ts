@@ -106,11 +106,12 @@ export function useAIAgentAvailability(): AIAgentAvailability {
   useEffect(() => {
     let cancelled = false
     let requestVersion = 0
+    const controller = new AbortController()
 
     const loadStatus = async () => {
       const currentRequestVersion = ++requestVersion
       try {
-        const status = await aiAgentService.getConfig()
+        const status = await aiAgentService.getConfig({ signal: controller.signal })
         if (!cancelled && currentRequestVersion === requestVersion) applyStatus(status)
       } catch {
         if (!cancelled && currentRequestVersion === requestVersion) {
@@ -148,6 +149,7 @@ export function useAIAgentAvailability(): AIAgentAvailability {
     return () => {
       cancelled = true
       requestVersion += 1
+      controller.abort()
       window.removeEventListener(AI_AGENT_CONFIG_CHANGED_EVENT, handleConfigChange)
       window.removeEventListener(AUTH_PRINCIPAL_CHANGED_EVENT, handleAuthPrincipalChange)
     }

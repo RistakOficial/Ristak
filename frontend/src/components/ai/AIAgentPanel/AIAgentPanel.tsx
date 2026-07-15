@@ -1627,34 +1627,37 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     setForm(statusToForm(nextStatus))
   }
 
-  const loadStatus = async () => {
+  const loadStatus = async (signal?: AbortSignal) => {
     setLoadingConfig(true)
     try {
-      const nextStatus = await aiAgentService.getConfig()
+      const nextStatus = await aiAgentService.getConfig({ signal })
       applyStatus(nextStatus)
     } catch {
+      if (signal?.aborted) return
       applyStatus(emptyStatus)
     } finally {
-      setLoadingConfig(false)
+      if (!signal?.aborted) setLoadingConfig(false)
     }
   }
 
   useEffect(() => {
+    const controller = new AbortController()
     clearLegacyStoredMessages()
-    loadStatus()
+    void loadStatus(controller.signal)
 
     const handleConfigChange = (event: Event) => {
       const customEvent = event as CustomEvent<AIAgentConfigStatus>
       if (customEvent.detail) {
         applyStatus(customEvent.detail)
       } else {
-        loadStatus()
+        void loadStatus(controller.signal)
       }
     }
 
     window.addEventListener('ai-agent-config-changed', handleConfigChange)
 
     return () => {
+      controller.abort()
       window.removeEventListener('ai-agent-config-changed', handleConfigChange)
     }
   }, [])

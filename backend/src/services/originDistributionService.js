@@ -413,32 +413,32 @@ async function getMessageAnalyticsAggregateRows(range, {
 }
 
 async function getMessageConnectionStatus(signal) {
-  // Son lecturas chicas, pero antes abrían cuatro conexiones simultáneas en
-  // medio de un agregado ya pesado. En conjunto con tracking y dashboard una
-  // sola visita a Analíticas podía superar el pool completo de la instalación.
-  const phoneRows = await db.get(
-    'SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers',
+  // Los tres estados locales comparten una sola ida a la base. La configuracion
+  // Meta conserva su contrato de merge/decryption, pero se lee despues para no
+  // volver al burst de cuatro conexiones que competia con el agregado pesado.
+  const localStatus = await db.get(
+    `SELECT
+      (SELECT COUNT(*) FROM whatsapp_api_phone_numbers) AS whatsapp_total,
+      (SELECT COUNT(*) FROM meta_social_contacts) AS meta_contact_total,
+      (SELECT config_value
+       FROM app_config
+       WHERE config_key = 'email_smtp_config'
+       LIMIT 1) AS email_config_value`,
     [],
     { signal }
-  ).catch(fallbackUnlessAborted({ total: 0 }, signal))
+  ).catch(fallbackUnlessAborted({
+    whatsapp_total: 0,
+    meta_contact_total: 0,
+    email_config_value: null
+  }, signal))
   const metaConfig = await getMetaSocialConfig({ migratePlaintext: false })
     .catch(fallbackUnlessAborted(null, signal))
-  const metaContactRows = await db.get(
-    'SELECT COUNT(*) as total FROM meta_social_contacts',
-    [],
-    { signal }
-  ).catch(fallbackUnlessAborted({ total: 0 }, signal))
-  const emailConfigRow = await db.get(
-    "SELECT config_value FROM app_config WHERE config_key = 'email_smtp_config'",
-    [],
-    { signal }
-  ).catch(fallbackUnlessAborted(null, signal))
 
-  const emailConfig = parseJsonSafe(emailConfigRow?.config_value, {})
+  const emailConfig = parseJsonSafe(localStatus?.email_config_value, {})
   return {
-    whatsapp: Number(phoneRows?.total || 0) > 0,
-    messenger: hasText(metaConfig?.page_id) || Number(metaContactRows?.total || 0) > 0,
-    instagram: hasText(metaConfig?.instagram_account_id) || Number(metaContactRows?.total || 0) > 0,
+    whatsapp: Number(localStatus?.whatsapp_total || 0) > 0,
+    messenger: hasText(metaConfig?.page_id) || Number(localStatus?.meta_contact_total || 0) > 0,
+    instagram: hasText(metaConfig?.instagram_account_id) || Number(localStatus?.meta_contact_total || 0) > 0,
     email: Boolean(emailConfig?.connected)
   }
 }
@@ -456,10 +456,15 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
     hiddenFilters,
     signal
   })
-  const connectionStatus = await getMessageConnectionStatus(signal)
-  const firstSeenCount = hasActiveFilters
-    ? { count: null, projectionReady: true, projectionStatus: 'filtered' }
-    : await getMessageFirstSeenCount(range, hiddenFilters, signal)
+  // El agregado ya termino antes de abrir auxiliares. A partir de aqui solo hay
+  // dos tareas acotadas: estado de conexiones y first-seen; asi recuperamos una
+  // ola completa de latencia sin competir con el scan principal.
+  const [connectionStatus, firstSeenCount] = await Promise.all([
+    getMessageConnectionStatus(signal),
+    hasActiveFilters
+      ? Promise.resolve({ count: null, projectionReady: true, projectionStatus: 'filtered' })
+      : getMessageFirstSeenCount(range, hiddenFilters, signal)
+  ])
   const metricsRow = aggregateRows.find(row => row.row_type === 'metrics') || {}
   const inboundMessages = Number(metricsRow.count_value || 0)
   const conversations = Number(metricsRow.secondary_value || 0)

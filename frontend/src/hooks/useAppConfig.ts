@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { apiUrl } from '@/services/apiBaseUrl'
+import {
+  clearAppConfigReadCache,
+  getAppConfigValues
+} from '@/services/appConfigService'
 
 /**
  * Sistema HÍBRIDO de configuración:
@@ -146,14 +150,8 @@ export function useAppConfig<T = string>(
       beginSync()
 
       try {
-        const params = new URLSearchParams({ keys: key })
-        const response = await fetch(buildConfigUrl(params), {
-          headers: getConfigHeaders()
-        })
-        if (!response.ok) throw new Error('Failed to fetch config')
-
-        const data = await response.json()
-        const dbValue = data.config?.[key]
+        const config = await getAppConfigValues([key])
+        const dbValue = config[key]
 
         if (
           dbValue !== undefined &&
@@ -226,6 +224,10 @@ export function useAppConfig<T = string>(
       if (!response.ok) {
         throw new Error('Failed to save config')
       }
+
+      // El POST usa fetch directo; invalida explícitamente el snapshot JSON
+      // para que un consumidor que monte después no reciba el valor anterior.
+      clearAppConfigReadCache()
 
       // 2. Actualizar cache local si esta config lo permite
       if (cacheFirst) {

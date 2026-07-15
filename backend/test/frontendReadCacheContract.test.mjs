@@ -18,6 +18,32 @@ test('authFetch no clona, materializa ni cachea globalmente las respuestas GET',
   assert.match(source, /pathPrefixesOverlap/)
 })
 
+test('config deduplica únicamente JSON pequeño con cache acotado por cuenta', async () => {
+  const [authFetch, configService, configHook] = await Promise.all([
+    repoFile('frontend/src/services/authFetch.ts'),
+    repoFile('frontend/src/services/appConfigService.ts'),
+    repoFile('frontend/src/hooks/useAppConfig.ts')
+  ])
+
+  assert.match(configService, /APP_CONFIG_CACHE_TTL_MS = 60_000/)
+  assert.match(configService, /APP_CONFIG_CACHE_MAX_ENTRIES = 128/)
+  assert.match(configService, /APP_CONFIG_REQUEST_TIMEOUT_MS = 20_000/)
+  assert.match(configService, /getOrCreateSharedRequest\(\{/)
+  assert.match(configService, /createRequest: sharedSignal => withRequestTimeout\(\{/)
+  assert.match(configService, /registerAuthScopedCacheInvalidator\(clearAppConfigReadCache\)/)
+  assert.match(configService, /pathPrefixes: \['\/api\/config'\]/)
+  assert.match(configService, /requestAuthRevision === getAuthScopedCacheRevision\(\)/)
+  assert.doesNotMatch(configService, /Response\.clone|response\.clone|arrayBuffer/)
+  assert.match(configHook, /getAppConfigValues\(\[key\]\)/)
+  assert.match(
+    configHook,
+    /if \(!response\.ok\)[\s\S]*?throw new Error\('Failed to save config'\)[\s\S]*?clearAppConfigReadCache\(\)[\s\S]*?dispatchEvent/,
+    'sólo una mutación confirmada invalida el snapshot antes de publicar el valor nuevo'
+  )
+  assert.doesNotMatch(configHook, /fetch\(buildConfigUrl\(params\)/)
+  assert.doesNotMatch(authFetch, /apiReadResponseCache|apiReadInFlight/)
+})
+
 test('mutaciones y eventos vivos invalidan sólo los módulos que realmente dependen del cambio', async () => {
   const [authFetch, paymentsLive, chatLive] = await Promise.all([
     repoFile('frontend/src/services/authFetch.ts'),

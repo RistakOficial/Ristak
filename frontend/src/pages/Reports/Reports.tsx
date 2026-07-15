@@ -3367,7 +3367,14 @@ export const Reports: React.FC = () => {
   const summaryRefreshing = loadingSummary && hasLoadedSummary
 
   if ((loadingMetrics || loadingSummary) && !hasLoadedReports) {
-    return <Loading message="Cargando reportes..." page="reports" />
+    return (
+      <PageContainer size="wide">
+        <div className={styles.container}>
+          <PageHeader title="Reportes" subtitle={metricsRangeLabel || undefined} />
+          <Loading message="Cargando reportes..." page="reports" />
+        </div>
+      </PageContainer>
+    )
   }
 
   return (

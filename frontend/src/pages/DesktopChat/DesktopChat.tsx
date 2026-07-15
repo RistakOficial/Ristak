@@ -110,6 +110,7 @@ import {
   getOldestJourneyMessageCursor,
   type JourneyEvent
 } from '@/services/contactsService'
+import { createDesktopChatConversationRequestCoordinator } from '@/services/desktopChatConversationRequest'
 import { subscribeToChatLiveEvents, reportViewing, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
 import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel, type HighLevelPhoneNumber } from '@/services/highLevelService'
@@ -3284,6 +3285,8 @@ export const DesktopChat: React.FC = () => {
     lastMessageId: ''
   })
   const conversationLoadGenerationRef = useRef(0)
+  const [conversationRequestCoordinator] = useState(() => createDesktopChatConversationRequestCoordinator())
+  const chatReadRequestsRef = useRef(new Map<string, Promise<unknown>>())
   const conversationActivityLoadedAtRef = useRef(0)
   const olderMessagesLoadingRef = useRef(false)
   const conversationHasOlderMessagesRef = useRef(false)
@@ -3802,26 +3805,45 @@ export const DesktopChat: React.FC = () => {
   const markChatsReadLocally = useCallback((contactIds: string[]) => {
     const idSet = new Set(contactIds.filter(Boolean))
     if (!idSet.size) return
+    chatsRef.current = chatsRef.current.map((contact) => (
+      idSet.has(contact.id) ? { ...contact, unreadCount: 0 } : contact
+    ))
     setChats((current) => {
       const next = current.map((contact) => (
         idSet.has(contact.id) ? { ...contact, unreadCount: 0 } : contact
       ))
+      chatsRef.current = next
       writeCachedChatList(next)
       return next
     })
   }, [])
   const persistChatsRead = useCallback((contactIds: string[]) => {
     const ids = [...new Set(contactIds.filter(Boolean))]
+      .filter((contactId) => !chatReadRequestsRef.current.has(contactId))
     if (!ids.length) return
 
     const request = ids.length === 1
       ? contactsService.markChatRead(ids[0])
       : contactsService.markChatsRead(ids)
 
-    request.catch((error: any) => {
-      showToast('warning', 'No se pudo guardar leído', error?.message || 'El chat se marcó localmente; se corregirá al refrescar.')
-    })
+    ids.forEach((contactId) => chatReadRequestsRef.current.set(contactId, request))
+    void request
+      .catch((error: any) => {
+        showToast('warning', 'No se pudo guardar leído', error?.message || 'El chat se marcó localmente; se corregirá al refrescar.')
+      })
+      .finally(() => {
+        ids.forEach((contactId) => {
+          if (chatReadRequestsRef.current.get(contactId) === request) {
+            chatReadRequestsRef.current.delete(contactId)
+          }
+        })
+      })
   }, [showToast])
+  useEffect(() => {
+    if (!activeContactId || Number(activeContact?.unreadCount || 0) <= 0) return
+    markChatsReadLocally([activeContactId])
+    persistChatsRead([activeContactId])
+  }, [activeContact?.unreadCount, activeContactId, markChatsReadLocally, persistChatsRead])
   useEffect(() => {
     archivedChatIdSetRef.current = archivedChatIdSet
   }, [archivedChatIdSet])
@@ -4530,18 +4552,23 @@ export const DesktopChat: React.FC = () => {
     }
   }, [chats.length, loadChats])
 
-  const loadConversation = useCallback(async (
+  const loadConversation = useCallback((
     contactId: string,
     options: { silent?: boolean; useCache?: boolean; showCacheRefresh?: boolean } = {}
-  ) => {
-    if (!contactId) return
+  ): Promise<void> => {
+    if (!contactId) return Promise.resolve()
+    const silent = options.silent === true
+    return conversationRequestCoordinator.run(
+      contactId,
+      silent ? 'background' : 'foreground',
+      async (signal) => {
     const loadGeneration = conversationLoadGenerationRef.current + 1
     conversationLoadGenerationRef.current = loadGeneration
     const isCurrentConversationLoad = () => (
       conversationLoadGenerationRef.current === loadGeneration &&
-      activeContactIdRef.current === contactId
+      activeContactIdRef.current === contactId &&
+      !signal.aborted
     )
-    const silent = options.silent === true
     const useCache = options.useCache !== false && !silent
     const shouldRefreshActivityJourney = !silent || Date.now() - conversationActivityLoadedAtRef.current >= CHAT_ACTIVITY_REFRESH_INTERVAL_MS
     if (!silent) {
@@ -4596,19 +4623,21 @@ export const DesktopChat: React.FC = () => {
       ? contactsService.getContactJourney(contactId, {
         refreshExternalStatuses: false,
         throwOnError: true,
-        chatActivityOnly: true
+        chatActivityOnly: true,
+        signal
       })
         .then((events) => ({ events, loaded: true }))
         .catch(() => ({ events: [] as JourneyEvent[], loaded: false }))
       : Promise.resolve({ events: [] as JourneyEvent[], loaded: false })
-    const scheduledMessagesPromise = whatsappApiService.getScheduledMessages(contactId).catch(() => [])
+    const scheduledMessagesPromise = whatsappApiService.getScheduledMessages(contactId, { signal }).catch(() => [])
     try {
       // La conversación es la ruta crítica. Programados, perfil, agente y
       // marcadores se hidratan después sin retener el primer paint.
       const journey = await contactsService.getContactConversation(contactId, {
         refreshExternalStatuses: false,
         messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
-        throwOnError: true
+        throwOnError: true,
+        signal
       })
       if (!isCurrentConversationLoad()) return
 
@@ -4633,21 +4662,16 @@ export const DesktopChat: React.FC = () => {
       messagesLoaded = true
       setMessagesLoading(false)
       setMessagesRefreshing(false)
-      setChats((current) => {
-        const next = current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact)
-        writeCachedChatList(next)
-        return next
-      })
-      void contactsService.markChatRead(contactId).catch(() => undefined)
 
       const [scheduledMessages, details, contactAgentStates, agentCompletions, activityJourney] = await Promise.all([
         scheduledMessagesPromise,
         contactsService.getContactDetails(contactId, {
           warmProfilePictures: false,
-          refreshExternalAppointments: false
+          refreshExternalAppointments: false,
+          signal
         }).catch(() => null),
-        conversationalAgentService.getStates(contactId).catch(() => [] as ConversationAgentState[]),
-        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => []),
+        conversationalAgentService.getStates(contactId, { signal }).catch(() => [] as ConversationAgentState[]),
+        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }, { signal }).catch(() => []),
         activityJourneyPromise
       ])
       if (!isCurrentConversationLoad()) return
@@ -4703,7 +4727,9 @@ export const DesktopChat: React.FC = () => {
       }
       setContactInfoLoading(false)
     }
-  }, [locationId])
+      }
+    )
+  }, [conversationRequestCoordinator, locationId])
 
   const loadOlderConversationMessages = useCallback(async (contactId: string) => {
     if (!contactId) return
@@ -5055,11 +5081,13 @@ export const DesktopChat: React.FC = () => {
 
   useEffect(() => () => {
     chatsRequestRef.current?.abort()
+    chatListLoadMoreRequestRef.current?.abort()
+    conversationRequestCoordinator.scheduleAbort()
     if (chatLiveRefreshTimeoutRef.current !== null) {
       window.clearTimeout(chatLiveRefreshTimeoutRef.current)
       chatLiveRefreshTimeoutRef.current = null
     }
-  }, [])
+  }, [conversationRequestCoordinator])
 
   useEffect(() => {
     loadSupportData()
@@ -5067,6 +5095,7 @@ export const DesktopChat: React.FC = () => {
 
   useEffect(() => {
     if (!activeContactId) {
+      conversationRequestCoordinator.abort()
       openingConversationScrollContactIdRef.current = ''
       scrollContactIdRef.current = ''
       conversationActivityLoadedAtRef.current = 0
@@ -5076,7 +5105,9 @@ export const DesktopChat: React.FC = () => {
       contactJourneyRef.current = []
       setContactInfoData(null)
       setConversationAgentState(null)
+      setMessagesLoading(false)
       setMessagesRefreshing(false)
+      setContactInfoLoading(false)
       olderMessagesLoadingRef.current = false
       conversationHasOlderMessagesRef.current = false
       conversationHistoryExhaustedContactIdRef.current = null
@@ -5088,8 +5119,9 @@ export const DesktopChat: React.FC = () => {
     messagePanePinnedToBottomRef.current = true
     setInfoPanelView('summary')
     setAgentHistoryExpanded(false)
-    loadConversation(activeContactId)
-  }, [activeContactId, loadConversation])
+    void loadConversation(activeContactId)
+    return () => conversationRequestCoordinator.scheduleAbort(activeContactId)
+  }, [activeContactId, conversationRequestCoordinator, loadConversation])
 
   const updateMessagePaneBottomLock = useCallback(() => {
     const pane = messagePaneRef.current

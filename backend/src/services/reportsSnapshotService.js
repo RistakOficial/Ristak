@@ -12,6 +12,7 @@ import {
 import { createDatabaseAbortError } from '../utils/postgresCancelableQuery.js'
 
 const SNAPSHOT_REFRESH_INTERVAL_MS = 30_000
+const SNAPSHOT_ACCESS_TOUCH_INTERVAL_MS = 30_000
 const SNAPSHOT_STALE_MAX_AGE_MS = 5 * 60_000
 const SNAPSHOT_MAX_ENTRIES_PER_SHARED_SCOPE = 48
 const SNAPSHOT_MAX_ENTRIES_PER_ACCOUNT = 192
@@ -160,20 +161,31 @@ function decodeStoredRevision(storedRevision) {
 
 async function getSnapshotSourceRevision(signal) {
   throwIfAborted(signal)
-  const visitorRevisionPromise = getCampaignPerformanceSourceRevision({ includeVisitors: true, signal })
   if (databaseDialect === 'postgres') {
-    const [row, visitorRevision] = await Promise.all([
-      db.get(
-        'SELECT last_value, is_called FROM reports_snapshot_revision_seq',
-        [],
-        signalOptions(signal)
-      ),
-      visitorRevisionPromise
-    ])
-    const coreRevision = row?.is_called ? Number(row.last_value || 0) : 0
-    return `reports:${coreRevision}|${visitorRevision}`
+    const row = await db.get(`
+      SELECT
+        COALESCE((
+          SELECT CASE WHEN is_called THEN last_value ELSE 0 END
+          FROM reports_snapshot_revision_seq
+        ), 0) AS reports_revision,
+        COALESCE((
+          SELECT core_revision
+          FROM campaign_performance_revision
+          WHERE id = 1
+        ), 0) AS campaign_core_revision,
+        COALESCE((
+          SELECT CASE WHEN is_called THEN last_value ELSE 0 END
+          FROM campaign_performance_visitor_revision_seq
+        ), 0) AS visitor_revision
+    `, [], signalOptions(signal))
+    return [
+      `reports:${Number(row?.reports_revision || 0)}`,
+      `core:${Number(row?.campaign_core_revision || 0)}`,
+      `visitor:${Number(row?.visitor_revision || 0)}`
+    ].join('|')
   }
 
+  const visitorRevisionPromise = getCampaignPerformanceSourceRevision({ includeVisitors: true, signal })
   const [row, visitorRevision] = await Promise.all([
     db.get(
       'SELECT revision FROM reports_snapshot_revision WHERE singleton = 1',
@@ -185,16 +197,7 @@ async function getSnapshotSourceRevision(signal) {
   return `reports:${Number(row?.revision || 0)}|${visitorRevision}`
 }
 
-async function readSnapshot({ accountScope, principalScope, cacheKey, sourceRevision, signal }) {
-  const row = await db.get(`
-    SELECT source_revision, payload_json, built_at
-    FROM reports_snapshot_cache
-    WHERE account_scope = ?
-      AND principal_scope = ?
-      AND cache_key = ?
-    LIMIT 1
-  `, [accountScope, principalScope, cacheKey], signalOptions(signal))
-
+function decodeSnapshotRow({ row, accountScope, principalScope, cacheKey, sourceRevision }) {
   if (!row) return null
   const storedRevision = decodeStoredRevision(row.source_revision)
   const exact = storedRevision.exactAtBuiltAt && storedRevision.builtSourceRevision === sourceRevision
@@ -207,11 +210,16 @@ async function readSnapshot({ accountScope, principalScope, cacheKey, sourceRevi
     return null
   }
 
-  void db.run(`
-    UPDATE reports_snapshot_cache
-    SET last_accessed_at = CURRENT_TIMESTAMP
-    WHERE account_scope = ? AND principal_scope = ? AND cache_key = ?
-  `, [accountScope, principalScope, cacheKey]).catch(() => undefined)
+  const lastAccessedMs = timestampMs(row.last_accessed_at)
+  if (lastAccessedMs === 0 || Date.now() - lastAccessedMs >= SNAPSHOT_ACCESS_TOUCH_INTERVAL_MS) {
+    // El LRU no necesita una escritura por cada cache hit. Acotar el touch evita
+    // WAL y locks repetidos sobre la misma fila durante ráfagas de navegación.
+    void db.run(`
+      UPDATE reports_snapshot_cache
+      SET last_accessed_at = CURRENT_TIMESTAMP
+      WHERE account_scope = ? AND principal_scope = ? AND cache_key = ?
+    `, [accountScope, principalScope, cacheKey]).catch(() => undefined)
+  }
 
   return {
     payload,
@@ -225,6 +233,89 @@ async function readSnapshot({ accountScope, principalScope, cacheKey, sourceRevi
       ? !exact
       : ageMs >= SNAPSHOT_REFRESH_INTERVAL_MS
   }
+}
+
+async function readPostgresSnapshotContext({ principalScope, cacheKey, signal }) {
+  // PostgreSQL evalúa las cuatro fuentes dentro de un solo statement. Además
+  // de ahorrar adquisiciones del pool, esto cierra las ventanas entre
+  // roundtrips; el fence posterior al build sigue siendo quien certifica que
+  // una reconstrucción no cruzó escrituras concurrentes.
+  const row = await db.get(`
+    WITH account_context AS MATERIALIZED (
+      SELECT
+        'account:' || COALESCE(
+          NULLIF(LEFT(BTRIM(COALESCE((
+            SELECT location_id::text
+            FROM highlevel_config
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+          ), '')), 240), ''),
+          'local-database'
+        ) AS account_scope
+    ), revision_context AS MATERIALIZED (
+      SELECT
+        COALESCE((
+          SELECT CASE WHEN is_called THEN last_value ELSE 0 END
+          FROM reports_snapshot_revision_seq
+        ), 0) AS reports_revision,
+        COALESCE((
+          SELECT core_revision
+          FROM campaign_performance_revision
+          WHERE id = 1
+        ), 0) AS campaign_core_revision,
+        COALESCE((
+          SELECT CASE WHEN is_called THEN last_value ELSE 0 END
+          FROM campaign_performance_visitor_revision_seq
+        ), 0) AS visitor_revision
+    )
+    SELECT
+      account_context.account_scope,
+      revision_context.reports_revision,
+      revision_context.campaign_core_revision,
+      revision_context.visitor_revision,
+      snapshot.source_revision,
+      snapshot.payload_json,
+      snapshot.built_at,
+      snapshot.last_accessed_at
+    FROM account_context
+    CROSS JOIN revision_context
+    LEFT JOIN LATERAL (
+      SELECT source_revision, payload_json, built_at, last_accessed_at
+      FROM reports_snapshot_cache
+      WHERE account_scope = account_context.account_scope
+        AND principal_scope = ?
+        AND cache_key = ?
+      LIMIT 1
+    ) snapshot ON TRUE
+  `, [principalScope, cacheKey], signalOptions(signal))
+
+  const accountScope = String(row?.account_scope || 'account:local-database')
+  const sourceRevision = [
+    `reports:${Number(row?.reports_revision || 0)}`,
+    `core:${Number(row?.campaign_core_revision || 0)}`,
+    `visitor:${Number(row?.visitor_revision || 0)}`
+  ].join('|')
+  const cached = decodeSnapshotRow({
+    row: row?.source_revision === null || row?.source_revision === undefined ? null : row,
+    accountScope,
+    principalScope,
+    cacheKey,
+    sourceRevision
+  })
+  return { accountScope, sourceRevision, cached }
+}
+
+async function readSnapshot({ accountScope, principalScope, cacheKey, sourceRevision, signal }) {
+  const row = await db.get(`
+    SELECT source_revision, payload_json, built_at, last_accessed_at
+    FROM reports_snapshot_cache
+    WHERE account_scope = ?
+      AND principal_scope = ?
+      AND cache_key = ?
+    LIMIT 1
+  `, [accountScope, principalScope, cacheKey], signalOptions(signal))
+
+  return decodeSnapshotRow({ row, accountScope, principalScope, cacheKey, sourceRevision })
 }
 
 async function persistSnapshot({ accountScope, principalScope, cacheKey, sourceRevision, payload, signal }) {
@@ -575,18 +666,27 @@ export async function getReportsSnapshot({
   let sourceRevision
   let cached
   try {
-    ;[accountScope, sourceRevision] = await Promise.all([
-      getCampaignPerformanceAccountScope({ signal }),
-      getSnapshotSourceRevision(signal)
-    ])
+    if (databaseDialect === 'postgres') {
+      ;({ accountScope, sourceRevision, cached } = await readPostgresSnapshotContext({
+        principalScope,
+        cacheKey,
+        signal
+      }))
+    } else {
+      ;[accountScope, sourceRevision] = await Promise.all([
+        getCampaignPerformanceAccountScope({ signal }),
+        getSnapshotSourceRevision(signal)
+      ])
+      throwIfAborted(signal)
+      cached = await readSnapshot({
+        accountScope,
+        principalScope,
+        cacheKey,
+        sourceRevision,
+        signal
+      })
+    }
     throwIfAborted(signal)
-    cached = await readSnapshot({
-      accountScope,
-      principalScope,
-      cacheKey,
-      sourceRevision,
-      signal
-    })
   } catch (error) {
     if (!isSnapshotSchemaUnavailable(error)) throw error
     const payload = await buildSnapshot(query, signal)

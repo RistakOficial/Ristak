@@ -581,7 +581,7 @@ const ContactsTable: React.FC = () => {
   // (CNT-011) Progreso (X de N) y cancelación del borrado masivo secuencial.
   const [deleteProgress, setDeleteProgress] = useState(0)
   const deleteCancelRef = useRef(false)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [statsLoading, setStatsLoading] = useState(false)
   const [viewMode, setViewMode] = useState<ContactViewMode>(routeState.viewMode)
   const [isClient, setIsClient] = useState(false)
@@ -1828,7 +1828,17 @@ const ContactsTable: React.FC = () => {
   const statsRefreshing = statsLoading
 
   if (loading && !hasLoadedContacts) {
-    return <Loading message="Cargando contactos..." page="contacts" />
+    return (
+      <PageContainer>
+        <div className={styles.container}>
+          <PageHeader
+            title="Contactos"
+            subtitle={`Visualiza tus contactos, ${labels.customers.toLowerCase()} y su valor acumulado en el tiempo.`}
+          />
+          <Loading message="Cargando contactos..." page="contacts" />
+        </div>
+      </PageContainer>
+    )
   }
 
   return (

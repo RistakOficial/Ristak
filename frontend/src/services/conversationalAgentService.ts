@@ -1627,8 +1627,10 @@ export const conversationalAgentService = {
     return request<ConversationAgentState | null>(`/states/${encodeURIComponent(contactId)}`)
   },
 
-  getStates(contactId: string): Promise<ConversationAgentState[]> {
-    return request<ConversationAgentState[]>(`/states/${encodeURIComponent(contactId)}?includeAll=1`)
+  getStates(contactId: string, options: { signal?: AbortSignal } = {}): Promise<ConversationAgentState[]> {
+    return request<ConversationAgentState[]>(`/states/${encodeURIComponent(contactId)}?includeAll=1`, {
+      signal: options.signal
+    })
   },
 
   async updateState(
@@ -1681,17 +1683,25 @@ export const conversationalAgentService = {
     })
   },
 
-  listEvents(params: { contactId?: string; limit?: number; kind?: 'completion' } = {}): Promise<ConversationalAgentEvent[]> {
+  listEvents(
+    params: { contactId?: string; limit?: number; kind?: 'completion' } = {},
+    options: { signal?: AbortSignal } = {}
+  ): Promise<ConversationalAgentEvent[]> {
     const search = new URLSearchParams()
     if (params.contactId) search.set('contactId', params.contactId)
     if (params.limit) search.set('limit', String(params.limit))
     if (params.kind) search.set('kind', params.kind)
     const query = search.toString()
-    return request<ConversationalAgentEvent[]>(`/events${query ? `?${query}` : ''}`)
+    return request<ConversationalAgentEvent[]>(`/events${query ? `?${query}` : ''}`, {
+      signal: options.signal
+    })
   },
 
-  async listCompletionEvents(params: { contactId?: string; limit?: number } = {}): Promise<ConversationalAgentCompletionEvent[]> {
-    const events = await conversationalAgentService.listEvents({ ...params, kind: 'completion' })
+  async listCompletionEvents(
+    params: { contactId?: string; limit?: number } = {},
+    options: { signal?: AbortSignal } = {}
+  ): Promise<ConversationalAgentCompletionEvent[]> {
+    const events = await conversationalAgentService.listEvents({ ...params, kind: 'completion' }, options)
     return events
       .map(normalizeCompletionEvent)
       .filter((event): event is ConversationalAgentCompletionEvent => Boolean(event))

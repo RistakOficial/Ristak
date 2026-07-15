@@ -1,5 +1,12 @@
 import { apiUrl } from './apiBaseUrl'
+import {
+  getAuthScopedCacheRevision,
+  registerAuthScopedCacheInvalidator,
+  syncAuthScopedCachePrincipal
+} from './authPrincipalCache'
 import { refreshIntegrationsStatusAfter } from './integrationsService'
+import { withRequestTimeout } from './requestTimeout'
+import { abortAndClearSharedRequests, getOrCreateSharedRequest } from './sharedRequest'
 
 export type AIAgentRole = 'user' | 'assistant'
 export type AIAgentResponseStyle = 'direct' | 'balanced' | 'advisor'
@@ -217,6 +224,42 @@ type AIAgentRequestOptions = {
 
 export const AI_AGENT_RECONNECT_REQUIRED_CODE = 'OPENAI_CREDENTIAL_RECONNECT_REQUIRED'
 
+const AI_AGENT_CONFIG_SNAPSHOT_TTL_MS = 60_000
+const AI_AGENT_CONFIG_REQUEST_TIMEOUT_MS = 20_000
+const aiAgentConfigInflight = new Map<number, Promise<AIAgentConfigStatus>>()
+let aiAgentConfigSnapshot: {
+  data: AIAgentConfigStatus
+  fetchedAt: number
+  principalRevision: number
+} | null = null
+let aiAgentConfigGeneration = 0
+
+function invalidateAIAgentConfigRead(clearSnapshot = true) {
+  aiAgentConfigGeneration += 1
+  abortAndClearSharedRequests(aiAgentConfigInflight)
+  if (clearSnapshot) aiAgentConfigSnapshot = null
+}
+
+function beginAIAgentConfigMutation() {
+  syncAuthScopedCachePrincipal()
+  invalidateAIAgentConfigRead(false)
+  return [aiAgentConfigGeneration, getAuthScopedCacheRevision()] as const
+}
+
+function publishAIAgentConfigSnapshot(
+  data: AIAgentConfigStatus,
+  [generation, principalRevision]: readonly [number, number]
+) {
+  if (
+    generation === aiAgentConfigGeneration &&
+    principalRevision === getAuthScopedCacheRevision()
+  ) {
+    aiAgentConfigSnapshot = { data, fetchedAt: Date.now(), principalRevision }
+  }
+}
+
+registerAuthScopedCacheInvalidator(invalidateAIAgentConfigRead)
+
 function getAuthHeaders(includeContentType = true): HeadersInit {
   const token = localStorage.getItem('auth_token')
 
@@ -250,38 +293,93 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return (payload?.data ?? payload) as T
 }
 
+function getAIAgentConfig(
+  options: { signal?: AbortSignal } = {}
+): Promise<AIAgentConfigStatus> {
+  syncAuthScopedCachePrincipal()
+  const principalRevision = getAuthScopedCacheRevision()
+
+  if (
+    aiAgentConfigSnapshot &&
+    aiAgentConfigSnapshot.principalRevision === principalRevision &&
+    Date.now() - aiAgentConfigSnapshot.fetchedAt < AI_AGENT_CONFIG_SNAPSHOT_TTL_MS
+  ) {
+    if (options.signal?.aborted) {
+      return Promise.reject(
+        options.signal.reason || new DOMException('La lectura del agente fue cancelada.', 'AbortError')
+      )
+    }
+    return Promise.resolve(aiAgentConfigSnapshot.data)
+  }
+
+  const context = [aiAgentConfigGeneration, principalRevision] as const
+  return getOrCreateSharedRequest({
+    inflight: aiAgentConfigInflight,
+    key: principalRevision,
+    signal: options.signal,
+    abortWhenUnused: true,
+    createRequest: (sharedSignal) => withRequestTimeout({
+      timeoutMs: AI_AGENT_CONFIG_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'La configuración del agente tardó demasiado. Reintenta la carga.',
+      signal: sharedSignal,
+      request: (requestSignal) => request<AIAgentConfigStatus>('/config', {
+        signal: requestSignal
+      })
+    }).then((status) => {
+      publishAIAgentConfigSnapshot(status, context)
+      return status
+    })
+  })
+}
+
 export const aiAgentService = {
-  getConfig(): Promise<AIAgentConfigStatus> {
-    return request<AIAgentConfigStatus>('/config')
+  getConfig(options: { signal?: AbortSignal } = {}): Promise<AIAgentConfigStatus> {
+    return getAIAgentConfig(options)
   },
 
-  saveConfig(config: AIAgentConfigInput): Promise<AIAgentConfigStatus> {
-    return refreshIntegrationsStatusAfter(request<AIAgentConfigStatus>('/config', {
+  async saveConfig(config: AIAgentConfigInput): Promise<AIAgentConfigStatus> {
+    const context = beginAIAgentConfigMutation()
+    const status = await request<AIAgentConfigStatus>('/config', {
       method: 'POST',
       body: JSON.stringify(config)
-    }))
+    })
+    publishAIAgentConfigSnapshot(status, context)
+    return refreshIntegrationsStatusAfter(Promise.resolve(status))
   },
 
   async deleteConfig(): Promise<void> {
+    const context = beginAIAgentConfigMutation()
     await refreshIntegrationsStatusAfter(request('/config', {
       method: 'DELETE'
     }))
+    if (
+      context[0] === aiAgentConfigGeneration &&
+      context[1] === getAuthScopedCacheRevision()
+    ) {
+      aiAgentConfigSnapshot = null
+    }
   },
 
-  deleteToken(): Promise<AIAgentConfigStatus> {
-    return refreshIntegrationsStatusAfter(request<AIAgentConfigStatus>('/config/token', {
+  async deleteToken(): Promise<AIAgentConfigStatus> {
+    const context = beginAIAgentConfigMutation()
+    const status = await request<AIAgentConfigStatus>('/config/token', {
       method: 'DELETE'
-    }))
+    })
+    publishAIAgentConfigSnapshot(status, context)
+    return refreshIntegrationsStatusAfter(Promise.resolve(status))
   },
 
-  saveBusinessContextAnswer(
+  async saveBusinessContextAnswer(
     field: AIAgentBusinessContextField,
     answer: string
   ): Promise<AIAgentBusinessContextAnswerResult> {
-    return request<AIAgentBusinessContextAnswerResult>('/business-context-answer', {
+    const context = beginAIAgentConfigMutation()
+    const result = await request<AIAgentBusinessContextAnswerResult>('/business-context-answer', {
       method: 'POST',
       body: JSON.stringify({ field, answer })
     })
+    publishAIAgentConfigSnapshot(result.status, context)
+    return result
   },
 
   sendMessage(

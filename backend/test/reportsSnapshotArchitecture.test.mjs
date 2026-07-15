@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
@@ -96,6 +96,11 @@ test('la UI de Reportes consume un solo read-model y conserva los endpoints lega
   assert.match(service, /SNAPSHOT_MAX_QUEUED_BUILDS = 8/)
   assert.match(service, /SNAPSHOT_BUILD_DEADLINE_MS = 18_000/)
   assert.match(service, /REPORTS_SHARED_PRINCIPAL_SCOPE = 'authorized-reports-read-v1'/)
+  assert.match(service, /async function readPostgresSnapshotContext/)
+  assert.match(service, /WITH account_context AS MATERIALIZED/)
+  assert.match(service, /revision_context AS MATERIALIZED/)
+  assert.match(service, /LEFT JOIN LATERAL \([\s\S]*?FROM reports_snapshot_cache/)
+  assert.match(service, /if \(databaseDialect === 'postgres'\) \{[\s\S]*?readPostgresSnapshotContext/)
   assert.match(service, /encodeMovingRevision/)
   assert.match(service, /db\.withAdvisoryLock\([\s\S]*\}, \{ signal \}\)/)
   assert.match(service, /activeBuilds >= SNAPSHOT_MAX_CONCURRENT_BUILDS[\s\S]*return withCacheMetadata\(cached\.payload/)
@@ -111,6 +116,11 @@ test('la UI de Reportes consume un solo read-model y conserva los endpoints lega
   assert.match(page, /controller\.abort\(\)/)
   assert.match(page, /result\.cache\.stale/)
   assert.match(page, /result\.cache\.revalidateAfter/)
+  assert.match(
+    page,
+    /if \(\(loadingMetrics \|\| loadingSummary\) && !hasLoadedReports\) \{[\s\S]*?<PageHeader title="Reportes"[\s\S]*?<Loading message="Cargando reportes\.\.\."/,
+    'el encabezado de Reportes debe aparecer antes de que termine el primer snapshot'
+  )
   assert.match(phone, /reportsService\.getSnapshot/)
   assert.doesNotMatch(phone, /reportsService\.getMetrics\(/)
   assert.doesNotMatch(phone, /reportsService\.getSummary\(/)
@@ -120,6 +130,89 @@ test('la UI de Reportes consume un solo read-model y conserva los endpoints lega
   assert.ok(REPORTS_SNAPSHOT_CACHE_LIMITS.entriesPerAccount <= 256)
   assert.equal(REPORTS_SNAPSHOT_CACHE_LIMITS.refreshIntervalMs, 30_000)
   assert.ok(REPORTS_SNAPSHOT_CACHE_LIMITS.staleMaxAgeMs <= 5 * 60_000)
+})
+
+test('PostgreSQL resuelve cuenta, revisiones y cache exacto de Reportes en una lectura coherente', {
+  skip: databaseDialect !== 'postgres'
+}, async () => {
+  const date = `2199-${randomUUID()}`.slice(0, 40)
+  const query = { startDate: date, endDate: date, groupBy: 'day', scope: 'all' }
+  const cacheKey = createHash('sha256').update(JSON.stringify({ version: 1, ...query })).digest('hex')
+  const principalScope = 'authorized-reports-read-v1'
+  const [location, reportsRevision, campaignRevision, visitorRevision] = await Promise.all([
+    db.get('SELECT location_id FROM highlevel_config ORDER BY created_at DESC, id DESC LIMIT 1'),
+    db.get('SELECT last_value, is_called FROM reports_snapshot_revision_seq'),
+    db.get('SELECT core_revision FROM campaign_performance_revision WHERE id = 1'),
+    db.get('SELECT last_value, is_called FROM campaign_performance_visitor_revision_seq')
+  ])
+  const accountScope = `account:${String(location?.location_id || '').trim().slice(0, 240) || 'local-database'}`
+  const sourceRevision = [
+    `reports:${reportsRevision?.is_called ? Number(reportsRevision.last_value || 0) : 0}`,
+    `core:${Number(campaignRevision?.core_revision || 0)}`,
+    `visitor:${visitorRevision?.is_called ? Number(visitorRevision.last_value || 0) : 0}`
+  ].join('|')
+  const builtAt = new Date().toISOString()
+  const payload = {
+    metrics: [{ date, revenue: 123 }],
+    range: { start: date, end: date, timezone: 'UTC', filtered: true },
+    summary: { payments: {}, campaigns: {} }
+  }
+
+  await db.run(`
+    INSERT INTO reports_snapshot_cache (
+      account_scope, principal_scope, cache_key, source_revision,
+      payload_json, built_at, last_accessed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(account_scope, principal_scope, cache_key) DO UPDATE SET
+      source_revision = excluded.source_revision,
+      payload_json = excluded.payload_json,
+      built_at = excluded.built_at,
+      last_accessed_at = excluded.last_accessed_at
+  `, [
+    accountScope,
+    principalScope,
+    cacheKey,
+    sourceRevision,
+    JSON.stringify(payload),
+    builtAt,
+    builtAt
+  ])
+
+  const originalGet = db.get
+  const originalRun = db.run
+  const reads = []
+  const writes = []
+  const controller = new AbortController()
+  db.get = async function observedGet(sql, params = [], options = {}) {
+    reads.push({ sql: String(sql || ''), options })
+    return originalGet.call(this, sql, params, options)
+  }
+  db.run = async function observedRun(sql, params = [], options = {}) {
+    writes.push(String(sql || ''))
+    return originalRun.call(this, sql, params, options)
+  }
+
+  try {
+    const result = await getReportsSnapshot({ ...query, signal: controller.signal })
+    assert.equal(result.cache.stale, false)
+    assert.equal(result.cache.consistency, 'exact')
+    assert.deepEqual(result.metrics, payload.metrics)
+    assert.equal(reads.length, 1, 'el cache hit PostgreSQL no debe adquirir el pool cinco veces')
+    assert.match(reads[0].sql, /FROM highlevel_config/)
+    assert.match(reads[0].sql, /FROM reports_snapshot_revision_seq/)
+    assert.match(reads[0].sql, /FROM campaign_performance_revision/)
+    assert.match(reads[0].sql, /FROM campaign_performance_visitor_revision_seq/)
+    assert.match(reads[0].sql, /FROM reports_snapshot_cache/)
+    assert.equal(reads[0].options.signal, controller.signal)
+    assert.equal(writes.length, 0, 'un cache hit reciente no debe escribir otra vez el LRU')
+  } finally {
+    db.get = originalGet
+    db.run = originalRun
+    await db.run(`
+      DELETE FROM reports_snapshot_cache
+      WHERE account_scope = ? AND principal_scope = ? AND cache_key = ?
+    `, [accountScope, principalScope, cacheKey])
+  }
 })
 
 test('la revision extra de Reportes no duplica hot paths ni invalida por config ajena', {

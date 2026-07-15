@@ -235,6 +235,26 @@ TTL, revision y maximo de entradas. Tambien es owner de su single-flight y lo
 cancela cuando se va el ultimo consumidor. Listas paginadas, binarios, streams y
 fuentes vivas no se guardan como Responses globales.
 
+La configuracion pequeña que consumen tablas y preferencias es la excepcion
+especializada, no una vuelta al cache global. `appConfigService` comparte solo
+JSON de `/api/config` para el conjunto exacto de llaves, durante 60 segundos y
+con un LRU de 128 entradas aislado por cuenta. Nunca conserva `Response`,
+binarios ni cuerpos arbitrarios. Un POST confirmado o un cambio de cuenta limpia
+ese snapshot; un POST fallido conserva el valor anterior. La tabla dueña debe
+montarse una sola vez durante la primera carga: Contactos empieza en estado de
+carga real y no monta, desmonta y vuelve a montar `table_contacts_v2`, mientras
+Transacciones y Reportes reutilizan las lecturas concurrentes de moneda y
+configuracion de columnas. La lectura compartida tiene un deadline de 20 segundos:
+un servidor o transporte colgado aborta el fetch real, libera el single-flight y
+permite reintentar en vez de dejar consumidores esperando indefinidamente.
+
+La configuracion del asistente AI sigue el mismo principio especializado:
+`aiAgentService` comparte un unico `GET /api/ai-agent/config` entre disponibilidad
+y panel, con snapshot de 60 segundos por cuenta y deadline de 20 segundos. El
+ultimo consumidor que abandona aborta el transporte. Un POST o DELETE fallido
+conserva el ultimo estado confirmado; una mutacion exitosa publica su respuesta y
+solo un DELETE confirmado vacia el snapshot. Timeouts y errores nunca se cachean.
+
 Una mutacion exitosa notifica solamente los prefijos afectados; los POST que son
 consultas declaradas, como los resumenes de Analytics, no cuentan como mutacion.
 Los eventos SSE de Chat y Pagos invalidan antes de revalidar la pantalla, pero
@@ -467,7 +487,13 @@ plataformas, 8 campanas por plataforma, 5 conjuntos por campana, 5 anuncios por
 conjunto y 750 nodos globales. Las etiquetas URL-encoded se decodifican sin
 alterar esos IDs. El resumen multicanal de mensajes tambien agrega WhatsApp,
 Meta y correo en SQL; no materializa historiales crudos y limita sus opciones de
-filtro a 50.
+filtro a 50. Ese agregado termina antes de abrir lecturas auxiliares. Los estados
+locales de WhatsApp, contactos Meta y correo comparten un solo statement; despues
+solo corren en paralelo dos tareas acotadas: estado de conexiones y conteo
+first-seen. El par interno de configuracion Meta deja el pico auxiliar en tres
+conexiones y nunca se solapa con el agregado principal. La misma senal de aborto
+llega al statement combinado para que abandonar la vista no deje trabajo
+huerfano.
 
 El conteo de contactos por primer mensaje inbound no vuelve a ejecutar
 `MIN(...) GROUP BY` sobre todo el historial. La proyeccion versionada
@@ -729,6 +755,14 @@ consumidor que abandona cancela el `fetch`. Los eventos vivos conservan el TTL
 corto y una mutacion explicita limpia y aborta. Ambos loaders de la pagina se
 liberan en `finally`; un error inicial muestra estado reintentable y una falla de
 revalidacion nunca borra el snapshot que el usuario ya puede consultar.
+
+La cabecera de Reportes siempre se pinta antes de la primera respuesta; solo la
+zona de datos conserva su loader. En PostgreSQL, un cache hit obtiene cuenta,
+revision de Reportes, revision core, revision de visitantes y fila durable en un
+unico statement cancelable, en vez de cinco adquisiciones consecutivas del pool.
+El fence posterior al build usa la misma lectura compacta y el touch LRU se
+limita a una vez cada 30 segundos para no generar WAL y locks por navegacion.
+Este fast path no amplia el TTL ni omite la comprobacion exact/moving-window.
 
 Pagos mantiene contratos server-side en todas sus listas crecientes. Productos
 pagina y busca en backend, calcula el resumen global en SQL y carga los precios
@@ -1075,6 +1109,11 @@ Shell desktop protegido:
   `Configuracion`.
 - `/mdp-program`
 - `/settings`
+
+El shell de `/mdp-program` consulta su navegacion remota una sola vez por
+montaje. Cuando el iframe sincroniza la URL de `/mdp-program` a un item interno,
+la ruta vuelve a seleccionar ese item sobre el snapshot ya recibido; no repite
+`GET /api/mdp-program/navigation` por el simple cambio de pathname.
 
 Configuracion se organiza en:
 
@@ -1984,6 +2023,13 @@ ultimos 50 mensajes combinados del hilo (`messageLimit`) y conserva el historial
 ya visible durante refresh silenciosos. Si el usuario sube al inicio de la
 conversacion, la UI pide otro bloque anterior usando `beforeMessageDate`; no
 debe precargar el historial completo de todas las conversaciones de la bandeja.
+Desktop Chat conserva una sola hidratacion activa por contacto aunque coincidan
+el efecto inicial, SSE, polling, foco o una accion manual. Cambiar de contacto o
+salir de `/chat` aborta fisicamente conversacion, journey, detalle, programados,
+estado y eventos del agente; descartar un resultado viejo en React no sustituye
+esa cancelacion. Marcar leido ocurre una vez al abrir un contacto con pendientes
+y comparte el POST en vuelo por contacto. Las reconciliaciones silenciosas no
+vuelven a mandar `/read` ni duplican toda la cadena de hidratacion.
 En la primera conexion de `ios/app` o `mobile/`, si esa cuenta todavia no tiene
 snapshot local ni la marca namespaceada `mobile:first-sync:completed`, la pagina
 principal muestra una barra de bootstrap por etapas reales: sesion conectada,
