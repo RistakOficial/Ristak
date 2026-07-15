@@ -1326,6 +1326,14 @@ indisponibilidad inequívoca del transporte (desconexión, autorización perdida
 suspensión/restricción o límite confirmado) permite el respaldo. Cuando Meta
 pierde permisos, sólo su fila queda inactiva y YCloud/QR continúan operando.
 
+Esta prioridad es independiente del orden de conexión. Cuando termina de
+conectarse cualquier proveedor registrado como API oficial, el backend marca esa
+fila como remitente principal y conserva cualquier QR del mismo teléfono como
+respaldo sin cerrar su sesión. Así, QR seguido de YCloud/Meta directo queda
+operativamente igual que YCloud/Meta directo seguido de QR. Los adaptadores
+oficiales futuros deben pasar por la misma reconciliación central; HighLevel no
+participa porque sólo se usa cuando el usuario elige explícitamente su canal.
+
 El chat desktop y `/movil` también resuelven la disponibilidad por la fila
 seleccionada. El `connected` superior del status corresponde a la conexión
 histórica de YCloud; Meta directo se valida con

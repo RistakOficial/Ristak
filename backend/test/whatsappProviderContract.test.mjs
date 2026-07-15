@@ -25,6 +25,7 @@ test('declares YCloud and Meta Direct as distinct official providers', () => {
   assert.equal(isOfficialWhatsAppApiProvider(WHATSAPP_PROVIDER_YCLOUD), true)
   assert.equal(isOfficialWhatsAppApiProvider(WHATSAPP_PROVIDER_META_DIRECT), true)
   assert.equal(isOfficialWhatsAppApiProvider(WHATSAPP_PROVIDER_QR), false)
+  assert.equal(isOfficialWhatsAppApiProvider('future_provider_not_registered'), false)
 })
 
 test('keeps provider IDs in their own legacy columns', () => {

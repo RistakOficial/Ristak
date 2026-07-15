@@ -68,6 +68,7 @@ import {
   WHATSAPP_PROVIDER_META_DIRECT,
   WHATSAPP_PROVIDER_YCLOUD,
   getWhatsAppProviderDefinitions,
+  isOfficialWhatsAppApiProvider,
   resolveWhatsAppMessageIdentifiers,
   resolveWhatsAppSourceAdapter
 } from './whatsapp/providers/providerRegistry.js'
@@ -3384,6 +3385,77 @@ async function setDefaultSenderPhoneNumber(phoneNumberId) {
   `, [cleanPhoneNumberId])
 }
 
+// Contrato central para cualquier proveedor de API oficial registrado: una
+// conexión API recién completada se vuelve la autoridad del número sin tocar
+// la sesión QR existente. Si QR se conectó primero puede vivir en una fila
+// hermana; el ruteo la encuentra por teléfono y la conserva como respaldo.
+export async function promoteConnectedWhatsAppApiPhoneNumber({ phoneNumberId, provider } = {}) {
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  if (!cleanPhoneNumberId) {
+    throw new Error('Falta el número de la API oficial que debe quedar como principal')
+  }
+
+  const phone = await db.get(`
+    SELECT id, provider, waba_id, phone_number, display_phone_number,
+      api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone
+    FROM whatsapp_api_phone_numbers
+    WHERE id = ?
+  `, [cleanPhoneNumberId])
+
+  if (!phone) {
+    throw new Error('La API oficial terminó de conectar, pero su número no quedó registrado localmente')
+  }
+
+  const registeredProvider = cleanString(phone.provider || provider).toLowerCase()
+  const expectedProvider = cleanString(provider).toLowerCase()
+  if (
+    !isOfficialWhatsAppApiProvider(registeredProvider) ||
+    registeredProvider === 'qr' ||
+    (expectedProvider && registeredProvider !== expectedProvider)
+  ) {
+    throw new Error('El número conectado no pertenece al proveedor de API oficial esperado')
+  }
+  if (Number(phone.api_send_enabled ?? 1) !== 1) {
+    throw new Error('La API oficial del número quedó deshabilitada y no puede marcarse como principal')
+  }
+
+  const senderPhone = cleanString(phone.phone_number || phone.display_phone_number)
+  await setDefaultSenderPhoneNumber(phone.id)
+  await Promise.all([
+    setAppConfig(CONFIG_KEYS.provider, registeredProvider),
+    setAppConfig(CONFIG_KEYS.senderPhone, senderPhone),
+    setAppConfig(CONFIG_KEYS.phoneNumberId, phone.id),
+    setAppConfig(CONFIG_KEYS.wabaId, phone.waba_id || '')
+  ])
+
+  const matchPhones = getPhoneRowMatchValues(phone)
+  const possibleQrRows = matchPhones.length
+    ? await db.all(`
+        SELECT id, provider, phone_number, display_phone_number,
+          qr_send_enabled, qr_status, qr_connected_phone
+        FROM whatsapp_api_phone_numbers
+        WHERE id != ?
+          AND (LOWER(COALESCE(provider, '')) = 'qr' OR qr_send_enabled = 1)
+      `, [phone.id]).catch(() => [])
+    : []
+  const siblingQrPhoneNumberIds = possibleQrRows
+    .filter(candidate => rowMatchesAnyPhone(candidate, matchPhones))
+    .map(candidate => cleanString(candidate.id))
+    .filter(Boolean)
+
+  logger.info(
+    `WhatsApp: ${registeredProvider} quedó como API principal para ${senderPhone || phone.id}` +
+    `${siblingQrPhoneNumberIds.length ? ` con ${siblingQrPhoneNumberIds.length} respaldo QR asociado` : ''}.`
+  )
+
+  return {
+    phoneNumberId: phone.id,
+    provider: registeredProvider,
+    senderPhone,
+    siblingQrPhoneNumberIds
+  }
+}
+
 function isLocallyConnectedWhatsAppPhone(phone = {}) {
   const provider = cleanString(phone.provider).toLowerCase()
   const qrStatus = cleanString(phone.qr_status).toLowerCase()
@@ -5028,10 +5100,10 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
     }
 
     if (selectedPhone?.phoneNumber) {
-      await setAppConfig(CONFIG_KEYS.senderPhone, selectedPhone.phoneNumber)
-      await setAppConfig(CONFIG_KEYS.phoneNumberId, selectedPhone.id || '')
-      await setAppConfig(CONFIG_KEYS.wabaId, selectedPhone.wabaId || '')
-      await setDefaultSenderPhoneNumber(selectedPhone.id)
+      await promoteConnectedWhatsAppApiPhoneNumber({
+        phoneNumberId: selectedPhone.id,
+        provider: PROVIDER_NAME
+      })
     }
 
     const businessPhoneHints = [
@@ -9495,6 +9567,11 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
       source: META_DIRECT_PROVIDER_NAME
     })
   ])
+
+  await promoteConnectedWhatsAppApiPhoneNumber({
+    phoneNumberId,
+    provider: META_DIRECT_PROVIDER_NAME
+  })
 
   return getWhatsAppApiStatus()
 }

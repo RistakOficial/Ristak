@@ -89,6 +89,16 @@ cuando la API está inequívocamente indisponible y la solicitud puntual lo
 autorizó. Una ventana de 24 horas cerrada exige plantilla oficial y nunca cambia
 el transporte a Baileys.
 
+El orden de conexión no modifica esa autoridad. Al completar la conexión de
+cualquier proveedor marcado como API oficial en el registro interno,
+`promoteConnectedWhatsAppApiPhoneNumber` deja su fila como remitente principal,
+actualiza la selección global compatible y retira `is_default_sender` de la fila
+QR hermana del mismo teléfono sin cerrar, borrar ni reescribir su sesión. Por
+eso conectar QR primero y API después debe producir el mismo ruteo que conectar
+API primero y QR después. Todo adaptador oficial nuevo debe ejecutar esta
+reconciliación al confirmar su conexión; HighLevel queda fuera porque es un canal
+explícito separado, no un proveedor nativo de respaldo para estas filas.
+
 Si Meta pierde permisos, además de marcar su fila `AUTHORIZATION_REQUIRED`, se
 reconcilia la preferencia global a YCloud cuando esa conexión sigue disponible.
 Esto protege rutas históricas, pero no sustituye la regla por fila.

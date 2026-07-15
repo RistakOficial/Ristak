@@ -46,7 +46,8 @@ export function getWhatsAppProviderDefinitions() {
 }
 
 export function isOfficialWhatsAppApiProvider(provider) {
-  return DEFINITIONS[normalizeWhatsAppProvider(provider)]?.officialApi === true
+  const normalizedProvider = String(provider || '').trim().toLowerCase()
+  return DEFINITIONS[normalizedProvider]?.officialApi === true
 }
 
 export function resolveWhatsAppSourceAdapter({ provider, transport } = {}) {
