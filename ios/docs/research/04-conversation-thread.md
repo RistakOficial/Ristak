@@ -394,6 +394,9 @@ Reglas exactas, por evento:
    si no hay tipo o identificador → sin attachment. `isGif` si el probe contiene `gif`.
    `durationMs` de `durationMs|duration_ms|audio_duration_ms`. Nombre fallback:
    `Foto|Video|Audio|Documento` (format.ts:670).
+   **Extensión iOS obligatoria:** `messageType === 'sticker'` o un tipo GIF explícito se
+   interpreta como imagen aunque la URL no traiga extensión ni llegue MIME; de otro modo el
+   sticker válido caería al fallback `Mensaje`.
 7. **Location** (`getJourneyLocation`, format.ts:733): primero campos directos
    `location_latitude/longitude/name/address/url` (+ alias), luego objetos anidados
    `location|locationMessage|whatsappMessage.location|...`. `url` fallback Google Maps.
@@ -408,8 +411,11 @@ Reglas exactas, por evento:
      `"capturado desde la api."`, `"capturado desde whatsapp api."` (con/sin acento).
    - Fallback: `getCommentFallbackText(messageType, status, postDeleted)` (los 4 copys de §2.3);
      `postDeleted` = truthy de `post_deleted|postDeleted|post_removed|postRemoved|post_unavailable|postUnavailable`.
+   - Si `messageType === 'reaction'`, el texto visible es `reaction_emoji|reactionEmoji`; si
+     ese campo no llegó, se recupera de `rawText`. Esta regla ocurre antes del fallback genérico
+     para que una reacción cuyo objetivo no está cargado pinte el emoji y nunca `Mensaje`.
    - Último fallback si no hay attachment/location: `getMediaFallback` (format.ts:759) →
-     filename, o `Foto|Video|Audio|Documento` según type, o `"Mensaje"`.
+     filename, reacción/`Sticker`/`GIF`, o `Foto|Video|Audio|Documento` según type, o `"Mensaje"`.
 9. Descarta el evento si no hay `text` NI `messageType` NI attachment NI location NI emailDetails.
 10. `direction` = `normalizeDirection(data.direction)`: `outbound|sent`→outbound, `system`→system,
     resto→inbound. **Ojo**: el cliente solo reconoce `outbound|sent`; el backend ya normaliza sus
@@ -442,7 +448,8 @@ Reglas exactas, por evento:
   `reactionTargetProviderMessageId` (comparado contra `providerMessageId || id` de los demás) y se
   agrega a `target.reactions` como `{ id, emoji, direction }` (reemplaza reacción previa con mismo id).
   Si el objetivo no está en la ventana cargada, el evento reaction **se pinta como mensaje normal**
-  (globo con el emoji como texto).
+  (globo con el emoji como texto). SwiftUI usa el emoji como `displayText` también al restaurar una
+  caché legacy que todavía guardó `text: "Mensaje"`.
 - Orden final ascendente por `new Date(date).getTime()`.
 
 ---
@@ -702,8 +709,9 @@ componente equivalente `WhatsAppFormattedText`.
   (RN `findNativeReplyTarget`, App.tsx:23063; `/movil` PhoneChat.tsx:14550).
 - Render: bloque superior dentro del globo con barra vertical + título
   (`Tú` si el original es outbound; si no, nombre del contacto) + preview 1 línea
-  (`getMessagePreviewText`: texto, o etiqueta del adjunto `Foto|Video|Audio|Documento`, o
-  `📍 Ubicación`, o `"Mensaje"`; `/movil` trunca a 120 chars).
+  (`getMessagePreviewText`: texto/emoji de reacción, o etiqueta del adjunto
+  `Foto|Sticker|GIF|Video|Audio|Documento`, o `📍 Ubicación`, o `"Mensaje"`; `/movil` trunca a
+  120 chars).
 - Si el target no está cargado, `/movil` pinta el quote con label del contacto y texto
   `"Mensaje"`; RN no pinta quote (replyTarget null). **No existe "tocar el quote salta al
   original" en ningún cliente** — no implementar salvo decisión nueva (el resaltado por scroll

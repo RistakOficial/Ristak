@@ -480,7 +480,8 @@ test('el recibo externo permite limpiar Google aunque se pierda la fila local', 
   const runId = uniqueId('run_receipt_test')
   const agentId = uniqueId('agent_receipt_test')
   const calendarId = uniqueId('calendar_receipt_test')
-  const externalId = uniqueId('google_event_test')
+  const externalId = googleTestEventIdForEffect(effectId)
+  const providerCalendarId = `${uniqueId('google_calendar')}@example.test`
   const startTime = new Date(Date.now() + 60 * 60 * 1000).toISOString()
   const endTime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
   const expiresAt = new Date(Date.now() - 1_000).toISOString()
@@ -489,6 +490,7 @@ test('el recibo externo permite limpiar Google aunque se pierda la fila local', 
     { role: 'primary_attendee', contactId }
   ]
   let deletedExternalId = ''
+  let deletedReceiptId = ''
 
   try {
     await db.run(
@@ -535,6 +537,7 @@ test('el recibo externo permite limpiar Google aunque se pierda la fila local', 
       provider: 'google',
       externalId,
       calendarId,
+      commandPayload: { providerCalendarId },
       cleanupDueAt: expiresAt
     })
     await db.run(`
@@ -546,8 +549,9 @@ test('el recibo externo permite limpiar Google aunque se pierda la fila local', 
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
 
     setConversationalAppointmentTestCleanupDependenciesForTests({
-      deleteGoogleEventForAppointment: async (appointment) => {
-        deletedExternalId = appointment.googleEventId
+      deleteConversationalTestGoogleEventFromReceipt: async ({ receiptId, testEffectId }) => {
+        deletedExternalId = googleTestEventIdForEffect(testEffectId)
+        deletedReceiptId = receiptId
         return { enabled: true, deleted: true }
       }
     })
@@ -555,10 +559,12 @@ test('el recibo externo permite limpiar Google aunque se pierda la fila local', 
     assert.equal(result.status, 'cleaned')
     assert.equal(result.alreadyAbsent, true)
     assert.equal(deletedExternalId, externalId)
-    assert.equal(
-      (await db.get('SELECT cleanup_status FROM conversational_appointment_test_provider_receipts WHERE test_effect_id = ?', [effectId])).cleanup_status,
-      'cleaned'
+    const receipt = await db.get(
+      'SELECT id, cleanup_status FROM conversational_appointment_test_provider_receipts WHERE test_effect_id = ?',
+      [effectId]
     )
+    assert.equal(deletedReceiptId, receipt.id)
+    assert.equal(receipt.cleanup_status, 'cleaned')
   } finally {
     setConversationalAppointmentTestCleanupDependenciesForTests()
     await deleteFixture({ appointmentId, effectId, runId, contactId, agentId })

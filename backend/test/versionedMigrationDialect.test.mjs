@@ -112,6 +112,148 @@ test('PostgreSQL omite y registra una migración exclusiva de SQLite', async () 
   }
 })
 
+test('la migración de idempotencia agrega failure_kind a instalaciones existentes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-appointment-failure-kind-'))
+  const database = openMemoryDatabase()
+  const migration = new URL(
+    '../migrations/versioned/051_appointment_creation_failure_kind.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      CREATE TABLE appointment_creation_requests (
+        client_request_id TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_retryable INTEGER NOT NULL DEFAULT 0
+      );
+    `)
+    await copyFile(migration, join(directory, '051_appointment_creation_failure_kind.sql'))
+
+    const result = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(result, { applied: 1, skipped: 0 })
+
+    const columns = await database.all('PRAGMA table_info(appointment_creation_requests)')
+    assert.equal(columns.find((column) => column.name === 'failure_kind')?.type, 'TEXT')
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('las migraciones del tester agregan el ledger de turnos a una instalación existente', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-test-turn-ledger-migrations-'))
+  const database = openMemoryDatabase()
+  const migrationNames = [
+    '052a_conversational_agent_test_effect_error_code.sql',
+    '052b_conversational_agent_test_effect_error_retryable.sql',
+    '052c_conversational_agent_test_turns.sql'
+  ]
+
+  try {
+    await database.exec(`
+      CREATE TABLE conversational_agent_test_runs (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        requested_by_user_id TEXT NOT NULL,
+        effects_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        expires_at DATETIME NOT NULL
+      );
+      CREATE TABLE conversational_agent_test_effects (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        effect_type TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'recorded',
+        payload_json TEXT NOT NULL
+      );
+    `)
+    for (const name of migrationNames) {
+      await copyFile(
+        new URL(`../migrations/versioned/${name}`, import.meta.url),
+        join(directory, name)
+      )
+    }
+
+    const firstRun = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(firstRun, { applied: 3, skipped: 0 })
+    const effectColumns = await database.all('PRAGMA table_info(conversational_agent_test_effects)')
+    assert.equal(effectColumns.find((column) => column.name === 'error_code')?.type, 'TEXT')
+    assert.equal(effectColumns.find((column) => column.name === 'error_retryable')?.type, 'INTEGER')
+    const turnColumns = await database.all('PRAGMA table_info(conversational_agent_test_turns)')
+    assert.ok(turnColumns.some((column) => column.name === 'client_request_hash'))
+    assert.ok(turnColumns.some((column) => column.name === 'preview_result_json'))
+    assert.ok(turnColumns.some((column) => column.name === 'response_json'))
+    const indexes = await database.all("SELECT name FROM sqlite_master WHERE type = 'index'")
+    assert.ok(indexes.some((row) => row.name === 'idx_conv_agent_test_turn_identity'))
+    assert.ok(indexes.some((row) => row.name === 'idx_conv_agent_test_turn_run'))
+
+    const ledger = await database.all('SELECT name FROM schema_migrations ORDER BY name')
+    assert.deepEqual(ledger.map((row) => row.name), migrationNames)
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 0, skipped: 0 }
+    )
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('el ledger versionado también converge si el bootstrap ya creó las columnas', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-test-turn-bootstrap-migrations-'))
+  const database = openMemoryDatabase()
+  const migrationNames = [
+    '052a_conversational_agent_test_effect_error_code.sql',
+    '052b_conversational_agent_test_effect_error_retryable.sql',
+    '052c_conversational_agent_test_turns.sql'
+  ]
+
+  try {
+    await database.exec(`
+      CREATE TABLE conversational_agent_test_runs (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        requested_by_user_id TEXT NOT NULL,
+        effects_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        expires_at DATETIME NOT NULL
+      );
+      CREATE TABLE conversational_agent_test_effects (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        effect_type TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'recorded',
+        payload_json TEXT NOT NULL,
+        error_code TEXT,
+        error_retryable INTEGER
+      );
+    `)
+    for (const name of migrationNames) {
+      await copyFile(
+        new URL(`../migrations/versioned/${name}`, import.meta.url),
+        join(directory, name)
+      )
+    }
+
+    const result = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(result, { applied: 1, skipped: 0 })
+    assert.equal((await database.all(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversational_agent_test_turns'"
+    )).length, 1)
+    const ledger = await database.all('SELECT name FROM schema_migrations ORDER BY name')
+    assert.deepEqual(ledger.map((row) => row.name), migrationNames)
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('PostgreSQL serializa dos runners y aplica una cadena versionada una sola vez', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ristak-concurrent-migrations-'))
   const base = openMemoryDatabase()

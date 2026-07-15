@@ -67,6 +67,18 @@
   color: var(--accent);
 }
 
+.radioItem {
+  justify-content: center;
+  border-radius: var(--ristak-dropdown-radius) !important;
+  padding-inline: 8px;
+  font-weight: 400;
+}
+
+.radioItem[data-state='checked'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .item.destructive {
   color: var(--neg);
 }

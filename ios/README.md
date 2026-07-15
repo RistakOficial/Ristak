@@ -116,6 +116,9 @@ solo en capa flotante; copy en español.
   swipe, reacciones por canal, mensajes programados
   (crear/editar/cancelar), info de mensaje, reintento de fallidos, carga de
   historial hacia atrás, polling 7s + presencia (suprime push y marca leído).
+  Las reacciones conservan su emoji aunque el mensaje objetivo esté fuera de la
+  página cargada o la app arranque desde una caché anterior; los stickers se
+  reconocen como imagen en vez de degradarse al texto genérico `Mensaje`.
   El teclado conserva materializadas las burbujas al primer enfoque: el ancla al
   fondo es solo inicial y los cambios de frame se estabilizan con la duración de UIKit.
   Composer: cámara directa junto al micrófono para foto/video (se oculta al

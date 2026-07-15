@@ -2499,7 +2499,7 @@ async function saveHighLevelWhatsAppMirror({ contact, channel, text, attachments
         status, message_timestamp, raw_payload_json, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
-        contact_id = COALESCE(excluded.contact_id, whatsapp_api_messages.contact_id),
+        contact_id = COALESCE(whatsapp_api_messages.contact_id, excluded.contact_id),
         phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
         from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
         to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
@@ -2589,7 +2589,7 @@ async function saveHighLevelMetaMirror({ contact, channel, text, attachments = [
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
-        contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
+        contact_id = COALESCE(meta_social_messages.contact_id, excluded.contact_id),
         sender_id = COALESCE(NULLIF(excluded.sender_id, ''), meta_social_messages.sender_id),
         recipient_id = COALESCE(NULLIF(excluded.recipient_id, ''), meta_social_messages.recipient_id),
         page_id = COALESCE(NULLIF(excluded.page_id, ''), meta_social_messages.page_id),
@@ -2659,7 +2659,7 @@ async function saveHighLevelEmailMirror({ contact, channel, subject, text, html,
       message_timestamp, raw_payload_json, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
-      contact_id = COALESCE(excluded.contact_id, email_messages.contact_id),
+      contact_id = COALESCE(email_messages.contact_id, excluded.contact_id),
       direction = COALESCE(NULLIF(excluded.direction, ''), email_messages.direction),
       status = COALESCE(NULLIF(excluded.status, ''), email_messages.status),
       to_email = COALESCE(NULLIF(excluded.to_email, ''), email_messages.to_email),

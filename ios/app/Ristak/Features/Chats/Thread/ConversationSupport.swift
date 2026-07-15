@@ -131,7 +131,7 @@ enum ConversationTimelineBuilder {
         } else {
             visibleMessages = messages.filter { message in
                 let haystack = [
-                    message.text,
+                    message.displayText,
                     message.attachment?.name ?? "",
                     message.channel,
                     message.transport ?? "",
@@ -333,11 +333,15 @@ enum MessagePreviewText {
     /// `getMessagePreviewText` de RN: texto, etiqueta del adjunto, ubicación
     /// o "Mensaje".
     static func preview(for message: ChatMessage) -> String {
-        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty { return text }
         if let attachment = message.attachment {
             switch attachment.type {
-            case .image: return "Foto"
+            case .image:
+                let type = (message.messageType ?? "").lowercased()
+                if type.contains("sticker") { return "Sticker" }
+                if attachment.isGif { return "GIF" }
+                return "Foto"
             case .video: return "Video"
             case .audio: return "Audio"
             case .document, .file: return attachment.name ?? "Documento"

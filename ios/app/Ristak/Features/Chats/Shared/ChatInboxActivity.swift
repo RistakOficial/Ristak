@@ -28,7 +28,7 @@ struct ChatInboxActivity: Sendable, Equatable {
     init(message: ChatMessage, conversationIsVisible: Bool = true) {
         contactID = message.contactId
         messageID = message.id
-        text = message.text
+        text = message.displayText
         messageType = message.messageType ?? (message.attachment?.type.rawValue ?? "text")
         channel = message.channel
         transport = message.transport ?? message.channel

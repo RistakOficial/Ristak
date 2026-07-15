@@ -8,7 +8,8 @@ import { withConversationalAgentTestMutationLock } from './conversationalAgentTe
 const TEST_APPOINTMENT_CLEANUP_LIMIT = 100
 const TEST_APPOINTMENT_CLEANUP_LEASE_MS = 2 * 60 * 1000
 
-let deleteGoogleEventForAppointmentImpl = googleCalendarService.deleteGoogleEventForAppointment
+let deleteConversationalTestGoogleEventFromReceiptImpl =
+  googleCalendarService.deleteConversationalTestGoogleEventFromReceipt
 let deleteHighLevelEventImpl = highlevelCalendarService.deleteEvent
 let getHighLevelCalendarEventsImpl = highlevelCalendarService.getCalendarEvents
 let getHighLevelAccessTokenImpl = async () => {
@@ -177,10 +178,22 @@ async function finalizeAmbiguousTestAutomationReceipts(testEffectId) {
   `, [testEffectId]).catch(() => undefined)
 }
 
-async function deleteRemoteGoogleAppointment(appointment) {
-  if (!appointment.googleEventId) return null
+async function deleteRemoteGoogleAppointment({ receiptId, testEffectId } = {}) {
+  if (!receiptId || !testEffectId) {
+    return {
+      status: 'failed',
+      provider: 'google',
+      message: 'Falta el receipt durable que autoriza borrar el evento Google de prueba.'
+    }
+  }
   try {
-    const result = await deleteGoogleEventForAppointmentImpl(appointment)
+    // El receipt conserva el provider original aunque el calendario local se
+    // haya religado. Google vuelve a comprobar receipt/effect/run e ID
+    // determinista antes de emitir este DELETE exclusivamente remoto.
+    const result = await deleteConversationalTestGoogleEventFromReceiptImpl({
+      receiptId,
+      testEffectId
+    })
     if (result?.enabled === false) {
       return { status: 'pending', provider: 'google', message: 'Google Calendar no está conectado para borrar el evento de prueba.' }
     }
@@ -295,11 +308,13 @@ async function cleanupRemoteProviderReceipts({ row, receipts }) {
   addArtifact('google', row?.google_event_id)
   addArtifact('highlevel', row?.ghl_appointment_id)
   for (const receipt of receipts || []) {
-    if (receipt.cleanup_status === 'cleaned') continue
     addArtifact(receipt.provider, receipt.external_id, receipt)
   }
 
   for (const artifact of artifacts) {
+    // Si el DELETE remoto ya quedó durablemente limpio pero el proceso cayó
+    // antes de cerrar cita/efecto, no necesita tocar otra vez al proveedor.
+    if (artifact.receipt?.cleanup_status === 'cleaned') continue
     let activeArtifact = artifact
     if (
       artifact.provider === 'highlevel' && artifact.receipt &&
@@ -339,11 +354,13 @@ async function cleanupRemoteProviderReceipts({ row, receipts }) {
     const baseAppointment = {
       id: row?.id || activeArtifact.receipt?.appointment_id,
       calendarId: row?.calendar_id || activeArtifact.receipt?.calendar_id,
-      participants: [],
-      googleProviderCalendarId: parseJsonObject(activeArtifact.receipt?.command_json).providerCalendarId
+      participants: []
     }
     const failure = activeArtifact.provider === 'google'
-      ? await deleteRemoteGoogleAppointment({ ...baseAppointment, googleEventId: activeArtifact.externalId })
+      ? await deleteRemoteGoogleAppointment({
+          receiptId: activeArtifact.receipt?.id,
+          testEffectId: activeArtifact.receipt?.test_effect_id
+        })
       : activeArtifact.provider === 'highlevel'
         ? await deleteRemoteHighLevelAppointment({ ...baseAppointment, ghlAppointmentId: activeArtifact.externalId })
         : { status: 'failed', provider: activeArtifact.provider || 'unknown', message: 'Proveedor de recibo no soportado.' }
@@ -601,7 +618,9 @@ export async function cleanupExpiredConversationalTestAppointments({
 }
 
 export function setConversationalAppointmentTestCleanupDependenciesForTests(overrides = null) {
-  deleteGoogleEventForAppointmentImpl = overrides?.deleteGoogleEventForAppointment || googleCalendarService.deleteGoogleEventForAppointment
+  deleteConversationalTestGoogleEventFromReceiptImpl =
+    overrides?.deleteConversationalTestGoogleEventFromReceipt ||
+    googleCalendarService.deleteConversationalTestGoogleEventFromReceipt
   deleteHighLevelEventImpl = overrides?.deleteHighLevelEvent || highlevelCalendarService.deleteEvent
   getHighLevelCalendarEventsImpl = overrides?.getHighLevelCalendarEvents || highlevelCalendarService.getCalendarEvents
   getHighLevelAccessTokenImpl = overrides?.getHighLevelAccessToken || (async () => {

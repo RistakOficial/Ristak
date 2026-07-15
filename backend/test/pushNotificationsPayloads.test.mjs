@@ -8,6 +8,7 @@ import {
   buildPaymentNotificationPayload,
   normalizeNotificationPayload,
   renderNotificationInitialsAvatarPng,
+  sendCalendarAppointmentNotification,
   sendChatMessageNotification,
   sendAppNotificationPayload,
   setAppNotificationPayloadSenderForTest
@@ -39,11 +40,11 @@ test('normaliza payloads push para no usar Ristak/Reistack como titulo', () => {
 test('agrega emoji inicial a titulos semanticos de citas y pagos', () => {
   assert.equal(
     normalizeNotificationPayload({
-      title: 'Pago completado',
-      body: 'Ana Pago · $1,500.00',
+      title: 'Nuevo Pago',
+      body: 'Ana Pago ($1,500)',
       category: 'payment'
     }).title,
-    '💸 Pago completado'
+    '💸 Nuevo Pago'
   )
 
   assert.equal(
@@ -75,12 +76,10 @@ test('construye titulos semanticos para pagos', () => {
     title: 'Consulta dental'
   })
 
-  assert.equal(received.title, '💸 Pago completado')
+  assert.equal(received.title, '💸 Nuevo Pago')
   assert.equal(received.contactName, 'Ana Pago')
-  assert.match(received.body, /Pago completado/)
-  assert.match(received.body, /Ana Pago/)
-  assert.match(received.body, /\$1,500\.00/)
-  assert.match(received.body, /Consulta dental/)
+  assert.equal(received.body, 'Ana Pago ($1,500)')
+  assert.doesNotMatch(received.body, /Consulta dental/)
 
   const rejected = buildPaymentNotificationPayload({
     id: 'pay_rejected_test',
@@ -92,9 +91,7 @@ test('construye titulos semanticos para pagos', () => {
   })
 
   assert.equal(rejected.title, '❌ Pago rechazado')
-  assert.match(rejected.body, /Pago rechazado/)
-  assert.match(rejected.body, /Luis Cliente/)
-  assert.match(rejected.body, /Tarjeta rechazada/)
+  assert.equal(rejected.body, 'Luis Cliente ($800) - Tarjeta rechazada')
 
   const refunded = buildPaymentNotificationPayload({
     id: 'pay_refunded_test',
@@ -105,7 +102,7 @@ test('construye titulos semanticos para pagos', () => {
   })
 
   assert.equal(refunded.title, '↩️ Pago reembolsado')
-  assert.match(refunded.body, /Pago reembolsado/)
+  assert.equal(refunded.body, 'Maria Cliente ($400)')
 })
 
 test('push de pago publico no usa Pago requerido como resultado del checkout', () => {
@@ -121,10 +118,8 @@ test('push de pago publico no usa Pago requerido como resultado del checkout', (
     public_payment_id: 'rstk_pay_push_test'
   })
 
-  assert.equal(payload.title, '💸 Pago completado')
-  assert.match(payload.body, /Pago completado/)
-  assert.match(payload.body, /Raul Cliente/)
-  assert.match(payload.body, /\$2,000\.00/)
+  assert.equal(payload.title, '💸 Nuevo Pago')
+  assert.equal(payload.body, 'Raul Cliente ($2,000)')
   assert.doesNotMatch(payload.body, /Pago requerido/i)
 })
 
@@ -139,7 +134,7 @@ test('push de pagos cubre estados pendientes y de atencion sin sonar a exito', (
   })
 
   assert.equal(pending.title, '⏳ Pago pendiente')
-  assert.match(pending.body, /Pago pendiente/)
+  assert.equal(pending.body, 'Ana Pendiente ($750)')
   assert.doesNotMatch(pending.body, /Pago completado/)
   assert.doesNotMatch(pending.body, /Pago requerido/i)
 
@@ -153,8 +148,63 @@ test('push de pagos cubre estados pendientes y de atencion sin sonar a exito', (
   })
 
   assert.equal(requiresAction.title, '⚠️ Pago requiere atención')
-  assert.match(requiresAction.body, /Pago requiere atención/)
-  assert.match(requiresAction.body, /autenticacion adicional/)
+  assert.equal(requiresAction.body, 'Luis Atencion ($900) - El banco pide autenticacion adicional.')
+})
+
+test('push de cita nueva usa el evento como titulo y la hora del negocio en el cuerpo', async () => {
+  const sentPayloads = []
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await sendCalendarAppointmentNotification({
+      id: 'appointment_event_title_test',
+      contactName: 'Raúl Gómez',
+      startTime: '2026-05-28T17:00:00.000Z',
+      title: 'Asesoría para médicos'
+    }, {
+      calendarId: 'calendar_event_title_test',
+      timezone: 'America/Ciudad_Juarez'
+    })
+
+    assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].title, '📅 Nueva Cita')
+    assert.equal(sentPayloads[0].body, 'Raúl Gómez - 28 Mayo, 11:00 AM')
+    assert.equal(sentPayloads[0].contactAvatarUrl, undefined)
+    assert.equal(sentPayloads[0].senderAvatarUrl, undefined)
+    assert.doesNotMatch(sentPayloads[0].body, /Asesoría para médicos/)
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+  }
+})
+
+test('push de evento con un contacto no se convierte en conversacion ni usa avatar', async () => {
+  const sentPayloads = []
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await sendAppNotificationPayload({
+      title: '💸 Nuevo Pago',
+      body: 'Raúl Gómez ($20,000)',
+      category: 'payment',
+      contactId: 'contact_event_test',
+      contactName: 'Raúl Gómez',
+      imageUrl: 'https://cdn.example.test/avatars/contact_event_test.jpg'
+    })
+
+    assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].title, '💸 Nuevo Pago')
+    assert.equal(sentPayloads[0].body, 'Raúl Gómez ($20,000)')
+    assert.equal(sentPayloads[0].contactAvatarUrl, undefined)
+    assert.equal(sentPayloads[0].senderAvatarUrl, undefined)
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+  }
 })
 
 test('push de contacto unico usa avatar del contacto cuando existe foto publica', async () => {

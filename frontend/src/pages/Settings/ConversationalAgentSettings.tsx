@@ -315,7 +315,7 @@ const TEST_VOICE_MIME_CANDIDATES = [
 ]
 const TEST_TEXT_EXTENSIONS = new Set(['txt', 'csv', 'json', 'md', 'html', 'xml'])
 
-function createTestTrackingId(prefix: 'session' | 'message') {
+function createTestTrackingId(prefix: 'session' | 'message' | 'transcript') {
   const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -327,12 +327,29 @@ const RETRYABLE_TEST_RUN_CODES = new Set([
   'test_run_expired',
   'test_run_not_found'
 ])
+const RETRY_SAME_TEST_TURN_CODES = new Set([
+  'test_turn_processing',
+  'test_turn_effect_processing',
+  'test_turn_claim_lost',
+  'test_turn_heartbeat_failed'
+])
 
 export function shouldRotateClosedTestRun(error: unknown) {
   const code = error && typeof error === 'object' && 'code' in error
     ? String((error as { code?: unknown }).code || '').trim()
     : ''
   return RETRYABLE_TEST_RUN_CODES.has(code)
+}
+
+export function shouldRetrySameTestTurn(error: unknown) {
+  if (error instanceof TypeError) return true
+  const candidate = error && typeof error === 'object'
+    ? error as { code?: unknown; statusCode?: unknown }
+    : null
+  const code = String(candidate?.code || '').trim()
+  const statusCode = Number(candidate?.statusCode)
+  return RETRY_SAME_TEST_TURN_CODES.has(code) ||
+    statusCode === 408 || statusCode === 425 || statusCode === 429 || statusCode >= 500
 }
 
 function describeTestEffectResult(effect: ConversationalAgentTestEffectResult) {
@@ -382,6 +399,7 @@ type TestAttachment = ConversationalAgentTestAttachment & PhoneChatPreviewAttach
   expiresAt?: number
 }
 type TestMessage = {
+  id?: string
   role: 'user' | 'assistant'
   content: string
   attachments?: TestAttachment[]
@@ -640,6 +658,7 @@ async function createTestAttachment(file: File): Promise<TestAttachment> {
 
 function toTestPayloadMessage(message: TestMessage): ConversationalAgentTestMessage {
   return {
+    ...(message.id ? { id: message.id } : {}),
     role: message.role,
     content: message.content,
     attachments: (message.attachments || []).map((attachment) => ({
@@ -2456,6 +2475,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const testVoiceAudioRef = useRef<HTMLAudioElement | null>(null)
   const testPracticeExpiredRef = useRef(false)
   const testingRef = useRef(false)
+  const testRequestOwnerRef = useRef<string | null>(null)
   const testMessagesRef = useRef<TestMessage[]>([])
   const testSessionIdRef = useRef(createTestTrackingId('session'))
   const activeTestRunIdRef = useRef<string | null>(null)
@@ -2523,10 +2543,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   useEffect(() => {
     testPracticeExpiredRef.current = testPracticeExpired
   }, [testPracticeExpired])
-
-  useEffect(() => {
-    testingRef.current = testing
-  }, [testing])
 
   useEffect(() => {
     testMessagesRef.current = testMessages
@@ -2824,6 +2840,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
   const expireTestPracticeMedia = useCallback(() => {
     testPracticeExpiredRef.current = true
+    const requestStillInFlight = Boolean(testRequestOwnerRef.current || testingRef.current)
     cleanupTestVoiceRecorder()
     testVoiceAudioRef.current?.pause()
     setTestMessages([])
@@ -2831,7 +2848,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestAttachments([])
     setTestAttachmentMenuOpen(false)
     setTestEmojiPickerOpen(false)
-    setTesting(false)
+    // Expirar los adjuntos invalida el render, pero no cancela mágicamente el
+    // HTTP que ya está vivo. Conservamos su ownership hasta el finally para que
+    // Reiniciar/cambiar contacto no deje entrar una respuesta vieja al chat nuevo.
+    setTesting(requestStillInFlight)
     setTestVoiceDraft(null)
     setTestVoiceRecording(false)
     setTestVoiceProcessing(false)
@@ -2871,7 +2891,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       setTestMessages((current) => (
         deliveryKey && current.some((item) => item.deliveryKey === deliveryKey)
           ? current
-          : [...current, { ...message, ...(deliveryKey ? { deliveryKey } : {}) }]
+          : [...current, {
+              ...message,
+              id: message.id || createTestTrackingId('transcript'),
+              ...(deliveryKey ? { deliveryKey } : {})
+            }]
       ))
     }
     const responseDelayMs = includeResponseDelay ? normalizeTestResponseDelay(result.responseDelayMs) : 0
@@ -2917,7 +2941,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   async function submitTestMessage(input: { content?: string; attachments?: TestAttachment[]; clearComposer?: boolean }) {
     const content = String(input.content ?? '').trim()
     const attachments = input.attachments || []
-    if (testPracticeExpired || testing || (!content && attachments.length === 0)) return
+    if (testPracticeExpired || testing || testingRef.current || (!content && attachments.length === 0)) return
     if (expectsTestRun && !testContact?.id) {
       setTestOptionsOpen(true)
       showToast('warning', 'Elige un contacto de prueba', 'Lo necesitamos para ligar las validaciones al hilo correcto sin adivinar identidades.')
@@ -2931,6 +2955,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     }
 
     const userMessage: TestMessage = {
+      id: createTestTrackingId('transcript'),
       role: 'user',
       content,
       ...(attachments.length ? { attachments } : {})
@@ -2944,6 +2969,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       setTestInput('')
       setTestAttachments([])
     }
+    // React actualiza `testing` en el siguiente render. El ref se cierra de
+    // inmediato para que Enter + submit/click en el mismo frame no disparen dos
+    // HTTP con el mismo mensaje; el backend conserva además el fence durable.
+    const requestOwnerToken = `submit:${userMessage.id}`
+    testRequestOwnerRef.current = requestOwnerToken
+    testingRef.current = true
     setTesting(true)
 
     try {
@@ -2968,22 +2999,38 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       try {
         result = await runTestRequest(requestSessionId, requestMessageId)
       } catch (error) {
-        if (!expectsTestRun || !shouldRotateClosedTestRun(error)) throw error
-        // El cleanup automático cerró una corrida anterior. Repetimos una sola
-        // vez el MISMO transcript y configuración, pero con identidades nuevas,
-        // para no perder ni duplicar el mensaje visible del usuario.
-        requestSessionId = rotateTestSessionIdentity()
-        requestMessageId = createTestTrackingId('message')
-        activeTestRunIdRef.current = requestSessionId
-        result = await runTestRequest(requestSessionId, requestMessageId)
+        if (expectsTestRun && shouldRetrySameTestTurn(error)) {
+          // Si se perdió la respuesta HTTP o el dueño sigue cerrando efectos,
+          // reconsultamos exactamente el mismo turno. El ledger devuelve el
+          // response guardado y jamás vuelve a crear la cita.
+          result = await runTestRequest(requestSessionId, requestMessageId)
+        } else {
+          if (!expectsTestRun || !shouldRotateClosedTestRun(error)) throw error
+          // El cleanup automático cerró una corrida anterior. Repetimos una sola
+          // vez el MISMO transcript y configuración, pero con identidades nuevas,
+          // para no perder ni duplicar el mensaje visible del usuario.
+          requestSessionId = rotateTestSessionIdentity()
+          requestMessageId = createTestTrackingId('message')
+          activeTestRunIdRef.current = requestSessionId
+          result = await runTestRequest(requestSessionId, requestMessageId)
+        }
       }
       if (result.testRunId) activeTestRunIdRef.current = result.testRunId
       else if (expectsTestRun) activeTestRunIdRef.current = null
 
-      await renderTestAgentResult(result)
+      await renderTestAgentResult(result, {
+        shouldContinue: () => (
+          testRequestOwnerRef.current === requestOwnerToken &&
+          testSessionIdRef.current === requestSessionId
+        ),
+        messageKeyPrefix: `submit-${requestMessageId}`
+      })
       if (result.testRunId || result.testEffects?.length) void refreshTestRunHistory()
     } catch (error: any) {
-      if (activeTestRunIdRef.current === testSessionIdRef.current) {
+      if (
+        activeTestRunIdRef.current === testSessionIdRef.current &&
+        !shouldRetrySameTestTurn(error)
+      ) {
         cleanupActiveTestRun()
         testSessionIdRef.current = createTestTrackingId('session')
       }
@@ -2991,7 +3038,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         showToast('error', 'Prueba fallida', error?.message || 'No se pudo probar el agente')
       }
     } finally {
-      if (!testPracticeExpiredRef.current) {
+      if (testRequestOwnerRef.current === requestOwnerToken) {
+        testRequestOwnerRef.current = null
+        testingRef.current = false
         setTesting(false)
       }
     }
@@ -3004,7 +3053,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     const pollVerifiedPayment = async () => {
       const testRunId = activeTestRunIdRef.current
       if (!testRunId || testingRef.current || testPaymentResumeInFlightRef.current || !testContact?.id) return
+      const paymentContactId = testContact.id
       let claimedPaymentEffectId = ''
+      let requestOwnerToken = ''
+      let ownsPaymentResume = false
       try {
         const effects = await conversationalAgentService.listTestRunEffects(testRunId)
         setTestRunHistory((current) => current.map((run) => (
@@ -3016,10 +3068,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         const pendingEffect = paidEffects.find((effect) => (
           typeof effect.id === 'string' && !handledTestPaymentEventsRef.current.has(effect.id)
         ))
-        if (!pendingEffect || cancelled) return
+        // Otro envío pudo adquirir el mutex mientras esperábamos la bitácora.
+        // Volvemos a comprobar después del await antes de tocar transcript/IA.
+        if (!pendingEffect || cancelled || testingRef.current || testRequestOwnerRef.current) return
 
         claimedPaymentEffectId = String(pendingEffect.id)
+        requestOwnerToken = `payment-resume:${claimedPaymentEffectId}`
+        testRequestOwnerRef.current = requestOwnerToken
+        testingRef.current = true
         testPaymentResumeInFlightRef.current = true
+        ownsPaymentResume = true
         setTesting(true)
         if (!announcedTestPaymentEventsRef.current.has(claimedPaymentEffectId)) {
           announcedTestPaymentEventsRef.current.add(claimedPaymentEffectId)
@@ -3044,7 +3102,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             agentId: effectiveAgent.id,
             testSessionId: testRunId,
             testMessageId: resumeMessageId,
-            contactId: testContact.id,
+            contactId: paymentContactId,
             effects: effectiveTestEffects
           }
         )
@@ -3052,7 +3110,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         if (result.testRunId) activeTestRunIdRef.current = result.testRunId
         const rendered = await renderTestAgentResult(result, {
           includeResponseDelay: false,
-          shouldContinue: () => !cancelled,
+          shouldContinue: () => (
+            !cancelled &&
+            testRequestOwnerRef.current === requestOwnerToken &&
+            activeTestRunIdRef.current === testRunId &&
+            testContact?.id === paymentContactId
+          ),
           messageKeyPrefix: `payment-resume-${claimedPaymentEffectId}`
         })
         if (!rendered || cancelled || testPracticeExpiredRef.current) return
@@ -3069,8 +3132,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           showToast('error', 'Continuación pendiente', error?.message || 'El pago sí quedó detectado. Reconciliamos la misma continuación sin duplicarla.')
         }
       } finally {
-        testPaymentResumeInFlightRef.current = false
-        if (!cancelled && !testPracticeExpiredRef.current) setTesting(false)
+        if (ownsPaymentResume) testPaymentResumeInFlightRef.current = false
+        if (requestOwnerToken && testRequestOwnerRef.current === requestOwnerToken) {
+          testRequestOwnerRef.current = null
+          testingRef.current = false
+          if (!cancelled) setTesting(false)
+        }
       }
     }
 
@@ -3358,7 +3425,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleResetTestChat = () => {
-    if (testing) return
+    if (testingRef.current || testRequestOwnerRef.current) return false
     cleanupActiveTestRun()
     testSessionIdRef.current = createTestTrackingId('session')
     testPracticeExpiredRef.current = false
@@ -3376,6 +3443,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestVoiceBars(createTestVoiceBars())
     setTestPracticeExpired(false)
     void clearTestMediaCache().catch(() => undefined)
+    return true
   }
 
   return (
@@ -3916,7 +3984,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <ContactSearchInput
                     value={testContact}
                     onChange={(contact) => {
-                      if (contact?.id !== testContact?.id) handleResetTestChat()
+                      if (contact?.id !== testContact?.id && !handleResetTestChat()) return
                       setTestContact(contact)
                     }}
                     label="Contacto de prueba"
@@ -3924,6 +3992,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     required
                     allowCreate={false}
                     error={!testContact ? 'Elige el contacto que recibirá las acciones de esta prueba.' : undefined}
+                    disabled={testing || Boolean(testRequestOwnerRef.current)}
                     portal
                   />
 

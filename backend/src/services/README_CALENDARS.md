@@ -89,6 +89,27 @@ debe ocultar una semilla vacía, el GET consulta únicamente candidatos semilla
 con `EXISTS` sobre el índice parcial; no ejecuta `COUNT(*)` sobre el histórico
 ni revisa las citas de todos los calendarios.
 
+## Contrato Canónico De Alta
+
+`POST /api/calendars/appointments` exige `calendarId`; si falta responde `400`
+con `code=appointment_calendar_required` antes de crear cualquier fila. Todas las
+superficies internas deben usar esta ruta y mandar el ID del calendario local
+seleccionado o predeterminado.
+
+La cita se confirma primero en `appointments`. Cuando HighLevel está configurado,
+el controller intenta enseguida crear el espejo usando `calendars.ghl_calendar_id`:
+
+- Éxito: conserva el ID local como canónico, guarda `ghl_appointment_id` y deja
+  `sync_status=synced`.
+- Fallo o calendario todavía sin vínculo remoto: conserva la cita local, deja
+  `sync_status=error`, devuelve ese estado a la superficie y permite que
+  `syncLocalAppointmentsToHighLevel` concilie/reintente sin repetir POST a ciegas.
+- HighLevel desconectado: la cita local sigue siendo válida y queda pendiente.
+
+La ruta pública resuelve el calendario desde el slug y aplica el mismo contrato
+local más espejo. Las importaciones de citas que ya nacieron en HighLevel son
+conciliación entrante, no una nueva alta, y no deben volver a publicarse.
+
 ## Calendarios Publicos Y Contactos
 
 El endpoint `POST /api/calendars/public/:slug/appointments` crea citas desde la
@@ -146,14 +167,28 @@ Reglas del contrato:
 - El fallback lunes a viernes 09:00–17:00 existe sólo para registros legacy sin
   la marca de configuración. La migración 049 materializa ese horario y los
   calendarios nuevos también lo guardan de forma explícita.
+- Un PUT que incluye `openHours` reemplaza siempre el horario local, incluso si
+  el calendario conserva `sync_status=pending` o `error`. Sólo una escritura que
+  omite `openHours` puede preservar el valor anterior. La protección separada
+  contra espejos viejos de HighLevel sigue evitando que una respuesta remota sin
+  acuse de escritura pise una edición local pendiente.
 - Las horas se interpretan en `account_timezone`; el `timezone` del visitante
   sólo sirve para presentar los instantes ya calculados.
 - URL pública, Sites, agente conversacional y creación admin/móvil en modo
-  `Por defecto` consumen esta misma disponibilidad. El modo `Personalizado`
-  conserva su override manual.
+  `Por defecto` consumen esta misma disponibilidad. `Por defecto` nunca permite
+  otra cita empalmada por una bandera enviada por el cliente, incluso si el
+  payload la mezcla con el candado estricto. Sólo el agente conversacional puede
+  hacerlo cuando el contexto interno demuestra `allowOverlaps=true`. El modo
+  `Personalizado` manda el override manual para ignorar exclusivamente conflictos
+  con otras citas; los `blocked_slots`, ausencias y rangos inválidos siguen
+  rechazándose.
 - La creación pública realiza la comprobación final dentro de la transacción y
   el candado del calendario. Además del horario aplica ventana de reserva,
-  límites diarios/por espacio, buffers, bloqueos y citas existentes.
+  límite estricto de una cita por espacio, cupo diario, buffers, bloqueos y
+  citas existentes. Un `appoinmentPerSlot` mayor importado desde HighLevel no
+  amplía el cupo de URL pública, Sites, pagos ni selectores `Por defecto`.
+- La creación admin personalizada también conserva la transacción y el candado:
+  permitir un empalme no autoriza saltarse la protección de concurrencia.
 
 ## Funciones Del Servicio
 
@@ -257,7 +292,7 @@ Para que la sincronización con HighLevel funcione:
 
 ## Errores Comunes
 
-- 400 desde controller: faltan `locationId`, `accessToken`, `startTime`, etc.
+- 400 desde controller: falta `calendarId`, `startTime` u otro dato obligatorio.
 - 401/403 desde HighLevel: token inválido o scopes insuficientes.
 - 404: calendario/evento inexistente.
 - 429: rate limit de HighLevel.

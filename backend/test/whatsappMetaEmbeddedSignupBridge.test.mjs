@@ -55,10 +55,11 @@ test('el tenant prepara y completa Embedded Signup por backend sin exponer token
             status: 'pending',
             appId: 'public-app-id',
             configId: 'public-config-id',
+            configVersion: 'v4',
             graphVersion: 'v25.0',
             featureType: 'whatsapp_business_app_onboarding',
             sessionInfoVersion: '3',
-            coexistence: true
+            loginExtras: { featureType: 'whatsapp_business_app_onboarding' }
           }
         })
       }
@@ -78,6 +79,7 @@ test('el tenant prepara y completa Embedded Signup por backend sin exponer token
     const stateBody = session.state.slice(0, session.state.lastIndexOf('.'))
     const statePayload = JSON.parse(Buffer.from(stateBody, 'base64url').toString('utf8'))
     assert.equal(statePayload.app_url, 'https://tenant-signup.test')
+    assert.deepEqual(session.loginExtras, { featureType: 'whatsapp_business_app_onboarding' })
     assert.equal('systemUserToken' in session, false)
     assert.equal(requests[0].url.origin, 'https://installer-signup.test')
 

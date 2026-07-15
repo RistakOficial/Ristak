@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import type { Notification, NotificationResponse } from 'expo-notifications';
 import type { RistakApiClient } from './api';
 import type { WebPushPublicConfig } from './types';
+import { getNativePushRegistrationRetryDelay } from './pushRegistrationReliability';
 
 export type NativePushPermissionStatus = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
@@ -11,7 +12,8 @@ export type NativePushSubscriptionResult =
   | { status: 'subscribed' }
   | { status: 'not_supported'; reason: string }
   | { status: 'not_configured'; reason: string }
-  | { status: 'denied'; reason: string };
+  | { status: 'denied'; reason: string }
+  | { status: 'failed'; reason: string };
 
 export type NativeNotificationIntent = {
   category: string;
@@ -210,9 +212,11 @@ async function saveNativePushToken(
   { calendarIds = [] }: { calendarIds?: string[] } = {},
 ) {
   const normalizedToken = token.trim();
-  if (!normalizedToken) return;
+  if (!normalizedToken) {
+    throw new Error('Android no entregó una llave de notificaciones para este celular.');
+  }
 
-  await api.saveMobilePushDevice({
+  const saved = await api.saveMobilePushDevice({
     token: normalizedToken,
     platform: 'android',
     clientType: ANDROID_EXPO_CLIENT_TYPE,
@@ -223,6 +227,9 @@ async function saveNativePushToken(
     deviceModel: Device.modelName || Device.modelId || Device.brand || '',
     osVersion: Device.osVersion || '',
   });
+  if (saved?.enabled !== true || !saved?.id) {
+    throw new Error('El servidor no confirmó el registro de este celular.');
+  }
 
   lastRegisteredNativePushToken = normalizedToken;
 }
@@ -233,20 +240,40 @@ export function configureNativePushTokenRefresh(
 ) {
   if (!isNativeMobilePlatform()) return () => undefined;
 
+  let active = true;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingToken = '';
+
+  const persistToken = async (token: string, attempt = 0) => {
+    try {
+      await saveNativePushToken(api, token, { calendarIds });
+    } catch (error) {
+      if (!active || token !== pendingToken) return;
+      console.warn('[Push] No se pudo guardar la llave renovada de Android.', error);
+      retryTimer = setTimeout(() => {
+        void persistToken(token, attempt + 1);
+      }, getNativePushRegistrationRetryDelay(attempt));
+    }
+  };
+
   const subscription = Notifications.addPushTokenListener((nativeToken) => {
     const token = getNativeTokenString(nativeToken);
     if (!token || token === lastRegisteredNativePushToken) return;
-    void saveNativePushToken(api, token, { calendarIds }).catch(() => undefined);
+    pendingToken = token;
+    if (retryTimer) clearTimeout(retryTimer);
+    void persistToken(token);
   });
 
   return () => {
+    active = false;
+    if (retryTimer) clearTimeout(retryTimer);
     subscription.remove();
   };
 }
 
 export async function subscribeToNativePushNotifications(
   api: RistakApiClient,
-  { calendarIds = [] }: { calendarIds?: string[] } = {},
+  { calendarIds = [], requestPermission = true }: { calendarIds?: string[]; requestPermission?: boolean } = {},
 ): Promise<NativePushSubscriptionResult> {
   if (!isNativeMobilePlatform() || !Device.isDevice) {
     return {
@@ -276,7 +303,7 @@ export async function subscribeToNativePushNotifications(
   }
 
   let permission = await Notifications.getPermissionsAsync() as PermissionStatusProbe;
-  if (!permission.granted) {
+  if (!permission.granted && requestPermission) {
     permission = await Notifications.requestPermissionsAsync() as PermissionStatusProbe;
   }
 
@@ -295,7 +322,7 @@ export async function subscribeToNativePushNotifications(
     return { status: 'subscribed' };
   } catch (error) {
     return {
-      status: 'denied',
+      status: 'failed',
       reason: error instanceof Error ? error.message : 'Este celular no pudo registrarse para alertas.',
     };
   }

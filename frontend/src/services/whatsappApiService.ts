@@ -211,9 +211,10 @@ export interface WhatsAppMetaEmbeddedSignupSession {
   appId: string
   configId: string
   graphVersion: string
+  configVersion: 'v2' | 'v4'
   featureType: string
   sessionInfoVersion: string
-  coexistence: boolean
+  loginExtras: Record<string, unknown>
 }
 
 export interface WhatsAppMetaEmbeddedSignupData {

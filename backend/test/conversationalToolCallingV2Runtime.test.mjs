@@ -16,8 +16,10 @@ import {
   TOOL_CALLING_V2_MODEL_SETTINGS,
   buildToolCallingV2HistoryEnvelope,
   createToolCallingV2Agent,
+  enforceToolCallingV2AppointmentOfferPostcondition,
   estimateToolCallingV2HistoryMessageBytes,
   ensureToolCallingV2VisibleReply,
+  guardConversationalAppointmentReplyAgainstState,
   loadToolCallingV2ConversationEnvelope,
   resolveConversationalFollowUpAIProvider,
   resumeToolCallingV2AfterVerifiedPayment,
@@ -163,6 +165,17 @@ test('Agent v2 puede exigir una herramienta terminal exacta sin aceptar nombres 
   })
   assert.equal(forcedAgent.modelSettings.toolChoice, 'book_appointment')
 
+  const adjudicationAgent = createToolCallingV2Agent({
+    model: 'gpt-4.1-mini',
+    instructions: 'Prueba',
+    tools: [{ type: 'function', name: 'resolve_active_appointment_offer' }],
+    forcedToolName: 'resolve_active_appointment_offer',
+    requireTool: true,
+    resetRequiredToolChoice: true
+  })
+  assert.equal(adjudicationAgent.modelSettings.toolChoice, 'resolve_active_appointment_offer')
+  assert.equal(adjudicationAgent.resetToolChoice, true)
+
   const unavailableAgent = createToolCallingV2Agent({
     model: 'gpt-4.1-mini',
     instructions: 'Prueba',
@@ -188,7 +201,7 @@ test('seguimiento v2 resuelve proveedor aun cuando una configuración legacy no 
   assert.equal(resolveConversationalFollowUpAIProvider({ aiProvider: 'gemini' }), 'gemini')
 })
 
-test('una oferta durable pendiente no fuerza resolver ni oculta las demás capacidades', async () => {
+test('una oferta durable fuerza adjudicación semántica primero y preserve deja continuar sin mutarla', async () => {
   const suffix = randomUUID()
   const agentId = `agent_offer_decision_${suffix}`
   const contactId = `contact_offer_decision_${suffix}`
@@ -260,13 +273,17 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
       })]
     )
 
+    const offerBeforeAdjudication = (await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json
     let activeOfferAgent = null
     const result = await runToolCallingV2Turn({
       config,
       runtime: { modelProvider: {} },
       messages: [
         { id: offerExecutionId, role: 'assistant', content: pendingOfferText },
-        { id: confirmationExecutionId, role: 'user', content: 'ok' }
+        { id: confirmationExecutionId, role: 'user', content: 'cuánto cuesta la consulta?' }
       ],
       contactId,
       dryRun: true,
@@ -278,7 +295,7 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
       executeAgent: async ({ agent }) => {
         activeOfferAgent = agent
         const names = agent.tools.map((item) => item.name)
-        assert.equal(agent.modelSettings.toolChoice, undefined)
+        assert.equal(agent.modelSettings.toolChoice, 'resolve_active_appointment_offer')
         assert.equal(agent.resetToolChoice, true)
         for (const expected of [
           'resolve_active_appointment_offer',
@@ -295,11 +312,124 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
         assert.equal(names.includes('book_appointment'), false, 'la aceptación debe entrar por el resolver único')
         assert.equal(names.includes('reschedule_appointment'), false, 'la aceptación debe entrar por el resolver único')
         assert.equal(names.includes('get_conversation_history'), false)
-        return 'respuesta de prueba'
+        const preserved = await agent.tools
+          .find((item) => item.name === 'resolve_active_appointment_offer')
+          .invoke(null, JSON.stringify({
+            decision: 'preserve',
+            nextPreferenceScope: null,
+            reply: null,
+            title: null,
+            notes: null,
+            attendeeName: null,
+            attendeeContext: null,
+            primaryAttendee: null,
+            guests: [],
+            agreedAmount: null
+          }))
+        assert.equal(preserved.ok, true)
+        assert.equal(preserved.terminal, false)
+        assert.equal(preserved.appointmentOfferPreserved, true)
+        const continuation = await agent.toolUseBehavior(null, [{
+          tool: { name: 'resolve_active_appointment_offer' },
+          output: preserved
+        }])
+        assert.equal(continuation.isFinalOutput, false)
+        const priceLookup = await agent.tools
+          .find((item) => item.name === 'list_products')
+          .invoke(null, JSON.stringify({ query: `consulta inexistente ${suffix}` }))
+        assert.equal(priceLookup.ok, true)
+        const repeatedAdjudication = await agent.tools
+          .find((item) => item.name === 'resolve_active_appointment_offer')
+          .invoke(null, JSON.stringify({
+            decision: 'accept',
+            nextPreferenceScope: null,
+            reply: null,
+            title: null,
+            notes: null,
+            attendeeName: null,
+            attendeeContext: null,
+            primaryAttendee: null,
+            guests: [],
+            agreedAmount: null
+          }))
+        assert.equal(repeatedAdjudication.ok, false)
+        assert.equal(repeatedAdjudication.code, 'appointment_offer_already_adjudicated')
+        return 'la consulta no aparece en el catálogo todavía'
+      },
+      validateAppointmentOfferReplySemantics: async ({ reply, model, modelProvider }) => {
+        assert.equal(reply, 'la consulta no aparece en el catálogo todavía')
+        assert.equal(model, 'gpt-4.1-mini')
+        assert.deepEqual(modelProvider, {})
+        return { classification: 'safe_unrelated', modelCallCount: 1, source: 'di_test' }
       },
       runInChannel: (_channel, callback) => callback()
     })
     assert.equal(result.appointmentOfferDecision?.offerEventId, offerEventId)
+    assert.equal(result.reply, 'la consulta no aparece en el catálogo todavía')
+    assert.equal(result.appointmentOfferPostcondition.adjudicationDecision, 'preserve')
+    assert.equal(result.appointmentOfferPostcondition.prevented, false)
+    assert.equal(result.appointmentOfferPostcondition.semanticClassification, 'safe_unrelated')
+    assert.equal(result.appointmentOfferPostcondition.semanticValidation.source, 'di_test')
+    assert.equal(result.modelCallCount, 2)
+    assert.equal(result.ctx.appointmentOfferAdjudication?.decision, 'preserve')
+    assert.equal(result.ctx.actions.filter((action) => (
+      ['book_appointment', 'request_human_booking', 'reschedule_appointment'].includes(action.type)
+    )).length, 0)
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, offerBeforeAdjudication)
+
+    const ambiguousExecutionId = `test:ambiguous_${suffix}`
+    const ambiguousResult = await runToolCallingV2Turn({
+      config,
+      runtime: { modelProvider: {} },
+      messages: [
+        { id: offerExecutionId, role: 'assistant', content: pendingOfferText },
+        { id: ambiguousExecutionId, role: 'user', content: 'mmm, no sé' }
+      ],
+      contactId,
+      dryRun: true,
+      channel: 'whatsapp',
+      executionId: ambiguousExecutionId,
+      previewScopeId,
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      executeAgent: async ({ agent }) => {
+        assert.equal(agent.modelSettings.toolChoice, 'resolve_active_appointment_offer')
+        const preserved = await agent.tools
+          .find((item) => item.name === 'resolve_active_appointment_offer')
+          .invoke(null, JSON.stringify({
+            decision: 'preserve',
+            nextPreferenceScope: null,
+            reply: null,
+            title: null,
+            notes: null,
+            attendeeName: null,
+            attendeeContext: null,
+            primaryAttendee: null,
+            guests: [],
+            agreedAmount: null
+          }))
+        assert.equal(preserved.appointmentOfferPreserved, true)
+        return 'sin problema, tómate tu tiempo'
+      },
+      validateAppointmentOfferReplySemantics: async () => ({
+        classification: 'safe_unrelated',
+        modelCallCount: 1,
+        source: 'di_test'
+      }),
+      runInChannel: (_channel, callback) => callback()
+    })
+    assert.equal(ambiguousResult.reply, 'sin problema, tómate tu tiempo')
+    assert.equal(ambiguousResult.appointmentOfferPostcondition.adjudicationDecision, 'preserve')
+    assert.equal(ambiguousResult.ctx.actions.filter((action) => (
+      ['book_appointment', 'request_human_booking', 'reschedule_appointment'].includes(action.type)
+    )).length, 0)
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, offerBeforeAdjudication)
 
     const decisionCtx = {
       config,
@@ -333,11 +463,36 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
       [offerEventId]
     )).detail_json, offerBeforePriceQuestion)
 
-    const otherOptions = await decisionTools
+    const offerResolver = decisionTools
       .find((item) => item.name === 'resolve_active_appointment_offer')
+    const missingScope = await offerResolver
       .invoke(null, JSON.stringify({
         decision: 'request_other_options',
-        nextPreferenceScope: 'open',
+        nextPreferenceScope: null,
+        reply: null,
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(missingScope.ok, false)
+    assert.equal(missingScope.code, 'appointment_next_preference_scope_required')
+    assert.equal(missingScope.terminal, false)
+    assert.equal(missingScope.visibleReply, null)
+    assert.match(missingScope.continueWith, /same_date|mismo turno/i)
+    assert.equal(decisionCtx.appointmentOfferAdjudication, undefined)
+    assert.equal((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )).detail_json, offerBeforePriceQuestion)
+
+    const otherOptions = await offerResolver
+      .invoke(null, JSON.stringify({
+        decision: 'request_other_options',
+        nextPreferenceScope: 'same_date',
         reply: null,
         title: null,
         notes: null,
@@ -350,7 +505,7 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
     assert.equal(otherOptions.ok, true)
     assert.equal(otherOptions.terminal, false)
     assert.equal(otherOptions.visibleReply, null)
-    assert.match(otherOptions.continueWith, /consulta disponibilidad/i)
+    assert.match(otherOptions.continueWith, /conserva la fecha|consulta otra vez la hora/i)
     const continuation = await activeOfferAgent.toolUseBehavior(null, [{
       tool: { name: 'resolve_active_appointment_offer' },
       output: otherOptions
@@ -387,6 +542,7 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
       ctx: decisionCtx,
       config
     })
+    delete decisionCtx.appointmentOfferAdjudication
     const handoffTools = createConversationalTools(decisionCtx)
     const handedOff = await handoffTools
       .find((item) => item.name === 'resolve_active_appointment_offer')
@@ -423,6 +579,273 @@ test('una oferta durable pendiente no fuerza resolver ni oculta las demás capac
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE id = ?', [offerEventId]).catch(() => {})
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
+test('la postcondición no entrega prosa de cita creada sin adjudicación y terminal exitosas', async () => {
+  const offerDecision = {
+    active: true,
+    offerEventId: 'offer_postcondition',
+    purpose: 'book',
+    terminalToolName: 'book_appointment'
+  }
+  const runFixture = async ({ adjudication = null } = {}) => {
+    const ctx = {
+      actions: [],
+      appointmentOfferDecision: offerDecision,
+      ...(adjudication ? { appointmentOfferAdjudication: adjudication } : {})
+    }
+    return runToolCallingV2Turn({
+      config: { id: 'agent_postcondition' },
+      runtime: { modelProvider: {} },
+      messages: [{ id: 'message_postcondition', role: 'user', content: 'sí' }],
+      executionId: 'message_postcondition',
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      buildAgentForRun: async () => ({
+        agent: {},
+        ctx,
+        model: 'gpt-4.1-mini',
+        aiProvider: 'openai',
+        appointmentOfferDecision: offerDecision
+      }),
+      executeAgent: async () => 'listo, la cita quedó creada',
+      runInChannel: (_channel, callback) => callback()
+    })
+  }
+
+  const withoutResolver = await runFixture()
+  assert.notEqual(withoutResolver.reply, 'listo, la cita quedó creada')
+  assert.equal(withoutResolver.appointmentOfferPostcondition.reason, 'appointment_offer_adjudication_missing')
+  assert.equal(withoutResolver.appointmentOfferPostcondition.terminalActionSucceeded, false)
+
+  const acceptedWithoutTerminal = await runFixture({
+    adjudication: {
+      completed: true,
+      source: 'resolver_tool',
+      decision: 'accept',
+      offerEventId: offerDecision.offerEventId
+    }
+  })
+  assert.notEqual(acceptedWithoutTerminal.reply, 'listo, la cita quedó creada')
+  assert.equal(acceptedWithoutTerminal.appointmentOfferPostcondition.reason, 'appointment_offer_terminal_success_missing')
+  assert.equal(acceptedWithoutTerminal.appointmentOfferPostcondition.terminalActionSucceeded, false)
+})
+
+test('la postcondición canonicaliza decisiones no-accept y sólo deja preserve lateral validado', () => {
+  const offerDecision = {
+    active: true,
+    offerEventId: 'offer_all_decisions',
+    purpose: 'book',
+    terminalToolName: 'book_appointment',
+    localLabel: 'mañana a las 4:00 p. m.'
+  }
+  const falseConfirmation = 'listo, tu cita quedó confirmada'
+  const adjudication = (decision, extra = {}) => ({
+    completed: true,
+    source: 'resolver_tool',
+    decision,
+    offerEventId: offerDecision.offerEventId,
+    ...extra
+  })
+  const enforce = ({ decision, marker = {}, semanticReplyValidation = null, reply = falseConfirmation }) => {
+    const ctx = {
+      actions: [],
+      appointmentOfferDecision: offerDecision,
+      appointmentOfferAdjudication: adjudication(decision, marker)
+    }
+    return {
+      ctx,
+      result: enforceToolCallingV2AppointmentOfferPostcondition({
+        reply,
+        ctx,
+        initialOfferDecision: offerDecision,
+        semanticReplyValidation
+      })
+    }
+  }
+
+  const preserveWithoutValidation = enforce({ decision: 'preserve' }).result
+  assert.notEqual(preserveWithoutValidation.reply, falseConfirmation)
+  assert.equal(preserveWithoutValidation.reason, 'appointment_offer_preserve_reply_unverified')
+
+  const preserveOutcomeClaim = enforce({
+    decision: 'preserve',
+    semanticReplyValidation: { classification: 'appointment_outcome_claim' }
+  }).result
+  assert.notEqual(preserveOutcomeClaim.reply, falseConfirmation)
+  assert.equal(preserveOutcomeClaim.reason, 'appointment_offer_preserve_outcome_claim_blocked')
+
+  const repeatedPrompt = enforce({
+    decision: 'preserve',
+    reply: '¿Qué fecha y hora quieres para tu cita?',
+    semanticReplyValidation: { classification: 'appointment_decision_prompt' }
+  })
+  assert.equal(repeatedPrompt.result.reason, 'appointment_offer_preserve_decision_prompt_blocked')
+  const guardedFallback = guardConversationalAppointmentReplyAgainstState({
+    reply: repeatedPrompt.result.reply,
+    ctx: repeatedPrompt.ctx
+  })
+  assert.equal(guardedFallback.prevented, false)
+  assert.equal(guardedFallback.reply, repeatedPrompt.result.reply)
+
+  const safeLateralReply = 'la consulta cuesta 500 pesos e incluye la valoración inicial'
+  const safePreserve = enforce({
+    decision: 'preserve',
+    reply: safeLateralReply,
+    semanticReplyValidation: { classification: 'safe_unrelated' }
+  }).result
+  assert.equal(safePreserve.reply, safeLateralReply)
+  assert.equal(safePreserve.prevented, false)
+
+  const decline = enforce({
+    decision: 'decline',
+    marker: { output: { ok: true, actionCompleted: true, visibleReply: 'claro, no confirmé ese horario' } }
+  }).result
+  assert.equal(decline.reply, 'claro, no confirmé ese horario')
+  assert.equal(decline.reason, 'appointment_offer_decline_reply_canonicalized')
+
+  const change = enforce({
+    decision: 'request_other_options',
+    marker: { nextPreferenceScope: 'same_date', output: { ok: true, actionCompleted: true, visibleReply: null } }
+  }).result
+  assert.notEqual(change.reply, falseConfirmation)
+  assert.match(change.reply, /conservé el día/i)
+  assert.equal(change.reason, 'appointment_offer_change_reply_canonicalized')
+
+  const handoff = enforce({
+    decision: 'handoff',
+    marker: { output: { ok: true, actionCompleted: true, visibleReply: 'el equipo continuará contigo' } }
+  }).result
+  assert.equal(handoff.reply, 'el equipo continuará contigo')
+  assert.equal(handoff.reason, 'appointment_offer_handoff_reply_canonicalized')
+})
+
+test('la compuerta semántica corre sólo para preserve y falla cerrada si el classifier truena', async () => {
+  const runFixture = async ({ decision, classifier }) => {
+    const offerDecision = {
+      active: true,
+      offerEventId: `offer_classifier_${decision}`,
+      purpose: 'book',
+      terminalToolName: 'book_appointment'
+    }
+    const ctx = {
+      actions: [],
+      appointmentOfferDecision: offerDecision,
+      appointmentOfferAdjudication: {
+        completed: true,
+        source: 'resolver_tool',
+        decision,
+        nextPreferenceScope: decision === 'request_other_options' ? 'same_date' : null,
+        offerEventId: offerDecision.offerEventId,
+        output: decision === 'decline'
+          ? { ok: true, actionCompleted: true, visibleReply: 'claro, no confirmé ese horario' }
+          : (decision === 'handoff'
+              ? { ok: true, actionCompleted: true, visibleReply: 'el equipo continuará contigo' }
+              : { ok: true, actionCompleted: true, visibleReply: null })
+      }
+    }
+    return runToolCallingV2Turn({
+      config: { id: `agent_classifier_${decision}` },
+      runtime: { modelProvider: { provider: 'same-provider' } },
+      messages: [{ id: `message_classifier_${decision}`, role: 'user', content: 'mensaje' }],
+      executionId: `message_classifier_${decision}`,
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      buildAgentForRun: async () => ({
+        agent: {},
+        ctx,
+        model: 'gpt-4.1-mini',
+        aiProvider: 'openai',
+        appointmentOfferDecision: offerDecision
+      }),
+      executeAgent: async () => 'listo, tu cita quedó confirmada',
+      validateAppointmentOfferReplySemantics: classifier,
+      runInChannel: (_channel, callback) => callback()
+    })
+  }
+
+  let mutativeClassifierCalls = 0
+  for (const decision of ['accept', 'decline', 'request_other_options', 'handoff']) {
+    const result = await runFixture({
+      decision,
+      classifier: async () => {
+        mutativeClassifierCalls += 1
+        return { classification: 'safe_unrelated', modelCallCount: 1, source: 'should_not_run' }
+      }
+    })
+    assert.notEqual(result.reply, 'listo, tu cita quedó confirmada')
+    assert.equal(result.appointmentOfferPostcondition.semanticValidation, null)
+  }
+  assert.equal(mutativeClassifierCalls, 0)
+
+  let preserveClassifierCalls = 0
+  const failedClassifier = await runFixture({
+    decision: 'preserve',
+    classifier: async ({ reply, model, modelProvider }) => {
+      preserveClassifierCalls += 1
+      assert.equal(reply, 'listo, tu cita quedó confirmada')
+      assert.equal(model, 'gpt-4.1-mini')
+      assert.deepEqual(modelProvider, { provider: 'same-provider' })
+      throw new Error('classifier timeout')
+    }
+  })
+  assert.equal(preserveClassifierCalls, 1)
+  assert.notEqual(failedClassifier.reply, 'listo, tu cita quedó confirmada')
+  assert.equal(failedClassifier.appointmentOfferPostcondition.reason, 'appointment_offer_preserve_reply_unverified')
+  assert.equal(failedClassifier.appointmentOfferPostcondition.semanticClassification, 'unavailable')
+})
+
+test('DI semántica adjudica sí, jalo, de una y me sirve como accept con una sola terminal', async () => {
+  for (const phrase of ['sí', 'jalo', 'de una', 'me sirve']) {
+    const offerDecision = {
+      active: true,
+      offerEventId: `offer_accept_${phrase}`,
+      purpose: 'book',
+      terminalToolName: 'book_appointment'
+    }
+    const ctx = { actions: [], appointmentOfferDecision: offerDecision }
+    const result = await runToolCallingV2Turn({
+      config: { id: `agent_accept_${phrase}` },
+      runtime: { modelProvider: {} },
+      messages: [{ id: `message_accept_${phrase}`, role: 'user', content: phrase }],
+      executionId: `message_accept_${phrase}`,
+      dryRun: true,
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      buildAgentForRun: async () => ({
+        agent: {},
+        ctx,
+        model: 'gpt-4.1-mini',
+        aiProvider: 'openai',
+        appointmentOfferDecision: offerDecision
+      }),
+      executeAgent: async ({ messages }) => {
+        assert.equal(messages.at(-1)?.content, phrase)
+        ctx.appointmentOfferAdjudication = {
+          completed: true,
+          source: 'resolver_tool',
+          decision: 'accept',
+          offerEventId: offerDecision.offerEventId
+        }
+        ctx.actions.push({
+          type: 'book_appointment',
+          outcome: {
+            status: 'simulated',
+            ok: true,
+            simulated: true,
+            actionCompleted: false,
+            wouldMarkObjectiveCompleted: true
+          }
+        })
+        return 'respuesta libre que no debe gobernar la confirmación'
+      },
+      runInChannel: (_channel, callback) => callback()
+    })
+    assert.equal(result.ctx.appointmentOfferAdjudication.decision, 'accept')
+    assert.equal(result.ctx.actions.filter((action) => action.type === 'book_appointment').length, 1)
+    assert.equal(result.reply, 'listo, la cita de prueba quedó confirmada')
+    assert.equal(result.appointmentOfferPostcondition.terminalActionSucceeded, true)
   }
 })
 

@@ -205,13 +205,15 @@ export interface ConversationalAgentEntryConflict {
 
 export class ConversationalAgentRequestError extends Error {
   code?: string
+  statusCode?: number
   conflicts?: ConversationalAgentEntryConflict[]
   limit?: { maxAgents?: number | null; currentTotal?: number | null }
 
-  constructor(message: string, payload: Record<string, any> | null = null) {
+  constructor(message: string, payload: Record<string, any> | null = null, statusCode?: number) {
     super(message)
     this.name = 'ConversationalAgentRequestError'
     this.code = payload?.code
+    this.statusCode = Number.isInteger(statusCode) ? statusCode : undefined
     this.conflicts = Array.isArray(payload?.conflicts) ? payload.conflicts : undefined
     this.limit = payload?.limit && typeof payload.limit === 'object' ? payload.limit : undefined
   }
@@ -505,6 +507,7 @@ export interface ConversationalAgentTestEffectResult {
   id?: string
   type: string
   status?: 'simulated' | 'executed' | 'skipped' | 'failed' | string
+  retryable?: boolean | null
   summary?: string
   message?: string
   notificationStatus?: string | null
@@ -554,6 +557,7 @@ export interface ConversationalAgentTestAttachment {
 }
 
 export interface ConversationalAgentTestMessage {
+  id?: string
   role: 'user' | 'assistant'
   content: string
   attachments?: ConversationalAgentTestAttachment[]
@@ -1509,7 +1513,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   if (!response.ok) {
     throw new ConversationalAgentRequestError(
       payload?.error || payload?.message || 'Error en el chatbot',
-      payload
+      payload,
+      response.status
     )
   }
 

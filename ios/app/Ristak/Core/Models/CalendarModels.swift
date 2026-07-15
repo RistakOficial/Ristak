@@ -341,7 +341,8 @@ struct AppointmentDraftRequest: Encodable, Sendable {
     var assignedUserId: String?
     /// `true` exige que el horario siga perteneciendo a la disponibilidad del calendario.
     var strictAvailabilityCheck: Bool?
-    /// `true` fuerza sobreagendar tras un 409 sólo cuando no hay candado estricto.
+    /// `true` permite empalmar otra cita desde el primer POST no estricto;
+    /// no autoriza atravesar un bloqueo explícito.
     var ignoreAppointmentConflicts: Bool?
 
     init(

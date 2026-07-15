@@ -1810,6 +1810,120 @@ export async function mergeRistakAppointmentsIntoGoogle({ sourceCalendarIds = nu
   throw new Error('La combinación automática ya no está disponible; vincula cada calendario de Ristak con Google desde su configuración')
 }
 
+function googleTestCleanupAuthorityError(message, code, status = 403) {
+  const error = new Error(message)
+  error.code = code
+  error.status = status
+  error.statusCode = status
+  return error
+}
+
+/**
+ * Borra exclusivamente el evento Google autorizado por un receipt durable de
+ * Modo test. No usa el owner actual del calendario local: ese vínculo puede
+ * haber cambiado después del POST original. La autoridad queda cerrada por
+ * receipt + effect + run + ID determinista + provider original.
+ */
+export async function deleteConversationalTestGoogleEventFromReceipt({
+  receiptId,
+  testEffectId
+} = {}) {
+  const cleanReceiptId = cleanString(receiptId)
+  const cleanEffectId = cleanString(testEffectId)
+  if (!cleanReceiptId || !cleanEffectId) {
+    throw googleTestCleanupAuthorityError(
+      'La limpieza Google de prueba requiere receipt y effect durables.',
+      'test_google_cleanup_receipt_required',
+      400
+    )
+  }
+
+  const authority = await db.get(`
+    SELECT
+      r.id, r.test_effect_id, r.test_run_id, r.appointment_id, r.provider,
+      r.external_id, r.command_json,
+      e.effect_type, e.entity_id AS effect_entity_id, e.run_id AS effect_run_id,
+      a.id AS local_appointment_id, a.is_test AS appointment_is_test,
+      a.test_effect_id AS appointment_test_effect_id,
+      a.test_run_id AS appointment_test_run_id,
+      a.google_provider_calendar_id
+    FROM conversational_appointment_test_provider_receipts r
+    INNER JOIN conversational_agent_test_effects e
+      ON e.id = r.test_effect_id AND e.run_id = r.test_run_id
+    LEFT JOIN appointments a ON a.id = r.appointment_id
+    WHERE r.id = ?
+    LIMIT 1
+  `, [cleanReceiptId])
+  if (
+    !authority ||
+    cleanString(authority.provider).toLowerCase() !== 'google' ||
+    cleanString(authority.test_effect_id) !== cleanEffectId ||
+    cleanString(authority.effect_type) !== 'appointment' ||
+    cleanString(authority.effect_run_id) !== cleanString(authority.test_run_id) ||
+    (
+      cleanString(authority.effect_entity_id) &&
+      cleanString(authority.effect_entity_id) !== cleanString(authority.appointment_id)
+    ) ||
+    (
+      cleanString(authority.local_appointment_id) &&
+      (
+        Number(authority.appointment_is_test || 0) !== 1 ||
+        cleanString(authority.appointment_test_effect_id) !== cleanEffectId ||
+        cleanString(authority.appointment_test_run_id) !== cleanString(authority.test_run_id)
+      )
+    )
+  ) {
+    throw googleTestCleanupAuthorityError(
+      'El receipt no autoriza limpiar este evento Google de prueba.',
+      'test_google_cleanup_receipt_mismatch'
+    )
+  }
+
+  const externalId = cleanString(authority.external_id)
+  const deterministicId = googleTestEventIdForEffect(cleanEffectId)
+  if (!externalId || externalId !== deterministicId) {
+    throw googleTestCleanupAuthorityError(
+      'El receipt no conserva el ID determinista del evento Google de prueba.',
+      'test_google_cleanup_event_identity_mismatch'
+    )
+  }
+
+  const command = parseJson(authority.command_json, {}) || {}
+  if (cleanString(command.eventId) && cleanString(command.eventId) !== externalId) {
+    throw googleTestCleanupAuthorityError(
+      'El comando y el receipt apuntan a eventos Google distintos.',
+      'test_google_cleanup_command_mismatch'
+    )
+  }
+  const providerCalendarId = normalizeGoogleCalendarIdInput(
+    command.providerCalendarId || authority.google_provider_calendar_id
+  )
+  if (!providerCalendarId) {
+    throw googleTestCleanupAuthorityError(
+      'El receipt no conserva el calendario Google original y no se puede borrar con seguridad.',
+      'test_google_cleanup_provider_identity_required',
+      409
+    )
+  }
+
+  const config = await getGoogleCalendarConfig({ includeCredentials: true })
+  if (!config) return { enabled: false, deleted: false }
+
+  try {
+    await googleRequest(config, eventWritePath(providerCalendarId, externalId), {
+      method: 'DELETE'
+    })
+  } catch (error) {
+    if (error.status !== 404 && error.status !== 410) throw error
+  }
+  return {
+    enabled: true,
+    deleted: true,
+    eventId: externalId,
+    providerCalendarId
+  }
+}
+
 export async function deleteGoogleEventForAppointment(appointmentOrId) {
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
   if (!config) return { enabled: false }
@@ -1893,6 +2007,7 @@ export async function testGoogleCalendarConnection() {
 
 export default {
   claimGoogleCalendarOAuthHandoff,
+  deleteConversationalTestGoogleEventFromReceipt,
   deleteGoogleCalendarConfig,
   deleteGoogleEventForAppointment,
   getGoogleCalendarConfig,

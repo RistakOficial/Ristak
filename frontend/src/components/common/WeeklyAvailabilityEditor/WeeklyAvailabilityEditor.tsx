@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import { Copy, Plus, Trash2 } from 'lucide-react'
 import { Button } from '../Button'
-import { CustomSelect } from '../CustomSelect'
+import { TimePickerSelect } from '../TimePickerSelect'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -14,7 +15,6 @@ import {
   WEEKLY_AVAILABILITY_DAYS,
   cloneWeeklyAvailability,
   findSuggestedAvailabilityRange,
-  formatAvailabilityTime,
   type WeeklyAvailability,
   type WeeklyAvailabilityTimeRange
 } from './weeklyAvailability'
@@ -28,31 +28,112 @@ export interface WeeklyAvailabilityEditorProps {
   'aria-label'?: string
 }
 
-const createTimeOptions = (includeEndOfDay: boolean) => {
-  const end = 24 * 60 - 5
-  const options = []
-  for (let minutes = 0; minutes <= end; minutes += 5) {
-    const hour = Math.floor(minutes / 60)
-    const minute = minutes % 60
-    const value = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-    options.push({ value, label: formatAvailabilityTime(value) })
-  }
-  if (includeEndOfDay) {
-    options.push({ value: '23:59', label: formatAvailabilityTime('23:59') })
-  }
-  return options
+interface CopyScheduleMenuProps {
+  sourceDay: number
+  disabled: boolean
+  onApply: (targetDays: number[]) => void
 }
 
-const START_TIME_OPTIONS = createTimeOptions(false)
-const END_TIME_OPTIONS = createTimeOptions(true)
+const CopyScheduleMenu: React.FC<CopyScheduleMenuProps> = ({
+  sourceDay,
+  disabled,
+  onApply
+}) => {
+  const [open, setOpen] = useState(false)
+  const [targetDays, setTargetDays] = useState<number[]>([])
+  const availableTargetDays: number[] = WEEKLY_AVAILABILITY_DAYS
+    .filter(day => day.day !== sourceDay)
+    .map(day => day.day)
+  const selectedTargets = targetDays.filter(day => availableTargetDays.includes(day))
+  const allSelected = selectedTargets.length === availableTargetDays.length
+  const selectAllState = allSelected
+    ? true
+    : selectedTargets.length
+      ? 'indeterminate'
+      : false
 
-const withCurrentTimeOption = (
-  options: Array<{ value: string; label: string }>,
-  currentValue: string
-) => {
-  if (!currentValue || options.some(option => option.value === currentValue)) return options
-  return [...options, { value: currentValue, label: formatAvailabilityTime(currentValue) }]
-    .sort((left, right) => left.value.localeCompare(right.value))
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) setTargetDays([])
+    setOpen(nextOpen)
+  }
+
+  const toggleTargetDay = (day: number, checked: boolean) => {
+    setTargetDays(current => checked
+      ? [...new Set([...current, day])]
+      : current.filter(target => target !== day))
+  }
+
+  const applyCopy = () => {
+    if (!selectedTargets.length) return
+    onApply(selectedTargets)
+    setOpen(false)
+  }
+
+  const sourceLabel = WEEKLY_AVAILABILITY_DAYS
+    .find(day => day.day === sourceDay)?.label.toLowerCase() || 'ese día'
+
+  return (
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="small"
+          iconOnly
+          disabled={disabled}
+          aria-label={`Copiar horarios del ${sourceLabel}`}
+          title="Copiar horarios"
+        >
+          <Copy size={16} aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={6} collisionPadding={12} className={styles.copyMenu}>
+        <div className={styles.copyMenuTitle}>Copiar horas a…</div>
+        <DropdownMenuCheckboxItem
+          checked={selectAllState}
+          onCheckedChange={() => setTargetDays(allSelected ? [] : availableTargetDays)}
+          onSelect={(event) => event.preventDefault()}
+        >
+          Copiar a todos
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuSeparator />
+        {WEEKLY_AVAILABILITY_DAYS.map(target => {
+          const isSource = target.day === sourceDay
+          return (
+            <DropdownMenuCheckboxItem
+              key={target.day}
+              checked={isSource || selectedTargets.includes(target.day)}
+              disabled={isSource}
+              onCheckedChange={(checked) => toggleTargetDay(target.day, checked === true)}
+              onSelect={(event) => event.preventDefault()}
+            >
+              {target.label}
+            </DropdownMenuCheckboxItem>
+          )
+        })}
+        <div className={styles.copyMenuActions}>
+          <DropdownMenuItem
+            asChild
+            unstyled
+            disabled={!selectedTargets.length}
+            onSelect={(event) => {
+              event.preventDefault()
+              applyCopy()
+            }}
+          >
+            <Button
+              type="button"
+              size="small"
+              fullWidth
+              disabled={!selectedTargets.length}
+            >
+              Aplicar
+            </Button>
+          </DropdownMenuItem>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> = ({
@@ -106,13 +187,13 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
     })
   }
 
-  const handleCopySchedule = (sourceDay: number, targetDay?: number) => {
+  const handleCopySchedule = (sourceDay: number, targetDays: number[]) => {
     const source = weekly.find(entry => entry.day === sourceDay)
     if (!source?.ranges.length) return
+    const targets = new Set(targetDays)
     onChange(weekly.map(entry => {
-      const shouldCopy = targetDay === undefined ? entry.day !== sourceDay : entry.day === targetDay
-      return shouldCopy
-        ? { ...entry, enabled: true, ranges: source.ranges.map(range => ({ ...range })) }
+      return targets.has(entry.day)
+        ? { ...entry, enabled: source.enabled, ranges: source.ranges.map(range => ({ ...range })) }
         : entry
     }))
   }
@@ -149,24 +230,19 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
               <div className={styles.rangeStack}>
                 {day.ranges.map((range, rangeIndex) => (
                   <div className={styles.rangeRow} key={`${day.day}-${rangeIndex}`}>
-                    <CustomSelect
+                    <TimePickerSelect
                       className={styles.timeControl}
                       value={range.start}
                       onValueChange={(start) => handleRangeChange(day.day, rangeIndex, { start })}
-                      options={withCurrentTimeOption(START_TIME_OPTIONS, range.start)}
-                      searchable
-                      searchPlaceholder="Buscar hora inicial"
                       disabled={disabled}
                       aria-label={`Hora inicial del ${dayMeta.label.toLowerCase()}`}
                     />
                     <span className={styles.rangeSeparator} aria-hidden="true">a</span>
-                    <CustomSelect
+                    <TimePickerSelect
                       className={styles.timeControl}
                       value={range.end}
                       onValueChange={(end) => handleRangeChange(day.day, rangeIndex, { end })}
-                      options={withCurrentTimeOption(END_TIME_OPTIONS, range.end)}
-                      searchable
-                      searchPlaceholder="Buscar hora final"
+                      allowLastMinute
                       disabled={disabled}
                       aria-label={`Hora final del ${dayMeta.label.toLowerCase()}`}
                     />
@@ -196,37 +272,13 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
                       >
                         <Trash2 size={16} aria-hidden="true" />
                       </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="small"
-                            iconOnly
-                            disabled={disabled}
-                            aria-label={`Copiar horarios del ${dayMeta.label.toLowerCase()}`}
-                            title="Copiar horarios"
-                          >
-                            <Copy size={16} aria-hidden="true" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onSelect={() => handleCopySchedule(day.day)}>
-                            Copiar a todos los días
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          {WEEKLY_AVAILABILITY_DAYS
-                            .filter(target => target.day !== day.day)
-                            .map(target => (
-                              <DropdownMenuItem
-                                key={target.day}
-                                onSelect={() => handleCopySchedule(day.day, target.day)}
-                              >
-                                Copiar a {target.label.toLowerCase()}
-                              </DropdownMenuItem>
-                            ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {rangeIndex === 0 ? (
+                        <CopyScheduleMenu
+                          sourceDay={day.day}
+                          disabled={disabled}
+                          onApply={(targetDays) => handleCopySchedule(day.day, targetDays)}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 ))}

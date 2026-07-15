@@ -284,6 +284,22 @@ struct ChatMessage: Sendable, Equatable, Identifiable {
         return id
     }
 
+    /// Texto que debe ver el usuario. Una reacción es un evento especial del
+    /// proveedor: cuando su mensaje objetivo quedó fuera de la página cargada,
+    /// el evento se conserva como globo independiente y debe enseñar el emoji,
+    /// no el fallback genérico que pudiera venir de una caché anterior.
+    var displayText: String {
+        let normalizedType = (messageType ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalizedType == "reaction",
+           let emoji = reactionEmoji?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !emoji.isEmpty {
+            return emoji
+        }
+        return text
+    }
+
     /// ¿Es una burbuja de mensaje programado? (RN `isScheduledMessage`).
     var isScheduled: Bool {
         if let scheduledAt, !scheduledAt.isEmpty { return true }
@@ -357,6 +373,7 @@ enum ChatJourneyParser {
         guard supportedMessageEventTypes.contains(event.type) else { return nil }
 
         let messageType = readString(data, ["message_type", "messageType", "type"])
+        let normalizedType = messageType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let status = readString(data, ["status"])
         let emailDetails = event.type == "email_message" ? buildEmailDetails(data, status: status) : nil
         let attachment = mediaAttachment(from: data, appBaseURL: appBaseURL)
@@ -367,6 +384,10 @@ enum ChatJourneyParser {
         } else {
             rawText = readString(data, ["message_text", "message", "text", "body", "subject", "caption"])
         }
+        let reactionEmoji = nonEmpty(readString(data, ["reaction_emoji", "reactionEmoji"]))
+            ?? (normalizedType == "reaction"
+                ? nonEmpty(rawText.trimmingCharacters(in: .whitespacesAndNewlines))
+                : nil)
         let postDeleted = readBool(data["post_deleted"]) || readBool(data["postDeleted"])
             || readBool(data["post_removed"]) || readBool(data["postRemoved"])
             || readBool(data["post_unavailable"]) || readBool(data["postUnavailable"])
@@ -377,6 +398,9 @@ enum ChatJourneyParser {
                 location: location
             )
         )
+        if normalizedType == "reaction", let reactionEmoji {
+            text = reactionEmoji
+        }
         if text.isEmpty {
             text = commentFallbackText(messageType: messageType, status: status, postDeleted: postDeleted)
         }
@@ -400,7 +424,6 @@ enum ChatJourneyParser {
             attachment: attachment,
             messageType: messageType
         )
-        let normalizedType = messageType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let agentMetadata = agentMessageMetadata(from: data)
 
         return ChatMessage(
@@ -430,7 +453,7 @@ enum ChatJourneyParser {
             agentId: agentMetadata.agentId,
             replyToMessageId: nonEmpty(readString(data, ["reply_to_message_id", "replyToMessageId"])),
             replyToProviderMessageId: nonEmpty(readString(data, ["reply_to_provider_message_id", "replyToProviderMessageId"])),
-            reactionEmoji: nonEmpty(readString(data, ["reaction_emoji", "reactionEmoji"])),
+            reactionEmoji: reactionEmoji,
             reactionTargetMessageId: nonEmpty(readString(data, ["reaction_target_message_id", "reactionTargetMessageId"])),
             reactionTargetProviderMessageId: nonEmpty(readString(data, ["reaction_target_provider_message_id", "reactionTargetProviderMessageId"])),
             attachment: attachment,
@@ -741,6 +764,9 @@ enum ChatJourneyParser {
         if ["audio", "voice", "ptt", "voice_note", "voicenote", "voice_message", "audiomessage"].contains(normalizedType) {
             return .audio
         }
+        if normalizedType.contains("sticker") || normalizedType.contains("gif") {
+            return .image
+        }
         let probe = [messageType, mimeType, filename, mediaUrl]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
@@ -836,6 +862,12 @@ enum ChatJourneyParser {
         let type = readString(data, ["message_type", "type"]).lowercased()
         let filename = readString(data, ["media_filename", "filename", "fileName"])
         if !filename.isEmpty { return filename }
+        if type.contains("reaction") {
+            let emoji = readString(data, ["reaction_emoji", "reactionEmoji"])
+            return emoji.isEmpty ? "Reacción" : emoji
+        }
+        if type.contains("sticker") { return "Sticker" }
+        if type.contains("gif") { return "GIF" }
         if type.contains("image") || type.contains("photo") { return "Foto" }
         if type.contains("video") { return "Video" }
         if type.contains("audio") || type.contains("voice") { return "Audio" }

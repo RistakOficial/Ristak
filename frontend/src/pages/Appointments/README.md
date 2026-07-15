@@ -86,18 +86,26 @@ Eliminar cita:
 calendarsService.deleteEvent(eventId, accessToken)
 ```
 
-`AppointmentModal` maneja contacto, usuario asignado, título, estado, fechas, ubicación y notas.
+`AppointmentModal` maneja contacto, usuario asignado, título, estado, fechas,
+ubicación y notas. Al crear siempre incluye el `calendarId` seleccionado; el
+backend rechaza una alta sin calendario antes de guardar una cita huérfana.
 Al crear una cita, el modo `Por defecto` manda una validación estricta para que
-la hora pertenezca al horario semanal y cumpla las reglas del calendario. El modo
-`Personalizado` conserva la captura manual como override explícito. Editar una
-cita mantiene el contrato anterior y no convierte silenciosamente una hora
-existente en una reserva nueva.
+la hora pertenezca al horario semanal, cumpla las reglas del calendario y jamás
+empalme otra cita. El modo `Personalizado` manda el override explícito desde el
+primer intento y sí permite empalmar otra cita, pero conserva el rechazo de
+ausencias y horarios bloqueados. Editar una cita mantiene el contrato anterior y
+no convierte silenciosamente una hora existente en una reserva nueva.
 
 Después de crear o editar, la vista aplica únicamente la respuesta confirmada por
 backend y ejecuta un refetch canónico para respetar normalización de fechas,
 webhooks y sincronización externa. Después de eliminar, quita la fila confirmada
 de eventos y próximas citas inmediatamente y revalida ambas colecciones. Ninguno
 de estos flujos requiere recargar la página.
+
+Cuando la respuesta trae `syncStatus=error`, la cita ya quedó guardada en Ristak,
+pero HighLevel sigue pendiente. `/appointments`, DesktopChat, PhoneCalendar y
+PhoneChat deben mostrar esa advertencia y cerrar el formulario sin invitar al
+usuario a crear otra cita; el backend se encarga del reintento seguro.
 
 ## Flujos De Horarios Bloqueados
 
@@ -223,6 +231,17 @@ El wizard usa ocho pasos: `Detalles`, `Disponibilidad`, `URL y Datos`, `Cobro`,
 `Mensajes automáticos`, `Avanzado`, `Eventos` y `Estilos y diseños`.
 `Disponibilidad` reúne el horario semanal, duración, cadencia, reglas y buffers;
 `URL y Datos` reúne enlace público, formulario y acción final.
+
+En el editor semanal, cada control de hora abre columnas separadas para hora,
+minuto y AM/PM. El valor se confirma con `De acuerdo`; Escape o cerrar el menú
+descarta el cambio temporal. `Copiar horarios` abre un menú de selección múltiple
+para elegir días destino y `Aplicar` clona todos los rangos del día origen sin
+alterar los días no seleccionados.
+
+El guardado incorpora inmediatamente la respuesta canónica del PUT y luego
+espera una recarga estricta del listado. Las recargas anteriores se ignoran y un
+GET fallido conserva la última lista válida, por lo que cerrar y reabrir el modal
+debe mostrar exactamente el horario persistido.
 
 Si no hay calendarios de atribución configurados, backend usa todos como fallback.
 

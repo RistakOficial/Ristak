@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -39,7 +39,7 @@ import {
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useUrlStringState } from '@/hooks'
-import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppMetaEmbeddedSignupSession, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
+import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
 import { formatInTimezone, getStoredBusinessTimezone } from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
@@ -276,8 +276,6 @@ export const WhatsAppSettings: React.FC = () => {
   const [apiLoading, setApiLoading] = useState(true)
   const [apiConnecting, setApiConnecting] = useState(false)
   const [metaConnecting, setMetaConnecting] = useState(false)
-  const [metaSignupPreparing, setMetaSignupPreparing] = useState(false)
-  const [metaSignupSession, setMetaSignupSession] = useState<WhatsAppMetaEmbeddedSignupSession | null>(null)
   const [apiRefreshing, setApiRefreshing] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [selectedPhoneId, setSelectedPhoneId] = useState('')
@@ -300,7 +298,6 @@ export const WhatsAppSettings: React.FC = () => {
   const [qrDripSaving, setQrDripSaving] = useState(false)
   const [qrDripDisableConfirmOpen, setQrDripDisableConfirmOpen] = useState(false)
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
-  const metaSignupPreparationRef = useRef<Promise<WhatsAppMetaEmbeddedSignupSession> | null>(null)
 
   const hasWhatsAppApiAccess = hasLicenseFeature(user, ['whatsapp_api'])
   const hasWhatsAppTemplatesAccess = hasLicenseFeature(user, ['whatsapp_templates'])
@@ -379,42 +376,6 @@ export const WhatsAppSettings: React.FC = () => {
     return nextStatus
   }
 
-  const prepareMetaSignup = useCallback(async (force = false) => {
-    const expiresAt = metaSignupSession?.expiresAt ? new Date(metaSignupSession.expiresAt).getTime() : 0
-    if (!force && metaSignupSession && (!expiresAt || expiresAt > Date.now() + 30_000)) return metaSignupSession
-    if (metaSignupPreparationRef.current) return metaSignupPreparationRef.current
-
-    setMetaSignupPreparing(true)
-    const preparation = whatsappApiService.prepareMetaSignup()
-      .then(session => {
-        setMetaSignupSession(session)
-        return session
-      })
-      .finally(() => {
-        metaSignupPreparationRef.current = null
-        setMetaSignupPreparing(false)
-      })
-    metaSignupPreparationRef.current = preparation
-    return preparation
-  }, [metaSignupSession])
-
-  useEffect(() => {
-    const shouldPrepare = hasWhatsAppApiAccess && (connectionChoice === 'api' || addNumberChoice === 'api')
-    if (!shouldPrepare) return
-    prepareMetaSignup().catch(error => {
-      showToast('error', 'No se pudo preparar Meta', error instanceof Error ? error.message : 'Intenta nuevamente.')
-    })
-  }, [addNumberChoice, connectionChoice, hasWhatsAppApiAccess, prepareMetaSignup, showToast])
-
-  useEffect(() => {
-    if (!metaSignupSession?.expiresAt || (connectionChoice !== 'api' && addNumberChoice !== 'api')) return
-    const refreshIn = Math.max(0, new Date(metaSignupSession.expiresAt).getTime() - Date.now() - 30_000)
-    const timer = window.setTimeout(() => {
-      prepareMetaSignup(true).catch(() => null)
-    }, refreshIn)
-    return () => window.clearTimeout(timer)
-  }, [addNumberChoice, connectionChoice, metaSignupSession?.expiresAt, prepareMetaSignup])
-
   const paymentConfigUrl = useMemo(() => {
     const businessId = metaBusinessAccountId.trim()
     const assetId = ycloudAssetId.trim()
@@ -477,7 +438,7 @@ export const WhatsAppSettings: React.FC = () => {
     const params = new URLSearchParams(location.hash.replace(/^#/, ''))
     if (params.get('whatsapp_meta') !== 'success') return
 
-    showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak mediante Coexistence.')
+    showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak.')
     invalidateIntegrationsStatus()
     loadApiStatus().catch(() => null)
     navigate({ pathname: location.pathname, search: location.search, hash: '' }, { replace: true })
@@ -544,24 +505,18 @@ export const WhatsAppSettings: React.FC = () => {
 
   const connectMetaDirect = async () => {
     if (metaConnecting) return
-
-    let session = metaSignupSession
-    if (!session) {
-      try {
-        session = await prepareMetaSignup()
-      } catch (error) {
-        showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Intenta nuevamente.')
-        return
-      }
-    }
-
-    const connectUrl = String(session.connectUrl || '').trim()
-    if (!connectUrl) {
-      showToast('error', 'No se pudo abrir Meta', 'La conexión central no devolvió una dirección segura. Intenta nuevamente.')
-      return
-    }
     setMetaConnecting(true)
-    window.location.assign(connectUrl)
+    try {
+      const session = await whatsappApiService.prepareMetaSignup()
+      const connectUrl = String(session.connectUrl || '').trim()
+      if (!connectUrl) {
+        throw new Error('La conexión central no devolvió una dirección segura. Intenta nuevamente.')
+      }
+      window.location.assign(connectUrl)
+    } catch (error) {
+      setMetaConnecting(false)
+      showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Intenta nuevamente.')
+    }
   }
 
   const refreshApi = async () => {
@@ -895,7 +850,7 @@ export const WhatsAppSettings: React.FC = () => {
           <span>1</span>
           <div>
             <strong>Conecta directo con Meta</strong>
-            <p>Usa el login oficial para conservar WhatsApp Business mediante Coexistence.</p>
+            <p>Meta detecta si el número ya usa WhatsApp Business o si es nuevo para Cloud API.</p>
           </div>
         </li>
         <li>
@@ -944,6 +899,29 @@ export const WhatsAppSettings: React.FC = () => {
     </div>
   )
 
+  const renderMetaSignup = () => (
+    <div className={styles.metaSignupModes}>
+      <div className={styles.metaSignupMode}>
+        <div className={styles.metaSignupModeCopy}>
+          <strong>Meta detecta el tipo de número</strong>
+          <span>Si ya lo usas en WhatsApp Business, conservarás la app mediante Coexistence. Si es nuevo, quedará conectado directo a Cloud API.</span>
+        </div>
+        <Button
+          type="button"
+          className={styles.metaConnectButton}
+          onClick={() => void connectMetaDirect()}
+          loading={metaConnecting}
+        >
+          <Link2 size={17} />
+          Conectar con Meta
+        </Button>
+      </div>
+      <p className={styles.metaSignupNote}>
+        <strong>Sobre el sitio web:</strong> Meta lo exige por defecto. La casilla para indicar que el negocio no tiene sitio sólo aparece a proveedores Select o Premier aprobados por Meta.
+      </p>
+    </div>
+  )
+
   const renderStandaloneQrLabelForm = (phone: WhatsAppApiPhoneNumber, session?: WhatsAppQrSession | null) => {
     const detectedPhone = session?.connectedPhone || phone.qr_connected_phone || phone.display_phone_number || phone.phone_number || 'Número detectado'
 
@@ -978,17 +956,8 @@ export const WhatsAppSettings: React.FC = () => {
   const renderApiConnectionOptions = () => (
     <div className={styles.connectionOptions}>
       <section className={styles.connectionOption}>
-        <p className={styles.connectionOptionTitle}>Conectar con Meta</p>
-        <Button
-          type="button"
-          className={styles.metaConnectButton}
-          onClick={() => void connectMetaDirect()}
-          loading={metaConnecting || metaSignupPreparing}
-          disabled={metaSignupPreparing}
-        >
-          <Link2 size={17} />
-          Conectar con Meta
-        </Button>
+        <p className={styles.connectionOptionTitle}>Conectar directo con Meta</p>
+        {renderMetaSignup()}
       </section>
 
       <div className={styles.connectionDivider} aria-hidden="true">
@@ -1012,7 +981,6 @@ export const WhatsAppSettings: React.FC = () => {
               startStandaloneQrConnection().catch(() => null)
               return
             }
-            setMetaSignupPreparing(true)
             setAddNumberChoice(choice)
           })}
         </div>
@@ -1023,17 +991,8 @@ export const WhatsAppSettings: React.FC = () => {
       return (
         <div className={styles.qrConsentBody}>
           {renderConnectionBack(() => setAddNumberChoice(null))}
-          <p>Meta te mostrará los números disponibles y conservará WhatsApp Business mediante Coexistence.</p>
-          <Button
-            type="button"
-            className={styles.metaConnectButton}
-            onClick={() => void connectMetaDirect()}
-            loading={metaConnecting || metaSignupPreparing}
-            disabled={metaSignupPreparing}
-          >
-            <Link2 size={17} />
-            Conectar con Meta
-          </Button>
+          <p>Meta detectará automáticamente si el número conserva WhatsApp Business o se conecta como número nuevo de Cloud API.</p>
+          {renderMetaSignup()}
         </div>
       )
     }
@@ -1071,7 +1030,6 @@ export const WhatsAppSettings: React.FC = () => {
               startStandaloneQrConnection().catch(() => null)
               return
             }
-            setMetaSignupPreparing(true)
             setConnectionChoice(choice)
           })}
         </section>

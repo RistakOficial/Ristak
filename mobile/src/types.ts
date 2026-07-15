@@ -939,6 +939,8 @@ export type CalendarFreeSlot = {
 export type CalendarEventItem = {
   id?: string;
   _id?: string;
+  ghlAppointmentId?: string | null;
+  ghl_appointment_id?: string | null;
   title?: string;
   name?: string;
   contactName?: string;
@@ -961,6 +963,10 @@ export type CalendarEventItem = {
   status?: string;
   appointmentStatus?: string;
   appointment_status?: string;
+  syncStatus?: string;
+  sync_status?: string;
+  syncError?: string | null;
+  sync_error?: string | null;
   location?: string;
   address?: string;
   notes?: string;

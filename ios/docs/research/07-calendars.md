@@ -92,7 +92,7 @@ desenvuelve `data` automáticamente cuando hay `success` y `data` (`api.ts:321-3
   "notes": "texto...\n\nInvitados:\n- Ana: +52155...", // notas + bloque de invitados (§5.4)
   "address": "Av. X 123",              // opcional
   "assignedUserId": "ghl_user_id",     // opcional; requerido en cliente si round_robin (create)
-  "ignoreAppointmentConflicts": true   // opcional (tb. "confirmDoubleBooking"): fuerza sobreagendar tras un 409
+  "ignoreAppointmentConflicts": true   // create Personalizado: permite empalmar otra cita, nunca un blocked_slot
 }
 ```
 
@@ -354,9 +354,15 @@ al `startTime` y, con smart, encaja en la ventana `smartStart–smartEnd` de la 
   - La verificación normal de choques conserva compatibilidad fail-open ante un
     error interno; la validación estricta de reglas solicitada por los flujos
     `Por defecto`, público e IA no inventa disponibilidad.
-  - Si no disponible → **409 `slot_unavailable`** salvo `ignoreAppointmentConflicts: true`
-    o `confirmDoubleBooking: true`.
-  - **El PUT de edición NO ejecuta este chequeo** (solo el POST).
+  - Si no disponible por otra cita → **409 `slot_unavailable`**, salvo que una
+    creación no estricta mande `ignoreAppointmentConflicts: true` o
+    `confirmDoubleBooking: true`. Ese override no atraviesa un `blocked_slot`.
+  - Una creación estricta (`Por defecto` o pública) rechaza el empalme aunque el
+    payload también mande una bandera de override. La IA sólo puede empalmar si
+    el contexto interno verificó su configuración `allowOverlaps=true`.
+  - El PUT ordinario de edición conserva el contrato legacy y no ejecuta este
+    chequeo. Una reagenda que sí manda `strictAvailabilityCheck` se valida bajo
+    candado y con cupo uno, aunque el espejo HighLevel tenga un límite mayor.
 - Cliente RN además pre-valida bloqueos para calendarios NO-GHL llamando
   `GET /:calendarId/blocked-slots` del día y comparando minutos en zona de negocio
   (`getDraftBlockedConflict`); si choca muestra alert "Horario bloqueado" con
@@ -370,8 +376,11 @@ al `startTime` y, con smart, encaja en la ventana `smartStart–smartEnd` de la 
   vacío configurado significa cerrado; sólo registros legacy sin configurar usan
   Lun–Vie 9–17. Un formato explícito ilegible falla cerrado.
 - Al crear, web, RN e iOS solicitan validación estricta en modo `Por defecto`; URL
-  pública y agente también la aplican. El modo `Personalizado` permite cualquier
-  hora como override intencional. La edición conserva el contrato legacy del PUT.
+  pública y agente también la aplican, salvo el override interno `allowOverlaps`
+  configurado explícitamente para ese agente. El modo `Personalizado` manda
+  `ignoreAppointmentConflicts: true` desde el primer POST para permitir empalmar
+  otra cita, pero sigue rechazando ausencias/bloqueos y rangos inválidos. La
+  edición conserva el contrato legacy del PUT.
 
 ### 5.3 Round Robin
 
@@ -569,8 +578,10 @@ detalles; si falla: alert `No se abrió la cita` / `El calendario abrió, pero l
    protección real al reprogramar tendría que llamar `free-slots`/`blocked-slots` manualmente.
 4. **Modo personalizado es un override real**: `openHours`, ventana de reserva,
    límite diario y buffers se aplican al listar y al crear en modo `Por defecto`,
-   pero el modo `Personalizado` permite una hora manual. iOS debe mandar
-   `strictAvailabilityCheck` sólo al crear en modo `Por defecto` y no al editar.
+   pero el modo `Personalizado` permite una hora manual y empalmar otra cita. iOS
+   debe mandar `strictAvailabilityCheck` sólo al crear en modo `Por defecto` e
+   `ignoreAppointmentConflicts` sólo al crear en modo `Personalizado`; ninguno de
+   esos flags se hereda automáticamente al editar.
 5. **Filtro de eventos por hora de inicio**: citas que cruzan medianoche pueden no aparecer en el
    día que terminan; la grilla debe agrupar por `startTime` como hace RN.
 6. **`GET /events` refresca remotos en segundo plano**: la primera respuesta puede no traer

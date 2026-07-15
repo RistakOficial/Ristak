@@ -17,6 +17,7 @@ import {
 } from '../src/agents/conversational/tools.js'
 import {
   ensureToolCallingV2VisibleReply,
+  normalizeConversationalPreviewTranscript,
   runConversationalAgentPreview,
   resumeToolCallingV2AfterVerifiedPayment
 } from '../src/agents/conversational/runner.js'
@@ -2288,7 +2289,7 @@ test('v2 agenda una frase natural sin pasar por el detector léxico legacy', asy
   }
 })
 
-test('dos requests de preview recuperan el UTC guardado y confirman sin startTime en la tool terminal', async () => {
+test('preview conserva identidad sin ids en fecha -> hora -> oferta visible -> sí y no vuelve a pedir la hora', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_preview_two_turns_${suffix}`
   const agentId = `agent_preview_two_turns_${suffix}`
@@ -2298,7 +2299,8 @@ test('dos requests de preview recuperan el UTC guardado y confirman sin startTim
   const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
   const slot = monday.set({ hour: 10, minute: 0, second: 0, millisecond: 0 })
   const startTime = slot.toUTC().toISO()
-  const opening = 'Es para mi mamá Paty Jiménez. Sí quiere que le agende; yo escribo desde este contacto.'
+  const opening = 'Quiero una cita para mi mamá Paty Jiménez el próximo lunes.'
+  const hour = 'A las 10 de la mañana está bien.'
   const confirmation = 'Sí, ese horario le funciona. Agéndala por favor.'
   const config = {
     id: agentId,
@@ -2354,27 +2356,33 @@ test('dos requests de preview recuperan el UTC guardado y confirman sin startTim
         }
         const tools = createConversationalTools(ctx)
         const output = turnNumber === 1
-          ? await tools.find((item) => item.name === 'offer_appointment_slot')
-              .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
-          : await tools.find((item) => item.name === 'book_appointment')
-              .invoke(null, JSON.stringify({
-                title: 'Valoración de rodilla',
-                notes: 'Dolor de rodilla',
-                attendeeName: 'Paty Jiménez',
-                attendeeContext: 'Mamá del contacto',
-                primaryAttendee: {
-                  name: 'Paty Jiménez',
-                  phone: null,
-                  phoneSourceQuote: null,
-                  email: null,
-                  emailSourceQuote: null,
-                  relation: 'Mamá del contacto'
-                },
-                guests: []
-              }))
-        assert.equal(output.ok, true, JSON.stringify(output))
+          ? null
+          : turnNumber === 2
+            ? await tools.find((item) => item.name === 'offer_appointment_slot')
+                .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
+            : await tools.find((item) => item.name === 'book_appointment')
+                .invoke(null, JSON.stringify({
+                  title: 'Valoración de rodilla',
+                  notes: 'Dolor de rodilla',
+                  attendeeName: 'Paty Jiménez',
+                  attendeeContext: 'Mamá del contacto',
+                  primaryAttendee: {
+                    name: 'Paty Jiménez',
+                    phone: null,
+                    phoneSourceQuote: null,
+                    email: null,
+                    emailSourceQuote: null,
+                    relation: 'Mamá del contacto'
+                  },
+                  guests: []
+                }))
+        if (output) assert.equal(output.ok, true, JSON.stringify(output))
         return {
-          reply: turnNumber === 1 ? output.visibleReply : 'listo, la cita de prueba quedó preparada',
+          reply: turnNumber === 1
+            ? '¿A qué hora del lunes le gustaría la cita?'
+            : turnNumber === 2
+              ? output.visibleReply
+              : 'Listo, la cita de prueba quedó preparada.',
           ctx,
           model: 'fake-model',
           runtimeMode: 'tool_calling_v2',
@@ -2393,7 +2401,23 @@ test('dos requests de preview recuperan el UTC guardado y confirman sin startTim
       executionId: `preview:offer_${suffix}`
     }, dependencies)
     assert.equal(first.replyParts.length, 1)
-    assert.equal(first.actions[0]?.type, 'offer_appointment_slot')
+    assert.equal(first.actions.length, 0)
+    assert.match(first.reply, /qué hora/i)
+
+    const second = await runConversationalAgentPreview({
+      // Contrato legacy real del frontend: manda el transcript completo, pero
+      // no manda ids de mensaje. El servidor debe reconstruirlos sin perder el
+      // turno que originó la oferta.
+      messages: [
+        { role: 'user', content: opening },
+        { role: 'assistant', content: first.reply },
+        { role: 'user', content: hour }
+      ],
+      agentId,
+      previewScopeId,
+      executionId: `preview:offer_${suffix}`
+    }, dependencies)
+    assert.equal(second.actions[0]?.type, 'offer_appointment_slot')
     assert.equal(Number((await db.get(
       `SELECT COUNT(*) AS total FROM conversational_agent_events
        WHERE agent_id = ? AND event_type = 'appointment_slot_preview_offer_created'`,
@@ -2417,7 +2441,9 @@ test('dos requests de preview recuperan el UTC guardado y confirman sin startTim
       virtualContact: { id: 'ristak-preview-contact', fullName: 'Contacto de prueba' },
       conversationMessages: [
         { id: `wrong_opening_${suffix}`, role: 'user', content: opening },
-        { id: `wrong_offer_${suffix}`, role: 'assistant', content: first.reply },
+        { id: `wrong_question_${suffix}`, role: 'assistant', content: first.reply },
+        { id: `wrong_hour_${suffix}`, role: 'user', content: hour },
+        { id: `wrong_offer_${suffix}`, role: 'assistant', content: second.reply },
         { id: `preview:wrong_session_${suffix}`, role: 'user', content: confirmation }
       ],
       accountLocale: { currency: 'MXN' },
@@ -2438,22 +2464,51 @@ test('dos requests de preview recuperan el UTC guardado y confirman sin startTim
     assert.equal(wrongSession.code, 'appointment_offer_required')
     assert.equal(wrongSessionCtx.actions.length, 0)
 
-    const second = await runConversationalAgentPreview({
+    const third = await runConversationalAgentPreview({
       messages: [
         { role: 'user', content: opening },
         { role: 'assistant', content: first.reply },
+        { role: 'user', content: hour },
+        { role: 'assistant', content: second.reply },
         { role: 'user', content: confirmation }
       ],
       agentId,
       previewScopeId,
       executionId: `preview:confirmation_${suffix}`
     }, dependencies)
-    const booking = second.actions.find((action) => action.type === 'book_appointment')
+    const booking = third.actions.find((action) => action.type === 'book_appointment')
     assert.ok(booking)
     assert.equal(booking.startTime, startTime)
     assert.equal(booking.outcome.status, 'simulated')
     assert.equal(booking.confirmationEvidence.evidenceVerified, true)
     assert.equal(booking.confirmationEvidence.customerQuote, confirmation)
+    assert.doesNotMatch(third.reply, /dime la hora|qué hora|hora otra vez/i)
+
+    const normalizedSecond = normalizeConversationalPreviewTranscript([
+      { role: 'user', content: opening },
+      { role: 'assistant', content: first.reply },
+      { role: 'user', content: hour }
+    ], { previewScopeId })
+    const normalizedThird = normalizeConversationalPreviewTranscript([
+      { role: 'user', content: opening },
+      { role: 'assistant', content: first.reply },
+      { role: 'user', content: hour },
+      { role: 'assistant', content: second.reply },
+      { role: 'user', content: confirmation }
+    ], { previewScopeId })
+    assert.deepEqual(
+      normalizedThird.slice(0, normalizedSecond.length).map((message) => message.id),
+      normalizedSecond.map((message) => message.id),
+      'anexar oferta y confirmación no debe reidentificar turnos anteriores'
+    )
+    const offerRow = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE agent_id = ? AND event_type = 'appointment_slot_preview_offer_created'`,
+      [agentId]
+    )
+    const offerDetail = JSON.parse(offerRow.detail_json)
+    assert.equal(offerDetail.offerSourceMessageId, normalizedSecond.at(-1).id)
+    assert.equal(booking.confirmationEvidence.offerSourceMessageId, normalizedSecond.at(-1).id)
     assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?', [calendarId])).total), 0)
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => {})

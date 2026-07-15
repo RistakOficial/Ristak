@@ -729,17 +729,26 @@ inicio":
   los logos oficiales de modo claro/noche. En `mobile/` si debe verse marca al
   cargar; en `/movil` la carga web sigue sin logo ni nombre visible.
 
-Las push de mensajes, citas y pagos deben mostrar identidad de contacto cuando
-el payload pertenece a exactamente un contacto. Si existe una foto publica, esa
-foto viaja en `contactAvatarUrl` y `senderAvatarUrl`. Si no existe foto, el
-backend debe generar un PNG publico de iniciales en
-`/api/push/contact-avatar/:contactId` con firma en querystring y usar esa URL en
-los mismos campos. Solo cuando son varios contactos o la alerta es general se
-usa el isotipo de Ristak.
+Solo las push de mensajes reales de chat deben mostrar identidad de contacto
+como remitente. Si existe una foto publica, esa foto viaja en
+`contactAvatarUrl` y `senderAvatarUrl`. Si no existe foto, el backend debe
+generar un PNG publico de iniciales en `/api/push/contact-avatar/:contactId` con
+firma en querystring y usar esa URL en los mismos campos.
 En iOS, el target `ios/app/RistakNotificationService` (`com.ristak.app.NotificationService`)
 procesa ese payload con `mutable-content`, pinta el avatar como remitente con
 Communication Notifications y adjunta media real cuando venga separada del
-avatar.
+avatar. La extension debe aplicar `INSendMessageIntent` exclusivamente cuando
+`category=chat`; una cita, pago, prioridad de agente u otro evento nunca puede
+convertirse en Communication Notification porque iOS reemplazaria el titulo del
+evento por el nombre del contacto.
+
+Las push de eventos usan titulo semantico y cuerpo compacto. Una cita nueva se
+muestra como `📅 Nueva Cita` y `Contacto - 28 Mayo, 11:00 AM`, usando la zona
+horaria de la cuenta. Un pago exitoso se muestra como `💸 Nuevo Pago` y
+`Contacto ($20,000)`, usando la moneda del pago o, si no viene, la moneda de la
+cuenta. Estados como pago rechazado, pendiente, reembolso, cita confirmada o
+cancelada conservan su titulo especifico. Los eventos no deben recibir
+`contactAvatarUrl`/`senderAvatarUrl`, aunque pertenezcan a un solo contacto.
 
 El avatar del contacto, sea foto real o iniciales generadas, no debe copiarse a
 `notificationImageUrl`. `notificationImageUrl` y `notificationAttachmentUrl`
@@ -797,6 +806,16 @@ En Android hay dos contratos de push y no se deben mezclar:
   la data de navegacion en `message.data`. Asi Android muestra la alerta cuando
   la app esta cerrada, y `mobile/src/notifications.ts` puede abrir el chat,
   calendario, pagos o seccion correcta al tocarla.
+
+En Android Play/Expo, permiso del sistema y registro del token en
+`mobile_push_devices` son estados distintos. La app solo puede mostrar
+`Alertas activas` cuando `POST /api/push/mobile-devices` confirme un registro
+habilitado con id; un permiso concedido por si solo no prueba entrega. Si falla
+la obtencion o persistencia del token, el resultado es `failed`, no `denied`, y
+la app reintenta a los 5/15/60/300 segundos y al volver a foreground. La
+renovacion del token usa el mismo backoff. Ajustes revalida el registro de forma
+idempotente y muestra que falta completar el registro cuando el permiso existe
+pero el backend aun no reconoce el celular.
 
 En ambos casos el small icon del sistema sigue siendo el icono monocromatico de
 la app y los canales Android oficiales son `ristak_alerts`, `ristak_sound`,

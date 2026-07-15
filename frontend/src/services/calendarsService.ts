@@ -215,6 +215,7 @@ export interface Calendar {
 
 export interface CalendarEvent {
   id: string;
+  ghlAppointmentId?: string | null;
   title: string;
   calendarId: string;
   googleEventId?: string | null;
@@ -240,12 +241,17 @@ export interface CalendarEvent {
     source: string;
   };
   masterEventId?: string;
+  source?: 'ristak' | 'ghl' | 'google';
+  syncStatus?: 'pending' | 'synced' | 'error';
+  syncError?: string | null;
 }
 
 export interface CreateAppointmentPayload extends Partial<CalendarEvent> {
+  calendarId: string;
   clientRequestId?: string;
   client_request_id?: string;
   strictAvailabilityCheck?: true;
+  ignoreAppointmentConflicts?: true;
   [key: string]: unknown;
 }
 

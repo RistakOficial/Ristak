@@ -25,6 +25,7 @@ import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
+import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 // (NOTI-003) La confirmación de citas por respuesta también debe abrirse cuando el
 // contacto responde por canales sincronizados vía HighLevel (SMS/Messenger/Instagram/
 // WhatsApp de GHL), no solo por WhatsApp API.
@@ -665,64 +666,77 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
 
   let saved = 0
   let isNew = false
-  for (const [index, attachmentUrl] of items.entries()) {
-    let localMessageId = hashId('ghl_msg', `${remoteMessageId}:${index}`)
-    const duplicateRows = await findHighLevelWhatsAppDuplicateRows({
-      contactId: contact.id,
-      transport,
-      direction,
-      text: index === 0 ? text : '',
-      attachmentUrl: attachmentUrl || '',
-      messageTimestamp,
-      remoteMessageId,
-      proposedLocalMessageId: localMessageId
-    })
-    const duplicate = selectCanonicalDuplicateRow(duplicateRows, localMessageId, remoteMessageId, 'ycloud_message_id')
-    if (duplicate) {
-      localMessageId = duplicate.id
-    }
-    const existing = await db.get('SELECT id FROM whatsapp_api_messages WHERE id = ?', [localMessageId])
-    if (!existing) isNew = true
+  const persistRows = async () => {
+    for (const [index, attachmentUrl] of items.entries()) {
+      let localMessageId = hashId('ghl_msg', `${remoteMessageId}:${index}`)
+      const duplicateRows = await findHighLevelWhatsAppDuplicateRows({
+        contactId: contact.id,
+        transport,
+        direction,
+        text: index === 0 ? text : '',
+        attachmentUrl: attachmentUrl || '',
+        messageTimestamp,
+        remoteMessageId,
+        proposedLocalMessageId: localMessageId
+      })
+      const duplicate = selectCanonicalDuplicateRow(duplicateRows, localMessageId, remoteMessageId, 'ycloud_message_id')
+      if (duplicate) {
+        localMessageId = duplicate.id
+      }
+      const existing = await db.get('SELECT id FROM whatsapp_api_messages WHERE id = ?', [localMessageId])
+      if (!existing) isNew = true
 
-    await db.run(`
-      INSERT INTO whatsapp_api_messages (
-        id, ycloud_message_id, contact_id, phone, from_phone, to_phone,
-        transport, direction, message_type, message_text, media_url,
-        status, message_timestamp, raw_payload_json, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(id) DO UPDATE SET
-        ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
-        contact_id = COALESCE(excluded.contact_id, whatsapp_api_messages.contact_id),
-        phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
-        from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
-        to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
-        transport = COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport),
-        direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
-        message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
-        message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
-        media_url = COALESCE(NULLIF(excluded.media_url, ''), whatsapp_api_messages.media_url),
-        status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
-        message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
-        raw_payload_json = excluded.raw_payload_json,
-        updated_at = CURRENT_TIMESTAMP
-    `, [
-      localMessageId,
-      remoteMessageId,
-      contact.id,
-      contactPhone || null,
-      direction === 'inbound' ? (contactPhone || null) : null,
-      direction === 'inbound' ? null : (contactPhone || null),
-      transport,
-      direction,
-      attachmentUrl ? inferAttachmentMessageType(attachmentUrl) : 'text',
-      index === 0 ? text : '',
-      attachmentUrl || null,
-      status,
-      messageTimestamp,
-      rawPayload
-    ])
-    await deleteDuplicateWhatsAppRows(duplicateRows, localMessageId)
-    saved++
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+          transport, direction, message_type, message_text, media_url,
+          status, message_timestamp, raw_payload_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+          ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
+          contact_id = COALESCE(whatsapp_api_messages.contact_id, excluded.contact_id),
+          phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
+          from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
+          to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
+          transport = COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport),
+          direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
+          message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
+          message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
+          media_url = COALESCE(NULLIF(excluded.media_url, ''), whatsapp_api_messages.media_url),
+          status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
+          message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
+          raw_payload_json = excluded.raw_payload_json,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        localMessageId,
+        remoteMessageId,
+        contact.id,
+        contactPhone || null,
+        direction === 'inbound' ? (contactPhone || null) : null,
+        direction === 'inbound' ? null : (contactPhone || null),
+        transport,
+        direction,
+        attachmentUrl ? inferAttachmentMessageType(attachmentUrl) : 'text',
+        index === 0 ? text : '',
+        attachmentUrl || null,
+        status,
+        messageTimestamp,
+        rawPayload
+      ])
+      await deleteDuplicateWhatsAppRows(duplicateRows, localMessageId)
+      saved++
+    }
+  }
+  // Persistencia y notificación son contratos distintos. Incluso una sync
+  // manual/background con notificaciones apagadas puede traer el inbound más
+  // reciente y debe competir con el commit terminal de una cita.
+  if (direction === 'inbound') {
+    await withConversationalInboundCommitLock({
+      contactId: contact.id,
+      channel: getLocalChannelFromWhatsAppTransport(transport)
+    }, persistRows)
+  } else {
+    await persistRows()
   }
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
@@ -779,8 +793,6 @@ async function upsertEmailRow({ message, contact, direction, notifyNewInbound })
   if (!remoteMessageId) return { saved: 0, isNew: false }
 
   const localMessageId = hashId('ghl_email_msg', `${remoteMessageId}:0`)
-  const existing = await db.get('SELECT id FROM email_messages WHERE id = ?', [localMessageId])
-  const isNew = !existing
   const text = getMessageBody(message)
   const messageTimestamp = parseTimestampToIso(
     message.dateAdded || message.date_added || message.createdAt || message.created_at || message.dateUpdated
@@ -803,36 +815,43 @@ async function upsertEmailRow({ message, contact, direction, notifyNewInbound })
   )
   const rawPayload = safeJsonStringify({ provider: 'highlevel', source: 'conversations_sync', message })
 
-  await db.run(`
-    INSERT INTO email_messages (
-      id, contact_id, direction, status, to_email, from_email, reply_to,
-      subject, message_text, message_timestamp, raw_payload_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(id) DO UPDATE SET
-      contact_id = COALESCE(excluded.contact_id, email_messages.contact_id),
-      direction = COALESCE(NULLIF(excluded.direction, ''), email_messages.direction),
-      status = COALESCE(NULLIF(excluded.status, ''), email_messages.status),
-      to_email = COALESCE(NULLIF(excluded.to_email, ''), email_messages.to_email),
-      from_email = COALESCE(NULLIF(excluded.from_email, ''), email_messages.from_email),
-      reply_to = COALESCE(NULLIF(excluded.reply_to, ''), email_messages.reply_to),
-      subject = COALESCE(NULLIF(excluded.subject, ''), email_messages.subject),
-      message_text = COALESCE(NULLIF(excluded.message_text, ''), email_messages.message_text),
-      message_timestamp = COALESCE(excluded.message_timestamp, email_messages.message_timestamp),
-      raw_payload_json = excluded.raw_payload_json,
-      updated_at = CURRENT_TIMESTAMP
-  `, [
-    localMessageId,
-    contact.id,
-    direction,
-    status,
-    toEmail || null,
-    fromEmail || null,
-    fromEmail || null,
-    getEmailSubject(message),
-    text,
-    messageTimestamp,
-    rawPayload
-  ])
+  const persistRow = async () => {
+    const existing = await db.get('SELECT id FROM email_messages WHERE id = ?', [localMessageId])
+    await db.run(`
+      INSERT INTO email_messages (
+        id, contact_id, direction, status, to_email, from_email, reply_to,
+        subject, message_text, message_timestamp, raw_payload_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        contact_id = COALESCE(email_messages.contact_id, excluded.contact_id),
+        direction = COALESCE(NULLIF(excluded.direction, ''), email_messages.direction),
+        status = COALESCE(NULLIF(excluded.status, ''), email_messages.status),
+        to_email = COALESCE(NULLIF(excluded.to_email, ''), email_messages.to_email),
+        from_email = COALESCE(NULLIF(excluded.from_email, ''), email_messages.from_email),
+        reply_to = COALESCE(NULLIF(excluded.reply_to, ''), email_messages.reply_to),
+        subject = COALESCE(NULLIF(excluded.subject, ''), email_messages.subject),
+        message_text = COALESCE(NULLIF(excluded.message_text, ''), email_messages.message_text),
+        message_timestamp = COALESCE(excluded.message_timestamp, email_messages.message_timestamp),
+        raw_payload_json = excluded.raw_payload_json,
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+      localMessageId,
+      contact.id,
+      direction,
+      status,
+      toEmail || null,
+      fromEmail || null,
+      fromEmail || null,
+      getEmailSubject(message),
+      text,
+      messageTimestamp,
+      rawPayload
+    ])
+    return !existing
+  }
+  const isNew = direction === 'inbound'
+    ? await withConversationalInboundCommitLock({ contactId: contact.id, channel: 'email' }, persistRow)
+    : await persistRow()
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
     await recordInboundChatUnread({
@@ -899,64 +918,71 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
 
   let saved = 0
   let isNew = false
-  for (const [index, attachmentUrl] of items.entries()) {
-    let localMessageId = hashId('ghl_meta_msg', `${remoteMessageId}:${index}`)
-    const duplicateRows = await findHighLevelMetaDuplicateRows({
-      contactId: contact.id,
-      platform,
-      direction,
-      text: index === 0 ? text : '',
-      attachmentUrl: attachmentUrl || '',
-      messageTimestamp,
-      remoteMessageId,
-      proposedLocalMessageId: localMessageId
-    })
-    const duplicate = selectCanonicalDuplicateRow(duplicateRows, localMessageId, remoteMessageId, 'meta_message_id')
-    if (duplicate) {
-      localMessageId = duplicate.id
-    }
-    const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [localMessageId])
-    if (!existing) isNew = true
+  const persistRows = async () => {
+    for (const [index, attachmentUrl] of items.entries()) {
+      let localMessageId = hashId('ghl_meta_msg', `${remoteMessageId}:${index}`)
+      const duplicateRows = await findHighLevelMetaDuplicateRows({
+        contactId: contact.id,
+        platform,
+        direction,
+        text: index === 0 ? text : '',
+        attachmentUrl: attachmentUrl || '',
+        messageTimestamp,
+        remoteMessageId,
+        proposedLocalMessageId: localMessageId
+      })
+      const duplicate = selectCanonicalDuplicateRow(duplicateRows, localMessageId, remoteMessageId, 'meta_message_id')
+      if (duplicate) {
+        localMessageId = duplicate.id
+      }
+      const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [localMessageId])
+      if (!existing) isNew = true
 
-    await db.run(`
-      INSERT INTO meta_social_messages (
-        id, platform, meta_message_id, meta_social_contact_id, contact_id,
-        sender_id, recipient_id, page_id, instagram_account_id,
-        direction, status, message_type, message_text, media_url,
-        message_timestamp, raw_payload_json, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(id) DO UPDATE SET
-        meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
-        meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
-        contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
-        direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
-        status = COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status),
-        message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
-        message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
-        media_url = COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url),
-        message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
-        raw_payload_json = excluded.raw_payload_json,
-        updated_at = CURRENT_TIMESTAMP
-    `, [
-      localMessageId,
-      platform,
-      remoteMessageId,
-      profile?.id || null,
-      contact.id,
-      direction === 'inbound' ? (profile?.sender_id || null) : (profile?.recipient_id || profile?.page_id || null),
-      direction === 'inbound' ? (profile?.recipient_id || profile?.page_id || null) : (profile?.sender_id || null),
-      profile?.page_id || null,
-      profile?.instagram_account_id || null,
-      direction,
-      status,
-      attachmentUrl ? inferAttachmentMessageType(attachmentUrl) : 'message',
-      index === 0 ? text : '',
-      attachmentUrl || null,
-      messageTimestamp,
-      rawPayload
-    ])
-    await deleteDuplicateMetaRows(duplicateRows, localMessageId)
-    saved++
+      await db.run(`
+        INSERT INTO meta_social_messages (
+          id, platform, meta_message_id, meta_social_contact_id, contact_id,
+          sender_id, recipient_id, page_id, instagram_account_id,
+          direction, status, message_type, message_text, media_url,
+          message_timestamp, raw_payload_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+          meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
+          meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
+          contact_id = COALESCE(meta_social_messages.contact_id, excluded.contact_id),
+          direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
+          status = COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status),
+          message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
+          message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
+          media_url = COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url),
+          message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
+          raw_payload_json = excluded.raw_payload_json,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        localMessageId,
+        platform,
+        remoteMessageId,
+        profile?.id || null,
+        contact.id,
+        direction === 'inbound' ? (profile?.sender_id || null) : (profile?.recipient_id || profile?.page_id || null),
+        direction === 'inbound' ? (profile?.recipient_id || profile?.page_id || null) : (profile?.sender_id || null),
+        profile?.page_id || null,
+        profile?.instagram_account_id || null,
+        direction,
+        status,
+        attachmentUrl ? inferAttachmentMessageType(attachmentUrl) : 'message',
+        index === 0 ? text : '',
+        attachmentUrl || null,
+        messageTimestamp,
+        rawPayload
+      ])
+      await deleteDuplicateMetaRows(duplicateRows, localMessageId)
+      saved++
+    }
+  }
+  if (direction === 'inbound') {
+    await withConversationalInboundCommitLock({ contactId: contact.id, channel: platform }, persistRows)
+  } else {
+    await persistRows()
   }
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
@@ -1241,7 +1267,38 @@ function prepareHistoricalMessageRows({ message, contact, channel, direction }) 
   }
 }
 
-async function bulkUpsertHistoricalWhatsAppRows(rows = []) {
+async function persistHistoricalRowsWithInboundCommitLocks({ rows = [], identityForRow, persistRows }) {
+  if (!rows.length) return
+  const unlockedRows = []
+  const inboundGroups = new Map()
+
+  for (const row of rows) {
+    const identity = identityForRow(row) || {}
+    const contactId = cleanString(identity.contactId)
+    const channel = cleanString(identity.channel)
+    if (identity.direction !== 'inbound' || !contactId || !channel) {
+      unlockedRows.push(row)
+      continue
+    }
+    const key = `${channel}\u0000${contactId}`
+    const group = inboundGroups.get(key) || { contactId, channel, rows: [] }
+    group.rows.push(row)
+    inboundGroups.set(key, group)
+  }
+
+  if (unlockedRows.length) await persistRows(unlockedRows)
+  // Un backfill también puede descubrir el mensaje más reciente mientras una
+  // cita está cerrándose. Agrupar por contacto+canal conserva el bulk insert,
+  // pero nunca deja que una fila inbound aparezca dentro de la ventana terminal.
+  for (const group of inboundGroups.values()) {
+    await withConversationalInboundCommitLock({
+      contactId: group.contactId,
+      channel: group.channel
+    }, () => persistRows(group.rows))
+  }
+}
+
+async function persistHistoricalWhatsAppRows(rows = []) {
   for (const chunk of chunkRows(rows)) {
     await db.run(`
       INSERT INTO whatsapp_api_messages (
@@ -1251,7 +1308,7 @@ async function bulkUpsertHistoricalWhatsAppRows(rows = []) {
       ) VALUES ${createValuesSql(chunk.length, 14)}
       ON CONFLICT(id) DO UPDATE SET
         ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
-        contact_id = COALESCE(excluded.contact_id, whatsapp_api_messages.contact_id),
+        contact_id = COALESCE(whatsapp_api_messages.contact_id, excluded.contact_id),
         phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
         from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
         to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
@@ -1268,7 +1325,19 @@ async function bulkUpsertHistoricalWhatsAppRows(rows = []) {
   }
 }
 
-async function bulkUpsertHistoricalEmailRows(rows = []) {
+async function bulkUpsertHistoricalWhatsAppRows(rows = []) {
+  return persistHistoricalRowsWithInboundCommitLocks({
+    rows,
+    identityForRow: row => ({
+      contactId: row[2],
+      channel: getLocalChannelFromWhatsAppTransport(row[6]),
+      direction: row[7]
+    }),
+    persistRows: persistHistoricalWhatsAppRows
+  })
+}
+
+async function persistHistoricalEmailRows(rows = []) {
   for (const chunk of chunkRows(rows)) {
     await db.run(`
       INSERT INTO email_messages (
@@ -1276,7 +1345,7 @@ async function bulkUpsertHistoricalEmailRows(rows = []) {
         subject, message_text, message_timestamp, raw_payload_json, updated_at
       ) VALUES ${createValuesSql(chunk.length, 11)}
       ON CONFLICT(id) DO UPDATE SET
-        contact_id = COALESCE(excluded.contact_id, email_messages.contact_id),
+        contact_id = COALESCE(email_messages.contact_id, excluded.contact_id),
         direction = COALESCE(NULLIF(excluded.direction, ''), email_messages.direction),
         status = COALESCE(NULLIF(excluded.status, ''), email_messages.status),
         to_email = COALESCE(NULLIF(excluded.to_email, ''), email_messages.to_email),
@@ -1291,7 +1360,15 @@ async function bulkUpsertHistoricalEmailRows(rows = []) {
   }
 }
 
-async function bulkUpsertHistoricalMetaRows(rows = []) {
+async function bulkUpsertHistoricalEmailRows(rows = []) {
+  return persistHistoricalRowsWithInboundCommitLocks({
+    rows,
+    identityForRow: row => ({ contactId: row[1], channel: 'email', direction: row[2] }),
+    persistRows: persistHistoricalEmailRows
+  })
+}
+
+async function persistHistoricalMetaRows(rows = []) {
   for (const chunk of chunkRows(rows)) {
     await db.run(`
       INSERT INTO meta_social_messages (
@@ -1303,7 +1380,7 @@ async function bulkUpsertHistoricalMetaRows(rows = []) {
       ON CONFLICT(id) DO UPDATE SET
         meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
         meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
-        contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
+        contact_id = COALESCE(meta_social_messages.contact_id, excluded.contact_id),
         direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
         status = COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status),
         message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
@@ -1314,6 +1391,14 @@ async function bulkUpsertHistoricalMetaRows(rows = []) {
         updated_at = CURRENT_TIMESTAMP
     `, chunk.flat())
   }
+}
+
+async function bulkUpsertHistoricalMetaRows(rows = []) {
+  return persistHistoricalRowsWithInboundCommitLocks({
+    rows,
+    identityForRow: row => ({ contactId: row[4], channel: row[1], direction: row[9] }),
+    persistRows: persistHistoricalMetaRows
+  })
 }
 
 async function importHighLevelHistoricalMessageBatch({

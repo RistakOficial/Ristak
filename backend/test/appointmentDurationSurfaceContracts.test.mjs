@@ -75,10 +75,12 @@ test('el agente general deriva el fin configurado al crear y reagendar', async (
       id: calendarId,
       name: 'Agenda del agente configurada en horas',
       source: 'ristak',
+      ghlCalendarId: `ghl_${calendarId}`,
       slotDuration: 1,
       slotDurationUnit: 'hours',
       slotInterval: 1,
       slotIntervalUnit: 'hours',
+      appoinmentPerSlot: 5,
       allowBookingFor: 36500,
       allowBookingForUnit: 'days',
       openHours: [{
@@ -116,6 +118,19 @@ test('el agente general deriva el fin configurado al crear y reagendar', async (
     assert.equal(
       Date.parse(created.data?.endTime) - Date.parse(created.data?.startTime),
       60 * 60 * 1000
+    )
+
+    const availabilityAfterCreate = await getFreeSlotsTool.invoke(null, JSON.stringify({
+      calendarId,
+      startDate: '2099-07-20',
+      endDate: '2099-07-20'
+    }))
+    assert.equal(availabilityAfterCreate.ok, true, JSON.stringify(availabilityAfterCreate))
+    assert.equal(
+      availabilityAfterCreate.slots
+        .flatMap((day) => day.slots)
+        .some((slot) => Date.parse(slot) === Date.parse(starts[0])),
+      false
     )
 
     const updated = await updateAppointmentTool.invoke(null, JSON.stringify({

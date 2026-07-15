@@ -12,6 +12,7 @@ import { recordInboundChatUnread } from './chatReadStateService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
+import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 import {
   formatContactName,
   splitContactName as splitFormattedContactName
@@ -753,7 +754,10 @@ async function getContactEmailRecipient(contactId, fallbackTo) {
   }
 }
 
-async function saveEmailMessageRow(row) {
+// La fila de mensaje tiene dueño write-once: un replay sólo completa contact_id
+// si la fila legacy no tenía dueño. Reasignar entre contactos pertenece al merge
+// explícito, que cerca origen y destino con el protocolo multi-lock.
+export async function saveEmailMessageRow(row) {
   await db.run(`
     INSERT INTO email_messages (
       id, contact_id, direction, status, to_email, from_email, reply_to,
@@ -762,7 +766,7 @@ async function saveEmailMessageRow(row) {
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
-      contact_id = excluded.contact_id,
+      contact_id = COALESCE(email_messages.contact_id, excluded.contact_id),
       direction = excluded.direction,
       status = excluded.status,
       to_email = excluded.to_email,
@@ -1119,8 +1123,6 @@ async function saveInboundEmailFromImap({ imapMessage, parsed, config }) {
     subject,
     messageTimestamp
   })
-  const existing = await db.get('SELECT id FROM email_messages WHERE id = ?', [localMessageId])
-  const isNew = !existing
   const rawPayload = safeJsonStringify({
     provider: 'imap',
     source: 'email_inbound_sync',
@@ -1134,20 +1136,30 @@ async function saveInboundEmailFromImap({ imapMessage, parsed, config }) {
     sourceTruncated: Buffer.isBuffer(imapMessage.source) && imapMessage.source.length >= EMAIL_INBOUND_SOURCE_LIMIT
   })
 
-  await saveEmailMessageRow({
-    id: localMessageId,
+  // El lock conversacional se toma antes de que el inbound sea visible y vive
+  // hasta el COMMIT. Así una cita que ya cruzó su fence final termina primero;
+  // si este correo gana el lock, el fence ve la fila y aborta el borrador viejo.
+  const isNew = await withConversationalInboundCommitLock({
     contactId: contact.id,
-    direction: 'inbound',
-    status: 'delivered',
-    toEmail: toAddresses.map(item => item.address).join(', '),
-    fromEmail: from.address,
-    replyTo: replyToAddresses.map(item => item.address).join(', '),
-    subject,
-    text,
-    html,
-    smtpMessageId: messageId,
-    messageTimestamp,
-    rawPayloadJson: rawPayload
+    channel: 'email'
+  }, async () => {
+    const existing = await db.get('SELECT id FROM email_messages WHERE id = ?', [localMessageId])
+    await saveEmailMessageRow({
+      id: localMessageId,
+      contactId: contact.id,
+      direction: 'inbound',
+      status: 'delivered',
+      toEmail: toAddresses.map(item => item.address).join(', '),
+      fromEmail: from.address,
+      replyTo: replyToAddresses.map(item => item.address).join(', '),
+      subject,
+      text,
+      html,
+      smtpMessageId: messageId,
+      messageTimestamp,
+      rawPayloadJson: rawPayload
+    })
+    return !existing
   })
 
   if (isNew) {

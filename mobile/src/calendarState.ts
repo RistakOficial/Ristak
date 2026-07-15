@@ -12,18 +12,26 @@ type AppointmentAvailabilityRequestInput = {
   scheduleMode: 'default' | 'custom';
 };
 
+type AppointmentAvailabilityRequestFields = {
+  strictAvailabilityCheck?: true;
+  ignoreAppointmentConflicts?: true;
+};
+
 /**
  * Keeps the server-side availability lock attached to appointments created
- * from a free slot, while preserving the explicit manual override offered by
- * the custom scheduler.
+ * from a published free slot. A custom create is an explicit manual override,
+ * so it asks the server to allow overlapping another appointment. Edits keep
+ * their existing contract and do not inherit either create-only flag.
  */
 export function getAppointmentAvailabilityRequestFields({
   formMode,
   scheduleMode,
-}: AppointmentAvailabilityRequestInput): { strictAvailabilityCheck?: true } {
-  return formMode === 'create' && scheduleMode === 'default'
+}: AppointmentAvailabilityRequestInput): AppointmentAvailabilityRequestFields {
+  if (formMode !== 'create') return {};
+
+  return scheduleMode === 'default'
     ? { strictAvailabilityCheck: true }
-    : {};
+    : { ignoreAppointmentConflicts: true };
 }
 
 type CurrentCalendarSlotSelectionInput = {

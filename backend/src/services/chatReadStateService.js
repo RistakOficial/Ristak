@@ -153,7 +153,8 @@ export async function claimInboundChatMessage({
   messageId,
   contactId,
   messageTimestamp,
-  incrementUnread = true
+  incrementUnread = true,
+  database = db
 } = {}) {
   const cleanChannel = cleanString(channel).toLowerCase()
   const cleanMessageId = cleanString(messageId)
@@ -198,6 +199,14 @@ export async function claimInboundChatMessage({
 
   // Un import histórico sólo necesita reservar la llave: un INSERT atómico es
   // suficiente y evita abrir miles de transacciones durante un backfill.
-  if (!incrementUnread) return executeClaim(db)
+  if (!incrementUnread) return executeClaim(database)
+
+  // Los writers que ya están dentro de `withConversationalInboundCommitLock`
+  // reciben el adapter de ESA transacción. Reutilizarlo evita encadenar una
+  // segunda transacción SQLite en la cola global mientras la primera conserva
+  // BEGIN IMMEDIATE: esa espera circular sólo podía terminar por busyTimeout.
+  if (database !== db || typeof database?.transaction !== 'function') {
+    return executeClaim(database)
+  }
   return runInboundClaimTransaction(executeClaim)
 }

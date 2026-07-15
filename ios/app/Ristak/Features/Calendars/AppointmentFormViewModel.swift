@@ -8,8 +8,8 @@ import Observation
 /// - Round Robin exige `assignedUserId` al crear (validación de cliente).
 /// - Pre-chequeo de bloqueos nativos antes del POST (silencioso si el fetch
 ///   falla, paridad web/RN).
-/// - 409 `slot_unavailable` → el modo Por defecto exige elegir otro espacio;
-///   personalizado/edición pueden ofrecer «Crear de todos modos».
+/// - Por defecto nunca permite sobreagendar; Personalizado autoriza el empalme
+///   desde el primer POST. Edición conserva el override manual existente.
 /// - Invitados serializados en `notes` con el bloque `Invitados:`.
 @MainActor
 @Observable
@@ -246,9 +246,29 @@ final class AppointmentFormViewModel {
     }
 
     /// Crear desde un espacio libre conserva el candado de disponibilidad en
-    /// el POST. Personalizado y edición mantienen su override manual.
+    /// el POST. Personalizado manda su override desde el primer intento y
+    /// edición conserva el reintento manual legacy.
     var requiresStrictAvailabilityCheck: Bool {
         !isEdit && entryMode == .defaultSlots
+    }
+
+    /// Contrato de guardado para choques entre citas:
+    /// - Crear + Por defecto: jamás permite override, incluso si una acción
+    ///   accidental intentara reintentar con `manualRetry: true`.
+    /// - Crear + Personalizado: permite el empalme desde el primer POST.
+    /// - Editar: conserva el override manual que ya existía.
+    func appointmentConflictOverrideRequested(manualRetry: Bool = false) -> Bool {
+        if !isEdit {
+            return entryMode == .custom
+        }
+        return manualRetry
+    }
+
+    /// El CTA «Crear de todos modos» sólo tiene efecto en edición legacy.
+    /// Personalizado ya mandó el override en su primer POST; volver a ofrecerlo
+    /// ante otro 409 repetiría exactamente el mismo request en un ciclo inútil.
+    var offersManualAppointmentConflictRetry: Bool {
+        isEdit
     }
 
     /// Round Robin sin `teamMembers` configurados: limitación documentada
@@ -518,6 +538,9 @@ final class AppointmentFormViewModel {
             durationMinutes = durationTotalMinutes
         }
         let endDate = startDate.addingTimeInterval(TimeInterval(durationMinutes * 60))
+        let overrideAppointmentConflicts = appointmentConflictOverrideRequested(
+            manualRetry: ignoringConflicts
+        )
 
         busy = true
         defer { busy = false }
@@ -550,7 +573,7 @@ final class AppointmentFormViewModel {
             address: isEdit ? trimmedAddress : (trimmedAddress.isEmpty ? nil : trimmedAddress),
             assignedUserId: (assignedUserID?.isEmpty == false) ? assignedUserID : nil,
             strictAvailabilityCheck: requiresStrictAvailabilityCheck ? true : nil,
-            ignoreAppointmentConflicts: ignoringConflicts ? true : nil
+            ignoreAppointmentConflicts: overrideAppointmentConflicts ? true : nil
         )
 
         do {
@@ -566,7 +589,7 @@ final class AppointmentFormViewModel {
             alert = FormAlert(
                 title: "Horario ocupado",
                 message: error.message,
-                offersOverbook: !requiresStrictAvailabilityCheck
+                offersOverbook: offersManualAppointmentConflictRetry
             )
             return nil
         } catch let error as RistakAPIError {

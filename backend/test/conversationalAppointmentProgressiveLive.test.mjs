@@ -8,11 +8,22 @@ import {
   createConversationalTools,
   loadConversationalAppointmentOfferDecisionContext,
   loadConversationalAppointmentSelectionProgressContext,
+  setNativeAppointmentAfterPreCommitAuthorityHookForTest,
   setNativeAppointmentBeforeResolverTerminalHookForTest,
+  setNativeAppointmentCreateControllerInvokeHookForTest,
   setNativeAppointmentRuntimeAgentLookupHookForTest,
   supersedeUndeliveredConversationalAppointmentOffer
 } from '../src/agents/conversational/tools.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import {
+  assignAgentToConversation,
+  claimConversationInboundMessage,
+  completeConversationInboundMessage,
+  checkpointConversationalReplyDelivery,
+  claimConversationalReplyDelivery,
+  getOrCreateConversationalReplyDeliveryPlan,
+  settleConversationalReplyDelivery
+} from '../src/services/conversationalAgentService.js'
 import { getAccountTimezone, invalidateTimezoneCache } from '../src/utils/dateUtils.js'
 
 function liveContext({ fixture, executionId, messages = [] }) {
@@ -154,6 +165,8 @@ async function cleanupFixture(fixture, extraContactIds = []) {
      WHERE appointment_id IN (SELECT id FROM appointments WHERE calendar_id = ?)`,
     [fixture.calendarId]
   ).catch(() => {})
+  await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
   await db.run(
     'DELETE FROM conversational_agent_events WHERE contact_id = ? OR agent_id = ?',
     [fixture.contactId, fixture.agentId]
@@ -223,6 +236,91 @@ async function offerExactTime(fixture, localTime, executionId = `offer-time-${fi
   assert.equal(offered.simulated, undefined)
   assert.match(offered.visibleReply, /¿Te funciona ese horario\?/)
   return { ctx, availability, offered, startTime }
+}
+
+async function createOfferReplyDelivery({
+  fixture,
+  sourceMessageId,
+  reply,
+  status = 'completed',
+  identity = {},
+  providerMessageId = `provider-offer-${fixture.suffix}`
+} = {}) {
+  const planIdentity = {
+    contactId: fixture.contactId,
+    agentId: fixture.agentId,
+    channel: 'whatsapp',
+    sourceMessageId,
+    externalIdPrefix: 'convagent',
+    ...identity
+  }
+  const created = await getOrCreateConversationalReplyDeliveryPlan(planIdentity, {
+    reply,
+    parts: [reply],
+    delaySchedule: [0],
+    splitterMeta: { source: 'structured_offer', reason: 'server_single_message' }
+  })
+  if (status === 'pending') return created.plan
+
+  const claim = await claimConversationalReplyDelivery(created.plan.id)
+  assert.equal(claim.claimed, true, JSON.stringify(claim))
+  if (status === 'interrupted') {
+    return (await settleConversationalReplyDelivery(created.plan.id, claim.claimToken, {
+      status: 'interrupted',
+      interruptedByMessageId: `newer-${fixture.suffix}`
+    })).plan
+  }
+
+  await checkpointConversationalReplyDelivery(created.plan.id, claim.claimToken, {
+    partIndex: 0,
+    status: 'sending'
+  })
+  if (status === 'ambiguous') {
+    return (await settleConversationalReplyDelivery(created.plan.id, claim.claimToken, {
+      status: 'pending',
+      error: 'simulated_unknown_provider_result'
+    })).plan
+  }
+  await checkpointConversationalReplyDelivery(created.plan.id, claim.claimToken, {
+    partIndex: 0,
+    status: 'sent',
+    providerMessageId
+  })
+  return (await settleConversationalReplyDelivery(created.plan.id, claim.claimToken, {
+    status: 'completed'
+  })).plan
+}
+
+async function mutateReplyDeliveryPlan(planId, mutate) {
+  const row = await db.get(
+    'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+    [planId]
+  )
+  assert.ok(row?.detail_json, `Falta el plan durable ${planId}`)
+  const detail = JSON.parse(row.detail_json)
+  const nextDetail = mutate(detail)
+  await db.run(
+    'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
+    [JSON.stringify(nextDetail), planId, row.detail_json]
+  )
+}
+
+async function truncatedLedgerConfirmationContext(fixture, executionId) {
+  const ctx = liveContext({
+    fixture,
+    executionId,
+    messages: [{ id: executionId, role: 'user', content: 'sí, confirmamos' }]
+  })
+  ctx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+    ctx,
+    config: fixture.config
+  })
+  ctx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+    ctx,
+    config: fixture.config
+  })
+  assert.equal(ctx.appointmentOfferDecision?.active, true)
+  return ctx
 }
 
 async function insertOriginMainLiveOffer({ fixture, option, executionId }) {
@@ -309,6 +407,57 @@ async function confirmationContext(fixture, offered, executionId) {
   assert.equal(ctx.appointmentOfferDecision?.active, true)
   assert.equal(ctx.appointmentSelectionProgress, null)
   return ctx
+}
+
+async function prepareLiveAppointmentConfirmation(fixture, localTime = '16:00') {
+  await selectDate(fixture)
+  const exact = await offerExactTime(fixture, localTime)
+  const confirmation = await confirmationContext(
+    fixture,
+    exact.offered,
+    `confirm-retry-${fixture.suffix}`
+  )
+  return {
+    exact,
+    confirmation,
+    resolver: toolNamed(confirmation, 'resolve_active_appointment_offer')
+  }
+}
+
+function singleBookAppointmentAction(ctx) {
+  const actions = (ctx.actions || []).filter((action) => action.type === 'book_appointment')
+  assert.equal(actions.length, 1, JSON.stringify(ctx.actions))
+  return actions[0]
+}
+
+async function appointmentCount(fixture) {
+  return Number((await db.get(
+    'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+    [fixture.calendarId, fixture.contactId]
+  )).total)
+}
+
+async function insertLiveInbound(fixture, id, text, timestamp, messageType = 'text') {
+  await db.run(
+    `INSERT INTO whatsapp_api_messages (
+       id, contact_id, direction, message_type, message_text, transport,
+       message_timestamp, created_at, updated_at
+     ) VALUES (?, ?, 'inbound', ?, ?, 'ycloud', ?, ?, CURRENT_TIMESTAMP)`,
+    [id, fixture.contactId, messageType, text, timestamp, timestamp]
+  )
+}
+
+async function insertLiveInboundAuthorityClaim(fixture, id, messageTimestamp, claimedAt) {
+  await db.run(
+    `INSERT INTO chat_inbound_message_claims (
+       channel, message_id, contact_id, message_timestamp, claimed_at
+     ) VALUES ('whatsapp', ?, ?, ?, ?)
+     ON CONFLICT(channel, message_id) DO UPDATE SET
+       contact_id = excluded.contact_id,
+       message_timestamp = excluded.message_timestamp,
+       claimed_at = excluded.claimed_at`,
+    [id, fixture.contactId, messageTimestamp, claimedAt]
+  )
 }
 
 test('live: fecha, hora, oferta y “sí” crean una sola cita real por el resolver; el replay no duplica', async () => {
@@ -404,6 +553,1146 @@ test('live: fecha, hora, oferta y “sí” crean una sola cita real por el reso
       'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
       [fixture.calendarId, fixture.contactId]
     )).total), 1)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: “sí” seguido de “mejor a las 3” antes del commit frena las 4 y procesa la hora nueva', async () => {
+  const fixture = await createFixture('newer_inbound_terminal_fence')
+  const initialConfirmationId = `confirm-old-${fixture.suffix}`
+  const newerPreferenceId = `prefer-new-${fixture.suffix}`
+  const finalConfirmationId = `confirm-new-${fixture.suffix}`
+  const baseTimestampMs = Date.now() + 10_000
+  try {
+    await selectDate(fixture)
+    const original = await offerExactTime(fixture, '16:00')
+    const initialConfirmation = await confirmationContext(
+      fixture,
+      original.offered,
+      initialConfirmationId
+    )
+    await insertLiveInbound(
+      fixture,
+      initialConfirmationId,
+      'sí, confirmamos',
+      new Date(baseTimestampMs).toISOString()
+    )
+    await assignAgentToConversation(fixture.contactId, fixture.agentId, {
+      channel: 'whatsapp',
+      updatedBy: 'agent'
+    })
+    const initialClaim = await claimConversationInboundMessage(
+      fixture.contactId,
+      initialConfirmationId,
+      { agentId: fixture.agentId, channel: 'whatsapp' }
+    )
+    assert.equal(initialClaim.claimed, true, JSON.stringify(initialClaim))
+    initialConfirmation.inboundClaim = {
+      messageId: initialConfirmationId,
+      claimToken: initialClaim.claimToken
+    }
+
+    let hookCalls = 0
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(async ({ terminalToolName, purpose }) => {
+      hookCalls += 1
+      assert.equal(terminalToolName, 'book_appointment')
+      assert.equal(purpose, 'book')
+      await insertLiveInbound(
+        fixture,
+        newerPreferenceId,
+        'mejor a las 3',
+        new Date(baseTimestampMs + 1_000).toISOString()
+      )
+    })
+
+    const rejectedOldCommit = await toolNamed(initialConfirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, initialConfirmation)
+
+    assert.equal(hookCalls, 1)
+    assert.equal(rejectedOldCommit.ok, false, JSON.stringify(rejectedOldCommit))
+    assert.equal(rejectedOldCommit.code, 'appointment_request_superseded_by_newer_inbound')
+    assert.equal(rejectedOldCommit.appointmentOfferInvalidated, true)
+    assert.equal(rejectedOldCommit.appointmentOfferRestoreSameDate, true)
+    assert.equal(await appointmentCount(fixture), 0)
+
+    const supersededOffer = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'
+       ORDER BY created_at DESC LIMIT 1`,
+      [fixture.contactId, fixture.agentId]
+    )
+    const supersededDetail = JSON.parse(supersededOffer?.detail_json || '{}')
+    assert.equal(supersededDetail.status, 'superseded')
+    assert.equal(supersededDetail.resolution, 'newer_inbound_preempted_terminal_commit')
+
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+    const initialCompleted = await completeConversationInboundMessage(
+      fixture.contactId,
+      initialConfirmationId,
+      {
+        agentId: fixture.agentId,
+        channel: 'whatsapp',
+        claimToken: initialClaim.claimToken,
+        answered: false
+      }
+    )
+    assert.equal(initialCompleted.completed, true)
+    const newerClaim = await claimConversationInboundMessage(
+      fixture.contactId,
+      newerPreferenceId,
+      { agentId: fixture.agentId, channel: 'whatsapp' }
+    )
+    assert.equal(newerClaim.claimed, true, JSON.stringify(newerClaim))
+    const changed = await offerExactTime(fixture, '15:00', newerPreferenceId)
+    assert.notEqual(changed.startTime, original.startTime)
+    const newerCompleted = await completeConversationInboundMessage(
+      fixture.contactId,
+      newerPreferenceId,
+      {
+        agentId: fixture.agentId,
+        channel: 'whatsapp',
+        claimToken: newerClaim.claimToken,
+        answered: true
+      }
+    )
+    assert.equal(newerCompleted.completed, true)
+    await insertLiveInbound(
+      fixture,
+      finalConfirmationId,
+      'sí, ahora sí',
+      new Date(baseTimestampMs + 2_000).toISOString()
+    )
+    const finalConfirmation = await confirmationContext(
+      fixture,
+      changed.offered,
+      finalConfirmationId
+    )
+    const finalClaim = await claimConversationInboundMessage(
+      fixture.contactId,
+      finalConfirmationId,
+      { agentId: fixture.agentId, channel: 'whatsapp' }
+    )
+    assert.equal(finalClaim.claimed, true, JSON.stringify(finalClaim))
+    finalConfirmation.inboundClaim = {
+      messageId: finalConfirmationId,
+      claimToken: finalClaim.claimToken
+    }
+    const confirmedNewTime = await toolNamed(finalConfirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, finalConfirmation)
+
+    assert.equal(confirmedNewTime.ok, true, JSON.stringify(confirmedNewTime))
+    assert.equal(await appointmentCount(fixture), 1)
+    const appointment = await db.get(
+      'SELECT start_time FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )
+    assert.equal(new Date(appointment.start_time).toISOString(), changed.startTime)
+  } finally {
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: una corrección persistida después gana aunque comparta timestamp y su ID ordene antes que la confirmación', async () => {
+  const fixture = await createFixture('same_timestamp_newer_inbound_fence')
+  const confirmationId = `z-confirm-${fixture.suffix}`
+  const correctionId = `a-correction-${fixture.suffix}`
+  const providerTimestamp = new Date(Date.now() + 10_000).toISOString()
+  const firstClaimedAt = new Date(Date.now() + 20_000).toISOString()
+  const correctionClaimedAt = new Date(Date.parse(firstClaimedAt) + 1).toISOString()
+  try {
+    await selectDate(fixture)
+    const original = await offerExactTime(fixture, '16:00')
+    const confirmation = await confirmationContext(
+      fixture,
+      original.offered,
+      confirmationId
+    )
+    await insertLiveInbound(fixture, confirmationId, 'sí, confirmamos', providerTimestamp)
+    await insertLiveInboundAuthorityClaim(
+      fixture,
+      confirmationId,
+      providerTimestamp,
+      firstClaimedAt
+    )
+    await assignAgentToConversation(fixture.contactId, fixture.agentId, {
+      channel: 'whatsapp',
+      updatedBy: 'agent'
+    })
+    const claim = await claimConversationInboundMessage(fixture.contactId, confirmationId, {
+      agentId: fixture.agentId,
+      channel: 'whatsapp'
+    })
+    assert.equal(claim.claimed, true, JSON.stringify(claim))
+    confirmation.inboundClaim = {
+      messageId: confirmationId,
+      claimToken: claim.claimToken
+    }
+
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(async () => {
+      await insertLiveInbound(
+        fixture,
+        correctionId,
+        'mejor a las 3',
+        providerTimestamp
+      )
+      await insertLiveInboundAuthorityClaim(
+        fixture,
+        correctionId,
+        providerTimestamp,
+        correctionClaimedAt
+      )
+    })
+
+    const rejected = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+
+    assert.equal(rejected.ok, false, JSON.stringify(rejected))
+    assert.equal(rejected.code, 'appointment_request_superseded_by_newer_inbound')
+    assert.equal(rejected.appointmentOfferInvalidated, true)
+    assert.equal(await appointmentCount(fixture), 0)
+  } finally {
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: una reacción llegada durante el commit no cancela la confirmación sustantiva', async () => {
+  const fixture = await createFixture('reaction_does_not_preempt_terminal')
+  const confirmationId = `confirm-reaction-${fixture.suffix}`
+  const timestampMs = Date.now() + 20_000
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '14:00')
+    const confirmation = await confirmationContext(fixture, exact.offered, confirmationId)
+    await insertLiveInbound(
+      fixture,
+      confirmationId,
+      'sí',
+      new Date(timestampMs).toISOString()
+    )
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(async () => {
+      await insertLiveInbound(
+        fixture,
+        `reaction-${fixture.suffix}`,
+        '👍',
+        new Date(timestampMs + 1_000).toISOString(),
+        'reaction'
+      )
+    })
+
+    const confirmed = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+    assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+    assert.equal(await appointmentCount(fixture), 1)
+    const appointment = await db.get(
+      'SELECT start_time FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )
+    assert.equal(new Date(appointment.start_time).toISOString(), exact.startTime)
+  } finally {
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: un claim de inbound perdido bloquea la creación aunque la oferta siga vigente', async () => {
+  const fixture = await createFixture('lost_inbound_claim_blocks_terminal')
+  const confirmationId = `confirm-lost-claim-${fixture.suffix}`
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '13:00')
+    const confirmation = await confirmationContext(fixture, exact.offered, confirmationId)
+    await insertLiveInbound(fixture, confirmationId, 'sí', new Date().toISOString())
+    await assignAgentToConversation(fixture.contactId, fixture.agentId, {
+      channel: 'whatsapp',
+      updatedBy: 'agent'
+    })
+    const claim = await claimConversationInboundMessage(fixture.contactId, confirmationId, {
+      agentId: fixture.agentId,
+      channel: 'whatsapp'
+    })
+    assert.equal(claim.claimed, true, JSON.stringify(claim))
+    confirmation.inboundClaim = {
+      messageId: confirmationId,
+      claimToken: `${claim.claimToken}-stale`
+    }
+
+    const rejected = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+    assert.equal(rejected.ok, false, JSON.stringify(rejected))
+    assert.equal(rejected.code, 'appointment_request_authority_lost')
+    assert.equal(rejected.appointmentOfferInvalidated, true)
+    assert.equal(await appointmentCount(fixture), 0)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: un inbound con claim vigente pero sin fila canónica falla cerrado', async () => {
+  const fixture = await createFixture('claimed_inbound_missing_canonical_row')
+  const confirmationId = `confirm-missing-row-${fixture.suffix}`
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '13:00')
+    const confirmation = await confirmationContext(fixture, exact.offered, confirmationId)
+    await insertLiveInbound(fixture, confirmationId, 'sí', new Date().toISOString())
+    await assignAgentToConversation(fixture.contactId, fixture.agentId, {
+      channel: 'whatsapp',
+      updatedBy: 'agent'
+    })
+    const claim = await claimConversationInboundMessage(fixture.contactId, confirmationId, {
+      agentId: fixture.agentId,
+      channel: 'whatsapp'
+    })
+    assert.equal(claim.claimed, true, JSON.stringify(claim))
+    confirmation.inboundClaim = {
+      messageId: confirmationId,
+      claimToken: claim.claimToken
+    }
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id = ? AND contact_id = ?', [
+      confirmationId,
+      fixture.contactId
+    ])
+
+    const rejected = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+    assert.equal(rejected.ok, false, JSON.stringify(rejected))
+    assert.equal(rejected.code, 'appointment_request_authority_lost')
+    assert.equal(rejected.appointmentOfferInvalidated, true)
+    assert.equal(rejected.appointmentOfferRestoreSameDate, true)
+    assert.equal(await appointmentCount(fixture), 0)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: un replay canónico reprogramado no devuelve datos stale si ya llegó otra instrucción', async () => {
+  const fixture = await createFixture('changed_replay_newer_inbound_fence')
+  const confirmationId = `confirm-changed-replay-${fixture.suffix}`
+  const baseTimestampMs = Date.now() + 10_000
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '16:00')
+    const confirmation = await confirmationContext(fixture, exact.offered, confirmationId)
+    const first = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+    assert.equal(first.ok, true, JSON.stringify(first))
+    const appointment = await db.get(
+      `SELECT id, start_time, end_time FROM appointments
+       WHERE calendar_id = ? AND contact_id = ?`,
+      [fixture.calendarId, fixture.contactId]
+    )
+    const movedStart = new Date(Date.parse(appointment.start_time) + 7 * 24 * 60 * 60 * 1000).toISOString()
+    const movedEnd = new Date(Date.parse(appointment.end_time) + 7 * 24 * 60 * 60 * 1000).toISOString()
+    await db.run('UPDATE appointments SET start_time = ?, end_time = ? WHERE id = ?', [
+      movedStart,
+      movedEnd,
+      appointment.id
+    ])
+    await db.run(
+      `UPDATE conversational_agent_state
+       SET status = 'active', signal = NULL,
+           inbound_processing_message_id = NULL,
+           inbound_processing_status = NULL,
+           inbound_processing_claim_token = NULL,
+           inbound_processing_lease_until_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [fixture.contactId, fixture.agentId]
+    )
+    await insertLiveInbound(
+      fixture,
+      confirmationId,
+      'sí',
+      new Date(baseTimestampMs).toISOString()
+    )
+    const claim = await claimConversationInboundMessage(fixture.contactId, confirmationId, {
+      agentId: fixture.agentId,
+      channel: 'whatsapp'
+    })
+    assert.equal(claim.claimed, true, JSON.stringify(claim))
+    confirmation.inboundClaim = { messageId: confirmationId, claimToken: claim.claimToken }
+    await insertLiveInbound(
+      fixture,
+      `newer-changed-replay-${fixture.suffix}`,
+      'mejor otra hora',
+      new Date(baseTimestampMs + 1_000).toISOString()
+    )
+
+    const rejected = await toolNamed(confirmation, 'book_appointment').invoke(null, JSON.stringify({
+      title: null,
+      notes: null,
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: null,
+      guests: []
+    }))
+    assert.equal(rejected.ok, false, JSON.stringify(rejected))
+    assert.equal(rejected.code, 'appointment_request_superseded_by_newer_inbound')
+    assert.equal(rejected.appointmentOfferInvalidated, true)
+    assert.equal('existingAppointment' in rejected, false)
+    assert.equal(await appointmentCount(fixture), 1)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: la recuperación de una cita existente cerca sync y depósito contra un inbound más nuevo', async () => {
+  const fixture = await createFixture('existing_recovery_newer_inbound_fence')
+  const recoveryConfirmationId = `confirm-existing-recovery-${fixture.suffix}`
+  const newerInboundId = `newer-existing-recovery-${fixture.suffix}`
+  const baseTimestampMs = Date.now() + 20_000
+  try {
+    const firstPrepared = await prepareLiveAppointmentConfirmation(fixture, '16:00')
+    const first = await firstPrepared.resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, firstPrepared.confirmation)
+    assert.equal(first.ok, true, JSON.stringify(first))
+    assert.equal(await appointmentCount(fixture), 1)
+
+    await db.run(
+      `DELETE FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type IN ('appointment_booked', 'signal_set')`,
+      [fixture.contactId]
+    )
+    await db.run(
+      `UPDATE conversational_agent_state
+       SET status = 'active', signal = NULL, signal_reason = NULL,
+           signal_summary = NULL, signal_at = NULL,
+           inbound_processing_message_id = NULL,
+           inbound_processing_status = NULL,
+           inbound_processing_claim_token = NULL,
+           inbound_processing_lease_until_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [fixture.contactId, fixture.agentId]
+    )
+
+    await selectDate(fixture, `select-existing-recovery-${fixture.suffix}`)
+    const recoveryOffer = await offerExactTime(
+      fixture,
+      '15:00',
+      `offer-existing-recovery-${fixture.suffix}`
+    )
+    const recoveryConfirmation = await confirmationContext(
+      fixture,
+      recoveryOffer.offered,
+      recoveryConfirmationId
+    )
+    await insertLiveInbound(
+      fixture,
+      recoveryConfirmationId,
+      'sí',
+      new Date(baseTimestampMs).toISOString()
+    )
+    const claim = await claimConversationInboundMessage(fixture.contactId, recoveryConfirmationId, {
+      agentId: fixture.agentId,
+      channel: 'whatsapp'
+    })
+    assert.equal(claim.claimed, true, JSON.stringify(claim))
+    recoveryConfirmation.inboundClaim = {
+      messageId: recoveryConfirmationId,
+      claimToken: claim.claimToken
+    }
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(async ({ appointmentId }) => {
+      assert.ok(appointmentId)
+      await insertLiveInbound(
+        fixture,
+        newerInboundId,
+        'mejor otra hora',
+        new Date(baseTimestampMs + 1_000).toISOString()
+      )
+    })
+
+    const rejected = await toolNamed(recoveryConfirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, recoveryConfirmation)
+    assert.equal(rejected.ok, false, JSON.stringify(rejected))
+    assert.equal(rejected.code, 'appointment_request_superseded_by_newer_inbound')
+    assert.equal(rejected.appointmentOfferInvalidated, true)
+    assert.equal(await appointmentCount(fixture), 1)
+    const state = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [fixture.contactId, fixture.agentId]
+    )
+    assert.equal(state.status, 'active')
+    assert.equal(state.signal, null)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type IN ('appointment_booked', 'signal_set')`,
+      [fixture.contactId]
+    )).total), 0)
+  } finally {
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live retry: un 503 transitorio reintenta una vez con body, autoridad, fecha, hora y llave idénticos', async () => {
+  const fixture = await createFixture('controller_retry_503_success')
+  const calls = []
+  try {
+    const { exact, confirmation, resolver } = await prepareLiveAppointmentConfirmation(fixture)
+    setNativeAppointmentCreateControllerInvokeHookForTest(async ({ attempt, body, internalContext, invoke }) => {
+      calls.push({ attempt, body, internalContext })
+      if (attempt === 1) {
+        return {
+          statusCode: 503,
+          payload: { success: false, code: 'test_transient_503', error: 'Fallo transitorio de prueba' }
+        }
+      }
+      return invoke()
+    })
+
+    const confirmed = await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+
+    assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+    assert.equal(calls.length, 2)
+    assert.strictEqual(calls[0].body, calls[1].body)
+    assert.strictEqual(calls[0].internalContext, calls[1].internalContext)
+    assert.strictEqual(
+      calls[0].internalContext.conversationalAppointmentAuthorityFence,
+      calls[1].internalContext.conversationalAppointmentAuthorityFence
+    )
+    assert.equal(Object.isFrozen(calls[0].body), true)
+    assert.equal(Object.isFrozen(calls[0].body.participants), true)
+    assert.equal(calls[0].body.calendarId, fixture.calendarId)
+    assert.equal(calls[0].body.startTime, exact.startTime)
+    assert.equal(calls[0].body.clientRequestId, calls[1].body.clientRequestId)
+    assert.ok(calls[0].body.clientRequestId)
+    assert.equal(await appointmentCount(fixture), 1)
+
+    const action = singleBookAppointmentAction(confirmation)
+    assert.equal(action.outcome.controllerAttempts, 2)
+    assert.equal(action.outcome.retried, true)
+    assert.equal(action.outcome.firstFailureCode, 'test_transient_503')
+
+    const retryRows = await db.all(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_creation_retry'`,
+      [fixture.contactId, fixture.agentId]
+    )
+    assert.equal(retryRows.length, 1)
+    const retryDetail = JSON.parse(retryRows[0].detail_json)
+    assert.deepEqual(Object.keys(retryDetail).sort(), [
+      'agentId',
+      'attempt',
+      'calendarId',
+      'code',
+      'startTime',
+      'statusCode'
+    ])
+    assert.equal(retryDetail.attempt, 2)
+    assert.equal(retryDetail.statusCode, 503)
+    assert.equal(retryDetail.code, 'test_transient_503')
+    assert.equal(retryDetail.calendarId, fixture.calendarId)
+    assert.equal(retryDetail.startTime, exact.startTime)
+    assert.equal(JSON.stringify(retryDetail).includes(fixture.contactId), false)
+    assert.equal(JSON.stringify(retryDetail).includes(calls[0].body.clientRequestId), false)
+
+    const request = await db.get(
+      `SELECT status, request_hash, appointment_id
+       FROM appointment_creation_requests WHERE client_request_id = ?`,
+      [calls[0].body.clientRequestId]
+    )
+    assert.equal(request?.status, 'completed')
+    assert.ok(request?.request_hash)
+    assert.ok(request?.appointment_id)
+  } finally {
+    setNativeAppointmentCreateControllerInvokeHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live retry: una respuesta lenta que termina en timeout postcommit concluye antes del replay y conserva una sola cita', async () => {
+  const fixture = await createFixture('controller_retry_postcommit_timeout')
+  let calls = 0
+  let committedAppointmentId = null
+  let replayResponse = null
+  let firstAttemptSettled = false
+  try {
+    const { confirmation, resolver } = await prepareLiveAppointmentConfirmation(fixture, '15:00')
+    setNativeAppointmentCreateControllerInvokeHookForTest(async ({ attempt, invoke }) => {
+      calls += 1
+      if (attempt === 1) {
+        const committed = await invoke()
+        assert.equal(committed.statusCode, 201, JSON.stringify(committed))
+        committedAppointmentId = committed.payload?.data?.id || null
+        assert.ok(committedAppointmentId)
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        firstAttemptSettled = true
+        throw Object.assign(new Error('Respuesta perdida después del commit'), { code: 'ETIMEDOUT' })
+      }
+      assert.equal(firstAttemptSettled, true, 'el retry no puede solaparse con el primer intento')
+      replayResponse = await invoke()
+      return replayResponse
+    })
+
+    const confirmed = await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+
+    assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+    assert.equal(calls, 2)
+    assert.equal(replayResponse?.statusCode, 201)
+    assert.equal(replayResponse?.payload?.data?.id, committedAppointmentId)
+    assert.equal(await appointmentCount(fixture), 1)
+    const action = singleBookAppointmentAction(confirmation)
+    assert.equal(action.outcome.controllerAttempts, 2)
+    assert.equal(action.outcome.retried, true)
+    assert.equal(action.outcome.firstFailureCode, 'ETIMEDOUT')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_booked'`,
+      [fixture.contactId, fixture.agentId]
+    )).total), 1)
+  } finally {
+    setNativeAppointmentCreateControllerInvokeHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live retry: dos 503 hacen exactamente dos intentos y no crean una cita', async () => {
+  const fixture = await createFixture('controller_retry_two_503')
+  let calls = 0
+  try {
+    const { confirmation, resolver } = await prepareLiveAppointmentConfirmation(fixture, '14:00')
+    setNativeAppointmentCreateControllerInvokeHookForTest(async ({ attempt }) => {
+      calls += 1
+      return {
+        statusCode: 503,
+        payload: {
+          success: false,
+          code: attempt === 1 ? 'test_first_503' : 'test_second_503',
+          error: 'Fallo transitorio de prueba'
+        }
+      }
+    })
+
+    const result = await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.equal(result.statusCode, 503)
+    assert.equal(calls, 2)
+    assert.equal(await appointmentCount(fixture), 0)
+    const action = singleBookAppointmentAction(confirmation)
+    assert.equal(action.outcome.controllerAttempts, 2)
+    assert.equal(action.outcome.retried, true)
+    assert.equal(action.outcome.firstFailureCode, 'test_first_503')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_creation_retry'`,
+      [fixture.contactId, fixture.agentId]
+    )).total), 1)
+  } finally {
+    setNativeAppointmentCreateControllerInvokeHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live retry: un 409 definitivo no reintenta', async () => {
+  const fixture = await createFixture('controller_retry_no_409')
+  let calls = 0
+  try {
+    const { confirmation, resolver } = await prepareLiveAppointmentConfirmation(fixture, '13:00')
+    setNativeAppointmentCreateControllerInvokeHookForTest(async () => {
+      calls += 1
+      return {
+        statusCode: 409,
+        payload: { success: false, code: 'slot_unavailable', error: 'El horario ya no está libre' }
+      }
+    })
+
+    const result = await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.equal(result.statusCode, 409)
+    assert.equal(calls, 1)
+    assert.equal(await appointmentCount(fixture), 0)
+    const action = singleBookAppointmentAction(confirmation)
+    assert.equal(action.outcome.controllerAttempts, 1)
+    assert.equal(action.outcome.retried, false)
+    assert.equal(action.outcome.firstFailureCode, 'slot_unavailable')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_creation_retry'`,
+      [fixture.contactId, fixture.agentId]
+    )).total), 0)
+  } finally {
+    setNativeAppointmentCreateControllerInvokeHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live retry: concurrencia y replay con la misma llave conservan una sola cita canónica', async () => {
+  const fixture = await createFixture('controller_retry_concurrent_replay')
+  let controllerCalls = 0
+  let concurrentResults = []
+  let replayResult = null
+  try {
+    const { confirmation, resolver } = await prepareLiveAppointmentConfirmation(fixture, '12:00')
+    setNativeAppointmentCreateControllerInvokeHookForTest(async ({ invoke }) => {
+      controllerCalls += 2
+      concurrentResults = await Promise.all([invoke(), invoke()])
+      controllerCalls += 1
+      replayResult = await invoke()
+      return replayResult
+    })
+
+    const confirmed = await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+
+    assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+    assert.equal(controllerCalls, 3)
+    assert.ok(concurrentResults.some((result) => result.statusCode === 201), JSON.stringify(concurrentResults))
+    assert.equal(replayResult?.statusCode, 201)
+    const concurrentAppointmentId = concurrentResults
+      .find((result) => result.statusCode === 201)?.payload?.data?.id
+    assert.ok(concurrentAppointmentId)
+    assert.equal(replayResult?.payload?.data?.id, concurrentAppointmentId)
+    assert.equal(await appointmentCount(fixture), 1)
+    const action = singleBookAppointmentAction(confirmation)
+    assert.equal(action.outcome.controllerAttempts, 1)
+    assert.equal(action.outcome.retried, false)
+    assert.equal(action.outcome.firstFailureCode, null)
+    const request = await db.get(
+      `SELECT status, appointment_id FROM appointment_creation_requests
+       WHERE client_request_id = ?`,
+      [action.clientRequestId]
+    )
+    assert.equal(request?.status, 'completed')
+    assert.ok(request?.appointment_id)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_booked'`,
+      [fixture.contactId, fixture.agentId]
+    )).total), 1)
+  } finally {
+    setNativeAppointmentCreateControllerInvokeHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live ledger: una oferta entregada hace seis minutos se reanuda con historial truncado, persiste evidencia mínima y no duplica', async () => {
+  const fixture = await createFixture('durable_delivery_truncated_history')
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '16:00')
+    const deliveryPlan = await createOfferReplyDelivery({
+      fixture,
+      sourceMessageId: exact.ctx.executionId,
+      reply: exact.offered.visibleReply
+    })
+    const agedDeliveryAt = new Date(Date.now() - 6 * 60 * 1000).toISOString()
+    await mutateReplyDeliveryPlan(deliveryPlan.id, (detail) => ({
+      ...detail,
+      completedAt: agedDeliveryAt,
+      updatedAt: agedDeliveryAt,
+      parts: detail.parts.map((part) => ({ ...part, sentAt: agedDeliveryAt }))
+    }))
+    deliveryPlan.completedAt = agedDeliveryAt
+    const offerRow = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [fixture.contactId, fixture.agentId]
+    )
+    const agedOffer = JSON.parse(offerRow?.detail_json || '{}')
+    agedOffer.offeredAt = new Date(Date.now() - 6 * 60 * 1000).toISOString()
+    agedOffer.expiresAt = new Date(Date.now() + 9 * 60 * 1000).toISOString()
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify(agedOffer), offerRow.id]
+    )
+    const confirmation = await truncatedLedgerConfirmationContext(
+      fixture,
+      `confirm-ledger-${fixture.suffix}`
+    )
+    const resolver = toolNamed(confirmation, 'resolve_active_appointment_offer')
+    const confirmed = await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+
+    assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+    assert.equal(confirmed.actionCompleted, true)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )).total), 1)
+
+    const selectionRow = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_selection_verified'
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [fixture.contactId, fixture.agentId]
+    )
+    const selection = JSON.parse(selectionRow?.detail_json || '{}')
+    assert.equal(selection.offerVisibilityEvidenceSource, 'reply_delivery_ledger')
+    assert.equal(selection.offerDeliveryPlanId, deliveryPlan.id)
+    assert.equal(selection.offerDeliveryReplyHash, deliveryPlan.replyHash)
+    assert.equal(selection.offerDeliveryCompletedAt, deliveryPlan.completedAt)
+    assert.equal(selection.offerMessageId, deliveryPlan.parts[0].providerMessageId)
+    assert.equal(Object.hasOwn(selection, 'offerDeliveryText'), false)
+    assert.equal(Object.hasOwn(selection, 'offerText'), false)
+    assert.equal(Object.hasOwn(selection, 'parts'), false)
+    assert.equal(JSON.stringify(selection).includes(exact.offered.visibleReply), false)
+    assert.equal(JSON.stringify(selection).includes('Contacto agenda progresiva live'), false)
+
+    await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )).total), 1)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+for (const scenario of [
+  { label: 'pending', status: 'pending' },
+  { label: 'ambiguous', status: 'ambiguous' },
+  { label: 'wrong_text', status: 'completed', reply: 'Tengo disponible otro horario. ¿Te funciona?' },
+  { label: 'wrong_source', status: 'completed', identity: ({ sourceMessageId }) => ({ sourceMessageId: `${sourceMessageId}-otro` }) },
+  { label: 'wrong_contact', status: 'completed', identity: () => ({ contactId: `otro-contacto-${randomUUID()}` }) },
+  { label: 'wrong_agent', status: 'completed', identity: () => ({ agentId: `otro-agente-${randomUUID()}` }) },
+  { label: 'wrong_channel', status: 'completed', identity: () => ({ channel: 'instagram' }) },
+  { label: 'wrong_prefix', status: 'completed', identity: () => ({ externalIdPrefix: 'otro-prefijo' }) }
+]) {
+  test(`live ledger: ${scenario.label} no autoriza una oferta fuera del transcript`, async () => {
+    const fixture = await createFixture(`ledger_reject_${scenario.label}`)
+    try {
+      await selectDate(fixture)
+      const exact = await offerExactTime(fixture, '15:00')
+      const identity = typeof scenario.identity === 'function'
+        ? scenario.identity({ sourceMessageId: exact.ctx.executionId })
+        : {}
+      await createOfferReplyDelivery({
+        fixture,
+        sourceMessageId: exact.ctx.executionId,
+        reply: scenario.reply || exact.offered.visibleReply,
+        status: scenario.status,
+        identity
+      })
+      const confirmation = await truncatedLedgerConfirmationContext(
+        fixture,
+        `confirm-${scenario.label}-${fixture.suffix}`
+      )
+      const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+        .invoke(null, JSON.stringify(acceptOfferInput()))
+
+      assert.equal(result.ok, false, JSON.stringify(result))
+      assert.equal(result.code, 'appointment_offer_visibility_unverified')
+      assert.equal(Number((await db.get(
+        'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+        [fixture.calendarId, fixture.contactId]
+      )).total), 0)
+    } finally {
+      await cleanupFixture(fixture)
+    }
+  })
+}
+
+for (const corruption of ['reply_hash', 'part_text']) {
+  test(`live ledger: corrupción de ${corruption} falla cerrado aunque el plan diga completed`, async () => {
+    const fixture = await createFixture(`ledger_corrupt_${corruption}`)
+    try {
+      await selectDate(fixture)
+      const exact = await offerExactTime(fixture, '15:00')
+      const plan = await createOfferReplyDelivery({
+        fixture,
+        sourceMessageId: exact.ctx.executionId,
+        reply: exact.offered.visibleReply
+      })
+      await mutateReplyDeliveryPlan(plan.id, (detail) => corruption === 'reply_hash'
+        ? { ...detail, replyHash: '0'.repeat(64) }
+        : {
+            ...detail,
+            parts: detail.parts.map((part, index) => index === 0
+              ? { ...part, text: 'Texto alterado después de la entrega' }
+              : part)
+          })
+      const confirmation = await truncatedLedgerConfirmationContext(
+        fixture,
+        `confirm-corrupt-${corruption}-${fixture.suffix}`
+      )
+      const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+        .invoke(null, JSON.stringify(acceptOfferInput()))
+
+      assert.equal(result.ok, false, JSON.stringify(result))
+      assert.equal(result.code, 'appointment_offer_visibility_unverified')
+      assert.equal(Number((await db.get(
+        'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+        [fixture.calendarId, fixture.contactId]
+      )).total), 0)
+    } finally {
+      await cleanupFixture(fixture)
+    }
+  })
+}
+
+test('live ledger: sin la confirmación inbound actual no agenda aunque la oferta sí haya salido', async () => {
+  const fixture = await createFixture('ledger_missing_current_confirmation')
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '15:00')
+    await createOfferReplyDelivery({
+      fixture,
+      sourceMessageId: exact.ctx.executionId,
+      reply: exact.offered.visibleReply
+    })
+    const executionId = `confirm-missing-${fixture.suffix}`
+    const confirmation = liveContext({
+      fixture,
+      executionId,
+      messages: [{ id: `otro-inbound-${fixture.suffix}`, role: 'user', content: 'sí' }]
+    })
+    confirmation.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: confirmation,
+      config: fixture.config
+    })
+    const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.equal(result.code, 'appointment_offer_visibility_unverified')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )).total), 0)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live ledger: una oferta expirada falla cerrado aunque su entrega exacta esté completed', async () => {
+  const fixture = await createFixture('ledger_expired_offer')
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '15:00')
+    await createOfferReplyDelivery({
+      fixture,
+      sourceMessageId: exact.ctx.executionId,
+      reply: exact.offered.visibleReply
+    })
+    const confirmation = await truncatedLedgerConfirmationContext(
+      fixture,
+      `confirm-expired-ledger-${fixture.suffix}`
+    )
+    const offerEventId = confirmation.appointmentOfferDecision.offerEventId
+    const offerRow = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [offerEventId]
+    )
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
+      [
+        JSON.stringify({
+          ...JSON.parse(offerRow.detail_json),
+          expiresAt: new Date(Date.now() - 60_000).toISOString()
+        }),
+        offerEventId,
+        offerRow.detail_json
+      ]
+    )
+    const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.equal(result.code, 'appointment_offer_expired')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )).total), 0)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live ledger: apagar el agente después de entregar la oferta impide el commit', async () => {
+  const fixture = await createFixture('ledger_agent_config_changed')
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '15:00')
+    await createOfferReplyDelivery({
+      fixture,
+      sourceMessageId: exact.ctx.executionId,
+      reply: exact.offered.visibleReply
+    })
+    const confirmation = await truncatedLedgerConfirmationContext(
+      fixture,
+      `confirm-config-ledger-${fixture.suffix}`
+    )
+    await db.run('UPDATE conversational_agents SET enabled = 0 WHERE id = ?', [fixture.agentId])
+    const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.notEqual(result.code, 'appointment_offer_visibility_unverified')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )).total), 0)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('preview: un ledger live completed no sustituye la oferta visible del transcript de prueba', async () => {
+  const fixture = await createFixture('preview_ignores_live_ledger')
+  const scopeId = `appointment_preview_${createHash('sha256').update(fixture.suffix).digest('hex').slice(0, 48)}`
+  const previewCtx = (executionId, messages = []) => ({
+    ...liveContext({ fixture, executionId, messages }),
+    dryRun: true,
+    previewScopeId: scopeId,
+    virtualContact: { id: fixture.contactId, fullName: 'Contacto de prueba' }
+  })
+  try {
+    const dateCtx = previewCtx(`preview-date-${fixture.suffix}`)
+    dateCtx.appointmentOfferDecision = null
+    dateCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: dateCtx,
+      config: fixture.config
+    })
+    const dayAvailability = await toolNamed(dateCtx, 'get_free_slots').invoke(
+      null,
+      JSON.stringify(freeSlotsInput(fixture.localDate))
+    )
+    assert.ok(dayAvailability.total > 1, JSON.stringify(dayAvailability))
+    assert.equal((await toolNamed(dateCtx, 'offer_appointment_options').invoke(null, JSON.stringify({
+      maxDays: 1,
+      selectionMode: 'collecting_time',
+      selectedLocalDate: fixture.localDate
+    }))).ok, true)
+
+    const sourceMessageId = `preview-offer-${fixture.suffix}`
+    const offerCtx = previewCtx(sourceMessageId)
+    offerCtx.appointmentOfferDecision = null
+    offerCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: offerCtx,
+      config: fixture.config
+    })
+    const exactAvailability = await toolNamed(offerCtx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.localDate, {
+        earliestLocalTime: '15:00',
+        latestLocalTime: '15:00'
+      })
+    ))
+    const startTime = exactAvailability.slots[0].options[0].startTime
+    const offered = await toolNamed(offerCtx, 'offer_appointment_slot').invoke(null, JSON.stringify({
+      startTime,
+      appointmentId: null
+    }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+    await createOfferReplyDelivery({
+      fixture,
+      sourceMessageId,
+      reply: offered.visibleReply
+    })
+
+    const confirmationExecutionId = `preview-confirm-${fixture.suffix}`
+    const confirmation = previewCtx(confirmationExecutionId, [
+      { id: confirmationExecutionId, role: 'user', content: 'sí' }
+    ])
+    confirmation.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: confirmation,
+      config: fixture.config
+    })
+    const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.equal(result.code, 'appointment_offer_visibility_unverified')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )).total), 0)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('preview: el transcript completo prueba la oferta aunque el sobre de 64 KiB sólo conserve el “sí”', async () => {
+  const fixture = await createFixture('preview_truncated_transcript_evidence')
+  const scopeId = `appointment_preview_${createHash('sha256').update(fixture.suffix).digest('hex').slice(0, 48)}`
+  const previewCtx = (executionId, messages = []) => ({
+    ...liveContext({ fixture, executionId, messages }),
+    dryRun: true,
+    previewScopeId: scopeId,
+    virtualContact: { id: fixture.contactId, fullName: 'Contacto de prueba' }
+  })
+  try {
+    const dateCtx = previewCtx(`preview-date-${fixture.suffix}`)
+    dateCtx.appointmentOfferDecision = null
+    dateCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: dateCtx,
+      config: fixture.config
+    })
+    const dayAvailability = await toolNamed(dateCtx, 'get_free_slots').invoke(
+      null,
+      JSON.stringify(freeSlotsInput(fixture.localDate))
+    )
+    assert.ok(dayAvailability.total > 1, JSON.stringify(dayAvailability))
+    assert.equal((await toolNamed(dateCtx, 'offer_appointment_options').invoke(null, JSON.stringify({
+      maxDays: 1,
+      selectionMode: 'collecting_time',
+      selectedLocalDate: fixture.localDate
+    }))).ok, true)
+
+    const sourceMessageId = `preview-source-${fixture.suffix}`
+    const sourceMessage = { id: sourceMessageId, role: 'user', content: 'el jueves a las tres' }
+    const offerCtx = previewCtx(sourceMessageId, [sourceMessage])
+    offerCtx.appointmentOfferDecision = null
+    offerCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: offerCtx,
+      config: fixture.config
+    })
+    const exactAvailability = await toolNamed(offerCtx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.localDate, {
+        earliestLocalTime: '15:00',
+        latestLocalTime: '15:00'
+      })
+    ))
+    const startTime = exactAvailability.slots[0].options[0].startTime
+    const offered = await toolNamed(offerCtx, 'offer_appointment_slot').invoke(null, JSON.stringify({
+      startTime,
+      appointmentId: null
+    }))
+    assert.equal(offered.ok, true, JSON.stringify(offered))
+
+    const confirmationExecutionId = `preview-confirm-${fixture.suffix}`
+    const confirmationMessage = { id: confirmationExecutionId, role: 'user', content: 'sí' }
+    const confirmation = previewCtx(confirmationExecutionId, [confirmationMessage])
+    confirmation.appointmentTranscriptEvidenceMessages = [
+      sourceMessage,
+      { id: `assistant-offer-${fixture.suffix}`, role: 'assistant', content: offered.visibleReply },
+      { id: `assistant-filler-${fixture.suffix}`, role: 'assistant', content: 'x'.repeat(70 * 1024) },
+      confirmationMessage
+    ]
+    confirmation.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: confirmation,
+      config: fixture.config
+    })
+    const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.notEqual(result.code, 'appointment_offer_visibility_unverified')
+    assert.equal(result.simulated, true)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )).total), 0, 'preview sólo autoriza el efecto temporal; no crea una cita live')
   } finally {
     await cleanupFixture(fixture)
   }
@@ -1337,7 +2626,7 @@ test('live: cambiar la zona entre resolver el “sí” y ejecutar la terminal n
   }
 })
 
-test('live: apagar o borrar el agente entre resolver el “sí” y ejecutar la terminal falla cerrado', async () => {
+test('live: apagar o borrar el agente entre resolver el “sí” y ejecutar la terminal invalida la oferta', async () => {
   for (const scenario of [
     {
       label: 'disabled',
@@ -1349,14 +2638,6 @@ test('live: apagar o borrar el agente entre resolver el “sí” y ejecutar la 
     {
       label: 'deleted',
       mutate: (agentId) => db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId])
-    },
-    {
-      label: 'lookup_failed',
-      mutate() {
-        setNativeAppointmentRuntimeAgentLookupHookForTest(async () => {
-          throw new Error('simulated_agent_lookup_failure')
-        })
-      }
     }
   ]) {
     const fixture = await createFixture(`offer_agent_${scenario.label}_terminal_race`)
@@ -1392,6 +2673,79 @@ test('live: apagar o borrar el agente entre resolver el “sí” y ejecutar la 
       setNativeAppointmentRuntimeAgentLookupHookForTest(null)
       await cleanupFixture(fixture)
     }
+  }
+})
+
+test('live: un fallo técnico al releer el agente devuelve 503 y conserva la oferta para reintento', async () => {
+  const fixture = await createFixture('offer_agent_lookup_failed_terminal_race')
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '14:00')
+    const confirmation = await confirmationContext(
+      fixture,
+      exact.offered,
+      `confirm-agent-lookup-failed-terminal-race-${fixture.suffix}`
+    )
+    setNativeAppointmentBeforeResolverTerminalHookForTest(async () => {
+      setNativeAppointmentRuntimeAgentLookupHookForTest(async () => {
+        throw new Error('simulated_agent_lookup_failure')
+      })
+    })
+
+    const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify(acceptOfferInput()))
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.equal(result.code, 'appointment_authority_revalidation_failed')
+    assert.equal(result.statusCode, 503)
+    assert.equal(result.retryable, true)
+    assert.equal(result.appointmentOfferInvalidated, false)
+    assert.equal(await appointmentCount(fixture), 0)
+    const offerDetail = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+      [fixture.contactId, fixture.agentId]
+    )).detail_json)
+    assert.equal(offerDetail.status, 'active')
+  } finally {
+    setNativeAppointmentBeforeResolverTerminalHookForTest(null)
+    setNativeAppointmentRuntimeAgentLookupHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: un fallo técnico dentro del fence transaccional se reintenta como 503 sin invalidar la oferta', async () => {
+  const fixture = await createFixture('terminal_fence_lookup_failed_retry')
+  let controllerCalls = 0
+  try {
+    const { confirmation, resolver } = await prepareLiveAppointmentConfirmation(fixture, '14:00')
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(async () => {
+      setNativeAppointmentRuntimeAgentLookupHookForTest(async () => {
+        throw new Error('simulated_terminal_fence_lookup_failure')
+      })
+    })
+    setNativeAppointmentCreateControllerInvokeHookForTest(async ({ invoke }) => {
+      controllerCalls += 1
+      return invoke()
+    })
+
+    const result = await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
+    collectClientRequestIds(fixture, confirmation)
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.equal(result.code, 'appointment_authority_revalidation_failed')
+    assert.equal(result.statusCode, 503)
+    assert.equal(controllerCalls, 2)
+    assert.equal(await appointmentCount(fixture), 0)
+    const offerDetail = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+      [fixture.contactId, fixture.agentId]
+    )).detail_json)
+    assert.notEqual(offerDetail.status, 'superseded')
+  } finally {
+    setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+    setNativeAppointmentRuntimeAgentLookupHookForTest(null)
+    setNativeAppointmentCreateControllerInvokeHookForTest(null)
+    await cleanupFixture(fixture)
   }
 })
 

@@ -196,6 +196,10 @@ import {
   type NativeNotificationIntent,
 } from './notifications';
 import {
+  getNativePushRegistrationRetryDelay,
+  shouldRetryNativePushRegistration,
+} from './pushRegistrationReliability';
+import {
   buildMessagesFromJourney,
   addBusinessDateOnlyDays,
   addBusinessDateOnlyMonths,
@@ -1860,19 +1864,70 @@ function PhoneShell({
 
     const registrationKey = `${baseUrl}:${userId}`;
     if (autoRegisteredPushKeyRef.current === registrationKey) return undefined;
-    autoRegisteredPushKeyRef.current = registrationKey;
 
     let cancelled = false;
+    let registrationInFlight = false;
+    let retryAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearRetryTimer = () => {
+      if (!retryTimer) return;
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    };
+
+    const scheduleRetry = () => {
+      if (cancelled || autoRegisteredPushKeyRef.current === registrationKey) return;
+      clearRetryTimer();
+      const delay = getNativePushRegistrationRetryDelay(retryAttempt);
+      retryAttempt += 1;
+      retryTimer = setTimeout(() => {
+        void registerIfAllowedOrPending();
+      }, delay);
+    };
+
     const registerIfAllowedOrPending = async () => {
+      if (cancelled || registrationInFlight || autoRegisteredPushKeyRef.current === registrationKey) return;
+      registrationInFlight = true;
       const permission = await getNativePushPermissionStatus();
-      if (cancelled || (permission !== 'granted' && permission !== 'prompt')) return;
-      await subscribeToNativePushNotifications(api).catch(() => undefined);
+      if (cancelled || (permission !== 'granted' && permission !== 'prompt')) {
+        registrationInFlight = false;
+        return;
+      }
+
+      try {
+        const result = await subscribeToNativePushNotifications(api);
+        if (cancelled) return;
+        if (result.status === 'subscribed') {
+          autoRegisteredPushKeyRef.current = registrationKey;
+          retryAttempt = 0;
+          clearRetryTimer();
+          return;
+        }
+        console.warn(`[Push] Android no quedó registrado: ${result.reason}`);
+        if (shouldRetryNativePushRegistration(result.status)) scheduleRetry();
+      } catch (error) {
+        if (!cancelled) {
+          console.warn('[Push] Falló el registro automático de Android.', error);
+          scheduleRetry();
+        }
+      } finally {
+        registrationInFlight = false;
+      }
     };
 
     void registerIfAllowedOrPending();
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active' || autoRegisteredPushKeyRef.current === registrationKey) return;
+      retryAttempt = 0;
+      clearRetryTimer();
+      void registerIfAllowedOrPending();
+    });
 
     return () => {
       cancelled = true;
+      clearRetryTimer();
+      appStateSubscription.remove();
     };
   }, [api, baseUrl, user?.email, user?.id]);
 
@@ -9168,10 +9223,6 @@ function CalendarSection({
           scheduleMode,
         }),
       };
-      if (appointmentMode === 'create') {
-        payload.calendarId = calendarId;
-        payload.contactId = draft.contactId;
-      }
       if (draft.assignedUserId) {
         payload.assignedUserId = draft.assignedUserId;
       }
@@ -9180,7 +9231,12 @@ function CalendarSection({
         if (!draft.eventId) throw new Error('La cita no tiene ID.');
         await api.updateAppointment(draft.eventId, payload);
       } else {
-        const signature = JSON.stringify(payload);
+        const createPayload = {
+          ...payload,
+          calendarId,
+          contactId: draft.contactId,
+        };
+        const signature = JSON.stringify(createPayload);
         const existingIntent = appointmentCreateIntentRef.current;
         const createIntent = existingIntent?.signature === signature
           ? existingIntent
@@ -9189,8 +9245,14 @@ function CalendarSection({
               clientRequestId: createNativeMutationId('native-appointment', draft.contactId || calendarId),
             };
         appointmentCreateIntentRef.current = createIntent;
-        await api.createAppointment(payload, createIntent.clientRequestId);
+        const createdAppointment = await api.createAppointment(createPayload, createIntent.clientRequestId);
         appointmentCreateIntentRef.current = null;
+        if (String(createdAppointment.syncStatus || createdAppointment.sync_status || '').trim().toLowerCase() === 'error') {
+          Alert.alert(
+            'Cita guardada en Ristak',
+            'HighLevel quedó pendiente de sincronización y Ristak volverá a intentarlo automáticamente.',
+          );
+        }
       }
       closeSheet();
       setSelectedEvent(null);
@@ -13065,6 +13127,7 @@ function SettingsScreen({
   const [whatsappError, setWhatsappError] = useState('');
   const [settingDefaultPhoneId, setSettingDefaultPhoneId] = useState<string | null>(null);
   const [pushPermissionStatus, setPushPermissionStatus] = useState<NativePushPermissionStatus>('prompt');
+  const [pushRegistrationStatus, setPushRegistrationStatus] = useState<'checking' | 'registered' | 'missing'>('checking');
   const [pushStatusMessage, setPushStatusMessage] = useState('');
   const [requestingPush, setRequestingPush] = useState(false);
   const settingsMountedRef = useRef(true);
@@ -13219,7 +13282,29 @@ function SettingsScreen({
     const status = await getNativePushPermissionStatus();
     if (!settingsMountedRef.current) return;
     setPushPermissionStatus(status);
-  }, []);
+    if (status !== 'granted') {
+      setPushRegistrationStatus('missing');
+      return;
+    }
+
+    setPushRegistrationStatus('checking');
+    try {
+      const result = await subscribeToNativePushNotifications(api, { requestPermission: false });
+      if (!settingsMountedRef.current) return;
+      if (result.status === 'subscribed') {
+        setPushRegistrationStatus('registered');
+        setPushStatusMessage('');
+        return;
+      }
+
+      setPushRegistrationStatus('missing');
+      setPushStatusMessage(result.reason);
+    } catch (error) {
+      if (!settingsMountedRef.current) return;
+      setPushRegistrationStatus('missing');
+      setPushStatusMessage(error instanceof Error ? error.message : 'No se pudo verificar este celular.');
+    }
+  }, [api]);
 
   const loadCalendars = useCallback(async () => {
     if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsCalendars)) setCalendarsLoading(true);
@@ -13329,7 +13414,12 @@ function SettingsScreen({
     : null;
   const defaultWhatsAppPhone = whatsAppPhones.find((phone) => phone.is_default_sender) || whatsappStatus?.selectedPhone || whatsAppPhones[0] || null;
   const whatsappNumbersMode = selectedWhatsAppPhone ? 'separate' : 'together';
-  const pushPermissionLabel = getPushPermissionLabel(pushPermissionStatus);
+  const nativePushReady = pushPermissionStatus === 'granted' && pushRegistrationStatus === 'registered';
+  const pushPermissionLabel = nativePushReady
+    ? 'Activo'
+    : pushPermissionStatus === 'granted'
+      ? 'Completar registro'
+      : getPushPermissionLabel(pushPermissionStatus);
   const selectedCalendarCount = pushCalendarIds.length || calendars.length;
   const customFieldGroups = useMemo(() => {
     const groups = new Map<string, ContactCustomFieldDefinition[]>();
@@ -13449,23 +13539,28 @@ function SettingsScreen({
   const handleEnableNativePush = async () => {
     if (requestingPush) return;
     setRequestingPush(true);
+    setPushRegistrationStatus('checking');
     setPushStatusMessage('Activando alertas en este celular...');
     try {
       const result = await subscribeToNativePushNotifications(
         api,
         { calendarIds: calendarPushEnabled ? pushCalendarIds : [] },
       );
-      await loadPushPermissionStatus();
+      const permission = await getNativePushPermissionStatus();
       if (!settingsMountedRef.current) return;
+      setPushPermissionStatus(permission);
       if (result.status === 'subscribed') {
+        setPushRegistrationStatus('registered');
         setPushStatusMessage('Alertas activas en este celular.');
         return;
       }
+      setPushRegistrationStatus('missing');
       const message = result.reason || 'No se activaron las alertas en este celular.';
       setPushStatusMessage(message);
       Alert.alert(result.status === 'not_configured' ? 'Falta preparar alertas' : 'No se activaron', message);
     } catch (err) {
       if (!settingsMountedRef.current) return;
+      setPushRegistrationStatus('missing');
       const message = err instanceof Error ? err.message : 'Intenta otra vez.';
       setPushStatusMessage(message);
       Alert.alert('No se activaron las alertas', message);
@@ -13864,13 +13959,17 @@ function SettingsScreen({
 
   const renderNotifications = () => (
     <>
-      <View style={[styles.settingsEnabledCard, pushPermissionStatus !== 'granted' && styles.settingsPushCardNeedsAction]}>
-        {pushPermissionStatus === 'granted' ? <Check size={18} color="#0f6b3e" strokeWidth={2.6} /> : <BellRing size={18} color={COLORS.text} strokeWidth={2.6} />}
+      <View style={[styles.settingsEnabledCard, !nativePushReady && styles.settingsPushCardNeedsAction]}>
+        {nativePushReady ? <Check size={18} color="#0f6b3e" strokeWidth={2.6} /> : <BellRing size={18} color={COLORS.text} strokeWidth={2.6} />}
         <View style={styles.settingsPushCopy}>
           <Text style={styles.settingsEnabledText}>
-            {pushPermissionStatus === 'granted'
+            {nativePushReady
               ? `Alertas activas en este celular · ${notificationCount} tipos prendidos.`
-              : `Permiso nativo: ${pushPermissionLabel}.`}
+              : pushRegistrationStatus === 'checking'
+                ? 'Verificando el registro de este celular...'
+                : pushPermissionStatus === 'granted'
+                  ? 'El permiso existe, pero este celular todavía no está registrado.'
+                  : `Permiso nativo: ${pushPermissionLabel}.`}
           </Text>
           {pushStatusMessage ? <Text style={styles.settingsPushMessage}>{pushStatusMessage}</Text> : null}
         </View>
@@ -13881,7 +13980,7 @@ function SettingsScreen({
           style={({ pressed }) => [styles.settingsPushActionButton, requestingPush && styles.disabledButton, pressed && styles.pressed]}
         >
           {requestingPush ? <ActivityIndicator color={COLORS.white} /> : <Bell size={15} color={COLORS.white} strokeWidth={2.5} />}
-          <Text style={styles.settingsPushActionText}>{pushPermissionStatus === 'granted' ? 'Actualizar' : 'Activar'}</Text>
+          <Text style={styles.settingsPushActionText}>{nativePushReady ? 'Actualizar' : 'Activar'}</Text>
         </Pressable>
       </View>
       <SettingsToggleRow title="Mensajes del chat" description="Avísame cuando llegue un WhatsApp nuevo." checked={chatPushEnabled} disabled={savingKey === 'chat_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('chat_push_notifications_enabled', checked)} />
@@ -23675,8 +23774,23 @@ function NativeConversationScreen({
     if (!acquireConversationActionLock(appointmentActionKey)) return;
     setAppointmentBusy(true);
     try {
+      const [configResponse, calendarsResponse] = await Promise.all([
+        api.getConfig(['default_calendar_id']),
+        api.getCalendars(),
+      ]);
+      const configValues = unwrapConfigValues(configResponse);
+      const defaultCalendarId = String(configValues.default_calendar_id || '').trim();
+      const availableCalendars = unwrapCalendars(calendarsResponse).filter(calendarIsActive);
+      const appointmentCalendar = availableCalendars.find(
+        (calendar) => getCalendarKey(calendar) === defaultCalendarId,
+      ) || availableCalendars[0];
+      const appointmentCalendarId = getCalendarKey(appointmentCalendar);
+      if (!appointmentCalendarId) {
+        throw new Error('No hay un calendario activo para guardar la cita.');
+      }
       const bookedAt = new Date().toISOString();
       const payload = {
+        calendarId: appointmentCalendarId,
         title,
         contactId: contact.id,
         contactName: getContactName(contact),
@@ -23699,7 +23813,7 @@ function NativeConversationScreen({
             clientRequestId: createNativeMutationId('native-appointment-chat', contact.id),
           };
       quickAppointmentIntentRef.current = intent;
-      await api.createAppointment(payload, intent.clientRequestId);
+      const createdAppointment = await api.createAppointment(payload, intent.clientRequestId);
       quickAppointmentIntentRef.current = null;
       const appointmentLabel = formatSchedulePreviewLabel(startTime, timezone);
       setLocalActivityMarkers((current) => mergeConversationActivityMarkers(current, [{
@@ -23716,6 +23830,16 @@ function NativeConversationScreen({
       });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       closeSheet();
+      const highLevelPending = Boolean(integrationsStatus?.highlevel?.connected) && (
+        String(createdAppointment.ghlAppointmentId || createdAppointment.ghl_appointment_id || '').trim() === ''
+        || String(createdAppointment.syncStatus || createdAppointment.sync_status || '').trim().toLowerCase() !== 'synced'
+      );
+      if (highLevelPending) {
+        Alert.alert(
+          'Cita guardada en Ristak',
+          'HighLevel quedó pendiente de sincronización y Ristak volverá a intentarlo automáticamente.',
+        );
+      }
       onContactPatch(contact.id, { hasAppointments: true, nextAppointmentDate: startTime });
       onRefreshChats();
       requestAnimationFrame(() => scrollConversationToLatest(true));

@@ -11,7 +11,7 @@ import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
 import { PhoneSegmentedTabs, PhoneSheet } from '@/components/phone/ui';
 import { calendarDurationToMinutes } from '../WeeklyAvailabilityEditor';
-import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot, RawBlockedSlot } from '@/services/calendarsService';
+import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot, RawBlockedSlot, type CreateAppointmentPayload } from '@/services/calendarsService';
 import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
@@ -1094,7 +1094,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           : '';
         const notesWithGuests = [formData.notes.trim(), guestsNotes].filter(Boolean).join('\n\n');
 
-        const payload: any = {
+        const payload: CreateAppointmentPayload = {
+          calendarId: calendar.id,
           title: formData.title.trim(),
           appointmentStatus: formData.appointmentStatus,
           notes: notesWithGuests,
@@ -1105,6 +1106,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
         if (scheduleMode === 'default') {
           payload.strictAvailabilityCheck = true;
+        } else {
+          payload.ignoreAppointmentConflicts = true;
         }
 
         // Agregar assignedUserId si está seleccionado
