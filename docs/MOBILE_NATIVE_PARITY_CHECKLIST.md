@@ -244,8 +244,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     sin duplicar contactos ni perder avatares hidratados.
 - [x] Replicar seleccion multiple.
   - Avance: `Mas acciones` > `Seleccionar` entra en seleccion multiple, muestra
-    check circular, oculta filtros, permite seleccionar visibles, cancelar,
-    marcar como leidos via API y archivar/restaurar seleccionados.
+    check circular, oculta filtros, permite seleccionar visibles o literalmente
+    todas las conversaciones del inbox aunque no esten cargadas, cancelar,
+    marcar como leidos via API y archivar/restaurar seleccionados. iOS y Android
+    consumen el mismo universo ligero de ids y conservan la seleccion fuera de
+    pantalla al ejecutar las acciones masivas.
 - [x] Replicar pull to refresh y copy visible.
   - Avance: la lista nativa ya usa pull to refresh, textos de loading/error y
     vacios equivalentes de primer pase. La bandeja hidrata el snapshot

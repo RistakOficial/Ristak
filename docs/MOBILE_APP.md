@@ -894,7 +894,11 @@ arriba. Tocar una fila abre el chat; mantenerla presionada abre el sheet `Mas
 acciones` con feedback haptico. En ese sheet, `Seleccionar` debe ser la primera
 accion, antes de agendar, registrar pagos o cualquier otra herramienta. Al tocar
 `Seleccionar`, la lista entra en seleccion multiple y desde ahi se pueden marcar
-leidos, archivar/restaurar o seleccionar visibles.
+leidos, archivar/restaurar, seleccionar visibles o seleccionar todas las
+conversaciones reales de la bandeja, aunque todavia no esten cargadas en
+pantalla. `Seleccionar todos` no respeta el filtro visual actual: su contrato es
+literalmente todo el inbox seleccionable; el asistente AI y filas no-chat quedan
+fuera.
 
 Las fechas de la lista de chats se formatean con la zona horaria del negocio:
 los mensajes del dia actual muestran la hora exacta (`7:47 p.m.`), los del dia
@@ -1236,7 +1240,11 @@ accion del sheet es `Seleccionar`, que activa seleccion multiple y debe quedarse
 activa al soltar/cerrar el sheet. Durante seleccion se ocultan los chips de filtro
 y el control compacto de seleccion reemplaza la fila de `Archivados`, debajo del
 asistente personal AI, con conteo, cancelar, `Seleccionar visibles` y `Mas
-acciones`; las acciones masivas minimas son marcar como leidos via
+acciones`. Tambien muestra `Seleccionar todos`, que obtiene del backend el
+universo completo de ids de conversaciones mediante
+`GET /contacts/chats?idsOnly=true`, sin quedar limitado por la paginacion, la
+busqueda o los filtros visibles; las acciones masivas deben usar esos ids aunque
+las filas no esten montadas. Las acciones masivas minimas son marcar como leidos via
 `/contacts/chats/read` y archivar/restaurar la seleccion. El sheet completo debe
 mantener agendar cita, registrar pagos, programar mensaje, agregar etiqueta,
 silenciar/quitar silencio, controles del agente, marcar como leido y

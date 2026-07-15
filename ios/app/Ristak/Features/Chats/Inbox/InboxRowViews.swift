@@ -238,7 +238,9 @@ struct CacheRefreshPillRow: View {
 struct ChatSelectionPanel: View {
     let selectedCount: Int
     let allVisibleSelected: Bool
+    let isSelectingAll: Bool
     let isArchivedView: Bool
+    let onSelectAll: () -> Void
     let onMarkRead: () -> Void
     let onArchiveOrRestore: () -> Void
     let onToggleSelectVisible: () -> Void
@@ -259,21 +261,40 @@ struct ChatSelectionPanel: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: RistakTheme.Spacing.xs) {
-                    panelButton("Marcar como leídos", systemImage: "checkmark.circle", action: onMarkRead)
-                        .disabled(selectedCount == 0)
-
-                    panelButton(
-                        isArchivedView ? "Restaurar chats" : "Archivar chats",
-                        systemImage: isArchivedView ? "tray.and.arrow.up" : "archivebox",
-                        action: onArchiveOrRestore
-                    )
-                    .disabled(selectedCount == 0)
+                    Button(action: onSelectAll) {
+                        HStack(spacing: RistakTheme.Spacing.xs) {
+                            if isSelectingAll {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "person.2")
+                            }
+                            Text(isSelectingAll ? "Seleccionando todos…" : "Seleccionar todos")
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, RistakTheme.Spacing.sm)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(RistakTheme.controlRest))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSelectingAll)
 
                     panelButton(
                         allVisibleSelected ? "Deseleccionar visibles" : "Seleccionar visibles",
                         systemImage: allVisibleSelected ? "square.dashed" : "checklist",
                         action: onToggleSelectVisible
                     )
+                    .disabled(isSelectingAll)
+
+                    panelButton("Marcar como leídos", systemImage: "checkmark.circle", action: onMarkRead)
+                        .disabled(selectedCount == 0 || isSelectingAll)
+
+                    panelButton(
+                        isArchivedView ? "Restaurar chats" : "Archivar chats",
+                        systemImage: isArchivedView ? "tray.and.arrow.up" : "archivebox",
+                        action: onArchiveOrRestore
+                    )
+                    .disabled(selectedCount == 0 || isSelectingAll)
                 }
             }
         }

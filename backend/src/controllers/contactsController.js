@@ -2813,6 +2813,80 @@ export const getChatContacts = async (req, res) => {
         ` : ''}
     `
 
+    // Seleccion masiva nativa: devuelve el universo completo de conversaciones
+    // como ids ligeros. No aplica limit/offset porque "Seleccionar todos" debe
+    // incluir tambien las paginas que todavia no se renderizaron. Reutiliza el
+    // mismo contrato de identidad, telefonos legacy, canales Meta/email y
+    // contactos ocultos de la bandeja normal para que ambos resultados coincidan.
+    if (isTruthyQueryValue(req.query.idsOnly || req.query.selectionIdsOnly)) {
+      const selectionRows = await db.all(`
+        WITH contact_phone_lookup AS (
+          SELECT id AS contact_id, phone
+          FROM contacts
+          WHERE TRIM(COALESCE(phone, '')) != ''
+          UNION ALL
+          SELECT contact_id, phone
+          FROM contact_phone_numbers
+          WHERE TRIM(COALESCE(phone, '')) != ''
+        ),
+        whatsapp_stats_source_rows AS (
+          ${whatsappStatsSourceRowsSql}
+        ),
+        whatsapp_stats_phone_matches AS (
+          SELECT whatsapp_stats_source_rows.message_id, whatsapp_stats_source_rows.message_date, contact_phone_lookup.contact_id
+          FROM whatsapp_stats_source_rows
+          JOIN contact_phone_lookup ON contact_phone_lookup.phone = whatsapp_stats_source_rows.phone
+          WHERE whatsapp_stats_source_rows.direct_contact_id IS NULL
+            AND TRIM(COALESCE(whatsapp_stats_source_rows.phone, '')) != ''
+          UNION ALL
+          SELECT whatsapp_stats_source_rows.message_id, whatsapp_stats_source_rows.message_date, contact_phone_lookup.contact_id
+          FROM whatsapp_stats_source_rows
+          JOIN contact_phone_lookup ON contact_phone_lookup.phone = whatsapp_stats_source_rows.from_phone
+          WHERE whatsapp_stats_source_rows.direct_contact_id IS NULL
+            AND TRIM(COALESCE(whatsapp_stats_source_rows.from_phone, '')) != ''
+          UNION ALL
+          SELECT whatsapp_stats_source_rows.message_id, whatsapp_stats_source_rows.message_date, contact_phone_lookup.contact_id
+          FROM whatsapp_stats_source_rows
+          JOIN contact_phone_lookup ON contact_phone_lookup.phone = whatsapp_stats_source_rows.to_phone
+          WHERE whatsapp_stats_source_rows.direct_contact_id IS NULL
+            AND TRIM(COALESCE(whatsapp_stats_source_rows.to_phone, '')) != ''
+          UNION ALL
+          SELECT whatsapp_stats_source_rows.message_id, whatsapp_stats_source_rows.message_date, contact_phone_lookup.contact_id
+          FROM whatsapp_stats_source_rows
+          JOIN contact_phone_lookup ON contact_phone_lookup.phone = whatsapp_stats_source_rows.api_profile_phone
+          WHERE whatsapp_stats_source_rows.direct_contact_id IS NULL
+            AND TRIM(COALESCE(whatsapp_stats_source_rows.api_profile_phone, '')) != ''
+        ),
+        message_stats_rows AS (
+          ${messageStatsRowsSql}
+        ),
+        chat_stats AS (
+          SELECT
+            contact_id,
+            SUM(message_count) AS message_count,
+            MAX(last_message_date) AS last_message_date,
+            MAX(last_message_sort) AS last_message_sort
+          FROM message_stats_rows
+          GROUP BY contact_id
+        )
+        SELECT chat_stats.contact_id AS id
+        FROM chat_stats
+        JOIN contacts c ON c.id = chat_stats.contact_id
+        ${whereClause}
+        ORDER BY chat_stats.last_message_sort DESC, chat_stats.contact_id DESC
+      `, [
+        ...whatsappMessageParams,
+        ...whatsappMessageParams,
+        ...whatsappMessageParams,
+        ...params
+      ])
+
+      return res.json({
+        success: true,
+        data: [...new Set(selectionRows.map(row => cleanString(row.id)).filter(Boolean))]
+      })
+    }
+
     const selectedMessageRowsSql = `
         SELECT
           ${directWhatsAppContactIdSql} AS contact_id,

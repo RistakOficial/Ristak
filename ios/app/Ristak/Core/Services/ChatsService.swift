@@ -61,6 +61,50 @@ struct ChatsService: Sendable {
         )
     }
 
+    /// Universo completo de conversaciones seleccionables. El backend actual
+    /// responde ids ligeros sin límite con `idsOnly=true`. Si una instalación
+    /// anterior ignora ese parámetro y devuelve ChatContact, completamos todas
+    /// sus páginas para no romper la selección durante un rollout gradual.
+    func fetchAllChatIDs() async throws -> [String] {
+        let pageSize = 100
+        let responseData = try await client.rawData(
+            "/contacts/chats",
+            query: [
+                "idsOnly": "true",
+                "limit": String(pageSize),
+                "warmProfilePictures": "false",
+            ],
+            timeout: APIClient.mediaTimeout
+        )
+        let decoder = JSONDecoder()
+
+        if let ids: [String] = try? RistakEnvelopeDecoder.unwrap(responseData, decoder: decoder) {
+            return ChatInboxSelection.normalizedIDs(ids)
+        }
+
+        var page: [ChatContact] = try RistakEnvelopeDecoder.unwrap(responseData, decoder: decoder)
+        var ids = ChatInboxSelection.normalizedIDs(page.map(\.id))
+        var seen = Set(ids)
+        var offset = page.count
+
+        while page.count >= pageSize {
+            page = try await fetchChats(
+                limit: pageSize,
+                offset: offset,
+                warmProfilePictures: false
+            )
+            let pageIDs = ChatInboxSelection.normalizedIDs(page.map(\.id))
+            let previousCount = seen.count
+            for id in pageIDs where seen.insert(id).inserted { ids.append(id) }
+            offset += page.count
+
+            // Un backend legacy que ignore offset no debe crear un loop eterno.
+            if page.count >= pageSize, seen.count == previousCount { break }
+        }
+
+        return ids
+    }
+
     /// `POST /api/contacts/chats/:id/read` — marca leído para el usuario y
     /// encola el "visto" real del proveedor en background (no bloquear la UI;
     /// al abrir un chat: optimista a 0 + este POST fire-and-forget).
