@@ -8,7 +8,11 @@ import {
   getSessionsHandler,
   getVisitorsList
 } from '../src/controllers/trackingController.js'
-import { runTrackingVisitorProjectionBackfill } from '../src/services/trackingVisitorProjectionService.js'
+import {
+  getTrackingVisitorProjectionStatus,
+  runTrackingVisitorProjectionBackfill,
+  TRACKING_VISITOR_PROJECTION_LIMITS
+} from '../src/services/trackingVisitorProjectionService.js'
 
 async function ensureVisitorProjectionMigration() {
   if (databaseDialect !== 'sqlite') return
@@ -260,7 +264,7 @@ test('visitors drill-down is projection-paginated, bounded-searchable and capped
   }
 })
 
-test('visitor GET serves partial projection during warming without inspecting historical sessions', async () => {
+test('visitor projection warming stays unavailable without inspecting historical sessions', async () => {
   if (databaseDialect !== 'sqlite') return
   await ensureVisitorProjectionMigration()
   const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -304,18 +308,15 @@ test('visitor GET serves partial projection during warming without inspecting hi
       return originalGet.call(this, sql, params)
     }
 
-    const page = await callController(getVisitorsList, {
-      startDate: '2098-02-12',
-      endDate: '2098-02-12',
-      limit: '50'
-    })
-    assert.equal(page.data.length, 50)
-    assert.equal(page.coverage.status, 'warming')
-    assert.equal(page.coverage.partial, true)
-    assert.equal(page.coverage.reason, 'projection_warming')
+    const status = await getTrackingVisitorProjectionStatus()
+    assert.equal(status.available, false)
+    assert.equal(status.ready, false)
+    assert.equal(status.status, 'warming')
+    assert.equal(status.sourceStatus, 'backfilling')
 
     const requestSql = observedSql.join('\n')
-    assert.match(requestSql, /tracking_visitor_latest/i)
+    assert.match(requestSql, /tracking_visitor_projection_state/i)
+    assert.doesNotMatch(requestSql, /tracking_visitor_latest/i)
     assert.doesNotMatch(requestSql, /visitor_projection_version/i)
     assert.doesNotMatch(requestSql, /ranked_visitors|matched_visitor_candidates/i)
     assert.doesNotMatch(requestSql, /ROW_NUMBER\s*\(\s*\)\s*OVER/i)
@@ -329,6 +330,124 @@ test('visitor GET serves partial projection during warming without inspecting hi
       SET status = 'ready', last_error = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE singleton_id = 1
     `).catch(() => undefined)
+  }
+})
+
+test('visitor backfill pauses after a bounded number of batches and resumes exactly', async () => {
+  if (databaseDialect !== 'sqlite') return
+  await ensureVisitorProjectionMigration()
+  await runTrackingVisitorProjectionBackfill({ batchSize: 200, maxBatches: 100, yieldMs: 0 })
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const prefix = `bounded-${suffix}-`
+
+  try {
+    for (let index = 0; index < 7; index += 1) {
+      await db.run(`
+        INSERT INTO sessions (
+          id, session_id, visitor_id, event_name, started_at, created_at
+        ) VALUES (?, ?, ?, 'page_view', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `${prefix}${index}`,
+        `session-${prefix}${index}`,
+        `visitor-${prefix}${index}`
+      ])
+    }
+    await db.run(
+      'UPDATE sessions SET visitor_key = NULL, visitor_projection_version = 0 WHERE id LIKE ?',
+      [`${prefix}%`]
+    )
+    await db.run(`
+      UPDATE tracking_visitor_projection_state
+      SET status = 'backfilling', updated_at = CURRENT_TIMESTAMP
+      WHERE singleton_id = 1
+    `)
+
+    const first = await runTrackingVisitorProjectionBackfill({
+      batchSize: 2,
+      maxBatches: 2,
+      yieldMs: 0
+    })
+    assert.equal(first.ready, false)
+    assert.equal(first.paused, true)
+    assert.equal(first.batches, 2)
+    assert.equal(first.updated, 4)
+    assert.equal(Number((await db.get(`
+      SELECT COUNT(*) AS total
+      FROM sessions
+      WHERE id LIKE ? AND visitor_projection_version < 3
+    `, [`${prefix}%`]))?.total || 0), 3)
+    assert.equal((await db.get(`
+      SELECT status FROM tracking_visitor_projection_state WHERE singleton_id = 1
+    `))?.status, 'backfilling')
+
+    const second = await runTrackingVisitorProjectionBackfill({
+      batchSize: 2,
+      maxBatches: 2,
+      yieldMs: 0
+    })
+    assert.equal(second.ready, true)
+    assert.equal(second.paused, false)
+    assert.equal(second.batches, 2)
+    assert.equal(second.updated, 3)
+    assert.equal(Number((await db.get(`
+      SELECT COUNT(*) AS total
+      FROM sessions
+      WHERE id LIKE ? AND visitor_projection_version < 3
+    `, [`${prefix}%`]))?.total || 0), 0)
+    assert.equal((await db.get(`
+      SELECT status FROM tracking_visitor_projection_state WHERE singleton_id = 1
+    `))?.status, 'ready')
+  } finally {
+    await db.run('DELETE FROM sessions WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+    await db.run(`
+      UPDATE tracking_visitor_projection_state
+      SET status = 'ready', last_error = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE singleton_id = 1
+    `).catch(() => undefined)
+  }
+})
+
+test('visitor PostgreSQL backfill keeps batches small and returns only projection columns', async () => {
+  assert.ok(TRACKING_VISITOR_PROJECTION_LIMITS.postgresBatchSize >= 100)
+  assert.ok(TRACKING_VISITOR_PROJECTION_LIMITS.postgresBatchSize <= 250)
+  assert.ok(TRACKING_VISITOR_PROJECTION_LIMITS.maxBatchesPerRun > 0)
+
+  const source = await readFile(
+    new URL('../src/services/trackingVisitorProjectionService.js', import.meta.url),
+    'utf8'
+  )
+  assert.doesNotMatch(source, /RETURNING\s+target\.\*/i)
+  assert.match(source, /RETURNING\s+target\.id,\s+target\.visitor_key,/i)
+})
+
+test('visitor backfill propagates projection-state write failures', async () => {
+  if (databaseDialect !== 'sqlite') return
+  await ensureVisitorProjectionMigration()
+  await db.run(`
+    UPDATE tracking_visitor_projection_state
+    SET status = 'backfilling', updated_at = CURRENT_TIMESTAMP
+    WHERE singleton_id = 1
+  `)
+  const originalRun = db.run
+
+  try {
+    db.run = async function failStateWrite(sql, params, options) {
+      if (/UPDATE\s+tracking_visitor_projection_state/i.test(String(sql))) {
+        throw new Error('projection state write failed')
+      }
+      return originalRun.call(this, sql, params, options)
+    }
+    await assert.rejects(
+      runTrackingVisitorProjectionBackfill({ batchSize: 1, maxBatches: 1, yieldMs: 0 }),
+      /projection state write failed/
+    )
+  } finally {
+    db.run = originalRun
+    await db.run(`
+      UPDATE tracking_visitor_projection_state
+      SET status = 'ready', last_error = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE singleton_id = 1
+    `)
   }
 })
 
@@ -696,10 +815,14 @@ test('tracking drill-down source keeps remote calls and unbounded list queries o
   assert.match(visitorsHandler, /pageLimit \+ 1/)
   assert.match(visitorsHandler, /pagination:/)
   assert.doesNotMatch(conversionsHandler, /ORDER BY c\.created_at DESC\s*`/)
-  assert.match(visitorsHandler, /fetchBoundedAppointmentsForContacts\(contactIds\)/)
-  assert.match(visitorsHandler, /SELECT \* FROM day_page\s+UNION\s+SELECT \* FROM quarter_page/)
-  assert.doesNotMatch(visitorsHandler, /SELECT \* FROM day_page\s+UNION ALL\s+SELECT \* FROM quarter_page/)
-  assert.match(conversionsHandler, /fetchPaymentSummariesForContacts\(contactIds\)/)
+  assert.match(visitorsHandler, /fetchBoundedAppointmentsForContacts\(contactIds, 5, \{ signal: requestScope\.signal \}\)/)
+  assert.match(visitorsHandler, /const quarterBucketRanges = hasFullUtcDayWindow/)
+  assert.match(visitorsHandler, /decodedCursor && cursorAtMillis < branchEndMillis/)
+  assert.match(visitorsHandler, /\.filter\(branch => !decodedCursor \|\| cursorAtMillis >= Date\.parse\(branch\.bucketStart\)\)/)
+  assert.match(visitorsHandler, /projectionBranches\.map\(branch => `SELECT \* FROM \$\{branch\.name\}`\)/)
+  assert.match(visitorsHandler, /\.join\('\\n            UNION\\n            '\)/)
+  assert.doesNotMatch(visitorsHandler, /NOT \(current\.bucket_start >= \? AND current\.bucket_start < \?\)/)
+  assert.match(conversionsHandler, /fetchPaymentSummariesForContacts\(contactIds, \{ signal: requestScope\.signal \}\)/)
   assert.doesNotMatch(conversionsHandler, /fetchPaymentsForContacts|fetchAppointmentsForContacts/)
   assert.match(conversionsHandler, /GROUP BY c\.id/)
 })

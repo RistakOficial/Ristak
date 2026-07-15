@@ -5,6 +5,8 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { dashboardService, type OriginDistributionData } from '@/services/dashboardService'
 import { trackingService } from '@/services/trackingService'
 import { normalizeDateInputToLocalDate } from '@/utils/format'
+import { useNotification } from '@/contexts/NotificationContext'
+import { Button } from '../Button'
 
 type TrafficDimension = 'sources' | 'platforms' | 'devices' | 'placements' | 'browsers' | 'os'
 
@@ -41,25 +43,69 @@ const PEOPLE_DIMENSIONS = new Set<TrafficDimension>(['sources', 'platforms'])
  */
 export const OriginDistributionCard: React.FC = () => {
   const { dateRange } = useDateRange()
+  const { showToast } = useNotification()
   const [dimension, setDimension] = useState<TrafficDimension>('sources')
   const [data, setData] = useState<OriginDistributionData>(EMPTY)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [retryKey, setRetryKey] = useState(0)
   const [webTrackingConfigured, setWebTrackingConfigured] = useState(false)
   const [webConnectionLoading, setWebConnectionLoading] = useState(true)
 
   useEffect(() => {
+    // Las dimensiones sólo se comparten dentro del mismo rango. Si cambia la
+    // ventana no mostramos como vigente un snapshot que pertenece a otras fechas.
+    setData(EMPTY)
+    setLoadError(null)
+  }, [dateRange.start, dateRange.end])
+
+  useEffect(() => {
     let active = true
+    const controller = new AbortController()
     setLoading(true)
+    setLoadError(null)
 
     const start = normalizeDateInputToLocalDate(dateRange.start)
     const end = normalizeDateInputToLocalDate(dateRange.end)
 
-    dashboardService.getOriginDistribution({ start, end })
-      .then((result) => { if (active) setData(result) })
+    dashboardService.getOriginDistribution({
+      start,
+      end,
+      dimension,
+      includeWhatsapp: PEOPLE_DIMENSIONS.has(dimension),
+      includeBreakdowns: false,
+      signal: controller.signal
+    })
+      .then((result) => {
+        if (!active) return
+        setLoadError(null)
+        setData(current => ({
+          ...current,
+          traffic: {
+            ...current.traffic,
+            [dimension]: result.traffic[dimension] || []
+          }
+        }))
+      })
+      .catch((error) => {
+        if (!active || controller.signal.aborted) return
+        const message = error instanceof Error ? error.message : 'Intenta nuevamente.'
+        // Una dimensión fallida no invalida las que ya respondieron. Conservar
+        // el último snapshot válido evita que un timeout aislado vacíe la dona.
+        setLoadError(message)
+        showToast(
+          'error',
+          'No se pudo cargar la distribución de origen',
+          message
+        )
+      })
       .finally(() => { if (active) setLoading(false) })
 
-    return () => { active = false }
-  }, [dateRange.start, dateRange.end])
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [dateRange.start, dateRange.end, dimension, retryKey, showToast])
 
   useEffect(() => {
     let active = true
@@ -107,6 +153,18 @@ export const OriginDistributionCard: React.FC = () => {
       insightCountLabel="Variedad"
       insightCountSuffix={meta.insightCountSuffix}
       showZeroStateAsChart
+      headerAction={loadError ? (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={loading}
+          title={loadError}
+          onClick={() => setRetryKey(current => current + 1)}
+        >
+          {loading ? 'Reintentando…' : 'Reintentar'}
+        </Button>
+      ) : undefined}
       titleSlot={webTrackingConfigured ? (
         <ViewSelector
           options={DIMENSION_OPTIONS}

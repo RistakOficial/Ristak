@@ -11,12 +11,20 @@ import {
 } from './reportMetricsAggregationService.js'
 import { createDatabaseAbortError } from '../utils/postgresCancelableQuery.js'
 
-const SNAPSHOT_STALE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
-const SNAPSHOT_MAX_ENTRIES_PER_PRINCIPAL = 48
+const SNAPSHOT_REFRESH_INTERVAL_MS = 30_000
+const SNAPSHOT_STALE_MAX_AGE_MS = 5 * 60_000
+const SNAPSHOT_MAX_ENTRIES_PER_SHARED_SCOPE = 48
 const SNAPSHOT_MAX_ENTRIES_PER_ACCOUNT = 192
 const SNAPSHOT_MAX_CONCURRENT_BUILDS = 2
+const SNAPSHOT_MAX_QUEUED_BUILDS = 8
+const SNAPSHOT_BUILD_DEADLINE_MS = 18_000
 const VALID_GROUPS = new Set(['day', 'month', 'year'])
 const VALID_SCOPES = new Set(['all', 'attribution', 'campaigns'])
+// El endpoint ya pasó requireAuth + requireModuleAccess('reports') y el
+// agregado sólo consume configuración y datos de cuenta. No contiene filtros,
+// campos ni preferencias del usuario autenticado, así que el read-model es
+// compartido por todos los principals autorizados de la misma cuenta.
+const REPORTS_SHARED_PRINCIPAL_SCOPE = 'authorized-reports-read-v1'
 const builds = new Map()
 const buildWaiters = []
 let activeBuilds = 0
@@ -50,18 +58,55 @@ function signalOptions(signal) {
   return signal ? { signal } : undefined
 }
 
-async function withBuildSlot(callback) {
+function reportsSnapshotDeadlineError() {
+  const error = new Error('El snapshot de Reportes tardó demasiado y fue cancelado. Intenta nuevamente.')
+  error.status = 503
+  error.code = 'reports_snapshot_deadline'
+  error.retryable = true
+  return error
+}
+
+function reportsSnapshotBusyError() {
+  const error = new Error('Reportes ya está procesando otras consultas. Intenta nuevamente en unos segundos.')
+  error.status = 503
+  error.code = 'reports_snapshot_busy'
+  error.retryable = true
+  return error
+}
+
+async function withBuildSlot(callback, signal) {
+  throwIfAborted(signal)
   if (activeBuilds >= SNAPSHOT_MAX_CONCURRENT_BUILDS) {
-    await new Promise(resolve => buildWaiters.push(resolve))
+    if (buildWaiters.length >= SNAPSHOT_MAX_QUEUED_BUILDS) throw reportsSnapshotBusyError()
+    await new Promise((resolve, reject) => {
+      const waiter = { resolve, reject, signal, onAbort: null }
+      waiter.onAbort = () => {
+        const index = buildWaiters.indexOf(waiter)
+        if (index >= 0) buildWaiters.splice(index, 1)
+        reject(createDatabaseAbortError())
+      }
+      signal?.addEventListener('abort', waiter.onAbort, { once: true })
+      buildWaiters.push(waiter)
+      if (signal?.aborted) waiter.onAbort()
+    })
   } else {
     activeBuilds += 1
   }
   try {
+    throwIfAborted(signal)
     return await callback()
   } finally {
-    const next = buildWaiters.shift()
-    if (next) next()
-    else activeBuilds -= 1
+    let next = null
+    while ((next = buildWaiters.shift() || null)) {
+      next.signal?.removeEventListener('abort', next.onAbort)
+      if (next.signal?.aborted) {
+        next.reject(createDatabaseAbortError())
+        continue
+      }
+      next.resolve()
+      break
+    }
+    if (!next) activeBuilds -= 1
   }
 }
 
@@ -80,8 +125,37 @@ function buildSnapshotCacheKey(query) {
   return sha256(JSON.stringify({ version: 1, ...query }))
 }
 
-function normalizePrincipalScope(principal) {
-  return `principal:${sha256(clean(principal, 500) || 'authenticated-user')}`
+function normalizePrincipalScope() {
+  return REPORTS_SHARED_PRINCIPAL_SCOPE
+}
+
+function encodeMovingRevision(sourceRevision, completedRevision) {
+  return `moving:${JSON.stringify({ sourceRevision, completedRevision })}`
+}
+
+function decodeStoredRevision(storedRevision) {
+  const normalized = String(storedRevision || '')
+  if (!normalized.startsWith('moving:')) {
+    return {
+      exactAtBuiltAt: true,
+      builtSourceRevision: normalized,
+      completedRevision: normalized
+    }
+  }
+  try {
+    const parsed = JSON.parse(normalized.slice('moving:'.length))
+    return {
+      exactAtBuiltAt: false,
+      builtSourceRevision: String(parsed?.sourceRevision || ''),
+      completedRevision: String(parsed?.completedRevision || '')
+    }
+  } catch {
+    return {
+      exactAtBuiltAt: false,
+      builtSourceRevision: '',
+      completedRevision: ''
+    }
+  }
 }
 
 async function getSnapshotSourceRevision(signal) {
@@ -122,8 +196,10 @@ async function readSnapshot({ accountScope, principalScope, cacheKey, sourceRevi
   `, [accountScope, principalScope, cacheKey], signalOptions(signal))
 
   if (!row) return null
-  const exact = String(row.source_revision || '') === sourceRevision
-  if (!exact && Date.now() - timestampMs(row.built_at) > SNAPSHOT_STALE_MAX_AGE_MS) return null
+  const storedRevision = decodeStoredRevision(row.source_revision)
+  const exact = storedRevision.exactAtBuiltAt && storedRevision.builtSourceRevision === sourceRevision
+  const ageMs = Math.max(0, Date.now() - timestampMs(row.built_at))
+  if (!exact && ageMs > SNAPSHOT_STALE_MAX_AGE_MS) return null
   let payload
   try {
     payload = JSON.parse(row.payload_json)
@@ -140,8 +216,14 @@ async function readSnapshot({ accountScope, principalScope, cacheKey, sourceRevi
   return {
     payload,
     builtAt: String(row.built_at || ''),
-    builtSourceRevision: String(row.source_revision || ''),
-    exact
+    builtSourceRevision: storedRevision.builtSourceRevision,
+    completedRevision: storedRevision.completedRevision,
+    exactAtBuiltAt: storedRevision.exactAtBuiltAt,
+    exact,
+    ageMs,
+    refreshDue: storedRevision.exactAtBuiltAt
+      ? !exact
+      : ageMs >= SNAPSHOT_REFRESH_INTERVAL_MS
   }
 }
 
@@ -188,7 +270,7 @@ async function pruneSnapshotCache({ accountScope, principalScope }) {
     principalScope,
     accountScope,
     principalScope,
-    SNAPSHOT_MAX_ENTRIES_PER_PRINCIPAL
+    SNAPSHOT_MAX_ENTRIES_PER_SHARED_SCOPE
   ])
 
   await db.run(`
@@ -227,7 +309,7 @@ function waitForSnapshotFenceRetry(ms, signal) {
   })
 }
 
-async function persistSnapshotIfCurrent({
+async function persistCompletedSnapshot({
   accountScope,
   principalScope,
   cacheKey,
@@ -241,22 +323,24 @@ async function persistSnapshotIfCurrent({
     throwIfAborted(signal)
     try {
       const result = await db.withAdvisoryLock(lockName, async () => {
-        // El fence se evalúa bajo un candado compartido por todas las instancias.
-        // Así un build viejo jamás puede terminar después y pisar uno nuevo.
+        // La clasificación exact/moving y la escritura ocurren bajo el mismo
+        // candado para que ninguna instancia publique exactitud con una
+        // revisión leída antes de adquirirlo.
         const completedRevision = await getSnapshotSourceRevision(signal)
-        if (completedRevision !== sourceRevision) {
-          return { persisted: false, builtAt: '', completedRevision }
-        }
+        const exactAtBuiltAt = completedRevision === sourceRevision
+        const storedRevision = exactAtBuiltAt
+          ? sourceRevision
+          : encodeMovingRevision(sourceRevision, completedRevision)
         const builtAt = await persistSnapshot({
           accountScope,
           principalScope,
           cacheKey,
-          sourceRevision,
+          sourceRevision: storedRevision,
           payload,
           signal
         })
-        return { persisted: true, builtAt, completedRevision }
-      })
+        return { persisted: true, builtAt, completedRevision, exactAtBuiltAt }
+      }, { signal })
 
       if (result.persisted) {
         void pruneSnapshotCache({ accountScope, principalScope }).catch(() => undefined)
@@ -344,18 +428,30 @@ async function buildSnapshot(query, signal) {
 
 function withCacheMetadata(payload, {
   stale,
+  exactAtBuiltAt,
   builtAt,
   builtSourceRevision,
   currentSourceRevision
 }) {
+  const builtAtMs = timestampMs(builtAt)
+  const ageMs = builtAtMs > 0 ? Math.max(0, Date.now() - builtAtMs) : 0
+  const revalidateAfter = builtAtMs > 0
+    ? new Date(exactAtBuiltAt && stale
+        ? Math.min(builtAtMs, Date.now())
+        : builtAtMs + SNAPSHOT_REFRESH_INTERVAL_MS).toISOString()
+    : ''
   return {
     ...payload,
     cache: {
       stale: Boolean(stale),
-      exactAtBuiltAt: true,
+      consistency: exactAtBuiltAt ? 'exact' : 'moving-window',
+      exactAtBuiltAt: Boolean(exactAtBuiltAt),
       builtAt: String(builtAt || ''),
       builtSourceRevision: String(builtSourceRevision || ''),
-      currentSourceRevision: String(currentSourceRevision || '')
+      currentSourceRevision: String(currentSourceRevision || ''),
+      ageMs,
+      revalidateAfter,
+      maxStaleAgeMs: SNAPSHOT_STALE_MAX_AGE_MS
     }
   }
 }
@@ -381,8 +477,14 @@ function getOrStartSharedBuild({
     keepAlive: Boolean(keepAlive),
     waiters: 0,
     settled: false,
+    timedOut: false,
     promise: null
   }
+  const deadlineTimer = setTimeout(() => {
+    entry.timedOut = true
+    controller.abort(reportsSnapshotDeadlineError())
+  }, SNAPSHOT_BUILD_DEADLINE_MS)
+  deadlineTimer.unref?.()
 
   entry.promise = (async () => {
     try {
@@ -390,7 +492,7 @@ function getOrStartSharedBuild({
         throwIfAborted(controller.signal)
         const payload = await buildSnapshot(query, controller.signal)
         throwIfAborted(controller.signal)
-        const committed = await persistSnapshotIfCurrent({
+        const committed = await persistCompletedSnapshot({
           accountScope,
           principalScope,
           cacheKey,
@@ -403,10 +505,15 @@ function getOrStartSharedBuild({
           builtAt: committed.builtAt,
           builtSourceRevision: sourceRevision,
           completedRevision: committed.completedRevision,
-          persisted: committed.persisted
+          persisted: committed.persisted,
+          exactAtBuiltAt: committed.exactAtBuiltAt
         }
-      })
+      }, controller.signal)
+    } catch (error) {
+      if (entry.timedOut) throw reportsSnapshotDeadlineError()
+      throw error
     } finally {
+      clearTimeout(deadlineTimer)
       entry.settled = true
       if (builds.get(buildKey) === entry) builds.delete(buildKey)
     }
@@ -429,6 +536,7 @@ async function waitForSharedBuild(entry, signal) {
     ? new Promise((_, reject) => {
         onAbort = () => reject(createDatabaseAbortError())
         signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) onAbort()
       })
     : null
 
@@ -451,7 +559,6 @@ async function waitForSharedBuild(entry, signal) {
  * asistencia, anuncios, sesiones, configuracion, zona y filtros ocultos.
  */
 export async function getReportsSnapshot({
-  principal,
   startDate,
   endDate,
   groupBy,
@@ -461,7 +568,7 @@ export async function getReportsSnapshot({
 } = {}) {
   throwIfAborted(signal)
   const query = normalizeQuery({ startDate, endDate, groupBy, scope })
-  const principalScope = normalizePrincipalScope(principal)
+  const principalScope = normalizePrincipalScope()
   const cacheKey = buildSnapshotCacheKey(query)
 
   let accountScope
@@ -485,6 +592,7 @@ export async function getReportsSnapshot({
     const payload = await buildSnapshot(query, signal)
     return withCacheMetadata(payload, {
       stale: false,
+      exactAtBuiltAt: true,
       builtAt: '',
       builtSourceRevision: '',
       currentSourceRevision: ''
@@ -495,16 +603,51 @@ export async function getReportsSnapshot({
     throwIfAborted(signal)
     return withCacheMetadata(cached.payload, {
       stale: false,
+      exactAtBuiltAt: cached.exactAtBuiltAt,
       builtAt: cached.builtAt,
       builtSourceRevision: cached.builtSourceRevision,
       currentSourceRevision: sourceRevision
     })
   }
 
-  // Una sola reconstruccion por principal+rango. La revision no forma parte de
+  // Una sola reconstruccion por cuenta+rango para todos los principals que ya
+  // pasaron el permiso de Reportes. La revision no forma parte de
   // esta llave para impedir que dos builds de revisiones consecutivas terminen
   // fuera de orden y el mas viejo sobrescriba al nuevo.
   const buildKey = `${accountScope}:${principalScope}:${cacheKey}`
+  const activeForKey = builds.get(buildKey)
+  if (
+    cached &&
+    !waitForFresh &&
+    cached.refreshDue &&
+    (!activeForKey || activeForKey.controller.signal.aborted) &&
+    (activeBuilds >= SNAPSHOT_MAX_CONCURRENT_BUILDS || buildWaiters.length > 0)
+  ) {
+    // Una revalidación SWR jamás debe formarse detrás de trabajo frío. Se pinta
+    // el snapshot conocido y la siguiente lectura volverá a intentar cuando
+    // haya capacidad, sin acumular rangos huérfanos en memoria.
+    return withCacheMetadata(cached.payload, {
+      stale: true,
+      exactAtBuiltAt: cached.exactAtBuiltAt,
+      builtAt: cached.builtAt,
+      builtSourceRevision: cached.builtSourceRevision,
+      currentSourceRevision: sourceRevision
+    })
+  }
+
+  // Un build que cruzó escrituras queda marcado moving-window y se persiste,
+  // pero no se vuelve a reconstruir en cada waitForFresh. El siguiente intento
+  // se habilita tras la ventana de coalescing o antes si había un snapshot
+  // exacto cuya revisión ya cambió.
+  if (cached && !cached.refreshDue) {
+    return withCacheMetadata(cached.payload, {
+      stale: true,
+      exactAtBuiltAt: cached.exactAtBuiltAt,
+      builtAt: cached.builtAt,
+      builtSourceRevision: cached.builtSourceRevision,
+      currentSourceRevision: sourceRevision
+    })
+  }
   const build = getOrStartSharedBuild({
     buildKey,
     query,
@@ -521,6 +664,7 @@ export async function getReportsSnapshot({
     throwIfAborted(signal)
     return withCacheMetadata(cached.payload, {
       stale: true,
+      exactAtBuiltAt: cached.exactAtBuiltAt,
       builtAt: cached.builtAt,
       builtSourceRevision: cached.builtSourceRevision,
       currentSourceRevision: sourceRevision
@@ -530,7 +674,8 @@ export async function getReportsSnapshot({
   const built = await waitForSharedBuild(build, signal)
   throwIfAborted(signal)
   return withCacheMetadata(built.payload, {
-    stale: built.completedRevision !== built.builtSourceRevision,
+    stale: !built.exactAtBuiltAt,
+    exactAtBuiltAt: built.exactAtBuiltAt,
     builtAt: built.builtAt,
     builtSourceRevision: built.builtSourceRevision,
     currentSourceRevision: built.completedRevision
@@ -538,8 +683,11 @@ export async function getReportsSnapshot({
 }
 
 export const REPORTS_SNAPSHOT_CACHE_LIMITS = Object.freeze({
-  entriesPerPrincipal: SNAPSHOT_MAX_ENTRIES_PER_PRINCIPAL,
+  entriesPerSharedScope: SNAPSHOT_MAX_ENTRIES_PER_SHARED_SCOPE,
   entriesPerAccount: SNAPSHOT_MAX_ENTRIES_PER_ACCOUNT,
   maxConcurrentBuilds: SNAPSHOT_MAX_CONCURRENT_BUILDS,
+  maxQueuedBuilds: SNAPSHOT_MAX_QUEUED_BUILDS,
+  buildDeadlineMs: SNAPSHOT_BUILD_DEADLINE_MS,
+  refreshIntervalMs: SNAPSHOT_REFRESH_INTERVAL_MS,
   staleMaxAgeMs: SNAPSHOT_STALE_MAX_AGE_MS
 })

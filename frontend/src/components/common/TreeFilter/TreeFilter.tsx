@@ -79,12 +79,37 @@ interface TreeFilterProps {
   }
   selectedFilters: Record<string, string[]>
   onFilterChange: (filters: Record<string, string[]>) => void
+  /** Categorías cuyo contenido se obtiene sólo cuando existe intención real. */
+  loadableCategories?: string[]
+  loadedCategories?: string[]
+  loadingCategories?: string[]
+  onCategoryIntent?: (categoryId: string) => void
+}
+
+const DEFERRED_CATEGORY_META: Record<string, Pick<FilterNode, 'label' | 'icon'>> = {
+  tracking_sources: { label: 'Origen tracking', icon: Layers },
+  traffic_channels: { label: 'Canales de tráfico', icon: Share2 },
+  site_types: { label: 'Tipo de Site', icon: Layers },
+  native_sites: { label: 'Sites nativos', icon: FileText },
+  native_forms: { label: 'Formularios', icon: FileText },
+  native_conversions: { label: 'Conversiones Sites', icon: UserCheck },
+  pages: { label: 'Páginas', icon: FileText },
+  ads: { label: 'Plataformas', icon: Target },
+  sources: { label: 'Fuentes', icon: Share2 },
+  devices: { label: 'Dispositivos', icon: Smartphone },
+  browsers: { label: 'Navegadores', icon: Globe },
+  os: { label: 'Sistemas', icon: Monitor },
+  placements: { label: 'Ubicaciones', icon: MapPin }
 }
 
 export function TreeFilter({
   availableData = {},
   selectedFilters,
-  onFilterChange
+  onFilterChange,
+  loadableCategories = [],
+  loadedCategories = [],
+  loadingCategories = [],
+  onCategoryIntent
 }: TreeFilterProps) {
   const [hoveredCategory, setHoveredCategory] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
@@ -92,6 +117,8 @@ export function TreeFilter({
   const [showSearchResults, setShowSearchResults] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loadedCategorySet = useMemo(() => new Set(loadedCategories), [loadedCategories])
+  const loadingCategorySet = useMemo(() => new Set(loadingCategories), [loadingCategories])
 
   // Cerrar dropdown cuando se hace click afuera
   useEffect(() => {
@@ -401,8 +428,18 @@ export function TreeFilter({
       })
     }
 
+    // El catálogo se muestra desde el primer paint, pero sus opciones no se
+    // consultan hasta hover/click. Así el filtro sigue descubrible sin convertir
+    // la apertura de Analíticas en 13 agregaciones de base de datos.
+    for (const categoryId of loadableCategories) {
+      if (tree.some(category => category.id === categoryId)) continue
+      const metadata = DEFERRED_CATEGORY_META[categoryId]
+      if (!metadata) continue
+      tree.push({ id: categoryId, ...metadata })
+    }
+
     return tree
-  }, [availableData])
+  }, [availableData, loadableCategories])
 
   const singleCategoryId = filterTree.length === 1 ? filterTree[0]?.id ?? null : null
 
@@ -412,12 +449,18 @@ export function TreeFilter({
   }, [isOpen, showSearchResults, singleCategoryId])
 
   // Manejar hover con delay para evitar flicker
+  const activateCategory = (categoryId: string) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+    setHoveredCategory(categoryId)
+    if (!loadedCategorySet.has(categoryId)) onCategoryIntent?.(categoryId)
+  }
+
   const handleCategoryHover = (categoryId: string) => {
     if (hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current)
     }
     hoverTimeoutRef.current = setTimeout(() => {
-      setHoveredCategory(categoryId)
+      activateCategory(categoryId)
     }, 100)
   }
 
@@ -615,7 +658,7 @@ export function TreeFilter({
                   type="text"
                   value={searchTerm}
                   onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder="Buscar..."
+                  placeholder="Buscar en filtros cargados..."
                   className="w-full pl-8 pr-3 py-2 text-sm rounded-md
                            bg-[var(--color-background-secondary)] border border-[var(--color-border)]
                            text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]
@@ -661,6 +704,16 @@ export function TreeFilter({
                     <div
                       key={category.id}
                       onMouseEnter={() => handleCategoryHover(category.id)}
+                      onClick={() => activateCategory(category.id)}
+                      onFocus={() => activateCategory(category.id)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return
+                        event.preventDefault()
+                        activateCategory(category.id)
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={isHovered}
                       data-ristak-dropdown-item
                       data-active={isHovered ? 'true' : undefined}
                       data-selected={selectedCount > 0 ? 'true' : undefined}
@@ -790,7 +843,13 @@ export function TreeFilter({
                   if (filteredChildren.length === 0) {
                     return (
                       <div key={category.id} className="p-4 text-center text-sm text-[var(--color-text-tertiary)]">
-                        {searchTerm ? 'No se encontraron resultados' : 'Sin opciones disponibles'}
+                        {loadingCategorySet.has(category.id)
+                          ? 'Cargando opciones…'
+                          : searchTerm
+                            ? 'No se encontraron resultados'
+                            : loadedCategorySet.has(category.id)
+                              ? 'Sin opciones disponibles'
+                              : 'Acércate a esta categoría para cargar sus opciones.'}
                       </div>
                     )
                   }

@@ -19,6 +19,7 @@ import { getLocalWhatsAppAnalyticsPhoneNumbers } from '../services/whatsappApiSe
 
 const isPostgres = databaseDialect === 'postgres';
 const DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT = 5;
+const DASHBOARD_ANALYTICS_DEADLINE_MS = 18_000;
 const DASHBOARD_INACTIVE_APPOINTMENT_STATUSES = [
   'cancelled',
   'canceled',
@@ -33,23 +34,106 @@ const DASHBOARD_INACTIVE_APPOINTMENT_STATUSES = [
 ];
 const DASHBOARD_ATTENDED_APPOINTMENT_STATUSES = ['showed', 'attended', 'completed', 'complete'];
 
-function createDashboardRequestAbortScope(res) {
+function createDashboardRequestAbortScope(res, { timeoutMs = 0 } = {}) {
   const controller = new AbortController();
+  let timedOut = false;
   const onClose = () => {
     if (!res?.writableEnded && !res?.finished) controller.abort();
   };
   const observable = typeof res?.once === 'function';
   if (observable) res.once('close', onClose);
+  const deadlineTimer = timeoutMs > 0
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs)
+    : null;
+  deadlineTimer?.unref?.();
   return {
     signal: controller.signal,
+    get timedOut() {
+      return timedOut;
+    },
     cleanup() {
       if (observable && typeof res?.off === 'function') res.off('close', onClose);
+      if (deadlineTimer) clearTimeout(deadlineTimer);
     }
   };
 }
 
 function isDashboardRequestAbort(error, signal) {
   return Boolean(signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR');
+}
+
+function dashboardAbortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error('La consulta del Dashboard fue cancelada');
+  error.name = 'AbortError';
+  return error;
+}
+
+/**
+ * Carril abortable para las lecturas que componen una misma respuesta del
+ * Dashboard. Es deliberadamente local al request: limita el pico que genera un
+ * usuario sin convertir peticiones de usuarios distintos en una cola global.
+ */
+export function createDashboardReadLimiter(signal, maxConcurrency = 2) {
+  const concurrency = Math.max(1, Math.floor(Number(maxConcurrency) || 1));
+  const queue = [];
+  let active = 0;
+
+  const drain = () => {
+    while (active < concurrency && queue.length > 0) {
+      const entry = queue.shift();
+      entry.cleanup();
+      if (signal?.aborted) {
+        entry.reject(dashboardAbortError(signal));
+        continue;
+      }
+
+      active += 1;
+      Promise.resolve()
+        .then(entry.task)
+        .then(entry.resolve, entry.reject)
+        .finally(() => {
+          active = Math.max(0, active - 1);
+          drain();
+        });
+    }
+  };
+
+  return (task) => {
+    if (signal?.aborted) return Promise.reject(dashboardAbortError(signal));
+
+    return new Promise((resolve, reject) => {
+      const entry = {
+        task,
+        resolve,
+        reject,
+        cleanup: () => {}
+      };
+      const onAbort = () => {
+        const index = queue.indexOf(entry);
+        if (index < 0) return;
+        queue.splice(index, 1);
+        entry.cleanup();
+        reject(dashboardAbortError(signal));
+      };
+      entry.cleanup = () => signal?.removeEventListener('abort', onAbort);
+      signal?.addEventListener('abort', onAbort, { once: true });
+
+      // AbortSignal no vuelve a emitir un aborto ocurrido entre el primer check
+      // y addEventListener(). Cerrar esa carrera evita una promesa encolada eterna.
+      if (signal?.aborted) {
+        entry.cleanup();
+        reject(dashboardAbortError(signal));
+        return;
+      }
+
+      queue.push(entry);
+      drain();
+    });
+  };
 }
 
 const sqlStringList = (values) => values.map(value => `'${value}'`).join(', ');
@@ -287,7 +371,12 @@ const buildContactFilters = async (range) => {
   return { filters, params };
 };
 
-const computeFinancialSnapshot = async (range, signal, hiddenFiltersOverride = null) => {
+const computeFinancialSnapshot = async (
+  range,
+  signal,
+  hiddenFiltersOverride = null,
+  runRead = (task) => task()
+) => {
   // Obtener filtro de contactos ocultos
   const hiddenFilters = hiddenFiltersOverride || await getHiddenContactFilters({ signal });
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
@@ -336,15 +425,15 @@ const computeFinancialSnapshot = async (range, signal, hiddenFiltersOverride = n
   const localDateRange = getLocalDateRange(range);
 
   const [paymentAggregateRow, gastosRow, costs, manualBusinessExpenses] = await Promise.all([
-    db.get(paymentAggregateQuery, paymentAggregateParams, { signal }),
-    db.get(gastosQuery, gastosParams, { signal }),
-    db.all('SELECT * FROM costs WHERE is_active = 1', [], { signal }).catch((error) => {
+    runRead(() => db.get(paymentAggregateQuery, paymentAggregateParams, { signal })),
+    runRead(() => db.get(gastosQuery, gastosParams, { signal })),
+    runRead(() => db.all('SELECT * FROM costs WHERE is_active = 1', [], { signal })).catch((error) => {
       if (isDashboardRequestAbort(error, signal)) throw error;
       logger.warn(`Error calculando costos desde tabla costs (no se aplicará costo automático): ${error.message}`);
       return [];
     }),
     localDateRange
-      ? getManualBusinessExpensesTotalForRange(localDateRange, { signal }).catch((error) => {
+      ? runRead(() => getManualBusinessExpensesTotalForRange(localDateRange, { signal })).catch((error) => {
         if (isDashboardRequestAbort(error, signal)) throw error;
         logger.warn('Error calculando costos variables manuales:', error.message);
         return 0;
@@ -409,7 +498,7 @@ export const getOperationalSnapshot = async (req, res) => {
       });
     }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const hiddenFilters = await getHiddenContactFilters({ signal: requestScope.signal });
     const hiddenContactCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
     const visibleLinkedContactCondition = hiddenContactCondition
@@ -498,10 +587,11 @@ export const getOperationalSnapshot = async (req, res) => {
       LIMIT ${DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT}
     `;
 
+    const runRead = createDashboardReadLimiter(requestScope.signal, 2);
     const [paymentRows, contactRows, appointmentRows] = await Promise.all([
-      db.all(paymentsQuery, paymentListWhere.params, { signal: requestScope.signal }),
-      db.all(contactsQuery, [range.startUtc, range.endUtc], { signal: requestScope.signal }),
-      db.all(appointmentsQuery, [range.startUtc, range.endUtc], { signal: requestScope.signal })
+      runRead(() => db.all(paymentsQuery, paymentListWhere.params, { signal: requestScope.signal })),
+      runRead(() => db.all(contactsQuery, [range.startUtc, range.endUtc], { signal: requestScope.signal })),
+      runRead(() => db.all(appointmentsQuery, [range.startUtc, range.endUtc], { signal: requestScope.signal }))
     ]);
 
     if (requestScope.signal.aborted || res.writableEnded || res.finished) return;
@@ -568,9 +658,12 @@ function buildPreviousDashboardRange(range) {
 async function computeDashboardMetrics(range, signal, { hiddenFilters } = {}) {
   const previousRange = buildPreviousDashboardRange(range);
   const sharedHiddenFilters = hiddenFilters || await getHiddenContactFilters({ signal });
+  // current y previous deben compartir EL MISMO carril. Crear un limitador por
+  // periodo volvería a permitir cuatro (o más) lecturas simultáneas.
+  const runRead = createDashboardReadLimiter(signal, 2);
   const [currentSnapshot, previousSnapshot] = await Promise.all([
-    computeFinancialSnapshot(range, signal, sharedHiddenFilters),
-    computeFinancialSnapshot(previousRange, signal, sharedHiddenFilters)
+    computeFinancialSnapshot(range, signal, sharedHiddenFilters, runRead),
+    computeFinancialSnapshot(previousRange, signal, sharedHiddenFilters, runRead)
   ]);
 
   return {
@@ -625,7 +718,7 @@ export const getMetrics = async (req, res) => {
     }
 
     logger.info(`Calculando métricas del dashboard desde ${startDate} hasta ${endDate}`);
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const metrics = await computeDashboardMetrics(range, requestScope.signal);
     logger.info(`Métricas calculadas: ROAS ${metrics.roas.value}, Ganancia Neta ${metrics.gananciaNeta.value}`);
 
@@ -877,7 +970,7 @@ export const getVisitorsData = async (req, res) => {
     }
 
     const identityExpression = getVisitorIdentityExpression();
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const timezone = range.appliedTimezone;
 
     // Ruta por bucket exacto (semana/quincena/trimestre/año): un COUNT(DISTINCT) por
@@ -943,7 +1036,7 @@ export const getLeadsData = async (req, res) => {
     }
 
     // Obtener timezone dinámico de HighLevel
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const timezone = range.appliedTimezone;
 
     // Usar getGroupExpression() con timezone dinámico
@@ -1003,7 +1096,7 @@ export const getAppointmentsData = async (req, res) => {
       return res.status(400).json([]);
     }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const timezone = range.appliedTimezone;
     const periods = parseChartPeriods(periodsParam, timezone);
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
@@ -1124,7 +1217,7 @@ export const getAttendancesData = async (req, res) => {
       return res.status(400).json([]);
     }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const timezone = range.appliedTimezone;
     const periods = parseChartPeriods(periodsParam, timezone);
     const isAttributed = scope === 'campaigns' || scope === 'attributed';
@@ -1215,7 +1308,7 @@ export const getSalesData = async (req, res) => {
     }
 
     // Obtener timezone dinámico de HighLevel
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const timezone = range.appliedTimezone;
 
     // Obtener filtro de contactos ocultos
@@ -1299,6 +1392,9 @@ export const getStorageStatus = async (req, res) => {
  * Usa la misma lógica que Analytics: site_source_name → source_platform → utm_source
  */
 export const getTrafficSources = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res, {
+    timeoutMs: DASHBOARD_ANALYTICS_DEADLINE_MS
+  })
   try {
     const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
 
@@ -1306,16 +1402,30 @@ export const getTrafficSources = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
     }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const range = await resolveDateRangeWithGHLTimezone({
+      startDate,
+      endDate,
+      signal: requestScope.signal
+    })
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
-    const hiddenFilters = shouldIncludeWhatsapp ? await getHiddenContactFilters() : []
+    const hiddenFilters = shouldIncludeWhatsapp
+      ? await getHiddenContactFilters({ signal: requestScope.signal })
+      : []
     const traffic = await getTrafficDistributions(range, {
       includeWeb: shouldIncludeWeb,
       includeWhatsapp: shouldIncludeWhatsapp,
-      hiddenFilters
+      hiddenFilters,
+      signal: requestScope.signal
     })
+
+    if (requestScope.timedOut) {
+      const deadlineError = new Error('Las fuentes de tráfico excedieron el presupuesto de ejecución')
+      deadlineError.code = 'dashboard_traffic_sources_deadline'
+      throw deadlineError
+    }
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return
 
     // Mapear colores por plataforma
     const colorMap = {
@@ -1355,8 +1465,22 @@ export const getTrafficSources = async (req, res) => {
 
     res.json({ success: true, data })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (!res.writableEnded && !res.finished) {
+        res.set?.('Retry-After', '3')
+        res.status(503).json({
+          success: false,
+          error: 'Las fuentes de tráfico siguen procesándose. Reintenta en unos segundos.',
+          retryable: true
+        })
+      }
+      return
+    }
+    if (isDashboardRequestAbort(error, requestScope.signal)) return
     logger.error(`Error en getTrafficSources: ${error.message}`)
     res.status(500).json({ success: false, error: 'Error al obtener fuentes de tráfico' })
+  } finally {
+    requestScope.cleanup()
   }
 }
 
@@ -1453,65 +1577,121 @@ async function getSourceBreakdownByMetric(
 
 /**
  * Payload unificado de la dona de "Origen" (Dashboard + Analíticas).
- * Devuelve la distribución de tráfico (6 dimensiones por visitantes únicos) y el
- * desglose por fuente de leads, citas y conversiones. El frontend cambia de vista
- * localmente sin volver a pedir datos.
+ * Por compatibilidad puede devolver las seis dimensiones y los desgloses de
+ * leads/citas/conversiones. Las cards web piden una sola dimensión y omiten los
+ * desgloses que no renderizan, para no escanear la misma tabla seis veces.
  */
+const ORIGIN_TRAFFIC_DIMENSIONS = new Set(['sources', 'platforms', 'devices', 'placements', 'browsers', 'os'])
+
 async function computeOriginDistribution(range, {
   includeWeb = true,
   includeWhatsapp = true,
+  dimension = null,
+  includeBreakdowns = true,
   hiddenFilters,
   attributionCalendarIds,
   signal
 } = {}) {
-  const [resolvedHiddenFilters, resolvedAttributionCalendarIds] = await Promise.all([
-    hiddenFilters || getHiddenContactFilters({ signal }),
-    attributionCalendarIds || getAttributionCalendarIds({ signal })
-  ]);
+  // Estas lecturas son pequeñas pero comparten el mismo pool que los agregados
+  // de abajo. Resolverlas en secuencia evita sumar conexiones justo cuando la
+  // base está bajo presión.
+  const needsHiddenFilters = includeBreakdowns || (
+    includeWhatsapp && (!dimension || dimension === 'sources' || dimension === 'platforms')
+  );
+  const resolvedHiddenFilters = hiddenFilters || (
+    needsHiddenFilters ? await getHiddenContactFilters({ signal }) : []
+  );
+  const resolvedAttributionCalendarIds = includeBreakdowns
+    ? (attributionCalendarIds || await getAttributionCalendarIds({ signal }))
+    : [];
 
-  const [traffic, leads, appointments, conversions, whatsappNumbers] = await Promise.all([
-    getTrafficDistributions(range, {
-      includeWeb,
-      includeWhatsapp,
-      hiddenFilters: resolvedHiddenFilters,
-      signal
-    }),
-    getSourceBreakdownByMetric('leads', range, { hiddenFilters: resolvedHiddenFilters, signal }),
-    getSourceBreakdownByMetric('appointments', range, {
-      hiddenFilters: resolvedHiddenFilters,
-      attributionCalendarIds: resolvedAttributionCalendarIds,
-      signal
-    }),
-    getSourceBreakdownByMetric('conversions', range, { hiddenFilters: resolvedHiddenFilters, signal }),
-    includeWhatsapp
-      ? getWhatsAppApiNumberBreakdown(range, { hiddenFilters: resolvedHiddenFilters, signal })
-      : []
-  ]);
+  // El endpoint anterior lanzaba cinco trabajos y tres copias del cálculo de
+  // atribución al mismo tiempo. En instalaciones pequeñas eso agotaba el pool y
+  // PostgreSQL terminaba reiniciándose. La respuesta conserva el mismo contrato,
+  // pero cada request usa una sola consulta pesada a la vez.
+  const traffic = await getTrafficDistributions(range, {
+    includeWeb,
+    includeWhatsapp,
+    dimension,
+    hiddenFilters: resolvedHiddenFilters,
+    signal
+  });
+  if (!includeBreakdowns) {
+    return { traffic, leads: [], appointments: [], conversions: [], whatsappNumbers: [] };
+  }
+  const leads = await getSourceBreakdownByMetric('leads', range, {
+    hiddenFilters: resolvedHiddenFilters,
+    signal
+  });
+  const appointments = await getSourceBreakdownByMetric('appointments', range, {
+    hiddenFilters: resolvedHiddenFilters,
+    attributionCalendarIds: resolvedAttributionCalendarIds,
+    signal
+  });
+  const conversions = await getSourceBreakdownByMetric('conversions', range, {
+    hiddenFilters: resolvedHiddenFilters,
+    signal
+  });
+  const whatsappNumbers = includeWhatsapp
+    ? await getWhatsAppApiNumberBreakdown(range, { hiddenFilters: resolvedHiddenFilters, signal })
+    : [];
 
   return { traffic, leads, appointments, conversions, whatsappNumbers };
 }
 
 export const getOriginDistribution = async (req, res) => {
-  const requestScope = createDashboardRequestAbortScope(res);
+  const requestScope = createDashboardRequestAbortScope(res, {
+    timeoutMs: DASHBOARD_ANALYTICS_DEADLINE_MS
+  });
   try {
-    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
+    const {
+      startDate,
+      endDate,
+      includeWeb = '1',
+      includeWhatsapp = '1',
+      dimension = '',
+      includeBreakdowns = '1'
+    } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
     }
+    if (dimension && !ORIGIN_TRAFFIC_DIMENSIONS.has(String(dimension))) {
+      return res.status(400).json({ success: false, error: 'Dimensión de origen no soportada' })
+    }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal })
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
     const data = await computeOriginDistribution(range, {
       includeWeb: shouldIncludeWeb,
       includeWhatsapp: shouldIncludeWhatsapp,
+      dimension: dimension ? String(dimension) : null,
+      includeBreakdowns: String(includeBreakdowns) !== '0',
       signal: requestScope.signal
     })
 
-    if (requestScope.signal.aborted) return;
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return;
+      return res.status(503).json({
+        success: false,
+        error: 'La distribución de origen tardó demasiado. Intenta nuevamente.',
+        code: 'dashboard_origin_deadline',
+        retryable: true
+      });
+    }
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return;
     res.json({ success: true, data })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return;
+      return res.status(503).json({
+        success: false,
+        error: 'La distribución de origen tardó demasiado. Intenta nuevamente.',
+        code: 'dashboard_origin_deadline',
+        retryable: true
+      });
+    }
     if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getOriginDistribution: ${error.message}`)
     logger.error(error.stack)
@@ -1618,7 +1798,7 @@ export const getFinancialOverview = async (req, res) => {
       });
     }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const data = await computeFinancialOverview(range, {
       scope,
       signal: requestScope.signal
@@ -1842,13 +2022,14 @@ async function computeFunnelData(range, {
     ];
   }
 
-  const [visitorsData, leadsData, appointmentsData, attendancesData, customersData] = await Promise.all([
-    db.get(visitorsQuery, visitorsParams, { signal }),
-    db.get(leadsQuery, contactRangeParams, { signal }),
-    db.get(appointmentsQuery, appointmentsParams, { signal }),
-    db.get(attendancesQuery, attendanceParams, { signal }),
-    db.get(customersQuery, customersParams, { signal })
-  ]);
+  // En el plan productivo de 0.1 CPU, estas cinco agregaciones no ganan tiempo
+  // real ejecutándose juntas: compiten por memoria/conexiones y alargan todas.
+  // El funnel conserva el mismo resultado usando un único carril de lectura.
+  const visitorsData = await db.get(visitorsQuery, visitorsParams, { signal });
+  const leadsData = await db.get(leadsQuery, contactRangeParams, { signal });
+  const appointmentsData = await db.get(appointmentsQuery, appointmentsParams, { signal });
+  const attendancesData = await db.get(attendancesQuery, attendanceParams, { signal });
+  const customersData = await db.get(customersQuery, customersParams, { signal });
 
   return [
     ...(includeWeb ? [{ stage: 'Visitantes', value: Number(visitorsData?.count || 0) }] : []),
@@ -1868,7 +2049,7 @@ export const getFunnelData = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
     }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal })
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const data = await computeFunnelData(range, {
       scope,
@@ -1900,7 +2081,9 @@ function normalizeDashboardScope(value) {
  * siguen usando sus endpoints focales.
  */
 export const getMobileAnalyticsSnapshot = async (req, res) => {
-  const requestScope = createDashboardRequestAbortScope(res);
+  const requestScope = createDashboardRequestAbortScope(res, {
+    timeoutMs: DASHBOARD_ANALYTICS_DEADLINE_MS
+  });
   try {
     const {
       startDate,
@@ -1914,43 +2097,54 @@ export const getMobileAnalyticsSnapshot = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' });
     }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const shouldIncludeWeb = String(includeWeb) !== '0';
     const resolvedFunnelScope = normalizeDashboardScope(funnelScope);
     const resolvedFinancialScope = normalizeDashboardScope(financialScope);
+    const runContextRead = createDashboardReadLimiter(requestScope.signal, 2);
     const [hiddenFilters, configuredCalendarIds, hlConfig, whatsappPhoneNumbers] = await Promise.all([
-      getHiddenContactFilters({ signal: requestScope.signal }),
-      getAttributionCalendarIds({ signal: requestScope.signal }),
-      db.get('SELECT custom_labels FROM highlevel_config LIMIT 1', [], { signal: requestScope.signal }),
-      getLocalWhatsAppAnalyticsPhoneNumbers({ signal: requestScope.signal })
+      runContextRead(() => getHiddenContactFilters({ signal: requestScope.signal })),
+      runContextRead(() => getAttributionCalendarIds({ signal: requestScope.signal })),
+      runContextRead(() => db.get('SELECT custom_labels FROM highlevel_config LIMIT 1', [], { signal: requestScope.signal })),
+      runContextRead(() => getLocalWhatsAppAnalyticsPhoneNumbers({ signal: requestScope.signal }))
     ]);
     const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
     const labels = parseDashboardLabels(hlConfig);
 
-    const [metrics, origin, funnel, financialChart] = await Promise.all([
-      computeDashboardMetrics(range, requestScope.signal, { hiddenFilters }),
-      computeOriginDistribution(range, {
-        includeWeb: shouldIncludeWeb,
-        includeWhatsapp: true,
-        hiddenFilters,
-        attributionCalendarIds,
-        signal: requestScope.signal
-      }),
-      computeFunnelData(range, {
-        scope: resolvedFunnelScope,
-        includeWeb: shouldIncludeWeb,
-        hiddenFilters,
-        attributionCalendarIds,
-        labels,
-        signal: requestScope.signal
-      }),
-      computeFinancialOverview(range, {
-        scope: resolvedFinancialScope,
-        hiddenFilters,
-        signal: requestScope.signal
-      })
-    ]);
+    // El snapshot móvil antes disparaba cuatro familias de agregados pesados al
+    // mismo tiempo. En una sola CPU eso produjo presión de pool sin paralelismo
+    // útil; resolverlas por carril protege también las vistas de escritorio.
+    const metrics = await computeDashboardMetrics(range, requestScope.signal, { hiddenFilters });
+    const origin = await computeOriginDistribution(range, {
+      includeWeb: shouldIncludeWeb,
+      includeWhatsapp: true,
+      hiddenFilters,
+      attributionCalendarIds,
+      signal: requestScope.signal
+    });
+    const funnel = await computeFunnelData(range, {
+      scope: resolvedFunnelScope,
+      includeWeb: shouldIncludeWeb,
+      hiddenFilters,
+      attributionCalendarIds,
+      labels,
+      signal: requestScope.signal
+    });
+    const financialChart = await computeFinancialOverview(range, {
+      scope: resolvedFinancialScope,
+      hiddenFilters,
+      signal: requestScope.signal
+    });
 
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return;
+      return res.status(503).json({
+        success: false,
+        error: 'Analíticas móvil tardó demasiado. Intenta nuevamente.',
+        code: 'mobile_analytics_deadline',
+        retryable: true
+      });
+    }
     if (requestScope.signal.aborted || res.writableEnded || res.finished) return;
     res.json({
       success: true,
@@ -1972,6 +2166,15 @@ export const getMobileAnalyticsSnapshot = async (req, res) => {
       }
     });
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return;
+      return res.status(503).json({
+        success: false,
+        error: 'Analíticas móvil tardó demasiado. Intenta nuevamente.',
+        code: 'mobile_analytics_deadline',
+        retryable: true
+      });
+    }
     if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getMobileAnalyticsSnapshot: ${error.message}`);
     logger.error(error.stack);

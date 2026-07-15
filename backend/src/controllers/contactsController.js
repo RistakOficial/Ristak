@@ -1516,7 +1516,9 @@ const loadContactVideoEngagements = async (contact = {}, { limit = JOURNEY_DEFAU
   }
 
   const videoTimestamp = 'COALESCE(vps.first_event_at, vps.started_at, vps.last_event_at)'
-  const videoCursorKey = "('video_playback:' || COALESCE(vps.playback_id, vps.id))"
+  // playback_id es TEXT y el id histórico puede ser UUID en PostgreSQL. El
+  // COALESCE sin casts rompía todo el Journey antes de devolver una sola fila.
+  const videoCursorKey = "('video_playback:' || COALESCE(CAST(vps.playback_id AS TEXT), CAST(vps.id AS TEXT)))"
   const cursorCondition = beforeDate
     ? `AND (
         ${timestampSortExpression(videoTimestamp)} < ${timestampSortParameterExpression()}
@@ -1529,34 +1531,38 @@ const loadContactVideoEngagements = async (contact = {}, { limit = JOURNEY_DEFAU
   if (beforeDate) params.push(beforeDate, beforeDate, beforeCursor || '')
 
   const rows = await db.all(`
+    WITH selected_video_sessions AS (
+      SELECT vps.*
+      FROM video_playback_sessions vps
+      WHERE (${conditions.join(' OR ')})
+        AND (
+          COALESCE(vps.play_count, 0) > 0
+          OR COALESCE(vps.watched_seconds, 0) > 0
+          OR COALESCE(vps.max_progress_percent, 0) > 0
+          OR COALESCE(vps.ended, 0) = 1
+        )
+        ${cursorCondition}
+      ORDER BY ${timestampSortExpression(videoTimestamp)} DESC, ${videoCursorKey} DESC
+      LIMIT ?
+    ), video_event_stats AS (
+      SELECT
+        vpe.playback_id,
+        MIN(vpe.position_seconds) AS min_position_seconds,
+        MAX(vpe.position_seconds) AS max_position_seconds,
+        COUNT(*) AS event_count
+      FROM video_playback_events vpe
+      INNER JOIN selected_video_sessions selected
+        ON selected.playback_id = vpe.playback_id
+      GROUP BY vpe.playback_id
+    )
     SELECT
       vps.*,
-      COALESCE((
-        SELECT MIN(position_seconds)
-        FROM video_playback_events vpe
-        WHERE vpe.playback_id = vps.playback_id
-      ), 0) as min_position_seconds,
-      COALESCE((
-        SELECT MAX(position_seconds)
-        FROM video_playback_events vpe
-        WHERE vpe.playback_id = vps.playback_id
-      ), vps.max_position_seconds, 0) as max_event_position_seconds,
-      COALESCE((
-        SELECT COUNT(*)
-        FROM video_playback_events vpe
-        WHERE vpe.playback_id = vps.playback_id
-      ), 0) as event_count
-    FROM video_playback_sessions vps
-    WHERE (${conditions.join(' OR ')})
-      AND (
-        COALESCE(vps.play_count, 0) > 0
-        OR COALESCE(vps.watched_seconds, 0) > 0
-        OR COALESCE(vps.max_progress_percent, 0) > 0
-        OR COALESCE(vps.ended, 0) = 1
-      )
-      ${cursorCondition}
+      COALESCE(stats.min_position_seconds, 0) AS min_position_seconds,
+      COALESCE(stats.max_position_seconds, vps.max_position_seconds, 0) AS max_event_position_seconds,
+      COALESCE(stats.event_count, 0) AS event_count
+    FROM selected_video_sessions vps
+    LEFT JOIN video_event_stats stats ON stats.playback_id = vps.playback_id
     ORDER BY ${timestampSortExpression(videoTimestamp)} DESC, ${videoCursorKey} DESC
-    LIMIT ?
   `, [...params, Math.max(1, Math.min(Number(limit) || JOURNEY_DEFAULT_PAGE_LIMIT, JOURNEY_MESSAGE_MAX_LIMIT))])
 
   return rows.reverse().map(row => buildVideoEngagementJourneyData(row, contact))

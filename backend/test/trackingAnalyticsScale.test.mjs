@@ -353,6 +353,35 @@ test('sessions/search usa cursor started_at+id sin duplicados ni omisiones', asy
   }
 })
 
+test('sessions/search no barre el rango con búsquedas menores a tres caracteres y respeta aborto', async () => {
+  const shortSearch = await searchTrackingSessions({
+    start: '2088-08-01',
+    end: '2088-08-01',
+    q: 'ab',
+    column: 'all',
+    limit: 50
+  })
+
+  assert.deepEqual(shortSearch, {
+    items: [],
+    limit: 50,
+    hasMore: false,
+    nextCursor: null,
+    searchMinLength: 3
+  })
+
+  const controller = new AbortController()
+  controller.abort()
+  await assert.rejects(
+    searchTrackingSessions({
+      start: '2088-08-01',
+      end: '2088-08-01',
+      signal: controller.signal
+    }),
+    error => error?.name === 'AbortError'
+  )
+})
+
 test('sessions/search pagina conversion_stage por chunks sin materializar todo el rango', async () => {
   const prefix = uniquePrefix('tracking_stage_cursor')
   const timezone = 'UTC'

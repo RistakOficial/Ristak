@@ -22,6 +22,16 @@ async function importSharedRequestModule() {
   return import(`data:text/javascript;base64,${Buffer.from(transpiled).toString('base64')}`)
 }
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 test('un consumidor aborta sin cancelar el singleflight que otro consumidor comparte', async () => {
   const { getOrCreateSharedRequest } = await importSharedRequestModule()
   const inflight = new Map()
@@ -65,7 +75,47 @@ test('un consumidor aborta sin cancelar el singleflight que otro consumidor comp
   assert.equal(requestCount, 1)
 })
 
-test('Dashboard conecta el signal al consumidor, no al fetch compartido', async () => {
+test('desregistrar un singleflight conserva consumidores viejos y fuerza transporte nuevo', async () => {
+  const { detachSharedRequests, getOrCreateSharedRequest } = await importSharedRequestModule()
+  const inflight = new Map()
+  const firstGate = deferred()
+  let requestCount = 0
+  let firstSignal
+
+  const createRequest = signal => {
+    requestCount += 1
+    if (requestCount === 1) {
+      firstSignal = signal
+      return firstGate.promise
+    }
+    return Promise.resolve({ revision: 2 })
+  }
+
+  const first = getOrCreateSharedRequest({
+    inflight,
+    key: 'same-range',
+    createRequest,
+    abortWhenUnused: true
+  })
+  detachSharedRequests(inflight)
+
+  assert.equal(firstSignal?.aborted, false)
+  const second = getOrCreateSharedRequest({
+    inflight,
+    key: 'same-range',
+    createRequest,
+    abortWhenUnused: true
+  })
+  assert.equal(requestCount, 2)
+  assert.deepEqual(await second, { revision: 2 })
+
+  firstGate.resolve({ revision: 1 })
+  assert.deepEqual(await first, { revision: 1 })
+  await Promise.resolve()
+  assert.equal(inflight.size, 0)
+})
+
+test('Dashboard cancela el fetch compartido sólo cuando se va el último consumidor', async () => {
   const source = await readFile(join(repoRoot, 'frontend/src/services/dashboardService.ts'), 'utf8')
   const metricsMethod = source.slice(
     source.indexOf('async getDashboardMetrics'),
@@ -75,6 +125,8 @@ test('Dashboard conecta el signal al consumidor, no al fetch compartido', async 
   assert.match(metricsMethod, /getOrCreateSharedRequest\(\{/)
   assert.match(metricsMethod, /inflight: dashboardMetricsInflight/)
   assert.match(metricsMethod, /signal: options\.signal/)
-  assert.match(metricsMethod, /fetch\(apiUrl\(`\/api\/dashboard\/metrics\?\$\{queryParams\}`\)\)/)
+  assert.match(metricsMethod, /abortWhenUnused: true/)
+  assert.match(metricsMethod, /createRequest: sharedSignal => scheduleDashboardHeavyRead\(\{[\s\S]*signal: sharedSignal/)
+  assert.match(metricsMethod, /fetch\(apiUrl\(`\/api\/dashboard\/metrics\?\$\{queryParams\}`\), \{ signal \}\)/)
   assert.doesNotMatch(metricsMethod, /fetch\([\s\S]*signal:\s*options\.signal/)
 })

@@ -14,6 +14,19 @@ const toRanked = (bucketMap, limit = 10) =>
 
 const isPostgres = databaseDialect === 'postgres'
 const MESSAGE_FILTER_OPTION_LIMIT = 50
+const TRAFFIC_DISTRIBUTION_DIMENSIONS = new Set([
+  'sources',
+  'platforms',
+  'devices',
+  'placements',
+  'browsers',
+  'os'
+])
+
+const fallbackUnlessAborted = (fallback, signal) => (error) => {
+  if (signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error
+  return fallback
+}
 
 const hasText = (value) => {
   if (value === null || value === undefined) return false
@@ -199,7 +212,7 @@ function normalizeMessageFilters(filters = {}) {
 }
 
 async function getMessageFirstSeenCount(range, providedHiddenFilters = null, signal) {
-  const hiddenFilters = providedHiddenFilters || await getHiddenContactFilters()
+  const hiddenFilters = providedHiddenFilters || await getHiddenContactFilters({ signal })
   return getProjectedMessageFirstSeenCount(range, {
     hiddenFilters,
     signal,
@@ -400,12 +413,26 @@ async function getMessageAnalyticsAggregateRows(range, {
 }
 
 async function getMessageConnectionStatus(signal) {
-  const [phoneRows, metaConfig, metaContactRows, emailConfigRow] = await Promise.all([
-    db.get('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers', [], { signal }).catch(() => ({ total: 0 })),
-    getMetaSocialConfig().catch(() => null),
-    db.get('SELECT COUNT(*) as total FROM meta_social_contacts', [], { signal }).catch(() => ({ total: 0 })),
-    db.get("SELECT config_value FROM app_config WHERE config_key = 'email_smtp_config'", [], { signal }).catch(() => null)
-  ])
+  // Son lecturas chicas, pero antes abrían cuatro conexiones simultáneas en
+  // medio de un agregado ya pesado. En conjunto con tracking y dashboard una
+  // sola visita a Analíticas podía superar el pool completo de la instalación.
+  const phoneRows = await db.get(
+    'SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers',
+    [],
+    { signal }
+  ).catch(fallbackUnlessAborted({ total: 0 }, signal))
+  const metaConfig = await getMetaSocialConfig({ migratePlaintext: false })
+    .catch(fallbackUnlessAborted(null, signal))
+  const metaContactRows = await db.get(
+    'SELECT COUNT(*) as total FROM meta_social_contacts',
+    [],
+    { signal }
+  ).catch(fallbackUnlessAborted({ total: 0 }, signal))
+  const emailConfigRow = await db.get(
+    "SELECT config_value FROM app_config WHERE config_key = 'email_smtp_config'",
+    [],
+    { signal }
+  ).catch(fallbackUnlessAborted(null, signal))
 
   const emailConfig = parseJsonSafe(emailConfigRow?.config_value, {})
   return {
@@ -420,19 +447,19 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
   const normalizedGroupBy = ['day', 'month', 'year'].includes(groupBy) ? groupBy : 'day'
   const normalizedFilters = normalizeMessageFilters(filters)
   const hasActiveFilters = normalizedFilters.channels.length > 0 || normalizedFilters.sources.length > 0
-  const hiddenFilters = await getHiddenContactFilters()
-  const [aggregateRows, connectionStatus, firstSeenCount] = await Promise.all([
-    getMessageAnalyticsAggregateRows(range, {
-      groupBy: normalizedGroupBy,
-      filters: normalizedFilters,
-      hiddenFilters,
-      signal
-    }),
-    getMessageConnectionStatus(signal),
-    hasActiveFilters
-      ? Promise.resolve({ count: null, projectionReady: true, projectionStatus: 'filtered' })
-      : getMessageFirstSeenCount(range, hiddenFilters, signal)
-  ])
+  const hiddenFilters = await getHiddenContactFilters({ signal })
+  // Mantener el mismo payload sin abrir hasta seis conexiones a la vez. El
+  // agregado es la parte dominante; los snapshots auxiliares se leen después.
+  const aggregateRows = await getMessageAnalyticsAggregateRows(range, {
+    groupBy: normalizedGroupBy,
+    filters: normalizedFilters,
+    hiddenFilters,
+    signal
+  })
+  const connectionStatus = await getMessageConnectionStatus(signal)
+  const firstSeenCount = hasActiveFilters
+    ? { count: null, projectionReady: true, projectionStatus: 'filtered' }
+    : await getMessageFirstSeenCount(range, hiddenFilters, signal)
   const metricsRow = aggregateRows.find(row => row.row_type === 'metrics') || {}
   const inboundMessages = Number(metricsRow.count_value || 0)
   const conversations = Number(metricsRow.secondary_value || 0)
@@ -502,8 +529,7 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
   // Este endpoint se conserva por compatibilidad, pero jamás debe descargar el
   // historial crudo. Las cuatro métricas tienen cardinalidad fija y se calculan
   // dentro de la base aunque el periodo contenga millones de mensajes.
-  const [aggregateRow, trendRows, firstSeenRow, phoneRows] = await Promise.all([
-    db.get(`
+  const aggregateRow = await db.get(`
       SELECT
         COUNT(*) AS inbound_messages,
         COUNT(DISTINCT ${identityExpr}) AS conversations,
@@ -516,18 +542,19 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
       LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
       LEFT JOIN contacts c ON c.id = msg.contact_id
       WHERE ${baseConditions.join(' AND ')}
-    `, [range.startUtc, range.endUtc]),
-    db.all(`
+    `, [range.startUtc, range.endUtc])
+  const trendRows = await db.all(`
       SELECT ${periodExpr} as label, COUNT(*) as messages
       FROM whatsapp_api_messages msg
       LEFT JOIN contacts c ON c.id = msg.contact_id
       WHERE ${baseConditions.join(' AND ')}
       GROUP BY label
       ORDER BY label ASC
-    `, [range.startUtc, range.endUtc]),
-    getWhatsAppFirstSeenCount(range, hiddenFilters),
-    db.get('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers').catch(() => ({ total: 0 }))
-  ])
+    `, [range.startUtc, range.endUtc])
+  const firstSeenRow = await getWhatsAppFirstSeenCount(range, hiddenFilters)
+  const phoneRows = await db.get(
+    'SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers'
+  ).catch(() => ({ total: 0 }))
 
   const inboundMessages = Number(aggregateRow?.inbound_messages || 0)
   const conversations = Number(aggregateRow?.conversations || 0)
@@ -565,11 +592,18 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
  */
 export async function getTrafficDistributions(
   range,
-  { includeWeb = true, includeWhatsapp = true, hiddenFilters: suppliedHiddenFilters = null, signal } = {}
+  {
+    includeWeb = true,
+    includeWhatsapp = true,
+    hiddenFilters: suppliedHiddenFilters = null,
+    dimension = null,
+    signal
+  } = {}
 ) {
+  const selectedDimension = TRAFFIC_DISTRIBUTION_DIMENSIONS.has(dimension) ? dimension : null
   const hiddenFilters = Array.isArray(suppliedHiddenFilters)
     ? suppliedHiddenFilters
-    : (includeWhatsapp ? await getHiddenContactFilters() : [])
+    : (includeWhatsapp ? await getHiddenContactFilters({ signal }) : [])
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const hiddenSql = hiddenCondition ? `AND (msg.contact_id IS NULL OR ${hiddenCondition})` : ''
   const webSource = buildNormalizedTrafficSourceSql([
@@ -580,6 +614,17 @@ export async function getTrafficDistributions(
   ])
   const whatsappSource = getWhatsAppMessageSourceSql('msg', 'attr', 'c')
   const rawFacetLimit = 100
+  const dimensionBranches = {
+    sources: "SELECT 'sources' AS dimension, source_name AS name, identity FROM source_identities",
+    platforms: "SELECT 'platforms' AS dimension, source_name AS name, identity FROM source_identities",
+    devices: "SELECT 'devices' AS dimension, device_name AS name, 'web:' || visitor_id AS identity FROM web_sessions",
+    placements: "SELECT 'placements' AS dimension, placement_name AS name, 'web:' || visitor_id AS identity FROM web_sessions",
+    browsers: "SELECT 'browsers' AS dimension, browser_name AS name, 'web:' || visitor_id AS identity FROM web_sessions",
+    os: "SELECT 'os' AS dimension, os_name AS name, 'web:' || visitor_id AS identity FROM web_sessions"
+  }
+  const selectedBranches = selectedDimension
+    ? [dimensionBranches[selectedDimension]]
+    : Object.values(dimensionBranches)
 
   const rows = await db.all(`
     WITH
@@ -631,17 +676,7 @@ export async function getTrafficDistributions(
       SELECT source_name, identity FROM whatsapp_identities
     ),
     dimension_values AS (
-      SELECT 'sources' AS dimension, source_name AS name, identity FROM source_identities
-      UNION ALL
-      SELECT 'platforms' AS dimension, source_name AS name, identity FROM source_identities
-      UNION ALL
-      SELECT 'devices' AS dimension, device_name AS name, 'web:' || visitor_id AS identity FROM web_sessions
-      UNION ALL
-      SELECT 'placements' AS dimension, placement_name AS name, 'web:' || visitor_id AS identity FROM web_sessions
-      UNION ALL
-      SELECT 'browsers' AS dimension, browser_name AS name, 'web:' || visitor_id AS identity FROM web_sessions
-      UNION ALL
-      SELECT 'os' AS dimension, os_name AS name, 'web:' || visitor_id AS identity FROM web_sessions
+      ${selectedBranches.join('\nUNION ALL\n')}
     ),
     dimension_counts AS (
       SELECT dimension, name, COUNT(DISTINCT identity) AS item_count

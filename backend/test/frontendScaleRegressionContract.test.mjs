@@ -36,7 +36,8 @@ test('los drill-downs de contactos acotan citas y paginan sin mentir sobre el to
     repoFile('frontend/src/components/common/ContactDetailsModal/ContactDetailsModal.tsx')
   ])
 
-  assert.match(tracking, /fetchBoundedAppointmentsForContacts\(contactIds, limitPerContact = 5\)/)
+  assert.match(tracking, /fetchBoundedAppointmentsForContacts\(contactIds, limitPerContact = 5, \{ signal \} = \{\}\)/)
+  assert.match(tracking, /ranked_appointments[\s\S]*?\[\.\.\.contactIds, limitPerContact\], \{ signal \}\)/)
   assert.match(tracking, /appointmentsTotal: appointmentSummary\.total/)
   assert.match(tracking, /appointmentsTruncated: appointmentSummary\.total > appointmentSummary\.appointments\.length/)
   assert.match(reportsService, /appointmentsTotal\?: number/)
@@ -71,6 +72,8 @@ test('Chat Desktop y Phone cargan páginas profundas con keyset exacto, no con o
     assert.match(source, /chatListCursorRef\.current !== cursor/)
     assert.doesNotMatch(source, /chatListOffsetRef/)
     assert.doesNotMatch(source, /offset: String\(pageOffset\)/)
+    assert.doesNotMatch(source, /CHAT_LIST_BACKGROUND_LOAD_CAP/)
+    assert.match(source, /bottomGap <= prefetchDistance[\s\S]{0,120}loadChats\(\{ silent: true/)
   }
 })
 
@@ -105,11 +108,12 @@ test('Dashboard pinta su ultimo snapshot antes de revalidar y cancela rangos obs
   assert.match(service, /peekDashboardMetrics/)
   assert.match(service, /DASHBOARD_METRICS_STALE_MS/)
   assert.match(service, /registerAuthScopedCacheInvalidator\(clearDashboardMetricSnapshots\)/)
-  assert.match(service, /registerRistakApiReadCacheInvalidator\(clearDashboardMetricSnapshots\)/)
+  assert.match(service, /registerRistakApiReadCacheInvalidator\(clearDashboardMetricSnapshots, \{[\s\S]*pathPrefixes: \['\/api\/dashboard'\]/)
   assert.match(service, /principalRevision === getAuthScopedCacheRevision\(\)/)
   assert.match(page, /useState<DashboardMetrics \| null>\(\(\) => \(/)
   assert.match(page, /const cachedMetrics = dashboardService\.peekDashboardMetrics/)
-  assert.match(page, /forceRefresh: Boolean\(cachedMetrics\)/)
+  assert.doesNotMatch(page, /forceRefresh: Boolean\(cachedMetrics\)/)
+  assert.match(service, /if \(!options\.forceRefresh && cached/)
   assert.match(page, /controller\.abort\(\)/)
 })
 
@@ -157,7 +161,7 @@ test('caches de integraciones y analíticas se aíslan por cuenta y siguen inval
   assert.match(integrationsController, /highlevelStatus\.accessToken = null/)
   assert.match(integrationsController, /if \(verifyExternal\) \{[\s\S]*verifyHighLevelConnection\(config\)/)
   assert.match(authFetch, /registerRistakApiReadCacheInvalidator/)
-  assert.match(analytics, /registerRistakApiReadCacheInvalidator\(invalidateTrackingAnalyticsSummaryCache\)/)
+  assert.match(analytics, /registerRistakApiReadCacheInvalidator\(invalidateTrackingAnalyticsSummaryCache, \{[\s\S]*pathPrefixes: \['\/api\/tracking\/analytics'\]/)
 })
 
 test('eventos backend de pagos y conversiones invalidan el resumen agregado', async () => {

@@ -55,7 +55,6 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import automationsService from '@/services/automationsService'
 import { prefetchRouteModule } from '@/routing/routeModules'
 import { getFirstAllowedSettingsPath } from '@/pages/Settings/settingsNav'
 
@@ -678,7 +677,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   } = useTheme()
   const { user } = useAuth()
   const settingsDestination = useMemo(() => getFirstAllowedSettingsPath(user), [user])
-  const canPreloadAutomations = hasModuleAccess(user, 'automations', 'read')
   const canPreloadSites = hasModuleAccess(user, 'sites', 'read')
 
   useEffect(() => cancelAllSidebarRoutePrefetches, [])
@@ -715,22 +713,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle)
     }
   }, [canPreloadSites, location.pathname])
-
-  // Precalienta la librería de automatizaciones (abre sin parpadeo) solo cuando
-  // el plan y el permiso del usuario incluyen Automatizaciones.
-  React.useEffect(() => {
-    if (!canPreloadAutomations) return
-
-    const timer = window.setTimeout(() => {
-      void automationsService.getOverview({
-        suppressFeatureNotAvailableToast: true,
-        folderId: 'root',
-        includeReview: false,
-        limit: 50
-      }).catch(() => undefined)
-    }, 2500)
-    return () => window.clearTimeout(timer)
-  }, [canPreloadAutomations])
 
   const { isInitialized } = useInitialization()
   const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>('sidebar_navigation_order', [])

@@ -6,6 +6,85 @@ export function createDatabaseAbortError() {
 }
 
 /**
+ * Espera una conexion del pool sin ignorar que el request ya fue abandonado.
+ * `pg.Pool` no permite retirar un waiter de su cola; si la conexion llega tarde,
+ * se libera de inmediato para no filtrarla ni ejecutar trabajo huérfano.
+ */
+export function acquireAbortablePostgresClient({ pool, signal, onLateReleaseError }) {
+  if (signal?.aborted) return Promise.reject(createDatabaseAbortError())
+
+  let pendingClient
+  try {
+    pendingClient = pool.connect()
+  } catch (error) {
+    return Promise.reject(error)
+  }
+  if (!signal) return pendingClient
+
+  return new Promise((resolve, reject) => {
+    let finished = false
+    const cleanup = () => signal.removeEventListener('abort', onAbort)
+    const onAbort = () => {
+      if (finished) return
+      finished = true
+      cleanup()
+      reject(createDatabaseAbortError())
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+
+    Promise.resolve(pendingClient).then(
+      client => {
+        if (finished) {
+          try {
+            client.release()
+          } catch (error) {
+            onLateReleaseError?.(error)
+          }
+          return
+        }
+        finished = true
+        cleanup()
+        resolve(client)
+      },
+      error => {
+        if (finished) return
+        finished = true
+        cleanup()
+        reject(error)
+      }
+    )
+  })
+}
+
+export function waitForDatabaseRetry(ms, signal) {
+  if (signal?.aborted) return Promise.reject(createDatabaseAbortError())
+  if (!signal) return new Promise(resolve => setTimeout(resolve, Math.max(0, ms)))
+
+  return new Promise((resolve, reject) => {
+    let timer = null
+    const cleanup = () => signal.removeEventListener('abort', onAbort)
+    const onAbort = () => {
+      if (timer !== null) clearTimeout(timer)
+      cleanup()
+      reject(createDatabaseAbortError())
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    timer = setTimeout(() => {
+      timer = null
+      cleanup()
+      resolve()
+    }, Math.max(0, ms))
+  })
+}
+
+/**
  * Ejecuta una consulta y, si el consumidor desaparece, cancela el backend de
  * PostgreSQL antes de permitir que la conexion vuelva al pool.
  *
@@ -19,7 +98,8 @@ export async function runCancelablePostgresQuery({
   params = [],
   signal,
   cancelBackend,
-  onCancelError
+  onCancelError,
+  destroyClient
 }) {
   if (signal?.aborted) throw createDatabaseAbortError()
 
@@ -30,8 +110,17 @@ export async function runCancelablePostgresQuery({
     if (!cancellation) {
       cancellation = Promise.resolve()
         .then(() => cancelBackend(client.processID))
-        .catch((error) => {
+        .catch(async (error) => {
           onCancelError?.(error)
+          // Si el canal reservado también falló, esperar `client.query()` deja
+          // vivo exactamente el scan que el deadline debía cortar. Destruir la
+          // conexión de trabajo es el último recurso seguro: el pool la
+          // reemplaza y el query pendiente rechaza en vez de quedar huérfano.
+          try {
+            await destroyClient?.(error)
+          } catch (destroyError) {
+            onCancelError?.(destroyError)
+          }
           return null
         })
     }

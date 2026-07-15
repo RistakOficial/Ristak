@@ -2,6 +2,7 @@ import { databaseDialect, db } from '../config/database.js'
 import { BACKFILL_JOB_PRIORITY } from '../jobs/backfillJobCoordinator.js'
 import { scheduleProjectionBackfillJob } from '../jobs/projectionBackfillScheduler.js'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 
 const WHATSAPP_STATUS_PROJECTION_VERSION = 1
 
@@ -38,11 +39,15 @@ const METRIC_FIELDS = Object.freeze({
 const WHATSAPP_STATUS_BACKFILL_KEY = 'whatsapp-status-projection'
 const METRIC_DELTA_BATCH_SIZE = 5_000
 const ROUTING_DELTA_BATCH_SIZE = 500
-const MAX_DELTA_BATCHES_PER_RUN = 20
-const PROJECTION_MONITOR_MS = 15_000
+// Una ejecución cede la cola global después de un lote. Con backlog grande,
+// WhatsApp no puede monopolizar el único carril de backfills del CRM.
+const MAX_DELTA_BATCHES_PER_RUN = 1
+const PROJECTION_RETRY_MIN_MS = 1_000
+const PROJECTION_RETRY_MAX_MS = 60_000
 
-let projectionMonitor = null
+let projectionSchedulerStarted = false
 let projectionRetryTimer = null
+let projectionRetryDelayMs = PROJECTION_RETRY_MIN_MS
 
 function asCount(value) {
   const count = Number(value || 0)
@@ -114,17 +119,34 @@ async function readProjectionSnapshot() {
 
 async function readProjectionState(database = db, { lock = false, dialect = databaseDialect } = {}) {
   const rowLock = lock && dialect === 'postgres' ? ' FOR UPDATE' : ''
-  return database.get(`
-    SELECT projection_version, status
-    FROM whatsapp_status_projection_state
-    WHERE singleton_id = 1${rowLock}
-  `).catch(() => null)
+  try {
+    return await database.get(`
+      SELECT projection_version, status
+      FROM whatsapp_status_projection_state
+      WHERE singleton_id = 1${rowLock}
+    `)
+  } catch (error) {
+    if (['42P01', '42703'].includes(String(error?.code || '').toUpperCase())) return null
+    throw error
+  }
+}
+
+async function lockWhatsAppStatusProjectionWorker(transaction, dialect) {
+  if (dialect !== 'postgres') return
+  // Serializa workers entre instancias sin bloquear los triggers de ingestión.
+  // El singleton se bloquea únicamente durante el corte final a ready.
+  await transaction.get(`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended('ristak-whatsapp-status-projection-worker', 0)
+    ) AS locked
+  `)
 }
 
 async function buildPostgresBaseline(database = db, { dialect = databaseDialect } = {}) {
   return database.transaction(async (transaction) => {
     await transaction.exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-    const state = await readProjectionState(transaction, { lock: true, dialect })
+    await lockWhatsAppStatusProjectionWorker(transaction, dialect)
+    const state = await readProjectionState(transaction, { dialect })
     if (!state || Number(state.projection_version) !== WHATSAPP_STATUS_PROJECTION_VERSION) {
       return { skipped: true, reason: 'state-unavailable' }
     }
@@ -195,12 +217,29 @@ async function buildPostgresBaseline(database = db, { dialect = databaseDialect 
         [routingDeltaMax]
       )
     }
+    return { skipped: false, metricDeltaMax, routingDeltaMax }
+  })
+}
+
+async function markPostgresProjectionReplaying(database = db, { dialect = databaseDialect } = {}) {
+  return database.transaction(async (transaction) => {
+    await lockWhatsAppStatusProjectionWorker(transaction, dialect)
+    // Esta transacción no conserva locks de contactos/routing. El singleton es
+    // siempre el primer lock de datos, igual que en los triggers de ingestión.
+    const state = await readProjectionState(transaction, { lock: true, dialect })
+    if (!state || Number(state.projection_version) !== WHATSAPP_STATUS_PROJECTION_VERSION) {
+      return { ready: false, skipped: true, reason: 'state-unavailable' }
+    }
+    const status = String(state.status || '').toLowerCase()
+    if (status === 'ready') return { ready: true, skipped: true, reason: 'ready' }
+    if (status === 'replaying') return { ready: false, skipped: true, reason: 'replaying' }
+
     await transaction.run(`
       UPDATE whatsapp_status_projection_state
       SET status = 'replaying', updated_at = CURRENT_TIMESTAMP
       WHERE singleton_id = 1 AND projection_version = ?
     `, [WHATSAPP_STATUS_PROJECTION_VERSION])
-    return { skipped: false, metricDeltaMax, routingDeltaMax }
+    return { ready: false, skipped: false, reason: 'replaying' }
   })
 }
 
@@ -221,9 +260,13 @@ function aggregateMetricDeltas(rows = []) {
 
 async function drainPostgresDeltaBatch(database = db, { dialect = databaseDialect } = {}) {
   return database.transaction(async (transaction) => {
-    const state = await readProjectionState(transaction, { lock: true, dialect })
+    await lockWhatsAppStatusProjectionWorker(transaction, dialect)
+    const state = await readProjectionState(transaction, { dialect })
     if (!state || Number(state.projection_version) !== WHATSAPP_STATUS_PROJECTION_VERSION) {
       return { ready: false, processed: 0, reason: 'state-unavailable' }
+    }
+    if (String(state.status || '').toLowerCase() === 'ready') {
+      return { ready: true, processed: 0, alreadyReady: true }
     }
 
     const [metricRows, routingRows] = await Promise.all([
@@ -279,33 +322,8 @@ async function drainPostgresDeltaBatch(database = db, { dialect = databaseDialec
       )
     }
 
-    const pending = await transaction.get(`
-      SELECT
-        EXISTS(SELECT 1 FROM whatsapp_status_metric_deltas WHERE applied = FALSE LIMIT 1) AS metric_pending,
-        EXISTS(SELECT 1 FROM whatsapp_status_routing_deltas WHERE applied = FALSE LIMIT 1) AS routing_pending
-    `)
-    const hasPending = pending?.metric_pending === true || pending?.routing_pending === true ||
-      Number(pending?.metric_pending || 0) === 1 || Number(pending?.routing_pending || 0) === 1
-
-    if (!hasPending) {
-      await transaction.run('DELETE FROM whatsapp_contingency_restore_counts')
-      await transaction.run(`
-        INSERT INTO whatsapp_contingency_restore_counts (
-          previous_phone_number_id, contact_count, updated_at
-        )
-        SELECT previous_phone_number_id, COUNT(*), CURRENT_TIMESTAMP
-        FROM whatsapp_routing_latest_projection
-        WHERE source = 'contingency'
-          AND previous_phone_number_id IS NOT NULL
-        GROUP BY previous_phone_number_id
-      `)
-      await transaction.run(`
-        UPDATE whatsapp_status_projection_state
-        SET status = 'ready', updated_at = CURRENT_TIMESTAMP
-        WHERE singleton_id = 1 AND projection_version = ?
-      `, [WHATSAPP_STATUS_PROJECTION_VERSION])
-    }
-
+    // Limpiar trabajo aplicado antes del corte: no hay razón para detener
+    // webhooks reales mientras se borran filas históricas.
     await transaction.run(`
       DELETE FROM whatsapp_status_metric_deltas
       WHERE id IN (
@@ -320,8 +338,38 @@ async function drainPostgresDeltaBatch(database = db, { dialect = databaseDialec
         WHERE applied = TRUE ORDER BY id ASC LIMIT 10000
       )
     `)
+
+    const readPending = () => transaction.get(`
+      SELECT
+        EXISTS(SELECT 1 FROM whatsapp_status_metric_deltas WHERE applied = FALSE LIMIT 1) AS metric_pending,
+        EXISTS(SELECT 1 FROM whatsapp_status_routing_deltas WHERE applied = FALSE LIMIT 1) AS routing_pending
+    `)
+    const isPending = (pending) => pending?.metric_pending === true || pending?.routing_pending === true ||
+      Number(pending?.metric_pending || 0) === 1 || Number(pending?.routing_pending || 0) === 1
+
+    let hasPending = isPending(await readPending())
+    if (!hasPending) {
+      // Precalcular restauraciones sin bloquear ingestión. Si entra otro evento,
+      // la segunda revisión bajo el singleton impedirá publicar ready y el
+      // siguiente lote volverá a calcular el snapshot exacto.
+      await transaction.run('DELETE FROM whatsapp_contingency_restore_counts')
+      await transaction.run(`
+        INSERT INTO whatsapp_contingency_restore_counts (
+          previous_phone_number_id, contact_count, updated_at
+        )
+        SELECT previous_phone_number_id, COUNT(*), CURRENT_TIMESTAMP
+        FROM whatsapp_routing_latest_projection
+        WHERE source = 'contingency'
+          AND previous_phone_number_id IS NOT NULL
+        GROUP BY previous_phone_number_id
+      `)
+
+      hasPending = isPending(await readPending())
+    }
+
     return {
-      ready: !hasPending,
+      ready: false,
+      drained: !hasPending,
       processed: metricRows.length + routingRows.length,
       metricDeltas: metricRows.length,
       routingDeltas: routingRows.length
@@ -329,13 +377,61 @@ async function drainPostgresDeltaBatch(database = db, { dialect = databaseDialec
   })
 }
 
-function retryWhatsAppStatusProjection(delayMs = 1_000) {
-  if (projectionRetryTimer) return
+async function finalizePostgresProjectionCutover(database = db, { dialect = databaseDialect } = {}) {
+  return database.transaction(async (transaction) => {
+    await lockWhatsAppStatusProjectionWorker(transaction, dialect)
+    // Barrera atómica mínima. No se llega aquí conservando locks de contactos:
+    // writer-first termina y deja su delta visible; worker-first impide que un
+    // trigger nuevo decida entre delta/contador hasta después del cutover.
+    const state = await readProjectionState(transaction, { lock: true, dialect })
+    if (!state || Number(state.projection_version) !== WHATSAPP_STATUS_PROJECTION_VERSION) {
+      return { ready: false, reason: 'state-unavailable' }
+    }
+    if (String(state.status || '').toLowerCase() === 'ready') {
+      return { ready: true, alreadyReady: true }
+    }
+
+    const pending = await transaction.get(`
+      SELECT
+        EXISTS(SELECT 1 FROM whatsapp_status_metric_deltas WHERE applied = FALSE LIMIT 1) AS metric_pending,
+        EXISTS(SELECT 1 FROM whatsapp_status_routing_deltas WHERE applied = FALSE LIMIT 1) AS routing_pending
+    `)
+    const hasPending = pending?.metric_pending === true || pending?.routing_pending === true ||
+      Number(pending?.metric_pending || 0) === 1 || Number(pending?.routing_pending || 0) === 1
+    if (hasPending) return { ready: false, pending: true }
+
+    await transaction.run(`
+      UPDATE whatsapp_status_projection_state
+      SET status = 'ready', updated_at = CURRENT_TIMESTAMP
+      WHERE singleton_id = 1 AND projection_version = ?
+    `, [WHATSAPP_STATUS_PROJECTION_VERSION])
+    return { ready: true }
+  })
+}
+
+function clearWhatsAppStatusProjectionRetry() {
+  if (projectionRetryTimer) clearTimeout(projectionRetryTimer)
+  projectionRetryTimer = null
+  projectionRetryDelayMs = PROJECTION_RETRY_MIN_MS
+}
+
+function retryWhatsAppStatusProjection() {
+  if (!projectionSchedulerStarted || isDeployShutdownStarted() || projectionRetryTimer) return false
+  const delayMs = projectionRetryDelayMs
+  projectionRetryDelayMs = Math.min(
+    PROJECTION_RETRY_MAX_MS,
+    Math.max(PROJECTION_RETRY_MIN_MS, delayMs * 2)
+  )
   projectionRetryTimer = setTimeout(() => {
     projectionRetryTimer = null
-    scheduleWhatsAppStatusProjectionBackfill()
+    if (!projectionSchedulerStarted || isDeployShutdownStarted()) return
+    void scheduleWhatsAppStatusProjectionBackfill().catch((error) => {
+      logger.warn(`[WhatsApp] No se pudo revisar status local: ${error.message}`)
+      retryWhatsAppStatusProjection()
+    })
   }, delayMs)
   projectionRetryTimer.unref?.()
+  return true
 }
 
 export async function rebuildWhatsAppStatusProjection({
@@ -344,56 +440,103 @@ export async function rebuildWhatsAppStatusProjection({
 } = {}) {
   if (dialect !== 'postgres') return { ready: true, skipped: true, reason: 'sqlite-eager' }
   const state = await readProjectionState(database, { dialect })
-  if (!state) return { ready: false, skipped: true, reason: 'state-unavailable' }
+  if (!state || Number(state.projection_version) !== WHATSAPP_STATUS_PROJECTION_VERSION) {
+    if (database === db) retryWhatsAppStatusProjection()
+    return { ready: false, skipped: true, reason: 'state-unavailable' }
+  }
+  if (String(state.status || '').toLowerCase() === 'ready') {
+    if (database === db) clearWhatsAppStatusProjectionRetry()
+    return {
+      ready: true,
+      processed: 0,
+      skipped: true,
+      alreadyReady: true,
+      reason: 'ready'
+    }
+  }
 
   if (state.status === 'backfilling' || state.status === 'failed') {
-    await buildPostgresBaseline(database, { dialect })
+    const baseline = await buildPostgresBaseline(database, { dialect })
+    if (!baseline?.skipped) await markPostgresProjectionReplaying(database, { dialect })
   }
 
   let result = { ready: false, processed: 0 }
   for (let batch = 0; batch < MAX_DELTA_BATCHES_PER_RUN; batch += 1) {
     const current = await drainPostgresDeltaBatch(database, { dialect })
+    const cutover = current.drained
+      ? await finalizePostgresProjectionCutover(database, { dialect })
+      : null
     result = {
       ...current,
+      ...(cutover || {}),
       processed: Number(result.processed || 0) + Number(current.processed || 0),
       batches: batch + 1
     }
-    if (current.ready || current.processed === 0) break
+    if (result.ready || current.processed === 0) break
   }
   if (database === db) {
-    if (!result.ready) retryWhatsAppStatusProjection()
-    else retryWhatsAppStatusProjection(2_000)
+    if (!result.ready && projectionSchedulerStarted) {
+      // Un lote aplicado es progreso sano, no un error. Ceder la cola un segundo
+      // evita monopolizar I/O sin convertir 300k deltas en diez horas de backoff.
+      if (Number(result.processed || 0) > 0) {
+        projectionRetryDelayMs = PROJECTION_RETRY_MIN_MS
+      }
+      retryWhatsAppStatusProjection()
+    }
+    else clearWhatsAppStatusProjectionRetry()
   }
   return result
 }
 
-export function scheduleWhatsAppStatusProjectionBackfill() {
-  return scheduleProjectionBackfillJob({
+export async function scheduleWhatsAppStatusProjectionBackfill({
+  database = db,
+  dialect = databaseDialect,
+  scheduleJob = scheduleProjectionBackfillJob
+} = {}) {
+  if (isDeployShutdownStarted()) {
+    return { scheduled: false, ready: false, reason: 'shutting-down' }
+  }
+  if (dialect !== 'postgres') {
+    return { scheduled: false, ready: true, reason: 'sqlite-eager' }
+  }
+
+  const state = await readProjectionState(database, { dialect })
+  if (
+    Number(state?.projection_version) === WHATSAPP_STATUS_PROJECTION_VERSION &&
+    String(state?.status || '').toLowerCase() === 'ready'
+  ) {
+    if (database === db) clearWhatsAppStatusProjectionRetry()
+    return { scheduled: false, ready: true, reason: 'ready' }
+  }
+  if (!state) {
+    if (database === db) retryWhatsAppStatusProjection()
+    return { scheduled: false, ready: false, reason: 'state-unavailable' }
+  }
+
+  return scheduleJob({
     key: WHATSAPP_STATUS_BACKFILL_KEY,
     priority: BACKFILL_JOB_PRIORITY.HIGH,
-    run: rebuildWhatsAppStatusProjection,
+    run: () => rebuildWhatsAppStatusProjection({ database, dialect }),
     onError: (error) => {
       logger.warn(`[WhatsApp] No se pudo converger status local: ${error.message}`)
-      retryWhatsAppStatusProjection()
+      if (database === db) retryWhatsAppStatusProjection()
     }
   })
 }
 
 export function startWhatsAppStatusProjectionScheduler() {
-  if (projectionMonitor || databaseDialect !== 'postgres') return
-  scheduleWhatsAppStatusProjectionBackfill()
-  projectionMonitor = setInterval(
-    scheduleWhatsAppStatusProjectionBackfill,
-    PROJECTION_MONITOR_MS
-  )
-  projectionMonitor.unref?.()
+  if (projectionSchedulerStarted || databaseDialect !== 'postgres') return false
+  projectionSchedulerStarted = true
+  void scheduleWhatsAppStatusProjectionBackfill().catch((error) => {
+    logger.warn(`[WhatsApp] No se pudo iniciar status local: ${error.message}`)
+    retryWhatsAppStatusProjection()
+  })
+  return true
 }
 
 export function stopWhatsAppStatusProjectionScheduler() {
-  if (projectionMonitor) clearInterval(projectionMonitor)
-  if (projectionRetryTimer) clearTimeout(projectionRetryTimer)
-  projectionMonitor = null
-  projectionRetryTimer = null
+  projectionSchedulerStarted = false
+  clearWhatsAppStatusProjectionRetry()
 }
 
 /**
@@ -420,6 +563,6 @@ export async function getWhatsAppStatusProjectionSnapshot() {
 }
 
 export function __resetWhatsAppStatusProjectionForTest() {
-  if (projectionRetryTimer) clearTimeout(projectionRetryTimer)
-  projectionRetryTimer = null
+  projectionSchedulerStarted = false
+  clearWhatsAppStatusProjectionRetry()
 }

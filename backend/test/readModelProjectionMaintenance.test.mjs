@@ -38,6 +38,49 @@ test('el scheduler agenda solo proyecciones pendientes y no trabaja al apagar', 
   assert.equal(calls.includes('never'), false)
 })
 
+test('el scheduler no encola ready y usa un intervalo conservador', async () => {
+  let stateReads = 0
+  let schedules = 0
+  let observedIntervalMs = 0
+  let cleared = false
+  const intervalId = { unref() {} }
+  const scheduler = createReadModelProjectionMaintenanceScheduler({
+    projections: [{
+      key: 'already-ready',
+      version: 7,
+      async readState() {
+        stateReads += 1
+        return { projection_version: 7, status: 'ready' }
+      },
+      schedule() {
+        schedules += 1
+        return { scheduled: true }
+      }
+    }],
+    shuttingDown: () => false,
+    setIntervalFn(_callback, intervalMs) {
+      observedIntervalMs = intervalMs
+      return intervalId
+    },
+    clearIntervalFn(receivedId) {
+      assert.equal(receivedId, intervalId)
+      cleared = true
+    }
+  })
+
+  await scheduler.tick()
+  await scheduler.tick()
+  // Se vuelve a leer para detectar si un trigger cambió ready -> dirty entre
+  // ticks, pero sólo cada 30 s y sin encolar trabajo cuando sigue listo.
+  assert.equal(stateReads, 2)
+  assert.equal(schedules, 0)
+
+  assert.equal(scheduler.start(), true)
+  assert.ok(observedIntervalMs >= 30_000)
+  assert.equal(scheduler.stop(), true)
+  assert.equal(cleared, true)
+})
+
 test('los tres read paths no convierten GET en comando de backfill', async () => {
   const [contacts, metrics, firstSeen, origin, server] = await Promise.all([
     readFile(new URL('../src/controllers/contactsController.js', import.meta.url), 'utf8'),

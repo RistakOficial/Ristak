@@ -23,14 +23,14 @@ function isSchemaUnavailable(error) {
   )
 }
 
-export async function readContactPersonIdentityProjectionState(database = db) {
+export async function readContactPersonIdentityProjectionState(database = db, { signal } = {}) {
   try {
     return await database.get(`
       SELECT singleton_id, projection_version, status, generation,
              processed_count, last_error, updated_at
       FROM contact_person_identity_projection_state
       WHERE singleton_id = 1
-    `)
+    `, [], { signal })
   } catch (error) {
     if (isSchemaUnavailable(error)) return null
     throw error
@@ -229,9 +229,9 @@ export function scheduleContactPersonIdentityProjectionBackfill() {
   return { scheduled: queued.scheduled, ready: false }
 }
 
-export async function getContactPersonIdentityProjectionStatus({ schedule = true } = {}) {
+export async function getContactPersonIdentityProjectionStatus({ schedule = true, signal } = {}) {
   if (projectionReady) return { available: true, ready: true, status: 'ready' }
-  const state = await readContactPersonIdentityProjectionState()
+  const state = await readContactPersonIdentityProjectionState(db, { signal })
   if (!state) return { available: false, ready: false, status: 'unavailable' }
   const ready = Number(state.projection_version) === CONTACT_PERSON_IDENTITY_PROJECTION_VERSION &&
     String(state.status || '').toLowerCase() === 'ready'

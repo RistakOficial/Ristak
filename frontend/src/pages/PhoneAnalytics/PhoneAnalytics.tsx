@@ -417,7 +417,6 @@ export const PhoneAnalytics: React.FC = () => {
     }
 
     dashboardService.getMobileAnalyticsSnapshot(snapshotParams, {
-      forceRefresh: Boolean(cachedSnapshot),
       signal: controller.signal
     })
       .then(applySnapshot)

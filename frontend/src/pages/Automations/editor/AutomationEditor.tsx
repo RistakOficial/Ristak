@@ -240,7 +240,8 @@ export const AutomationEditor: React.FC = () => {
   const { user } = useAuth()
 
   const [automation, setAutomation] = useState<Automation | null>(null)
-  const [loadError, setLoadError] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [name, setName] = useState('')
   const [state, dispatch] = useReducer(editorReducer, createEditorState({ nodes: [], edges: [] }))
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -572,8 +573,9 @@ export const AutomationEditor: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
     const resetRouteState = () => {
-      setLoadError(false)
+      setLoadError(null)
       setStatusBusy(false)
       setSelectedNodeId(null)
       setSelectedEdgeId(null)
@@ -596,7 +598,7 @@ export const AutomationEditor: React.FC = () => {
     const initFrom = (data: Automation) => {
       const safeFlow = normalizeEditorFlow(data.flow)
       const safeSettings = { ...defaultFlowSettings(), ...(safeFlow.settings || {}) }
-      setLoadError(false)
+      setLoadError(null)
       setAutomation({ ...data, flow: safeFlow })
       setName(data.name)
       viewportRef.current = safeFlow.viewport
@@ -631,7 +633,7 @@ export const AutomationEditor: React.FC = () => {
     }
 
     automationsService
-      .getAutomation(automationId)
+      .getAutomation(automationId, { signal: controller.signal })
       .then((data) => {
         if (cancelled) return
         if (!cached) {
@@ -642,16 +644,21 @@ export const AutomationEditor: React.FC = () => {
           stateRef.current.past.length === 0 && stateRef.current.future.length === 0
         if (untouched && data.updatedAt !== cached.updatedAt) initFrom(data)
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled && !cached) {
           setAutomation(null)
-          setLoadError(true)
+          setLoadError(
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : 'No se pudo cargar la automatización.'
+          )
         }
       })
     return () => {
       cancelled = true
+      controller.abort()
     }
-  }, [automationId])
+  }, [automationId, loadAttempt])
 
   useEffect(() => {
     const activeAutomationId = automation?.id
@@ -1562,8 +1569,12 @@ export const AutomationEditor: React.FC = () => {
   if (loadError) {
     return (
       <div className={styles.editorShell}>
-        <div className={styles.editorLoading}>
-          No se encontró la automatización.&nbsp;
+        <div className={styles.editorLoading} role="alert">
+          {loadError}&nbsp;
+          <Button variant="secondary" size="sm" onClick={() => setLoadAttempt((current) => current + 1)}>
+            Reintentar
+          </Button>
+          &nbsp;
           <Button variant="secondary" size="sm" onClick={() => navigateFromEditor('/automations')}>
             Volver a Automatizaciones
           </Button>

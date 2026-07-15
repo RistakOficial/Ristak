@@ -25,9 +25,10 @@ const buildRangePayload = (range) => ({
   filtered: range.isFiltered
 })
 
-function createReportsRequestAbortScope(req, res) {
+function createReportsRequestAbortScope(req, res, { timeoutMs = 0 } = {}) {
   const controller = new AbortController()
   let disconnected = Boolean(req.aborted || res.destroyed)
+  let timedOut = false
   const abortIfDisconnected = () => {
     disconnected = true
     if (!res.writableEnded && !res.finished && !controller.signal.aborted) {
@@ -38,13 +39,24 @@ function createReportsRequestAbortScope(req, res) {
   req.once?.('aborted', abortIfDisconnected)
   res.once?.('close', abortIfDisconnected)
   if (req.aborted) abortIfDisconnected()
+  const deadlineTimer = timeoutMs > 0
+    ? setTimeout(() => {
+        timedOut = true
+        if (!controller.signal.aborted) controller.abort()
+      }, timeoutMs)
+    : null
+  deadlineTimer?.unref?.()
 
   return {
     signal: controller.signal,
     get disconnected() {
       return disconnected || Boolean(req.aborted) || Boolean(res.destroyed) || res.writable === false
     },
+    get timedOut() {
+      return timedOut
+    },
     cleanup() {
+      if (deadlineTimer) clearTimeout(deadlineTimer)
       req.off?.('aborted', abortIfDisconnected)
       res.off?.('close', abortIfDisconnected)
       req.removeListener?.('aborted', abortIfDisconnected)
@@ -205,11 +217,10 @@ export const getMetrics = async (req, res) => {
 }
 
 export const getReportsSnapshot = async (req, res) => {
-  const requestScope = createReportsRequestAbortScope(req, res)
+  const requestScope = createReportsRequestAbortScope(req, res, { timeoutMs: 18_000 })
   try {
     const { from, to, groupBy = 'day', scope = 'all' } = req.query
     const snapshot = await getReportsSnapshotReadModel({
-      principal: req.user?.userId || req.user?.id || req.user?.email || 'authenticated-user',
       startDate: from,
       endDate: to,
       groupBy,
@@ -218,10 +229,26 @@ export const getReportsSnapshot = async (req, res) => {
       signal: requestScope.signal
     })
 
+    if (requestScope.timedOut) {
+      const deadlineError = new Error('El reporte tardó demasiado y fue cancelado. Intenta nuevamente.')
+      deadlineError.code = 'reports_snapshot_deadline'
+      deadlineError.status = 503
+      throw deadlineError
+    }
     if (requestScope.disconnected || requestScope.signal.aborted || res.writableEnded || res.finished) return
     logger.info(`Snapshot unificado de Reportes generado (${snapshot.metrics.length} periodos)`)
     res.json({ success: true, data: snapshot })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.set?.('Retry-After', '1')
+      return res.status(503).json({
+        success: false,
+        error: 'El reporte tardó demasiado y fue cancelado. Intenta nuevamente.',
+        code: 'reports_snapshot_deadline',
+        retryable: true
+      })
+    }
     if (isReportsRequestAbort(error) || requestScope.signal.aborted) {
       logger.info('Snapshot de Reportes cancelado porque el cliente abandono la vista')
       if (!requestScope.disconnected && !res.headersSent && !res.writableEnded && !res.finished) {
@@ -230,9 +257,13 @@ export const getReportsSnapshot = async (req, res) => {
       return
     }
     logger.error(`Error en getReportsSnapshot: ${error.message}`)
-    res.status(500).json({
+    const status = Number(error?.status) || 500
+    if (status === 503) res.set?.('Retry-After', '1')
+    res.status(status).json({
       success: false,
-      error: 'Error al obtener el snapshot de reportes'
+      error: status === 503 ? error.message : 'Error al obtener el snapshot de reportes',
+      ...(error?.code ? { code: error.code } : {}),
+      ...(status === 503 ? { retryable: true } : {})
     })
   } finally {
     requestScope.cleanup()
@@ -356,6 +387,7 @@ export const upsertManualBusinessExpense = async (req, res) => {
 }
 
 export const getContactsList = async (req, res) => {
+  const requestScope = createReportsRequestAbortScope(req, res, { timeoutMs: 18_000 })
   try {
     const { from, to, type = 'interesados', scope = 'all', dedupe, search, cursor, limit } = req.query
 
@@ -369,8 +401,12 @@ export const getContactsList = async (req, res) => {
       dedupeByPerson: dedupe === 'person',
       search,
       cursor,
-      limit
+      limit,
+      signal: requestScope.signal
     })
+
+    if (requestScope.timedOut) throw new Error('report_contacts_deadline')
+    if (requestScope.disconnected || requestScope.signal.aborted || res.writableEnded || res.finished) return
 
     logger.info(`Página de contactos (${type}) generada: ${contacts.length} registros`)
 
@@ -383,11 +419,26 @@ export const getContactsList = async (req, res) => {
       }
     })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.set?.('Retry-After', '1')
+      return res.status(503).json({
+        success: false,
+        error: 'La lista de contactos tardó demasiado y fue cancelada. Intenta nuevamente.',
+        code: 'report_contacts_deadline',
+        retryable: true
+      })
+    }
+    if (isReportsRequestAbort(error) || requestScope.signal.aborted) {
+      logger.info('Lista de contactos cancelada porque el cliente abandonó la vista')
+      return
+    }
     logger.error(`Error en getContactsList: ${error.message}`)
     const status = Number(error?.status) || 500
     if (status === 503 && error?.retryAfter) {
       res.set?.('Retry-After', String(error.retryAfter))
     }
+    if (res.writableEnded || res.finished) return
     res.status(status).json({
       success: false,
       error: status === 503 ? error.message : 'Error al obtener la lista de contactos',
@@ -400,10 +451,13 @@ export const getContactsList = async (req, res) => {
           }
         : {})
     })
+  } finally {
+    requestScope.cleanup()
   }
 }
 
 export const getTransactionsList = async (req, res) => {
+  const requestScope = createReportsRequestAbortScope(req, res, { timeoutMs: 18_000 })
   try {
     const result = await listReportTransactionsPage({
       startDate: req.query.from,
@@ -411,8 +465,12 @@ export const getTransactionsList = async (req, res) => {
       search: req.query.search,
       cursor: req.query.cursor,
       page: req.query.page,
-      limit: req.query.limit
+      limit: req.query.limit,
+      signal: requestScope.signal
     })
+
+    if (requestScope.timedOut) throw new Error('report_transactions_deadline')
+    if (requestScope.disconnected || requestScope.signal.aborted || res.writableEnded || res.finished) return
 
     logger.info(`Página de transacciones generada: ${result.transactions.length} registros (límite ${result.pagination.limit})`)
 
@@ -426,11 +484,37 @@ export const getTransactionsList = async (req, res) => {
       }
     })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.set?.('Retry-After', '1')
+      return res.status(503).json({
+        success: false,
+        error: 'La lista de transacciones tardó demasiado y fue cancelada. Intenta nuevamente.',
+        code: 'report_transactions_deadline',
+        retryable: true
+      })
+    }
+    if (isReportsRequestAbort(error) || requestScope.signal.aborted) {
+      logger.info('Lista de transacciones cancelada porque el cliente abandonó la vista')
+      return
+    }
     logger.error(`Error en getTransactionsList: ${error.message}`)
     const status = Number(error?.status) || 500
+    if (status === 503 && error?.retryAfter) {
+      res.set?.('Retry-After', String(error.retryAfter))
+    }
+    if (res.writableEnded || res.finished) return
     res.status(status).json({
       success: false,
-      error: status < 500 ? error.message : 'Error al obtener la lista de transacciones'
+      error: status === 503 || status < 500 ? error.message : 'Error al obtener la lista de transacciones',
+      ...(status === 503
+        ? {
+            code: error.code,
+            retryable: Boolean(error.retryable || error.retriable)
+          }
+        : {})
     })
+  } finally {
+    requestScope.cleanup()
   }
 }

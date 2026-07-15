@@ -25,10 +25,12 @@ import {
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useAuth } from '@/contexts/AuthContext'
+import { useNotification } from '@/contexts/NotificationContext'
 import { formatCurrency, formatRoas, formatDateToISO, formatEndDateToISO, normalizeDateInputToLocalDate, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
 import {
   campaignsService,
   type CampaignContact,
+  type CampaignOverviewSnapshot,
   type CampaignOverviewSummary,
   type CampaignPerformanceItem,
   type CampaignPerformanceLevel
@@ -327,6 +329,7 @@ export const Campaigns: React.FC = () => {
 
   // Sistema híbrido de configuración
   const { user } = useAuth()
+  const { showToast } = useNotification()
   const [visitorSourceConfig] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
 
@@ -354,12 +357,14 @@ export const Campaigns: React.FC = () => {
   const [campaignSortBy, setCampaignSortBy] = useState<string | null>('lastActiveDate')
   const [campaignSortOrder, setCampaignSortOrder] = useState<'asc' | 'desc'>('desc')
   const [syncStatus, setSyncStatus] = useState<any>(null)
+  const syncStatusBusyRef = React.useRef(false)
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set())
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<'campaigns' | 'winners'>(routeState.viewMode)
   const [campaignTableView, setCampaignTableView] = useState<CampaignTableView>(routeState.campaignTableView)
   const [winnersCategory, setWinnersCategory] = useState<CampaignWinnersCategory>(routeState.winnersCategory)
   const [campaignSummary, setCampaignSummary] = useState<CampaignOverviewSummary | null>(null)
+  const [campaignOverviewSnapshot, setCampaignOverviewSnapshot] = useState<CampaignOverviewSnapshot | null>(null)
   const [selectedChart, setSelectedChart] = useState<ChartView>(routeChartView ?? 'revenue')
 
   // Datos para diferentes gráficos
@@ -388,6 +393,7 @@ export const Campaigns: React.FC = () => {
   const [selectedVisitorItem, setSelectedVisitorItem] = useState<any>(null)
   const [visitorsModalPage, setVisitorsModalPage] = useState<VisitorsModalPageState>(emptyVisitorsModalPageState)
   const visitorsModalRequestRef = React.useRef(0)
+  const visitorsModalAbortRef = React.useRef<AbortController | null>(null)
   const [selectedCreative, setSelectedCreative] = useState<CreativePreviewData | null>(null)
   const [creativePreviewHtml, setCreativePreviewHtml] = useState<string | null>(null)
   const [creativePreviewLoading, setCreativePreviewLoading] = useState(false)
@@ -593,7 +599,33 @@ export const Campaigns: React.FC = () => {
         value2: data.value2
       }
     })
-  }, [timezoneInfo])
+  }, [])
+
+  useEffect(() => {
+    if (!campaignOverviewSnapshot) return
+    const rangeInDays = Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24))
+    const funnelMetrics = campaignOverviewSnapshot.funnelMetrics || []
+    const adjustDate = timezoneInfo.adjustMetaDateToLocal
+    setCampaignSummary(campaignOverviewSnapshot.summary || null)
+    setRevenueData(groupAndFormatChartData(campaignOverviewSnapshot.spendOverTime || [], rangeInDays, adjustDate))
+    setLeadsData(groupAndFormatChartData(funnelMetrics.map(item => ({
+      label: item.label,
+      value: item.leads || 0,
+      value2: item.appointments || 0
+    })), rangeInDays, adjustDate))
+    setAppointmentsData(groupAndFormatChartData(funnelMetrics.map(item => ({
+      label: item.label,
+      value: item.appointments || 0,
+      value2: item.sales || 0
+    })), rangeInDays, adjustDate))
+    setVisitorsData(analyticsEnabled
+      ? groupAndFormatChartData(funnelMetrics.map(item => ({
+          label: item.label,
+          value: item.visitors || 0,
+          value2: item.leads || 0
+        })), rangeInDays, adjustDate)
+      : [])
+  }, [analyticsEnabled, campaignOverviewSnapshot, dateRange.end, dateRange.start, groupAndFormatChartData, timezoneInfo.adjustMetaDateToLocal])
 
   const activeEntityLevel: CampaignPerformanceLevel = viewMode === 'winners'
     ? (winnersCategory === 'campaigns' ? 'campaign' : winnersCategory === 'adsets' ? 'adset' : 'ad')
@@ -667,6 +699,7 @@ export const Campaigns: React.FC = () => {
       if (activeEntityLevel === 'campaign' && viewMode === 'campaigns') setCampaigns([])
       else setFlatEntities([])
       setCampaignPageInfo({ page: 1, pageSize: 50, totalItems: 0, totalPages: 1, hasMore: false })
+      showToast('error', 'No se cargó la tabla de Publicidad', error instanceof Error ? error.message : 'Intenta nuevamente')
     } finally {
       if (requestId === entityRequestRef.current) {
         setLoading(false)
@@ -682,6 +715,7 @@ export const Campaigns: React.FC = () => {
     campaignSortOrder,
     dateRange.end,
     dateRange.start,
+    showToast,
     viewMode,
     visitorSource
   ])
@@ -694,80 +728,56 @@ export const Campaigns: React.FC = () => {
     setOverviewLoading(true)
     const startDate = formatDateToISO(dateRange.start)
     const endDate = formatEndDateToISO(dateRange.end)
-    const rangeInDays = Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24))
-
-    const applySnapshot = (snapshot: Awaited<ReturnType<typeof campaignsService.getOverviewSnapshot>>) => {
-      const funnelMetrics = snapshot.funnelMetrics || []
-      setCampaignSummary(snapshot.summary || null)
-      setRevenueData(groupAndFormatChartData(
-        snapshot.spendOverTime || [],
-        rangeInDays,
-        timezoneInfo.adjustMetaDateToLocal
-      ))
-      setLeadsData(groupAndFormatChartData(
-        funnelMetrics.map(item => ({
-          label: item.label,
-          value: item.leads || 0,
-          value2: item.appointments || 0
-        })),
-        rangeInDays,
-        timezoneInfo.adjustMetaDateToLocal
-      ))
-      setAppointmentsData(groupAndFormatChartData(
-        funnelMetrics.map(item => ({
-          label: item.label,
-          value: item.appointments || 0,
-          value2: item.sales || 0
-        })),
-        rangeInDays,
-        timezoneInfo.adjustMetaDateToLocal
-      ))
-      setVisitorsData(analyticsEnabled
-        ? groupAndFormatChartData(
-            funnelMetrics.map(item => ({
-              label: item.label,
-              value: item.visitors || 0,
-              value2: item.leads || 0
-            })),
-            rangeInDays,
-            timezoneInfo.adjustMetaDateToLocal
-          )
-        : [])
-    }
-
     try {
       const snapshot = await campaignsService.getOverviewSnapshot(startDate, endDate, {
         includeVisitors: analyticsEnabled,
         signal: controller.signal
       })
       if (requestId !== overviewRequestRef.current || controller.signal.aborted) return
-      applySnapshot(snapshot)
+      setCampaignOverviewSnapshot(snapshot)
 
       // SWR: un snapshot consistente se pinta ya; sólo la revalidación exacta
       // continúa en segundo plano y nunca vuelve a encender el loader.
       if (snapshot.cache?.stale) {
         setOverviewLoading(false)
-        const fresh = await campaignsService.getOverviewSnapshot(startDate, endDate, {
-          includeVisitors: analyticsEnabled,
-          waitForFresh: true,
-          signal: controller.signal
-        })
-        if (requestId !== overviewRequestRef.current || controller.signal.aborted) return
-        applySnapshot(fresh)
+        try {
+          const fresh = await campaignsService.getOverviewSnapshot(startDate, endDate, {
+            includeVisitors: analyticsEnabled,
+            waitForFresh: true,
+            signal: controller.signal
+          })
+          if (requestId !== overviewRequestRef.current || controller.signal.aborted) return
+          setCampaignOverviewSnapshot(fresh)
+        } catch (error) {
+          if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
+          if (requestId !== overviewRequestRef.current) return
+          showToast(
+            'warning',
+            'Publicidad conserva el último resumen',
+            error instanceof Error ? error.message : 'No se pudo actualizar en segundo plano'
+          )
+        }
       }
     } catch (error) {
       if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
       if (requestId !== overviewRequestRef.current) return
-      // Conserva el último snapshot visible ante una falla transitoria.
+      setCampaignSummary(null)
+      setCampaignOverviewSnapshot(null)
+      setRevenueData([])
+      setLeadsData([])
+      setAppointmentsData([])
+      setVisitorsData([])
+      showToast('error', 'No se cargó el resumen de Publicidad', error instanceof Error ? error.message : 'Intenta nuevamente')
     } finally {
       if (requestId === overviewRequestRef.current) setOverviewLoading(false)
       if (overviewAbortRef.current === controller) overviewAbortRef.current = null
     }
-  }, [analyticsEnabled, dateRange.end, dateRange.start, groupAndFormatChartData, timezoneInfo.adjustMetaDateToLocal])
+  }, [analyticsEnabled, dateRange.end, dateRange.start, showToast])
 
   useEffect(() => () => {
     entityAbortRef.current?.abort()
     overviewAbortRef.current?.abort()
+    visitorsModalAbortRef.current?.abort()
   }, [])
 
   useEffect(() => {
@@ -946,6 +956,8 @@ export const Campaigns: React.FC = () => {
   }, [])
 
   const checkSyncStatus = useCallback(async () => {
+    if (syncStatusBusyRef.current) return
+    syncStatusBusyRef.current = true
     try {
       const status = await campaignsService.getSyncStatus()
 
@@ -967,6 +979,8 @@ export const Campaigns: React.FC = () => {
       setSyncStatus(status)
     } catch (error) {
       // Silenciar errores de polling
+    } finally {
+      syncStatusBusyRef.current = false
     }
   }, [fetchCampaignEntities, fetchCampaignOverview, syncStatus?.running])
 
@@ -1123,6 +1137,9 @@ export const Campaigns: React.FC = () => {
     item: any,
     { cursor, cursorHistory, page, search }: Pick<VisitorsModalPageState, 'cursor' | 'cursorHistory' | 'page' | 'search'>
   ) => {
+    visitorsModalAbortRef.current?.abort()
+    const controller = new AbortController()
+    visitorsModalAbortRef.current = controller
     const requestId = visitorsModalRequestRef.current + 1
     visitorsModalRequestRef.current = requestId
     setVisitorsModalLoading(true)
@@ -1132,30 +1149,54 @@ export const Campaigns: React.FC = () => {
       endDate: formatEndDateToISO(dateRange.end),
       cursor,
       search,
-      limit: 50
+      limit: 50,
+      signal: controller.signal
     }
     if (item.level === 'campaign') params.campaign_id = item.id
     else if (item.level === 'adset') params.adset_id = item.id
     else if (item.level === 'ad') params.ad_id = item.id
 
-    const result = await campaignsService.getVisitorsPage(params)
-    if (visitorsModalRequestRef.current !== requestId) return
+    try {
+      const result = await campaignsService.getVisitorsPage(params)
+      if (visitorsModalRequestRef.current !== requestId) return
 
-    const coverageNotice = trackingVisitorsCoverageNotice(result.coverage)
-    if (result.items.length > 0 || !coverageNotice) {
-      setModalVisitors(result.items)
+      const coverageNotice = trackingVisitorsCoverageNotice(result.coverage)
+      if (result.items.length > 0 || !coverageNotice) {
+        setModalVisitors(result.items)
+      }
+      setVisitorsModalPage({
+        page,
+        cursor,
+        cursorHistory,
+        search,
+        hasNext: result.pagination.hasNext,
+        nextCursor: result.pagination.nextCursor,
+        coverageNotice
+      })
+    } catch (error) {
+      if (controller.signal.aborted) return
+      if (visitorsModalRequestRef.current !== requestId) return
+      setModalVisitors([])
+      setVisitorsModalPage({
+        ...emptyVisitorsModalPageState,
+        search,
+        coverageNotice: error instanceof Error
+          ? error.message
+          : 'No se pudieron cargar los visitantes. Intenta nuevamente.'
+      })
+    } finally {
+      if (visitorsModalRequestRef.current === requestId) setVisitorsModalLoading(false)
+      if (visitorsModalAbortRef.current === controller) visitorsModalAbortRef.current = null
     }
-    setVisitorsModalPage({
-      page,
-      cursor,
-      cursorHistory,
-      search,
-      hasNext: result.pagination.hasNext,
-      nextCursor: result.pagination.nextCursor,
-      coverageNotice
-    })
-    setVisitorsModalLoading(false)
   }, [dateRange.end, dateRange.start])
+
+  const closeVisitorsModal = useCallback(() => {
+    visitorsModalRequestRef.current += 1
+    visitorsModalAbortRef.current?.abort()
+    visitorsModalAbortRef.current = null
+    setVisitorsModalLoading(false)
+    setIsVisitorsModalOpen(false)
+  }, [])
 
   useEffect(() => {
     if (!analyticsEnabled || !isVisitorsModalOpen || !selectedVisitorItem) return
@@ -2937,7 +2978,7 @@ export const Campaigns: React.FC = () => {
       {analyticsEnabled && (
         <VisitorDetailsModal
           isOpen={isVisitorsModalOpen}
-          onClose={() => setIsVisitorsModalOpen(false)}
+          onClose={closeVisitorsModal}
           title="Visitantes"
           subtitle={[visitorsModalTitle, visitorsModalPage.coverageNotice].filter(Boolean).join(' · ')}
           data={modalVisitors}

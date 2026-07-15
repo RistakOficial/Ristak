@@ -1,6 +1,9 @@
 import apiClient from './apiClient'
 import { apiUrl, getApiBaseUrl } from './apiBaseUrl'
 import type { FirstPartyVideoTracking, MediaAsset, MediaAssetPage, MediaStreamAnalytics, MediaStreamAnalyticsInput, StreamChartPoint } from './mediaService'
+import { withRequestTimeout } from './requestTimeout'
+
+const SITES_VIEW_REQUEST_TIMEOUT_MS = 20_000
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token')
@@ -1204,6 +1207,7 @@ export const sitesService = {
     search?: string
     folderId?: string | null
     includeFacets?: boolean
+    signal?: AbortSignal
   } = {}) {
     const params = new URLSearchParams({ paginated: '1' })
     if (options.limit) params.set('limit', String(options.limit))
@@ -1215,7 +1219,14 @@ export const sitesService = {
       params.set('folderId', options.folderId || '__root__')
     }
     if (options.includeFacets !== undefined) params.set('includeFacets', options.includeFacets ? '1' : '0')
-    return apiClient.get<SitesListPage>(`/sites?${params.toString()}`)
+    return withRequestTimeout({
+      timeoutMs: SITES_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'La biblioteca de sitios tardó demasiado. Reintenta la carga.',
+      signal: options.signal,
+      request: requestSignal => apiClient.get<SitesListPage>(`/sites?${params.toString()}`, {
+        signal: requestSignal
+      })
+    })
   },
 
   listSiteSelectorsPage(options: {
@@ -1233,8 +1244,13 @@ export const sitesService = {
     if (options.cursor) params.set('cursor', options.cursor)
     if (options.search?.trim()) params.set('search', options.search.trim())
     if (options.selectedIds?.length) params.set('selectedIds', options.selectedIds.slice(0, 50).join(','))
-    return apiClient.get<SitesSelectorPage>(`/sites/selectors?${params.toString()}`, {
-      signal: options.signal
+    return withRequestTimeout({
+      timeoutMs: SITES_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'El selector de sitios tardó demasiado. Reintenta la carga.',
+      signal: options.signal,
+      request: requestSignal => apiClient.get<SitesSelectorPage>(`/sites/selectors?${params.toString()}`, {
+        signal: requestSignal
+      })
     })
   },
 
@@ -1294,8 +1310,15 @@ export const sitesService = {
     }
   },
 
-  listFolders() {
-    return apiClient.get<SiteLibraryFolder[]>('/sites/folders')
+  listFolders(signal?: AbortSignal) {
+    return withRequestTimeout({
+      timeoutMs: SITES_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Las carpetas de sitios tardaron demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<SiteLibraryFolder[]>('/sites/folders', {
+        signal: requestSignal
+      })
+    })
   },
 
   createFolder(payload: { name: string; section: SiteLibraryFolderSection }) {
@@ -1361,6 +1384,7 @@ export const sitesService = {
     includeSubmissions?: boolean
     includeTrackingStats?: boolean
     submissionLimit?: number
+    signal?: AbortSignal
   } = {}) {
     const params = new URLSearchParams()
     if (options.includeSubmissions) params.set('includeSubmissions', '1')
@@ -1369,7 +1393,14 @@ export const sitesService = {
     params.set('includeTrackingStats', options.includeTrackingStats ? '1' : '0')
     if (options.submissionLimit) params.set('submissionLimit', String(options.submissionLimit))
     const query = params.toString()
-    return apiClient.get<PublicSite>(`/sites/${siteId}${query ? `?${query}` : ''}`)
+    return withRequestTimeout({
+      timeoutMs: SITES_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'El sitio tardó demasiado. Reintenta la carga.',
+      signal: options.signal,
+      request: requestSignal => apiClient.get<PublicSite>(`/sites/${siteId}${query ? `?${query}` : ''}`, {
+        signal: requestSignal
+      })
+    })
   },
 
   async getPreviewHtml(siteId: string, pageId?: string, options: {
@@ -1444,8 +1475,15 @@ export const sitesService = {
     return apiClient.delete(`/sites/${siteId}`)
   },
 
-  getDomain() {
-    return apiClient.get<SitesDomainConfig>('/sites/domain')
+  getDomain(signal?: AbortSignal) {
+    return withRequestTimeout({
+      timeoutMs: SITES_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'La configuración del dominio tardó demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<SitesDomainConfig>('/sites/domain', {
+        signal: requestSignal
+      })
+    })
   },
 
   listVideoAssets(input: {

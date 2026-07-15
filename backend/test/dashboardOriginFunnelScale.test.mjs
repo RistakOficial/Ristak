@@ -9,6 +9,7 @@ import {
   getAppointmentsData,
   getAttendancesData,
   getFunnelData,
+  getOriginDistribution,
   getTrafficSources
 } from '../src/controllers/dashboardController.js'
 import {
@@ -140,6 +141,34 @@ test('la distribución devuelve payload acotado aun con muchas facetas y agrega 
     assert.equal(traffic.os.length, 10)
     assert.equal(traffic.placements.length, 10)
     assert.equal(traffic.sources.reduce((sum, row) => sum + row.value, 0), 120)
+
+    const devicesOnly = await getTrafficDistributions(range, {
+      includeWeb: true,
+      includeWhatsapp: false,
+      hiddenFilters: [],
+      dimension: 'devices'
+    })
+    assert.equal(devicesOnly.devices.length, 10)
+    assert.deepEqual(devicesOnly.sources, [])
+    assert.deepEqual(devicesOnly.platforms, [])
+    assert.deepEqual(devicesOnly.browsers, [])
+    assert.deepEqual(devicesOnly.os, [])
+    assert.deepEqual(devicesOnly.placements, [])
+
+    const focusedResponse = await controllerRequest(getOriginDistribution, {
+      startDate: '2189-04-01',
+      endDate: '2189-04-30',
+      includeWeb: '1',
+      includeWhatsapp: '0',
+      dimension: 'devices',
+      includeBreakdowns: '0'
+    })
+    assert.equal(focusedResponse.statusCode, 200)
+    assert.equal(focusedResponse.payload.success, true)
+    assert.equal(focusedResponse.payload.data.traffic.devices.length, 10)
+    assert.deepEqual(focusedResponse.payload.data.leads, [])
+    assert.deepEqual(focusedResponse.payload.data.appointments, [])
+    assert.deepEqual(focusedResponse.payload.data.conversions, [])
 
     const legacyResponse = await controllerRequest(getTrafficSources, {
       startDate: '2189-04-01',

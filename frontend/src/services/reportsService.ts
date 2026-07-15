@@ -1,7 +1,22 @@
 import type { ContactMetaAttribution } from '@/types'
 import apiClient from './apiClient'
+import {
+  getAuthScopedCacheRevision,
+  registerAuthScopedCacheInvalidator,
+  syncAuthScopedCachePrincipal
+} from './authPrincipalCache'
+import {
+  registerRistakApiReadCacheInvalidator,
+  type ApiReadCacheInvalidationContext
+} from './authFetch'
+import { withRequestTimeout } from './requestTimeout'
+import { abortAndClearSharedRequests, getOrCreateSharedRequest } from './sharedRequest'
 
 export type GroupBy = 'day' | 'month' | 'year'
+
+const REPORTS_SNAPSHOT_TIMEOUT_MS = 20_000
+const REPORTS_CLIENT_SNAPSHOT_TTL_MS = 30_000
+const REPORTS_CLIENT_SNAPSHOT_MAX_ENTRIES = 12
 
 export interface ReportRange {
   start: string | null
@@ -108,10 +123,14 @@ export interface ReportsSnapshot {
   summary: ReportsSnapshotSummary
   cache: {
     stale: boolean
+    consistency: 'exact' | 'moving-window'
     exactAtBuiltAt: boolean
     builtAt: string
     builtSourceRevision: string
     currentSourceRevision: string
+    ageMs: number
+    revalidateAfter: string
+    maxStaleAgeMs: number
   }
 }
 
@@ -258,7 +277,61 @@ export interface ReportTransactionsPage {
   }
 }
 
+const reportsSnapshotCache = new Map<string, { data: ReportsSnapshot; fetchedAt: number }>()
+const reportsSnapshotInflight = new Map<string, Promise<ReportsSnapshot>>()
+let reportsSnapshotCacheRevision = 0
+
+function reportsSnapshotKey(params: {
+  from?: string
+  to?: string
+  groupBy?: GroupBy
+  scope?: 'all' | 'attribution' | 'campaigns' | 'attributed'
+}) {
+  return JSON.stringify({
+    from: params.from || '',
+    to: params.to || '',
+    groupBy: params.groupBy || '',
+    scope: params.scope || 'all'
+  })
+}
+
+function clearReportsSnapshotCache(
+  { abortInflight = true }: Partial<ApiReadCacheInvalidationContext> = {}
+) {
+  // Los eventos vivos son frecuentes y el snapshot durable ya declara cuándo
+  // debe revalidarse. Conservarlo hasta 30 s permite volver a Reportes sin un
+  // loader completo; una mutación explícita sí invalida de inmediato.
+  if (!abortInflight) return
+  reportsSnapshotCacheRevision += 1
+  reportsSnapshotCache.clear()
+  abortAndClearSharedRequests(reportsSnapshotInflight)
+}
+
+registerAuthScopedCacheInvalidator(clearReportsSnapshotCache)
+registerRistakApiReadCacheInvalidator(clearReportsSnapshotCache, {
+  pathPrefixes: ['/api/reports']
+})
+
 class ReportsService {
+  peekSnapshot(params: {
+    from?: string
+    to?: string
+    groupBy?: GroupBy
+    scope?: 'all' | 'attribution' | 'campaigns' | 'attributed'
+  }): ReportsSnapshot | null {
+    syncAuthScopedCachePrincipal()
+    const key = reportsSnapshotKey(params)
+    const cached = reportsSnapshotCache.get(key)
+    if (!cached) return null
+    if (Date.now() - cached.fetchedAt >= REPORTS_CLIENT_SNAPSHOT_TTL_MS) {
+      reportsSnapshotCache.delete(key)
+      return null
+    }
+    reportsSnapshotCache.delete(key)
+    reportsSnapshotCache.set(key, cached)
+    return cached.data
+  }
+
   async getSnapshot(
     params: {
       from?: string
@@ -269,14 +342,50 @@ class ReportsService {
     },
     signal?: AbortSignal
   ): Promise<ReportsSnapshot> {
+    syncAuthScopedCachePrincipal()
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
     if (params.to) query.to = params.to
     if (params.groupBy) query.groupBy = params.groupBy
     if (params.scope) query.scope = params.scope
     if (params.waitForFresh) query.waitForFresh = '1'
+    const cacheKey = reportsSnapshotKey(params)
+    if (!params.waitForFresh) {
+      const cached = this.peekSnapshot(params)
+      if (cached) return cached
+    }
 
-    return apiClient.get<ReportsSnapshot>('/reports/snapshot', { params: query, signal })
+    const requestPrincipalRevision = getAuthScopedCacheRevision()
+    const requestCacheRevision = reportsSnapshotCacheRevision
+    const requestKey = `${cacheKey}\nwaitForFresh:${params.waitForFresh === true}`
+    return getOrCreateSharedRequest({
+      inflight: reportsSnapshotInflight,
+      key: requestKey,
+      signal,
+      abortWhenUnused: true,
+      createRequest: sharedSignal => withRequestTimeout({
+        timeoutMs: REPORTS_SNAPSHOT_TIMEOUT_MS,
+        timeoutMessage: 'El reporte tardó demasiado. Reintenta la carga.',
+        signal: sharedSignal,
+        request: requestSignal => apiClient.get<ReportsSnapshot>('/reports/snapshot', {
+          params: query,
+          signal: requestSignal
+        })
+      }).then((data) => {
+        if (
+          requestPrincipalRevision === getAuthScopedCacheRevision()
+          && requestCacheRevision === reportsSnapshotCacheRevision
+        ) {
+          while (reportsSnapshotCache.size >= REPORTS_CLIENT_SNAPSHOT_MAX_ENTRIES) {
+            const oldestKey = reportsSnapshotCache.keys().next().value
+            if (!oldestKey) break
+            reportsSnapshotCache.delete(oldestKey)
+          }
+          reportsSnapshotCache.set(cacheKey, { data, fetchedAt: Date.now() })
+        }
+        return data
+      })
+    })
   }
 
   async getMetrics(params: { from?: string; to?: string; groupBy?: GroupBy; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' }): Promise<{ metrics: ReportMetricRow[]; range: ReportRange }> {
@@ -307,7 +416,7 @@ class ReportsService {
     search?: string
     cursor?: string
     limit?: number
-  }): Promise<{ contacts: ContactListItem[]; range: ReportRange; pagination: ReportContactsPagination }> {
+  }, signal?: AbortSignal): Promise<{ contacts: ContactListItem[]; range: ReportRange; pagination: ReportContactsPagination }> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
     if (params.to) query.to = params.to
@@ -320,10 +429,15 @@ class ReportsService {
     if (params.cursor) query.cursor = params.cursor
     if (params.limit) query.limit = String(params.limit)
 
-    const response = await apiClient.get<{ contacts: ContactListItem[]; range: ReportRange; pagination: ReportContactsPagination }>(
-      '/reports/contacts/list',
-      { params: query }
-    )
+    const response = await withRequestTimeout({
+      timeoutMs: REPORTS_SNAPSHOT_TIMEOUT_MS,
+      timeoutMessage: 'La lista de contactos del reporte tardó demasiado. Reintenta la carga.',
+      signal,
+      request: signal => apiClient.get<{ contacts: ContactListItem[]; range: ReportRange; pagination: ReportContactsPagination }>(
+        '/reports/contacts/list',
+        { params: query, signal }
+      )
+    })
 
     const rawContacts = Array.isArray(response.contacts) ? response.contacts : []
     return {
@@ -363,9 +477,14 @@ class ReportsService {
     if (params.page) query.page = String(params.page)
     if (params.limit) query.limit = String(params.limit)
 
-    const response = await apiClient.get<ReportTransactionsPage>('/reports/transactions', {
-      params: query,
-      signal
+    const response = await withRequestTimeout({
+      timeoutMs: REPORTS_SNAPSHOT_TIMEOUT_MS,
+      timeoutMessage: 'La lista de transacciones tardó demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<ReportTransactionsPage>('/reports/transactions', {
+        params: query,
+        signal: requestSignal
+      })
     })
     const transactions = Array.isArray(response?.transactions) ? response.transactions : []
     return {

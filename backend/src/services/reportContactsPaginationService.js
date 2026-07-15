@@ -136,10 +136,11 @@ function attributionMatchCondition(alias, timezone, referenceDate) {
   )`
 }
 
-async function getAttributionCalendarIds() {
+async function getAttributionCalendarIds(signal) {
   const config = await db.get(
     'SELECT config_value FROM app_config WHERE config_key = ? LIMIT 1',
-    ['attribution_calendar_ids']
+    ['attribution_calendar_ids'],
+    { signal }
   )
   if (!config?.config_value) return []
 
@@ -336,17 +337,18 @@ export async function listReportContactsPage({
   dedupeByPerson = false,
   search = '',
   cursor,
-  limit = DEFAULT_PAGE_LIMIT
+  limit = DEFAULT_PAGE_LIMIT,
+  signal
 } = {}) {
   const cleanType = VALID_TYPES.has(type) ? type : 'interesados'
   const cleanScope = VALID_SCOPES.has(scope) ? scope : 'all'
   const limitNumber = normalizeLimit(limit)
-  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal })
   const [hiddenFilters, calendarIds, identityProjectionStatus] = await Promise.all([
-    getHiddenContactFilters(),
-    getAttributionCalendarIds(),
+    getHiddenContactFilters({ signal }),
+    getAttributionCalendarIds(signal),
     dedupeByPerson
-      ? getContactPersonIdentityProjectionStatus({ schedule: false })
+      ? getContactPersonIdentityProjectionStatus({ schedule: false, signal })
       : Promise.resolve({ available: true, ready: true, status: 'not-required' })
   ])
   const cursorScope = hashPaginationCursorScope('report-contacts', {
@@ -448,6 +450,11 @@ export async function listReportContactsPage({
     ? `(SELECT COUNT(*) FROM payments detail_payment WHERE ${periodPaymentConditions.join(' AND ')})`
     : 'COALESCE(c.purchases_count, 0)'
 
+  const queryController = new AbortController()
+  const abortQueries = () => queryController.abort(signal?.reason)
+  if (signal?.aborted) abortQueries()
+  else signal?.addEventListener('abort', abortQueries, { once: true })
+
   const rowsPromise = db.all(
     `SELECT
        c.id, c.full_name, c.email, c.phone, c.created_at, c.total_paid, c.purchases_count,
@@ -469,7 +476,8 @@ export async function listReportContactsPage({
       ...newerEligibility.params,
       ...cursorParams,
       limitNumber + 1
-    ]
+    ],
+    { signal: queryController.signal }
   )
 
   // El total acotado se calcula una sola vez y viaja firmado por el scope del
@@ -486,13 +494,23 @@ export async function listReportContactsPage({
          AND ${representativeCondition}
        LIMIT ?
      ) capped_contacts`,
-      [...eligibility.params, ...newerEligibility.params, TOTAL_COUNT_CAP + 1]
+      [...eligibility.params, ...newerEligibility.params, TOTAL_COUNT_CAP + 1],
+      { signal: queryController.signal }
     )
     : Promise.resolve({
         total: decodedCursor.total + (decodedCursor.totalIsCapped ? 1 : 0)
       })
 
-  const [rows, countRow] = await Promise.all([rowsPromise, countPromise])
+  let rows
+  let countRow
+  try {
+    ;[rows, countRow] = await Promise.all([rowsPromise, countPromise])
+  } catch (error) {
+    queryController.abort(error)
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', abortQueries)
+  }
   const hasNext = rows.length > limitNumber
   const pageRows = hasNext ? rows.slice(0, limitNumber) : rows
   const countedTotal = Number(countRow?.total || 0)

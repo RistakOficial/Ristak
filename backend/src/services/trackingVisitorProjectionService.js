@@ -2,21 +2,43 @@ import { databaseDialect, db } from '../config/database.js'
 import { BACKFILL_JOB_PRIORITY } from '../jobs/backfillJobCoordinator.js'
 import { scheduleProjectionBackfillJob } from '../jobs/projectionBackfillScheduler.js'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 
 export const TRACKING_VISITOR_PROJECTION_VERSION = 3
-const POSTGRES_BATCH_SIZE = 2_000
+const POSTGRES_BATCH_SIZE = 200
 // Cuatro ramas de scope comparten el mismo statement. 200 mantiene 800 IDs por
 // debajo del límite SQLite legacy de 999 bind parameters.
 const SQLITE_BATCH_SIZE = 200
+const MAX_BATCHES_PER_RUN = 10
 const DEFAULT_YIELD_MS = 25
+const BACKFILL_PAUSE_MS = 1_000
+const BACKFILL_ERROR_RETRY_MS = 30_000
 const BACKFILL_JOB_KEY = 'tracking-visitor-projection'
 const PROJECTION_STATE_ID = 1
 
 let projectionReady = false
 let workerPromise = null
 let workerScheduled = false
+let workerEligibleAt = 0
+let workerResumeTimer = null
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
+
+function clearTrackingVisitorProjectionResume() {
+  if (workerResumeTimer) clearTimeout(workerResumeTimer)
+  workerResumeTimer = null
+}
+
+function scheduleTrackingVisitorProjectionResume(delayMs) {
+  if (projectionReady || workerResumeTimer) return false
+  workerResumeTimer = setTimeout(() => {
+    workerResumeTimer = null
+    if (isDeployShutdownStarted()) return
+    scheduleTrackingVisitorProjectionBackfill()
+  }, Math.max(1, Number(delayMs) || 1))
+  workerResumeTimer.unref?.()
+  return true
+}
 
 function isMissingTrackingVisitorProjectionSchema(error) {
   const code = String(error?.code || '').toUpperCase()
@@ -27,13 +49,13 @@ function isMissingTrackingVisitorProjectionSchema(error) {
     /no such column:\s*(?:tracking_visitor_projection_state\.)?(?:singleton_id|projection_version|status|last_error|updated_at)/i.test(message)
 }
 
-export async function readTrackingVisitorProjectionState(database = db) {
+export async function readTrackingVisitorProjectionState(database = db, { signal } = {}) {
   try {
     return await database.get(`
       SELECT singleton_id, projection_version, status, last_error, updated_at
       FROM tracking_visitor_projection_state
       WHERE singleton_id = ?
-    `, [PROJECTION_STATE_ID])
+    `, [PROJECTION_STATE_ID], { signal })
   } catch (error) {
     if (isMissingTrackingVisitorProjectionSchema(error)) return null
     throw error
@@ -53,15 +75,16 @@ async function updateTrackingVisitorProjectionState(status, error = null, databa
     status,
     error ? String(error).slice(0, 2_000) : null,
     PROJECTION_STATE_ID
-  ]).catch(() => null)
+  ])
 }
 
 /**
  * Estado O(1) del read model. Un GET nunca inspecciona `sessions` para decidir
- * si puede responder: durante backfill publica la cobertura parcial disponible.
+ * si puede responder. La proyección sólo es publicable cuando su cobertura está
+ * completa; durante backfill no expone filas parciales como si fueran válidas.
  */
-export async function getTrackingVisitorProjectionStatus({ schedule = false } = {}) {
-  const state = await readTrackingVisitorProjectionState()
+export async function getTrackingVisitorProjectionStatus({ schedule = false, signal } = {}) {
+  const state = await readTrackingVisitorProjectionState(db, { signal })
   if (!state || Number(state.projection_version) !== TRACKING_VISITOR_PROJECTION_VERSION) {
     if (schedule) scheduleTrackingVisitorProjectionBackfill()
     return {
@@ -76,7 +99,7 @@ export async function getTrackingVisitorProjectionStatus({ schedule = false } = 
   const ready = String(state.status || '').toLowerCase() === 'ready'
   if (!ready && schedule) scheduleTrackingVisitorProjectionBackfill()
   return {
-    available: true,
+    available: ready,
     ready,
     status: ready ? 'ready' : 'warming',
     sourceStatus: String(state.status || 'backfilling'),
@@ -152,7 +175,13 @@ async function backfillBatch(batchSize) {
             visitor_projection_version = ?
         FROM projection_batch
         WHERE target.id = projection_batch.id
-        RETURNING target.*
+        RETURNING
+          target.id,
+          target.visitor_key,
+          target.campaign_id,
+          target.adset_id,
+          target.ad_id,
+          target.started_at
       ), scoped_sessions AS (
         SELECT
           scopes.scope_type,
@@ -326,12 +355,27 @@ async function backfillBatch(batchSize) {
  */
 export async function runTrackingVisitorProjectionBackfill({
   batchSize = databaseDialect === 'postgres' ? POSTGRES_BATCH_SIZE : SQLITE_BATCH_SIZE,
-  yieldMs = DEFAULT_YIELD_MS
+  yieldMs = DEFAULT_YIELD_MS,
+  maxBatches = MAX_BATCHES_PER_RUN
 } = {}) {
   let updated = 0
-  const normalizedBatchSize = Math.max(1, Math.min(Number(batchSize) || 1, 10_000))
+  let batches = 0
+  const batchSizeLimit = databaseDialect === 'postgres'
+    ? POSTGRES_BATCH_SIZE
+    : SQLITE_BATCH_SIZE
+  const normalizedBatchSize = Math.max(1, Math.min(Number(batchSize) || 1, batchSizeLimit))
+  const normalizedMaxBatches = Math.max(1, Math.min(Number(maxBatches) || 1, 100))
 
   const state = await readTrackingVisitorProjectionState()
+  if (!state) {
+    projectionReady = false
+    return {
+      ready: false,
+      updated: 0,
+      version: TRACKING_VISITOR_PROJECTION_VERSION,
+      unavailable: true
+    }
+  }
   if (
     Number(state?.projection_version) === TRACKING_VISITOR_PROJECTION_VERSION &&
     String(state?.status || '').toLowerCase() === 'ready'
@@ -347,45 +391,86 @@ export async function runTrackingVisitorProjectionBackfill({
   if (state && String(state.status || '').toLowerCase() !== 'ready') {
     await updateTrackingVisitorProjectionState('backfilling')
   }
+  projectionReady = false
 
-  while (true) {
+  for (let batch = 0; batch < normalizedMaxBatches; batch += 1) {
     const changes = Number(await backfillBatch(normalizedBatchSize) || 0)
+    batches += 1
     updated += changes
-
-    if (changes === 0) {
-      // Otra instancia puede tener el último lote bloqueado. Sólo publicar ready
-      // cuando la tabla confirma que ya no queda ninguna versión vieja.
-      if (!(await hasPendingProjectionRows())) {
-        projectionReady = true
-        await updateTrackingVisitorProjectionState('ready')
-        break
-      }
-    }
-
-    await sleep(yieldMs)
+    if (changes === 0) break
+    if (batch + 1 < normalizedMaxBatches) await sleep(yieldMs)
   }
 
+  // Otra instancia puede tener el último lote bloqueado. Sólo publicar ready
+  // cuando la tabla confirma que ya no queda ninguna versión vieja.
+  const pending = await hasPendingProjectionRows()
+  if (!pending) {
+    await updateTrackingVisitorProjectionState('ready')
+    projectionReady = true
+  }
   if (updated > 0) {
     logger.info(`[Tracking] Proyección de visitantes actualizada en ${updated} sesión(es).`)
   }
-  return { ready: true, updated, version: TRACKING_VISITOR_PROJECTION_VERSION }
+  return {
+    ready: !pending,
+    updated,
+    batches,
+    paused: pending,
+    version: TRACKING_VISITOR_PROJECTION_VERSION
+  }
 }
 
 /** Programa el backfill y regresa de inmediato; nunca bloquea readiness/deploy. */
 export function scheduleTrackingVisitorProjectionBackfill() {
+  if (isDeployShutdownStarted()) {
+    return { scheduled: false, ready: false, reason: 'shutting-down' }
+  }
   if (projectionReady || workerPromise || workerScheduled) {
     return { scheduled: false, ready: projectionReady }
+  }
+  const retryAfterMs = Math.max(0, workerEligibleAt - Date.now())
+  if (retryAfterMs > 0) {
+    scheduleTrackingVisitorProjectionResume(retryAfterMs)
+    return { scheduled: false, ready: false, paused: true, retryAfterMs }
   }
 
   const queued = scheduleProjectionBackfillJob({
     key: BACKFILL_JOB_KEY,
     priority: BACKFILL_JOB_PRIORITY.NORMAL,
+    onError: (error) => {
+      // El fence distribuido puede fallar antes de invocar `run` (por ejemplo,
+      // al adquirir conexión). En ese caso nadie había limpiado esta bandera y
+      // la proyección quedaba warming para siempre.
+      workerScheduled = false
+      workerEligibleAt = Date.now() + BACKFILL_ERROR_RETRY_MS
+      scheduleTrackingVisitorProjectionResume(BACKFILL_ERROR_RETRY_MS)
+      logger.warn(`[Tracking] No se pudo iniciar la proyección de visitantes; se reintentará: ${error?.message || error}`)
+    },
     run: () => {
       workerScheduled = false
       if (projectionReady || workerPromise) return workerPromise
       workerPromise = runTrackingVisitorProjectionBackfill()
-        .catch((error) => {
-          void updateTrackingVisitorProjectionState('failed', error?.message || error)
+        .then((result) => {
+          const retryDelayMs = result?.unavailable
+            ? BACKFILL_ERROR_RETRY_MS
+            : BACKFILL_PAUSE_MS
+          workerEligibleAt = result?.ready ? 0 : Date.now() + retryDelayMs
+          if (result?.ready) clearTrackingVisitorProjectionResume()
+          else scheduleTrackingVisitorProjectionResume(retryDelayMs)
+          return result
+        })
+        .catch(async (error) => {
+          workerEligibleAt = Date.now() + BACKFILL_ERROR_RETRY_MS
+          scheduleTrackingVisitorProjectionResume(BACKFILL_ERROR_RETRY_MS)
+          try {
+            await updateTrackingVisitorProjectionState('failed', error?.message || error)
+          } catch (stateError) {
+            logger.warn(`[Tracking] Falló el backfill y tampoco se pudo persistir su estado: ${stateError.message}`)
+            throw new AggregateError(
+              [error, stateError],
+              'Falló la proyección de visitantes y no se pudo guardar su estado'
+            )
+          }
           logger.warn(`[Tracking] No se pudo completar la proyección de visitantes: ${error.message}`)
           return { ready: false, error: error.message }
         })
@@ -410,5 +495,8 @@ export async function isTrackingVisitorProjectionReady({
 export const TRACKING_VISITOR_PROJECTION_LIMITS = Object.freeze({
   postgresBatchSize: POSTGRES_BATCH_SIZE,
   sqliteBatchSize: SQLITE_BATCH_SIZE,
+  maxBatchesPerRun: MAX_BATCHES_PER_RUN,
+  pauseMs: BACKFILL_PAUSE_MS,
+  resumesWithoutTraffic: true,
   yieldMs: DEFAULT_YIELD_MS
 })

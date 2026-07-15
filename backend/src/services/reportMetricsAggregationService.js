@@ -229,7 +229,7 @@ async function runBoundedQueryTasks(tasks, concurrency = 2, signal) {
  */
 export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy = 'day', scope = 'all', signal } = {}) {
   throwIfReportQueryAborted(signal)
-  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal })
   throwIfReportQueryAborted(signal)
   const cleanGroup = VALID_GROUPS.has(groupBy) ? groupBy : 'day'
   const timezone = range.appliedTimezone
@@ -526,7 +526,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
  */
 export async function buildReportComparisonTotals({ startDate, endDate, scope = 'all', signal } = {}) {
   throwIfReportQueryAborted(signal)
-  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal })
   throwIfReportQueryAborted(signal)
   const timezone = range.appliedTimezone
   const useContactAttribution = scope === 'attribution' || scope === 'campaigns'

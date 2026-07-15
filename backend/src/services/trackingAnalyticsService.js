@@ -93,6 +93,7 @@ const DEFAULT_SEARCH_COLUMNS = [
 ]
 const MAX_FILTER_VALUES = 100
 const MAX_FILTER_VALUE_LENGTH = 300
+const MIN_SEARCH_LENGTH = 3
 const MAX_SEARCH_LENGTH = 200
 const MAX_SERIES_POINTS = 400
 const FACET_LIMIT = 25
@@ -101,6 +102,29 @@ const ADS_HIERARCHY_CAMPAIGN_LIMIT = 8
 const ADS_HIERARCHY_ADSET_LIMIT = 5
 const ADS_HIERARCHY_AD_LIMIT = 5
 const ADS_HIERARCHY_GLOBAL_LIMIT = 750
+const FLAT_FACET_DIMENSIONS = Object.freeze([
+  'sources',
+  'campaigns',
+  'adsets',
+  'ads',
+  'devices',
+  'browsers',
+  'os',
+  'placements',
+  'trafficChannels',
+  'trackingSources',
+  'pages',
+  'siteTypes',
+  'nativeSites',
+  'nativeForms',
+  'nativeConversions',
+  'topVisitors'
+])
+const TRACKING_ANALYTICS_FACET_DIMENSIONS = Object.freeze([
+  ...FLAT_FACET_DIMENSIONS,
+  'adsHierarchy'
+])
+const TRACKING_ANALYTICS_FACET_DIMENSION_SET = new Set(TRACKING_ANALYTICS_FACET_DIMENSIONS)
 const STAGE_SEARCH_CHUNK_SIZE = 500
 const STAGE_SEARCH_MAX_SCAN = 10_000
 const SUMMARY_CACHE_TTL_MS = 30_000
@@ -112,8 +136,26 @@ const SUMMARY_CACHE_TTL_MS = 30_000
 // cuando necesita el resultado fresco.
 const SUMMARY_CACHE_STALE_WHILE_REVALIDATE_MS = 5 * 60_000
 const SUMMARY_CACHE_MAX_ENTRIES = 100
+const SUMMARY_QUERY_DEADLINE_MS = 18_000
+const SUMMARY_MAX_CONCURRENT_BUILDS = 2
+const SUMMARY_MAX_QUEUED_BUILDS = 8
+const SUMMARY_MAX_CONCURRENT_QUERIES = 2
+const FACET_CACHE_TTL_MS = 30_000
+const FACET_CACHE_STALE_WHILE_REVALIDATE_MS = 5 * 60_000
+const FACET_CACHE_MAX_ENTRIES = 200
+const FACET_QUERY_DEADLINE_MS = 18_000
+const FACET_MAX_CONCURRENT_BUILDS = 1
+const FACET_MAX_QUEUED_BUILDS = 12
 const summaryCache = new Map()
 const summaryInflight = new Map()
+const summaryBuildWaiters = []
+const summaryQueryWaiters = []
+const facetCache = new Map()
+const facetInflight = new Map()
+const facetBuildWaiters = []
+let activeSummaryBuilds = 0
+let activeSummaryQueries = 0
+let activeFacetBuilds = 0
 
 const successfulPaymentStatusSql = SUCCESS_PAYMENT_STATUSES
   .map(status => `'${String(status).replace(/'/g, "''")}'`)
@@ -473,12 +515,16 @@ function buildFilteredSessionsCte(range, filters, params) {
   `
 }
 
-async function resolveAnalyticsRange(start, end) {
+async function resolveAnalyticsRange(start, end, signal) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(end || ''))) {
     throw requestError('start y end deben usar el formato YYYY-MM-DD')
   }
 
-  const resolved = await resolveDateRangeWithGHLTimezone({ startDate: start, endDate: end })
+  const resolved = await resolveDateRangeWithGHLTimezone({
+    startDate: start,
+    endDate: end,
+    signal
+  })
   if (!resolved.startZoned?.isValid || !resolved.endZoned?.isValid || resolved.startZoned > resolved.endZoned) {
     throw requestError('El rango de fechas no es válido')
   }
@@ -535,7 +581,7 @@ function emptySessionMetrics() {
   }
 }
 
-async function querySessionMetrics(range, filters, groupBy, { includeSeries }) {
+async function querySessionMetrics(range, filters, groupBy, { includeSeries, signal }) {
   const params = []
   const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params)
 
@@ -544,7 +590,9 @@ async function querySessionMetrics(range, filters, groupBy, { includeSeries }) {
       WITH
       ${filteredSessionsCte},
       view_sessions AS (
-        SELECT * FROM filtered_sessions WHERE event_name IN (${viewEventSql})
+        SELECT session_id, contact_id, visitor_identity
+        FROM filtered_sessions
+        WHERE event_name IN (${viewEventSql})
       ),
       returning_identities AS (
         SELECT visitor_identity
@@ -559,7 +607,7 @@ async function querySessionMetrics(range, filters, groupBy, { includeSeries }) {
         COUNT(DISTINCT contact_id) AS identified_contacts,
         (SELECT COUNT(*) FROM returning_identities) AS returning_users
       FROM view_sessions
-    `, params)
+    `, params, { signal })
 
     return {
       metrics: {
@@ -574,63 +622,157 @@ async function querySessionMetrics(range, filters, groupBy, { includeSeries }) {
   }
 
   const periodExpression = getGroupExpression('started_at', groupBy, range.timezone)
-  const rows = await db.all(`
-    WITH
-    ${filteredSessionsCte},
-    view_sessions AS (
-      SELECT *, ${periodExpression} AS period
-      FROM filtered_sessions
-      WHERE event_name IN (${viewEventSql})
-    ),
-    identity_totals AS (
-      SELECT visitor_identity
-      FROM view_sessions
-      GROUP BY visitor_identity
-      HAVING COUNT(DISTINCT session_id) > 1
-    ),
-    identity_periods AS (
-      SELECT period, visitor_identity
-      FROM view_sessions
-      GROUP BY period, visitor_identity
-      HAVING COUNT(DISTINCT session_id) > 1
-    ),
-    period_totals AS (
+  const seriesSql = databaseDialect === 'postgres'
+    ? `
+      WITH
+      ${filteredSessionsCte},
+      view_sessions AS (
+        SELECT
+          session_id,
+          contact_id,
+          visitor_identity,
+          ${periodExpression} AS period
+        FROM filtered_sessions
+        WHERE event_name IN (${viewEventSql})
+      ),
+      identity_groups AS (
+        SELECT
+          GROUPING(period) AS total_group,
+          period,
+          visitor_identity,
+          COUNT(*) AS page_views,
+          COUNT(DISTINCT session_id) AS identity_sessions,
+          MAX(CASE WHEN contact_id = '' THEN 1 ELSE 0 END) AS has_empty_contact
+        FROM view_sessions
+        GROUP BY GROUPING SETS (
+          (visitor_identity),
+          (period, visitor_identity)
+        )
+      ),
+      identity_rollups AS (
+        SELECT
+          total_group,
+          period,
+          SUM(page_views) AS page_views,
+          COUNT(visitor_identity) AS unique_visitors,
+          COUNT(*) FILTER (WHERE visitor_identity LIKE 'contact:%')
+            + MAX(has_empty_contact) AS identified_contacts,
+          COUNT(*) FILTER (
+            WHERE visitor_identity IS NOT NULL AND identity_sessions > 1
+          ) AS returning_users
+        FROM identity_groups
+        GROUP BY total_group, period
+      ),
+      complete_identity_rollups AS (
+        SELECT
+          total_group,
+          period,
+          page_views,
+          unique_visitors,
+          identified_contacts,
+          returning_users
+        FROM identity_rollups
+        UNION ALL
+        SELECT 1, NULL::text, 0, 0, 0, 0
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM identity_rollups
+          WHERE total_group = 1
+        )
+      ),
+      session_groups AS (
+        SELECT
+          GROUPING(period) AS total_group,
+          period,
+          session_id
+        FROM view_sessions
+        WHERE session_id IS NOT NULL
+        GROUP BY GROUPING SETS (
+          (session_id),
+          (period, session_id)
+        )
+      ),
+      session_rollups AS (
+        SELECT total_group, period, COUNT(*) AS unique_sessions
+        FROM session_groups
+        GROUP BY total_group, period
+      )
       SELECT
-        period,
+        CASE WHEN identities.total_group = 1 THEN 'metric' ELSE 'series' END AS row_type,
+        identities.period,
+        identities.page_views,
+        identities.unique_visitors,
+        COALESCE(sessions.unique_sessions, 0) AS unique_sessions,
+        identities.identified_contacts,
+        identities.returning_users
+      FROM complete_identity_rollups identities
+      LEFT JOIN session_rollups sessions
+        ON sessions.total_group = identities.total_group
+        AND sessions.period IS NOT DISTINCT FROM identities.period
+      ORDER BY row_type ASC, period ASC
+    `
+    : `
+      WITH
+      ${filteredSessionsCte},
+      view_sessions AS (
+        SELECT
+          session_id,
+          contact_id,
+          visitor_identity,
+          ${periodExpression} AS period
+        FROM filtered_sessions
+        WHERE event_name IN (${viewEventSql})
+      ),
+      identity_totals AS (
+        SELECT visitor_identity
+        FROM view_sessions
+        GROUP BY visitor_identity
+        HAVING COUNT(DISTINCT session_id) > 1
+      ),
+      identity_periods AS (
+        SELECT period, visitor_identity
+        FROM view_sessions
+        GROUP BY period, visitor_identity
+        HAVING COUNT(DISTINCT session_id) > 1
+      ),
+      period_totals AS (
+        SELECT
+          period,
+          COUNT(*) AS page_views,
+          COUNT(DISTINCT visitor_identity) AS unique_visitors,
+          COUNT(DISTINCT session_id) AS unique_sessions,
+          COUNT(DISTINCT contact_id) AS identified_contacts
+        FROM view_sessions
+        GROUP BY period
+      ),
+      returning_periods AS (
+        SELECT period, COUNT(*) AS returning_users
+        FROM identity_periods
+        GROUP BY period
+      )
+      SELECT
+        'metric' AS row_type,
+        NULL AS period,
         COUNT(*) AS page_views,
         COUNT(DISTINCT visitor_identity) AS unique_visitors,
         COUNT(DISTINCT session_id) AS unique_sessions,
-        COUNT(DISTINCT contact_id) AS identified_contacts
+        COUNT(DISTINCT contact_id) AS identified_contacts,
+        (SELECT COUNT(*) FROM identity_totals) AS returning_users
       FROM view_sessions
-      GROUP BY period
-    ),
-    returning_periods AS (
-      SELECT period, COUNT(*) AS returning_users
-      FROM identity_periods
-      GROUP BY period
-    )
-    SELECT
-      'metric' AS row_type,
-      NULL AS period,
-      COUNT(*) AS page_views,
-      COUNT(DISTINCT visitor_identity) AS unique_visitors,
-      COUNT(DISTINCT session_id) AS unique_sessions,
-      COUNT(DISTINCT contact_id) AS identified_contacts,
-      (SELECT COUNT(*) FROM identity_totals) AS returning_users
-    FROM view_sessions
-    UNION ALL
-    SELECT
-      'series' AS row_type,
-      totals.period,
-      totals.page_views,
-      totals.unique_visitors,
-      totals.unique_sessions,
-      totals.identified_contacts,
-      COALESCE(returning_rows.returning_users, 0) AS returning_users
-    FROM period_totals totals
-    LEFT JOIN returning_periods returning_rows ON returning_rows.period = totals.period
-    ORDER BY row_type ASC, period ASC
-  `, params)
+      UNION ALL
+      SELECT
+        'series' AS row_type,
+        totals.period,
+        totals.page_views,
+        totals.unique_visitors,
+        totals.unique_sessions,
+        totals.identified_contacts,
+        COALESCE(returning_rows.returning_users, 0) AS returning_users
+      FROM period_totals totals
+      LEFT JOIN returning_periods returning_rows ON returning_rows.period = totals.period
+      ORDER BY row_type ASC, period ASC
+    `
+  const rows = await db.all(seriesSql, params, { signal })
 
   const metricRow = rows.find(row => row.row_type === 'metric')
   return {
@@ -670,7 +812,7 @@ function emptyConversionMetrics() {
   return { registrations: 0, prospects: 0, appointments: 0, attendances: 0, customers: 0, purchases: 0 }
 }
 
-async function queryConversionMetrics(range, filters, groupBy, { includeSeries }) {
+async function queryConversionMetrics(range, filters, groupBy, { includeSeries, signal }) {
   const params = [range.startUtc, range.endExclusiveUtc]
   const candidateConditions = [
     `c.created_at >= ?`,
@@ -724,7 +866,7 @@ async function queryConversionMetrics(range, filters, groupBy, { includeSeries }
     FROM contact_facts cf
     ${stageConditions.length > 0 ? `WHERE ${stageConditions.join(' AND ')}` : ''}
     ${groupClause}
-  `, params)
+  `, params, { signal })
 
   const series = rows.map(row => ({
     period: includeSeries ? String(row.period || '') : '',
@@ -787,59 +929,99 @@ function facetDimensionDefinitions(alias, identityExpression) {
   ]
 }
 
-async function queryPostgresSessionFacetsWithoutConversionFilter(range, filters) {
-  const params = [range.startUtc, range.endExclusiveUtc]
+export function normalizeTrackingAnalyticsFacetDimension(input) {
+  const dimension = normalizeText(input, 40)
+  if (!TRACKING_ANALYTICS_FACET_DIMENSION_SET.has(dimension)) {
+    throw requestError(`Dimensión de faceta no soportada: ${dimension || '(vacía)'}`)
+  }
+  return dimension
+}
+
+function flatFacetDefinition(alias, identityExpression, dimension) {
+  const definition = facetDimensionDefinitions(alias, identityExpression)
+    .find(([candidate]) => candidate === dimension)
+  if (!definition) throw requestError(`Dimensión de faceta no soportada: ${dimension}`)
+  return definition
+}
+
+async function queryPostgresSessionFacetsWithoutConversionFilter(range, filters, signal) {
   const identityExpression = getVisitorIdentityExpression('s')
   const dimensions = facetDimensionDefinitions('s', identityExpression)
-  const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
-  conditions.push(...buildSessionFilterConditions(filters, 's', params))
-  const dimensionCase = dimensions
-    .map(([dimension, value]) => `WHEN GROUPING(${value}) = 0 THEN '${dimension}'`)
-    .join('\n          ')
-  const valueCase = dimensions
-    .map(([, value]) => `WHEN GROUPING(${value}) = 0 THEN CAST(COALESCE(${value}, '') AS TEXT)`)
-    .join('\n          ')
-  const labelCase = dimensions
-    .map(([, value, label]) => `WHEN GROUPING(${value}) = 0 THEN CAST(MAX(COALESCE(${label}, ${value}, '')) AS TEXT)`)
-    .join('\n          ')
-  const groupingSets = dimensions.map(([, value]) => `(${value})`).join(',\n        ')
-  const topVisitorExpression = dimensions.find(([dimension]) => dimension === 'topVisitors')[1]
+  const params = []
+
+  // GROUPING SETS parecía ahorrar recorridos, pero con 300k eventos y work_mem
+  // de 4 MB mantuvo simultáneamente los estados de 16 dimensiones y derramó
+  // casi 3 GiB a temporales. Cada rama siguiente agrega y poda sus 25 valores
+  // antes del UNION ALL. Repite un scan barato e indexado por rango, evita la
+  // explosión de memoria y conserva exactamente value/count/orden de facetas.
+  const facetBranches = dimensions.map(([dimension, value, label, identity]) => {
+    const branchParams = [range.startUtc, range.endExclusiveUtc]
+    const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
+    conditions.push(...buildSessionFilterConditions(filters, 's', branchParams))
+    conditions.push(`COALESCE(CAST(${value} AS TEXT), '') != ''`)
+    params.push(...branchParams)
+
+    const itemCount = dimension === 'topVisitors'
+      ? 'COUNT(*)'
+      : `COUNT(DISTINCT ${identity})`
+
+    return `
+      SELECT dimension, value, label, item_count
+      FROM (
+        SELECT
+          '${dimension}' AS dimension,
+          CAST(COALESCE(${value}, '') AS TEXT) AS value,
+          CAST(MAX(COALESCE(${label}, ${value}, '')) AS TEXT) AS label,
+          ${itemCount} AS item_count
+        FROM sessions s
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY ${value}
+        ORDER BY item_count DESC, value ASC
+        LIMIT ${FACET_LIMIT}
+      ) ${dimension}_facet
+    `
+  })
 
   const rows = await db.all(`
-    WITH dimension_counts AS (
-      SELECT
-        CASE ${dimensionCase} END AS dimension,
-        CASE ${valueCase} END AS value,
-        CASE ${labelCase} END AS label,
-        CASE
-          WHEN GROUPING(${topVisitorExpression}) = 0 THEN COUNT(*)
-          ELSE COUNT(DISTINCT ${identityExpression})
-        END AS item_count
-      FROM sessions s
-      WHERE ${conditions.join(' AND ')}
-      GROUP BY GROUPING SETS (
-        ${groupingSets}
-      )
-    ),
-    ranked_dimensions AS (
-      SELECT
-        dimension,
-        value,
-        label,
-        item_count,
-        ROW_NUMBER() OVER (PARTITION BY dimension ORDER BY item_count DESC, value ASC) AS item_rank
-      FROM dimension_counts
-      WHERE COALESCE(value, '') != ''
-    )
     SELECT dimension, value, label, item_count
-    FROM ranked_dimensions
-    WHERE item_rank <= ${FACET_LIMIT}
-    ORDER BY dimension ASC, item_rank ASC
-  `, params)
+    FROM (
+      ${facetBranches.join('\nUNION ALL\n')}
+    ) facet_rows
+    ORDER BY dimension ASC, item_count DESC, value ASC
+  `, params, { signal })
 
   const facets = Object.fromEntries(dimensions.map(([dimension]) => [dimension, []]))
   for (const row of rows) facets[row.dimension]?.push(facetItem(row))
   return facets
+}
+
+async function queryPostgresSingleSessionFacetWithoutConversionFilter(range, filters, dimension, signal) {
+  const identityExpression = getVisitorIdentityExpression('s')
+  const [, value, label, identity] = flatFacetDefinition('s', identityExpression, dimension)
+  const params = [range.startUtc, range.endExclusiveUtc]
+  const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
+  conditions.push(...buildSessionFilterConditions(filters, 's', params))
+  conditions.push(`COALESCE(CAST(${value} AS TEXT), '') != ''`)
+  const itemCount = dimension === 'topVisitors'
+    ? 'COUNT(*)'
+    : `COUNT(DISTINCT ${identity})`
+
+  // Esta ruta ejecuta exactamente una dimensión. No se permite aceptar un
+  // arreglo ni construir un UNION: cada intención del usuario paga un solo
+  // agregado acotado y no vuelve a meter las 16 facetas en la ruta crítica.
+  const rows = await db.all(`
+    SELECT
+      CAST(COALESCE(${value}, '') AS TEXT) AS value,
+      CAST(MAX(COALESCE(${label}, ${value}, '')) AS TEXT) AS label,
+      ${itemCount} AS item_count
+    FROM sessions s
+    WHERE ${conditions.join(' AND ')}
+    GROUP BY ${value}
+    ORDER BY item_count DESC, value ASC
+    LIMIT ${FACET_LIMIT}
+  `, params, { signal })
+
+  return rows.map(facetItem)
 }
 
 function hierarchyNodeKey(...parts) {
@@ -929,7 +1111,7 @@ function buildAdsHierarchy(rows) {
   return platforms
 }
 
-async function queryAdsHierarchy(range, filters) {
+async function queryAdsHierarchy(range, filters, signal) {
   const params = []
   const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params)
   const platformExpression = trafficSourceExpression('fs')
@@ -1166,14 +1348,14 @@ async function queryAdsHierarchy(range, filters) {
     FROM hierarchy_nodes
     ORDER BY node_order ASC, platform_rank ASC, campaign_rank ASC, adset_rank ASC, ad_rank ASC
     LIMIT ${ADS_HIERARCHY_GLOBAL_LIMIT}
-  `, params)
+  `, params, { signal })
 
   return buildAdsHierarchy(rows)
 }
 
-async function queryFlatSessionFacets(range, filters) {
+async function queryFlatSessionFacets(range, filters, signal) {
   if (databaseDialect === 'postgres' && !filters.conversion_stage?.length) {
-    return queryPostgresSessionFacetsWithoutConversionFilter(range, filters)
+    return queryPostgresSessionFacetsWithoutConversionFilter(range, filters, signal)
   }
 
   const params = []
@@ -1220,19 +1402,72 @@ async function queryFlatSessionFacets(range, filters) {
     FROM ranked_dimensions
     WHERE item_rank <= ${FACET_LIMIT}
     ORDER BY dimension ASC, item_rank ASC
-  `, params)
+  `, params, { signal })
 
   const facets = Object.fromEntries(dimensions.map(([dimension]) => [dimension, []]))
   for (const row of rows) facets[row.dimension]?.push(facetItem(row))
   return facets
 }
 
-async function querySessionFacets(range, filters) {
-  // La jerarquía corre dentro del mismo carril de facets: no abre una cuarta
-  // consulta concurrente contra el pool cuando varios usuarios cargan Analytics.
-  const facets = await queryFlatSessionFacets(range, filters)
-  facets.adsHierarchy = await queryAdsHierarchy(range, filters)
-  return facets
+async function querySingleFlatSessionFacet(range, filters, dimension, signal) {
+  if (databaseDialect === 'postgres' && !filters.conversion_stage?.length) {
+    return queryPostgresSingleSessionFacetWithoutConversionFilter(range, filters, dimension, signal)
+  }
+
+  const params = []
+  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params)
+  const [, value, label, identity] = flatFacetDefinition(
+    'fs',
+    'fs.visitor_identity',
+    dimension
+  )
+  const itemCount = dimension === 'topVisitors'
+    ? 'COUNT(*)'
+    : `COUNT(DISTINCT ${identity})`
+
+  const rows = await db.all(`
+    WITH
+    ${filteredSessionsCte}
+    SELECT
+      CAST(COALESCE(${value}, '') AS TEXT) AS value,
+      CAST(MAX(COALESCE(${label}, ${value}, '')) AS TEXT) AS label,
+      ${itemCount} AS item_count
+    FROM filtered_sessions fs
+    WHERE COALESCE(CAST(${value} AS TEXT), '') != ''
+      AND COALESCE(CAST(${identity} AS TEXT), '') != ''
+    GROUP BY ${value}
+    ORDER BY item_count DESC, value ASC
+    LIMIT ${FACET_LIMIT}
+  `, params, { signal })
+
+  return rows.map(facetItem)
+}
+
+async function queryTrackingAnalyticsFacet(range, filters, dimension, signal) {
+  if (dimension === 'adsHierarchy') return queryAdsHierarchy(range, filters, signal)
+  return querySingleFlatSessionFacet(range, filters, dimension, signal)
+}
+
+async function querySessionFacets(range, filters, signal, runQuery) {
+  // Facetas planas y jerarquía no dependen entre sí. Ambas comparten el
+  // semáforo global de dos consultas con sesiones/conversiones; así reducen el
+  // tiempo de pared sin volver al burst de seis consultas que saturó Render.
+  const siblingController = new AbortController()
+  const linkedScope = createLinkedSummaryAbortScope([signal, siblingController.signal])
+  const flatPromise = runQuery(() => queryFlatSessionFacets(range, filters, linkedScope.signal))
+  const hierarchyPromise = runQuery(() => queryAdsHierarchy(range, filters, linkedScope.signal))
+
+  try {
+    const [facets, adsHierarchy] = await Promise.all([flatPromise, hierarchyPromise])
+    facets.adsHierarchy = adsHierarchy
+    return facets
+  } catch (error) {
+    siblingController.abort(error)
+    await Promise.allSettled([flatPromise, hierarchyPromise])
+    throw error
+  } finally {
+    linkedScope.cleanup()
+  }
 }
 
 function trendValue(current, previous) {
@@ -1257,28 +1492,80 @@ async function computeTrackingAnalyticsSummary({
   requestedGroupBy,
   normalizedFilters,
   range,
-  appliedGroupBy
+  appliedGroupBy,
+  includeFacets,
+  signal
 }) {
   const previousRange = previousRangeFor(range)
+  const siblingController = new AbortController()
+  const linkedScope = createLinkedSummaryAbortScope([signal, siblingController.signal])
+  const runQuery = callback => withTrackingSummaryQuerySlot(linkedScope.signal, callback)
 
-  // Tres carriles como máximo por petición: sesiones, conversiones y facets.
-  // Dentro de cada carril el período anterior corre después del actual para no
-  // comerse cinco conexiones del pool cuando varios usuarios abren Analytics.
-  const [sessionResults, conversionResults, facets] = await Promise.all([
-    (async () => ({
-      current: await querySessionMetrics(range, normalizedFilters, appliedGroupBy, { includeSeries: true }),
-      previous: await querySessionMetrics(previousRange, normalizedFilters, appliedGroupBy, { includeSeries: false })
-    }))(),
-    (async () => ({
-      current: await queryConversionMetrics(range, normalizedFilters, appliedGroupBy, { includeSeries: true }),
-      previous: await queryConversionMetrics(previousRange, normalizedFilters, appliedGroupBy, { includeSeries: false })
-    }))(),
-    querySessionFacets(range, normalizedFilters)
-  ])
-  const currentSessions = sessionResults.current
-  const previousSessions = sessionResults.previous
-  const currentConversions = conversionResults.current
-  const previousConversions = conversionResults.previous
+  // Hasta tres carriles independientes reducen el tiempo de pared frente a seis
+  // lecturas seriales. El core web usa sólo sesiones y conversiones; callers
+  // legacy pueden sumar facetas. Cada carril conserva su orden y todos pasan por un
+  // semáforo global de dos consultas: ni un build ni varios builds simultáneos
+  // pueden abrir más de dos agregados pesados contra PostgreSQL.
+  const sessionLane = (async () => ({
+    current: await runQuery(() => querySessionMetrics(
+      range,
+      normalizedFilters,
+      appliedGroupBy,
+      { includeSeries: true, signal: linkedScope.signal }
+    )),
+    previous: await runQuery(() => querySessionMetrics(
+      previousRange,
+      normalizedFilters,
+      appliedGroupBy,
+      { includeSeries: false, signal: linkedScope.signal }
+    ))
+  }))()
+  const conversionLane = (async () => ({
+    current: await runQuery(() => queryConversionMetrics(
+      range,
+      normalizedFilters,
+      appliedGroupBy,
+      { includeSeries: true, signal: linkedScope.signal }
+    )),
+    previous: await runQuery(() => queryConversionMetrics(
+      previousRange,
+      normalizedFilters,
+      appliedGroupBy,
+      { includeSeries: false, signal: linkedScope.signal }
+    ))
+  }))()
+  // El frontend puede sacar las facetas de la apertura inicial. En ese caso ni
+  // siquiera se crea la promesa del carril: no hay SQL plano, jerarquía ni
+  // trabajo en cola escondido después de responder el core.
+  const lanes = [sessionLane, conversionLane]
+  if (includeFacets) {
+    lanes.push(querySessionFacets(
+      range,
+      normalizedFilters,
+      linkedScope.signal,
+      runQuery
+    ))
+  }
+
+  let laneResults
+  try {
+    laneResults = await Promise.all(lanes)
+  } catch (error) {
+    // Si un carril falla, cancelar y esperar los hermanos evita consultas
+    // huérfanas consumiendo conexiones después de que el request ya terminó.
+    if (!siblingController.signal.aborted) siblingController.abort(error)
+    await Promise.allSettled(lanes)
+    throw error
+  } finally {
+    linkedScope.cleanup()
+  }
+
+  const [sessions, conversions, loadedFacets] = laneResults
+  const facets = includeFacets ? loadedFacets : {}
+  const currentSessions = sessions.current
+  const previousSessions = sessions.previous
+  const currentConversions = conversions.current
+  const previousConversions = conversions.previous
 
   const current = finalizeMetrics(currentSessions.metrics, currentConversions.metrics)
   const previous = finalizeMetrics(previousSessions.metrics, previousConversions.metrics)
@@ -1304,16 +1591,18 @@ async function computeTrackingAnalyticsSummary({
     metrics: { current, previous, trends },
     trafficSeries: currentSessions.series,
     conversionSeries: currentConversions.series,
-    distributions: {
-      sources: facets.sources.slice(0, 5),
-      placements: facets.placements.slice(0, 5),
-      devices: facets.devices.slice(0, 5),
-      browsers: facets.browsers.slice(0, 5),
-      os: facets.os.slice(0, 5),
-      channels: facets.trafficChannels.slice(0, 5),
-      trackingSources: facets.trackingSources.slice(0, 5),
-      topVisitors: facets.topVisitors.slice(0, 5)
-    },
+    distributions: includeFacets
+      ? {
+          sources: facets.sources.slice(0, 5),
+          placements: facets.placements.slice(0, 5),
+          devices: facets.devices.slice(0, 5),
+          browsers: facets.browsers.slice(0, 5),
+          os: facets.os.slice(0, 5),
+          channels: facets.trafficChannels.slice(0, 5),
+          trackingSources: facets.trackingSources.slice(0, 5),
+          topVisitors: facets.topVisitors.slice(0, 5)
+        }
+      : {},
     facets
   }
 }
@@ -1322,6 +1611,30 @@ function stableFilterCacheKey(filters) {
   return Object.keys(filters)
     .sort()
     .map(field => [field, [...filters[field]].sort()])
+}
+
+function trackingSnapshotMetadata({
+  exactAtBuiltAt,
+  builtAt,
+  builtRevision,
+  currentRevision,
+  cacheTtlMs = SUMMARY_CACHE_TTL_MS,
+  maxStaleAgeMs = SUMMARY_CACHE_STALE_WHILE_REVALIDATE_MS
+}) {
+  const revisionChanged = builtRevision !== currentRevision
+  const revalidateAfterMs = exactAtBuiltAt && revisionChanged
+    ? Date.now()
+    : builtAt + cacheTtlMs
+  return {
+    stale: !exactAtBuiltAt || revisionChanged || Date.now() >= revalidateAfterMs,
+    consistency: exactAtBuiltAt ? 'exact' : 'moving-window',
+    exactAtBuiltAt: Boolean(exactAtBuiltAt),
+    builtAt: new Date(builtAt).toISOString(),
+    builtRevision: Number(builtRevision || 0),
+    revision: Number(currentRevision || 0),
+    revalidateAfter: new Date(revalidateAfterMs).toISOString(),
+    maxStaleAgeMs
+  }
 }
 
 function readSummaryCache(key, revision) {
@@ -1336,33 +1649,405 @@ function readSummaryCache(key, revision) {
   // Map conserva orden de inserción: mover al final implementa un LRU pequeño.
   summaryCache.delete(key)
   summaryCache.set(key, cached)
+  const metadata = trackingSnapshotMetadata({
+    exactAtBuiltAt: cached.exactAtBuiltAt,
+    builtAt: cached.fetchedAt,
+    builtRevision: cached.revision,
+    currentRevision: revision
+  })
+  const data = age < SUMMARY_CACHE_TTL_MS && cached.revision === revision
+    ? cached.data
+    : { ...cached.data, snapshot: metadata }
   return {
-    data: cached.data,
-    stale: cached.revision !== revision || age >= SUMMARY_CACHE_TTL_MS
+    data,
+    stale: metadata.stale,
+    refreshDue: age >= SUMMARY_CACHE_TTL_MS || (
+      cached.exactAtBuiltAt && cached.revision !== revision
+    )
   }
 }
 
-function writeSummaryCache(key, data, revision) {
-  summaryCache.set(key, { data, fetchedAt: Date.now(), revision })
+function writeSummaryCache(key, data, revision, { exactAtBuiltAt = true } = {}) {
+  const fetchedAt = Date.now()
+  const snapshot = trackingSnapshotMetadata({
+    exactAtBuiltAt,
+    builtAt: fetchedAt,
+    builtRevision: revision,
+    currentRevision: revision
+  })
+  const snapshotData = { ...data, snapshot }
+  summaryCache.set(key, {
+    data: snapshotData,
+    fetchedAt,
+    revision,
+    exactAtBuiltAt: Boolean(exactAtBuiltAt)
+  })
   while (summaryCache.size > SUMMARY_CACHE_MAX_ENTRIES) {
     summaryCache.delete(summaryCache.keys().next().value)
   }
+  return snapshotData
+}
+
+function readFacetCache(key, revision) {
+  const cached = facetCache.get(key)
+  if (!cached) return null
+  const age = Date.now() - cached.fetchedAt
+  if (age >= FACET_CACHE_STALE_WHILE_REVALIDATE_MS) {
+    facetCache.delete(key)
+    return null
+  }
+
+  facetCache.delete(key)
+  facetCache.set(key, cached)
+  const metadata = trackingSnapshotMetadata({
+    exactAtBuiltAt: cached.exactAtBuiltAt,
+    builtAt: cached.fetchedAt,
+    builtRevision: cached.revision,
+    currentRevision: revision,
+    cacheTtlMs: FACET_CACHE_TTL_MS,
+    maxStaleAgeMs: FACET_CACHE_STALE_WHILE_REVALIDATE_MS
+  })
+  const data = age < FACET_CACHE_TTL_MS && cached.revision === revision
+    ? cached.data
+    : { ...cached.data, snapshot: metadata }
+  return {
+    data,
+    refreshDue: age >= FACET_CACHE_TTL_MS || (
+      cached.exactAtBuiltAt && cached.revision !== revision
+    )
+  }
+}
+
+function writeFacetCache(key, data, revision, { exactAtBuiltAt = true } = {}) {
+  const fetchedAt = Date.now()
+  const snapshot = trackingSnapshotMetadata({
+    exactAtBuiltAt,
+    builtAt: fetchedAt,
+    builtRevision: revision,
+    currentRevision: revision,
+    cacheTtlMs: FACET_CACHE_TTL_MS,
+    maxStaleAgeMs: FACET_CACHE_STALE_WHILE_REVALIDATE_MS
+  })
+  const snapshotData = { ...data, snapshot }
+  facetCache.set(key, {
+    data: snapshotData,
+    fetchedAt,
+    revision,
+    exactAtBuiltAt: Boolean(exactAtBuiltAt)
+  })
+  while (facetCache.size > FACET_CACHE_MAX_ENTRIES) {
+    facetCache.delete(facetCache.keys().next().value)
+  }
+  return snapshotData
 }
 
 export function clearTrackingAnalyticsSummaryCache() {
   summaryCache.clear()
+  for (const record of summaryInflight.values()) record?.controller?.abort()
   summaryInflight.clear()
+  facetCache.clear()
+  for (const record of facetInflight.values()) record?.controller?.abort()
+  facetInflight.clear()
   invalidateTrackingAnalyticsCache()
 }
 
-function withTrackingSnapshotState(data, { stale, revision }) {
+function createSummaryQueryDeadline() {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    const reason = new Error('El resumen de Analíticas excedió el presupuesto de ejecución')
+    reason.code = 'tracking_analytics_deadline'
+    controller.abort(reason)
+  }, SUMMARY_QUERY_DEADLINE_MS)
+  timer.unref?.()
   return {
-    ...data,
-    snapshot: {
-      stale: Boolean(stale),
-      revision: Number(revision || 0)
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timer)
+  }
+}
+
+function createFacetQueryDeadline() {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    const reason = new Error('La faceta de Analíticas excedió el presupuesto de ejecución')
+    reason.code = 'tracking_analytics_facet_deadline'
+    controller.abort(reason)
+  }, FACET_QUERY_DEADLINE_MS)
+  timer.unref?.()
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timer)
+  }
+}
+
+function trackingSummaryDeadlineError() {
+  const error = new Error('El resumen tardó demasiado y fue cancelado para proteger la estabilidad del CRM. Intenta nuevamente.')
+  error.status = 503
+  error.code = 'tracking_analytics_deadline'
+  return error
+}
+
+function trackingSummaryBusyError() {
+  const error = new Error('Analíticas ya está procesando otras consultas. Intenta nuevamente en unos segundos.')
+  error.status = 503
+  error.code = 'tracking_analytics_busy'
+  return error
+}
+
+function trackingFacetDeadlineError() {
+  const error = new Error('La faceta tardó demasiado y fue cancelada para proteger la estabilidad del CRM. Intenta nuevamente.')
+  error.status = 503
+  error.code = 'tracking_analytics_facet_deadline'
+  return error
+}
+
+function trackingFacetBusyError() {
+  const error = new Error('Analíticas ya está procesando otra faceta. Intenta nuevamente en unos segundos.')
+  error.status = 503
+  error.code = 'tracking_analytics_facet_busy'
+  return error
+}
+
+function trackingSummaryAbortError() {
+  const error = new Error('La consulta de Analíticas fue cancelada')
+  error.name = 'AbortError'
+  error.code = 'ABORT_ERR'
+  error.status = 499
+  return error
+}
+
+function throwIfTrackingSummaryAborted(signal) {
+  if (signal?.aborted) throw trackingSummaryAbortError()
+}
+
+async function withTrackingSummaryQuerySlot(signal, callback) {
+  throwIfTrackingSummaryAborted(signal)
+  if (activeSummaryQueries >= SUMMARY_MAX_CONCURRENT_QUERIES) {
+    await new Promise((resolve, reject) => {
+      const waiter = { resolve, reject, signal, onAbort: null }
+      waiter.onAbort = () => {
+        const index = summaryQueryWaiters.indexOf(waiter)
+        if (index >= 0) summaryQueryWaiters.splice(index, 1)
+        reject(trackingSummaryAbortError())
+      }
+      signal?.addEventListener('abort', waiter.onAbort, { once: true })
+      summaryQueryWaiters.push(waiter)
+      // AbortSignal no reproduce un evento ya ocurrido. Cerrar esta carrera
+      // evita dejar una Promise en cola para siempre si abortó entre el primer
+      // chequeo y el registro del listener.
+      if (signal?.aborted) waiter.onAbort()
+    })
+  } else {
+    activeSummaryQueries += 1
+  }
+
+  try {
+    throwIfTrackingSummaryAborted(signal)
+    return await callback()
+  } finally {
+    let next = null
+    while ((next = summaryQueryWaiters.shift() || null)) {
+      next.signal?.removeEventListener('abort', next.onAbort)
+      if (next.signal?.aborted) {
+        next.reject(trackingSummaryAbortError())
+        continue
+      }
+      next.resolve()
+      break
+    }
+    if (!next) {
+      activeSummaryQueries = Math.max(0, activeSummaryQueries - 1)
     }
   }
+}
+
+async function withTrackingFacetBuildSlot(signal, callback) {
+  throwIfTrackingSummaryAborted(signal)
+  if (activeFacetBuilds >= FACET_MAX_CONCURRENT_BUILDS) {
+    if (facetBuildWaiters.length >= FACET_MAX_QUEUED_BUILDS) {
+      throw trackingFacetBusyError()
+    }
+    await new Promise((resolve, reject) => {
+      const waiter = { resolve, reject, signal, onAbort: null }
+      waiter.onAbort = () => {
+        const index = facetBuildWaiters.indexOf(waiter)
+        if (index >= 0) facetBuildWaiters.splice(index, 1)
+        reject(trackingSummaryAbortError())
+      }
+      signal?.addEventListener('abort', waiter.onAbort, { once: true })
+      facetBuildWaiters.push(waiter)
+      if (signal?.aborted) waiter.onAbort()
+    })
+  } else {
+    activeFacetBuilds += 1
+  }
+
+  try {
+    throwIfTrackingSummaryAborted(signal)
+    // La compuerta singular se adquiere antes del semáforo global. La faceta
+    // sólo ocupa uno de los dos carriles compartidos y deja avanzar el core.
+    return await withTrackingSummaryQuerySlot(signal, callback)
+  } finally {
+    let next = null
+    while ((next = facetBuildWaiters.shift() || null)) {
+      next.signal?.removeEventListener('abort', next.onAbort)
+      if (next.signal?.aborted) {
+        next.reject(trackingSummaryAbortError())
+        continue
+      }
+      next.resolve()
+      break
+    }
+    if (!next) activeFacetBuilds = Math.max(0, activeFacetBuilds - 1)
+  }
+}
+
+async function withTrackingSummaryBuildSlot(signal, callback) {
+  throwIfTrackingSummaryAborted(signal)
+  if (activeSummaryBuilds >= SUMMARY_MAX_CONCURRENT_BUILDS) {
+    if (summaryBuildWaiters.length >= SUMMARY_MAX_QUEUED_BUILDS) {
+      throw trackingSummaryBusyError()
+    }
+    await new Promise((resolve, reject) => {
+      const waiter = { resolve, reject, signal, onAbort: null }
+      waiter.onAbort = () => {
+        const index = summaryBuildWaiters.indexOf(waiter)
+        if (index >= 0) summaryBuildWaiters.splice(index, 1)
+        reject(trackingSummaryAbortError())
+      }
+      signal?.addEventListener('abort', waiter.onAbort, { once: true })
+      summaryBuildWaiters.push(waiter)
+      if (signal?.aborted) waiter.onAbort()
+    })
+  } else {
+    activeSummaryBuilds += 1
+  }
+
+  try {
+    throwIfTrackingSummaryAborted(signal)
+    return await callback()
+  } finally {
+    let next = null
+    while ((next = summaryBuildWaiters.shift() || null)) {
+      next.signal?.removeEventListener('abort', next.onAbort)
+      if (next.signal?.aborted) {
+        next.reject(trackingSummaryAbortError())
+        continue
+      }
+      next.resolve()
+      break
+    }
+    if (!next) {
+      activeSummaryBuilds = Math.max(0, activeSummaryBuilds - 1)
+    }
+  }
+}
+
+function createLinkedSummaryAbortScope(signals) {
+  const controller = new AbortController()
+  const listeners = []
+  for (const signal of signals.filter(Boolean)) {
+    const onAbort = () => controller.abort(signal.reason)
+    if (signal.aborted) onAbort()
+    else {
+      signal.addEventListener('abort', onAbort, { once: true })
+      listeners.push([signal, onAbort])
+    }
+  }
+  return {
+    signal: controller.signal,
+    cleanup() {
+      for (const [signal, listener] of listeners) signal.removeEventListener('abort', listener)
+    }
+  }
+}
+
+function cancelUnusedTrackingSummaryBuild(record, cacheKey) {
+  if (record.keepAlive || record.waiters > 0 || record.controller.signal.aborted) return
+  record.controller.abort()
+  if (summaryInflight.get(cacheKey) === record) summaryInflight.delete(cacheKey)
+  void record.promise.catch(() => undefined)
+}
+
+function cancelOneBackgroundTrackingSummaryBuild() {
+  for (const [key, record] of summaryInflight.entries()) {
+    if (!record.keepAlive || record.waiters > 0 || record.controller.signal.aborted) continue
+    record.controller.abort()
+    if (summaryInflight.get(key) === record) summaryInflight.delete(key)
+    void record.promise.catch(() => undefined)
+    return true
+  }
+  return false
+}
+
+function waitForTrackingSummaryBuild(record, signal, cacheKey) {
+  if (signal?.aborted) {
+    cancelUnusedTrackingSummaryBuild(record, cacheKey)
+    throw trackingSummaryAbortError()
+  }
+  record.waiters += 1
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', onAbort)
+      record.waiters = Math.max(0, record.waiters - 1)
+      callback(value)
+    }
+    const onAbort = () => {
+      finish(reject, trackingSummaryAbortError())
+      cancelUnusedTrackingSummaryBuild(record, cacheKey)
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) {
+      onAbort()
+      return
+    }
+    record.promise.then(
+      result => finish(resolve, result),
+      error => finish(reject, error)
+    )
+  })
+}
+
+function cancelUnusedTrackingFacetBuild(record, cacheKey) {
+  if (record.keepAlive || record.waiters > 0 || record.controller.signal.aborted) return
+  record.controller.abort()
+  if (facetInflight.get(cacheKey) === record) facetInflight.delete(cacheKey)
+  void record.promise.catch(() => undefined)
+}
+
+function waitForTrackingFacetBuild(record, signal, cacheKey) {
+  if (signal?.aborted) {
+    cancelUnusedTrackingFacetBuild(record, cacheKey)
+    throw trackingSummaryAbortError()
+  }
+  record.waiters += 1
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', onAbort)
+      record.waiters = Math.max(0, record.waiters - 1)
+      callback(value)
+    }
+    const onAbort = () => {
+      finish(reject, trackingSummaryAbortError())
+      cancelUnusedTrackingFacetBuild(record, cacheKey)
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) {
+      onAbort()
+      return
+    }
+    record.promise.then(
+      result => finish(resolve, result),
+      error => finish(reject, error)
+    )
+  })
 }
 
 export async function getTrackingAnalyticsSummary({
@@ -1370,10 +2055,14 @@ export async function getTrackingAnalyticsSummary({
   end,
   groupBy = 'day',
   filters = {},
-  allowStale = false
+  includeFacets = true,
+  allowStale = false,
+  signal
 } = {}) {
+  throwIfTrackingSummaryAborted(signal)
   const normalizedFilters = normalizeTrackingAnalyticsFilters(filters)
-  const range = await resolveAnalyticsRange(start, end)
+  const range = await resolveAnalyticsRange(start, end, signal)
+  throwIfTrackingSummaryAborted(signal)
   const requestedGroupBy = ALLOWED_GROUPS.has(groupBy) ? groupBy : 'day'
   const appliedGroupBy = effectiveGroupBy(requestedGroupBy, range)
   const revision = getTrackingAnalyticsCacheRevision()
@@ -1382,50 +2071,216 @@ export async function getTrackingAnalyticsSummary({
     end,
     timezone: range.timezone,
     groupBy: appliedGroupBy,
+    includeFacets: includeFacets !== false,
     filters: stableFilterCacheKey(normalizedFilters)
   })
   const cached = readSummaryCache(cacheKey, revision)
-  if (cached && !cached.stale) {
+  // Una reconstruccion que cruza escrituras nunca se declara exacta, pero
+  // tampoco vuelve a dispararse en cada request. Durante 30 s se sirve como
+  // moving-window; despues, una sola lectura compartida intenta avanzarla.
+  if (cached && !cached.refreshDue) {
     return cached.data
   }
 
-  let pending = summaryInflight.get(cacheKey)
-  if (!pending) {
-    pending = computeTrackingAnalyticsSummary({
-      start,
-      end,
-      requestedGroupBy,
-      normalizedFilters,
-      range,
-      appliedGroupBy
-    }).then((data) => {
-      // Una cuenta activa puede recibir tracking mientras el agregado corre.
-      // Sellar el snapshot con la revision de inicio lo convertia en stale de
-      // inmediato y provocaba otra consulta en cada apertura. La revision de
-      // termino representa el punto de frescura SWR: cualquier escritura
-      // posterior volvera a invalidarlo, sin perseguir un stream infinito.
-      const completedRevision = getTrackingAnalyticsCacheRevision()
-      const freshData = withTrackingSnapshotState(data, {
-        stale: false,
-        revision: completedRevision
+  // SWR nunca entra a la cola detrás de otro trabajo. Bajo presión se devuelve
+  // el snapshot stale de inmediato y una lectura de usuario sin snapshot puede
+  // desplazar una revalidación huérfana para no quedar detrás de ella.
+  if (cached && allowStale && !summaryInflight.has(cacheKey) && activeSummaryBuilds >= SUMMARY_MAX_CONCURRENT_BUILDS) {
+    return cached.data
+  }
+  if ((!cached || !allowStale) && activeSummaryBuilds >= SUMMARY_MAX_CONCURRENT_BUILDS) {
+    cancelOneBackgroundTrackingSummaryBuild()
+  }
+
+  let record = summaryInflight.get(cacheKey)
+  if (record?.controller?.signal?.aborted) {
+    if (summaryInflight.get(cacheKey) === record) summaryInflight.delete(cacheKey)
+    void record.promise.catch(() => undefined)
+    record = null
+  }
+  if (!record) {
+    record = {
+      controller: new AbortController(),
+      keepAlive: Boolean(cached && allowStale),
+      waiters: 0,
+      promise: null
+    }
+    const deadline = createSummaryQueryDeadline()
+    const linkedScope = createLinkedSummaryAbortScope([
+      record.controller.signal,
+      deadline.signal
+    ])
+    record.promise = withTrackingSummaryBuildSlot(linkedScope.signal, () => (
+      computeTrackingAnalyticsSummary({
+        start,
+        end,
+        requestedGroupBy,
+        normalizedFilters,
+        range,
+        appliedGroupBy,
+        includeFacets: includeFacets !== false,
+        signal: linkedScope.signal
       })
-      writeSummaryCache(cacheKey, freshData, completedRevision)
-      return freshData
+    )).then((data) => {
+      const completedRevision = getTrackingAnalyticsCacheRevision()
+      const changedDuringBuild = completedRevision !== revision
+      // No declarar fresco un agregado que cruzó escrituras. Se conserva como
+      // snapshot SWR para pintar sin bloquear. Si el stream sigue escribiendo,
+      // el siguiente intento queda coalescido por una ventana acotada.
+      return writeSummaryCache(cacheKey, data, completedRevision, {
+        exactAtBuiltAt: !changedDuringBuild
+      })
+    }).catch((error) => {
+      if (deadline.signal.aborted && !record.controller.signal.aborted) {
+        throw trackingSummaryDeadlineError()
+      }
+      throw error
     }).finally(() => {
-      if (summaryInflight.get(cacheKey) === pending) summaryInflight.delete(cacheKey)
+      linkedScope.cleanup()
+      deadline.cleanup()
+      if (summaryInflight.get(cacheKey) === record) summaryInflight.delete(cacheKey)
     })
-    summaryInflight.set(cacheKey, pending)
+    summaryInflight.set(cacheKey, record)
   }
 
   if (cached && allowStale) {
+    record.keepAlive = true
     // Evita un rechazo no observado cuando el navegador ya recibio el snapshot
     // anterior. La siguiente lectura volvera a intentar si la revalidacion falla.
-    void pending.catch(() => undefined)
-    return withTrackingSnapshotState(cached.data, { stale: true, revision })
+    void record.promise.catch(() => undefined)
+    return cached.data
   }
 
-  return pending
+  return waitForTrackingSummaryBuild(record, signal, cacheKey)
 }
+
+function cancelOneBackgroundTrackingFacetBuild() {
+  for (const [key, record] of facetInflight.entries()) {
+    if (!record.keepAlive || record.waiters > 0 || record.controller.signal.aborted) continue
+    record.controller.abort()
+    if (facetInflight.get(key) === record) facetInflight.delete(key)
+    void record.promise.catch(() => undefined)
+    return true
+  }
+  return false
+}
+
+export async function getTrackingAnalyticsFacet({
+  start,
+  end,
+  filters = {},
+  dimension,
+  allowStale = false,
+  signal
+} = {}) {
+  throwIfTrackingSummaryAborted(signal)
+  const normalizedDimension = normalizeTrackingAnalyticsFacetDimension(dimension)
+  const normalizedFilters = normalizeTrackingAnalyticsFilters(filters)
+  const range = await resolveAnalyticsRange(start, end, signal)
+  throwIfTrackingSummaryAborted(signal)
+  const revision = getTrackingAnalyticsCacheRevision()
+  const cacheKey = JSON.stringify({
+    start: range.startDate,
+    end: range.endDate,
+    timezone: range.timezone,
+    filters: stableFilterCacheKey(normalizedFilters),
+    dimension: normalizedDimension
+  })
+  const cached = readFacetCache(cacheKey, revision)
+  if (cached && !cached.refreshDue) return cached.data
+
+  // Una revalidación SWR jamás forma una cola de facetas por sí sola. Si hay
+  // trabajo activo se sirve el snapshot honesto; una petición fría puede
+  // desplazar una revalidación sin consumidores.
+  if (cached && allowStale && !facetInflight.has(cacheKey) && activeFacetBuilds >= FACET_MAX_CONCURRENT_BUILDS) {
+    return cached.data
+  }
+  if ((!cached || !allowStale) && activeFacetBuilds >= FACET_MAX_CONCURRENT_BUILDS) {
+    cancelOneBackgroundTrackingFacetBuild()
+  }
+
+  let record = facetInflight.get(cacheKey)
+  if (record?.controller?.signal?.aborted) {
+    if (facetInflight.get(cacheKey) === record) facetInflight.delete(cacheKey)
+    void record.promise.catch(() => undefined)
+    record = null
+  }
+  if (!record) {
+    record = {
+      controller: new AbortController(),
+      keepAlive: Boolean(cached && allowStale),
+      waiters: 0,
+      promise: null
+    }
+    const deadline = createFacetQueryDeadline()
+    const linkedScope = createLinkedSummaryAbortScope([
+      record.controller.signal,
+      deadline.signal
+    ])
+    record.promise = withTrackingFacetBuildSlot(linkedScope.signal, async () => {
+      const items = await queryTrackingAnalyticsFacet(
+        range,
+        normalizedFilters,
+        normalizedDimension,
+        linkedScope.signal
+      )
+      return {
+        range: {
+          start: range.startDate,
+          end: range.endDate,
+          timezone: range.timezone
+        },
+        facet: {
+          dimension: normalizedDimension,
+          items
+        }
+      }
+    }).then((data) => {
+      const completedRevision = getTrackingAnalyticsCacheRevision()
+      return writeFacetCache(cacheKey, data, completedRevision, {
+        exactAtBuiltAt: completedRevision === revision
+      })
+    }).catch((error) => {
+      if (deadline.signal.aborted && !record.controller.signal.aborted) {
+        throw trackingFacetDeadlineError()
+      }
+      throw error
+    }).finally(() => {
+      linkedScope.cleanup()
+      deadline.cleanup()
+      if (facetInflight.get(cacheKey) === record) facetInflight.delete(cacheKey)
+    })
+    facetInflight.set(cacheKey, record)
+  }
+
+  if (cached && allowStale) {
+    record.keepAlive = true
+    void record.promise.catch(() => undefined)
+    return cached.data
+  }
+
+  return waitForTrackingFacetBuild(record, signal, cacheKey)
+}
+
+export const TRACKING_ANALYTICS_BUILD_LIMITS = Object.freeze({
+  maxConcurrentBuilds: SUMMARY_MAX_CONCURRENT_BUILDS,
+  maxConcurrentQueries: SUMMARY_MAX_CONCURRENT_QUERIES,
+  maxQueuedBuilds: SUMMARY_MAX_QUEUED_BUILDS,
+  queryDeadlineMs: SUMMARY_QUERY_DEADLINE_MS,
+  coalesceWindowMs: SUMMARY_CACHE_TTL_MS,
+  maxStaleAgeMs: SUMMARY_CACHE_STALE_WHILE_REVALIDATE_MS
+})
+
+export const TRACKING_ANALYTICS_FACET_LIMITS = Object.freeze({
+  dimensions: TRACKING_ANALYTICS_FACET_DIMENSIONS,
+  maxItems: FACET_LIMIT,
+  maxConcurrentBuilds: FACET_MAX_CONCURRENT_BUILDS,
+  maxQueuedBuilds: FACET_MAX_QUEUED_BUILDS,
+  queryDeadlineMs: FACET_QUERY_DEADLINE_MS,
+  coalesceWindowMs: FACET_CACHE_TTL_MS,
+  maxStaleAgeMs: FACET_CACHE_STALE_WHILE_REVALIDATE_MS,
+  maxCacheEntries: FACET_CACHE_MAX_ENTRIES
+})
 
 function normalizeSearchColumn(column) {
   const normalized = normalizeText(column || 'all', 40) || 'all'
@@ -1610,7 +2465,8 @@ async function queryStageSearchCandidateChunk({
   q,
   column,
   cursor,
-  limit
+  limit,
+  signal
 }) {
   const params = [range.startUtc, range.endExclusiveUtc]
   const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
@@ -1631,10 +2487,10 @@ async function queryStageSearchCandidateChunk({
     WHERE ${conditions.join(' AND ')}
     ORDER BY s.started_at DESC, s.id DESC
     LIMIT ?
-  `, params)
+  `, params, { signal })
 }
 
-async function queryStageContactFacts(candidateRows, conversionStages) {
+async function queryStageContactFacts(candidateRows, conversionStages, signal) {
   const contactIds = [...new Set(candidateRows
     .map(row => normalizeText(row.contact_id, 180))
     .filter(Boolean))]
@@ -1658,7 +2514,7 @@ async function queryStageContactFacts(candidateRows, conversionStages) {
       ${contactStageExpression('cf')} AS conversion_stage
     FROM contact_facts cf
     WHERE ${stageCondition}
-  `, params)
+  `, params, { signal })
 
   return new Map(rows.map(row => [String(row.contact_id), row]))
 }
@@ -1670,7 +2526,8 @@ async function searchTrackingSessionsByStage({
   column,
   cursor,
   limit,
-  cursorScope
+  cursorScope,
+  signal
 }) {
   const conversionStages = filters.conversion_stage || []
   const matches = []
@@ -1680,6 +2537,7 @@ async function searchTrackingSessionsByStage({
   let exhausted = false
 
   while (scanned < STAGE_SEARCH_MAX_SCAN) {
+    signal?.throwIfAborted?.()
     const chunkLimit = Math.min(STAGE_SEARCH_CHUNK_SIZE, STAGE_SEARCH_MAX_SCAN - scanned)
     const candidates = await queryStageSearchCandidateChunk({
       range,
@@ -1687,7 +2545,8 @@ async function searchTrackingSessionsByStage({
       q,
       column,
       cursor: scanCursor,
-      limit: chunkLimit
+      limit: chunkLimit,
+      signal
     })
 
     if (candidates.length === 0) {
@@ -1695,7 +2554,7 @@ async function searchTrackingSessionsByStage({
       break
     }
 
-    const factsByContactId = await queryStageContactFacts(candidates, conversionStages)
+    const factsByContactId = await queryStageContactFacts(candidates, conversionStages, signal)
     for (const candidate of candidates) {
       const facts = factsByContactId.get(String(candidate.contact_id || ''))
       if (facts && matches.length >= limit) {
@@ -1739,14 +2598,34 @@ async function searchTrackingSessionsByStage({
   }
 }
 
-export async function searchTrackingSessions({ start, end, filters = {}, q = '', column = 'all', cursor = null, limit = 50 } = {}) {
+export async function searchTrackingSessions({
+  start,
+  end,
+  filters = {},
+  q = '',
+  column = 'all',
+  cursor = null,
+  limit = 50,
+  signal
+} = {}) {
   const normalizedFilters = normalizeTrackingAnalyticsFilters(filters)
-  const range = await resolveAnalyticsRange(start, end)
+  const normalizedQuery = normalizeText(q, MAX_SEARCH_LENGTH)
+  const range = await resolveAnalyticsRange(start, end, signal)
+  throwIfTrackingSummaryAborted(signal)
   const normalizedColumn = normalizeSearchColumn(column)
+  if (normalizedQuery && normalizedQuery.length < MIN_SEARCH_LENGTH) {
+    return {
+      items: [],
+      limit: Math.min(100, Math.max(20, Math.trunc(numberValue(limit)) || 50)),
+      hasMore: false,
+      nextCursor: null,
+      searchMinLength: MIN_SEARCH_LENGTH
+    }
+  }
   const cursorScope = trackingSearchCursorScope({
     range,
     filters: normalizedFilters,
-    q,
+    q: normalizedQuery,
     column: normalizedColumn
   })
   const decodedCursor = decodeCursor(cursor, cursorScope)
@@ -1758,11 +2637,12 @@ export async function searchTrackingSessions({ start, end, filters = {}, q = '',
     return searchTrackingSessionsByStage({
       range,
       filters: normalizedFilters,
-      q,
+      q: normalizedQuery,
       column: normalizedColumn,
       cursor: decodedCursor,
       limit: normalizedLimit,
-      cursorScope
+      cursorScope,
+      signal
     })
   }
 
@@ -1770,7 +2650,7 @@ export async function searchTrackingSessions({ start, end, filters = {}, q = '',
   const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
   conditions.push(...buildSessionFilterConditions(withoutConversionStage(normalizedFilters), 's', params))
 
-  const searchCondition = buildSearchCondition(q, normalizedColumn, 's', params)
+  const searchCondition = buildSearchCondition(normalizedQuery, normalizedColumn, 's', params)
   if (searchCondition) conditions.push(searchCondition)
   if (decodedCursor) {
     conditions.push(`(s.started_at, s.id) < (?, ?)`)
@@ -1799,7 +2679,7 @@ export async function searchTrackingSessions({ start, end, filters = {}, q = '',
     ORDER BY page.started_at DESC, page.id DESC
   `
 
-  const rows = await db.all(sql, params)
+  const rows = await db.all(sql, params, { signal })
   const hasMore = rows.length > normalizedLimit
   const items = formatSearchItems(rows.slice(0, normalizedLimit))
 

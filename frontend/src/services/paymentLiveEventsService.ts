@@ -36,7 +36,8 @@ const PAYMENT_LIVE_CACHE_PATHS = [
   '/api/subscriptions',
   '/api/dashboard',
   '/api/reports',
-  '/api/contacts'
+  '/api/contacts',
+  '/api/tracking/analytics'
 ]
 
 function buildStreamHeaders() {
@@ -88,7 +89,10 @@ function dispatchFrame(frame: string, options: SubscribeOptions) {
     const payload = JSON.parse(parsed.data)
     if (payload?.type !== 'payment_changed' && payload?.type !== 'subscription_changed') return
 
-    invalidateRistakApiReadCache({ pathPrefixes: PAYMENT_LIVE_CACHE_PATHS })
+    invalidateRistakApiReadCache({
+      pathPrefixes: PAYMENT_LIVE_CACHE_PATHS,
+      abortInflight: false
+    })
     options.onEvent({
       ...payload,
       scopes: normalizeScopes(payload.scopes)

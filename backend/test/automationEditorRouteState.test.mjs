@@ -32,12 +32,12 @@ test('automation editor route changes remount the editor and clear stale load st
   )
   assert.match(
     editorSource,
-    /const resetRouteState = \(\) => \{[\s\S]*?setLoadError\(false\)[\s\S]*?setAutomation\(null\)/,
+    /const resetRouteState = \(\) => \{[\s\S]*?setLoadError\(null\)[\s\S]*?setAutomation\(null\)/,
     'opening an automation should clear stale error/loading state before fetching'
   )
   assert.match(
     editorSource,
-    /const initFrom = \(data: Automation\) => \{[\s\S]*?setLoadError\(false\)[\s\S]*?setAutomation\(\{ \.\.\.data, flow: safeFlow \}\)/,
+    /const initFrom = \(data: Automation\) => \{[\s\S]*?setLoadError\(null\)[\s\S]*?setAutomation\(\{ \.\.\.data, flow: safeFlow \}\)/,
     'a successful fetch should leave the editor out of the previous error state'
   )
   assert.match(

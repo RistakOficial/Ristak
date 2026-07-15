@@ -8871,9 +8871,11 @@ export const Sites: React.FC = () => {
   const libraryFiltersRef = useRef(libraryFilters)
   const libraryPageRequestRef = useRef<Record<LibraryViewSection, number>>({ landings: 0, forms: 0 })
   const libraryPagePromiseRef = useRef<Record<LibraryViewSection, Promise<void> | null>>({ landings: null, forms: null })
+  const libraryPageAbortRef = useRef<Record<LibraryViewSection, AbortController | null>>({ landings: null, forms: null })
   const domainSitesRef = useRef<PublicSite[]>([])
   const domainSitesRequestRef = useRef(0)
   const domainSitesPromiseRef = useRef<Promise<void> | null>(null)
+  const domainSitesAbortRef = useRef<AbortController | null>(null)
   const domainSitesLoadedRef = useRef(false)
   const domainSitesNextCursorRef = useRef('')
   const formCatalogRequestRef = useRef(0)
@@ -8972,8 +8974,13 @@ export const Sites: React.FC = () => {
       builderResourcesMountedRef.current = false
       libraryPageRequestRef.current.landings += 1
       libraryPageRequestRef.current.forms += 1
+      libraryPageAbortRef.current.landings?.abort()
+      libraryPageAbortRef.current.forms?.abort()
+      libraryPageAbortRef.current = { landings: null, forms: null }
       libraryPagePromiseRef.current = { landings: null, forms: null }
       domainSitesRequestRef.current += 1
+      domainSitesAbortRef.current?.abort()
+      domainSitesAbortRef.current = null
       domainSitesPromiseRef.current = null
       domainSitesNextCursorRef.current = ''
       formCatalogRequestRef.current += 1
@@ -9013,6 +9020,8 @@ export const Sites: React.FC = () => {
     // Invalida de inmediato la respuesta anterior. El debounce sólo retrasa el
     // siguiente request, no permite que una búsqueda vieja repinte la biblioteca.
     libraryPageRequestRef.current[kind] += 1
+    libraryPageAbortRef.current[kind]?.abort()
+    libraryPageAbortRef.current[kind] = null
     libraryPagePromiseRef.current[kind] = null
     commitLibraryPages(current => ({
       ...current,
@@ -10859,14 +10868,24 @@ export const Sites: React.FC = () => {
     if (!append && !force && currentPage.loaded && !currentPage.loading && cacheFresh) {
       return Promise.resolve()
     }
+    if (libraryPagePromiseRef.current[kind] && currentPage.queryKey !== queryKey) {
+      libraryPageRequestRef.current[kind] += 1
+      libraryPageAbortRef.current[kind]?.abort()
+      libraryPageAbortRef.current[kind] = null
+      libraryPagePromiseRef.current[kind] = null
+    }
     if (force && libraryPagePromiseRef.current[kind]) {
       libraryPageRequestRef.current[kind] += 1
+      libraryPageAbortRef.current[kind]?.abort()
+      libraryPageAbortRef.current[kind] = null
       libraryPagePromiseRef.current[kind] = null
     }
     if (append && libraryPagePromiseRef.current[kind]) {
       // Un refresh SWR nunca debe tragarse la intención explícita de cargar la
       // siguiente página. Su respuesta queda obsoleta y el append toma control.
       libraryPageRequestRef.current[kind] += 1
+      libraryPageAbortRef.current[kind]?.abort()
+      libraryPageAbortRef.current[kind] = null
       libraryPagePromiseRef.current[kind] = null
     }
     if (libraryPagePromiseRef.current[kind]) return libraryPagePromiseRef.current[kind]!
@@ -10874,6 +10893,8 @@ export const Sites: React.FC = () => {
     const cursor = append ? currentPage.nextCursor : ''
     const requestId = libraryPageRequestRef.current[kind] + 1
     libraryPageRequestRef.current[kind] = requestId
+    const controller = new AbortController()
+    libraryPageAbortRef.current[kind] = controller
     commitLibraryPages(current => ({
       ...current,
       [kind]: {
@@ -10908,7 +10929,8 @@ export const Sites: React.FC = () => {
         currentPage.facetsValidatedAt <= 0 ||
         force ||
         Date.now() - currentPage.facetsValidatedAt >= SITES_LIBRARY_FACETS_TTL_MS
-      )
+      ),
+      signal: controller.signal
     })
       .then(page => {
         if (
@@ -10938,6 +10960,7 @@ export const Sites: React.FC = () => {
         setSites(current => mergeSiteCollection(current, scopedItems))
       })
       .catch(error => {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
         if (
           !builderResourcesMountedRef.current ||
           libraryPageRequestRef.current[kind] !== requestId ||
@@ -10958,6 +10981,9 @@ export const Sites: React.FC = () => {
         )
       })
       .finally(() => {
+        if (libraryPageAbortRef.current[kind] === controller) {
+          libraryPageAbortRef.current[kind] = null
+        }
         if (libraryPageRequestRef.current[kind] === requestId && libraryPagePromiseRef.current[kind] === request) {
           libraryPagePromiseRef.current[kind] = null
         }
@@ -10976,15 +11002,23 @@ export const Sites: React.FC = () => {
 
     const requestId = domainSitesRequestRef.current + 1
     domainSitesRequestRef.current = requestId
+    domainSitesAbortRef.current?.abort()
+    const controller = new AbortController()
+    domainSitesAbortRef.current = controller
     setDomainSitesLoading(true)
     let request: Promise<void>
     request = sitesService.listSiteSelectorsPage({
       kind: 'landings',
       limit: 200,
-      cursor: options.cursor || ''
+      cursor: options.cursor || '',
+      signal: controller.signal
     })
       .then(page => {
-        if (!builderResourcesMountedRef.current || domainSitesRequestRef.current !== requestId) return
+        if (
+          controller.signal.aborted ||
+          !builderResourcesMountedRef.current ||
+          domainSitesRequestRef.current !== requestId
+        ) return
         const items = page.items.filter(site => site.siteType === 'landing_page')
         commitDomainSites(append
           ? mergeSiteCollection(domainSitesRef.current, items)
@@ -10999,6 +11033,7 @@ export const Sites: React.FC = () => {
           setDomainSitesLoading(false)
           if (domainSitesPromiseRef.current === request) domainSitesPromiseRef.current = null
         }
+        if (domainSitesAbortRef.current === controller) domainSitesAbortRef.current = null
       })
     domainSitesPromiseRef.current = request
     return request
@@ -11088,8 +11123,16 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     if (section !== 'domains') return
     void ensureDomainSites(domainConfig.defaultRoute?.siteId || '').catch(error => {
+      if ((error as Error)?.name === 'AbortError') return
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar las páginas del dominio')
     })
+    return () => {
+      domainSitesRequestRef.current += 1
+      domainSitesAbortRef.current?.abort()
+      domainSitesAbortRef.current = null
+      domainSitesPromiseRef.current = null
+      if (builderResourcesMountedRef.current) setDomainSitesLoading(false)
+    }
   }, [domainConfig.defaultRoute?.siteId, ensureDomainSites, section, showToast])
 
   const loadCalendarsForBuilder = useCallback((): Promise<void> => {

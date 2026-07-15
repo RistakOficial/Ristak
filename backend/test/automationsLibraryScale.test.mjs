@@ -8,6 +8,7 @@ import { listAutomationsPage } from '../src/services/automationsService.js'
 const backendServiceUrl = new URL('../src/services/automationsService.js', import.meta.url)
 const frontendLibraryUrl = new URL('../../frontend/src/pages/Automations/AutomationLibrary.tsx', import.meta.url)
 const frontendServiceUrl = new URL('../../frontend/src/services/automationsService.ts', import.meta.url)
+const frontendEditorUrl = new URL('../../frontend/src/pages/Automations/editor/AutomationEditor.tsx', import.meta.url)
 
 test('la librería pagina por cursor, busca en servidor y no devuelve grafos en summaries ligeros', async () => {
   const marker = `automation_scale_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -119,10 +120,11 @@ test('la librería pagina por cursor, busca en servidor y no devuelve grafos en 
 })
 
 test('el contrato HTTP y la librería mantienen filtros y carga incremental server-side', async () => {
-  const [backend, library, frontendService] = await Promise.all([
+  const [backend, library, frontendService, editor] = await Promise.all([
     readFile(backendServiceUrl, 'utf8'),
     readFile(frontendLibraryUrl, 'utf8'),
-    readFile(frontendServiceUrl, 'utf8')
+    readFile(frontendServiceUrl, 'utf8'),
+    readFile(frontendEditorUrl, 'utf8')
   ])
 
   const pagedList = backend.slice(
@@ -144,6 +146,11 @@ test('el contrato HTTP y la librería mantienen filtros y carga incremental serv
   assert.match(library, /cursor: append \? options\.cursor : null/)
   assert.match(library, /includeReview: false/)
   assert.match(library, /includeReview: true/)
+  assert.match(library, /reviewAbortControllersRef/)
+  assert.match(library, /reviewGeneration !== reviewGenerationRef\.current/)
+  assert.match(library, /if \(!append\) \{[\s\S]{0,260}reviewAbortControllersRef\.current\.clear\(\)/)
+  assert.doesNotMatch(library, /reviewAbortRef/)
+  assert.match(library, /getAutomation\(currentAutomationId, \{ signal: controller\.signal \}\)/)
   assert.match(library, /Cargar más/)
   assert.doesNotMatch(library, /automation\.name\.toLowerCase\(\)\.includes/)
 
@@ -151,4 +158,16 @@ test('el contrato HTTP y la librería mantienen filtros y carga incremental serv
   assert.match(frontendService, /OVERVIEW_PAGE_CACHE_MAX_ENTRIES = 40/)
   assert.match(frontendService, /params\.search = normalizedOptions\.search/)
   assert.match(frontendService, /invalidateAutomationListPages\(\)/)
+  const detailLoader = frontendService.slice(
+    frontendService.indexOf('function fetchAutomation'),
+    frontendService.indexOf('export const automationsService')
+  )
+  assert.match(detailLoader, /getOrCreateSharedRequest\(\{/)
+  assert.match(detailLoader, /abortWhenUnused: true/)
+  assert.match(detailLoader, /withRequestTimeout\(\{[\s\S]{0,180}timeoutMs: 15_000/)
+  assert.match(detailLoader, /apiClient\.get<Automation>[\s\S]{0,100}signal: requestSignal/)
+  assert.match(editor, /getAutomation\(automationId, \{ signal: controller\.signal \}\)/)
+  assert.match(editor, /controller\.abort\(\)/)
+  assert.match(editor, /role="alert"/)
+  assert.match(editor, />\s*Reintentar\s*</)
 })

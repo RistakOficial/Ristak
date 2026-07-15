@@ -41,7 +41,7 @@ test('iOS vuelve a mostrar el boton inferior y guarda la preferencia compartida'
     readSource('ios/app/Ristak/Features/Chats/Thread/ConversationViewModel.swift')
   ])
 
-  assert.match(composer, /ChannelBadgeView\(channel: viewModel\.selectedChannel\.badgeChannel, size: 22\)/)
+  assert.match(composer, /ComposerChannelIconView\(channel: viewModel\.selectedChannel, size: 22\)/)
   assert.match(composer, /viewModel\.isComposerChannelSheetPresented = true/)
   assert.match(composer, /ChannelPickerSheet\(viewModel: viewModel\)/)
   assert.match(viewModel, /for \(index, phone\) in whatsAppPhones\.enumerated\(\)/)

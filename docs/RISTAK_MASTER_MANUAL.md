@@ -109,6 +109,12 @@ cambios nuevos deben entrar por `backend/migrations/versioned/`. PostgreSQL usa
 timeouts de mantenimiento únicamente en esa sesión y restaura los límites de la
 cuenta antes de atender tráfico.
 
+El bootstrap común no ejecuta DDL específico de otro motor. En particular, el
+índice legacy `idx_campaign_contacts_cursor_created_at_id`, cuya expresión usa
+`julianday()` y `INDEXED BY`, se crea sólo en SQLite. PostgreSQL usa sus índices
+keyset versionados y una base vacía debe completar el arranque sin funciones de
+compatibilidad inventadas ni parches manuales en la base.
+
 Las migraciones versionadas PostgreSQL comparten otro advisory lock de sesión y
 no envuelven `CREATE/DROP INDEX CONCURRENTLY` en transacciones. El tren `091*` a
 `099*` y cualquier construcción concurrente tienen límites internos de 10
@@ -207,10 +213,10 @@ La navegacion del CRM debe conservar el shell montado y cargar cada modulo por
 separado. `frontend/src/routing/routeModules.tsx` es el registro canonico de
 chunks para rutas desktop, moviles y publicas. El sidebar inicia la descarga al
 detectar intencion real de navegar: el pointer exige 150 ms de permanencia y se
-cancela al salir, mientras foco, touch y pointer-down son inmediatos. El chunk
-pesado de Sites solo se calienta en tiempo ocioso, despues de estabilizar la ruta,
-con permiso del usuario y sin ahorro de datos ni conexiones 2G. Configuracion hace
-lo mismo con cada panel interno y navega directamente al primero permitido. Los
+cancela al salir, mientras foco, touch y pointer-down son inmediatos. En Sites esa
+precarga trae solamente el shell de ruta; el workspace/editor pesado se importa
+al entrar realmente a Sites y nunca durante el idle global. Configuracion hace lo
+mismo con cada panel interno y navega directamente al primero permitido. Los
 redirects de login/inicio precargan su destino, y el panel del asistente AI queda
 en un chunk separado del shell. No se permite volver a importar todas las
 paginas de forma estatica desde `App.tsx` ni bloquear el contenido completo con
@@ -218,31 +224,45 @@ un loader global mientras existan requests de una ruta. Las esperas inevitables
 deben aparecer dentro de la zona que aun no tiene datos, conservando navegacion,
 header y contenido anterior utilizable.
 
-`frontend/src/services/authFetch.ts` comparte peticiones GET autenticadas
-identicas en vuelo y conserva snapshots JSON breves: 15 segundos para lecturas
-normales y 60 segundos para configuracion/integraciones. El cache es LRU, tiene
-un maximo de 120 respuestas, nunca guarda una respuesta mayor a 1 MB e impone
-12 MB como presupuesto total para que 120 respuestas grandes no agoten la
-memoria. La llave incluye un fingerprint no reversible de todos los
-headers que alteran alcance (sin guardar tokens ni secrets en texto). Streams,
-health, descargas, cuerpos binarios de Media, previews, paginas masivas, requests
-con `AbortSignal` y fuentes vivas quedan fuera. Esos binarios tampoco entran al
-dedupe en vuelo: clonar un stream grande podria retener el archivo completo en
-memoria. Una mutacion exitosa invalida los snapshots; los POST
-que son consultas declaradas, como los resumenes de Analytics, no cuentan como
-mutacion. Los eventos SSE de Chat y Pagos tambien invalidan antes de revalidar la
-pantalla, pero solo expulsan las familias de URL afectadas: Chat actualiza
-contactos, Dashboard y Reportes; Pagos actualiza transacciones, suscripciones,
-contactos, Dashboard y Reportes. Un evento vivo no debe enfriar Sites,
-Configuracion ni otro modulo independiente. La promesa GET compartida permanece
-registrada hasta que termina de materializar su snapshot, cerrando la ventana de
-una segunda descarga entre la respuesta de red y la escritura del cache. Un
-registro central invalida tambien los caches especializados de integraciones,
-tracking, etiquetas y automatizaciones al cambiar de cuenta y descarta cualquier
-promesa de la cuenta anterior que termine tarde. Tema y disponibilidad del
-agente AI esperan una sesion autenticada, ligan sus snapshots al principal y
-tambien descartan respuestas tardias. El snapshot persistido de integraciones no
-guarda el access token de HighLevel.
+`frontend/src/services/authFetch.ts` se limita a autenticacion, telemetria de
+actividad, bloqueo de licencia y notificacion de invalidaciones. No cachea,
+materializa, clona ni deduplica `Response` de forma global: hacerlo para todas las
+rutas retiene ramas de streams, duplica cuerpos grandes y mezcla el ciclo de vida
+de modulos que no dependen entre si. Cada servicio que realmente se beneficia de
+un snapshot —Dashboard, Analytics, Reportes, Publicidad, integraciones o
+Automatizaciones— es owner de un cache acotado por principal, llave funcional,
+TTL, revision y maximo de entradas. Tambien es owner de su single-flight y lo
+cancela cuando se va el ultimo consumidor. Listas paginadas, binarios, streams y
+fuentes vivas no se guardan como Responses globales.
+
+Una mutacion exitosa notifica solamente los prefijos afectados; los POST que son
+consultas declaradas, como los resumenes de Analytics, no cuentan como mutacion.
+Los eventos SSE de Chat y Pagos invalidan antes de revalidar la pantalla, pero
+solo despiertan las familias necesarias: Chat actualiza contactos, Dashboard,
+Tracking y Reportes; Pagos actualiza transacciones, suscripciones, contactos,
+Dashboard, Tracking y Reportes. Un evento vivo no debe enfriar Sites,
+Configuracion ni otro modulo independiente. Los caches especializados declaran
+sus prefijos y descartan respuestas de una revision anterior. Cambiar de cuenta
+invalida todos y cancela las promesas de la cuenta anterior. Tema y disponibilidad
+del agente AI esperan una sesion autenticada y el snapshot persistido de
+integraciones nunca guarda el access token de HighLevel.
+
+La invalidacion viva es suave: no aborta ni desacopla un agregado pesado que ya
+esta en vuelo y conserva su snapshot especializado durante el TTL corto. Asi un
+stream de mensajes, pagos o tracking no crea transportes competidores ni vuelve
+a encender loaders con cada evento. La siguiente ventana de revalidacion obtiene
+el estado nuevo; una mutacion explicita o un cambio de cuenta invalida de forma
+dura, cancela el trabajo anterior y fuerza una lectura nueva. Marcar uno o varios
+chats como leidos es una mutacion operacional de la bandeja y no invalida
+Dashboard, Analytics ni Reportes. El clasificador reconoce tanto `calendar` como
+`calendars`; ninguna variante puede dejar snapshots dependientes sin revision ni
+reiniciar agregados ajenos con cada mensaje leido.
+
+Las lecturas que controlan el estado `loading` de una vista deben tener un
+presupuesto explicito —20 segundos en el frontend y menor en los endpoints
+pesados— y propagar `AbortSignal` al fetch y a la consulta de base. Cambiar de
+rango, pagina, contacto o ruta cancela la lectura anterior; un error o deadline
+termina el loader con un estado reintentable y nunca con una promesa pendiente.
 
 Los cambios automaticos de una cita (confirmar, cancelar, marcar asistencia o
 procesar una respuesta afirmativa) publican `chat_data_changed` unicamente
@@ -284,8 +304,15 @@ Reglas de datos para cualquier modulo nuevo o refactorizado:
   PID mediante un pool reservado de dos conexiones. La orden de cancelacion se
   completa antes de devolver la conexion de trabajo al pool, para que saturar
   las conexiones normales no bloquee la cancelacion ni una carrera alcance la
-  siguiente consulta que reutilice el mismo PID. SQLite aplica cancelacion
-  cooperativa antes y despues de la operacion.
+  siguiente consulta que reutilice el mismo PID. La señal tambien cubre la espera
+  de `pool.connect()` y los backoffs de reconexion: si una conexion llega despues
+  del aborto se libera sin ejecutar SQL. SQLite aplica cancelacion cooperativa
+  antes y despues de la operacion. Si el canal reservado no logra confirmar
+  `pg_cancel_backend`, el cliente de trabajo se destruye y el pool lo reemplaza:
+  la promesa original siempre termina y una falla del canal de cancelacion nunca
+  deja un loader esperando al query huerfano. Resolver la zona horaria usa esa misma señal;
+  una falla transitoria de DB no cachea el timezone default como configuracion
+  real de la cuenta.
 - Los rangos siguen `docs/DATE_TIME_GUIDELINES.md`: dias del negocio en su zona
   horaria e instantes persistidos/consultados en UTC.
 
@@ -302,13 +329,14 @@ aislado y no detiene el siguiente trabajo. La cola se agenda despues de las
 migraciones y fuera de readiness; los advisory locks/estados durables de cada
 worker siguen siendo la autoridad de su propia proyeccion. Los workers se
 encienden solamente despues de publicar readiness, para que un primer backfill
-de millones de filas no retrase el healthcheck ni la inicializacion critica. Un scheduler de
-sistema revisa cada dos segundos las filas singleton de Chats, primer mensaje y
-metricas del Agente IA, y vuelve a encolar estados `backfilling`, `dirty` o
-`failed` sin depender de que alguien abra una pantalla. Sus GET sirven snapshots
-materializados parciales con metadata `warming`; nunca reconstruyen el historial
-ni agendan trabajo dentro del request. Los snapshots `100*` de Reportes y `101*`
-de Publicidad se hidratan bajo demanda y no pertenecen a esta cola de backfill.
+de millones de filas no retrase el healthcheck ni la inicializacion critica. Un
+scheduler de sistema revisa cada 30 segundos las filas singleton de Chats, primer
+mensaje, metricas del Agente IA y visitantes; solo vuelve a encolar estados
+`backfilling`, `dirty` o `failed` y nunca reencola un estado `ready`. Los read
+models que admiten cobertura parcial lo declaran expresamente; visitantes no se
+publica hasta ser exacto. Ningun GET reconstruye el historial dentro del request.
+Los snapshots `100*` de Reportes y `101*` de Publicidad se hidratan bajo demanda y
+no pertenecen a esta cola de backfill.
 
 El estado local de WhatsApp que comparten Chats, Contactos y Configuracion no
 ejecuta `COUNT(*)` ni `GROUP BY` sobre mensajes, contactos, eventos o ruteos al
@@ -320,7 +348,20 @@ pendientes, aunque el historial tenga millones de mensajes. El scan legacy
 exacto existe solo para compatibilidad si una instancia recibe trafico antes de
 aplicar `102*`; el arranque normal corre migraciones antes de readiness. El GET
 de status tampoco limpia credenciales legacy ni repara sesiones QR: desconectar,
-resetear y reparar siguen siendo comandos explicitos.
+resetear y reparar siguen siendo comandos explicitos. El worker deja de consultar
+y escribir cuando el singleton llega a `ready`; mientras converge usa reintentos
+con backoff en lugar de polling fijo. Un lote que si progreso vuelve al intervalo
+minimo de un segundo; solo los errores consecutivos crecen exponencialmente, para
+que cientos de miles de deltas no conviertan un backfill sano en horas de espera.
+La migracion `112a*` hace atomico el corte
+`replaying -> ready`: el worker toma `FOR UPDATE` y los triggers `FOR SHARE`, por
+lo que un evento concurrente queda antes o despues del corte y no puede dejar un
+delta huerfano. El baseline, el cambio a `replaying`, el drain y el finalizer usan
+transacciones separadas; el finalizer nunca conserva un lock de contacto antes de
+tomar el singleton. Ese orden evita el ciclo singleton-contacto que produciria
+deadlocks con un writer concurrente. Al desplegar, una unica transicion
+`ready -> replaying` recupera cualquier delta heredado y despues vuelve al camino
+O(1).
 
 El catalogo de plantillas de Automatizaciones es un read-model local con pagina
 de 50 por default, 100 maximo, busqueda y cursor ligado a status + busqueda. Crear,
@@ -335,9 +376,16 @@ editor.
 Analytics usa dos contratos protegidos por `analytics` + `web_analytics`:
 
 - `POST /api/tracking/analytics/summary`: recibe `start`, `end`, `groupBy` y
-  filtros. Devuelve metricas actual/anterior, tendencias, series, distribuciones
-  y facets; nunca filas de `sessions`. Autoagrupa rangos grandes para no superar
-  400 puntos y limita cada facet a 25 opciones.
+  filtros. Devuelve metricas actual/anterior, tendencias y series; nunca filas de
+  `sessions`. `includeFacets=false` es el contrato de apertura web y evita crear
+  cualquier consulta de facetas antes del primer paint. El default `true` se
+  conserva exclusivamente por compatibilidad con callers legacy. Autoagrupa
+  rangos grandes para no superar 400 puntos.
+- `POST /api/tracking/analytics/facets`: acepta exactamente una dimension
+  allowlisted por request y devuelve como maximo 25 opciones. Fuentes,
+  dispositivos, navegadores, sistemas, ubicaciones, paginas, Sites, formularios,
+  canales y jerarquia publicitaria se cargan por intencion real; el contrato no
+  acepta una lista de dimensiones que permita reconstruir las 16 de golpe.
 - `POST /api/tracking/sessions/search`: devuelve entre 20 y 100 filas angostas,
   `hasMore` y un cursor opaco basado en `started_at + id`. No calcula total. La
   tabla pide 50 y mantiene como maximo 100 filas en memoria/DOM, con busqueda
@@ -349,9 +397,64 @@ El resumen mantiene un snapshot SWR por rango, zona, agrupacion y filtros. Una
 escritura de tracking incrementa su revision sin crear una llave nueva: durante
 30 segundos se reutiliza el resultado fresco y, hasta cinco minutos, una
 reentrada recibe el ultimo snapshot inmediatamente mientras una sola promesa
-compartida recalcula en background. El frontend pinta primero ese snapshot y
-espera la misma revalidacion para reemplazarlo; un stream continuo de visitas no
-puede convertir cada apertura en cache miss ni multiplicar agregados iguales.
+compartida recalcula en background. El frontend no fuerza red cuando el snapshot
+sigue fresco, pinta primero cualquier snapshot util y no mantiene la pagina tras
+el loader mientras revalida. El resumen, la configuracion de tracking y la tabla
+de sesiones son cargas independientes: una configuracion lenta o un error de
+metricas no desmonta la tabla. Toda lectura tiene cancelacion y presupuesto de 20
+segundos con error reintentable; nunca deja una promesa ni un loader pendientes.
+En backend el core tiene dos carriles logicos —sesiones y conversiones— y un
+semaforo global permite como maximo dos consultas pesadas activas entre todos los
+builds. Asi el resumen inicial no espera facetas, no suma seis tiempos en serie
+ni abre seis conexiones de golpe; requests identicos comparten el mismo build.
+Las facetas singulares admiten un solo build activo y usan tambien ese semaforo,
+por lo que siempre queda capacidad para el core. El proceso acepta como maximo
+dos builds pesados globales y ocho esperas; cuenta el tiempo de cola dentro del
+deadline de 18 segundos y devuelve un error reintentable bajo presion, sin seguir
+ejecutando despues de que el cliente abandono la ruta. Si la revision cambia
+mientras se calcula, el resultado queda marcado `stale` y se reconstruye antes de
+declararse fresco. Un stream continuo de visitas no puede convertir cada apertura
+en cache miss ni multiplicar agregados iguales.
+
+En PostgreSQL cada faceta plana se agrega como una sola rama acotada: conserva su
+definicion exacta de identidad y etiqueta, ordena y aplica top 25 dentro de esa
+rama. El endpoint singular no genera un `UNION` de 16 scans. El contrato legacy
+puede unir ramas acotadas, pero nunca usa `GROUPING SETS` ni una materializacion
+global que derrame todas las dimensiones a disco. En la prueba con 300,000
+sesiones, el core sin facetas termino en 3.705 s frente a 6.706 s del resumen
+completo; `sources` tardo 536 ms, `devices` 352 ms, `topVisitors` 132 ms y la
+jerarquia publicitaria acotada 1.839 s, cada una aislada y fuera del loader global.
+Con 1,000,000 de sesiones, el core exacto completo termino entre 3.75 y 4.61 s.
+El rollup de identidad/sesion redujo el I/O temporal total de PostgreSQL 54.4%:
+de 671.3 MiB leidos + 517.8 MiB escritos a 271.0 + 271.5 MiB, sin cambiar una
+metrica (`EXCEPT` dio cero filas en ambos sentidos). Node aumento solo 6.4 MiB de
+RSS y 1.8 MiB de heap en el pico; no materializa el millon de eventos. El
+frontend pide filtros por hover, click, foco o teclado, conserva un cache acotado
+por cuenta/rango y carga las seis tarjetas inferiores de forma secuencial cuando
+entran al viewport.
+
+La tabla de visitantes lee exclusivamente `tracking_visitor_latest` con
+pagina de 50, cursor estable, filtros y busqueda server-side. Nunca vuelve a
+`SELECT` del historico ni reconstruye todos los registros dentro del GET. Una
+instalacion que aun converge responde `503 tracking_visitor_projection_warming`
+y `Retry-After`, mientras el worker reanudable procesa en PostgreSQL lotes de 200,
+como maximo diez lotes por turno, cede un segundo y continua solo. El estado
+`ready` se publica unicamente cuando el historico completo ya fue proyectado;
+con 300,001 sesiones el drain debe converger sin retener la tabla en memoria del
+proceso. Si el fence distribuido falla antes de entrar al callback, el scheduler
+libera su bandera y programa el retry; no puede quedarse eternamente en
+`warming`. La busqueda atribuida limita y ordena por cursor cada fuente de
+candidatos antes de unirlas, en vez de materializar todos los matches. La metadata
+de cada consulta declara por separado si una busqueda
+acotada o un borde no alineado reducen su cobertura.
+Los rangos se separan entre buckets diarios completos y bordes parciales de
+trimestre; cada rama recibe su propio limite temporal y solo la rama que contiene
+el cursor aplica el predicado keyset. Esto evita que un `LIMIT 51` ordene cientos
+de miles de candidatos antes de paginar. Sobre 1,000,000 de sesiones y 2,000,000
+de filas de proyeccion, la primera pagina medida termino en 34-93 ms y la segunda
+en 5-11 ms, con 100 identidades unicas y un incremento pico de 6.2 MiB de RSS en
+Node. Una busqueda de una o dos letras no toca PostgreSQL; desde tres caracteres
+usa el indice trigram acotado y la interfaz explica el minimo requerido.
 `GET /api/tracking/config` tambien es estrictamente local: lee dominio,
 preferencias, Sites publicados y la evidencia hash de la ultima sincronizacion
 aceptada por HighLevel. La consulta remota del custom value vive solamente en
@@ -405,18 +508,42 @@ externa depende de los crons registrados de HighLevel/Google y del sync al
 conectar; el GET del Dashboard nunca sacrifica latencia esperando un proveedor.
 Origenes, funnel, citas, asistencias y fuentes de trafico se agregan en SQL por
 rango y zona de la cuenta; no recorren contactos, citas o sesiones completas en
-Node ni hacen fallback a HighLevel durante la navegacion. Las graficas devuelven
-solo buckets y top 10. Ingresos, reembolsos y ticket promedio comparten una sola
+Node ni hacen fallback a HighLevel durante la navegacion. Sus deadlines cubren
+tambien la espera de conexion, la resolucion de timezone y la consulta: abandonar
+la ruta cancela el trabajo y una saturacion responde como error reintentable, no
+como loader permanente. Las graficas devuelven solo buckets y top 10. Ingresos,
+reembolsos y ticket promedio comparten una sola
 pasada condicional por `payments`, mientras publicidad, costos y gastos manuales
 se resuelven en paralelo. El frontend conserva snapshots por principal y rango:
 al volver pinta el ultimo Dashboard util y revalida sin cubrir la pantalla con
 un loader. Las metricas concurrentes del mismo rango comparten una sola lectura,
-pero esa lectura no adopta el `AbortSignal` del primer componente: cada
-consumidor cancela únicamente su propia espera y los demás reciben el resultado,
-que todavía puede poblar el cache. Los modales de contacto/visitante, sus editores y los
+cada consumidor cancela su propia espera y el fetch compartido continua mientras
+exista otro consumidor; al irse el ultimo se aborta la consulta. La vista no
+fuerza red si el snapshot de 30 segundos sigue fresco. Si el primer snapshot
+falla, Dashboard muestra un error reintentable en vez de conservar
+`metrics=null` bajo un loader; las graficas extendidas tambien detienen su
+reintento automatico al fallar. Los modales de contacto/visitante, sus editores y los
 servicios de Reportes/Campanas para drill-down no forman parte del chunk inicial:
 se descargan al abrir el detalle y muestran un modal ligero durante una red fria.
 Los indices locales de este contrato viven en `063*`.
+
+El limitador compartido del backend admite como maximo dos lecturas de Dashboard,
+incluyendo los periodos actual/anterior y el contexto movil; un montaje ya no
+puede abrir ocho conexiones simultaneas. En el navegador, metricas, snapshot
+operativo, financiera, las dos series visibles, funnel, fuentes y origen pasan
+por una cola abortable de maximo dos transportes, en ese orden de prioridad. La
+espera de cola termina a los 10 segundos con error local reintentable; el timeout
+de red/ejecucion de 20 segundos empieza solamente al obtener un carril. Asi una
+tercera familia no pierde su presupuesto mientras espera y tampoco extiende un
+loader a 40-45 segundos. Salir de la ruta elimina una entrada pendiente antes de
+abrir su `fetch`.
+`OriginDistributionCard` solicita `dimension=<visible>&includeBreakdowns=0`:
+el backend agrega solo esa dimension y no calcula leads, citas, conversiones ni
+numeros WhatsApp que la card no renderiza. Cada dimension queda cacheada por
+cuenta/rango durante 30 segundos, de modo que cambiar el selector reutiliza el
+resultado sin rehacer las otras cinco agregaciones. Si una dimension falla, la
+card conserva las demas y ofrece reintento local; no borra datos validos ni
+reactiva el loader global.
 
 `PhoneAnalytics` obtiene su primer paint desde
 `GET /api/dashboard/mobile-analytics-snapshot`: una sola peticion entrega KPIs,
@@ -429,16 +556,21 @@ proveedor. Si el cliente abandona o cambia de periodo, el `AbortSignal` llega a
 las consultas de base. El frontend conserva como maximo ocho snapshots por
 principal/rango/scope (30 segundos frescos y cinco minutos como stale visible),
 descarta respuestas de periodos anteriores con un ID monotono y revalida con una
-request propia. No existe single-flight abortable compartido para este snapshot:
-cancelar un consumidor nunca cancela la lectura de otro. Cambiar scope, grafica
-u otra vista despues del primer paint usa solamente el endpoint focal necesario.
+request propia. Peticiones concurrentes de la misma llave comparten single-flight;
+cada consumidor puede abandonar su espera y la consulta real se cancela solo
+cuando ya no queda ninguno. Cambiar scope, grafica u otra vista despues del primer
+paint usa solamente el endpoint focal necesario.
 
 Contactos confia en los flags de cita/asistencia calculados por su endpoint
 paginado; no descarga anos de calendarios para pintar veinte filas. La busqueda
 de Chat escritorio entrega la primera pagina de inmediato y pagina resultados
 al hacer scroll, en lugar de recorrer toda la cuenta antes de mostrar algo. La
 lista de conversaciones avanza por `last_message_sort + contact_id`, no por
-offset. Dentro de una conversacion, Desktop y movil conservan la tupla privada
+offset. El montaje no precarga cinco paginas ni 250 conversaciones: solo pide el
+siguiente lote de 50 cuando la lista aun no llena la pantalla o el usuario se
+acerca al final. La lectura de la pagina y del hilo tiene deadline y no puede
+dejar sus loaders activos indefinidamente. Dentro de una conversacion, Desktop y
+movil conservan la tupla privada
 `cursorDate + cursorKey` del mensaje mas antiguo y la envian al pedir historia;
 esto evita saltar mensajes distintos que compartan el mismo instante. La
 app movil solo carga los datos de la seccion activa y sus listas de pagos,
@@ -511,7 +643,9 @@ una sola promesa lo recompone. Como maximo se ejecutan dos builds de overview a
 la vez. Una revision que cambie durante los scans no se publica falsamente como
 exacta: queda marcada stale para la siguiente reconstruccion. El frontend
 conserva el shell, cancela tanto la pagina de entidades como el overview anterior
-y nunca cubre toda la ruta con un loader. Un build frio se cancela cuando pierde
+y nunca cubre toda la ruta con un loader. Si falla la revalidacion en background,
+conserva el snapshot stale visible y muestra una advertencia; no vacia KPIs ni
+regresa al loader. Un build frio se cancela cuando pierde
 su ultimo consumidor; una revalidacion SWR con snapshot util puede terminar en
 background para beneficiar la siguiente navegacion. `meta_ads.date` se filtra
 como su texto ISO canonico; `101b*` agrega `ad_id + date` para resolver la
@@ -544,8 +678,15 @@ legacy. La primera compra parte de candidatos del rango y comprueba que no exist
 un pago anterior, apoyada por los indices parciales `064*`; no agrupa todo el
 historico de pagos en cada apertura. El modal de transacciones pagina 50 filas
 con cursor `date + id`, busca en servidor y obtiene su resumen global por
-separado; sus indices viven en `066*`. Reportes no repite una segunda consulta
-de visitantes despues de recibir el agregado principal.
+separado; sus indices viven en `066*`. Resumen y filas arrancan juntos con un
+maximo de dos operaciones de DB; el `COUNT` filtrado espera a que termine la
+pagina de filas para no abrir un tercer carril. Como maximo existen dos builds
+frios globales; un tercero recibe
+`503 report_transaction_summary_busy` reintentable en lugar de abrir otra
+consulta pesada. Consumidores iguales comparten build, irse uno no cancela a los
+demas y el ultimo si aborta la consulta. Backend corta a 18 segundos y frontend a
+20. Reportes no repite una segunda consulta de visitantes despues de recibir el
+agregado principal.
 
 La apertura web y movil de Reportes usa un solo read-model:
 `GET /api/reports/snapshot`. La respuesta incluye buckets, rango y los KPIs
@@ -554,7 +695,7 @@ no vuelve a escanear contactos, pagos ni anuncios mediante `/metrics` y
 `/summary`. Solo el periodo anterior ejecuta dos agregados acotados (pagos y
 anuncios). `/metrics` y `/summary` permanecen compatibles para integraciones y
 callers legacy, pero no son el camino de montaje de la UI. El snapshot se guarda
-por cuenta, principal, rango, agrupacion y scope en
+por cuenta, rango, agrupacion y scope en
 `reports_snapshot_cache`; `100*` mantiene una revision durable que cambia con
 contactos, telefonos canonicos, pagos, citas, asistencias, anuncios, sesiones,
 filtros y configuracion. En PostgreSQL la revision core usa secuencia y triggers
@@ -562,16 +703,32 @@ por statement. Reutiliza la revision `070*` para contactos, pagos, citas,
 asistencia y anuncios, además de su secuencia append-only de visitantes; `100*`
 solo agrega teléfonos canónicos, filtros, zona/calendarios y HighLevel. Así no
 duplica escrituras en los hot paths ni invalida por una clave de configuración
-ajena al reporte. Una revision nueva
-sirve inmediatamente el ultimo snapshot como stale, comparte una sola
-reconstruccion SWR y el frontend espera esa misma promesa sin duplicar el
-agregado. Cambiar rango o scope aborta la lectura anterior y las respuestas
+ajena al reporte. Una revision nueva sirve inmediatamente el ultimo snapshot
+como stale y comparte una sola reconstruccion SWR entre usuarios autorizados de
+la misma cuenta: la ruta ya exige autenticacion y permiso de Reportes, y el
+agregado no contiene datos especificos del principal. Esto evita dos filas o
+builds identicos por cada usuario. El frontend respeta `revalidateAfter`; un
+stream continuo produce un snapshot `moving-window` honesto y como maximo un
+nuevo intento cada 30 segundos, sin encadenar `waitForFresh` ni declarar
+exactitud falsa. Cambiar rango o scope aborta la lectura anterior y las respuestas
 tardias no pueden pisar la vista actual. Esa cancelacion cruza el request HTTP:
 el backend propaga `AbortSignal` hasta los agregados y, en PostgreSQL, cancela la
 consulta activa en el servidor. Un build frio o `waitForFresh` se detiene cuando
 ya no queda ningun consumidor; una reconstruccion SWR que ya tiene un snapshot
 stale util conserva `keepAlive` y termina de publicar el cache durable para la
-siguiente entrada.
+siguiente entrada. Tanto la cola como el build tienen presupuesto total de 18
+segundos; la cola admite como maximo ocho misses frios. Una revalidacion SWR no se
+encola si los dos slots estan ocupados: devuelve el snapshot stale y reintenta en
+la siguiente lectura. El fence de persistencia recibe la misma señal y un timeout
+responde `503 reports_snapshot_deadline` con `Retry-After`, nunca un loader
+indefinido ni trabajo huerfano.
+El cliente conserva como maximo 12 snapshots de Reportes durante 30 segundos,
+aislados por cuenta, rango, agrupacion y scope. Volver a la ruta pinta ese dato
+de inmediato; llamadas equivalentes comparten una sola promesa y el ultimo
+consumidor que abandona cancela el `fetch`. Los eventos vivos conservan el TTL
+corto y una mutacion explicita limpia y aborta. Ambos loaders de la pagina se
+liberan en `finally`; un error inicial muestra estado reintentable y una falla de
+revalidacion nunca borra el snapshot que el usuario ya puede consultar.
 
 Pagos mantiene contratos server-side en todas sus listas crecientes. Productos
 pagina y busca en backend, calcula el resumen global en SQL y carga los precios
@@ -609,17 +766,18 @@ documento completo solo al abrir, editar o ejecutar una accion. El endpoint
 legacy queda capado, los detalles limitan submissions y los indices de las
 bibliotecas viven en `055*` y `091*`. La carga incremental conserva el contenido
 ya visible, no mezcla tipos y no vuelve a hidratar cada tarjeta con requests
-independientes.
+independientes. Cambiar tipo, carpeta, busqueda o abandonar la ruta aborta la
+promesa anterior; una promesa de otra llave nunca se reutiliza para la consulta
+nueva ni queda consumiendo backend fuera de pantalla.
 
-La ruta de Sites tiene un shell propio y liviano. Pinta de inmediato el encabezado,
-las secciones y, cuando la red responde antes que el JavaScript del editor, la
-primera pagina real de la biblioteca. En paralelo precalienta exactamente la
-pagina o documento que consumira el workspace y comparte esa lectura mediante el
-dedupe/cache autenticado; por eso no aparece un segundo loader ni se repite el
-GET al terminar de parsear editor, media, formularios y analiticas. La intencion
-real en el menu comparte la misma promesa de prefetch y un fallo transitorio no
-envenena el siguiente intento. El chunk pesado nunca forma parte del shell global
-ni bloquea una transicion hacia otro modulo.
+La ruta de Sites tiene un shell propio y liviano. Pinta de inmediato encabezado y
+secciones mientras descarga una sola vez el chunk del workspace. El menu puede
+precargar ese chunk con intencion real, pero nunca dispara biblioteca, carpetas,
+dominio ni documento de edicion antes de montar Sites. El workspace es el unico
+owner de esas lecturas, todas con deadline y cancelacion; asi no se duplican datos
+ni una API lenta impide abrir o abandonar la ruta. Un fallo transitorio del chunk
+limpia su promesa y permite reintentar. El editor pesado nunca forma parte del
+shell global ni bloquea una transicion hacia otro modulo.
 El documento de edicion se solicita con `includeTrackingStats=0`: abrir,
 previsualizar, guardar o recibir respuestas no ejecuta conteos historicos de
 sesiones. El API directo conserva `includeTrackingStats=1` por compatibilidad,
@@ -711,7 +869,9 @@ lecturas puras.
 
 Automatizaciones lista summaries sin el grafo del flujo, pagina por cursor,
 busca/filtra en SQL y consulta el detalle solo al abrir. Las referencias externas
-se validan despues del primer paint y unicamente para la pagina visible. Su cache
+se validan despues del primer paint y unicamente para la pagina visible. Esa
+auditoria usa una señal separada de la primera pagina y se cancela al recargar o
+desmontar la biblioteca, sin sobrevivir como request huerfano. Su cache
 LRU se invalida por principal y mutaciones; los indices de libreria viven en
 `062*`. La biblioteca publica explicitamente su primera pagina al snapshot
 reactivo; crear, renombrar, mover o borrar publica un delta revisionado que se
@@ -809,13 +969,13 @@ La migracion `111*` agrega el singleton
 `tracking_visitor_projection_state`. El GET de visitantes solo lee ese estado y
 `tracking_visitor_latest`: nunca inspecciona `visitor_projection_version`, arma
 ventanas ni recorre el historico de `sessions` para decidir un fallback. Mientras
-el backfill esta en `warming`, devuelve inmediatamente las filas ya proyectadas
-con `coverage.partial=true`, `status=warming` y la razon explicita; si el esquema
-del read model aun no esta disponible durante un rolling deploy, responde una
-pagina vacia con `status=unavailable` en vez de disparar el scan legacy. Cuando el
-estado es `ready` y los bordes caen en cuartos de hora, `coverage.exact=true`.
-Los bordes no alineados permanecen acotados a la proyeccion y se declaran
-parciales: la request nunca compra exactitud bloqueando la interfaz.
+el backfill esta en `warming`, o si el esquema todavia no existe durante un
+rolling deploy, responde `503 tracking_visitor_projection_warming` con
+`Retry-After` y metadata de cobertura; no entrega una pagina parcial ni dispara
+el scan legacy. Cuando el estado es `ready` y los bordes caen en cuartos de hora,
+`coverage.exact=true`. Los bordes no alineados y la busqueda remota permanecen
+acotados a la proyeccion y declaran su cobertura: la request nunca compra
+exactitud con un sort historico que bloquee la interfaz.
 
 Vincular miles de visitas a un contacto no ejecuta miles de reparaciones del
 rollup en PostgreSQL: una transaccion local actualiza el historial y reconstruye

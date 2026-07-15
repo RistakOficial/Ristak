@@ -63,7 +63,18 @@ test('Analíticas móvil abre con una petición abortable y deja los cambios de 
   assert.match(frontendService, /principalRevision === getAuthScopedCacheRevision\(\)/)
   assert.match(frontendService, /mobile-analytics-snapshot\?\$\{queryParams\}/)
   assert.match(frontendService, /signal: options\.signal/)
-  assert.doesNotMatch(frontendService, /mobileAnalyticsInflight/)
+  assert.match(frontendService, /inflight: mobileAnalyticsInflight/)
+  assert.match(frontendService, /abortWhenUnused: true/)
+  assert.match(frontendService, /createRequest: sharedSignal => scheduleDashboardHeavyRead\(\{[\s\S]*Analíticas móvil tardó demasiado/)
+  const schedulerStart = frontendService.indexOf('function scheduleDashboardHeavyRead')
+  const schedulerEnd = frontendService.indexOf('function clearDashboardMetricSnapshots', schedulerStart)
+  const scheduler = frontendService.slice(schedulerStart, schedulerEnd)
+  assert.match(scheduler, /return scheduleDashboardHeavyRequest\(/)
+  assert.match(scheduler, /\(\) => withRequestTimeout\(\{/)
+  assert.ok(
+    scheduler.indexOf('scheduleDashboardHeavyRequest(') < scheduler.indexOf('withRequestTimeout({'),
+    'el timeout de ejecución debe empezar después de obtener un carril pesado'
+  )
 
   assert.match(routes, /router\.get\('\/mobile-analytics-snapshot', requireWebAnalyticsWhenIncluded, getMobileAnalyticsSnapshot\)/)
   const handlerStart = controller.indexOf('export const getMobileAnalyticsSnapshot')

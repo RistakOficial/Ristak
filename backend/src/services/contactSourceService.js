@@ -268,12 +268,130 @@ export async function getContactSourceBreakdownForSelection({
     ELSE ${whatsappBaseSource}
   END`
 
-  const rows = await db.all(`
-    WITH
-    selected_contacts AS (
-      SELECT DISTINCT *
-      FROM (${selectionSql}) selected_contact_rows
+  // PostgreSQL puede resolver la primera señal de cada contacto con probes
+  // contra los índices existentes. La versión anterior unía y ordenaba todas
+  // las sesiones/mensajes de todos los contactos seleccionados; al ejecutarse
+  // tres veces en paralelo desde Dashboard/Analíticas llegó a ser el proceso
+  // que el kernel mató en producción. SQLite conserva el plan por ventanas,
+  // que es más portable y se usa para instalaciones/pruebas locales pequeñas.
+  const firstMatchCtes = databaseDialect === 'postgres'
+    ? `
+    first_sessions AS (
+      SELECT
+        sc.id AS selected_contact_id,
+        matched.id,
+        matched.referrer_url,
+        matched.site_source_name,
+        matched.utm_source,
+        matched.source_platform,
+        matched.started_at,
+        matched.created_at,
+        matched.match_priority
+      FROM selected_contacts sc
+      JOIN LATERAL (
+        SELECT candidates.*
+        FROM (
+          SELECT by_contact.*
+          FROM (
+            SELECT
+              s.id, s.referrer_url, s.site_source_name, s.utm_source,
+              s.source_platform, s.started_at, s.created_at, 1 AS match_priority
+            FROM sessions s
+            WHERE s.contact_id = sc.id
+            ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
+            LIMIT 1
+          ) by_contact
+
+          UNION ALL
+
+          SELECT by_visitor.*
+          FROM (
+            SELECT
+              s.id, s.referrer_url, s.site_source_name, s.utm_source,
+              s.source_platform, s.started_at, s.created_at, 2 AS match_priority
+            FROM sessions s
+            WHERE sc.visitor_id IS NOT NULL
+              AND sc.visitor_id != ''
+              AND s.visitor_id = sc.visitor_id
+            ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
+            LIMIT 1
+          ) by_visitor
+
+          UNION ALL
+
+          SELECT by_email.*
+          FROM (
+            SELECT
+              s.id, s.referrer_url, s.site_source_name, s.utm_source,
+              s.source_platform, s.started_at, s.created_at, 3 AS match_priority
+            FROM sessions s
+            WHERE sc.email IS NOT NULL
+              AND sc.email != ''
+              AND LOWER(s.email) = LOWER(sc.email)
+            ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
+            LIMIT 1
+          ) by_email
+        ) candidates
+        ORDER BY match_priority ASC, started_at ASC, created_at ASC, id ASC
+        LIMIT 1
+      ) matched ON TRUE
     ),
+    first_official_attributions AS (
+      SELECT
+        sc.id AS selected_contact_id,
+        official.referral_source_url,
+        official.referral_source_type,
+        official.referral_source_id,
+        official.referral_ctwa_clid,
+        NULL AS referral_source_app,
+        NULL AS referral_entry_point
+      FROM selected_contacts sc
+      JOIN LATERAL (
+        SELECT
+          wat.referral_source_url,
+          wat.referral_source_type,
+          wat.referral_source_id,
+          wat.referral_ctwa_clid
+        FROM whatsapp_attribution wat
+        WHERE wat.contact_id = sc.id
+        ORDER BY wat.created_at ASC, wat.id ASC
+        LIMIT 1
+      ) official ON TRUE
+    ),
+    first_api_attributions AS (
+      SELECT
+        sc.id AS selected_contact_id,
+        api.referral_source_url,
+        api.referral_source_type,
+        api.referral_source_id,
+        api.referral_ctwa_clid,
+        api.referral_source_app,
+        api.referral_entry_point
+      FROM selected_contacts sc
+      JOIN LATERAL (
+        SELECT
+          COALESCE(attr.detected_source_url, msg.detected_source_url) AS referral_source_url,
+          COALESCE(attr.detected_source_type, msg.detected_source_type) AS referral_source_type,
+          COALESCE(attr.detected_source_id, msg.detected_source_id) AS referral_source_id,
+          COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) AS referral_ctwa_clid,
+          COALESCE(attr.detected_source_app, msg.detected_source_app) AS referral_source_app,
+          COALESCE(attr.detected_entry_point, msg.detected_entry_point) AS referral_entry_point
+        FROM whatsapp_api_messages msg
+        LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
+        WHERE msg.contact_id = sc.id
+          AND LOWER(COALESCE(msg.direction, '')) = 'inbound'
+          AND (
+            attr.id IS NOT NULL
+            OR msg.detected_ctwa_clid IS NOT NULL
+            OR msg.detected_source_id IS NOT NULL
+            OR msg.detected_source_url IS NOT NULL
+            OR msg.detected_headline IS NOT NULL
+          )
+        ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.id ASC
+        LIMIT 1
+      ) api ON TRUE
+    )`
+    : `
     session_matches AS (
       SELECT
         sc.id AS selected_contact_id,
@@ -382,7 +500,15 @@ export async function getContactSourceBreakdownForSelection({
     ),
     first_api_attributions AS (
       SELECT * FROM ranked_api_attributions WHERE attribution_rank = 1
+    )`
+
+  const rows = await db.all(`
+    WITH
+    selected_contacts AS (
+      SELECT DISTINCT *
+      FROM (${selectionSql}) selected_contact_rows
     ),
+    ${firstMatchCtes},
     whatsapp_attributions AS (
       SELECT
         sc.id AS selected_contact_id,

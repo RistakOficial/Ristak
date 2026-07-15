@@ -5,6 +5,7 @@ import {
   registerAuthScopedCacheInvalidator,
   syncAuthScopedCachePrincipal
 } from './authPrincipalCache'
+import { withRequestTimeout } from './requestTimeout'
 
 export interface TrackingSession {
   // IDs principales
@@ -167,6 +168,7 @@ export interface TrackingSessionsSearchResponse {
   limit: number
   hasMore: boolean
   nextCursor: string | null
+  searchMinLength?: number
 }
 
 export interface CursorPagePagination {
@@ -198,12 +200,21 @@ export interface TrackingVisitorsCoverage {
   }
 }
 
+const TRACKING_SEARCH_TIMEOUT_MS = 15_000
+
 export function trackingVisitorsCoverageNotice(coverage?: TrackingVisitorsCoverage): string | null {
   if (coverage?.status === 'warming') {
-    return 'Preparando el historial completo; mostramos lo que ya está disponible.'
+    return 'Preparando el índice completo de visitantes. Reintenta en unos segundos.'
   }
   if (coverage?.status === 'unavailable') {
-    return 'Preparando el índice de visitantes; conservamos la última información disponible.'
+    return 'El índice de visitantes todavía no está disponible. Reintenta en unos segundos.'
+  }
+  if (coverage?.partial) {
+    if (coverage.reasons?.includes('bounded_latest_session_search')) {
+      const scanned = coverage.search?.candidatesScanned || coverage.search?.candidateLimit || 500
+      return `La búsqueda revisó los ${scanned} visitantes más recientes. Acota el rango para buscar más atrás.`
+    }
+    return 'El resultado está acotado a períodos completos del índice. Ajusta el rango para obtener cobertura exacta.'
   }
   return null
 }
@@ -252,20 +263,35 @@ async function searchSessions(
   options: { signal?: AbortSignal } = {}
 ): Promise<TrackingSessionsSearchResponse> {
   const limit = Math.min(100, Math.max(20, Math.trunc(input.limit ?? 50)))
+  const query = input.q?.trim() ?? ''
+  if (query && query.length < 3) {
+    return {
+      items: [],
+      limit,
+      hasMore: false,
+      nextCursor: null,
+      searchMinLength: 3
+    }
+  }
 
-  return apiClient.post<TrackingSessionsSearchResponse>(
-    '/api/tracking/sessions/search',
-    {
-      start: input.start,
-      end: input.end,
-      filters: input.filters ?? {},
-      q: input.q?.trim() ?? '',
-      column: input.column || 'all',
-      cursor: input.cursor ?? null,
-      limit
-    },
-    { signal: options.signal }
-  )
+  return withRequestTimeout({
+    timeoutMs: TRACKING_SEARCH_TIMEOUT_MS,
+    timeoutMessage: 'La consulta de eventos tardó demasiado. Ajusta el rango o reintenta.',
+    signal: options.signal,
+    request: signal => apiClient.post<TrackingSessionsSearchResponse>(
+      '/api/tracking/sessions/search',
+      {
+        start: input.start,
+        end: input.end,
+        filters: input.filters ?? {},
+        q: query,
+        column: input.column || 'all',
+        cursor: input.cursor ?? null,
+        limit
+      },
+      { signal }
+    )
+  })
 }
 
 /**
@@ -289,16 +315,34 @@ async function getVisitorsPage<T = Record<string, unknown>>(
   if (input.cursor) params.set('cursor', input.cursor)
   if (input.search?.trim()) params.set('search', input.search.trim())
 
-  const response = await fetch(apiUrl(`/api/tracking/visitors?${params.toString()}`), {
-    signal: options.signal
+  const { response, payload } = await withRequestTimeout({
+    timeoutMs: TRACKING_SEARCH_TIMEOUT_MS,
+    timeoutMessage: 'La consulta de visitantes tardó demasiado. Ajusta el rango o reintenta.',
+    signal: options.signal,
+    request: async signal => {
+      const response = await fetch(apiUrl(`/api/tracking/visitors?${params.toString()}`), { signal })
+      const payload = await response.json().catch(() => null) as {
+        error?: string
+        code?: string
+        retryable?: boolean
+        data?: T[] | { items?: T[]; pagination?: Partial<CursorPagePagination> }
+        pagination?: Partial<CursorPagePagination>
+        coverage?: TrackingVisitorsCoverage
+      } | null
+      return { response, payload }
+    }
   })
-  const payload = await response.json().catch(() => null) as {
-    error?: string
-    data?: T[] | { items?: T[]; pagination?: Partial<CursorPagePagination> }
-    pagination?: Partial<CursorPagePagination>
-    coverage?: TrackingVisitorsCoverage
-  } | null
-  if (!response.ok) throw new Error(payload?.error || 'No se pudieron cargar los visitantes')
+  if (!response.ok) {
+    throw Object.assign(
+      new Error(payload?.error || 'No se pudieron cargar los visitantes'),
+      {
+        status: response.status,
+        code: payload?.code,
+        retryable: payload?.retryable === true,
+        coverage: payload?.coverage
+      }
+    )
+  }
 
   const items = Array.isArray(payload?.data)
     ? payload.data
@@ -352,7 +396,11 @@ function getTrackingConfig(options: { forceRefresh?: boolean } = {}): Promise<Tr
     return trackingConfigCache.promise
   }
 
-  const promise: Promise<TrackingConfig> = apiClient.get<TrackingConfig>('/api/tracking/config').catch(error => {
+  const promise: Promise<TrackingConfig> = withRequestTimeout({
+    timeoutMs: TRACKING_SEARCH_TIMEOUT_MS,
+    timeoutMessage: 'La configuración de tracking tardó demasiado. Reintenta la carga.',
+    request: signal => apiClient.get<TrackingConfig>('/api/tracking/config', { signal })
+  }).catch(error => {
     // No cachear errores para permitir reintentos
     if (trackingConfigCache?.promise === promise) trackingConfigCache = null
     throw error

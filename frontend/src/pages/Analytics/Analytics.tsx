@@ -27,6 +27,7 @@ import {
   getContactConversionsByDate,
   getContactConversionContacts,
   getMessageAnalyticsSummary,
+  getTrackingAnalyticsFacet,
   getTrackingAnalyticsSummary,
   peekTrackingAnalyticsSummary,
   type ContactsByDate,
@@ -34,6 +35,7 @@ import {
   type ContactConversionsByDate,
   type MessageAnalyticsSummary,
   type TrackingAnalyticsFacetItem,
+  type TrackingAnalyticsFacetDimension,
   type TrackingAnalyticsSummary,
   type TrackingAnalyticsSummaryInput
 } from '../../services/analyticsService'
@@ -45,6 +47,7 @@ import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '../../utils/timezo
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 import { readNumberParam, setSearchParam } from '../../utils/urlState'
 import { hasLicenseFeature } from '../../utils/accessControl'
+import { useNotification } from '../../contexts/NotificationContext'
 
 type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'all' | 'custom'
@@ -534,6 +537,81 @@ const buildTrackingFilterData = (
     })),
     adsHierarchy: Array.isArray(facets.adsHierarchy) ? facets.adsHierarchy : []
   }
+}
+
+const ANALYTICS_DEFERRED_FILTER_CATEGORIES = [
+  'tracking_sources',
+  'traffic_channels',
+  'site_types',
+  'native_sites',
+  'native_forms',
+  'native_conversions',
+  'pages',
+  'ads',
+  'sources',
+  'devices',
+  'browsers',
+  'os',
+  'placements'
+]
+
+const ANALYTICS_FILTER_DIMENSION_BY_CATEGORY: Record<string, TrackingAnalyticsFacetDimension> = {
+  tracking_sources: 'trackingSources',
+  traffic_channels: 'trafficChannels',
+  site_types: 'siteTypes',
+  native_sites: 'nativeSites',
+  native_forms: 'nativeForms',
+  native_conversions: 'nativeConversions',
+  pages: 'pages',
+  ads: 'adsHierarchy',
+  sources: 'sources',
+  devices: 'devices',
+  browsers: 'browsers',
+  os: 'os',
+  placements: 'placements'
+}
+
+const ANALYTICS_FILTER_CATEGORY_BY_FIELD: Record<string, string> = {
+  tracking_source: 'tracking_sources',
+  channel: 'traffic_channels',
+  site_type: 'site_types',
+  site_id: 'native_sites',
+  form_site_id: 'native_forms',
+  native_conversion_source: 'native_conversions',
+  landing_url: 'pages',
+  page_url: 'pages',
+  utm_source: 'ads',
+  utm_campaign: 'ads',
+  utm_medium: 'ads',
+  utm_content: 'ads',
+  device_type: 'devices',
+  browser: 'browsers',
+  os: 'os',
+  placement: 'placements'
+}
+
+const ANALYTICS_DISTRIBUTION_DIMENSIONS: TrackingAnalyticsFacetDimension[] = [
+  'sources',
+  'placements',
+  'devices',
+  'os',
+  'browsers',
+  'topVisitors'
+]
+
+const trackingFacetToFilterData = (
+  dimension: TrackingAnalyticsFacetDimension,
+  items: unknown[]
+): Record<string, unknown> => {
+  if (dimension === 'adsHierarchy') return { adsHierarchy: items }
+  const facetItems = items as TrackingAnalyticsFacetItem[]
+  if (dimension === 'pages') {
+    return { pages: facetItems.map(item => ({ page: item.value, count: item.count })) }
+  }
+  if (['trafficChannels', 'trackingSources', 'siteTypes', 'nativeSites', 'nativeForms', 'nativeConversions'].includes(dimension)) {
+    return { [dimension]: toValuedFacet(facetItems) }
+  }
+  return { [dimension]: toNamedFacet(facetItems) }
 }
 
 const toDistributionStats = (
@@ -1248,6 +1326,7 @@ const Analytics: React.FC = () => {
   }, [defaultYearRange, searchParams])
   const { labels: appLabels } = useLabels()
   const { user } = useAuth()
+  const { showToast } = useNotification()
   const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
   const [loading, setLoading] = useState(false)
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
@@ -1256,6 +1335,7 @@ const Analytics: React.FC = () => {
   const [analyticsError, setAnalyticsError] = useState<string | null>(null)
   const [analyticsRetryKey, setAnalyticsRetryKey] = useState(0)
   const [hasWebAnalyticsSnapshot, setHasWebAnalyticsSnapshot] = useState(false)
+  const [loadedAnalyticsCoreScopeKey, setLoadedAnalyticsCoreScopeKey] = useState<string | null>(null)
   const [webTrackingConfigured, setWebTrackingConfigured] = useState(hasWebAnalyticsAccess)
   const [messageAnalytics, setMessageAnalytics] = useState<MessageAnalyticsSummary | null>(null)
 
@@ -1279,6 +1359,12 @@ const Analytics: React.FC = () => {
   const [selectedFilters, setSelectedFilters] = useUrlFilterState('filters')
   const [webFilterData, setWebFilterData] = useState<Record<string, unknown>>({})
   const [messageFilterData, setMessageFilterData] = useState<Record<string, unknown>>({})
+  const [loadedWebFilterCategories, setLoadedWebFilterCategories] = useState<string[]>([])
+  const [loadingWebFilterCategories, setLoadingWebFilterCategories] = useState<string[]>([])
+  const analyticsFacetControllersRef = React.useRef(new Map<string, AbortController>())
+  const analyticsFacetGenerationRef = React.useRef(0)
+  const analyticsStatsGridRef = React.useRef<HTMLDivElement | null>(null)
+  const [shouldLoadAnalyticsDistributions, setShouldLoadAnalyticsDistributions] = useState(false)
   const availableFilterData = React.useMemo(
     () => ({ ...webFilterData, ...messageFilterData }),
     [messageFilterData, webFilterData]
@@ -1291,12 +1377,15 @@ const Analytics: React.FC = () => {
   const [conversionTrendSeries, setConversionTrendSeries] = useState<ConversionTrendPoint[]>([])
   const [contactModalState, setContactModalState] = useState<AnalyticsContactModalState>(emptyContactModalState)
   const contactModalRequestRef = React.useRef(0)
-  const [platformsData, setPlatformsData] = useState<any[]>([])
-  const [placementsData, setPlacementsData] = useState<any[]>([])
-  const [devicesData, setDevicesData] = useState<any[]>([])
-  const [osData, setOsData] = useState<any[]>([])
-  const [browserData, setBrowserData] = useState<any[]>([])
-  const [topVisitors, setTopVisitors] = useState<any[]>([])
+  const contactModalAbortRef = React.useRef<AbortController | null>(null)
+  useEffect(() => () => {
+    contactModalRequestRef.current += 1
+    contactModalAbortRef.current?.abort()
+    contactModalAbortRef.current = null
+  }, [])
+  const [analyticsDistributionFacets, setAnalyticsDistributionFacets] = useState<
+    Partial<Record<TrackingAnalyticsFacetDimension, TrackingAnalyticsFacetItem[]>>
+  >({})
   const [viewType, setViewType] = useState<ViewType>(routeState.viewType)
   const [monthPreset, setMonthPreset] = useState<MonthPreset>(routeMonthPreset)
   const [yearRange, setYearRange] = useState(routeYearRange)
@@ -1360,6 +1449,36 @@ const Analytics: React.FC = () => {
       avgPagePerSession: 0
     }
   })
+  const platformsData = React.useMemo(
+    () => toDistributionStats(analyticsDistributionFacets.sources, metrics.uniqueVisitors),
+    [analyticsDistributionFacets.sources, metrics.uniqueVisitors]
+  )
+  const placementsData = React.useMemo(
+    () => toDistributionStats(analyticsDistributionFacets.placements, metrics.uniqueVisitors),
+    [analyticsDistributionFacets.placements, metrics.uniqueVisitors]
+  )
+  const devicesData = React.useMemo(
+    () => toDistributionStats(analyticsDistributionFacets.devices, metrics.uniqueVisitors),
+    [analyticsDistributionFacets.devices, metrics.uniqueVisitors]
+  )
+  const osData = React.useMemo(
+    () => toDistributionStats(analyticsDistributionFacets.os, metrics.uniqueVisitors),
+    [analyticsDistributionFacets.os, metrics.uniqueVisitors]
+  )
+  const browserData = React.useMemo(
+    () => toDistributionStats(analyticsDistributionFacets.browsers, metrics.uniqueVisitors),
+    [analyticsDistributionFacets.browsers, metrics.uniqueVisitors]
+  )
+  const topVisitors = React.useMemo(
+    () => (analyticsDistributionFacets.topVisitors || []).slice(0, 5).map(item => {
+      const visitorId = item.value || item.label
+      return {
+        id: visitorId.length > 24 ? `${visitorId.slice(0, 24)}...` : visitorId,
+        requests: item.count
+      }
+    }),
+    [analyticsDistributionFacets.topVisitors]
+  )
 
   // Memoizar funciones de formato para evitar re-renders infinitos
   const formatTrafficAxis = useCallback((value: number) => formatChartNumber(value), [])
@@ -1409,10 +1528,91 @@ const Analytics: React.FC = () => {
     start: apiRange.from,
     end: apiRange.to,
     groupBy: viewType,
-    filters: webSummaryFilters
+    filters: webSummaryFilters,
+    includeFacets: false
   }), [apiRange.from, apiRange.to, viewType, webSummaryFilterKey])
+  const analyticsSummaryScopeKey = React.useMemo(() => JSON.stringify(analyticsSummaryInput), [analyticsSummaryInput])
   const analyticsRequestIdRef = React.useRef(0)
   const messageAnalyticsRequestIdRef = React.useRef(0)
+
+  useEffect(() => {
+    analyticsFacetGenerationRef.current += 1
+    for (const controller of analyticsFacetControllersRef.current.values()) controller.abort()
+    analyticsFacetControllersRef.current.clear()
+    setLoadedWebFilterCategories([])
+    setLoadingWebFilterCategories([])
+    setLoadedAnalyticsCoreScopeKey(null)
+    setWebFilterData({})
+    setAnalyticsDistributionFacets({})
+    setShouldLoadAnalyticsDistributions(false)
+  }, [analyticsSummaryScopeKey])
+
+  useEffect(() => () => {
+    analyticsFacetGenerationRef.current += 1
+    for (const controller of analyticsFacetControllersRef.current.values()) controller.abort()
+    analyticsFacetControllersRef.current.clear()
+  }, [])
+
+  const loadWebFilterCategory = useCallback(async (categoryId: string) => {
+    if (!hasWebAnalyticsAccess) return
+    const dimension = ANALYTICS_FILTER_DIMENSION_BY_CATEGORY[categoryId]
+    if (!dimension || loadedWebFilterCategories.includes(categoryId)) return
+
+    const requestKey = `filter:${categoryId}`
+    if (analyticsFacetControllersRef.current.has(requestKey)) return
+    const controller = new AbortController()
+    const generation = analyticsFacetGenerationRef.current
+    analyticsFacetControllersRef.current.set(requestKey, controller)
+    setLoadingWebFilterCategories(current => current.includes(categoryId) ? current : [...current, categoryId])
+
+    try {
+      const response = await getTrackingAnalyticsFacet({
+        start: analyticsSummaryInput.start,
+        end: analyticsSummaryInput.end,
+        filters: analyticsSummaryInput.filters,
+        dimension
+      }, { signal: controller.signal })
+      if (controller.signal.aborted || generation !== analyticsFacetGenerationRef.current) return
+      setWebFilterData(current => ({
+        ...current,
+        ...trackingFacetToFilterData(dimension, response.facet.items)
+      }))
+      setLoadedWebFilterCategories(current => current.includes(categoryId) ? current : [...current, categoryId])
+    } catch (error) {
+      if (controller.signal.aborted || generation !== analyticsFacetGenerationRef.current) return
+      console.error(`No se pudo cargar la faceta ${dimension}:`, error)
+      showToast('error', 'No se pudo cargar ese filtro', 'Intenta abrir la categoría nuevamente.')
+    } finally {
+      if (analyticsFacetControllersRef.current.get(requestKey) === controller) {
+        analyticsFacetControllersRef.current.delete(requestKey)
+      }
+      if (generation === analyticsFacetGenerationRef.current) {
+        setLoadingWebFilterCategories(current => current.filter(item => item !== categoryId))
+      }
+    }
+  }, [analyticsSummaryInput, hasWebAnalyticsAccess, loadedWebFilterCategories, showToast])
+
+  useEffect(() => {
+    if (
+      !hasWebAnalyticsAccess
+      || !hasWebAnalyticsSnapshot
+      || loadedAnalyticsCoreScopeKey !== analyticsSummaryScopeKey
+    ) return
+    const activeCategories = new Set<string>()
+    for (const [field, values] of Object.entries(selectedFilters)) {
+      if (!values.length) continue
+      const category = ANALYTICS_FILTER_CATEGORY_BY_FIELD[field]
+      if (category) activeCategories.add(category)
+    }
+    for (const category of activeCategories) void loadWebFilterCategory(category)
+  }, [
+    analyticsSummaryScopeKey,
+    hasWebAnalyticsAccess,
+    hasWebAnalyticsSnapshot,
+    loadWebFilterCategory,
+    loadedAnalyticsCoreScopeKey,
+    selectedFilters
+  ])
 
   // El navegador recibe agregados acotados; nunca el historial crudo de tracking.
   useEffect(() => {
@@ -1427,10 +1627,7 @@ const Analytics: React.FC = () => {
       !controller.signal.aborted && analyticsRequestIdRef.current === requestId
     )
 
-    const applyTrackingSummary = (
-      summary: TrackingAnalyticsSummary,
-      trackingConfig: Awaited<ReturnType<typeof trackingService.getTrackingConfig>> | null
-    ) => {
+    const applyTrackingSummary = (summary: TrackingAnalyticsSummary) => {
       const groupBy = summary.range.groupBy
       const range = { from: summary.range.start, to: summary.range.end }
       const current = summary.metrics.current
@@ -1499,26 +1696,21 @@ const Analytics: React.FC = () => {
       })))
 
       const distributions = summary.distributions || {}
-      setPlatformsData(toDistributionStats(distributions.sources, current.uniqueVisitors))
-      setPlacementsData(toDistributionStats(distributions.placements, current.uniqueVisitors))
-      setDevicesData(toDistributionStats(distributions.devices, current.uniqueVisitors))
-      setOsData(toDistributionStats(distributions.os, current.uniqueVisitors))
-      setBrowserData(toDistributionStats(distributions.browsers, current.uniqueVisitors))
-      setTopVisitors((distributions.topVisitors || []).slice(0, 5).map(item => {
-        const visitorId = item.value || item.label
-        return {
-          id: visitorId.length > 24 ? `${visitorId.slice(0, 24)}...` : visitorId,
-          requests: item.count
-        }
-      }))
-      setWebFilterData(buildTrackingFilterData(summary, conversionFilters))
+      const receivedDistributionFacets = Object.fromEntries(
+        ANALYTICS_DISTRIBUTION_DIMENSIONS
+          .filter(dimension => Array.isArray(distributions[dimension]))
+          .map(dimension => [dimension, distributions[dimension]])
+      ) as Partial<Record<TrackingAnalyticsFacetDimension, TrackingAnalyticsFacetItem[]>>
+      if (Object.keys(receivedDistributionFacets).length > 0) {
+        setAnalyticsDistributionFacets(existing => ({ ...existing, ...receivedDistributionFacets }))
+      }
+      const conversionData = buildTrackingFilterData(summary, conversionFilters).conversions
+      setWebFilterData(existing => ({ ...existing, conversions: conversionData }))
       setHasWebAnalyticsSnapshot(true)
-      setWebTrackingConfigured(Boolean(
-        trackingConfig?.isConfigured ||
-        trackingConfig?.hasPublicSites ||
-        current.pageViews > 0 ||
-        current.uniqueVisitors > 0
-      ))
+      setLoadedAnalyticsCoreScopeKey(analyticsSummaryScopeKey)
+      if (current.pageViews > 0 || current.uniqueVisitors > 0) {
+        setWebTrackingConfigured(true)
+      }
     }
 
     // Stale-while-revalidate real: el snapshot tiene que pintarse antes de
@@ -1526,7 +1718,7 @@ const Analytics: React.FC = () => {
     // visibles las métricas del rango anterior bajo las fechas nuevas.
     if (cachedSummary) {
       setAnalyticsError(null)
-      applyTrackingSummary(cachedSummary, null)
+      applyTrackingSummary(cachedSummary)
       setHasLoadedAnalytics(true)
     }
 
@@ -1534,28 +1726,43 @@ const Analytics: React.FC = () => {
       try {
         const summaryPromise = hasWebAnalyticsAccess
           ? getTrackingAnalyticsSummary(analyticsSummaryInput, {
-              signal: controller.signal,
-              forceRefresh: Boolean(cachedSummary)
+              signal: controller.signal
             })
           : Promise.resolve(null)
         const fallbackConversionsPromise = hasWebAnalyticsAccess
           ? Promise.resolve([] as ContactConversionsByDate[])
-          : getContactConversionsByDate(apiRange.from, apiRange.to).catch(() => [] as ContactConversionsByDate[])
+          : getContactConversionsByDate(apiRange.from, apiRange.to, controller.signal)
+        const trackingConfigPromise = hasWebAnalyticsAccess
+          ? trackingService.getTrackingConfig().catch(() => null)
+          : Promise.resolve(null)
 
-        const [summary, fallbackConversions, trackingConfig] = await Promise.all([
+        const [summary, fallbackConversions] = await Promise.all([
           summaryPromise,
-          fallbackConversionsPromise,
-          hasWebAnalyticsAccess
-            ? trackingService.getTrackingConfig().catch(() => null)
-            : Promise.resolve(null)
+          fallbackConversionsPromise
         ])
 
         if (!isCurrentRequest()) return
         setAnalyticsError(null)
 
         if (summary) {
-          applyTrackingSummary(summary, trackingConfig)
-          if (summary.snapshot?.stale) {
+          applyTrackingSummary(summary)
+          void trackingConfigPromise.then(trackingConfig => {
+            if (!trackingConfig || !isCurrentRequest()) return
+            const current = summary.metrics.current
+            setWebTrackingConfigured(Boolean(
+              trackingConfig.isConfigured ||
+              trackingConfig.hasPublicSites ||
+              current.pageViews > 0 ||
+              current.uniqueVisitors > 0
+            ))
+          })
+          const revalidateAfter = Date.parse(summary.snapshot?.revalidateAfter || '')
+          const shouldRevalidateSnapshot = Boolean(
+            summary.snapshot?.stale && (
+              !Number.isFinite(revalidateAfter) || revalidateAfter <= Date.now()
+            )
+          )
+          if (shouldRevalidateSnapshot) {
             setLoading(false)
             setHasLoadedAnalytics(true)
             // El servidor devuelve de inmediato el ultimo snapshot aunque el
@@ -1567,7 +1774,7 @@ const Analytics: React.FC = () => {
               waitForFresh: true
             })
             if (!isCurrentRequest()) return
-            applyTrackingSummary(freshSummary, trackingConfig)
+            applyTrackingSummary(freshSummary)
           }
         } else if (!hasWebAnalyticsAccess) {
           const fallbackSeries = completeConversionTrendPeriods(
@@ -1603,12 +1810,7 @@ const Analytics: React.FC = () => {
           })))
           setSessionTrendSeries([])
           setConversionTrendSeries(fallbackSeries)
-          setPlatformsData([])
-          setPlacementsData([])
-          setDevicesData([])
-          setOsData([])
-          setBrowserData([])
-          setTopVisitors([])
+          setAnalyticsDistributionFacets({})
           setWebFilterData({})
         }
       } catch (error) {
@@ -1661,8 +1863,14 @@ const Analytics: React.FC = () => {
         setMessageFilterData(hasAvailableFilterOptions(nextFilterData) ? nextFilterData : {})
       } catch (error) {
         if (cancelled || messageAnalyticsRequestIdRef.current !== requestId) return
+        setMessageAnalytics(null)
+        setMessageFilterData({})
         console.error('No se pudo cargar el resumen de mensajes de Analíticas:', error)
-        // Conserva el último snapshot de mensajes ante fallos transitorios.
+        showToast(
+          'error',
+          'No se cargó el resumen de mensajes',
+          error instanceof Error ? error.message : 'Intenta nuevamente'
+        )
       } finally {
         if (!cancelled && messageAnalyticsRequestIdRef.current === requestId) {
           setMessageLoading(false)
@@ -1682,6 +1890,7 @@ const Analytics: React.FC = () => {
     apiRange.to,
     messageSummaryFilterKey,
     messageSummaryFilters,
+    showToast,
     viewType
   ])
 
@@ -1765,6 +1974,69 @@ const Analytics: React.FC = () => {
     messageAnalytics?.status?.connected ||
     hasMessageAnalyticsData
   )
+
+  useEffect(() => {
+    if (!showWebAnalyticsBlocks || shouldLoadAnalyticsDistributions) return
+    const target = analyticsStatsGridRef.current
+    if (!target || typeof IntersectionObserver === 'undefined') {
+      setShouldLoadAnalyticsDistributions(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return
+      setShouldLoadAnalyticsDistributions(true)
+      observer.disconnect()
+    }, { rootMargin: '280px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [shouldLoadAnalyticsDistributions, showWebAnalyticsBlocks])
+
+  useEffect(() => {
+    if (
+      !shouldLoadAnalyticsDistributions
+      || loadedAnalyticsCoreScopeKey !== analyticsSummaryScopeKey
+      || !hasWebAnalyticsAccess
+    ) return
+
+    const controller = new AbortController()
+    const generation = analyticsFacetGenerationRef.current
+    let reportedError = false
+
+    const loadDistributions = async () => {
+      for (const dimension of ANALYTICS_DISTRIBUTION_DIMENSIONS) {
+        if (controller.signal.aborted || generation !== analyticsFacetGenerationRef.current) return
+        try {
+          const response = await getTrackingAnalyticsFacet({
+            start: analyticsSummaryInput.start,
+            end: analyticsSummaryInput.end,
+            filters: analyticsSummaryInput.filters,
+            dimension
+          }, { signal: controller.signal })
+          if (controller.signal.aborted || generation !== analyticsFacetGenerationRef.current) return
+          const items = response.facet.items as TrackingAnalyticsFacetItem[]
+          setAnalyticsDistributionFacets(existing => ({ ...existing, [dimension]: items }))
+        } catch (error) {
+          if (controller.signal.aborted || generation !== analyticsFacetGenerationRef.current) return
+          console.error(`No se pudo cargar la distribución ${dimension}:`, error)
+          if (!reportedError) {
+            reportedError = true
+            showToast('error', 'No se cargaron algunos desgloses', 'Las métricas principales siguen disponibles; desplázate de nuevo para reintentar.')
+          }
+        }
+      }
+    }
+
+    void loadDistributions()
+    return () => controller.abort()
+  }, [
+    analyticsSummaryInput,
+    analyticsSummaryScopeKey,
+    hasWebAnalyticsAccess,
+    loadedAnalyticsCoreScopeKey,
+    shouldLoadAnalyticsDistributions,
+    showToast
+  ])
 
   const metricSections: Array<{ title: string; metrics: typeof webMetrics; loading: boolean }> = []
   if (showWebAnalyticsBlocks) {
@@ -1855,8 +2127,9 @@ const Analytics: React.FC = () => {
   ), [newContactsLabel])
 
   const showAnalyticsFilters = Boolean(
-    (showWebAnalyticsBlocks || showMessageAnalyticsBlocks) &&
-    hasAvailableFilterOptions(availableFilterData)
+    showWebAnalyticsBlocks || (
+      showMessageAnalyticsBlocks && hasAvailableFilterOptions(availableFilterData)
+    )
   )
 
   useEffect(() => {
@@ -2060,6 +2333,9 @@ const Analytics: React.FC = () => {
 
   const loadConversionContactPage = useCallback(async (nextState: AnalyticsContactModalState) => {
     if (!nextState.range) return
+    contactModalAbortRef.current?.abort()
+    const controller = new AbortController()
+    contactModalAbortRef.current = controller
     const requestId = contactModalRequestRef.current + 1
     contactModalRequestRef.current = requestId
     setContactModalState({ ...nextState, loading: true })
@@ -2072,7 +2348,8 @@ const Analytics: React.FC = () => {
         {
           cursor: nextState.cursor,
           search: nextState.search,
-          limit: 50
+          limit: 50,
+          signal: controller.signal
         }
       )
       if (contactModalRequestRef.current !== requestId) return
@@ -2090,7 +2367,8 @@ const Analytics: React.FC = () => {
           nextCursor: result.pagination.nextCursor
         }
       })
-    } catch {
+    } catch (error) {
+      if (controller.signal.aborted) return
       if (contactModalRequestRef.current !== requestId) return
       setContactModalState({
         ...nextState,
@@ -2098,8 +2376,11 @@ const Analytics: React.FC = () => {
         loading: false,
         pagination: { limit: 50, hasNext: false, nextCursor: null }
       })
+      showToast('error', 'No se cargó la lista de conversiones', error instanceof Error ? error.message : 'Intenta nuevamente')
+    } finally {
+      if (contactModalAbortRef.current === controller) contactModalAbortRef.current = null
     }
-  }, [])
+  }, [showToast])
 
   const handleConversionContactPageChange = useCallback((direction: 'next' | 'previous') => {
     if (!contactModalState.range) return
@@ -2152,6 +2433,8 @@ const Analytics: React.FC = () => {
 
   const closeConversionContactModal = useCallback(() => {
     contactModalRequestRef.current += 1
+    contactModalAbortRef.current?.abort()
+    contactModalAbortRef.current = null
     setContactModalState(emptyContactModalState)
   }, [])
 
@@ -2220,6 +2503,10 @@ const Analytics: React.FC = () => {
                     availableData={availableFilterData}
                     selectedFilters={selectedFilters}
                     onFilterChange={setSelectedFilters}
+                    loadableCategories={showWebAnalyticsBlocks ? ANALYTICS_DEFERRED_FILTER_CATEGORIES : []}
+                    loadedCategories={loadedWebFilterCategories}
+                    loadingCategories={loadingWebFilterCategories}
+                    onCategoryIntent={loadWebFilterCategory}
                   />
                 )}
 
@@ -2551,7 +2838,7 @@ const Analytics: React.FC = () => {
 
         {/* Grid de stats cards */}
         {showWebAnalyticsBlocks && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div ref={analyticsStatsGridRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {/* Top Plataformas */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
@@ -2717,7 +3004,7 @@ const Analytics: React.FC = () => {
         )}
 
         {/* Tabla de sesiones de tracking */}
-        {showWebAnalyticsBlocks && (
+        {hasWebAnalyticsAccess && (
           <SessionsTable
             range={{ start: apiRange.from, end: apiRange.to }}
             filters={webSummaryFilters}

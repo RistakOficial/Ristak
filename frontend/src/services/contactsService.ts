@@ -3,6 +3,9 @@ import { parseSortableDateValue } from '@/utils/dateSort'
 import { formatName } from '@/utils/format'
 import { apiUrl } from './apiBaseUrl'
 import apiClient from './apiClient'
+import { withRequestTimeout } from './requestTimeout'
+
+const CONTACTS_VIEW_REQUEST_TIMEOUT_MS = 20_000
 
 export type Contact = ContactType
 
@@ -409,16 +412,23 @@ const requestContactsPage = async ({
   if (warmProfilePictures) params.append('warmProfilePictures', 'true')
 
   const url = apiUrl(`/api/contacts?${params.toString()}`)
-  const response = await fetch(url, {
-    headers: getAuthHeaders(),
-    signal
+  const json = await withRequestTimeout({
+    timeoutMs: CONTACTS_VIEW_REQUEST_TIMEOUT_MS,
+    timeoutMessage: 'Los contactos tardaron demasiado. Reintenta la carga.',
+    signal,
+    request: async requestSignal => {
+      const response = await fetch(url, {
+        headers: getAuthHeaders(),
+        signal: requestSignal
+      })
+
+      if (!response.ok) {
+        throw new Error(`No se pudieron cargar los contactos (${response.status})`)
+      }
+
+      return response.json()
+    }
   })
-
-  if (!response.ok) {
-    throw new Error(`No se pudieron cargar los contactos (${response.status})`)
-  }
-
-  const json = await response.json()
   const contacts = Array.isArray(json?.data) ? json.data as Contact[] : []
   const pagination = json?.pagination || {}
 
@@ -572,9 +582,14 @@ export const contactsService = {
     const params: Record<string, string> = {}
     if (options.includeChildren) params.includeChildren = 'true'
 
-    const data = await apiClient.get<Contact>(`/contacts/${id}`, {
-      params: Object.keys(params).length > 0 ? params : undefined,
-      signal: options.signal
+    const data = await withRequestTimeout({
+      timeoutMs: CONTACTS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'El contacto tardó demasiado. Reintenta la carga.',
+      signal: options.signal,
+      request: requestSignal => apiClient.get<Contact>(`/contacts/${id}`, {
+        params: Object.keys(params).length > 0 ? params : undefined,
+        signal: requestSignal
+      })
     })
     return normalizeContact(data)
   },
@@ -583,12 +598,17 @@ export const contactsService = {
     id: string,
     options: { cursor?: string | null; limit?: number; signal?: AbortSignal } = {}
   ): Promise<ContactPaymentsPage> {
-    const data = await apiClient.get<{ payments?: Contact['payments']; pagination?: Partial<ContactChildPagination> }>(`/contacts/${id}/payments`, {
-      params: {
-        ...(options.cursor ? { cursor: options.cursor } : {}),
-        ...(options.limit ? { limit: String(options.limit) } : {})
-      },
-      signal: options.signal
+    const data = await withRequestTimeout({
+      timeoutMs: CONTACTS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Los pagos del contacto tardaron demasiado. Reintenta la carga.',
+      signal: options.signal,
+      request: requestSignal => apiClient.get<{ payments?: Contact['payments']; pagination?: Partial<ContactChildPagination> }>(`/contacts/${id}/payments`, {
+        params: {
+          ...(options.cursor ? { cursor: options.cursor } : {}),
+          ...(options.limit ? { limit: String(options.limit) } : {})
+        },
+        signal: requestSignal
+      })
     })
     return {
       payments: Array.isArray(data?.payments) ? data.payments : [],
@@ -605,12 +625,17 @@ export const contactsService = {
     id: string,
     options: { cursor?: string | null; limit?: number; signal?: AbortSignal } = {}
   ): Promise<ContactAppointmentsPage> {
-    const data = await apiClient.get<{ appointments?: Contact['appointments']; pagination?: Partial<ContactChildPagination> }>(`/contacts/${id}/appointments`, {
-      params: {
-        ...(options.cursor ? { cursor: options.cursor } : {}),
-        ...(options.limit ? { limit: String(options.limit) } : {})
-      },
-      signal: options.signal
+    const data = await withRequestTimeout({
+      timeoutMs: CONTACTS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Las citas del contacto tardaron demasiado. Reintenta la carga.',
+      signal: options.signal,
+      request: requestSignal => apiClient.get<{ appointments?: Contact['appointments']; pagination?: Partial<ContactChildPagination> }>(`/contacts/${id}/appointments`, {
+        params: {
+          ...(options.cursor ? { cursor: options.cursor } : {}),
+          ...(options.limit ? { limit: String(options.limit) } : {})
+        },
+        signal: requestSignal
+      })
     })
     return {
       appointments: Array.isArray(data?.appointments) ? data.appointments : [],
@@ -647,9 +672,14 @@ export const contactsService = {
       if (options.beforeEventDate) params.beforeEventDate = options.beforeEventDate
       if (options.beforeEventCursor) params.beforeEventCursor = options.beforeEventCursor
 
-      const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
-        params: Object.keys(params).length > 0 ? params : undefined,
-        signal: options.signal
+      const data = await withRequestTimeout({
+        timeoutMs: CONTACTS_VIEW_REQUEST_TIMEOUT_MS,
+        timeoutMessage: 'La actividad del contacto tardó demasiado. Reintenta la carga.',
+        signal: options.signal,
+        request: requestSignal => apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
+          params: Object.keys(params).length > 0 ? params : undefined,
+          signal: requestSignal
+        })
       })
 
       return normalizeJourneyEvents(data)
@@ -669,9 +699,14 @@ export const contactsService = {
       if (options.beforeMessageDate) params.beforeMessageDate = options.beforeMessageDate
       if (options.beforeMessageCursor) params.beforeMessageCursor = options.beforeMessageCursor
 
-      const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/conversation`, {
-        params: Object.keys(params).length > 0 ? params : undefined,
-        signal: options.signal
+      const data = await withRequestTimeout({
+        timeoutMs: CONTACTS_VIEW_REQUEST_TIMEOUT_MS,
+        timeoutMessage: 'La conversación tardó demasiado. Reintenta la carga.',
+        signal: options.signal,
+        request: requestSignal => apiClient.get<JourneyEvent[]>(`/contacts/${id}/conversation`, {
+          params: Object.keys(params).length > 0 ? params : undefined,
+          signal: requestSignal
+        })
       })
 
       return normalizeJourneyEvents(data)

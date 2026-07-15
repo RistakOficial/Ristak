@@ -37,8 +37,8 @@ test('Sites abre con summaries paginados y un solo cargador de detalle compartid
   assert.match(source, /getSitesLibraryQueryKey/)
   assert.match(source, /libraryPagesRef\.current\[kind\]\.queryKey !== queryKey/)
   assert.match(source, /folderCounts=\{activeLibraryPage\?\.facets\.folderCounts/)
-  assert.match(source, /const loadSiteDetail = useCallback\(\(siteId: string\)/)
-  assert.equal((source.match(/sitesService\.getSite\(siteId\)/g) || []).length, 1)
+  assert.match(source, /const loadSiteDetail = useCallback\(\(siteId: string/)
+  assert.equal((source.match(/sitesService\.getSite\(siteId/g) || []).length, 1)
   assert.match(source, /const \[formCatalog, setFormCatalog\]/)
   assert.match(source, /listAllSiteSelectors\(\{ kind: 'forms' \}\)/)
   assert.match(source, /collectLinkedFormIdsFromBlocks/)
@@ -51,10 +51,10 @@ test('Sites abre con summaries paginados y un solo cargador de detalle compartid
   assert.match(controllerSource, /includeTrackingStats:[\s\S]{0,120}!== '0'/)
   assert.match(routeSource, /const LazySitesWorkspace = React\.lazy/)
   assert.match(routeSource, /prewarmSitesRoute\(location\.pathname\)/)
-  assert.match(routeSource, /Promise\.all\([\s\S]{0,180}prefetchSitesWorkspace\(\)[\s\S]{0,180}warmup\.critical/)
-  assert.match(routeSource, /limit: 120,[\s\S]{0,120}folderId: '__root__',[\s\S]{0,80}includeFacets: true/)
-  assert.match(routeSource, /sitesService\.getSite\(descriptor\.siteId\)/)
-  assert.match(routeSource, /return <SitesRouteShell warmup=\{warmup\} data=\{warmData\} \/>/)
+  assert.match(routeSource, /void prefetchSitesWorkspace\(\)\.then/)
+  assert.doesNotMatch(routeSource, /sitesService\.|warmup\.critical|Promise\.all\(/)
+  assert.doesNotMatch(routeSource, /limit: 120|folderId: '__root__'|includeFacets: true/)
+  assert.match(routeSource, /return <SitesRouteShell warmup=\{warmup\} \/>/)
   assert.doesNotMatch(routeSource, /fallback=\{<Loading/)
 })
 
@@ -127,11 +127,30 @@ test('los selectores de Configuración consultan páginas server-side y no recor
 test('el selector integrado de dominios pagina únicamente landings activas', async () => {
   const source = await readFile(backendSourceUrl, 'utf8')
   const frontend = await readFile(frontendServiceSourceUrl, 'utf8')
+  const sitesWorkspace = await readFile(frontendSourceUrl, 'utf8')
 
   assert.match(source, /view === 'landing_selector'[\s\S]*?s\.site_type = 'landing_page' AND s\.status != 'archived'/)
   assert.match(source, /normalizedView === 'landing_selector'/)
   assert.match(frontend, /listSiteSelectorsPage[\s\S]*?kind: options\.kind/)
   assert.match(source, /landings: 'landing_selector'/)
+
+  const selectorLoader = frontend.slice(
+    frontend.indexOf('listSiteSelectorsPage(options:'),
+    frontend.indexOf('listAnalyticsSiteOptionsPage(options:')
+  )
+  assert.match(selectorLoader, /withRequestTimeout\(\{/)
+  assert.match(selectorLoader, /timeoutMs: SITES_VIEW_REQUEST_TIMEOUT_MS/)
+  assert.match(selectorLoader, /signal: options\.signal/)
+  assert.match(selectorLoader, /apiClient\.get<SitesSelectorPage>[\s\S]{0,120}signal: requestSignal/)
+
+  const integratedSelector = sitesWorkspace.slice(
+    sitesWorkspace.indexOf('const loadDomainSelector = useCallback'),
+    sitesWorkspace.indexOf('const ensureDomainSites = useCallback')
+  )
+  assert.match(sitesWorkspace, /const domainSitesAbortRef = useRef<AbortController \| null>\(null\)/)
+  assert.match(integratedSelector, /signal: controller\.signal/)
+  assert.match(integratedSelector, /controller\.signal\.aborted/)
+  assert.match(sitesWorkspace, /domainSitesAbortRef\.current\?\.abort\(\)/)
 })
 
 test('analytics_selector pagina fuera de carpetas y respeta tipo, modo y videos disponibles', async () => {

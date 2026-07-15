@@ -44,7 +44,8 @@ const CHAT_APPOINTMENT_CACHE_PATHS = [
   '/api/calendars',
   '/api/contacts',
   '/api/dashboard',
-  '/api/reports'
+  '/api/reports',
+  '/api/tracking/analytics'
 ]
 
 // Presencia: le avisa al backend qué contacto tiene abierto este usuario y si la
@@ -119,12 +120,18 @@ function dispatchFrame(frame: string, options: SubscribeOptions) {
       Array.isArray(payload.domains) &&
       payload.domains.includes('appointments')
     ) {
-      invalidateRistakApiReadCache({ pathPrefixes: CHAT_APPOINTMENT_CACHE_PATHS })
+      invalidateRistakApiReadCache({
+        pathPrefixes: CHAT_APPOINTMENT_CACHE_PATHS,
+        abortInflight: false
+      })
       return
     }
     if (parsed.event !== 'chat_message') return
     if (payload?.type === 'chat_message' && typeof payload.contactId === 'string' && payload.contactId.trim()) {
-      invalidateRistakApiReadCache({ pathPrefixes: CHAT_LIVE_CACHE_PATHS })
+      invalidateRistakApiReadCache({
+        pathPrefixes: CHAT_LIVE_CACHE_PATHS,
+        abortInflight: false
+      })
       options.onMessage(payload as ChatLiveMessageEvent)
     }
   } catch (error) {

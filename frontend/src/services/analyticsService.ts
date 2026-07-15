@@ -4,9 +4,17 @@ import {
   registerAuthScopedCacheInvalidator,
   syncAuthScopedCachePrincipal
 } from './authPrincipalCache'
-import { registerRistakApiReadCacheInvalidator } from './authFetch'
+import {
+  registerRistakApiReadCacheInvalidator,
+  type ApiReadCacheInvalidationContext
+} from './authFetch'
 import type { ContactListItem } from './reportsService'
 import type { CursorPagePagination, TrackingSession, TrackingVisitorsCoverage } from './trackingService'
+import {
+  abortAndClearSharedRequests,
+  getOrCreateSharedRequest
+} from './sharedRequest'
+import { withRequestTimeout } from './requestTimeout'
 
 export type AnalyticsVisitorsCoverage = TrackingVisitorsCoverage
 
@@ -17,6 +25,30 @@ export interface TrackingAnalyticsSummaryInput {
   end: string
   groupBy: TrackingAnalyticsGroupBy
   filters?: Record<string, string[]>
+  includeFacets?: boolean
+}
+
+export type TrackingAnalyticsFacetDimension =
+  | 'sources'
+  | 'devices'
+  | 'browsers'
+  | 'os'
+  | 'placements'
+  | 'trafficChannels'
+  | 'trackingSources'
+  | 'pages'
+  | 'siteTypes'
+  | 'nativeSites'
+  | 'nativeForms'
+  | 'nativeConversions'
+  | 'topVisitors'
+  | 'adsHierarchy'
+
+export interface TrackingAnalyticsFacetInput {
+  start: string
+  end: string
+  filters?: Record<string, string[]>
+  dimension: TrackingAnalyticsFacetDimension
 }
 
 export interface TrackingAnalyticsMetricSet {
@@ -63,7 +95,13 @@ export interface TrackingAnalyticsConversionPoint {
 export interface TrackingAnalyticsSummary {
   snapshot?: {
     stale: boolean
+    consistency: 'exact' | 'moving-window'
+    exactAtBuiltAt: boolean
+    builtAt: string
+    builtRevision: number
     revision: number
+    revalidateAfter: string
+    maxStaleAgeMs: number
   }
   range: {
     start: string
@@ -85,16 +123,58 @@ export interface TrackingAnalyticsSummary {
   facets: Record<string, TrackingAnalyticsFacetItem[]>
 }
 
+export interface TrackingAnalyticsFacetResponse {
+  range: {
+    start: string
+    end: string
+    timezone: string
+  }
+  facet: {
+    dimension: TrackingAnalyticsFacetDimension
+    items: unknown[]
+  }
+  snapshot?: {
+    stale: boolean
+    consistency?: 'exact' | 'moving-window'
+    exactAtBuiltAt?: boolean
+    builtAt?: string
+    builtRevision?: number
+    revision: number
+    revalidateAfter?: string
+    maxStaleAgeMs?: number
+  }
+}
+
 const TRACKING_ANALYTICS_CACHE_TTL_MS = 30_000
 const TRACKING_ANALYTICS_CACHE_MAX_ENTRIES = 24
+const ANALYTICS_REQUEST_TIMEOUT_MS = 20_000
 const trackingAnalyticsCache = new Map<string, { data: TrackingAnalyticsSummary; fetchedAt: number }>()
+const trackingAnalyticsInflight = new Map<string, Promise<TrackingAnalyticsSummary>>()
+const TRACKING_ANALYTICS_FACET_CACHE_MAX_ENTRIES = 64
+const trackingAnalyticsFacetCache = new Map<string, { data: TrackingAnalyticsFacetResponse; fetchedAt: number }>()
+const trackingAnalyticsFacetInflight = new Map<string, Promise<TrackingAnalyticsFacetResponse>>()
+let trackingAnalyticsCacheRevision = 0
 
-export function invalidateTrackingAnalyticsSummaryCache() {
+export function invalidateTrackingAnalyticsSummaryCache(
+  { abortInflight = true }: Partial<ApiReadCacheInvalidationContext> = {}
+) {
+  // Chat y pagos pueden producir decenas de eventos por minuto. El snapshot
+  // analítico ya tiene TTL de 30 s y revisión durable en backend; una
+  // invalidación suave conserva esa ventana acotada para que un stream vivo no
+  // impida que ninguna lectura llegue a cache. Las mutaciones explícitas siguen
+  // invalidando y cancelando de inmediato.
+  if (!abortInflight) return
+  trackingAnalyticsCacheRevision += 1
   trackingAnalyticsCache.clear()
+  trackingAnalyticsFacetCache.clear()
+  abortAndClearSharedRequests(trackingAnalyticsInflight)
+  abortAndClearSharedRequests(trackingAnalyticsFacetInflight)
 }
 
 registerAuthScopedCacheInvalidator(invalidateTrackingAnalyticsSummaryCache)
-registerRistakApiReadCacheInvalidator(invalidateTrackingAnalyticsSummaryCache)
+registerRistakApiReadCacheInvalidator(invalidateTrackingAnalyticsSummaryCache, {
+  pathPrefixes: ['/api/tracking/analytics']
+})
 
 function trackingAnalyticsCacheKey(input: TrackingAnalyticsSummaryInput) {
   const filters = Object.fromEntries(
@@ -108,6 +188,23 @@ function trackingAnalyticsCacheKey(input: TrackingAnalyticsSummaryInput) {
     start: input.start,
     end: input.end,
     groupBy: input.groupBy,
+    includeFacets: input.includeFacets !== false,
+    filters
+  })
+}
+
+function trackingAnalyticsFacetCacheKey(input: TrackingAnalyticsFacetInput) {
+  const filters = Object.fromEntries(
+    Object.entries(input.filters || {})
+      .filter(([, values]) => values.length > 0)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([field, values]) => [field, [...values].sort()])
+  )
+
+  return JSON.stringify({
+    start: input.start,
+    end: input.end,
+    dimension: input.dimension,
     filters
   })
 }
@@ -138,25 +235,99 @@ export async function getTrackingAnalyticsSummary(
   syncAuthScopedCachePrincipal()
   const requestPrincipalRevision = getAuthScopedCacheRevision()
   const key = trackingAnalyticsCacheKey(input)
-  if (!options.forceRefresh) {
+  if (!options.forceRefresh && !options.waitForFresh) {
     const cached = peekTrackingAnalyticsSummary(input)
     if (cached) return cached
   }
 
-  const data = await apiClient.post<TrackingAnalyticsSummary>(
-    '/tracking/analytics/summary',
-    options.waitForFresh ? { ...input, waitForFresh: true } : input,
-    { signal: options.signal }
-  )
-  if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
-    while (trackingAnalyticsCache.size >= TRACKING_ANALYTICS_CACHE_MAX_ENTRIES) {
-      const oldestKey = trackingAnalyticsCache.keys().next().value
-      if (!oldestKey) break
-      trackingAnalyticsCache.delete(oldestKey)
+  const requestCacheRevision = trackingAnalyticsCacheRevision
+  const requestKey = `${key}\nwaitForFresh:${options.waitForFresh === true}`
+  return getOrCreateSharedRequest({
+    inflight: trackingAnalyticsInflight,
+    key: requestKey,
+    signal: options.signal,
+    abortWhenUnused: true,
+    createRequest: async sharedSignal => {
+      const data = await withRequestTimeout({
+        timeoutMs: ANALYTICS_REQUEST_TIMEOUT_MS,
+        timeoutMessage: 'El resumen de Analíticas tardó demasiado. Reintenta la carga.',
+        signal: sharedSignal,
+        request: signal => apiClient.post<TrackingAnalyticsSummary>(
+          '/tracking/analytics/summary',
+          options.waitForFresh ? { ...input, waitForFresh: true } : input,
+          { signal }
+        )
+      })
+
+      if (
+        requestPrincipalRevision === getAuthScopedCacheRevision()
+        && requestCacheRevision === trackingAnalyticsCacheRevision
+      ) {
+        while (trackingAnalyticsCache.size >= TRACKING_ANALYTICS_CACHE_MAX_ENTRIES) {
+          const oldestKey = trackingAnalyticsCache.keys().next().value
+          if (!oldestKey) break
+          trackingAnalyticsCache.delete(oldestKey)
+        }
+        trackingAnalyticsCache.set(key, { data, fetchedAt: Date.now() })
+      }
+      return data
     }
-    trackingAnalyticsCache.set(key, { data, fetchedAt: Date.now() })
+  })
+}
+
+/**
+ * Carga una sola faceta bajo demanda. Mantener el contrato singular evita que
+ * una vista vuelva a reconstruir las 16 dimensiones antes de pintar el core.
+ */
+export async function getTrackingAnalyticsFacet(
+  input: TrackingAnalyticsFacetInput,
+  options: { signal?: AbortSignal; forceRefresh?: boolean } = {}
+): Promise<TrackingAnalyticsFacetResponse> {
+  syncAuthScopedCachePrincipal()
+  const requestPrincipalRevision = getAuthScopedCacheRevision()
+  const key = trackingAnalyticsFacetCacheKey(input)
+  if (!options.forceRefresh) {
+    const cached = trackingAnalyticsFacetCache.get(key)
+    if (cached && Date.now() - cached.fetchedAt < TRACKING_ANALYTICS_CACHE_TTL_MS) {
+      trackingAnalyticsFacetCache.delete(key)
+      trackingAnalyticsFacetCache.set(key, cached)
+      return cached.data
+    }
+    if (cached) trackingAnalyticsFacetCache.delete(key)
   }
-  return data
+
+  const requestCacheRevision = trackingAnalyticsCacheRevision
+  return getOrCreateSharedRequest({
+    inflight: trackingAnalyticsFacetInflight,
+    key,
+    signal: options.signal,
+    abortWhenUnused: true,
+    createRequest: async sharedSignal => {
+      const data = await withRequestTimeout({
+        timeoutMs: ANALYTICS_REQUEST_TIMEOUT_MS,
+        timeoutMessage: 'El filtro de Analíticas tardó demasiado. Reintenta la carga.',
+        signal: sharedSignal,
+        request: signal => apiClient.post<TrackingAnalyticsFacetResponse>(
+          '/tracking/analytics/facets',
+          input,
+          { signal }
+        )
+      })
+
+      if (
+        requestPrincipalRevision === getAuthScopedCacheRevision()
+        && requestCacheRevision === trackingAnalyticsCacheRevision
+      ) {
+        while (trackingAnalyticsFacetCache.size >= TRACKING_ANALYTICS_FACET_CACHE_MAX_ENTRIES) {
+          const oldestKey = trackingAnalyticsFacetCache.keys().next().value
+          if (!oldestKey) break
+          trackingAnalyticsFacetCache.delete(oldestKey)
+        }
+        trackingAnalyticsFacetCache.set(key, { data, fetchedAt: Date.now() })
+      }
+      return data
+    }
+  })
 }
 
 /**
@@ -248,10 +419,20 @@ export async function getContactsByDate(startDate: string, endDate: string): Pro
 /**
  * Obtiene conversiones por fecha de creación del contacto.
  */
-export async function getContactConversionsByDate(startDate: string, endDate: string): Promise<ContactConversionsByDate[]> {
-  return apiClient.get<ContactConversionsByDate[]>(
-    `/tracking/contact-conversions-by-date?start=${startDate}&end=${endDate}`
-  )
+export async function getContactConversionsByDate(
+  startDate: string,
+  endDate: string,
+  signal?: AbortSignal
+): Promise<ContactConversionsByDate[]> {
+  return withRequestTimeout({
+    timeoutMs: ANALYTICS_REQUEST_TIMEOUT_MS,
+    timeoutMessage: 'Las conversiones tardaron demasiado. Reintenta la carga.',
+    signal,
+    request: requestSignal => apiClient.get<ContactConversionsByDate[]>(
+      `/tracking/contact-conversions-by-date?start=${startDate}&end=${endDate}`,
+      { signal: requestSignal }
+    )
+  })
 }
 
 /**
@@ -267,7 +448,15 @@ export async function getMessageAnalyticsSummary(
   const params = new URLSearchParams({ start: startDate, end: endDate, groupBy })
   if (filters.channels?.length) params.set('channels', filters.channels.join(','))
   if (filters.sources?.length) params.set('sources', filters.sources.join(','))
-  return apiClient.get<MessageAnalyticsSummary>(`/tracking/messages-summary?${params.toString()}`, { signal })
+  return withRequestTimeout({
+    timeoutMs: ANALYTICS_REQUEST_TIMEOUT_MS,
+    timeoutMessage: 'El resumen de mensajes tardó demasiado. Reintenta la carga.',
+    signal,
+    request: requestSignal => apiClient.get<MessageAnalyticsSummary>(
+      `/tracking/messages-summary?${params.toString()}`,
+      { signal: requestSignal }
+    )
+  })
 }
 
 /**
@@ -294,10 +483,15 @@ export async function getContactConversionContacts(
   const params = new URLSearchParams({ start: startDate, end: endDate, type, limit: String(limit) })
   if (options.cursor) params.set('cursor', options.cursor)
   if (options.search?.trim()) params.set('search', options.search.trim())
-  const response = await apiClient.get<Partial<ContactConversionContactsPage>>(
-    `/tracking/contact-conversions-list?${params.toString()}`,
-    { signal: options.signal }
-  )
+  const response = await withRequestTimeout({
+    timeoutMs: ANALYTICS_REQUEST_TIMEOUT_MS,
+    timeoutMessage: 'La lista de conversiones tardó demasiado. Ajusta el rango o reintenta.',
+    signal: options.signal,
+    request: requestSignal => apiClient.get<Partial<ContactConversionContactsPage>>(
+      `/tracking/contact-conversions-list?${params.toString()}`,
+      { signal: requestSignal }
+    )
+  })
   const hasNext = Boolean(response.pagination?.hasNext ?? response.pagination?.hasMore)
 
   return {

@@ -8,15 +8,19 @@ const testDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(testDir, '..', '..')
 const repoFile = path => readFile(join(repoRoot, path), 'utf8')
 
-test('Analíticas pinta el snapshot SWR antes de revalidar el mismo rango', async () => {
+test('Analíticas pinta el snapshot fresco y no fuerza otra consulta del mismo rango', async () => {
   const source = await repoFile('frontend/src/pages/Analytics/Analytics.tsx')
   const cachedApplyIndex = source.indexOf('if (cachedSummary) {')
   const fetchIndex = source.indexOf('const fetchAnalytics = async () =>', cachedApplyIndex)
+  const initialSummaryRequest = source.slice(
+    source.indexOf('const summaryPromise', fetchIndex),
+    source.indexOf('const fallbackConversionsPromise', fetchIndex)
+  )
 
   assert.ok(cachedApplyIndex >= 0)
   assert.ok(fetchIndex > cachedApplyIndex)
-  assert.match(source.slice(cachedApplyIndex, fetchIndex), /applyTrackingSummary\(cachedSummary, null\)/)
-  assert.match(source, /forceRefresh: Boolean\(cachedSummary\)/)
+  assert.match(source.slice(cachedApplyIndex, fetchIndex), /applyTrackingSummary\(cachedSummary(?:,\s*null)?\)/)
+  assert.doesNotMatch(initialSummaryRequest, /forceRefresh/)
 })
 
 test('Dashboard cancela y descarta datasets extendidos de una ventana anterior', async () => {
@@ -31,7 +35,9 @@ test('Dashboard cancela y descarta datasets extendidos de una ventana anterior',
   assert.match(page, /signal: controller\.signal/)
   assert.match(page, /if \(!isCurrentRequest\(\)\) return/)
   assert.match(service, /signal\?: AbortSignal/)
-  assert.ok((service.match(/\{ signal: params\.signal \}/g) || []).length >= 5)
+  assert.match(service, /async function fetchDashboardSeries\([\s\S]{0,500}scheduleDashboardHeavyRead\(\{[\s\S]{0,220}signal,/)
+  assert.match(service, /function scheduleDashboardHeavyRead<[\s\S]{0,500}\(\) => withRequestTimeout\(\{/)
+  assert.ok((service.match(/fetchDashboardSeries\([^\n]+params\.signal/g) || []).length >= 5)
 })
 
 test('Reportes cancela y descarta snapshots unificados atrasados al cambiar el rango', async () => {
@@ -48,7 +54,8 @@ test('Reportes cancela y descarta snapshots unificados atrasados al cambiar el r
   assert.match(page, /waitForFresh: true/)
   assert.match(page, /controller\.abort\(\)/)
   assert.match(service, /async getSnapshot\([\s\S]{0,380}signal\?: AbortSignal/)
-  assert.match(service, /apiClient\.get<ReportsSnapshot>\('\/reports\/snapshot', \{ params: query, signal \}\)/)
+  assert.match(service, /withRequestTimeout\(\{/)
+  assert.match(service, /request:\s*requestSignal\s*=>\s*apiClient\.get<ReportsSnapshot>\('\/reports\/snapshot',[\s\S]{0,120}signal:\s*requestSignal/)
 })
 
 test('los drilldowns de Publicidad no mezclan hijos de otro rango o página', async () => {

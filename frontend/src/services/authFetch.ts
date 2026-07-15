@@ -7,62 +7,32 @@ import { syncAuthScopedCachePrincipal } from './authPrincipalCache'
 
 const API_AUTH_HEADER = 'Authorization'
 const LOCAL_DEV_LOGIN_TIMEOUT_MS = 2500
-const API_READ_CACHE_DEFAULT_TTL_MS = 15_000
-const API_READ_CACHE_CONFIG_TTL_MS = 60_000
-const API_READ_CACHE_MAX_ENTRIES = 120
-const API_READ_CACHE_MAX_RESPONSE_BYTES = 1_000_000
-const API_READ_CACHE_MAX_TOTAL_BYTES = 12_000_000
-
-type ApiReadCacheEntry = {
-  response: Response
-  expiresAt: number
-  sizeBytes: number
-}
-
-type ApiReadRequestPolicy = {
-  key: string
-  ttlMs: number
-  cacheResponse: boolean
-}
 
 type ApiReadCacheInvalidation = {
   pathPrefixes?: string[]
+  abortInflight?: boolean
 }
 
-const apiReadResponseCache = new Map<string, ApiReadCacheEntry>()
-const apiReadInFlight = new Map<string, Promise<Response>>()
-const apiReadInvalidationListeners = new Set<() => void>()
-let apiReadCacheToken = ''
-let apiReadCacheVersion = 0
-let apiReadCacheTotalBytes = 0
+export type ApiReadCacheInvalidationContext = {
+  abortInflight: boolean
+}
 
-const API_READ_CACHE_BYPASS_PREFIXES = [
-  '/api/auth/',
-  '/api/automations/assets',
-  '/api/chat-events',
-  '/api/payment-events',
-  '/api/highlevel/conversations',
-  '/api/highlevel/sync/progress',
-  '/api/whatsapp-api',
-  '/api/email/',
-  '/api/search',
-  '/api/health'
-]
+type ApiReadCacheInvalidatorRegistration = {
+  invalidator: (context: ApiReadCacheInvalidationContext) => void
+  pathPrefixes: string[]
+}
 
-const API_READ_RESPONSE_CACHE_BYPASS_PREFIXES = [
-  '/api/media',
-  '/api/internal',
-  '/api/tracking/sessions',
-  '/api/tracking/visitors',
-  '/api/reports/contacts-list'
-]
+const apiReadInvalidationListeners = new Set<ApiReadCacheInvalidatorRegistration>()
+// Evita que el primer GET de una sesión ya restaurada invalide los snapshots que
+// la propia ruta acaba de preparar. Los cambios reales de login/cuenta sí pasan
+// por syncAuthPrincipal y limpian todo el estado anterior.
+let currentAuthPrincipal = getStoredAuthToken() || ''
 
-// Algunos endpoints POST son consultas porque su filtro no cabe de forma segura
-// en una URL. No deben vaciar snapshots de toda la aplicación como si hubieran
-// modificado datos.
+// Algunos POST son lecturas y no deben invalidar snapshots especializados.
 const API_READ_ONLY_POST_PATHS = new Set([
   '/api/chat-events/viewing',
   '/api/sites/analytics/summary',
+  '/api/tracking/analytics/facets',
   '/api/tracking/analytics/summary',
   '/api/tracking/sessions/search',
   '/api/settings/message-templates/preview',
@@ -70,20 +40,24 @@ const API_READ_ONLY_POST_PATHS = new Set([
   '/api/email/detect'
 ])
 
-function clearApiReadCache() {
-  apiReadResponseCache.clear()
-  apiReadInFlight.clear()
-  apiReadCacheTotalBytes = 0
-  apiReadCacheVersion += 1
-}
+// Estas mutaciones cambian métricas derivadas que también leen Dashboard y
+// Analíticas. La invalidación se limita a sus consumidores reales; nunca vuelve
+// a enfriar Sites, Configuración, Chats u otro módulo ajeno.
+const ANALYTICS_MUTATION_MODULES = new Set([
+  'appointments',
+  'calendar',
+  'calendars',
+  'campaigns',
+  'contacts',
+  'meta',
+  'payments',
+  'tracking',
+  'transactions'
+])
 
-function getApiReadCacheKeyPathname(key: string) {
-  const rawUrl = key.split('\n', 1)[0]
-  try {
-    return new URL(rawUrl).pathname
-  } catch {
-    return ''
-  }
+function isAnalyticsNeutralMutation(pathname: string) {
+  return pathname === '/api/contacts/chats/read'
+    || /^\/api\/contacts\/chats\/[^/]+\/read$/.test(pathname)
 }
 
 function normalizeApiReadInvalidationPrefixes(values: string[] = []) {
@@ -92,205 +66,61 @@ function normalizeApiReadInvalidationPrefixes(values: string[] = []) {
     .filter(value => value.startsWith('/api/')))]
 }
 
-function cacheKeyMatchesPathPrefixes(key: string, prefixes: string[]) {
-  const pathname = getApiReadCacheKeyPathname(key)
-  return prefixes.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
-}
-
-function deleteCachedApiResponse(key: string) {
-  const cached = apiReadResponseCache.get(key)
-  if (!cached) return false
-  apiReadResponseCache.delete(key)
-  apiReadCacheTotalBytes = Math.max(0, apiReadCacheTotalBytes - cached.sizeBytes)
-  return true
+function pathPrefixesOverlap(leftPrefixes: string[], rightPrefixes: string[]) {
+  return leftPrefixes.some(left => rightPrefixes.some(right => (
+    left === right
+    || left.startsWith(`${right}/`)
+    || right.startsWith(`${left}/`)
+  )))
 }
 
 /**
- * Invalida snapshots GET después de una mutación local o de un evento vivo.
- * Las mutaciones que atraviesan installAuthFetch ya lo hacen automáticamente;
- * este helper cubre servicios que reciben actualizaciones por SSE/websocket.
+ * Notifica únicamente a los snapshots especializados afectados. La capa global
+ * de Response.clone/cache/dedupe fue retirada porque dejaba ramas de body sin
+ * consumir y convertía mutaciones locales en recargas de toda la aplicación.
  */
 export function invalidateRistakApiReadCache(options: ApiReadCacheInvalidation = {}) {
   const prefixes = normalizeApiReadInvalidationPrefixes(options.pathPrefixes)
+  const context = { abortInflight: options.abortInflight !== false }
 
-  if (prefixes.length === 0) {
-    clearApiReadCache()
-  } else {
-    // Una invalidacion viva de Chat/Pagos no debe enfriar Sites, Configuracion
-    // ni los demas modulos. Las promesas coincidentes se desacoplan para que
-    // una lectura nueva no comparta una respuesta que ya quedo obsoleta.
-    apiReadCacheVersion += 1
-    for (const key of apiReadResponseCache.keys()) {
-      if (cacheKeyMatchesPathPrefixes(key, prefixes)) deleteCachedApiResponse(key)
+  apiReadInvalidationListeners.forEach(({ invalidator, pathPrefixes }) => {
+    if (prefixes.length === 0 || pathPrefixesOverlap(prefixes, pathPrefixes)) {
+      invalidator(context)
     }
-    for (const key of apiReadInFlight.keys()) {
-      if (cacheKeyMatchesPathPrefixes(key, prefixes)) apiReadInFlight.delete(key)
-    }
-  }
-
-  apiReadInvalidationListeners.forEach((invalidate) => invalidate())
-}
-
-/** Permite que snapshots especializados sigan la misma coherencia que GET. */
-export function registerRistakApiReadCacheInvalidator(invalidator: () => void) {
-  apiReadInvalidationListeners.add(invalidator)
-  return () => apiReadInvalidationListeners.delete(invalidator)
-}
-
-function syncApiReadCacheToken(token: string | null) {
-  syncAuthScopedCachePrincipal(token)
-  const nextToken = token || ''
-  if (nextToken === apiReadCacheToken) return
-  apiReadCacheToken = nextToken
-  clearApiReadCache()
-}
-
-function requestAcceptHeader(input: RequestInfo | URL, init?: RequestInit) {
-  const headers = new Headers(input instanceof Request ? input.headers : undefined)
-  if (init?.headers) {
-    new Headers(init.headers).forEach((value, key) => headers.set(key, value))
-  }
-  return headers.get('Accept') || ''
-}
-
-function requestHeadersFingerprint(input: RequestInfo | URL, init?: RequestInit) {
-  const headers = new Headers(input instanceof Request ? input.headers : undefined)
-  if (init?.headers) {
-    new Headers(init.headers).forEach((value, key) => headers.set(key, value))
-  }
-
-  const serialized = Array.from(headers.entries())
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}:${value}`)
-    .join('\n')
-
-  // FNV-1a de 64 bits: diferencia headers que cambian el alcance de la
-  // respuesta (por ejemplo X-Meta-Access-Token) sin conservar secrets crudos
-  // dentro de las llaves del Map.
-  let hash = 0xcbf29ce484222325n
-  for (let index = 0; index < serialized.length; index += 1) {
-    hash ^= BigInt(serialized.charCodeAt(index))
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
-  }
-  return `${serialized.length}:${hash.toString(16)}`
-}
-
-function hasBypassPrefix(pathname: string, prefixes: string[]) {
-  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
-}
-
-function requestsStreamingResponse(url: URL) {
-  if (['download', 'export', 'stream'].some((key) => url.searchParams.has(key))) return true
-
-  // Una respuesta binaria grande no puede compartir el camino de snapshots:
-  // response.clone() crea un tee cuyo segundo brazo puede retener el archivo
-  // completo en memoria mientras el consumidor lee el primero.
-  return /\/(?:download|export)$/.test(url.pathname)
-    || /\/(?:file|thumbnail|voice\.ogg)$/.test(url.pathname)
-    || /\/stream$/.test(url.pathname)
-}
-
-function getApiReadRequestPolicy(
-  url: URL,
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-  method: string,
-  token: string | null
-): ApiReadRequestPolicy | null {
-  if (method !== 'GET' || !token) return null
-  if (init?.signal || init?.cache === 'no-store' || init?.cache === 'reload') return null
-  if (hasBypassPrefix(url.pathname, API_READ_CACHE_BYPASS_PREFIXES)) return null
-
-  const accept = requestAcceptHeader(input, init).toLowerCase()
-  if (accept.includes('text/event-stream')) return null
-
-  const limit = Number(url.searchParams.get('limit') || 0)
-  const requestsOversizedPage = Number.isFinite(limit) && limit > 200
-  if (requestsOversizedPage) return null
-  if (requestsStreamingResponse(url)) return null
-
-  const cacheResponse = !hasBypassPrefix(url.pathname, API_READ_RESPONSE_CACHE_BYPASS_PREFIXES)
-    && !url.pathname.includes('/preview')
-
-  const ttlMs = (
-    url.pathname.startsWith('/api/config')
-    || url.pathname.startsWith('/api/user-config')
-    || url.pathname.startsWith('/api/settings')
-    || url.pathname.startsWith('/api/integrations')
-  )
-    ? API_READ_CACHE_CONFIG_TTL_MS
-    : API_READ_CACHE_DEFAULT_TTL_MS
-
-  return {
-    key: `${url.href}\nheaders:${requestHeadersFingerprint(input, init)}`,
-    ttlMs,
-    cacheResponse
-  }
-}
-
-function readCachedApiResponse(key: string) {
-  const cached = apiReadResponseCache.get(key)
-  if (!cached) return null
-  if (cached.expiresAt <= Date.now()) {
-    deleteCachedApiResponse(key)
-    return null
-  }
-
-  // Map conserva orden de inserción: reinsertar vuelve este snapshot el más
-  // reciente y permite podar como LRU sin otra estructura paralela.
-  apiReadResponseCache.delete(key)
-  apiReadResponseCache.set(key, cached)
-  return cached.response.clone()
-}
-
-async function cacheApiResponse(
-  key: string,
-  response: Response,
-  ttlMs: number,
-  expectedCacheVersion: number
-) {
-  if (!response.ok) return
-  const contentType = response.headers.get('content-type') || ''
-  if (!contentType.toLowerCase().includes('application/json')) return
-  if (response.headers.has('content-disposition')) return
-
-  // El cache en memoria no debe saltarse una prohibicion explicita del
-  // backend. `no-cache` tambien queda fuera porque este cliente no implementa
-  // revalidacion condicional (ETag/Last-Modified) para respuestas de API.
-  const cacheControl = response.headers.get('cache-control')?.toLowerCase() || ''
-  if (/(?:^|,)\s*(?:no-store|no-cache)\b/.test(cacheControl)) return
-  if ((response.headers.get('vary') || '').trim() === '*') return
-
-  const contentLength = Number(response.headers.get('content-length') || 0)
-  if (Number.isFinite(contentLength) && contentLength > API_READ_CACHE_MAX_RESPONSE_BYTES) return
-
-  const payload = await response.clone().arrayBuffer()
-  if (payload.byteLength > API_READ_CACHE_MAX_RESPONSE_BYTES) return
-  if (expectedCacheVersion !== apiReadCacheVersion) return
-
-  deleteCachedApiResponse(key)
-  while (
-    apiReadResponseCache.size >= API_READ_CACHE_MAX_ENTRIES
-    || apiReadCacheTotalBytes + payload.byteLength > API_READ_CACHE_MAX_TOTAL_BYTES
-  ) {
-    const oldestKey = apiReadResponseCache.keys().next().value
-    if (!oldestKey) break
-    deleteCachedApiResponse(oldestKey)
-  }
-
-  apiReadResponseCache.set(key, {
-    response: new Response(payload, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers
-    }),
-    expiresAt: Date.now() + ttlMs,
-    sizeBytes: payload.byteLength
   })
-  apiReadCacheTotalBytes += payload.byteLength
 }
 
-function shouldInvalidateApiReadCache(method: string, pathname: string) {
+/** Registra un snapshot de servicio y las rutas de API de las que depende. */
+export function registerRistakApiReadCacheInvalidator(
+  invalidator: (context: ApiReadCacheInvalidationContext) => void,
+  options: ApiReadCacheInvalidation = {}
+) {
+  const registration = {
+    invalidator,
+    pathPrefixes: normalizeApiReadInvalidationPrefixes(options.pathPrefixes)
+  }
+  apiReadInvalidationListeners.add(registration)
+  return () => apiReadInvalidationListeners.delete(registration)
+}
+
+function syncAuthPrincipal(token: string | null) {
+  syncAuthScopedCachePrincipal(token)
+  const nextPrincipal = token || ''
+  if (nextPrincipal === currentAuthPrincipal) return
+  currentAuthPrincipal = nextPrincipal
+  invalidateRistakApiReadCache()
+}
+
+function getMutationInvalidationPrefixes(pathname: string) {
+  const moduleName = pathname.split('/').filter(Boolean)[1] || ''
+  const prefixes = moduleName ? [`/api/${moduleName}`] : []
+  if (ANALYTICS_MUTATION_MODULES.has(moduleName) && !isAnalyticsNeutralMutation(pathname)) {
+    prefixes.push('/api/dashboard', '/api/tracking')
+  }
+  return normalizeApiReadInvalidationPrefixes(prefixes)
+}
+
+function shouldNotifyMutation(method: string, pathname: string) {
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false
   if (method === 'POST' && API_READ_ONLY_POST_PATHS.has(pathname)) return false
   return true
@@ -359,7 +189,7 @@ export function installAuthFetch() {
       ? startRistakApiRequest(requestUrl, input, init)
       : null
     const token = getStoredAuthToken()
-    syncApiReadCacheToken(token)
+    syncAuthPrincipal(token)
 
     const runFetch = (nextInit?: RequestInit, onResponse?: (response: Response) => Response) => {
       try {
@@ -390,62 +220,15 @@ export function installAuthFetch() {
       headers.set(API_AUTH_HEADER, `Bearer ${token}`)
     }
 
-    const nextInit = {
+    return runFetch({
       ...init,
       headers
-    }
-    const readPolicy = getApiReadRequestPolicy(requestUrl, input, nextInit, method, token)
-
-    if (readPolicy) {
-      const cachedResponse = readCachedApiResponse(readPolicy.key)
-      if (cachedResponse) {
-        finishRistakApiRequest(activityId)
-        return Promise.resolve(cachedResponse)
-      }
-
-      const requestCacheVersion = apiReadCacheVersion
-      let sharedRequest = apiReadInFlight.get(readPolicy.key)
-
-      if (!sharedRequest) {
-        sharedRequest = originalFetch(input, nextInit)
-          .then(response => {
-            maybeHandleLicenseBlocked(response)
-            return response
-          })
-
-        // Mantener la promesa compartida registrada hasta que termine de
-        // materializarse el snapshot cierra la ventana donde un segundo GET
-        // podia arrancar entre la respuesta de red y la escritura del cache.
-        const cacheLifecycle = sharedRequest.then(async response => {
-          if (readPolicy.cacheResponse && requestCacheVersion === apiReadCacheVersion) {
-            await cacheApiResponse(
-              readPolicy.key,
-              response,
-              readPolicy.ttlMs,
-              requestCacheVersion
-            )
-          }
-        })
-
-        void cacheLifecycle
-          .catch(() => undefined)
-          .finally(() => {
-            if (apiReadInFlight.get(readPolicy.key) === sharedRequest) {
-              apiReadInFlight.delete(readPolicy.key)
-            }
-          })
-        apiReadInFlight.set(readPolicy.key, sharedRequest)
-      }
-
-      return sharedRequest
-        .then(response => response.clone())
-        .finally(() => finishRistakApiRequest(activityId))
-    }
-
-    return runFetch(nextInit, response => {
+    }, response => {
       maybeHandleLicenseBlocked(response)
-      if (response.ok && shouldInvalidateApiReadCache(method, requestUrl.pathname)) {
-        invalidateRistakApiReadCache()
+      if (response.ok && shouldNotifyMutation(method, requestUrl.pathname)) {
+        invalidateRistakApiReadCache({
+          pathPrefixes: getMutationInvalidationPrefixes(requestUrl.pathname)
+        })
       }
       return response
     })
@@ -462,7 +245,7 @@ function maybeHandleLicenseBlocked(response: Response) {
     if (data?.code === 'license_blocked') {
       try {
         localStorage.removeItem('auth_token')
-        syncAuthScopedCachePrincipal(null)
+        syncAuthPrincipal(null)
       } catch {
         // sin acceso a storage, continuar igual
       }
@@ -494,7 +277,7 @@ export async function ensureLocalDevAuth() {
     if (!data?.success || !data?.token) return false
 
     window.localStorage.setItem('auth_token', data.token)
-    syncAuthScopedCachePrincipal(data.token)
+    syncAuthPrincipal(data.token)
     return true
   } catch {
     return false

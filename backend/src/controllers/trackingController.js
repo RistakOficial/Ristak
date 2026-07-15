@@ -10,6 +10,7 @@ import { getGroupExpression } from '../services/analyticsService.js'
 import { getMessageAnalyticsSummary, getWhatsAppApiAnalyticsSummary } from '../services/originDistributionService.js'
 import {
   buildTrackingSearchDocumentExpression,
+  getTrackingAnalyticsFacet,
   getTrackingAnalyticsSummary,
   searchTrackingSessions
 } from '../services/trackingAnalyticsService.js'
@@ -33,23 +34,42 @@ import {
 import fetch from 'node-fetch'
 
 const isPostgres = databaseDialect === 'postgres'
-function createTrackingRequestAbortScope(res) {
+function createTrackingRequestAbortScope(res, { timeoutMs = 0 } = {}) {
   const controller = new AbortController()
+  let timedOut = false
   const onClose = () => {
     if (!res?.writableEnded && !res?.finished) controller.abort()
   }
   const observable = typeof res?.once === 'function'
   if (observable) res.once('close', onClose)
+  const deadlineTimer = timeoutMs > 0
+    ? setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, timeoutMs)
+    : null
+  deadlineTimer?.unref?.()
   return {
     signal: controller.signal,
+    get timedOut() {
+      return timedOut
+    },
     cleanup() {
       if (observable && typeof res?.off === 'function') res.off('close', onClose)
+      if (deadlineTimer) clearTimeout(deadlineTimer)
     }
   }
 }
 
 function isTrackingRequestAbort(error, signal) {
   return Boolean(signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR')
+}
+
+function trackingRequestDeadlineError() {
+  const error = new Error('La consulta de tracking excedió el presupuesto de ejecución')
+  error.status = 503
+  error.code = 'tracking_request_deadline'
+  return error
 }
 const TRACKING_SNIPPET_VERSION = '13' // Incrementar cuando cambies el código del snippet
 const TRACKING_GHL_SYNC_STATE_CONFIG_KEY = 'tracking_ghl_sync_state'
@@ -93,12 +113,22 @@ const TRACKING_DRILLDOWN_DEFAULT_LIMIT = 50
 const TRACKING_DRILLDOWN_MAX_LIMIT = 100
 const TRACKING_DRILLDOWN_MAX_SEARCH_LENGTH = 160
 const TRACKING_VISITOR_SEARCH_CANDIDATE_LIMIT = 500
+const TRACKING_VISITOR_QUERY_DEADLINE_MS = 14_000
+const TRACKING_AUXILIARY_QUERY_DEADLINE_MS = 18_000
 const LEGACY_TRACKING_SESSIONS_MAX_LIMIT = 200
 const LEGACY_TRACKING_SESSIONS_MAX_OFFSET = 5_000
 
 function trackingDrilldownRequestError(message) {
   const error = new Error(message)
   error.status = 400
+  return error
+}
+
+function trackingProjectionWarmingError(coverage) {
+  const error = new Error('La vista de visitantes se está preparando. Intenta nuevamente en unos segundos.')
+  error.status = 503
+  error.code = 'tracking_visitor_projection_warming'
+  error.coverage = coverage
   return error
 }
 
@@ -338,7 +368,7 @@ function getContactConversionListCondition(type) {
   }
 }
 
-async function fetchBoundedAppointmentsForContacts(contactIds, limitPerContact = 5) {
+async function fetchBoundedAppointmentsForContacts(contactIds, limitPerContact = 5, { signal } = {}) {
   if (!contactIds.length) return new Map()
 
   const placeholders = contactIds.map(() => '?').join(', ')
@@ -366,7 +396,7 @@ async function fetchBoundedAppointmentsForContacts(contactIds, limitPerContact =
     FROM ranked_appointments
     WHERE appointment_rank <= ?
     ORDER BY contact_id, start_time DESC, id DESC
-  `, [...contactIds, limitPerContact])
+  `, [...contactIds, limitPerContact], { signal })
 
   const result = new Map()
   for (const contactId of contactIds) {
@@ -398,7 +428,7 @@ async function fetchBoundedAppointmentsForContacts(contactIds, limitPerContact =
   return result
 }
 
-async function fetchPaymentSummariesForContacts(contactIds) {
+async function fetchPaymentSummariesForContacts(contactIds, { signal } = {}) {
   if (!contactIds.length) return new Map()
 
   const placeholders = contactIds.map(() => '?').join(', ')
@@ -411,7 +441,7 @@ async function fetchPaymentSummariesForContacts(contactIds) {
     WHERE p.contact_id IN (${placeholders})
       AND ${validPaymentPredicate('p')}
     GROUP BY p.contact_id
-  `, contactIds)
+  `, contactIds, { signal })
 
   return new Map(rows.map(row => [String(row.contact_id), {
     ltv: Number(row.ltv || 0),
@@ -1568,6 +1598,12 @@ export async function getSessionsHandler(req, res) {
  * POST /api/tracking/analytics/summary
  */
 export async function getTrackingAnalyticsSummaryHandler(req, res) {
+  // El presupuesto cubre también la adquisición de conexión y la resolución de
+  // zona horaria; antes el deadline empezaba después de ambos pasos y un pool
+  // saturado podía dejar el loader esperando decenas de segundos.
+  const requestScope = createTrackingRequestAbortScope(res, {
+    timeoutMs: TRACKING_AUXILIARY_QUERY_DEADLINE_MS
+  })
   try {
     const body = req.body || {}
     const data = await getTrackingAnalyticsSummary({
@@ -1575,16 +1611,89 @@ export async function getTrackingAnalyticsSummaryHandler(req, res) {
       end: body.end,
       groupBy: body.groupBy,
       filters: body.filters,
-      allowStale: body.waitForFresh !== true
+      includeFacets: body.includeFacets !== false,
+      allowStale: body.waitForFresh !== true,
+      signal: requestScope.signal
     })
 
+    if (requestScope.timedOut) throw trackingRequestDeadlineError()
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return
     res.json({ success: true, data })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.setHeader?.('Retry-After', '1')
+      return res.status(503).json({
+        error: 'El resumen tardó demasiado y fue cancelado para proteger la estabilidad del CRM. Intenta nuevamente.',
+        code: 'tracking_analytics_deadline',
+        retryable: true
+      })
+    }
+    if (isTrackingRequestAbort(error, requestScope.signal)) return
     const status = Number(error?.status) || 500
     logger.error(`Error obteniendo resumen acotado de tracking: ${error.message}`)
     res.status(status).json({
-      error: status < 500 ? error.message : 'Internal server error'
+      error: ['tracking_analytics_deadline', 'tracking_analytics_busy'].includes(error?.code)
+        ? error.message
+        : status < 500
+          ? error.message
+          : 'Internal server error',
+      ...(error?.code ? { code: error.code } : {}),
+      ...(['tracking_analytics_deadline', 'tracking_analytics_busy'].includes(error?.code) ? { retryable: true } : {})
     })
+  } finally {
+    requestScope.cleanup()
+  }
+}
+
+/**
+ * Devuelve una sola faceta acotada y bajo demanda. Nunca reconstruye el juego
+ * completo de dimensiones ni bloquea el resumen principal de Analíticas.
+ * POST /api/tracking/analytics/facets
+ */
+export async function getTrackingAnalyticsFacetHandler(req, res) {
+  const requestScope = createTrackingRequestAbortScope(res, {
+    timeoutMs: TRACKING_AUXILIARY_QUERY_DEADLINE_MS
+  })
+  try {
+    const body = req.body || {}
+    const data = await getTrackingAnalyticsFacet({
+      start: body.start,
+      end: body.end,
+      filters: body.filters,
+      dimension: body.dimension,
+      allowStale: body.waitForFresh !== true,
+      signal: requestScope.signal
+    })
+
+    if (requestScope.timedOut) throw trackingRequestDeadlineError()
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return
+    res.json({ success: true, data })
+  } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.setHeader?.('Retry-After', '1')
+      return res.status(503).json({
+        error: 'La faceta tardó demasiado y fue cancelada para proteger la estabilidad del CRM. Intenta nuevamente.',
+        code: 'tracking_analytics_facet_deadline',
+        retryable: true
+      })
+    }
+    if (isTrackingRequestAbort(error, requestScope.signal)) return
+    const status = Number(error?.status) || 500
+    const retryableCodes = ['tracking_analytics_facet_deadline', 'tracking_analytics_facet_busy']
+    logger.error(`Error obteniendo faceta acotada de tracking: ${error.message}`)
+    res.status(status).json({
+      error: retryableCodes.includes(error?.code)
+        ? error.message
+        : status < 500
+          ? error.message
+          : 'Internal server error',
+      ...(error?.code ? { code: error.code } : {}),
+      ...(retryableCodes.includes(error?.code) ? { retryable: true } : {})
+    })
+  } finally {
+    requestScope.cleanup()
   }
 }
 
@@ -1594,6 +1703,9 @@ export async function getTrackingAnalyticsSummaryHandler(req, res) {
  * POST /api/tracking/sessions/search
  */
 export async function searchTrackingSessionsHandler(req, res) {
+  const requestScope = createTrackingRequestAbortScope(res, {
+    timeoutMs: TRACKING_VISITOR_QUERY_DEADLINE_MS
+  })
   try {
     const body = req.body || {}
     const data = await searchTrackingSessions({
@@ -1603,16 +1715,31 @@ export async function searchTrackingSessionsHandler(req, res) {
       q: body.q,
       column: body.column,
       cursor: body.cursor,
-      limit: body.limit
+      limit: body.limit,
+      signal: requestScope.signal
     })
 
+    if (requestScope.timedOut) throw trackingRequestDeadlineError()
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return
     res.json({ success: true, data })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.setHeader?.('Retry-After', '1')
+      return res.status(503).json({
+        error: 'La tabla de tracking tardó demasiado y fue cancelada. Intenta nuevamente.',
+        code: 'tracking_sessions_deadline',
+        retryable: true
+      })
+    }
+    if (isTrackingRequestAbort(error, requestScope.signal)) return
     const status = Number(error?.status) || 500
     logger.error(`Error buscando sesiones de tracking: ${error.message}`)
     res.status(status).json({
       error: status < 500 ? error.message : 'Internal server error'
     })
+  } finally {
+    requestScope.cleanup()
   }
 }
 
@@ -2264,6 +2391,9 @@ export async function getVisitorsByPeriod(req, res) {
  * GET /api/tracking/visitors?startDate=&endDate=&ad_id=&campaign_id=&adset_id=&scope=
  */
 export async function getVisitorsList(req, res) {
+  const requestScope = createTrackingRequestAbortScope(res, {
+    timeoutMs: TRACKING_VISITOR_QUERY_DEADLINE_MS
+  })
   try {
     const {
       startDate,
@@ -2297,7 +2427,11 @@ export async function getVisitorsList(req, res) {
         }
       })
     }
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const range = await resolveDateRangeWithGHLTimezone({
+      startDate,
+      endDate,
+      signal: requestScope.signal
+    })
 
     logger.info(`Obteniendo página de visitantes - rango: ${range.startUtc} -> ${range.endUtc}, scope: ${scope}, limit: ${pageLimit}`)
 
@@ -2321,11 +2455,34 @@ export async function getVisitorsList(req, res) {
       ? startUtcDay
       : startUtcDay?.plus({ days: 1 })
     const fullUtcDaysEnd = rangeEndExclusiveUtcDateTime?.startOf('day')
-    const firstFullUtcDayIso = firstFullUtcDay?.toISO({ suppressMilliseconds: false })
-    const fullUtcDaysEndIso = fullUtcDaysEnd?.toISO({ suppressMilliseconds: false })
+    const rangeStartUtcMillis = rangeStartUtcDateTime?.toMillis() ?? Date.parse(range.startUtc)
+    const rangeEndExclusiveUtcMillis = rangeEndExclusiveUtcDateTime?.toMillis() ?? Date.parse(endExclusiveUtc)
+    const firstFullUtcDayMillis = firstFullUtcDay?.toMillis() ?? rangeEndExclusiveUtcMillis
+    const fullUtcDaysEndMillis = fullUtcDaysEnd?.toMillis() ?? rangeStartUtcMillis
+    const fullDayWindowStartMillis = Math.min(
+      rangeEndExclusiveUtcMillis,
+      Math.max(rangeStartUtcMillis, firstFullUtcDayMillis)
+    )
+    const fullDayWindowEndMillis = Math.min(
+      rangeEndExclusiveUtcMillis,
+      Math.max(rangeStartUtcMillis, fullUtcDaysEndMillis)
+    )
+    const hasFullUtcDayWindow = fullDayWindowStartMillis < fullDayWindowEndMillis
+    const fullDayWindowStartIso = new Date(fullDayWindowStartMillis).toISOString()
+    const fullDayWindowEndIso = new Date(fullDayWindowEndMillis).toISOString()
+    const quarterBucketRanges = hasFullUtcDayWindow
+      ? [
+          ...(rangeStartUtcMillis < fullDayWindowStartMillis
+            ? [{ start: range.startUtc, end: fullDayWindowStartIso }]
+            : []),
+          ...(fullDayWindowEndMillis < rangeEndExclusiveUtcMillis
+            ? [{ start: fullDayWindowEndIso, end: endExclusiveUtc }]
+            : [])
+        ]
+      : [{ start: range.startUtc, end: endExclusiveUtc }]
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
-    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenFilters = await getHiddenContactFilters({ signal: requestScope.signal })
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
     const visitorAttributionMode = isAttributed
       ? 'attributed'
@@ -2424,9 +2581,13 @@ export async function getVisitorsList(req, res) {
       const cursorParams = decodedCursor ? [decodedCursor.createdAt, decodedCursor.id] : []
       if (normalizedSearch) {
         const pattern = trackingDrilldownSearchPattern(normalizedSearch)
+        // Cada fuente de búsqueda recorre como máximo una ventana ordenada. El
+        // cursor continúa desde el último contacto y permite seguir buscando
+        // sin materializar todos los contactos/sesiones que coincidan.
+        const attributedSearchCandidateLimit = TRACKING_VISITOR_SEARCH_CANDIDATE_LIMIT + 1
         const sessionSearchHits = isPostgres
           ? `
-            session_search_hits AS MATERIALIZED (
+            session_search_deduplicated AS MATERIALIZED (
               SELECT DISTINCT ON (s.contact_id)
                 s.contact_id,
                 ${contactCursorSortExpression} AS contact_created_at,
@@ -2438,6 +2599,12 @@ export async function getVisitorsList(req, res) {
                 AND ${contactConditions.join(' AND ')}
                 ${cursorCondition}
               ORDER BY s.contact_id, s.created_at DESC, s.id DESC
+            ),
+            session_search_hits AS MATERIALIZED (
+              SELECT contact_id, contact_created_at, session_row_id
+              FROM session_search_deduplicated
+              ORDER BY contact_created_at DESC, contact_id DESC
+              LIMIT ?
             )
           `
           : `
@@ -2461,6 +2628,8 @@ export async function getVisitorsList(req, res) {
               SELECT contact_id, contact_created_at, session_row_id
               FROM session_search_candidates
               WHERE contact_session_rank = 1
+              ORDER BY contact_created_at DESC, contact_id DESC
+              LIMIT ?
             )
           `
 
@@ -2471,6 +2640,8 @@ export async function getVisitorsList(req, res) {
             WHERE ${trackingContactSearchDocumentExpression('c')} LIKE ? ESCAPE '!'
               AND ${contactConditions.join(' AND ')}
               ${cursorCondition}
+            ORDER BY ${contactCursorSortExpression} DESC, c.id DESC
+            LIMIT ?
           ),
           contact_search_candidates AS (
             SELECT
@@ -2525,9 +2696,11 @@ export async function getVisitorsList(req, res) {
           pattern,
           ...contactParams,
           ...cursorParams,
+          attributedSearchCandidateLimit,
           pattern,
           ...contactParams,
           ...cursorParams,
+          attributedSearchCandidateLimit,
           pageLimit + 1
         ]
       } else {
@@ -2560,66 +2733,21 @@ export async function getVisitorsList(req, res) {
         throw trackingDrilldownRequestError('El cursor ya no corresponde a esta vista; vuelve a la primera página')
       }
 
-      const projectionStatus = await getTrackingVisitorProjectionStatus()
+      const projectionStatus = await getTrackingVisitorProjectionStatus({
+        schedule: true,
+        signal: requestScope.signal
+      })
       visitorCoverage = trackingVisitorProjectionCoverage(projectionStatus, {
         rangeQuarterAligned: projectionQuarterAligned,
         search: normalizedSearch
       })
       if (!projectionStatus.available) {
-        const rawConditions = [
-          's.started_at >= ?',
-          's.started_at < ?'
-        ]
-        const rawParams = [range.startUtc, endExclusiveUtc]
-        if (visitorScopeType === 'ad') {
-          rawConditions.push('s.ad_id = ?')
-          rawParams.push(visitorScopeId)
-        } else if (visitorScopeType === 'adset') {
-          rawConditions.push('s.adset_id = ?')
-          rawParams.push(visitorScopeId)
-        } else if (visitorScopeType === 'campaign') {
-          rawConditions.push('s.campaign_id = ?')
-          rawParams.push(visitorScopeId)
-        }
-        if (normalizedSearch) {
-          const pattern = trackingDrilldownSearchPattern(normalizedSearch)
-          rawConditions.push(`(
-            ${buildTrackingSearchDocumentExpression('s')} LIKE ? ESCAPE '!'
-            OR ${trackingContactSearchDocumentExpression('c')} LIKE ? ESCAPE '!'
-          )`)
-          rawParams.push(pattern, pattern)
-        }
-
-        query = `
-          WITH ranked_raw_visitors AS (
-            SELECT
-              ${visitorIdentityExpression} as visitor_key,
-              s.id as session_row_id,
-              s.started_at as cursor_at,
-              ${trackingCursorTimestampProjection('s.started_at')} as cursor_serialized_at,
-              'projection-started' as cursor_mode,
-              ${visitorSelect},
-              ROW_NUMBER() OVER (
-                PARTITION BY ${visitorIdentityExpression}
-                ORDER BY s.started_at DESC, s.id DESC
-              ) AS visitor_rank
-            FROM sessions s
-            LEFT JOIN contacts c ON s.contact_id = c.id
-            WHERE ${rawConditions.join(' AND ')}
-          )
-          SELECT *
-          FROM ranked_raw_visitors
-          WHERE visitor_rank = 1
-          ORDER BY cursor_at DESC, session_row_id DESC
-          LIMIT ?
-        `
-        pageParams = [...rawParams, pageLimit + 1]
-        visitorCoverage = {
-          ...visitorCoverage,
-          status: 'fallback',
-          sourceStatus: projectionStatus.sourceStatus || 'unavailable',
-          degraded: true
-        }
+        // No responder con cobertura parcial ni volver al ROW_NUMBER() sobre
+        // todo sessions. Ese fallback convertía una simple página en un sort
+        // histórico sin límite y podía tumbar PostgreSQL durante el rollout.
+        // sessions/search sigue disponible con keyset; esta vista de identidades
+        // reintenta cuando el read model exacto haya terminado de calentarse.
+        throw trackingProjectionWarmingError(visitorCoverage)
       } else {
         const projectionScopeType = visitorScopeType
         const projectionScopeId = visitorScopeId
@@ -2628,76 +2756,82 @@ export async function getVisitorsList(req, res) {
           ? TRACKING_VISITOR_SEARCH_CANDIDATE_LIMIT
           : pageLimit
 
-        const buildProjectionBranch = (bucketKind) => {
+        const buildProjectionBranch = ({ bucketKind, bucketStart, bucketEnd }) => {
+          const cursorAtMillis = decodedCursor ? Date.parse(decodedCursor.createdAt) : null
+          const branchEndMillis = Date.parse(bucketEnd)
           const conditions = [
             'current.scope_type = ?',
             'current.scope_id = ?',
             'current.bucket_kind = ?',
             'current.latest_at >= ?',
-            'current.latest_at < ?'
+            'current.latest_at < ?',
+            'current.bucket_start >= ?',
+            'current.bucket_start < ?'
           ]
           const params = [
             projectionScopeType,
             projectionScopeId,
             bucketKind,
-            range.startUtc,
-            endExclusiveUtc
+            bucketStart,
+            bucketEnd,
+            bucketStart,
+            bucketEnd
           ]
 
-          if (bucketKind === 'day') {
-            conditions.push('current.bucket_start >= ?', 'current.bucket_start < ?')
-            params.push(firstFullUtcDayIso, fullUtcDaysEndIso)
-          } else {
-            conditions.push(
-              'current.bucket_start >= ?',
-              'current.bucket_start < ?',
-              'NOT (current.bucket_start >= ? AND current.bucket_start < ?)'
-            )
-            params.push(range.startUtc, endExclusiveUtc, firstFullUtcDayIso, fullUtcDaysEndIso)
-          }
-
-          if (decodedCursor) {
+          // Si el cursor está después de todo este bucket-range, la rama
+          // completa ya pertenece a la página siguiente. Incluir una tupla de
+          // cursor redundante hace que PostgreSQL arranque el índice desde el
+          // cursor global y atraviese todos los buckets interiores antes de
+          // llegar al borde. Sólo se aplica dentro de la rama que realmente lo
+          // contiene.
+          if (decodedCursor && cursorAtMillis < branchEndMillis) {
             conditions.push('(current.latest_at, current.session_row_id) < (?, ?)')
             params.push(decodedCursor.createdAt, decodedCursor.id)
           }
-          conditions.push(`NOT EXISTS (
-            SELECT 1
-            FROM tracking_visitor_latest newer_day
-            WHERE newer_day.scope_type = current.scope_type
-              AND newer_day.scope_id = current.scope_id
-              AND newer_day.bucket_kind = 'day'
-              AND newer_day.visitor_key = current.visitor_key
-              AND newer_day.latest_at >= ?
-              AND newer_day.latest_at < ?
-              AND newer_day.bucket_start >= ?
-              AND newer_day.bucket_start < ?
-              AND (newer_day.latest_at, newer_day.session_row_id) >
-                  (current.latest_at, current.session_row_id)
-          )`)
-          params.push(range.startUtc, endExclusiveUtc, firstFullUtcDayIso, fullUtcDaysEndIso)
-          conditions.push(`NOT EXISTS (
-            SELECT 1
-            FROM tracking_visitor_latest newer_quarter
-            WHERE newer_quarter.scope_type = current.scope_type
-              AND newer_quarter.scope_id = current.scope_id
-              AND newer_quarter.bucket_kind = 'quarter'
-              AND newer_quarter.visitor_key = current.visitor_key
-              AND newer_quarter.latest_at >= ?
-              AND newer_quarter.latest_at < ?
-              AND newer_quarter.bucket_start >= ?
-              AND newer_quarter.bucket_start < ?
-              AND NOT (newer_quarter.bucket_start >= ? AND newer_quarter.bucket_start < ?)
-              AND (newer_quarter.latest_at, newer_quarter.session_row_id) >
-                  (current.latest_at, current.session_row_id)
-          )`)
-          params.push(
-            range.startUtc,
-            endExclusiveUtc,
-            range.startUtc,
-            endExclusiveUtc,
-            firstFullUtcDayIso,
-            fullUtcDaysEndIso
-          )
+          if (hasFullUtcDayWindow) {
+            conditions.push(`NOT EXISTS (
+              SELECT 1
+              FROM tracking_visitor_latest newer_day
+              WHERE newer_day.scope_type = current.scope_type
+                AND newer_day.scope_id = current.scope_id
+                AND newer_day.bucket_kind = 'day'
+                AND newer_day.visitor_key = current.visitor_key
+                AND newer_day.latest_at >= ?
+                AND newer_day.latest_at < ?
+                AND newer_day.bucket_start >= ?
+                AND newer_day.bucket_start < ?
+                AND (newer_day.latest_at, newer_day.session_row_id) >
+                    (current.latest_at, current.session_row_id)
+            )`)
+            params.push(
+              range.startUtc,
+              endExclusiveUtc,
+              fullDayWindowStartIso,
+              fullDayWindowEndIso
+            )
+          }
+          if (quarterBucketRanges.length > 0) {
+            const newerQuarterBucketCondition = quarterBucketRanges
+              .map(() => '(newer_quarter.bucket_start >= ? AND newer_quarter.bucket_start < ?)')
+              .join(' OR ')
+            conditions.push(`NOT EXISTS (
+              SELECT 1
+              FROM tracking_visitor_latest newer_quarter
+              WHERE newer_quarter.scope_type = current.scope_type
+                AND newer_quarter.scope_id = current.scope_id
+                AND newer_quarter.bucket_kind = 'quarter'
+                AND newer_quarter.visitor_key = current.visitor_key
+                AND newer_quarter.latest_at >= ?
+                AND newer_quarter.latest_at < ?
+                AND (${newerQuarterBucketCondition})
+                AND (newer_quarter.latest_at, newer_quarter.session_row_id) >
+                    (current.latest_at, current.session_row_id)
+            )`)
+            params.push(range.startUtc, endExclusiveUtc)
+            for (const rangeBounds of quarterBucketRanges) {
+              params.push(rangeBounds.start, rangeBounds.end)
+            }
+          }
           params.push(projectionSearchCandidateLimit + 1)
 
           return {
@@ -2712,8 +2846,40 @@ export async function getVisitorsList(req, res) {
           }
         }
 
-        const dayBranch = buildProjectionBranch('day')
-        const quarterBranch = buildProjectionBranch('quarter')
+        const cursorAtMillis = decodedCursor ? Date.parse(decodedCursor.createdAt) : null
+        const branchDefinitions = [
+          ...(hasFullUtcDayWindow
+            ? [{
+                name: 'day_page',
+                bucketKind: 'day',
+                bucketStart: fullDayWindowStartIso,
+                bucketEnd: fullDayWindowEndIso
+              }]
+            : []),
+          ...quarterBucketRanges.map((rangeBounds, index) => ({
+            name: `quarter_page_${index + 1}`,
+            bucketKind: 'quarter',
+            bucketStart: rangeBounds.start,
+            bucketEnd: rangeBounds.end
+          }))
+        ]
+        const projectionBranches = branchDefinitions
+          .filter(branch => !decodedCursor || cursorAtMillis >= Date.parse(branch.bucketStart))
+          .map(branch => ({
+            name: branch.name,
+            ...buildProjectionBranch(branch)
+          }))
+        if (projectionBranches.length === 0) {
+          projectionBranches.push({
+            name: 'empty_page',
+            sql: `
+              SELECT current.visitor_key, current.session_row_id, current.latest_at
+              FROM tracking_visitor_latest current
+              WHERE 1 = 0
+            `,
+            params: []
+          })
+        }
         const searchPattern = boundedProjectionSearch
           ? trackingDrilldownSearchPattern(normalizedSearch)
           : null
@@ -2724,14 +2890,10 @@ export async function getVisitorsList(req, res) {
             ) THEN 1 ELSE 0 END AS bounded_search_match,`
           : ''
         query = `
-          WITH day_page AS (
-            ${dayBranch.sql}
-          ), quarter_page AS (
-            ${quarterBranch.sql}
-          ), projected_page AS (
-            SELECT * FROM day_page
-            UNION
-            SELECT * FROM quarter_page
+          WITH ${projectionBranches.map(branch => `${branch.name} AS (
+            ${branch.sql}
+          )`).join(', ')}, projected_page AS (
+            ${projectionBranches.map(branch => `SELECT * FROM ${branch.name}`).join('\n            UNION\n            ')}
           )
           SELECT
             page.visitor_key,
@@ -2748,15 +2910,14 @@ export async function getVisitorsList(req, res) {
           LIMIT ?
         `
         pageParams = [
-          ...dayBranch.params,
-          ...quarterBranch.params,
+          ...projectionBranches.flatMap(branch => branch.params),
           ...(boundedProjectionSearch ? [searchPattern, searchPattern] : []),
           projectionSearchCandidateLimit + 1
         ]
       }
     }
 
-    const rawCandidateVisitors = await db.all(query, pageParams)
+    const rawCandidateVisitors = await db.all(query, pageParams, { signal: requestScope.signal })
     let hasNext
     let visitors
     let nextCursorRow
@@ -2796,13 +2957,13 @@ export async function getVisitorsList(req, res) {
     const contactIds = [...new Set(visitors.map(visitor => visitor.contact_id).filter(Boolean).map(String))]
     const attendancePlaceholders = contactIds.map(() => '?').join(', ')
     const [appointmentsMap, attendanceRows] = await Promise.all([
-      fetchBoundedAppointmentsForContacts(contactIds),
+      fetchBoundedAppointmentsForContacts(contactIds, 5, { signal: requestScope.signal }),
       contactIds.length > 0
         ? db.all(`
             SELECT DISTINCT contact_id
             FROM appointment_attendance_signals
             WHERE contact_id IN (${attendancePlaceholders})
-          `, contactIds)
+          `, contactIds, { signal: requestScope.signal })
         : []
     ])
     const contactsWithAttendanceSignals = new Set(attendanceRows.map(row => String(row.contact_id)))
@@ -2874,6 +3035,13 @@ export async function getVisitorsList(req, res) {
 
     logger.info(`Página de visitantes obtenida: ${formattedVisitors.length} visitantes; hasNext=${hasNext}`)
 
+    if (requestScope.timedOut) {
+      const deadlineError = new Error('La consulta de visitantes excedió el presupuesto de ejecución')
+      deadlineError.code = 'tracking_visitors_deadline'
+      throw deadlineError
+    }
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return
+
     res.json({
       success: true,
       data: formattedVisitors,
@@ -2888,10 +3056,32 @@ export async function getVisitorsList(req, res) {
       }
     })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      return res.status(503).json({
+        error: 'La tabla de visitantes tardó demasiado y fue cancelada. Intenta nuevamente.',
+        code: 'tracking_visitors_deadline',
+        retryable: true
+      })
+    }
+    if (isTrackingRequestAbort(error, requestScope.signal)) return
     const status = Number(error?.status) || 500
-    if (status < 500) logger.warn(`Solicitud de visitantes rechazada: ${error.message}`)
+    if (status < 500 || error?.code === 'tracking_visitor_projection_warming') {
+      logger.warn(`Solicitud de visitantes rechazada: ${error.message}`)
+    }
     else logger.error('Error obteniendo lista de visitantes:', error)
+    if (error?.code === 'tracking_visitor_projection_warming') {
+      res.setHeader?.('Retry-After', '1')
+      return res.status(status).json({
+        error: error.message,
+        code: error.code,
+        retryable: true,
+        coverage: error.coverage
+      })
+    }
     res.status(status).json({ error: status < 500 ? error.message : 'Internal server error' })
+  } finally {
+    requestScope.cleanup()
   }
 }
 
@@ -3084,7 +3274,9 @@ export async function getWhatsAppSummary(req, res) {
  * Resumen de mensajes entrantes por canal para Analíticas.
  */
 export async function getMessagesSummary(req, res) {
-  const requestScope = createTrackingRequestAbortScope(res)
+  const requestScope = createTrackingRequestAbortScope(res, {
+    timeoutMs: TRACKING_AUXILIARY_QUERY_DEADLINE_MS
+  })
   try {
     const { start, end, groupBy = 'day', channels = '', sources = '' } = req.query
 
@@ -3092,16 +3284,29 @@ export async function getMessagesSummary(req, res) {
       return res.status(400).json({ error: 'Se requieren parámetros start y end' })
     }
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate: start, endDate: end })
+    const range = await resolveDateRangeWithGHLTimezone({
+      startDate: start,
+      endDate: end,
+      signal: requestScope.signal
+    })
     const data = await getMessageAnalyticsSummary(range, {
       groupBy,
       filters: { channels, sources },
       signal: requestScope.signal
     })
 
+    if (requestScope.timedOut) throw new Error('tracking_messages_deadline')
     if (requestScope.signal.aborted || res.writableEnded || res.finished) return
     res.json({ success: true, data })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      return res.status(503).json({
+        error: 'El resumen de mensajes tardó demasiado y fue cancelado. Intenta nuevamente.',
+        code: 'tracking_messages_deadline',
+        retryable: true
+      })
+    }
     if (isTrackingRequestAbort(error, requestScope.signal)) return
     logger.error('Error obteniendo resumen de mensajes para analíticas:', error)
     res.status(500).json({ error: 'Internal server error' })
@@ -3116,6 +3321,9 @@ export async function getMessagesSummary(req, res) {
  * Query params: start (YYYY-MM-DD), end (YYYY-MM-DD), type
  */
 export async function getContactConversionsList(req, res) {
+  const requestScope = createTrackingRequestAbortScope(res, {
+    timeoutMs: TRACKING_AUXILIARY_QUERY_DEADLINE_MS
+  })
   try {
     const {
       start,
@@ -3148,7 +3356,11 @@ export async function getContactConversionsList(req, res) {
 
     logger.info(`Obteniendo página de conversiones (${normalizedType}): ${start} a ${end}; limit=${pageLimit}`)
 
-    const range = await resolveDateRangeWithGHLTimezone({ startDate: start, endDate: end })
+    const range = await resolveDateRangeWithGHLTimezone({
+      startDate: start,
+      endDate: end,
+      signal: requestScope.signal
+    })
     const cursorScope = trackingDrilldownCursorScope('contact-conversions', {
       start,
       end,
@@ -3215,14 +3427,14 @@ export async function getContactConversionsList(req, res) {
       LIMIT ?
     `
 
-    const candidateRows = await db.all(query, params)
+    const candidateRows = await db.all(query, params, { signal: requestScope.signal })
     const hasNext = candidateRows.length > pageLimit
     const rows = hasNext ? candidateRows.slice(0, pageLimit) : candidateRows
     const contactIds = rows.map(row => row.id).filter(Boolean)
     const contactPlaceholders = contactIds.map(() => '?').join(', ')
     const [paymentSummaries, appointmentSummaries, metaRows] = await Promise.all([
-      fetchPaymentSummariesForContacts(contactIds),
-      fetchBoundedAppointmentsForContacts(contactIds),
+      fetchPaymentSummariesForContacts(contactIds, { signal: requestScope.signal }),
+      fetchBoundedAppointmentsForContacts(contactIds, 5, { signal: requestScope.signal }),
       contactIds.length > 0
         ? db.all(`
             SELECT
@@ -3236,7 +3448,7 @@ export async function getContactConversionsList(req, res) {
             LEFT JOIN meta_ads ON meta_ads.ad_id = c.attribution_ad_id
             WHERE c.id IN (${contactPlaceholders})
             GROUP BY c.id
-          `, contactIds)
+          `, contactIds, { signal: requestScope.signal })
         : []
     ])
     const metaByContactId = new Map(metaRows.map(row => [String(row.contact_id), row]))
@@ -3293,6 +3505,8 @@ export async function getContactConversionsList(req, res) {
       }
     })
 
+    if (requestScope.timedOut) throw new Error('tracking_contact_conversions_deadline')
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return
     res.json({
       success: true,
       data: {
@@ -3309,9 +3523,22 @@ export async function getContactConversionsList(req, res) {
       }
     })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      return res.status(503).json({
+        error: 'La lista de conversiones tardó demasiado y fue cancelada. Intenta nuevamente.',
+        code: 'tracking_contact_conversions_deadline',
+        retryable: true
+      })
+    }
+    if (isTrackingRequestAbort(error, requestScope.signal)) return
     const status = Number(error?.status) || 500
     if (status < 500) logger.warn(`Solicitud de conversiones rechazada: ${error.message}`)
     else logger.error('Error obteniendo lista de conversiones por contacto:', error)
-    res.status(status).json({ error: status < 500 ? error.message : 'Internal server error' })
+    if (!res.writableEnded && !res.finished) {
+      res.status(status).json({ error: status < 500 ? error.message : 'Internal server error' })
+    }
+  } finally {
+    requestScope.cleanup()
   }
 }

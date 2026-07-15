@@ -1,12 +1,26 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { db } from '../src/config/database.js'
+import { readFile } from 'node:fs/promises'
+import { databaseDialect, db } from '../src/config/database.js'
 import {
   getVisitorsByAd,
   getVisitorsByPeriod,
   getVisitorsList
 } from '../src/controllers/trackingController.js'
 import { buildReportMetrics } from '../src/services/analyticsService.js'
+import { runTrackingVisitorProjectionBackfill } from '../src/services/trackingVisitorProjectionService.js'
+
+async function ensureVisitorProjectionMigration() {
+  if (databaseDialect !== 'sqlite') return
+  const columns = await db.all("PRAGMA table_info('sessions')")
+  if (!columns.some(column => column.name === 'visitor_projection_version')) {
+    await db.exec(await readFile(new URL('../migrations/versioned/080_tracking_visitor_projection.sqlite.sql', import.meta.url), 'utf8'))
+  }
+  const stateColumns = await db.all("PRAGMA table_info('tracking_visitor_projection_state')")
+  if (!stateColumns.length) {
+    await db.exec(await readFile(new URL('../migrations/versioned/111_tracking_visitor_projection_state.sqlite.sql', import.meta.url), 'utf8'))
+  }
+}
 
 function createResponse() {
   return {
@@ -39,6 +53,9 @@ test('tracking visitor reports deduplicate the same contact across visitor ids',
   const appointmentId = `appt_visitor_identity_${suffix}`
 
   try {
+    await ensureVisitorProjectionMigration()
+    await runTrackingVisitorProjectionBackfill({ batchSize: 200, maxBatches: 100, yieldMs: 0 })
+
     await db.run(`
       INSERT INTO contacts (
         id,

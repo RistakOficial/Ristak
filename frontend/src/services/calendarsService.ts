@@ -2,6 +2,9 @@ import apiClient from './apiClient';
 import { refreshIntegrationsStatusAfter } from './integrationsService';
 import { parseSortableDateValue } from '@/utils/dateSort';
 import { getStoredBusinessTimezone, localDateTimeInputToUTCISOString, todayDateOnlyInTimezone } from '@/utils/timezone';
+import { RequestTimeoutError, withRequestTimeout } from './requestTimeout';
+
+const CALENDARS_VIEW_REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * Tipos para calendarios y eventos de Ristak, Google y HighLevel opcional.
@@ -431,18 +434,26 @@ export const calendarsService = {
     locationId?: string | null,
     accessToken?: string | null,
     sourcePreference?: 'combined' | 'ristak' | 'ghl' | 'google',
-    options: { throwOnError?: boolean } = {}
+    options: { throwOnError?: boolean; signal?: AbortSignal } = {}
   ): Promise<Calendar[]> {
     try {
-      const data = await apiClient.get<Calendar[]>('/calendars', {
-        params: {
-          ...(locationId ? { locationId } : {}),
-          ...(accessToken ? { accessToken } : {}),
-          ...(sourcePreference ? { sourcePreference } : {})
-        }
+      const data = await withRequestTimeout({
+        timeoutMs: CALENDARS_VIEW_REQUEST_TIMEOUT_MS,
+        timeoutMessage: 'Los calendarios tardaron demasiado. Reintenta la carga.',
+        signal: options.signal,
+        request: requestSignal => apiClient.get<Calendar[]>('/calendars', {
+          params: {
+            ...(locationId ? { locationId } : {}),
+            ...(accessToken ? { accessToken } : {}),
+            ...(sourcePreference ? { sourcePreference } : {})
+          },
+          signal: requestSignal
+        })
       });
       return Array.isArray(data) ? data : [];
     } catch (error) {
+      if (options.signal?.aborted) throw error;
+      if (error instanceof RequestTimeoutError) throw error;
       if (options.throwOnError) throw error;
       return [];
     }
@@ -573,14 +584,19 @@ export const calendarsService = {
     previewLimit?: number;
     signal?: AbortSignal;
   }): Promise<CalendarMonthPreviewResponse> {
-    return apiClient.get<CalendarMonthPreviewResponse>('/calendars/events/month-preview', {
-      params: {
-        calendarId,
-        startTime: String(startTime),
-        endTime: String(endTime),
-        previewLimit: String(previewLimit)
-      },
-      signal
+    return withRequestTimeout({
+      timeoutMs: CALENDARS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'La vista mensual tardó demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<CalendarMonthPreviewResponse>('/calendars/events/month-preview', {
+        params: {
+          calendarId,
+          startTime: String(startTime),
+          endTime: String(endTime),
+          previewLimit: String(previewLimit)
+        },
+        signal: requestSignal
+      })
     });
   },
 
@@ -602,16 +618,21 @@ export const calendarsService = {
     includeCounts?: boolean;
     signal?: AbortSignal;
   }): Promise<CalendarEventsPage> {
-    return apiClient.get<CalendarEventsPage>('/calendars/events/page', {
-      params: {
-        calendarId,
-        startTime: String(startTime),
-        endTime: String(endTime),
-        limit: String(limit),
-        includeCounts: includeCounts ? '1' : '0',
-        ...(cursor ? { cursor } : {})
-      },
-      signal
+    return withRequestTimeout({
+      timeoutMs: CALENDARS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Las citas tardaron demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<CalendarEventsPage>('/calendars/events/page', {
+        params: {
+          calendarId,
+          startTime: String(startTime),
+          endTime: String(endTime),
+          limit: String(limit),
+          includeCounts: includeCounts ? '1' : '0',
+          ...(cursor ? { cursor } : {})
+        },
+        signal: requestSignal
+      })
     });
   },
 
@@ -627,13 +648,18 @@ export const calendarsService = {
     endTime: number;
     signal?: AbortSignal;
   }): Promise<CalendarEventDayCountsResponse> {
-    return apiClient.get<CalendarEventDayCountsResponse>('/calendars/events/day-counts', {
-      params: {
-        calendarId,
-        startTime: String(startTime),
-        endTime: String(endTime)
-      },
-      signal
+    return withRequestTimeout({
+      timeoutMs: CALENDARS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Los conteos de citas tardaron demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<CalendarEventDayCountsResponse>('/calendars/events/day-counts', {
+        params: {
+          calendarId,
+          startTime: String(startTime),
+          endTime: String(endTime)
+        },
+        signal: requestSignal
+      })
     });
   },
 
@@ -649,13 +675,18 @@ export const calendarsService = {
     limit?: number;
     signal?: AbortSignal;
   }): Promise<CalendarEventsOverview> {
-    return apiClient.get<CalendarEventsOverview>('/calendars/events/overview', {
-      params: {
-        startTime: String(startTime),
-        endTime: String(endTime),
-        limit: String(limit)
-      },
-      signal
+    return withRequestTimeout({
+      timeoutMs: CALENDARS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'El resumen de citas tardó demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<CalendarEventsOverview>('/calendars/events/overview', {
+        params: {
+          startTime: String(startTime),
+          endTime: String(endTime),
+          limit: String(limit)
+        },
+        signal: requestSignal
+      })
     });
   },
 
@@ -666,13 +697,18 @@ export const calendarsService = {
     endTime: number,
     signal?: AbortSignal
   ): Promise<AppointmentStats> {
-    return apiClient.get<AppointmentStats>('/calendars/events/summary', {
-      params: {
-        calendarId,
-        startTime: String(startTime),
-        endTime: String(endTime)
-      },
-      signal
+    return withRequestTimeout({
+      timeoutMs: CALENDARS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Las métricas de citas tardaron demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<AppointmentStats>('/calendars/events/summary', {
+        params: {
+          calendarId,
+          startTime: String(startTime),
+          endTime: String(endTime)
+        },
+        signal: requestSignal
+      })
     });
   },
 
@@ -688,13 +724,18 @@ export const calendarsService = {
     limit?: number;
     signal?: AbortSignal;
   }): Promise<UpcomingAppointmentsPage> {
-    return apiClient.get<UpcomingAppointmentsPage>('/calendars/upcoming', {
-      params: {
-        calendarId,
-        limit: String(limit),
-        ...(cursor ? { cursor } : {})
-      },
-      signal
+    return withRequestTimeout({
+      timeoutMs: CALENDARS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Las próximas citas tardaron demasiado. Reintenta la carga.',
+      signal,
+      request: requestSignal => apiClient.get<UpcomingAppointmentsPage>('/calendars/upcoming', {
+        params: {
+          calendarId,
+          limit: String(limit),
+          ...(cursor ? { cursor } : {})
+        },
+        signal: requestSignal
+      })
     });
   },
 

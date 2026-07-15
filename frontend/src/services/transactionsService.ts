@@ -1,5 +1,8 @@
 import apiClient from './apiClient'
 import { apiUrl } from './apiBaseUrl'
+import { withRequestTimeout } from './requestTimeout'
+
+const TRANSACTIONS_VIEW_REQUEST_TIMEOUT_MS = 20_000
 
 export interface Transaction {
   id: string
@@ -137,6 +140,7 @@ interface PaymentPlansPageParams {
   sortBy?: string
   sortOrder?: 'ASC' | 'DESC' | 'asc' | 'desc'
   forceRefresh?: boolean
+  signal?: AbortSignal
 }
 
 interface TransactionsPageParams {
@@ -226,16 +230,23 @@ const requestTransactionsPage = async ({
   if (cursor) params.append('cursor', cursor)
   appendTransactionQueryParams(params, { startDate, endDate, search, statuses })
 
-  const response = await fetch(apiUrl(`/api/transactions?${params.toString()}`), {
-    headers: getAuthHeaders(),
-    signal
+  const json = await withRequestTimeout({
+    timeoutMs: TRANSACTIONS_VIEW_REQUEST_TIMEOUT_MS,
+    timeoutMessage: 'Los pagos tardaron demasiado. Reintenta la carga.',
+    signal,
+    request: async requestSignal => {
+      const response = await fetch(apiUrl(`/api/transactions?${params.toString()}`), {
+        headers: getAuthHeaders(),
+        signal: requestSignal
+      })
+
+      if (!response.ok) {
+        throw new Error(`No se pudieron cargar los pagos (${response.status})`)
+      }
+
+      return response.json()
+    }
   })
-
-  if (!response.ok) {
-    throw new Error(`No se pudieron cargar los pagos (${response.status})`)
-  }
-
-  const json = await response.json()
   const transactions = Array.isArray(json?.data) ? json.data as Transaction[] : []
   const pagination = json?.pagination || {}
   const facets = json?.facets || {}
@@ -270,7 +281,8 @@ const requestPaymentPlansPage = async ({
   statuses,
   sortBy = 'startDate',
   sortOrder = 'DESC',
-  forceRefresh = false
+  forceRefresh = false,
+  signal
 }: PaymentPlansPageParams = {}): Promise<PaymentPlansPageResult> => {
   const params = new URLSearchParams()
   params.append('page', String(page))
@@ -282,16 +294,24 @@ const requestPaymentPlansPage = async ({
   if (cleanSearch.length >= 2) params.append('q', cleanSearch)
   if (statuses?.length) params.append('status', statuses.join(','))
 
-  const response = await fetch(apiUrl(`/api/transactions/payment-plans?${params.toString()}`), {
-    headers: getAuthHeaders(),
-    ...(forceRefresh ? { cache: 'reload' as RequestCache } : {})
+  const json = await withRequestTimeout({
+    timeoutMs: TRANSACTIONS_VIEW_REQUEST_TIMEOUT_MS,
+    timeoutMessage: 'Los planes de pago tardaron demasiado. Reintenta la carga.',
+    signal,
+    request: async requestSignal => {
+      const response = await fetch(apiUrl(`/api/transactions/payment-plans?${params.toString()}`), {
+        headers: getAuthHeaders(),
+        signal: requestSignal,
+        ...(forceRefresh ? { cache: 'reload' as RequestCache } : {})
+      })
+
+      if (!response.ok) {
+        throw new Error(`No se pudieron cargar los planes de pago (${response.status})`)
+      }
+
+      return response.json()
+    }
   })
-
-  if (!response.ok) {
-    throw new Error(`No se pudieron cargar los planes de pago (${response.status})`)
-  }
-
-  const json = await response.json()
   const paymentPlans = Array.isArray(json?.data) ? json.data as PaymentPlan[] : []
   const pagination = json?.pagination || {}
   const facets = json?.facets || {}

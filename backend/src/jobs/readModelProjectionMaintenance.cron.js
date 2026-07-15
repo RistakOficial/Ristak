@@ -18,10 +18,15 @@ import {
   readContactPersonIdentityProjectionState,
   scheduleContactPersonIdentityProjectionBackfill
 } from '../services/contactPersonIdentityProjectionService.js'
+import {
+  TRACKING_VISITOR_PROJECTION_VERSION,
+  readTrackingVisitorProjectionState,
+  scheduleTrackingVisitorProjectionBackfill
+} from '../services/trackingVisitorProjectionService.js'
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 import { logger as defaultLogger } from '../utils/logger.js'
 
-const DEFAULT_INTERVAL_MS = 2_000
+const DEFAULT_INTERVAL_MS = 30_000
 
 const defaultProjections = Object.freeze([
   {
@@ -47,6 +52,12 @@ const defaultProjections = Object.freeze([
     version: CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION,
     readState: readConversationalAgentMetricsProjectionState,
     schedule: scheduleConversationalAgentMetricsProjectionBackfill
+  },
+  {
+    key: 'tracking-visitor',
+    version: TRACKING_VISITOR_PROJECTION_VERSION,
+    readState: readTrackingVisitorProjectionState,
+    schedule: scheduleTrackingVisitorProjectionBackfill
   }
 ])
 
@@ -71,17 +82,26 @@ export function createReadModelProjectionMaintenanceScheduler({
     running = true
     try {
       const scheduled = []
-      const states = await Promise.all(projections.map(async projection => ({
-        projection,
-        state: await projection.readState()
-      })))
-      for (const { projection, state } of states) {
+      const states = await Promise.all(projections.map(async projection => {
+        try {
+          return { projection, state: await projection.readState(), error: null }
+        } catch (error) {
+          logger.warn(`[Proyecciones] No se pudo leer ${projection.key}: ${error.message}`)
+          return { projection, state: null, error }
+        }
+      }))
+      for (const { projection, state, error } of states) {
+        if (error) continue
         if (!state) continue
         const ready = Number(state.projection_version) === Number(projection.version) &&
           String(state.status || '').toLowerCase() === 'ready'
         if (ready) continue
-        const queued = projection.schedule()
-        scheduled.push({ key: projection.key, queued: Boolean(queued?.scheduled) })
+        try {
+          const queued = projection.schedule()
+          scheduled.push({ key: projection.key, queued: Boolean(queued?.scheduled) })
+        } catch (scheduleError) {
+          logger.warn(`[Proyecciones] No se pudo agendar ${projection.key}: ${scheduleError.message}`)
+        }
       }
       return { scheduled, skipped: false }
     } finally {

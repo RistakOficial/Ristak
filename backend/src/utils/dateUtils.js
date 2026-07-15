@@ -156,26 +156,42 @@ export function invalidateTimezoneCache() {
  * que HighLevel esté conectado: usuarios sin GHL pueden fijar su zona en Ristak.
  * INCLUYE CACHE para evitar queries repetidas a la DB.
  */
-export async function getAccountTimezone({ forceRefresh = false, throwOnError = false } = {}) {
+export async function getAccountTimezone({
+  forceRefresh = false,
+  throwOnError = false,
+  signal
+} = {}) {
+  if (signal?.aborted) {
+    const error = new Error('La resolución de zona horaria fue cancelada')
+    error.name = 'AbortError'
+    error.code = 'ABORT_ERR'
+    throw error
+  }
   const now = Date.now()
   if (!forceRefresh && cachedTimezone && cacheTimestamp && (now - cacheTimestamp) < CACHE_TTL_MS) {
     return cachedTimezone
   }
 
   let timezone = DEFAULT_TIMEZONE
+  let cacheResult = true
 
   try {
     // 1) Override de la cuenta configurado en Ristak
     const override = await db.get(
       'SELECT config_value FROM app_config WHERE config_key = ?',
-      [ACCOUNT_TIMEZONE_CONFIG_KEY]
+      [ACCOUNT_TIMEZONE_CONFIG_KEY],
+      { signal }
     )
 
     if (override?.config_value && isValidTimezone(override.config_value)) {
       timezone = override.config_value
     } else {
       // 2) Zona horaria de HighLevel (si está conectado)
-      const config = await db.get('SELECT location_data FROM highlevel_config LIMIT 1')
+      const config = await db.get(
+        'SELECT location_data FROM highlevel_config LIMIT 1',
+        [],
+        { signal }
+      )
       if (config?.location_data) {
         const locationData = JSON.parse(config.location_data)
         if (locationData?.timezone && isValidTimezone(locationData.timezone)) {
@@ -184,13 +200,21 @@ export async function getAccountTimezone({ forceRefresh = false, throwOnError = 
       }
     }
   } catch (error) {
+    // Un deadline/cliente desconectado no es evidencia de que la cuenta use el
+    // default. Propagarlo evita esperar reintentos del pool y cachear un dato
+    // falso durante la caída.
+    if (error?.name === 'AbortError' || signal?.aborted) throw error
     if (throwOnError) throw error
-    // 3) Ante cualquier error, usar el default
+    // 3) Ante cualquier error, usar el default sólo para este caller. Guardarlo
+    // una hora convertía una caída temporal de DB en configuración falsa.
+    cacheResult = false
     timezone = DEFAULT_TIMEZONE
   }
 
-  cachedTimezone = timezone
-  cacheTimestamp = Date.now()
+  if (cacheResult) {
+    cachedTimezone = timezone
+    cacheTimestamp = Date.now()
+  }
   return timezone
 }
 
@@ -198,8 +222,8 @@ export async function getAccountTimezone({ forceRefresh = false, throwOnError = 
  * Alias retrocompatible. La resolución real vive en getAccountTimezone().
  * @deprecated usar getAccountTimezone()
  */
-export async function getTimezoneFromGHL() {
-  return getAccountTimezone()
+export async function getTimezoneFromGHL(options = {}) {
+  return getAccountTimezone(options)
 }
 
 /**
@@ -372,9 +396,9 @@ export function resolveDateRange ({ startDate, endDate, timezone = DEFAULT_TIMEZ
  * @param {string} [params.timezone] - Zona horaria (si no se pasa, se obtiene de GHL)
  * @returns {Promise<{ startUtc: string|null, endUtc: string|null, appliedTimezone: string, isFiltered: boolean }>}
  */
-export async function resolveDateRangeWithGHLTimezone ({ startDate, endDate, timezone } = {}) {
+export async function resolveDateRangeWithGHLTimezone ({ startDate, endDate, timezone, signal } = {}) {
   // Si no se pasó timezone, obtenerlo de HighLevel
-  const resolvedTimezone = timezone || await getTimezoneFromGHL()
+  const resolvedTimezone = timezone || await getTimezoneFromGHL({ signal })
 
   // Llamar a la función sync con el timezone correcto
   return resolveDateRange({ startDate, endDate, timezone: resolvedTimezone })

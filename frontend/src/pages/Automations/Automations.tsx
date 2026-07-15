@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useState } from 'react'
+import React, { Suspense, useMemo, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/common'
@@ -12,8 +12,6 @@ import editorStyles from './editor/AutomationEditor.module.css'
 const loadAutomationEditor = () => import('./editor/AutomationEditor')
 const createAutomationEditor = () =>
   React.lazy(() => loadAutomationEditor().then((module) => ({ default: module.AutomationEditor })))
-
-const editorPreload = loadAutomationEditor
 
 function isDynamicImportFailure(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '')
@@ -156,15 +154,6 @@ const AutomationEditorRoute: React.FC = () => {
 }
 
 export const Automations: React.FC = () => {
-  // Precarga el chunk del editor en segundo plano: al entrar a una
-  // automatización ya está listo (sin espera perceptible)
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void editorPreload().catch(() => undefined)
-    }, 300)
-    return () => window.clearTimeout(timer)
-  }, [])
-
   return (
     <Routes>
       <Route index element={<AutomationsHome />} />

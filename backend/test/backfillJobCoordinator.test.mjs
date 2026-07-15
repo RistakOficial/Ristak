@@ -207,7 +207,8 @@ test('los schedulers de proyecciones de startup usan el coordinador global despu
     ['contactPersonIdentityProjectionService.js', 'scheduleContactPersonIdentityProjectionBackfill'],
     ['chatActivityProjectionService.js', 'scheduleChatActivityProjectionBackfill'],
     ['conversationalAgentMetricsProjectionService.js', 'scheduleConversationalAgentMetricsProjectionBackfill'],
-    ['messageFirstSeenProjectionService.js', 'scheduleMessageFirstSeenProjectionBackfill']
+    ['messageFirstSeenProjectionService.js', 'scheduleMessageFirstSeenProjectionBackfill'],
+    ['trackingVisitorProjectionService.js', 'scheduleTrackingVisitorProjectionBackfill']
   ]
 
   for (const [fileName, schedulerName] of maintenanceServices) {

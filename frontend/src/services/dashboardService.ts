@@ -11,8 +11,15 @@ import {
   registerAuthScopedCacheInvalidator,
   syncAuthScopedCachePrincipal
 } from './authPrincipalCache'
-import { registerRistakApiReadCacheInvalidator } from './authFetch'
-import { getOrCreateSharedRequest } from './sharedRequest'
+import {
+  registerRistakApiReadCacheInvalidator,
+  type ApiReadCacheInvalidationContext
+} from './authFetch'
+import {
+  abortAndClearSharedRequests,
+  getOrCreateSharedRequest
+} from './sharedRequest'
+import { RequestTimeoutError, withRequestTimeout } from './requestTimeout'
 
 export interface DashboardKPI {
   value: number;
@@ -85,6 +92,7 @@ export interface DashboardVisitorsPageParams {
   cursor?: string | null;
   search?: string;
   limit?: number;
+  signal?: AbortSignal;
 }
 
 export interface SourceDatum {
@@ -117,6 +125,8 @@ export interface OriginDistributionData {
   whatsappNumbers?: WhatsAppNumberOriginDatum[];
 }
 
+export type OriginTrafficDimension = 'sources' | 'platforms' | 'devices' | 'placements' | 'browsers' | 'os'
+
 export interface DashboardMobileAnalyticsSnapshot {
   metrics: DashboardMetrics;
   origin: OriginDistributionData;
@@ -144,30 +154,237 @@ const EMPTY_ORIGIN_DISTRIBUTION: OriginDistributionData = {
 
 const DASHBOARD_METRICS_FRESH_MS = 30_000
 const DASHBOARD_METRICS_STALE_MS = 5 * 60_000
+const DASHBOARD_REQUEST_TIMEOUT_MS = 20_000
+// La cola no extiende el loader hasta 40-45 s. Si los dos carriles siguen
+// ocupados diez segundos, esa zona falla de forma local y reintentable; el
+// presupuesto de ejecución de 20 s empieza sólo cuando la lectura es admitida.
+const DASHBOARD_HEAVY_QUEUE_TIMEOUT_MS = 10_000
 const dashboardMetricsSnapshots = new Map<string, { data: DashboardMetrics; fetchedAt: number }>()
 const dashboardMetricsInflight = new Map<string, Promise<DashboardMetrics>>()
+let dashboardMetricsRevision = 0
+const ORIGIN_DISTRIBUTION_CACHE_LIMIT = 24
+const originDistributionSnapshots = new Map<string, { data: OriginDistributionData; fetchedAt: number }>()
+const originDistributionInflight = new Map<string, Promise<OriginDistributionData>>()
+let originDistributionRevision = 0
 const MOBILE_ANALYTICS_FRESH_MS = 30_000
 const MOBILE_ANALYTICS_STALE_MS = 5 * 60_000
 const MOBILE_ANALYTICS_CACHE_LIMIT = 8
 const mobileAnalyticsSnapshots = new Map<string, { data: DashboardMobileAnalyticsSnapshot; fetchedAt: number }>()
+const mobileAnalyticsInflight = new Map<string, Promise<DashboardMobileAnalyticsSnapshot>>()
+let mobileAnalyticsRevision = 0
 
-function clearDashboardMetricSnapshots() {
+const DASHBOARD_HEAVY_PRIORITY = {
+  metrics: 0,
+  operational: 1,
+  financial: 2,
+  extendedChart: 3,
+  funnel: 4,
+  trafficSources: 5,
+  origin: 6
+} as const
+const DASHBOARD_HEAVY_REQUEST_CONCURRENCY = 2
+
+type DashboardHeavyRequestEntry = {
+  priority: number;
+  sequence: number;
+  request: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+  signal?: AbortSignal;
+  cleanup: () => void;
+}
+
+const dashboardHeavyRequestQueue: DashboardHeavyRequestEntry[] = []
+let dashboardHeavyRequestActiveCount = 0
+let dashboardHeavyRequestSequence = 0
+let dashboardHeavyPumpScheduled = false
+
+function dashboardQueueAbortError(signal?: AbortSignal) {
+  if (signal?.reason instanceof Error) return signal.reason
+  return new DOMException('La carga del Dashboard fue cancelada', 'AbortError')
+}
+
+function pumpDashboardHeavyRequestQueue() {
+  if (dashboardHeavyRequestActiveCount >= DASHBOARD_HEAVY_REQUEST_CONCURRENCY) return
+
+  dashboardHeavyRequestQueue.sort((left, right) => (
+    left.priority - right.priority || left.sequence - right.sequence
+  ))
+
+  while (
+    dashboardHeavyRequestActiveCount < DASHBOARD_HEAVY_REQUEST_CONCURRENCY
+    && dashboardHeavyRequestQueue.length > 0
+  ) {
+    const entry = dashboardHeavyRequestQueue.shift()!
+    entry.cleanup()
+    if (entry.signal?.aborted) {
+      entry.reject(dashboardQueueAbortError(entry.signal))
+      continue
+    }
+
+    dashboardHeavyRequestActiveCount += 1
+    Promise.resolve()
+      .then(entry.request)
+      .then(entry.resolve, entry.reject)
+      .finally(() => {
+        dashboardHeavyRequestActiveCount = Math.max(0, dashboardHeavyRequestActiveCount - 1)
+        scheduleDashboardHeavyRequestPump()
+      })
+  }
+}
+
+function scheduleDashboardHeavyRequestPump() {
+  if (
+    dashboardHeavyRequestActiveCount >= DASHBOARD_HEAVY_REQUEST_CONCURRENCY
+    || dashboardHeavyPumpScheduled
+  ) return
+  dashboardHeavyPumpScheduled = true
+  // Agrupar el mismo flush de effects permite que métricas/resumen operativo
+  // ganen prioridad aunque una card hija se haya montado primero.
+  void Promise.resolve().then(() => {
+    dashboardHeavyPumpScheduled = false
+    pumpDashboardHeavyRequestQueue()
+  })
+}
+
+function scheduleDashboardHeavyRequest<T>(
+  request: () => Promise<T>,
+  {
+    signal,
+    priority,
+    queueTimeoutMs = DASHBOARD_HEAVY_QUEUE_TIMEOUT_MS,
+    queueTimeoutMessage = 'El Dashboard sigue ocupado. Reintenta la carga.'
+  }: {
+    signal?: AbortSignal;
+    priority: number;
+    queueTimeoutMs?: number;
+    queueTimeoutMessage?: string;
+  }
+): Promise<T> {
+  if (signal?.aborted) return Promise.reject(dashboardQueueAbortError(signal))
+
+  return new Promise<T>((resolve, reject) => {
+    let queueTimeoutId: ReturnType<typeof setTimeout> | null = null
+    const entry: DashboardHeavyRequestEntry = {
+      priority,
+      sequence: dashboardHeavyRequestSequence++,
+      request,
+      resolve: value => resolve(value as T),
+      reject,
+      signal,
+      cleanup: () => {}
+    }
+    const rejectWhileQueued = (error: unknown) => {
+      const index = dashboardHeavyRequestQueue.indexOf(entry)
+      if (index < 0) return
+      dashboardHeavyRequestQueue.splice(index, 1)
+      entry.cleanup()
+      reject(error)
+    }
+    const onAbort = () => {
+      rejectWhileQueued(dashboardQueueAbortError(signal))
+    }
+    const onQueueTimeout = () => {
+      rejectWhileQueued(new RequestTimeoutError(queueTimeoutMessage))
+    }
+    entry.cleanup = () => {
+      signal?.removeEventListener('abort', onAbort)
+      if (queueTimeoutId !== null) {
+        globalThis.clearTimeout(queueTimeoutId)
+        queueTimeoutId = null
+      }
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    queueTimeoutId = globalThis.setTimeout(onQueueTimeout, queueTimeoutMs)
+
+    // Cerrar la carrera entre el check inicial y el listener: una navegación
+    // rápida nunca debe dejar una entrada muerta ocupando la cola.
+    if (signal?.aborted) {
+      entry.cleanup()
+      reject(dashboardQueueAbortError(signal))
+      return
+    }
+
+    dashboardHeavyRequestQueue.push(entry)
+    scheduleDashboardHeavyRequestPump()
+  })
+}
+
+function scheduleDashboardHeavyRead<T>({
+  request,
+  signal,
+  priority,
+  timeoutMessage
+}: {
+  request: (signal: AbortSignal) => Promise<T>;
+  signal?: AbortSignal;
+  priority: number;
+  timeoutMessage: string;
+}): Promise<T> {
+  // La espera de cola tiene su propio límite. El presupuesto de ejecución/red
+  // empieza únicamente cuando el scheduler admite esta familia pesada.
+  return scheduleDashboardHeavyRequest(
+    () => withRequestTimeout({
+      timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS,
+      timeoutMessage,
+      signal,
+      request
+    }),
+    { signal, priority }
+  )
+}
+
+function clearDashboardMetricSnapshots(
+  { abortInflight = true }: Partial<ApiReadCacheInvalidationContext> = {}
+) {
+  if (!abortInflight) return
+  dashboardMetricsRevision += 1
+  originDistributionRevision += 1
   dashboardMetricsSnapshots.clear()
-  dashboardMetricsInflight.clear()
+  originDistributionSnapshots.clear()
+  abortAndClearSharedRequests(dashboardMetricsInflight)
+  abortAndClearSharedRequests(originDistributionInflight)
 }
 
 registerAuthScopedCacheInvalidator(clearDashboardMetricSnapshots)
-registerRistakApiReadCacheInvalidator(clearDashboardMetricSnapshots)
+registerRistakApiReadCacheInvalidator(clearDashboardMetricSnapshots, {
+  pathPrefixes: ['/api/dashboard']
+})
 
-function clearMobileAnalyticsSnapshots() {
+function clearMobileAnalyticsSnapshots(
+  { abortInflight = true }: Partial<ApiReadCacheInvalidationContext> = {}
+) {
+  if (!abortInflight) return
+  mobileAnalyticsRevision += 1
   mobileAnalyticsSnapshots.clear()
+  abortAndClearSharedRequests(mobileAnalyticsInflight)
 }
 
 registerAuthScopedCacheInvalidator(clearMobileAnalyticsSnapshots)
-registerRistakApiReadCacheInvalidator(clearMobileAnalyticsSnapshots)
+registerRistakApiReadCacheInvalidator(clearMobileAnalyticsSnapshots, {
+  pathPrefixes: ['/api/dashboard']
+})
 
 function dashboardMetricsKey(params: { start: Date; end: Date }) {
   return `${formatDateToISO(params.start)}:${formatEndDateToISO(params.end)}`
+}
+
+function originDistributionKey(params: {
+  start: Date;
+  end: Date;
+  includeWeb?: boolean;
+  includeWhatsapp?: boolean;
+  dimension?: OriginTrafficDimension;
+  includeBreakdowns?: boolean;
+}) {
+  return [
+    formatDateToISO(params.start),
+    formatEndDateToISO(params.end),
+    params.includeWeb === false ? 'no-web' : 'web',
+    params.includeWhatsapp === false ? 'no-whatsapp' : 'whatsapp',
+    params.dimension || 'all-dimensions',
+    params.includeBreakdowns === false ? 'traffic-only' : 'with-breakdowns'
+  ].join(':')
 }
 
 function mobileAnalyticsKey(params: {
@@ -184,6 +401,26 @@ function mobileAnalyticsKey(params: {
     params.funnelScope || 'all',
     params.financialScope || 'all'
   ].join(':')
+}
+
+async function fetchDashboardSeries(
+  path: string,
+  queryParams: URLSearchParams,
+  signal: AbortSignal | undefined,
+  label: string
+): Promise<{ label: string; value: number }[]> {
+  return scheduleDashboardHeavyRead({
+    timeoutMessage: `${label} tardó demasiado. Reintenta la carga.`,
+    signal,
+    priority: DASHBOARD_HEAVY_PRIORITY.extendedChart,
+    request: async requestSignal => {
+      const response = await fetch(apiUrl(`${path}?${queryParams}`), { signal: requestSignal })
+      if (!response.ok) throw new Error(`No se pudo cargar ${label.toLocaleLowerCase('es-MX')}`)
+      const data = await response.json()
+      if (!Array.isArray(data)) throw new Error(`${label} respondió con datos incompletos`)
+      return data
+    }
+  })
 }
 
 class DashboardService {
@@ -216,6 +453,7 @@ class DashboardService {
   }, options: { forceRefresh?: boolean; signal?: AbortSignal } = {}): Promise<DashboardMobileAnalyticsSnapshot> {
     syncAuthScopedCachePrincipal()
     const principalRevision = getAuthScopedCacheRevision()
+    const snapshotRevision = mobileAnalyticsRevision
     const key = mobileAnalyticsKey(params)
     const cached = mobileAnalyticsSnapshots.get(key)
     if (!options.forceRefresh && cached && Date.now() - cached.fetchedAt < MOBILE_ANALYTICS_FRESH_MS) {
@@ -229,25 +467,39 @@ class DashboardService {
       funnelScope: params.funnelScope || 'all',
       financialScope: params.financialScope || 'all'
     })
-    const response = await fetch(apiUrl(`/api/dashboard/mobile-analytics-snapshot?${queryParams}`), {
-      signal: options.signal
-    })
-    if (!response.ok) throw new Error('No se pudo cargar Analíticas móvil')
-    const result = await response.json()
-    const data = result?.data as DashboardMobileAnalyticsSnapshot | undefined
-    if (!data?.metrics || !data?.origin || !Array.isArray(data.funnel) || !Array.isArray(data.financialChart)) {
-      throw new Error('El snapshot de Analíticas móvil está incompleto')
-    }
+    return getOrCreateSharedRequest({
+      inflight: mobileAnalyticsInflight,
+      key,
+      signal: options.signal,
+      abortWhenUnused: true,
+      createRequest: sharedSignal => scheduleDashboardHeavyRead({
+        timeoutMessage: 'Analíticas móvil tardó demasiado. Reintenta la carga.',
+        signal: sharedSignal,
+        priority: DASHBOARD_HEAVY_PRIORITY.metrics,
+        request: async signal => {
+          const response = await fetch(apiUrl(`/api/dashboard/mobile-analytics-snapshot?${queryParams}`), { signal })
+          if (!response.ok) throw new Error('No se pudo cargar Analíticas móvil')
+          const result = await response.json()
+          const data = result?.data as DashboardMobileAnalyticsSnapshot | undefined
+          if (!data?.metrics || !data?.origin || !Array.isArray(data.funnel) || !Array.isArray(data.financialChart)) {
+            throw new Error('El snapshot de Analíticas móvil está incompleto')
+          }
 
-    if (principalRevision === getAuthScopedCacheRevision()) {
-      while (mobileAnalyticsSnapshots.size >= MOBILE_ANALYTICS_CACHE_LIMIT) {
-        const oldest = mobileAnalyticsSnapshots.keys().next().value
-        if (!oldest) break
-        mobileAnalyticsSnapshots.delete(oldest)
-      }
-      mobileAnalyticsSnapshots.set(key, { data, fetchedAt: Date.now() })
-    }
-    return data
+          if (
+            principalRevision === getAuthScopedCacheRevision()
+            && snapshotRevision === mobileAnalyticsRevision
+          ) {
+            while (mobileAnalyticsSnapshots.size >= MOBILE_ANALYTICS_CACHE_LIMIT) {
+              const oldest = mobileAnalyticsSnapshots.keys().next().value
+              if (!oldest) break
+              mobileAnalyticsSnapshots.delete(oldest)
+            }
+            mobileAnalyticsSnapshots.set(key, { data, fetchedAt: Date.now() })
+          }
+          return data
+        }
+      })
+    })
   }
 
   peekDashboardMetrics(params: { start: Date; end: Date }): DashboardMetrics | null {
@@ -270,6 +522,7 @@ class DashboardService {
   }, options: { forceRefresh?: boolean; signal?: AbortSignal } = {}): Promise<DashboardMetrics> {
     syncAuthScopedCachePrincipal()
     const principalRevision = getAuthScopedCacheRevision()
+    const snapshotRevision = dashboardMetricsRevision
     const key = dashboardMetricsKey(params)
     const cached = dashboardMetricsSnapshots.get(key)
     if (!options.forceRefresh && cached && Date.now() - cached.fetchedAt < DASHBOARD_METRICS_FRESH_MS) {
@@ -279,24 +532,28 @@ class DashboardService {
       inflight: dashboardMetricsInflight,
       key,
       signal: options.signal,
-      createRequest: async () => {
-        try {
+      abortWhenUnused: true,
+      createRequest: sharedSignal => scheduleDashboardHeavyRead({
+        timeoutMessage: 'Las métricas del Dashboard tardaron demasiado. Reintenta la carga.',
+        signal: sharedSignal,
+        priority: DASHBOARD_HEAVY_PRIORITY.metrics,
+        request: async signal => {
           const queryParams = new URLSearchParams({
             startDate: formatDateToISO(params.start),
             endDate: formatEndDateToISO(params.end)
           });
 
-          // El request pertenece al rango, no al primer componente que llegó.
-          // Cada consumidor cancela únicamente su espera en sharedRequest.ts.
-          const response = await fetch(apiUrl(`/api/dashboard/metrics?${queryParams}`));
+          const response = await fetch(apiUrl(`/api/dashboard/metrics?${queryParams}`), { signal });
 
           if (!response.ok) {
-            // Si el endpoint no existe, devolver valores por defecto
-            return this.getDefaultMetrics();
+            throw new Error('No se pudieron cargar las métricas del Dashboard')
           }
 
           const data = await response.json() as DashboardMetrics
-          if (principalRevision === getAuthScopedCacheRevision()) {
+          if (
+            principalRevision === getAuthScopedCacheRevision()
+            && snapshotRevision === dashboardMetricsRevision
+          ) {
             while (dashboardMetricsSnapshots.size >= 12) {
               const oldest = dashboardMetricsSnapshots.keys().next().value
               if (!oldest) break
@@ -305,11 +562,8 @@ class DashboardService {
             dashboardMetricsSnapshots.set(key, { data, fetchedAt: Date.now() })
           }
           return data
-        } catch {
-          // TODO: Implement proper logging service
-          return this.getDefaultMetrics();
         }
-      }
+      })
     })
   }
 
@@ -317,20 +571,18 @@ class DashboardService {
     start: Date;
     end: Date;
   }, signal?: AbortSignal): Promise<DashboardOperationalSnapshot> {
-    const emptySnapshot: DashboardOperationalSnapshot = {
-      transactions: [],
-      contacts: [],
-      appointments: []
-    };
-
-    try {
+    return scheduleDashboardHeavyRead({
+      timeoutMessage: 'El resumen operativo tardó demasiado. Reintenta la carga.',
+      signal,
+      priority: DASHBOARD_HEAVY_PRIORITY.operational,
+      request: async requestSignal => {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
         endDate: formatDateToISO(params.end)
       });
-      const response = await fetch(apiUrl(`/api/dashboard/operational-snapshot?${queryParams}`), { signal });
+      const response = await fetch(apiUrl(`/api/dashboard/operational-snapshot?${queryParams}`), { signal: requestSignal });
 
-      if (!response.ok) return emptySnapshot;
+      if (!response.ok) throw new Error('No se pudo cargar el resumen operativo')
 
       const result = await response.json();
       const data = result?.data || {};
@@ -340,10 +592,8 @@ class DashboardService {
         contacts: Array.isArray(data.contacts) ? data.contacts : [],
         appointments: Array.isArray(data.appointments) ? data.appointments : []
       };
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      return emptySnapshot;
-    }
+      }
+    })
   }
 
   async getFinancialChart(params: {
@@ -351,7 +601,11 @@ class DashboardService {
     end: Date;
     scope?: 'all' | 'attribution' | 'campaigns';
   }, signal?: AbortSignal): Promise<ChartData[]> {
-    try {
+    return scheduleDashboardHeavyRead({
+      timeoutMessage: 'La gráfica financiera tardó demasiado. Reintenta la carga.',
+      signal,
+      priority: DASHBOARD_HEAVY_PRIORITY.financial,
+      request: async requestSignal => {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
         endDate: formatEndDateToISO(params.end),
@@ -359,10 +613,10 @@ class DashboardService {
       });
 
       // Usar el nuevo endpoint de dashboard que muestra TODOS los ingresos y gastos
-      const response = await fetch(apiUrl(`/api/dashboard/financial-overview?${queryParams}`), { signal });
+      const response = await fetch(apiUrl(`/api/dashboard/financial-overview?${queryParams}`), { signal: requestSignal });
 
       if (!response.ok) {
-        return [];
+        throw new Error('No se pudo cargar la gráfica financiera')
       }
 
       const result = await response.json();
@@ -376,11 +630,8 @@ class DashboardService {
         ingresos: item.value || 0,
         gastado: item.value2 || 0
       }));
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
-    }
+      }
+    })
   }
 
   async getRoasData(params: {
@@ -388,24 +639,11 @@ class DashboardService {
     end: Date;
     signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end)
-      });
-
-      const response = await fetch(apiUrl(`/api/dashboard/roas?${queryParams}`), { signal: params.signal });
-
-      if (!response.ok) {
-        return [];
-      }
-
-      return await response.json();
-    } catch (error) {
-      if (params.signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
-    }
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end)
+    })
+    return fetchDashboardSeries('/api/dashboard/roas', queryParams, params.signal, 'El ROAS')
   }
 
   async getNewCustomersData(params: {
@@ -414,25 +652,12 @@ class DashboardService {
     groupBy?: 'day' | 'month';
     signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        groupBy: params.groupBy || 'day'
-      });
-
-      const response = await fetch(apiUrl(`/api/dashboard/new-customers?${queryParams}`), { signal: params.signal });
-
-      if (!response.ok) {
-        return [];
-      }
-
-      return await response.json();
-    } catch (error) {
-      if (params.signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
-    }
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      groupBy: params.groupBy || 'day'
+    })
+    return fetchDashboardSeries('/api/dashboard/new-customers', queryParams, params.signal, 'Nuevos clientes')
   }
 
   async getVisitorsData(params: {
@@ -442,46 +667,26 @@ class DashboardService {
     periods?: { start: string; end: string }[];
     signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        groupBy: params.groupBy || 'day'
-      });
-      if (params.periods && params.periods.length > 0) {
-        queryParams.set('periods', JSON.stringify(params.periods));
-      }
-
-      const response = await fetch(apiUrl(`/api/dashboard/visitors?${queryParams}`), { signal: params.signal });
-
-      if (!response.ok) {
-        return [];
-      }
-
-      return await response.json();
-    } catch (error) {
-      if (params.signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      groupBy: params.groupBy || 'day'
+    })
+    if (params.periods && params.periods.length > 0) {
+      queryParams.set('periods', JSON.stringify(params.periods))
     }
+    return fetchDashboardSeries('/api/dashboard/visitors', queryParams, params.signal, 'Visitantes')
   }
 
   async getVisitorsPage(params: DashboardVisitorsPageParams): Promise<CursorPage<DashboardVisitorDetail>> {
-    try {
-      return await trackingService.getVisitorsPage<DashboardVisitorDetail>({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        scope: params.scope || 'all',
-        cursor: params.cursor,
-        search: params.search,
-        limit: params.limit
-      })
-    } catch (error) {
-      return {
-        items: [],
-        pagination: { limit: Math.min(100, Math.max(1, params.limit ?? 50)), hasNext: false, hasMore: false, nextCursor: null }
-      }
-    }
+    return trackingService.getVisitorsPage<DashboardVisitorDetail>({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      scope: params.scope || 'all',
+      cursor: params.cursor,
+      search: params.search,
+      limit: params.limit
+    }, { signal: params.signal })
   }
 
   async getVisitorsList(params: DashboardVisitorsPageParams): Promise<DashboardVisitorDetail[]> {
@@ -494,25 +699,12 @@ class DashboardService {
     groupBy?: 'day' | 'month';
     signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        groupBy: params.groupBy || 'day'
-      });
-
-      const response = await fetch(apiUrl(`/api/dashboard/leads?${queryParams}`), { signal: params.signal });
-
-      if (!response.ok) {
-        return [];
-      }
-
-      return await response.json();
-    } catch (error) {
-      if (params.signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
-    }
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      groupBy: params.groupBy || 'day'
+    })
+    return fetchDashboardSeries('/api/dashboard/leads', queryParams, params.signal, 'Leads')
   }
 
   async getAppointmentsData(params: {
@@ -522,28 +714,15 @@ class DashboardService {
     periods?: { start: string; end: string }[];
     signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        groupBy: params.groupBy || 'day'
-      });
-      if (params.periods && params.periods.length > 0) {
-        queryParams.set('periods', JSON.stringify(params.periods));
-      }
-
-      const response = await fetch(apiUrl(`/api/dashboard/appointments?${queryParams}`), { signal: params.signal });
-
-      if (!response.ok) {
-        return [];
-      }
-
-      return await response.json();
-    } catch (error) {
-      if (params.signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      groupBy: params.groupBy || 'day'
+    })
+    if (params.periods && params.periods.length > 0) {
+      queryParams.set('periods', JSON.stringify(params.periods))
     }
+    return fetchDashboardSeries('/api/dashboard/appointments', queryParams, params.signal, 'Citas')
   }
 
   async getAttendancesData(params: {
@@ -553,28 +732,15 @@ class DashboardService {
     periods?: { start: string; end: string }[];
     signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        groupBy: params.groupBy || 'day'
-      });
-      if (params.periods && params.periods.length > 0) {
-        queryParams.set('periods', JSON.stringify(params.periods));
-      }
-
-      const response = await fetch(apiUrl(`/api/dashboard/attendances?${queryParams}`), { signal: params.signal });
-
-      if (!response.ok) {
-        return [];
-      }
-
-      return await response.json();
-    } catch (error) {
-      if (params.signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      groupBy: params.groupBy || 'day'
+    })
+    if (params.periods && params.periods.length > 0) {
+      queryParams.set('periods', JSON.stringify(params.periods))
     }
+    return fetchDashboardSeries('/api/dashboard/attendances', queryParams, params.signal, 'Asistencias')
   }
 
   async getSalesData(params: {
@@ -583,25 +749,12 @@ class DashboardService {
     groupBy?: 'day' | 'month';
     signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        groupBy: params.groupBy || 'day'
-      });
-
-      const response = await fetch(apiUrl(`/api/dashboard/sales?${queryParams}`), { signal: params.signal });
-
-      if (!response.ok) {
-        return [];
-      }
-
-      return await response.json();
-    } catch (error) {
-      if (params.signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
-    }
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      groupBy: params.groupBy || 'day'
+    })
+    return fetchDashboardSeries('/api/dashboard/sales', queryParams, params.signal, 'Ventas')
   }
 
   async getTrafficSources(params: {
@@ -609,27 +762,28 @@ class DashboardService {
     end: Date;
     includeWeb?: boolean;
     includeWhatsapp?: boolean;
+    signal?: AbortSignal;
   }): Promise<{ name: string; value: number; color?: string }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        includeWeb: params.includeWeb === false ? '0' : '1',
-        includeWhatsapp: params.includeWhatsapp === false ? '0' : '1'
-      });
-
-      const response = await fetch(apiUrl(`/api/dashboard/traffic-sources?${queryParams}`));
-
-      if (!response.ok) {
-        return [];
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      includeWeb: params.includeWeb === false ? '0' : '1',
+      includeWhatsapp: params.includeWhatsapp === false ? '0' : '1'
+    });
+    const { response, result } = await scheduleDashboardHeavyRead({
+      timeoutMessage: 'Las fuentes de tráfico tardaron demasiado. Reintenta la carga.',
+      signal: params.signal,
+      priority: DASHBOARD_HEAVY_PRIORITY.trafficSources,
+      request: async signal => {
+        const response = await fetch(apiUrl(`/api/dashboard/traffic-sources?${queryParams}`), { signal });
+        const result = await response.json().catch(() => null);
+        return { response, result };
       }
-
-      const result = await response.json();
-      return result?.data || [];
-    } catch (error) {
-      // TODO: Implement proper logging service
-      return [];
+    });
+    if (!response.ok) {
+      throw new Error(result?.error || 'No se pudieron cargar las fuentes de tráfico.');
     }
+    return Array.isArray(result?.data) ? result.data : [];
   }
 
   async getOriginDistribution(params: {
@@ -637,29 +791,72 @@ class DashboardService {
     end: Date;
     includeWeb?: boolean;
     includeWhatsapp?: boolean;
+    dimension?: OriginTrafficDimension;
+    includeBreakdowns?: boolean;
     signal?: AbortSignal;
   }): Promise<OriginDistributionData> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        includeWeb: params.includeWeb === false ? '0' : '1',
-        includeWhatsapp: params.includeWhatsapp === false ? '0' : '1'
-      });
-
-      const response = await fetch(apiUrl(`/api/dashboard/origin-distribution?${queryParams}`), { signal: params.signal });
-
-      if (!response.ok) {
-        return EMPTY_ORIGIN_DISTRIBUTION;
-      }
-
-      const result = await response.json();
-      return result?.data || EMPTY_ORIGIN_DISTRIBUTION;
-    } catch (error) {
-      if (params.signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return EMPTY_ORIGIN_DISTRIBUTION;
+    syncAuthScopedCachePrincipal()
+    const key = originDistributionKey(params)
+    const cached = originDistributionSnapshots.get(key)
+    if (cached && Date.now() - cached.fetchedAt < DASHBOARD_METRICS_FRESH_MS) {
+      originDistributionSnapshots.delete(key)
+      originDistributionSnapshots.set(key, cached)
+      return cached.data
     }
+    if (cached) originDistributionSnapshots.delete(key)
+
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      includeWeb: params.includeWeb === false ? '0' : '1',
+      includeWhatsapp: params.includeWhatsapp === false ? '0' : '1',
+      includeBreakdowns: params.includeBreakdowns === false ? '0' : '1'
+    });
+    if (params.dimension) queryParams.set('dimension', params.dimension)
+
+    const requestPrincipalRevision = getAuthScopedCacheRevision()
+    const requestCacheRevision = originDistributionRevision
+    return getOrCreateSharedRequest({
+      inflight: originDistributionInflight,
+      key,
+      signal: params.signal,
+      abortWhenUnused: true,
+      createRequest: async sharedSignal => {
+        const { response, result } = await scheduleDashboardHeavyRead({
+          timeoutMessage: 'La distribución de origen tardó demasiado. Reintenta la carga.',
+          signal: sharedSignal,
+          priority: DASHBOARD_HEAVY_PRIORITY.origin,
+          request: async signal => {
+            const response = await fetch(apiUrl(`/api/dashboard/origin-distribution?${queryParams}`), { signal });
+            const result = await response.json().catch(() => null);
+            return { response, result };
+          }
+        });
+
+        if (!response.ok) {
+          const message = result && typeof result === 'object' && 'error' in result
+            ? String(result.error)
+            : 'No se pudo cargar la distribución de origen.';
+          throw new Error(message);
+        }
+
+        const data = result && typeof result === 'object' && 'data' in result
+          ? (result.data as OriginDistributionData)
+          : EMPTY_ORIGIN_DISTRIBUTION;
+        if (
+          requestPrincipalRevision === getAuthScopedCacheRevision()
+          && requestCacheRevision === originDistributionRevision
+        ) {
+          while (originDistributionSnapshots.size >= ORIGIN_DISTRIBUTION_CACHE_LIMIT) {
+            const oldestKey = originDistributionSnapshots.keys().next().value
+            if (!oldestKey) break
+            originDistributionSnapshots.delete(oldestKey)
+          }
+          originDistributionSnapshots.set(key, { data, fetchedAt: Date.now() })
+        }
+        return data
+      }
+    })
   }
 
   async getFunnelData(params: {
@@ -668,27 +865,26 @@ class DashboardService {
     scope?: 'all' | 'attribution' | 'campaigns';
     includeWeb?: boolean;
   }, signal?: AbortSignal): Promise<{ stage: string; value: number }[]> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end),
-        scope: params.scope || 'all',
-        includeWeb: params.includeWeb === false ? '0' : '1'
-      });
-
-      const response = await fetch(apiUrl(`/api/dashboard/funnel?${queryParams}`), { signal });
-
-      if (!response.ok) {
-        return [];
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      scope: params.scope || 'all',
+      includeWeb: params.includeWeb === false ? '0' : '1'
+    });
+    const { response, result } = await scheduleDashboardHeavyRead({
+      timeoutMessage: 'El embudo tardó demasiado. Reintenta la carga.',
+      signal,
+      priority: DASHBOARD_HEAVY_PRIORITY.funnel,
+      request: async requestSignal => {
+        const response = await fetch(apiUrl(`/api/dashboard/funnel?${queryParams}`), { signal: requestSignal });
+        const result = await response.json().catch(() => null);
+        return { response, result };
       }
-
-      const result = await response.json();
-      return result?.data || [];
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      // TODO: Implement proper logging service
-      return [];
+    });
+    if (!response.ok) {
+      throw new Error(result?.error || 'No se pudo cargar el embudo.');
     }
+    return Array.isArray(result?.data) ? result.data : [];
   }
 
   private getDefaultMetrics(): DashboardMetrics {

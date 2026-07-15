@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Card, DateRangePicker, AreaChart, PageContainer, PageHeader, OriginDistributionCard, ConversionFunnelChart, ViewSelector, Loading, TabList, Modal } from '@/components/common'
+import { Button, Card, DateRangePicker, AreaChart, PageContainer, PageHeader, OriginDistributionCard, ConversionFunnelChart, ViewSelector, Loading, TabList, Modal } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import {
   DollarSign,
@@ -36,6 +36,7 @@ import { parseSortableDateValue } from '@/utils/dateSort'
 import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
 import { Badge } from '@/components/common/Badge'
 import { hasLicenseFeature } from '@/utils/accessControl'
+import { useNotification } from '@/contexts/NotificationContext'
 
 const LazyContactDetailsModal = React.lazy(async () => {
   const module = await import('@/components/common/ContactDetailsModal/ContactDetailsModal')
@@ -524,6 +525,7 @@ export const Dashboard: React.FC = () => {
   const { user, locationId } = useAuth()
   const { labels } = useLabels()
   const { formatLocalDateTime, timezone } = useTimezone()
+  const { showToast } = useNotification()
   const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
   const businessToday = React.useMemo(
     () => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date(),
@@ -555,10 +557,13 @@ export const Dashboard: React.FC = () => {
   const [funnelScope, setFunnelScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
   const [financialScope, setFinancialScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
   const [loading, setLoading] = useState(true)
+  const [metricsError, setMetricsError] = useState<string | null>(null)
+  const [metricsRetryKey, setMetricsRetryKey] = useState(0)
   const [chartLoading, setChartLoading] = useState(true)
   const [selectedChartView, setSelectedChartView] = useState<ChartView>(routeChartView)
   const [extendedChartDataLoaded, setExtendedChartDataLoaded] = useState(false)
   const [extendedChartDataLoading, setExtendedChartDataLoading] = useState(false)
+  const [extendedChartDataError, setExtendedChartDataError] = useState<string | null>(null)
   const extendedChartRequestRef = React.useRef(0)
   const extendedChartAbortRef = React.useRef<AbortController | null>(null)
   const [contactModalOpen, setContactModalOpen] = useState(false)
@@ -567,6 +572,8 @@ export const Dashboard: React.FC = () => {
   const [contactModalType, setContactModalType] = useState<ContactModalType>('interesados')
   const [contactModalLoading, setContactModalLoading] = useState(false)
   const [contactModalContacts, setContactModalContacts] = useState<ContactListItem[]>([])
+  const contactModalRequestRef = React.useRef(0)
+  const contactModalAbortRef = React.useRef<AbortController | null>(null)
   const [visitorsModalOpen, setVisitorsModalOpen] = useState(false)
   const [visitorsModalTitle, setVisitorsModalTitle] = useState('Visitantes')
   const [visitorsModalSubtitle, setVisitorsModalSubtitle] = useState('')
@@ -574,6 +581,7 @@ export const Dashboard: React.FC = () => {
   const [visitorsModalData, setVisitorsModalData] = useState<DashboardVisitorDetail[]>([])
   const [visitorsModalPage, setVisitorsModalPage] = useState<VisitorsModalPageState>(emptyVisitorsModalPageState)
   const visitorsModalRequestRef = React.useRef(0)
+  const visitorsModalAbortRef = React.useRef<AbortController | null>(null)
   const [operationsLoading, setOperationsLoading] = useState(false)
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([])
   const [recentAppointments, setRecentAppointments] = useState<CalendarEvent[]>([])
@@ -870,35 +878,76 @@ export const Dashboard: React.FC = () => {
     page,
     search
   }: Pick<VisitorsModalPageState, 'cursor' | 'cursorHistory' | 'page' | 'search'>) => {
+    visitorsModalAbortRef.current?.abort()
+    const controller = new AbortController()
+    visitorsModalAbortRef.current = controller
     const requestId = visitorsModalRequestRef.current + 1
     visitorsModalRequestRef.current = requestId
     setVisitorsModalLoading(true)
 
-    const result = await dashboardService.getVisitorsPage({
-      start: dateRange.start,
-      end: dateRange.end,
-      scope: funnelScope,
-      cursor,
-      search,
-      limit: 50
-    })
-    if (visitorsModalRequestRef.current !== requestId) return
+    try {
+      const result = await dashboardService.getVisitorsPage({
+        start: dateRange.start,
+        end: dateRange.end,
+        scope: funnelScope,
+        cursor,
+        search,
+        limit: 50,
+        signal: controller.signal
+      })
+      if (visitorsModalRequestRef.current !== requestId) return
 
-    const coverageNotice = trackingVisitorsCoverageNotice(result.coverage)
-    if (result.items.length > 0 || !coverageNotice) {
-      setVisitorsModalData(result.items)
+      const coverageNotice = trackingVisitorsCoverageNotice(result.coverage)
+      if (result.items.length > 0 || !coverageNotice) {
+        setVisitorsModalData(result.items)
+      }
+      setVisitorsModalPage({
+        page,
+        cursor,
+        cursorHistory,
+        search,
+        hasNext: result.pagination.hasNext,
+        nextCursor: result.pagination.nextCursor,
+        coverageNotice
+      })
+    } catch (error) {
+      if (controller.signal.aborted) return
+      if (visitorsModalRequestRef.current !== requestId) return
+      setVisitorsModalData([])
+      setVisitorsModalPage({
+        ...emptyVisitorsModalPageState,
+        search,
+        coverageNotice: error instanceof Error
+          ? error.message
+          : 'No se pudieron cargar los visitantes. Intenta nuevamente.'
+      })
+    } finally {
+      if (visitorsModalRequestRef.current === requestId) setVisitorsModalLoading(false)
+      if (visitorsModalAbortRef.current === controller) visitorsModalAbortRef.current = null
     }
-    setVisitorsModalPage({
-      page,
-      cursor,
-      cursorHistory,
-      search,
-      hasNext: result.pagination.hasNext,
-      nextCursor: result.pagination.nextCursor,
-      coverageNotice
-    })
-    setVisitorsModalLoading(false)
   }, [dateRange.end, dateRange.start, funnelScope])
+
+  const closeVisitorsModal = React.useCallback(() => {
+    visitorsModalRequestRef.current += 1
+    visitorsModalAbortRef.current?.abort()
+    visitorsModalAbortRef.current = null
+    setVisitorsModalLoading(false)
+    setVisitorsModalOpen(false)
+  }, [])
+
+  const closeContactModal = React.useCallback(() => {
+    contactModalRequestRef.current += 1
+    contactModalAbortRef.current?.abort()
+    contactModalAbortRef.current = null
+    setContactModalLoading(false)
+    setContactModalOpen(false)
+  }, [])
+
+  React.useEffect(() => () => {
+    contactModalAbortRef.current?.abort()
+    visitorsModalAbortRef.current?.abort()
+    extendedChartAbortRef.current?.abort()
+  }, [])
 
   const handleVisitorsModalPageChange = React.useCallback((direction: 'next' | 'previous') => {
     if (direction === 'next') {
@@ -934,7 +983,7 @@ export const Dashboard: React.FC = () => {
     if (kind === 'visitors') {
       if (!analyticsEnabled) return
 
-      setContactModalOpen(false)
+      closeContactModal()
       setVisitorsModalOpen(true)
       setVisitorsModalTitle('Visitantes')
       setVisitorsModalSubtitle(selectedRangeLabel)
@@ -955,13 +1004,18 @@ export const Dashboard: React.FC = () => {
       title: string
     }
 
-    setVisitorsModalOpen(false)
+    closeVisitorsModal()
     setContactModalOpen(true)
     setContactModalTitle(contactConfig.title)
     setContactModalSubtitle(selectedRangeLabel)
     setContactModalType(contactConfig.modalType)
     setContactModalContacts([])
     setContactModalLoading(true)
+    contactModalAbortRef.current?.abort()
+    const controller = new AbortController()
+    contactModalAbortRef.current = controller
+    const requestId = contactModalRequestRef.current + 1
+    contactModalRequestRef.current = requestId
 
     try {
       const reportsService = await loadReportsService()
@@ -970,18 +1024,22 @@ export const Dashboard: React.FC = () => {
         to: formatEndDateToISO(dateRange.end, { timezone }),
         type: contactConfig.listType,
         scope: funnelScope
-      })
+      }, controller.signal)
+
+      if (contactModalRequestRef.current !== requestId) return
 
       setContactModalContacts(result.contacts.map(contact => ({
         ...contact,
         created_at: contact.created_at || (contact as any).createdAt
       })))
     } catch {
+      if (controller.signal.aborted || contactModalRequestRef.current !== requestId) return
       setContactModalContacts([])
     } finally {
-      setContactModalLoading(false)
+      if (contactModalRequestRef.current === requestId) setContactModalLoading(false)
+      if (contactModalAbortRef.current === controller) contactModalAbortRef.current = null
     }
-  }, [analyticsEnabled, dateRange.end, dateRange.start, funnelScope, getFunnelStageKind, labels.customers, labels.leads, loadVisitorsModalPage, selectedRangeLabel, timezone])
+  }, [analyticsEnabled, closeContactModal, closeVisitorsModal, dateRange.end, dateRange.start, funnelScope, getFunnelStageKind, labels.customers, labels.leads, loadVisitorsModalPage, selectedRangeLabel, timezone])
 
   const financialScopeOptions = React.useMemo(
     () => [
@@ -1024,7 +1082,13 @@ export const Dashboard: React.FC = () => {
 
   // Cargar datasets extendidos del gráfico solo cuando sean necesarios
   const loadExtendedChartData = React.useCallback(async () => {
-    if (!user || extendedChartDataLoading || extendedChartDataLoaded) {
+    if (
+      !user
+      || selectedChartView === 'revenue-spend'
+      || extendedChartDataLoading
+      || extendedChartDataLoaded
+      || extendedChartDataError
+    ) {
       return
     }
 
@@ -1038,6 +1102,7 @@ export const Dashboard: React.FC = () => {
     )
 
     setExtendedChartDataLoading(true)
+    setExtendedChartDataError(null)
     try {
       // Las métricas de CONTEO ÚNICO (visitantes, citados, asistencias) no se pueden
       // sumar por día para armar buckets que abarcan varios días: se contaría de más al
@@ -1050,76 +1115,113 @@ export const Dashboard: React.FC = () => {
         ? chartWindow.buckets.map(bucket => ({ start: bucket.periodStart, end: bucket.periodEnd }))
         : undefined
 
-      const visitorsPromise = analyticsEnabled
-        ? dashboardService.getVisitorsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods, signal: controller.signal })
-        : Promise.resolve<{ label: string; value: number }[]>([])
+      type ChartSeries = { label: string; value: number }[]
+      let primarySeriesPromise: Promise<ChartSeries>
+      let secondarySeriesPromise: Promise<ChartSeries>
 
-      const [visitorsData, leadsData, appointmentsData, attendancesData, salesData] = await Promise.all([
-        visitorsPromise,
-        dashboardService.getLeadsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, signal: controller.signal }),
-        dashboardService.getAppointmentsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods, signal: controller.signal }),
-        dashboardService.getAttendancesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods, signal: controller.signal }),
-        dashboardService.getSalesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, signal: controller.signal })
+      switch (selectedChartView) {
+        case 'visitors-leads':
+          if (!analyticsEnabled) return
+          primarySeriesPromise = dashboardService.getVisitorsData({
+            start: chartWindow.start,
+            end: chartWindow.end,
+            groupBy: chartApiGroupBy,
+            periods: bucketPeriods,
+            signal: controller.signal
+          })
+          secondarySeriesPromise = dashboardService.getLeadsData({
+            start: chartWindow.start,
+            end: chartWindow.end,
+            groupBy: chartApiGroupBy,
+            signal: controller.signal
+          })
+          break
+        case 'leads-appointments':
+          primarySeriesPromise = dashboardService.getLeadsData({
+            start: chartWindow.start,
+            end: chartWindow.end,
+            groupBy: chartApiGroupBy,
+            signal: controller.signal
+          })
+          secondarySeriesPromise = dashboardService.getAppointmentsData({
+            start: chartWindow.start,
+            end: chartWindow.end,
+            groupBy: chartApiGroupBy,
+            periods: bucketPeriods,
+            signal: controller.signal
+          })
+          break
+        case 'appointments-attendances':
+          primarySeriesPromise = dashboardService.getAppointmentsData({
+            start: chartWindow.start,
+            end: chartWindow.end,
+            groupBy: chartApiGroupBy,
+            periods: bucketPeriods,
+            signal: controller.signal
+          })
+          secondarySeriesPromise = dashboardService.getAttendancesData({
+            start: chartWindow.start,
+            end: chartWindow.end,
+            groupBy: chartApiGroupBy,
+            periods: bucketPeriods,
+            signal: controller.signal
+          })
+          break
+        case 'attendances-sales':
+          primarySeriesPromise = dashboardService.getAttendancesData({
+            start: chartWindow.start,
+            end: chartWindow.end,
+            groupBy: chartApiGroupBy,
+            periods: bucketPeriods,
+            signal: controller.signal
+          })
+          secondarySeriesPromise = dashboardService.getSalesData({
+            start: chartWindow.start,
+            end: chartWindow.end,
+            groupBy: chartApiGroupBy,
+            signal: controller.signal
+          })
+          break
+      }
+
+      // Ambas series se encolan juntas. La espera tiene un límite propio y cada
+      // deadline de 20 s empieza al obtener uno de los dos carriles del backend.
+      const [primarySeries, secondarySeries] = await Promise.all([
+        primarySeriesPromise,
+        secondarySeriesPromise
       ])
 
       if (!isCurrentRequest()) return
 
-      const visitorsMap = new Map(visitorsData.map(d => [d.label, d.value]))
-      const leadsMap = new Map(leadsData.map(d => [d.label, d.value]))
-      const appointmentsMap = new Map(appointmentsData.map(d => [d.label, d.value]))
-      const attendancesMap = new Map(attendancesData.map(d => [d.label, d.value]))
-      const salesMap = new Map(salesData.map(d => [d.label, d.value]))
-
+      const primaryMap = new Map(primarySeries.map(point => [point.label, point.value]))
+      const secondaryMap = new Map(secondarySeries.map(point => [point.label, point.value]))
       const allDates = new Set([
-        ...visitorsData.map(d => d.label),
-        ...leadsData.map(d => d.label),
-        ...appointmentsData.map(d => d.label),
-        ...attendancesData.map(d => d.label),
-        ...salesData.map(d => d.label)
+        ...primarySeries.map(point => point.label),
+        ...secondarySeries.map(point => point.label)
       ])
       const sortedDates = Array.from(allDates).sort()
-
-      if (analyticsEnabled) {
-        const visitorsLeads = sortedDates.map(date => ({
-          label: date,
-          value: visitorsMap.get(date) || 0,
-          value2: leadsMap.get(date) || 0
-        }))
-        setVisitorsLeadsData(visitorsLeads)
-      } else {
-        setVisitorsLeadsData([])
-      }
-
-      const leadsAppointments = sortedDates.map(date => ({
+      const selectedSeries = sortedDates.map(date => ({
         label: date,
-        value: leadsMap.get(date) || 0,
-        value2: appointmentsMap.get(date) || 0
+        value: primaryMap.get(date) || 0,
+        value2: secondaryMap.get(date) || 0
       }))
-      setLeadsAppointmentsData(leadsAppointments)
 
-      const appointmentsAttendances = sortedDates.map(date => ({
-        label: date,
-        value: appointmentsMap.get(date) || 0,
-        value2: attendancesMap.get(date) || 0
-      }))
-      setAppointmentsAttendancesData(appointmentsAttendances)
-
-      const attendancesSales = sortedDates.map(date => ({
-        label: date,
-        value: attendancesMap.get(date) || 0,
-        value2: salesMap.get(date) || 0
-      }))
-      setAttendancesSalesData(attendancesSales)
+      if (selectedChartView === 'visitors-leads') setVisitorsLeadsData(selectedSeries)
+      else if (selectedChartView === 'leads-appointments') setLeadsAppointmentsData(selectedSeries)
+      else if (selectedChartView === 'appointments-attendances') setAppointmentsAttendancesData(selectedSeries)
+      else setAttendancesSalesData(selectedSeries)
 
       setExtendedChartDataLoaded(true)
     } catch (error) {
       if (!isCurrentRequest()) return
-      // TODO: Integrate logging service
       setExtendedChartDataLoaded(false)
+      const message = error instanceof Error ? error.message : 'Intenta nuevamente.'
+      setExtendedChartDataError(message)
+      showToast('error', 'No se cargó la gráfica', message)
     } finally {
       if (isCurrentRequest()) setExtendedChartDataLoading(false)
     }
-  }, [analyticsEnabled, chartApiGroupBy, chartWindow.granularity, chartWindow.buckets, chartWindow.end, chartWindow.start, extendedChartDataLoaded, extendedChartDataLoading, user])
+  }, [analyticsEnabled, chartApiGroupBy, chartWindow.granularity, chartWindow.buckets, chartWindow.end, chartWindow.start, extendedChartDataError, extendedChartDataLoaded, extendedChartDataLoading, selectedChartView, showToast, user])
 
   React.useEffect(() => {
     extendedChartRequestRef.current += 1
@@ -1127,6 +1229,7 @@ export const Dashboard: React.FC = () => {
     extendedChartAbortRef.current = null
     setExtendedChartDataLoaded(false)
     setExtendedChartDataLoading(false)
+    setExtendedChartDataError(null)
     setVisitorsLeadsData([])
     setLeadsAppointmentsData([])
     setAppointmentsAttendancesData([])
@@ -1135,7 +1238,7 @@ export const Dashboard: React.FC = () => {
     return () => {
       extendedChartAbortRef.current?.abort()
     }
-  }, [analyticsEnabled, chartApiGroupBy, chartWindow.granularity, chartWindow.buckets, chartWindow.end, chartWindow.start])
+  }, [analyticsEnabled, chartApiGroupBy, chartWindow.granularity, chartWindow.buckets, chartWindow.end, chartWindow.start, selectedChartView])
 
   React.useEffect(() => {
     if (selectedChartView === 'revenue-spend') return
@@ -1156,12 +1259,12 @@ export const Dashboard: React.FC = () => {
 
     const loadData = async () => {
       setLoading(!cachedMetrics)
+      setMetricsError(null)
       try {
         const metricsData = await dashboardService.getDashboardMetrics({
           start: dateRange.start,
           end: dateRange.end
         }, {
-          forceRefresh: Boolean(cachedMetrics),
           signal: controller.signal
         })
 
@@ -1169,7 +1272,11 @@ export const Dashboard: React.FC = () => {
 
         setMetrics(metricsData)
       } catch (error) {
-        // TODO: add logging service
+        if (!controller.signal.aborted && mounted) {
+          const message = error instanceof Error ? error.message : 'Intenta nuevamente'
+          setMetricsError(message)
+          showToast('error', 'No se cargaron las métricas', message)
+        }
       } finally {
         if (mounted) {
           setLoading(false)
@@ -1183,7 +1290,7 @@ export const Dashboard: React.FC = () => {
       mounted = false
       controller.abort()
     }
-  }, [dateRange.end, dateRange.start, user])
+  }, [dateRange.end, dateRange.start, metricsRetryKey, showToast, user])
 
   useEffect(() => {
     if (!user) return
@@ -1205,6 +1312,9 @@ export const Dashboard: React.FC = () => {
       } catch (error) {
         if (mounted) {
           setChartData([])
+          if (!controller.signal.aborted) {
+            showToast('error', 'No se cargó la gráfica financiera', error instanceof Error ? error.message : 'Intenta nuevamente')
+          }
         }
       } finally {
         if (mounted) {
@@ -1219,7 +1329,7 @@ export const Dashboard: React.FC = () => {
       mounted = false
       controller.abort()
     }
-  }, [chartWindow.end, chartWindow.start, financialScope, user])
+  }, [chartWindow.end, chartWindow.start, financialScope, showToast, user])
 
   useEffect(() => {
     if (!user) return
@@ -1241,11 +1351,14 @@ export const Dashboard: React.FC = () => {
         setRecentTransactions(snapshot.transactions)
         setRecentContacts(snapshot.contacts)
         setRecentAppointments(snapshot.appointments)
-      } catch {
+      } catch (error) {
         if (!mounted) return
         setRecentTransactions([])
         setRecentContacts([])
         setRecentAppointments([])
+        if (!controller.signal.aborted) {
+          showToast('error', 'No se cargó el resumen operativo', error instanceof Error ? error.message : 'Intenta nuevamente')
+        }
       } finally {
         if (mounted) {
           setOperationsLoading(false)
@@ -1259,7 +1372,7 @@ export const Dashboard: React.FC = () => {
       mounted = false
       controller.abort()
     }
-  }, [dateRange.end, dateRange.start, timezone, user])
+  }, [dateRange.end, dateRange.start, showToast, timezone, user])
 
   // useEffect separado solo para el funnel (no recarga toda la página)
   React.useEffect(() => {
@@ -1278,7 +1391,10 @@ export const Dashboard: React.FC = () => {
         }, controller.signal)
         if (mounted) setFunnelData(funnelDataResponse)
       } catch (error) {
-        // Error silencioso
+        if (mounted && !controller.signal.aborted) {
+          setFunnelData([])
+          showToast('error', 'No se cargó el embudo', error instanceof Error ? error.message : 'Intenta nuevamente')
+        }
       }
     }
 
@@ -1288,7 +1404,7 @@ export const Dashboard: React.FC = () => {
       mounted = false
       controller.abort()
     }
-  }, [dateRange.end, dateRange.start, funnelScope, hasWebAnalyticsAccess, user])
+  }, [dateRange.end, dateRange.start, funnelScope, hasWebAnalyticsAccess, showToast, user])
 
   const renderOperationsLoadingRows = (count = 4) => (
     Array.from({ length: count }).map((_, index) => (
@@ -1666,8 +1782,30 @@ export const Dashboard: React.FC = () => {
     </div>
   )
 
-  if (!metrics) {
+  if (!metrics && loading) {
     return <Loading message="Cargando dashboard..." page="dashboard" kpiLayout="joined" kpiCount={8} />
+  }
+
+  if (!metrics) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="Dashboard"
+          subtitle="Resumen de ingresos, citas y rendimiento de tu negocio."
+        />
+        <Card variant="glass" className="p-4">
+          <div role="alert" aria-live="assertive" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-display text-sm font-semibold text-[var(--text)]">El Dashboard no respondió</p>
+              <p className="mt-1 text-sm text-[var(--text-mute)]">{metricsError || 'Intenta nuevamente.'}</p>
+            </div>
+            <Button type="button" variant="secondary" size="sm" onClick={() => setMetricsRetryKey(current => current + 1)}>
+              Reintentar
+            </Button>
+          </div>
+        </Card>
+      </PageContainer>
+    )
   }
 
   const metricsRefreshing = loading
@@ -1694,6 +1832,26 @@ export const Dashboard: React.FC = () => {
             />
           )}
         />
+
+        {metricsError && (
+          <Card variant="glass" className="p-4">
+            <div role="alert" aria-live="assertive" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="font-display text-sm font-semibold text-[var(--text)]">No se pudo actualizar el Dashboard</p>
+                <p className="mt-1 text-sm text-[var(--text-mute)]">Conservamos el último resultado correcto. {metricsError}</p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={loading}
+                onClick={() => setMetricsRetryKey(current => current + 1)}
+              >
+                {loading ? 'Reintentando…' : 'Reintentar'}
+              </Button>
+            </div>
+          </Card>
+        )}
 
         <div data-dashboard-kpi-grid className="grid grid-cols-2 gap-[var(--app-grid-gap,1rem)] sm:grid-cols-2 xl:grid-cols-4">
           <KpiCard
@@ -1824,6 +1982,13 @@ export const Dashboard: React.FC = () => {
                     aria-hidden="true"
                   />
                 ))}
+              </div>
+            ) : extendedChartDataError && selectedChartView !== 'revenue-spend' ? (
+              <div data-ristak-chart-empty role="alert" className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-[var(--color-text-tertiary)]">
+                <span>No se pudo cargar esta gráfica. {extendedChartDataError}</span>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setExtendedChartDataError(null)}>
+                  Reintentar
+                </Button>
               </div>
             ) : hasChartData ? (
               <AreaChart
@@ -2073,13 +2238,13 @@ export const Dashboard: React.FC = () => {
               <DetailsModalLoadingFallback
                 title={contactModalTitle}
                 subtitle={contactModalSubtitle}
-                onClose={() => setContactModalOpen(false)}
+                onClose={closeContactModal}
               />
             )}
           >
             <LazyContactDetailsModal
               isOpen
-              onClose={() => setContactModalOpen(false)}
+              onClose={closeContactModal}
               title={contactModalTitle}
               subtitle={contactModalSubtitle}
               data={contactModalContacts}
@@ -2095,13 +2260,13 @@ export const Dashboard: React.FC = () => {
             <DetailsModalLoadingFallback
               title={visitorsModalTitle}
               subtitle={visitorsModalSubtitle}
-              onClose={() => setVisitorsModalOpen(false)}
+              onClose={closeVisitorsModal}
             />
           )}
         >
           <LazyVisitorDetailsModal
             isOpen
-            onClose={() => setVisitorsModalOpen(false)}
+            onClose={closeVisitorsModal}
             title={visitorsModalTitle}
             subtitle={[visitorsModalSubtitle, visitorsModalPage.coverageNotice].filter(Boolean).join(' · ')}
             data={visitorsModalData}

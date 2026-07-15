@@ -140,11 +140,17 @@ export async function listReportTransactionsPage({
   search = '',
   cursor,
   page,
-  limit = DEFAULT_PAGE_LIMIT
+  limit = DEFAULT_PAGE_LIMIT,
+  signal
 } = {}) {
-  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+  if (signal?.aborted) {
+    const error = signal.reason instanceof Error ? signal.reason : new Error('Consulta cancelada')
+    error.name ||= 'AbortError'
+    throw error
+  }
+  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal })
   const pageLimit = normalizeLimit(limit)
-  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenFilters = await getHiddenContactFilters({ signal })
   const normalizedSearch = escapeLikeSearch(search)
   const cursorScope = hashPaginationCursorScope('report-transactions', {
     range: paginationCursorRangeScope(range),
@@ -229,32 +235,55 @@ export async function listReportTransactionsPage({
     endUtc: range.endUtc,
     hiddenFilters
   })
+
+  // Summary y filas son los dos carriles pesados permitidos para esta vista.
+  // Vincularlos a un solo controller permite cancelar ambos si el request se va
+  // o si cualquiera falla, sin dejar una consulta huérfana consumiendo el pool.
+  const queryController = new AbortController()
+  const abortQueries = () => queryController.abort(signal?.reason)
+  if (signal?.aborted) abortQueries()
+  else signal?.addEventListener('abort', abortQueries, { once: true })
+
   const summaryPromise = getReportTransactionSummary({
     cacheKey: summaryCacheKey,
-    buildSummary: async () => {
-      const row = await db.get(summaryQuery, baseParams)
+    signal: queryController.signal,
+    buildSummary: async (summarySignal) => {
+      const row = await db.get(summaryQuery, baseParams, { signal: summarySignal })
       return {
         count: Number(row?.count || 0),
         totalAmount: Number(row?.total_amount || 0)
       }
     }
   })
+  const rowsPromise = db.all(rowsQuery, rowsParams, { signal: queryController.signal })
   // El modal sólo necesita el total filtrado al iniciar una búsqueda. En páginas
   // siguientes hasNext viene de limit+1; repetir COUNT sobre millones no aporta.
+  // Encadenarlo a filas conserva el máximo de dos operaciones DB activas:
+  // summary + filas primero, summary + count después si el filtro lo requiere.
   const filteredCountPromise = searchCondition.sql && !decodedCursor
-    ? db.get(`
-        SELECT COUNT(*) AS total
-        FROM payments p
-        LEFT JOIN contacts c ON c.id = p.contact_id
-        WHERE ${[...baseConditions, searchCondition.sql].join(' AND ')}
-      `, [...baseParams, ...searchCondition.params])
-    : null
+    ? rowsPromise.then(() => db.get(`
+          SELECT COUNT(*) AS total
+          FROM payments p
+          LEFT JOIN contacts c ON c.id = p.contact_id
+          WHERE ${[...baseConditions, searchCondition.sql].join(' AND ')}
+        `, [...baseParams, ...searchCondition.params], { signal: queryController.signal }))
+    : Promise.resolve(null)
 
-  const [rows, summary, filteredCountRow] = await Promise.all([
-    db.all(rowsQuery, rowsParams),
-    summaryPromise,
-    filteredCountPromise
-  ])
+  let summary
+  let rows
+  let filteredCountRow
+  try {
+    ;[summary, rows, filteredCountRow] = await Promise.all([
+      summaryPromise,
+      rowsPromise,
+      filteredCountPromise
+    ])
+  } catch (error) {
+    queryController.abort(error)
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', abortQueries)
+  }
   const hasNext = rows.length > pageLimit
   const pageRows = hasNext ? rows.slice(0, pageLimit) : rows
   const total = searchCondition.sql

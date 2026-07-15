@@ -1941,6 +1941,7 @@ export const Reports: React.FC = () => {
     }
   })
   const modalContactsRequestRef = React.useRef(0)
+  const modalContactsAbortRef = React.useRef<AbortController | null>(null)
 
   // Estado para modal de visitantes
   const [isVisitorsModalOpen, setIsVisitorsModalOpen] = useState(false)
@@ -1954,6 +1955,7 @@ export const Reports: React.FC = () => {
   } | null>(null)
   const [visitorsModalPage, setVisitorsModalPage] = useState<VisitorsModalPageState>(emptyVisitorsModalPageState)
   const visitorsModalRequestRef = React.useRef(0)
+  const visitorsModalAbortRef = React.useRef<AbortController | null>(null)
 
   // Estado para modal de transacciones
   const [transactionsModalState, setTransactionsModalState] = useState<{
@@ -2092,30 +2094,50 @@ export const Reports: React.FC = () => {
 
     const fetchSnapshot = async () => {
       try {
-        setLoadingMetrics(true)
-        setLoadingSummary(true)
         const query = {
           from: apiRange.from,
           to: apiRange.to,
           groupBy: requestedViewType,
           scope: scopeParam
         } as const
-        const result = await reportsService.getSnapshot(
-          query,
-          controller.signal
-        )
+        const cachedSnapshot = reportsService.peekSnapshot(query)
+        if (cachedSnapshot) {
+          applySnapshot(cachedSnapshot)
+          setHasLoadedMetrics(true)
+          setHasLoadedSummary(true)
+        } else {
+          setLoadingMetrics(true)
+          setLoadingSummary(true)
+        }
+        const result = cachedSnapshot || await reportsService.getSnapshot(query, controller.signal)
         if (!isCurrentRequest()) return
         applySnapshot(result)
 
         // SWR durable: una revision nueva pinta de inmediato el ultimo snapshot
-        // y esta segunda lectura espera la misma reconstruccion compartida; no
-        // dispara otro agregado.
-        if (result.cache.stale) {
-          const fresh = await reportsService.getSnapshot(
+        // y libera la vista. La reconstruccion fresca sigue acotada en segundo
+        // plano sin mantener toda la pagina detrás del loader.
+        const revalidateAfter = Date.parse(result.cache.revalidateAfter || '')
+        const shouldRevalidateSnapshot = result.cache.stale && (
+          !Number.isFinite(revalidateAfter) || revalidateAfter <= Date.now()
+        )
+        if (shouldRevalidateSnapshot) {
+          setLoadingMetrics(false)
+          setLoadingSummary(false)
+          setHasLoadedMetrics(true)
+          setHasLoadedSummary(true)
+
+          void reportsService.getSnapshot(
             { ...query, waitForFresh: true },
             controller.signal
-          )
-          applySnapshot(fresh)
+          ).then(fresh => {
+            applySnapshot(fresh)
+          }).catch(error => {
+            if (!isCurrentRequest()) return
+            if (error instanceof Error && error.name === 'AbortError') return
+            // El snapshot visible sigue siendo valido; un fallo de la
+            // revalidacion no debe borrar datos ni reactivar el loader global.
+            console.error('No se pudo refrescar el snapshot de Reportes:', error)
+          })
         }
       } catch (error) {
         if (!isCurrentRequest()) return
@@ -2383,6 +2405,9 @@ export const Reports: React.FC = () => {
     page?: number
     showError?: boolean
   }) => {
+    modalContactsAbortRef.current?.abort()
+    const controller = new AbortController()
+    modalContactsAbortRef.current = controller
     const requestId = modalContactsRequestRef.current + 1
     modalContactsRequestRef.current = requestId
     setModalState((previous) => ({ ...previous, loading: true }))
@@ -2397,7 +2422,7 @@ export const Reports: React.FC = () => {
         search: options.search,
         cursor: options.cursor || undefined,
         limit: 50
-      })
+      }, controller.signal)
       if (modalContactsRequestRef.current !== requestId) return
 
       setModalState((previous) => ({
@@ -2410,7 +2435,8 @@ export const Reports: React.FC = () => {
         page: options.page || 1,
         pagination: result.pagination
       }))
-    } catch {
+    } catch (error) {
+      if (controller.signal.aborted) return
       if (modalContactsRequestRef.current !== requestId) return
       setModalState((previous) => ({
         ...previous,
@@ -2419,8 +2445,14 @@ export const Reports: React.FC = () => {
         loading: false
       }))
       if (options.showError !== false) {
-        showToast('error', 'No se pudieron cargar los contactos', 'Intenta nuevamente más tarde')
+        showToast(
+          'error',
+          'No se pudieron cargar los contactos',
+          error instanceof Error ? error.message : 'Intenta nuevamente más tarde'
+        )
       }
+    } finally {
+      if (modalContactsAbortRef.current === controller) modalContactsAbortRef.current = null
     }
   }, [showToast])
 
@@ -2638,7 +2670,17 @@ export const Reports: React.FC = () => {
     })
   }, [apiRange.from, apiRange.to, loadTransactionsModalPage])
 
-  useEffect(() => () => transactionsModalAbortRef.current?.abort(), [])
+  useEffect(() => () => {
+    modalContactsRequestRef.current += 1
+    modalContactsAbortRef.current?.abort()
+    modalContactsAbortRef.current = null
+    visitorsModalRequestRef.current += 1
+    visitorsModalAbortRef.current?.abort()
+    visitorsModalAbortRef.current = null
+    transactionsModalRequestRef.current += 1
+    transactionsModalAbortRef.current?.abort()
+    transactionsModalAbortRef.current = null
+  }, [])
 
   const handleTransactionsPageChange = useCallback((direction: 'next' | 'previous') => {
     const range = transactionsModalState.range
@@ -2681,6 +2723,9 @@ export const Reports: React.FC = () => {
     range: { startDate: string; endDate: string; scope: 'all' | 'attribution' | 'campaigns' },
     { cursor, cursorHistory, page, search }: Pick<VisitorsModalPageState, 'cursor' | 'cursorHistory' | 'page' | 'search'>
   ) => {
+    visitorsModalAbortRef.current?.abort()
+    const controller = new AbortController()
+    visitorsModalAbortRef.current = controller
     const requestId = visitorsModalRequestRef.current + 1
     visitorsModalRequestRef.current = requestId
     setVisitorsModalLoading(true)
@@ -2691,7 +2736,7 @@ export const Reports: React.FC = () => {
         cursor,
         search,
         limit: 50
-      })
+      }, { signal: controller.signal })
       if (visitorsModalRequestRef.current !== requestId) return
 
       const coverageNotice = trackingVisitorsCoverageNotice(result.coverage)
@@ -2707,13 +2752,22 @@ export const Reports: React.FC = () => {
         nextCursor: result.pagination.nextCursor,
         coverageNotice
       })
-    } catch {
+    } catch (error) {
+      if (controller.signal.aborted) return
       if (visitorsModalRequestRef.current !== requestId) return
       setVisitorsData([])
-      setVisitorsModalPage({ ...emptyVisitorsModalPageState, search })
-      showToast('error', 'No se pudieron cargar los visitantes', 'Intenta nuevamente')
+      const message = error instanceof Error
+        ? error.message
+        : 'No se pudieron cargar los visitantes. Intenta nuevamente.'
+      setVisitorsModalPage({
+        ...emptyVisitorsModalPageState,
+        search,
+        coverageNotice: message
+      })
+      showToast('error', 'No se pudieron cargar los visitantes', message)
     } finally {
       if (visitorsModalRequestRef.current === requestId) setVisitorsModalLoading(false)
+      if (visitorsModalAbortRef.current === controller) visitorsModalAbortRef.current = null
     }
   }, [showToast])
 
@@ -3275,7 +3329,12 @@ export const Reports: React.FC = () => {
   }
 
   const metricsRangeLabel = formatRangeLabel(metricsRange)
-  const closeModal = () => setModalState(prev => ({ ...prev, open: false }))
+  const closeModal = () => {
+    modalContactsRequestRef.current += 1
+    modalContactsAbortRef.current?.abort()
+    modalContactsAbortRef.current = null
+    setModalState(prev => ({ ...prev, open: false, loading: false }))
+  }
   const reportContactsModalData = useMemo(() => (
     modalState.contacts.map(contact => ({
       id: contact.id,
@@ -3495,7 +3554,13 @@ export const Reports: React.FC = () => {
         {analyticsEnabled && (
           <VisitorDetailsModal
             isOpen={isVisitorsModalOpen}
-            onClose={() => setIsVisitorsModalOpen(false)}
+            onClose={() => {
+              visitorsModalRequestRef.current += 1
+              visitorsModalAbortRef.current?.abort()
+              visitorsModalAbortRef.current = null
+              setVisitorsModalLoading(false)
+              setIsVisitorsModalOpen(false)
+            }}
             title="Visitantes"
             subtitle={[
               `Visitantes del ${visitorsModalDate}`,

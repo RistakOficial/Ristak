@@ -16,20 +16,48 @@ test('Analíticas consume agregados y deja las filas crudas a la búsqueda pagin
 
   assert.doesNotMatch(page, /getSessionsByDateRange/)
   assert.doesNotMatch(page, /setAllSessions|setSessions\(/)
-  assert.match(page, /getTrackingAnalyticsSummary\(analyticsSummaryInput, \{[\s\S]*signal: controller\.signal,[\s\S]*forceRefresh: Boolean\(cachedSummary\)/)
+  const initialSummaryRequest = page.slice(
+    page.indexOf('const summaryPromise'),
+    page.indexOf('const fallbackConversionsPromise')
+  )
+  assert.match(initialSummaryRequest, /getTrackingAnalyticsSummary\(analyticsSummaryInput, \{[\s\S]*signal: controller\.signal/)
+  assert.doesNotMatch(initialSummaryRequest, /forceRefresh/)
+  assert.match(page, /includeFacets: false/)
+  assert.match(page, /ANALYTICS_DISTRIBUTION_DIMENSIONS[\s\S]*for \(const dimension of ANALYTICS_DISTRIBUTION_DIMENSIONS\)/)
+  assert.match(page, /getTrackingAnalyticsFacet\([\s\S]*dimension/)
+  assert.match(page, /IntersectionObserver/)
+  assert.match(page, /onCategoryIntent=\{loadWebFilterCategory\}/)
   assert.match(page, /const controller = new AbortController\(\)/)
   assert.match(page, /analyticsRequestIdRef\.current === requestId/)
   assert.match(page, /<SessionsTable[\s\S]*range=\{\{ start: apiRange\.from, end: apiRange\.to \}\}[\s\S]*filters=\{webSummaryFilters\}/)
 
   assert.match(analyticsService, /'\/tracking\/analytics\/summary'/)
+  assert.match(analyticsService, /'\/tracking\/analytics\/facets'/)
+  assert.match(analyticsService, /dimension: input\.dimension/)
+  assert.match(analyticsService, /TRACKING_ANALYTICS_FACET_CACHE_MAX_ENTRIES = 64/)
   assert.match(analyticsService, /const TRACKING_ANALYTICS_CACHE_TTL_MS = 30_000/)
   assert.match(analyticsService, /const TRACKING_ANALYTICS_CACHE_MAX_ENTRIES = 24/)
-  assert.match(analyticsService, /export function invalidateTrackingAnalyticsSummaryCache\(\)/)
+  const invalidator = analyticsService.slice(
+    analyticsService.indexOf('export function invalidateTrackingAnalyticsSummaryCache'),
+    analyticsService.indexOf('registerAuthScopedCacheInvalidator', analyticsService.indexOf('export function invalidateTrackingAnalyticsSummaryCache'))
+  )
+  assert.match(invalidator, /abortInflight = true/)
+  assert.match(invalidator, /if \(!abortInflight\) return/)
+  assert.match(invalidator, /trackingAnalyticsCache\.clear\(\)/)
+  assert.match(invalidator, /trackingAnalyticsFacetCache\.clear\(\)/)
+  assert.match(invalidator, /abortAndClearSharedRequests\(trackingAnalyticsInflight\)/)
+  assert.match(invalidator, /abortAndClearSharedRequests\(trackingAnalyticsFacetInflight\)/)
+  assert.ok(
+    invalidator.indexOf('if (!abortInflight) return') < invalidator.indexOf('trackingAnalyticsCache.clear()'),
+    'una invalidación suave debe conservar snapshots e inflight durante el TTL'
+  )
   assert.match(analyticsService, /registerAuthScopedCacheInvalidator\(invalidateTrackingAnalyticsSummaryCache\)/)
-  assert.match(analyticsService, /registerRistakApiReadCacheInvalidator\(invalidateTrackingAnalyticsSummaryCache\)/)
+  assert.match(analyticsService, /registerRistakApiReadCacheInvalidator\(invalidateTrackingAnalyticsSummaryCache, \{[\s\S]*pathPrefixes: \['\/api\/tracking\/analytics'\]/)
   assert.match(analyticsService, /syncAuthScopedCachePrincipal\(\)/)
   assert.match(analyticsService, /requestPrincipalRevision === getAuthScopedCacheRevision\(\)/)
   assert.match(page, /onSessionsChanged=\{handleTrackingSessionsChanged\}/)
+  assert.match(page, /\{hasWebAnalyticsAccess && \(\s*<SessionsTable/)
+  assert.doesNotMatch(page, /\{showWebAnalyticsBlocks && \(\s*<SessionsTable/)
 })
 
 test('editar o borrar tracking invalida el snapshot agregado del navegador', async () => {
@@ -51,11 +79,13 @@ test('la vista inicial conserva estructura y usa esqueletos locales en vez de lo
 
 test('el resumen de mensajes carga por separado y no bloquea el resumen web', async () => {
   const page = await repoFile('frontend/src/pages/Analytics/Analytics.tsx')
-  const webBatch = page.match(/const \[summary, fallbackConversions, trackingConfig\] = await Promise\.all\(\[[\s\S]*?\n\s*\]\)/)?.[0]
+  const webBatch = page.match(/const \[summary, fallbackConversions\] = await Promise\.all\(\[[\s\S]*?\n\s*\]\)/)?.[0]
 
   assert.match(page, /Mensajes se resuelve en paralelo y nunca frena las métricas web/)
   assert.ok(webBatch, 'debe existir el lote acotado del resumen web')
   assert.doesNotMatch(webBatch, /getMessageAnalyticsSummary/)
+  assert.doesNotMatch(webBatch, /trackingConfigPromise|getTrackingConfig/)
+  assert.match(page, /const trackingConfigPromise = hasWebAnalyticsAccess/)
   assert.match(page, /const messageAnalyticsRefreshing = messageLoading \|\| !hasLoadedMessageAnalytics/)
   assert.match(page, /setHasWebAnalyticsSnapshot\(true\)/)
 })

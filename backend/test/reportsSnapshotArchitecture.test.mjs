@@ -78,16 +78,27 @@ test('la UI de Reportes consume un solo read-model y conserva los endpoints lega
   ])
 
   assert.match(routes, /router\.get\('\/snapshot', getReportsSnapshot\)/)
+  assert.match(routes, /router\.use\(requireAuth\)/)
+  assert.match(routes, /router\.use\(requireModuleAccess\('reports'\)\)/)
   assert.match(routes, /router\.get\('\/metrics', getMetrics\)/)
   assert.match(routes, /router\.get\('\/summary', getSummary\)/)
   assert.match(controller, /getReportsSnapshotReadModel/)
+  assert.doesNotMatch(controller, /principal:\s*req\.user/)
   assert.match(controller, /req\.once\?\.\('aborted', abortIfDisconnected\)/)
   assert.match(controller, /res\.once\?\.\('close', abortIfDisconnected\)/)
   assert.match(controller, /signal: requestScope\.signal/)
   assert.match(controller, /requestScope\.disconnected/)
+  assert.match(controller, /createReportsRequestAbortScope\(req, res, \{ timeoutMs: 18_000 \}\)/)
+  assert.match(controller, /code: 'reports_snapshot_deadline'/)
   assert.match(service, /buildAggregatedReportMetrics\(\{ \.\.\.query, signal \}\)/)
   assert.match(service, /buildReportComparisonTotals/)
   assert.match(service, /entry\.waiters \+= 1/)
+  assert.match(service, /SNAPSHOT_MAX_QUEUED_BUILDS = 8/)
+  assert.match(service, /SNAPSHOT_BUILD_DEADLINE_MS = 18_000/)
+  assert.match(service, /REPORTS_SHARED_PRINCIPAL_SCOPE = 'authorized-reports-read-v1'/)
+  assert.match(service, /encodeMovingRevision/)
+  assert.match(service, /db\.withAdvisoryLock\([\s\S]*\}, \{ signal \}\)/)
+  assert.match(service, /activeBuilds >= SNAPSHOT_MAX_CONCURRENT_BUILDS[\s\S]*return withCacheMetadata\(cached\.payload/)
   assert.match(service, /entry\.waiters === 0 && !entry\.keepAlive/)
   assert.match(service, /entry\.controller\.abort\(\)/)
   assert.match(metricsService, /buildAggregatedReportMetrics\(\{ startDate, endDate, groupBy = 'day', scope = 'all', signal \}/)
@@ -99,13 +110,16 @@ test('la UI de Reportes consume un solo read-model y conserva los endpoints lega
   assert.match(page, /snapshotRequestRef\.current === requestId/)
   assert.match(page, /controller\.abort\(\)/)
   assert.match(page, /result\.cache\.stale/)
+  assert.match(page, /result\.cache\.revalidateAfter/)
   assert.match(phone, /reportsService\.getSnapshot/)
   assert.doesNotMatch(phone, /reportsService\.getMetrics\(/)
   assert.doesNotMatch(phone, /reportsService\.getSummary\(/)
   assert.match(frontendService, /apiClient\.get<ReportsSnapshot>\('\/reports\/snapshot'/)
   assert.equal(REPORTS_SNAPSHOT_CACHE_LIMITS.maxConcurrentBuilds, 2)
-  assert.ok(REPORTS_SNAPSHOT_CACHE_LIMITS.entriesPerPrincipal <= 64)
+  assert.ok(REPORTS_SNAPSHOT_CACHE_LIMITS.entriesPerSharedScope <= 64)
   assert.ok(REPORTS_SNAPSHOT_CACHE_LIMITS.entriesPerAccount <= 256)
+  assert.equal(REPORTS_SNAPSHOT_CACHE_LIMITS.refreshIntervalMs, 30_000)
+  assert.ok(REPORTS_SNAPSHOT_CACHE_LIMITS.staleMaxAgeMs <= 5 * 60_000)
 })
 
 test('la revision extra de Reportes no duplica hot paths ni invalida por config ajena', {
@@ -268,18 +282,19 @@ test('SQLite sirve stale inmediatamente, comparte la reconstruccion e invalida p
     const beforeOtherPrincipal = Number((await db.get(
       'SELECT COUNT(*) AS total FROM reports_snapshot_cache'
     ))?.total || 0)
-    await getReportsSnapshot({ ...query, principal: `reports-principal-b-${suffix}` })
+    const sharedPrincipal = await getReportsSnapshot({ ...query, principal: `reports-principal-b-${suffix}` })
     const afterOtherPrincipal = Number((await db.get(
       'SELECT COUNT(*) AS total FROM reports_snapshot_cache'
     ))?.total || 0)
-    assert.equal(afterOtherPrincipal, beforeOtherPrincipal + 1)
+    assert.equal(afterOtherPrincipal, beforeOtherPrincipal)
+    assert.equal(sharedPrincipal.cache.builtAt, visitorFresh.cache.builtAt)
   } finally {
     await db.run('DELETE FROM sessions WHERE id = ?', [sessionId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })
 
-test('un build cuya revisión cambia no se persiste ni puede pisar un snapshot nuevo', {
+test('un build cuya revisión cambia se persiste como moving-window sin declarar exactitud', {
   skip: databaseDialect !== 'sqlite'
 }, async () => {
   await installReportsSnapshotSchema()
@@ -322,12 +337,22 @@ test('un build cuya revisión cambia no se persiste ni puede pisar un snapshot n
 
     const raced = await firstBuild
     assert.equal(raced.cache.stale, true)
-    assert.equal(raced.cache.builtAt, '')
+    assert.equal(raced.cache.exactAtBuiltAt, false)
+    assert.equal(raced.cache.consistency, 'moving-window')
+    assert.ok(raced.cache.builtAt)
     assert.notEqual(raced.cache.builtSourceRevision, raced.cache.currentSourceRevision)
     assert.equal(Number((await db.get(
       'SELECT COUNT(*) AS total FROM reports_snapshot_cache'
-    ))?.total || 0), beforeRows)
+    ))?.total || 0), beforeRows + 1)
 
+    const coalesced = await getReportsSnapshot(query)
+    assert.equal(coalesced.cache.stale, true)
+    assert.equal(coalesced.cache.builtAt, raced.cache.builtAt)
+
+    await db.run(
+      'UPDATE reports_snapshot_cache SET built_at = ? WHERE built_at = ?',
+      [new Date(Date.now() - REPORTS_SNAPSHOT_CACHE_LIMITS.refreshIntervalMs - 1_000).toISOString(), raced.cache.builtAt]
+    )
     const retry = await getReportsSnapshot(query)
     assert.equal(retry.cache.stale, false)
     assert.ok(retry.cache.builtAt)
@@ -335,6 +360,114 @@ test('un build cuya revisión cambia no se persiste ni puede pisar un snapshot n
     release.resolve()
     db.all = originalAll
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('Reportes coalesce varios builds bajo escrituras continuas y comparte cache entre principals', {
+  skip: databaseDialect !== 'sqlite'
+}, async () => {
+  await installReportsSnapshotSchema()
+  const date = '2094-04-15'
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const query = {
+    principal: `reports-continuous-a-${suffix}`,
+    startDate: date,
+    endDate: date,
+    groupBy: 'day',
+    scope: 'all',
+    waitForFresh: true
+  }
+  const originalAll = db.all
+  const insertedContacts = []
+  let mutateNextBuild = false
+  let targetQueries = 0
+  let mutations = 0
+
+  db.all = async (sql, params = [], options = {}) => {
+    const result = await originalAll.call(db, sql, params, options)
+    if (isTargetContactAggregate(sql, params, date)) {
+      targetQueries += 1
+      if (mutateNextBuild) {
+        mutateNextBuild = false
+        mutations += 1
+        const contactId = `reports-continuous-contact-${suffix}-${mutations}`
+        insertedContacts.push(contactId)
+        await db.run(`
+          INSERT INTO contacts (id, full_name, email, created_at, updated_at)
+          VALUES (?, 'Continuous snapshot', ?, ?, ?)
+        `, [
+          contactId,
+          `${suffix}-${mutations}@reports.invalid`,
+          `${date}T18:00:00.000Z`,
+          `${date}T18:00:00.000Z`
+        ])
+      }
+    }
+    return result
+  }
+
+  try {
+    const rowsBefore = Number((await db.get(
+      'SELECT COUNT(*) AS total FROM reports_snapshot_cache'
+    ))?.total || 0)
+
+    let moving = null
+    for (let build = 0; build < 3; build += 1) {
+      mutateNextBuild = true
+      if (build === 0) {
+        const [firstPrincipal, secondPrincipal] = await Promise.all([
+          getReportsSnapshot({ ...query, principal: `reports-continuous-a-${suffix}` }),
+          getReportsSnapshot({ ...query, principal: `reports-continuous-b-${suffix}` })
+        ])
+        moving = firstPrincipal
+        assert.equal(secondPrincipal.cache.builtAt, firstPrincipal.cache.builtAt)
+      } else {
+        moving = await getReportsSnapshot({
+          ...query,
+          principal: `reports-continuous-${build % 2 ? 'b' : 'a'}-${suffix}`
+        })
+      }
+      assert.equal(moving.cache.stale, true)
+      assert.equal(moving.cache.exactAtBuiltAt, false)
+      assert.equal(moving.cache.consistency, 'moving-window')
+      assert.ok(Date.parse(moving.cache.revalidateAfter) > Date.now())
+
+      const callsAfterBuild = targetQueries
+      const coalesced = await getReportsSnapshot({
+        ...query,
+        principal: `reports-continuous-other-${build}-${suffix}`
+      })
+      assert.equal(coalesced.cache.builtAt, moving.cache.builtAt)
+      assert.equal(coalesced.cache.stale, true)
+      assert.equal(targetQueries, callsAfterBuild, 'waitForFresh no debe iniciar otro build dentro de la ventana')
+
+      await db.run(
+        'UPDATE reports_snapshot_cache SET built_at = ? WHERE built_at = ?',
+        [
+          new Date(Date.now() - REPORTS_SNAPSHOT_CACHE_LIMITS.refreshIntervalMs - 1_000).toISOString(),
+          moving.cache.builtAt
+        ]
+      )
+    }
+
+    assert.equal(mutations, 3)
+    mutateNextBuild = false
+    const exact = await getReportsSnapshot({
+      ...query,
+      principal: `reports-continuous-final-${suffix}`
+    })
+    assert.equal(exact.cache.stale, false)
+    assert.equal(exact.cache.exactAtBuiltAt, true)
+    assert.equal(exact.cache.consistency, 'exact')
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM reports_snapshot_cache'
+    ))?.total || 0), rowsBefore + 1, 'todos los principals deben compartir una sola fila durable')
+  } finally {
+    mutateNextBuild = false
+    db.all = originalAll
+    for (const contactId of insertedContacts) {
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
   }
 })
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, copyFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, copyFile, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -89,6 +89,15 @@ test('las migraciones con sufijo de dialecto sólo apuntan a su motor', () => {
   assert.equal(migrationRunsForDialect('111a_tracking_visitor_projection_state.postgres.sql', 'sqlite'), false)
   assert.equal(migrationRunsForDialect('040_common.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('040_common.sql', 'sqlite'), true)
+})
+
+test('el bootstrap común nunca manda julianday de SQLite a PostgreSQL', async () => {
+  const source = await readFile(new URL('../src/config/database.js', import.meta.url), 'utf8')
+
+  assert.match(
+    source,
+    /if \(!usePostgres\) \{\s*await db\.run\(`\s*CREATE INDEX IF NOT EXISTS idx_campaign_contacts_cursor_created_at_id[\s\S]*?julianday\(created_at\)[\s\S]*?`\)\s*\}/
+  )
 })
 
 test('PostgreSQL omite y registra una migración exclusiva de SQLite', async () => {

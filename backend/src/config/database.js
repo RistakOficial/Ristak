@@ -19,8 +19,10 @@ import {
   mergeConversationalAgentSafetyContactReferences
 } from '../utils/conversationalAgentSafetyMerge.js'
 import {
+  acquireAbortablePostgresClient,
   createDatabaseAbortError,
-  runCancelablePostgresQuery
+  runCancelablePostgresQuery,
+  waitForDatabaseRetry
 } from '../utils/postgresCancelableQuery.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -398,7 +400,8 @@ if (usePostgres) {
     ...postgresPoolConfig,
     max: 2,
     idleTimeoutMillis: 1_000,
-    connectionTimeoutMillis: 5_000
+    connectionTimeoutMillis: 5_000,
+    query_timeout: 1_500
   })
 
   pool.on('error', (error) => {
@@ -436,22 +439,30 @@ if (usePostgres) {
     return client?.[POSTGRES_CLIENT_CONNECTION_ERROR] || null
   }
 
-  async function connectWithRetry() {
+  async function connectWithRetry({ signal } = {}) {
     const maxAttempts = 6
     let delayMs = 500
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      throwIfDatabaseOperationAborted({ signal })
       try {
-        const client = await pool.connect()
+        const client = await acquireAbortablePostgresClient({
+          pool,
+          signal,
+          onLateReleaseError: error => logger.warn(
+            `No se pudo liberar una conexión PostgreSQL obtenida después de cancelar: ${describePostgresConnectionError(error)}`
+          )
+        })
         return attachPostgresClientErrorHandler(client)
       } catch (error) {
+        if (error?.name === 'AbortError' || signal?.aborted) throw createDatabaseAbortError()
         const canRetry = isTransientPostgresConnectionError(error)
         if (!canRetry || attempt === maxAttempts) {
           throw error
         }
 
         logger.warn(`PostgreSQL no aceptó conexión (${describePostgresConnectionError(error)}). Reintentando ${attempt}/${maxAttempts}...`)
-        await sleep(delayMs)
+        await waitForDatabaseRetry(delayMs, signal)
         delayMs = Math.min(Math.round(delayMs * 1.8), 5000)
       }
     }
@@ -490,13 +501,32 @@ if (usePostgres) {
       sql,
       params: toPostgresParams(params),
       signal: options?.signal,
-      cancelBackend: (processId) => cancellationPool.query(
-        'SELECT pg_cancel_backend($1) AS cancelled',
-        [processId]
-      ),
+      cancelBackend: async (processId) => {
+        const cancellationResult = await cancellationPool.query(
+          'SELECT pg_cancel_backend($1) AS cancelled',
+          [processId]
+        )
+        if (cancellationResult.rows[0]?.cancelled !== true) {
+          throw Object.assign(new Error('PostgreSQL no confirmó la cancelación del backend activo'), {
+            code: 'PG_CANCEL_NOT_CONFIRMED'
+          })
+        }
+      },
       onCancelError: (error) => logger.warn(
         `No se pudo cancelar una consulta PostgreSQL desconectada: ${describePostgresConnectionError(error)}`
-      )
+      ),
+      destroyClient: (cancelError) => {
+        const connectionError = Object.assign(
+          new Error('Se cerró la conexión PostgreSQL porque su consulta no pudo cancelarse'),
+          { code: 'CONNECTION_TERMINATED', cause: cancelError }
+        )
+        client[POSTGRES_CLIENT_CONNECTION_ERROR] = connectionError
+        const stream = client?.connection?.stream
+        if (!stream || typeof stream.destroy !== 'function') {
+          throw connectionError
+        }
+        stream.destroy(connectionError)
+      }
     })
   }
 
@@ -570,12 +600,17 @@ if (usePostgres) {
     }
   })
 
-  async function withPostgresClient(operation, { retryTransientRead = false, label = 'consulta' } = {}) {
+  async function withPostgresClient(operation, {
+    retryTransientRead = false,
+    label = 'consulta',
+    signal
+  } = {}) {
     const maxAttempts = retryTransientRead ? 2 : 1
     let delayMs = 150
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const client = await connectWithRetry()
+      throwIfDatabaseOperationAborted({ signal })
+      const client = await connectWithRetry({ signal })
       let result
       let operationError = null
       let releaseError = null
@@ -601,7 +636,7 @@ if (usePostgres) {
 
       if (retryTransientRead && releaseError && attempt < maxAttempts) {
         logger.warn(`PostgreSQL cortó ${label} (${describePostgresConnectionError(operationError)}). Reintentando ${attempt + 1}/${maxAttempts}...`)
-        await sleep(delayMs)
+        await waitForDatabaseRetry(delayMs, signal)
         delayMs = Math.min(Math.round(delayMs * 2), 1000)
         continue
       }
@@ -625,7 +660,7 @@ if (usePostgres) {
     // Los advisory locks de PostgreSQL pertenecen a la sesión. Esta conexión
     // queda dedicada hasta que callback termina; jamás se devuelve al pool con
     // el candado puesto ni se depende de una fila con lease que pueda caducar.
-    const client = await connectWithRetry()
+    const client = await connectWithRetry({ signal: options?.signal })
     const clientDb = createPostgresAdapter(client)
     const lockKey = postgresAdvisoryLockKey(lockName)
     let acquired = false
@@ -695,7 +730,8 @@ if (usePostgres) {
       const pinnedConnection = databaseConnectionContext.getStore()
       if (pinnedConnection) return pinnedConnection.db.run(sql, params, options)
       return withPostgresClient((clientDb) => clientDb.run(sql, params, options), {
-        label: 'escritura'
+        label: 'escritura',
+        signal: options?.signal
       })
     },
 
@@ -706,7 +742,8 @@ if (usePostgres) {
       if (pinnedConnection) return pinnedConnection.db.get(sql, params, options)
       return withPostgresClient((clientDb) => clientDb.get(sql, params, options), {
         retryTransientRead: true,
-        label: 'lectura get'
+        label: 'lectura get',
+        signal: options?.signal
       })
     },
 
@@ -717,7 +754,8 @@ if (usePostgres) {
       if (pinnedConnection) return pinnedConnection.db.all(sql, params, options)
       return withPostgresClient((clientDb) => clientDb.all(sql, params, options), {
         retryTransientRead: true,
-        label: 'lectura all'
+        label: 'lectura all',
+        signal: options?.signal
       })
     },
 
@@ -4581,25 +4619,31 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_meta_ads_date ON meta_ads(date)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_meta_ads_campaign ON meta_ads(campaign_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_meta_ads_ad ON meta_ads(ad_id)')
-    await db.run(`
-      CREATE INDEX IF NOT EXISTS idx_campaign_contacts_cursor_created_at_id
-      ON contacts(
-        COALESCE(
-          NULLIF(
-            COALESCE(
+    // Esta expresión y su INDEXED BY pertenecen exclusivamente al paginador
+    // legacy de SQLite. PostgreSQL usa los índices de cursor nativos de sus
+    // migraciones versionadas; intentar crear éste allí rompe un bootstrap
+    // limpio porque julianday() no existe en PostgreSQL.
+    if (!usePostgres) {
+      await db.run(`
+        CREATE INDEX IF NOT EXISTS idx_campaign_contacts_cursor_created_at_id
+        ON contacts(
+          COALESCE(
+            NULLIF(
               COALESCE(
-                julianday(created_at),
-                julianday(REPLACE(REPLACE(created_at, 'T', ' '), 'Z', ''))
+                COALESCE(
+                  julianday(created_at),
+                  julianday(REPLACE(REPLACE(created_at, 'T', ' '), 'Z', ''))
+                ),
+                0
               ),
               0
             ),
-            0
-          ),
-          julianday('1970-01-01 00:00:00')
-        ) DESC,
-        id DESC
-      )
-    `)
+            julianday('1970-01-01 00:00:00')
+          ) DESC,
+          id DESC
+        )
+      `)
+    }
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS meta_campaign_templates (

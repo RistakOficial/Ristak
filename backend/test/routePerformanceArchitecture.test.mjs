@@ -31,7 +31,11 @@ test('las rutas principales se descargan por modulo y no inflan el bundle inicia
   assert.match(routeModules, /import\('@\/pages\/Analytics\/Analytics'\)/)
   assert.match(routeModules, /createLazyRoute\(\(\) => import\('@\/pages\/Analytics\/Analytics'\), 'default'\)/)
   assert.match(routeModules, /import\('@\/pages\/Sites\/SitesRoute'\)/)
-  assert.match(routeModules, /module\.prefetchSitesWorkspace\(\)/)
+  const sitesLoader = routeModules.slice(
+    routeModules.indexOf('const sites = createLazyRoute'),
+    routeModules.indexOf('const automations = createLazyRoute')
+  )
+  assert.doesNotMatch(sitesLoader, /prefetchSitesWorkspace|\.then\s*\(/)
   assert.match(sitesRoute, /export function prefetchSitesWorkspace/)
   assert.match(sitesRoute, /sitesWorkspacePromise = import\('\.\/Sites'\)/)
   assert.match(sitesRoute, /React\.Suspense/)

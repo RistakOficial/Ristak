@@ -31,6 +31,10 @@ const isAbortError = (error: unknown) => (
   error instanceof Error && error.name === 'AbortError'
 )
 
+const sessionRequestErrorMessage = (error: unknown, fallback: string) => (
+  error instanceof Error && error.message.trim() ? error.message : fallback
+)
+
 interface ResizableHeaderProps {
   columnKey: string
   label: string
@@ -200,7 +204,18 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
       setSelectedIds(new Set())
     } catch (error) {
       if (!isAbortError(error) && requestId === requestSequenceRef.current) {
-        showToast('error', 'Error', 'No se pudieron cargar las sesiones')
+        setSessions([])
+        setCompactSessions([])
+        setHasMore(false)
+        setNextCursor(null)
+        setPageCursor(null)
+        setCursorHistory([])
+        setSelectedIds(new Set())
+        showToast(
+          'error',
+          'No se pudieron cargar las sesiones',
+          sessionRequestErrorMessage(error, 'Ajusta el rango o reintenta la consulta.')
+        )
       }
     } finally {
       if (requestId === requestSequenceRef.current) {
@@ -258,7 +273,11 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
       setCursorHistory(history)
     } catch (error) {
       if (!isAbortError(error) && requestId === requestSequenceRef.current) {
-        showToast('error', 'Error', 'No se pudo cargar esta página de sesiones')
+        showToast(
+          'error',
+          'No se pudo cargar esta página de sesiones',
+          sessionRequestErrorMessage(error, 'Ajusta el rango o reintenta la consulta.')
+        )
       }
     } finally {
       if (requestId === requestSequenceRef.current) {
@@ -276,15 +295,15 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
   ])
 
   const loadNextPage = useCallback(() => {
-    if (!hasMore || !nextCursor || loadingMoreRef.current) return
+    if (loadingSessions || !hasMore || !nextCursor || loadingMoreRef.current) return
     void loadSessionsPage(nextCursor, [...cursorHistory, pageCursor])
-  }, [cursorHistory, hasMore, loadSessionsPage, nextCursor, pageCursor])
+  }, [cursorHistory, hasMore, loadSessionsPage, loadingSessions, nextCursor, pageCursor])
 
   const loadPreviousPage = useCallback(() => {
-    if (!cursorHistory.length || loadingMoreRef.current) return
+    if (loadingSessions || !cursorHistory.length || loadingMoreRef.current) return
     const previousCursor = cursorHistory[cursorHistory.length - 1] ?? null
     void loadSessionsPage(previousCursor, cursorHistory.slice(0, -1))
-  }, [cursorHistory, loadSessionsPage])
+  }, [cursorHistory, loadSessionsPage, loadingSessions])
 
   const handleToggleExpanded = () => {
     setIsExpanded(prev => !prev)
@@ -650,6 +669,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
             <span style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
               {sessions.length} {sessions.length === 1 ? 'sesión cargada' : 'sesiones cargadas'}
               {searchQuery.trim() && ' para esta búsqueda'}
+              {searchQuery.trim().length > 0 && searchQuery.trim().length < 3 && ' · escribe al menos 3 caracteres'}
             </span>
           </div>
 
@@ -806,7 +826,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                     variant="ghost"
                     size="small"
                     onClick={loadPreviousPage}
-                    disabled={loadingMore || cursorHistory.length === 0}
+                    disabled={loadingSessions || loadingMore || cursorHistory.length === 0}
                     aria-label="Cargar página anterior de sesiones"
                   >
                     Anterior
@@ -816,7 +836,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                     variant="ghost"
                     size="small"
                     onClick={loadNextPage}
-                    disabled={loadingMore || !hasMore || !nextCursor}
+                    disabled={loadingSessions || loadingMore || !hasMore || !nextCursor}
                     aria-label={loadingMore ? 'Cargando página de sesiones' : 'Cargar página siguiente de sesiones'}
                   >
                     {loadingMore && <RefreshCw size={16} className={styles.spinIcon} aria-hidden="true" />}

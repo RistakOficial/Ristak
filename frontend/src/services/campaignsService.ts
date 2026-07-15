@@ -1,6 +1,10 @@
 import apiClient from './apiClient'
 import type { ContactCustomField } from '@/types'
 import { trackingService, type CursorPage } from './trackingService'
+import { withRequestTimeout } from './requestTimeout'
+
+const CAMPAIGNS_REQUEST_TIMEOUT_MS = 20_000
+let syncStatusRequest: Promise<any> | null = null
 
 export interface Campaign {
   id: string
@@ -348,6 +352,7 @@ export interface CampaignVisitorListParams {
   cursor?: string | null
   search?: string
   limit?: number
+  signal?: AbortSignal
 }
 
 interface CreativePreviewResponse {
@@ -422,7 +427,15 @@ class CampaignsService {
     if (params.adsetId) query.adsetId = params.adsetId
     if (params.onlyWithResults) query.onlyWithResults = '1'
 
-    return apiClient.get<CampaignPerformancePage>('/meta/campaigns/page', { params: query, signal })
+    return withRequestTimeout({
+      timeoutMs: CAMPAIGNS_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'La tabla de Publicidad tardó demasiado. Ajusta el rango o reintenta.',
+      signal,
+      request: requestSignal => apiClient.get<CampaignPerformancePage>('/meta/campaigns/page', {
+        params: query,
+        signal: requestSignal
+      })
+    })
   }
 
   async getOverviewSnapshot(
@@ -430,20 +443,30 @@ class CampaignsService {
     endDate: string,
     options: { includeVisitors?: boolean; waitForFresh?: boolean; signal?: AbortSignal } = {}
   ): Promise<CampaignOverviewSnapshot> {
-    return apiClient.get<CampaignOverviewSnapshot>('/meta/overview', {
-      params: {
-        startDate,
-        endDate,
-        includeVisitors: options.includeVisitors === false ? '0' : '1',
-        waitForFresh: options.waitForFresh ? '1' : '0'
-      },
-      signal: options.signal
+    return withRequestTimeout({
+      timeoutMs: CAMPAIGNS_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'El resumen de Publicidad tardó demasiado. Reintenta la carga.',
+      signal: options.signal,
+      request: requestSignal => apiClient.get<CampaignOverviewSnapshot>('/meta/overview', {
+        params: {
+          startDate,
+          endDate,
+          includeVisitors: options.includeVisitors === false ? '0' : '1',
+          waitForFresh: options.waitForFresh ? '1' : '0'
+        },
+        signal: requestSignal
+      })
     })
   }
 
-  async getSyncStatus(): Promise<any> {
-    try {
-      const data = await apiClient.get<any>('/meta/sync/status')
+  async getSyncStatus(signal?: AbortSignal): Promise<any> {
+    if (syncStatusRequest) return syncStatusRequest
+    syncStatusRequest = withRequestTimeout({
+      timeoutMs: 8_000,
+      timeoutMessage: 'El estado de sincronización de Publicidad tardó demasiado.',
+      signal,
+      request: requestSignal => apiClient.get<any>('/meta/sync/status', { signal: requestSignal })
+    }).then((data) => {
       if (!data?.success) return null
 
       const details = data.details || {}
@@ -463,9 +486,10 @@ class CampaignsService {
         totalRecords: 0,
         progress: Number(data.progress || 0)
       }
-    } catch (error) {
-      return null
-    }
+    }).catch(() => null).finally(() => {
+      syncStatusRequest = null
+    })
+    return syncStatusRequest
   }
 
   async getCreativePreview(creativeId: string, adFormat = 'DESKTOP_FEED_STANDARD'): Promise<CreativePreviewResponse | null> {
@@ -615,23 +639,16 @@ class CampaignsService {
   }
 
   async getVisitorsPage(params: CampaignVisitorListParams): Promise<CursorPage<any>> {
-    try {
-      return await trackingService.getVisitorsPage({
-        startDate: params.startDate,
-        endDate: params.endDate,
-        campaign_id: params.campaign_id,
-        adset_id: params.adset_id,
-        ad_id: params.ad_id,
-        cursor: params.cursor,
-        search: params.search,
-        limit: params.limit
-      })
-    } catch (error) {
-      return {
-        items: [],
-        pagination: { limit: Math.min(100, Math.max(1, params.limit ?? 50)), hasNext: false, hasMore: false, nextCursor: null }
-      }
-    }
+    return trackingService.getVisitorsPage({
+      startDate: params.startDate,
+      endDate: params.endDate,
+      campaign_id: params.campaign_id,
+      adset_id: params.adset_id,
+      ad_id: params.ad_id,
+      cursor: params.cursor,
+      search: params.search,
+      limit: params.limit
+    }, { signal: params.signal })
   }
 
   async getVisitorsList(params: CampaignVisitorListParams): Promise<any[]> {

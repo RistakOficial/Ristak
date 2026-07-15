@@ -239,8 +239,6 @@ const CHAT_LIST_PAGE_SIZE = 50
 // loadMoreChatsIfNeeded) para que el lote llegue antes de tocar el fondo.
 const CHAT_LIST_AUTO_LOAD_GAP_PX = 900
 const CHAT_LIST_PREFETCH_VIEWPORTS = 3
-// Precargamos un bloque razonable en segundo plano. El resto sigue por scroll, sin ráfagas enormes.
-const CHAT_LIST_BACKGROUND_LOAD_CAP = 250
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
 const CHAT_ACTIVITY_REFRESH_INTERVAL_MS = 30_000
 const CHAT_FALLBACK_REFRESH_INTERVAL_MS = 30_000
@@ -9539,12 +9537,8 @@ export const PhoneChat: React.FC = () => {
     if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
     const list = chatListRef.current
     if (!list) return
-    // Hasta el tope, precargamos algunos lotes en segundo plano. El resto queda para scroll.
-    if (chats.length < CHAT_LIST_BACKGROUND_LOAD_CAP) {
-      void loadChats({ silent: true, append: true, useCache: false })
-      return
-    }
-    // Pasado el tope, volvemos al prefetch por scroll.
+    // Sólo anticipamos el siguiente lote cuando la lista no llena la pantalla o el
+    // usuario ya está cerca del fondo. Evita descargar cinco páginas al abrir Chats.
     const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, list.clientHeight * CHAT_LIST_PREFETCH_VIEWPORTS)
     const bottomGap = list.scrollHeight - list.scrollTop - list.clientHeight
     if (list.scrollHeight <= list.clientHeight + CHAT_LIST_AUTO_LOAD_GAP_PX || bottomGap <= prefetchDistance) {

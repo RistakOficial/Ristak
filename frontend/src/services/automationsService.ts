@@ -4,6 +4,8 @@ import {
   registerAuthScopedCacheInvalidator,
   syncAuthScopedCachePrincipal
 } from './authPrincipalCache'
+import { abortAndClearSharedRequests, getOrCreateSharedRequest } from './sharedRequest'
+import { withRequestTimeout } from './requestTimeout'
 
 // ---------------------------------------------------------------------------
 // Tipos del modelo de automatizaciones
@@ -271,6 +273,7 @@ export interface AutomationsListOptions {
   force?: boolean
   /** Publica o agrega esta pagina al store reactivo de la consulta visible. */
   publishSnapshot?: boolean
+  signal?: AbortSignal
 }
 
 export interface AutomationUpdateInput {
@@ -355,9 +358,9 @@ function invalidateAutomationsPrincipalCache() {
   overviewRevision = 0
   automationsCache.overview = null
   automationsCache.automations.clear()
-  automationRequests.clear()
+  abortAndClearSharedRequests(automationRequests)
   overviewPageCache.clear()
-  overviewPageRequests.clear()
+  abortAndClearSharedRequests(overviewPageRequests)
   deletedAutomationIds.clear()
   overviewSnapshotQueryKey = ''
   overviewSnapshotGeneration += 1
@@ -384,7 +387,7 @@ function staleAutomationPrincipalError() {
 function invalidateAutomationListPages() {
   overviewRevision += 1
   overviewPageCache.clear()
-  overviewPageRequests.clear()
+  abortAndClearSharedRequests(overviewPageRequests)
 }
 
 function normalizeListOptions(options: AutomationsListOptions) {
@@ -574,16 +577,26 @@ function cacheAutomation(automation: Automation, localMutation = false) {
   }
 }
 
-function fetchAutomation(automationId: string): Promise<Automation> {
+function fetchAutomation(
+  automationId: string,
+  options: { signal?: AbortSignal } = {}
+): Promise<Automation> {
   syncAuthScopedCachePrincipal()
   const requestPrincipalRevision = getAuthScopedCacheRevision()
   const requestOverviewRevision = overviewRevision
-  const inFlight = automationRequests.get(automationId)
-  if (inFlight) return inFlight
-
-  const request = apiClient
-    .get<Automation>(`/automations/${automationId}`)
-    .then((automation) => {
+  return getOrCreateSharedRequest({
+    inflight: automationRequests,
+    key: automationId,
+    signal: options.signal,
+    abortWhenUnused: true,
+    createRequest: sharedSignal => withRequestTimeout({
+      timeoutMs: 15_000,
+      timeoutMessage: 'La automatización tardó demasiado en cargar. Reintenta.',
+      signal: sharedSignal,
+      request: requestSignal => apiClient.get<Automation>(`/automations/${automationId}`, {
+        signal: requestSignal
+      })
+    }).then((automation) => {
       if (requestPrincipalRevision !== getAuthScopedCacheRevision()) {
         throw staleAutomationPrincipalError()
       }
@@ -592,14 +605,7 @@ function fetchAutomation(automationId: string): Promise<Automation> {
       }
       return automation
     })
-    .finally(() => {
-      if (automationRequests.get(automationId) === request) {
-        automationRequests.delete(automationId)
-      }
-    })
-
-  automationRequests.set(automationId, request)
-  return request
+  })
 }
 
 export const automationsService = {
@@ -614,23 +620,11 @@ export const automationsService = {
     const cacheKey = overviewPageKey(normalizedOptions)
     const cached = overviewPageCache.get(cacheKey)
     if (!options.force && cached && cached.expiresAt > Date.now()) {
+      if (options.signal?.aborted) throw options.signal.reason
       overviewPageCache.delete(cacheKey)
       overviewPageCache.set(cacheKey, cached)
       publishOverviewSnapshotPage(cached.overview, normalizedOptions, snapshotRequest)
       return cached.overview
-    }
-
-    if (!options.force) {
-      const inFlight = overviewPageRequests.get(cacheKey)
-      if (inFlight) {
-        if (!snapshotRequest.enabled) return inFlight
-        return inFlight.then(overview => {
-          if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
-            publishOverviewSnapshotPage(overview, normalizedOptions, snapshotRequest)
-          }
-          return overview
-        })
-      }
     }
 
     const requestVersion = overviewRequestVersion
@@ -646,48 +640,59 @@ export const automationsService = {
     }
     if (normalizedOptions.status) params.status = normalizedOptions.status
 
-    const request = apiClient.get<AutomationsOverview>('/automations', {
-      params,
-      suppressFeatureNotAvailableToast: options.suppressFeatureNotAvailableToast
-    }).then((overview) => {
-      if (
-        requestPrincipalRevision !== getAuthScopedCacheRevision() ||
-        requestVersion !== overviewRequestVersion
-      ) {
-        throw staleAutomationPrincipalError()
-      }
-      const normalized: AutomationsOverview = {
-        folders: Array.isArray(overview.folders) ? overview.folders : [],
-        automations: (Array.isArray(overview.automations) ? overview.automations : [])
-          .filter(automation => !deletedAutomationIds.has(automation.id)),
-        pageInfo: overview.pageInfo || {
-          limit: normalizedOptions.limit,
-          hasMore: false,
-          nextCursor: null
+    const requestKey = options.force ? `${cacheKey}:force` : cacheKey
+    const overview = await getOrCreateSharedRequest({
+      inflight: overviewPageRequests,
+      key: requestKey,
+      signal: options.signal,
+      abortWhenUnused: true,
+      createRequest: sharedSignal => withRequestTimeout({
+        timeoutMs: 15_000,
+        timeoutMessage: 'La librería de automatizaciones tardó demasiado. Reintenta la carga.',
+        signal: sharedSignal,
+        request: signal => apiClient.get<AutomationsOverview>('/automations', {
+          params,
+          signal,
+          suppressFeatureNotAvailableToast: options.suppressFeatureNotAvailableToast
+        })
+      }).then((response) => {
+        if (
+          requestPrincipalRevision !== getAuthScopedCacheRevision() ||
+          requestVersion !== overviewRequestVersion
+        ) {
+          throw staleAutomationPrincipalError()
         }
-      }
+        const normalized: AutomationsOverview = {
+          folders: Array.isArray(response.folders) ? response.folders : [],
+          automations: (Array.isArray(response.automations) ? response.automations : [])
+            .filter(automation => !deletedAutomationIds.has(automation.id)),
+          pageInfo: response.pageInfo || {
+            limit: normalizedOptions.limit,
+            hasMore: false,
+            nextCursor: null
+          }
+        }
 
-      const reconciled = scopeOverviewToQuery(
-        applyOverviewMutationsSince(normalized, startingRevision),
-        normalizedOptions
-      )
-
-      cacheOverviewPage(cacheKey, reconciled)
-      publishOverviewSnapshotPage(reconciled, normalizedOptions, snapshotRequest)
-
-      return reconciled
-    }).finally(() => {
-      if (overviewPageRequests.get(cacheKey) === request) {
-        overviewPageRequests.delete(cacheKey)
-      }
+        const reconciled = scopeOverviewToQuery(
+          applyOverviewMutationsSince(normalized, startingRevision),
+          normalizedOptions
+        )
+        cacheOverviewPage(cacheKey, reconciled)
+        return reconciled
+      })
     })
 
-    overviewPageRequests.set(cacheKey, request)
-    return request
+    if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
+      publishOverviewSnapshotPage(overview, normalizedOptions, snapshotRequest)
+    }
+    return overview
   },
 
-  async getAutomation(automationId: string): Promise<Automation> {
-    return fetchAutomation(automationId)
+  async getAutomation(
+    automationId: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<Automation> {
+    return fetchAutomation(automationId, options)
   },
 
   async prefetchAutomation(automationId: string): Promise<void> {
