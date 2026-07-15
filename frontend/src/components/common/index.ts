@@ -46,6 +46,8 @@ export { ContactCustomFieldsPanel } from './ContactCustomFieldsPanel'
 export type { ContactCustomFieldsPanelProps } from './ContactCustomFieldsPanel'
 export { ContactAvatar } from './ContactAvatar'
 export { ContactPhoneSelector } from './ContactPhoneSelector'
+export { PhoneCountryCodeSelect } from './PhoneCountryCodeSelect'
+export type { PhoneCountryCodeSelectProps } from './PhoneCountryCodeSelect'
 export { ContactSearchInput } from './ContactSearchInput/ContactSearchInput'
 export { VisitorDetailsModal } from './VisitorDetailsModal'
 

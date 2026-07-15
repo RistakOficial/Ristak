@@ -19,7 +19,7 @@ import {
   COUNTRY_OPTIONS,
   getAccountLocaleSettings,
   getCountryDefaults,
-  getCountryFlagEmoji,
+  getPhoneCountryOptions,
   normalizePhoneForAccount
 } from '../utils/accountLocale.js' // (GCAL-006)
 import GHLClient from './ghlClient.js'
@@ -2201,10 +2201,9 @@ function renderCalendarPhoneCountryOptions(defaultCountryCode) {
   const selectedCountry = getCalendarPhoneCountryOption(defaultCountryCode)
     || getCountryDefaults(DEFAULT_CALENDAR_PHONE_LOCALE.countryCode)
 
-  return COUNTRY_OPTIONS.map(country => {
+  return getPhoneCountryOptions().map(country => {
     const selected = country.value === selectedCountry.value ? 'selected' : ''
-    const label = `${getCountryFlagEmoji(country.value)} +${country.dialCode}`
-    return `<option value="${escapeHtml(country.value)}" data-dial-code="${escapeHtml(country.dialCode)}" data-timezones="${escapeHtml((country.timezones || []).join(','))}" ${selected}>${escapeHtml(label)}</option>`
+    return `<option value="${escapeHtml(country.value)}" data-dial-code="${escapeHtml(country.dialCode)}" data-timezones="${escapeHtml((country.timezones || []).join(','))}" ${selected}>${escapeHtml(country.label)}</option>`
   }).join('')
 }
 

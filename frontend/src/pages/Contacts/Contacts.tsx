@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactAvatar, Loading, CustomSelect, Modal } from '@/components/common'
+import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactAvatar, Loading, PhoneCountryCodeSelect, Modal } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import { ContactDetailsModal } from '@/components/common/ContactDetailsModal/ContactDetailsModal'
 import type { Column } from '@/components/common'
@@ -45,10 +45,8 @@ import {
   getContactCustomFieldKeys
 } from '@/utils/contactCustomFields'
 import {
-  COUNTRY_OPTIONS,
   composePhoneWithDialCode,
   getCountryDefaults,
-  getCountryFlagEmoji,
   getDetectedAccountLocaleDefaults,
   getPhoneInputParts
 } from '@/utils/accountLocale'
@@ -162,17 +160,10 @@ const ContactPhoneField: React.FC<{ defaultValue?: string; autoFocus?: boolean }
   return (
     <div className={styles.phoneCountryField}>
       <input type="hidden" name="phone" value={composedPhone} />
-      <CustomSelect
+      <PhoneCountryCodeSelect
         value={country.value}
-        onChange={(event) => setCountryCode(event.target.value)}
-        aria-label="País y lada"
-      >
-        {COUNTRY_OPTIONS.map(option => (
-          <option key={option.value} value={option.value}>
-            {getCountryFlagEmoji(option.value)} +{option.dialCode} {option.label}
-          </option>
-        ))}
-      </CustomSelect>
+        onValueChange={setCountryCode}
+      />
       <input
         type="tel"
         inputMode="tel"

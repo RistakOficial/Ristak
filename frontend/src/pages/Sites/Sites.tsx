@@ -214,7 +214,7 @@ import {
   loadAllVariables,
   type FlowVariable
 } from '@/pages/Automations/editor/variablesCatalog'
-import { COUNTRY_OPTIONS, getCountryDefaults, getCountryFlagEmoji, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
+import { getCountryDefaults, getDetectedAccountLocaleDefaults, getPhoneCountryOptions } from '@/utils/accountLocale'
 import styles from './Sites.module.css'
 import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
@@ -38126,9 +38126,9 @@ const PhoneCountryInputPreview: React.FC<{ block: SiteBlock; placeholder?: strin
   return (
     <div className="rstk-phone-input">
       <select aria-label="País y lada" defaultValue={selectedCountry.value}>
-        {COUNTRY_OPTIONS.map(country => (
+        {getPhoneCountryOptions().map(country => (
           <option key={country.value} value={country.value}>
-            {getCountryFlagEmoji(country.value)} +{country.dialCode}
+            {country.label}
           </option>
         ))}
       </select>

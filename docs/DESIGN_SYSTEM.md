@@ -128,6 +128,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |
 | Select enriquecido | `<CustomSelect>` | — |
+| Código telefónico internacional | `<PhoneCountryCodeSelect>`; muestra únicamente bandera + código (`🇲🇽 +52`) | un select local que agregue el nombre del país |
 | Campo numérico | `<NumberInput>`; en primitivas móviles, `type="text"` + `inputMode="numeric\|decimal"` | `<input type="number">` nativo o controles con flechas subir/bajar |
 | Texto largo enfocable | `<ExpandableTextareaField>`; comparte el mismo valor entre el campo y su editor `<Modal size="xl">` | duplicar estado, recortar silenciosamente o construir un overlay local |
 | Ruta / slug con prefijo fijo | `<PathInput prefix="…">` | un wrapper con prefijo + `<input className={styles.input}>` que crea doble contenedor |
@@ -152,6 +153,12 @@ Responsive: sí se permite ajustar ancho, densidad y orden visual para ventanas
 chicas usando `flex`, `grid`, `minmax`, `clamp`, `min-width: 0`, container/media
 queries y variables del componente. Lo que no se permite es crear otro estilo
 visual por página para "resolver" pantallas chicas.
+
+**Selector de código telefónico.** En cualquier formulario que separa la región
+del número, el control visible usa únicamente `bandera + código internacional`
+(`🇲🇽 +52`). El trigger y sus opciones nunca agregan el nombre del país. Esta
+regla no afecta selectores de país fiscal, país de la cuenta, dirección o
+facturación, donde el nombre sí aporta contexto y debe conservarse.
 
 **Menú de usuario del sidebar:** el panel de cuenta y temas se abre como popover
 lateral, anclado al borde exterior derecho del sidebar y alineado con el bloque

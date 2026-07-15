@@ -1095,7 +1095,11 @@ Capacidades:
   `Clientes`, `Prospecto` o `Prospectos` en copy visible nuevo; si una superficie
   no puede leer labels todavia, usar `contacto/persona` como fallback visible y
   conservar las llaves internas (`customer`, `lead`) solo para logica.
-- Telefonos normalizados.
+- Telefonos normalizados. Cuando un formulario separa la region del numero, el
+  selector visible muestra solo bandera y codigo internacional (`🇲🇽 +52`), sin
+  repetir el nombre del pais. Este contrato aplica al alta/edicion de contactos,
+  Sites, calendarios publicos y cualquier superficie futura que solicite lada;
+  los selectores de pais de cuenta, direccion o facturacion conservan el nombre.
 - Nombres de contactos normalizados como nombre propio al entrar al CRM. Si un
   contacto llega como `raul gomez`, `RAUL GOMEZ` o `rAuL GomEZ`, Ristak lo guarda
   y muestra como `Raul Gomez`. La normalizacion aplica en alta/edicion manual,
@@ -2341,8 +2345,9 @@ Reglas base:
   un sitio sin cambiar de correo.
 - El formulario publico predeterminado de calendario pregunta nombre, correo y
   despues telefono. Los campos de telefono de calendario deben mostrar selector
-  de pais/lada y normalizar el valor con la region elegida; si el visitante no la
-  cambia, se usa region detectada o la configurada en la cuenta como respaldo.
+  de pais/lada como bandera + codigo internacional, sin nombre de pais, y
+  normalizar el valor con la region elegida; si el visitante no la cambia, se usa
+  region detectada o la configurada en la cuenta como respaldo.
   Cuando el contacto se autopobla desde otro formulario, la lada queda en el
   selector y el campo visible conserva solo el numero nacional, sin prefijos tipo
   `+52`, `52` o `+1` duplicados dentro del input.

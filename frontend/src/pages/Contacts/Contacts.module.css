@@ -302,7 +302,7 @@
 
 .phoneCountryField {
   display: grid;
-  grid-template-columns: minmax(132px, .42fr) minmax(0, 1fr);
+  grid-template-columns: minmax(112px, 124px) minmax(0, 1fr);
   gap: var(--spacing-xs);
 }
 

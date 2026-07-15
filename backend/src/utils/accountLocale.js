@@ -128,10 +128,15 @@ export function getCountryFlagEmoji(countryCode) {
 }
 
 export function getPhoneCountryOptions() {
-  return COUNTRY_OPTIONS.map(country => ({
-    ...country,
-    flag: getCountryFlagEmoji(country.value)
-  }))
+  return COUNTRY_OPTIONS.map(country => {
+    const flag = getCountryFlagEmoji(country.value)
+    return {
+      ...country,
+      countryLabel: country.label,
+      label: `${flag} +${country.dialCode}`,
+      flag
+    }
+  })
 }
 
 async function getCountryFromTimezone() {
