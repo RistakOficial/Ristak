@@ -655,6 +655,21 @@ export type IntegrationsStatus = {
   [key: string]: unknown;
 };
 
+export type HighLevelPhoneNumber = {
+  id: string;
+  phoneNumber: string;
+  label: string;
+  isDefault?: boolean;
+};
+
+export type HighLevelPhoneNumberCatalog = {
+  success: boolean;
+  phoneNumbers: HighLevelPhoneNumber[];
+  selectable: boolean;
+  fallbackToAccountDefault: boolean;
+  reason?: string | null;
+};
+
 export type PaymentLinkPayload = {
   contactId: string;
   contactName?: string;

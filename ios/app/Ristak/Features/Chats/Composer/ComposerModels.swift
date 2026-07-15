@@ -10,16 +10,18 @@ import SwiftUI
 /// SMS sale por HighLevel (`sms_qr`).
 enum ComposerChannel: Hashable, Identifiable, Sendable {
     case whatsapp(phoneNumberId: String)
+    case highLevelWhatsApp
     case messenger
     case instagram
-    case sms
+    case sms(fromNumber: String)
 
     var id: String {
         switch self {
         case .whatsapp(let phoneId): return "whatsapp-\(phoneId)"
+        case .highLevelWhatsApp: return "highlevel-whatsapp"
         case .messenger: return "messenger"
         case .instagram: return "instagram"
-        case .sms: return "sms"
+        case .sms(let fromNumber): return "highlevel-sms-\(fromNumber)"
         }
     }
 
@@ -30,6 +32,25 @@ enum ComposerChannel: Hashable, Identifiable, Sendable {
 
     var isMetaSocial: Bool {
         self == .messenger || self == .instagram
+    }
+
+    var isHighLevel: Bool {
+        if case .highLevelWhatsApp = self { return true }
+        if case .sms = self { return true }
+        return false
+    }
+
+    var highLevelChannel: String? {
+        switch self {
+        case .highLevelWhatsApp: return "whatsapp_api"
+        case .sms: return "sms_qr"
+        default: return nil
+        }
+    }
+
+    var highLevelFromNumber: String? {
+        guard case .sms(let fromNumber) = self, !fromNumber.isEmpty else { return nil }
+        return fromNumber
     }
 
     var metaPlatform: MetaSocialPlatform? {
@@ -44,6 +65,7 @@ enum ComposerChannel: Hashable, Identifiable, Sendable {
     var badgeChannel: RistakChatChannel {
         switch self {
         case .whatsapp: return .whatsapp
+        case .highLevelWhatsApp: return .whatsapp
         case .messenger: return .messenger
         case .instagram: return .instagram
         case .sms: return .whatsapp
@@ -60,6 +82,23 @@ struct ComposerChannelOption: Identifiable {
     let disabledReason: String?
 
     var id: String { channel.id }
+}
+
+struct ComposerChannelIconView: View {
+    let channel: ComposerChannel
+    var size: CGFloat
+
+    var body: some View {
+        if channel.highLevelChannel == "sms_qr" {
+            Image(systemName: "message.fill")
+                .font(.system(size: size * 0.78, weight: .medium))
+                .foregroundStyle(RistakTheme.accent)
+                .frame(width: size, height: size)
+                .accessibilityHidden(true)
+        } else {
+            ChannelBadgeView(channel: channel.badgeChannel, size: size)
+        }
+    }
 }
 
 // MARK: - Borradores de adjuntos

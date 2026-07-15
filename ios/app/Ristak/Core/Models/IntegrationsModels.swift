@@ -85,3 +85,43 @@ struct IntegrationsStatus: Decodable, Sendable, Equatable {
 
     var isHighLevelConnected: Bool { highlevel?.connected == true }
 }
+
+struct HighLevelPhoneNumber: Decodable, Sendable, Equatable, Identifiable {
+    let id: String
+    let phoneNumber: String
+    let label: String
+    let isDefault: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, phoneNumber, label, isDefault
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = container.flexibleString(forKey: .id) ?? ""
+        phoneNumber = container.flexibleString(forKey: .phoneNumber) ?? ""
+        label = container.flexibleString(forKey: .label) ?? ""
+        isDefault = container.flexibleBool(forKey: .isDefault) ?? false
+    }
+}
+
+struct HighLevelPhoneNumberCatalog: Decodable, Sendable, Equatable {
+    let success: Bool
+    let phoneNumbers: [HighLevelPhoneNumber]
+    let selectable: Bool
+    let fallbackToAccountDefault: Bool
+    let reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case success, phoneNumbers, selectable, fallbackToAccountDefault, reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        success = container.flexibleBool(forKey: .success) ?? false
+        phoneNumbers = (try? container.decodeIfPresent([HighLevelPhoneNumber].self, forKey: .phoneNumbers)) ?? []
+        selectable = container.flexibleBool(forKey: .selectable) ?? false
+        fallbackToAccountDefault = container.flexibleBool(forKey: .fallbackToAccountDefault) ?? true
+        reason = container.flexibleString(forKey: .reason)
+    }
+}

@@ -11,6 +11,13 @@ enum IntegrationsService {
         )
     }
 
+    static func highLevelPhoneNumbers() async throws -> HighLevelPhoneNumberCatalog {
+        try await APIClient.shared.get(
+            "/api/highlevel/phone-numbers",
+            timeout: APIClient.dashboardTimeout
+        )
+    }
+
     /// `GET /api/license/status` — plan/features frescos. Consultarlo al abrir
     /// Pagos (el `user.licenseFeatures` cacheado puede quedar viejo, doc 13
     /// gap 6). Un estado bloqueado NO llega aquí: llega como 403

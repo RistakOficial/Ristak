@@ -175,7 +175,7 @@ struct ChannelPickerSheet: View {
                     viewModel.selectChannel(option)
                 } label: {
                     HStack(spacing: RistakTheme.Spacing.sm) {
-                        ChannelBadgeView(channel: option.channel.badgeChannel, size: 28)
+                        ComposerChannelIconView(channel: option.channel, size: 28)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(option.title)
                                 .font(.subheadline.weight(.medium))

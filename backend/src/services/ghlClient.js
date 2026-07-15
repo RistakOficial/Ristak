@@ -485,6 +485,20 @@ class GHLClient {
     })
   }
 
+  async listActivePhoneNumbers(options = {}) {
+    const pageSize = Math.min(Math.max(Math.trunc(Number(options.pageSize) || 1000), 1), 1000)
+    const page = Math.max(Math.trunc(Number(options.page) || 0), 0)
+
+    return this.request(`/phone-system/numbers/location/${encodeURIComponent(this.locationId)}`, {
+      version: 'v3',
+      params: {
+        pageSize,
+        page,
+        skipNumberPool: options.skipNumberPool === true
+      }
+    })
+  }
+
   async exportConversationMessages(options = {}) {
     const {
       contactId,

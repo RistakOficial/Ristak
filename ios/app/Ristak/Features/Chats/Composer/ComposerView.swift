@@ -406,7 +406,7 @@ struct ComposerView: View {
             Button {
                 viewModel.isComposerChannelSheetPresented = true
             } label: {
-                ChannelBadgeView(channel: viewModel.selectedChannel.badgeChannel, size: 22)
+                ComposerChannelIconView(channel: viewModel.selectedChannel, size: 22)
                     .frame(width: 34, height: 34)
                     .contentShape(Rectangle())
             }

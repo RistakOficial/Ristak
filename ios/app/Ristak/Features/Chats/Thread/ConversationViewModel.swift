@@ -172,6 +172,8 @@ final class ConversationViewModel {
     private(set) var isSending = false
 
     private(set) var whatsAppStatus: WhatsAppAPIStatus?
+    private(set) var highLevelConnected = false
+    private(set) var highLevelPhoneNumbers: [HighLevelPhoneNumber] = []
     private(set) var selectedChannel: ComposerChannel = .whatsapp(phoneNumberId: "")
     private var channelResolved = false
     private(set) var isSavingChannelSelection = false
@@ -318,7 +320,8 @@ final class ConversationViewModel {
         markRead()
         async let contactTask: Void = hydrateContactDetail()
         async let statusTask: Void = loadWhatsAppStatus()
-        _ = await (contactTask, statusTask)
+        async let highLevelTask: Void = loadHighLevelChannels()
+        _ = await (contactTask, statusTask, highLevelTask)
         resolveDefaultChannelIfNeeded()
     }
 
@@ -842,6 +845,17 @@ final class ConversationViewModel {
         whatsAppStatus = try? await WhatsAppNumbersService.status()
     }
 
+    private func loadHighLevelChannels() async {
+        let status = try? await IntegrationsService.status()
+        highLevelConnected = status?.isHighLevelConnected == true
+        guard highLevelConnected else {
+            highLevelPhoneNumbers = []
+            return
+        }
+        let catalog = try? await IntegrationsService.highLevelPhoneNumbers()
+        highLevelPhoneNumbers = catalog?.phoneNumbers ?? []
+    }
+
     func loadAgentStates() async {
         guard let fresh = try? await agentService.fetchAllStates(contactId: contactID) else {
             // Red caída en frío: NO pises lo hidratado desde caché (el robot
@@ -893,6 +907,19 @@ final class ConversationViewModel {
         if contactPhone == nil || contactPhone?.isEmpty == true {
             if evidence.contains("instagram") { selectedChannel = .instagram; return }
             if evidence.contains("messenger") || evidence.contains("facebook") { selectedChannel = .messenger; return }
+        }
+
+        if highLevelConnected, evidence.contains("ghl_whatsapp") {
+            selectedChannel = .highLevelWhatsApp
+            return
+        }
+        if highLevelConnected,
+           evidence.contains("ghl_sms") || evidence.contains("sms_qr") {
+            let sender = highLevelPhoneNumbers.first(where: \.isDefault)?.phoneNumber
+                ?? highLevelPhoneNumbers.first?.phoneNumber
+                ?? ""
+            selectedChannel = .sms(fromNumber: sender)
+            return
         }
 
         let preferred = contactDetail?.preferredWhatsAppPhoneNumberId
@@ -963,6 +990,39 @@ final class ConversationViewModel {
             }
         }
 
+        if highLevelConnected {
+            options.append(
+                ComposerChannelOption(
+                    channel: .highLevelWhatsApp,
+                    title: "WhatsApp · HighLevel",
+                    subtitle: "Envía desde la conversación conectada en HighLevel.",
+                    disabledReason: hasPhone ? nil : "Este contacto no tiene teléfono guardado."
+                )
+            )
+
+            if highLevelPhoneNumbers.isEmpty {
+                options.append(
+                    ComposerChannelOption(
+                        channel: .sms(fromNumber: ""),
+                        title: "SMS · HighLevel",
+                        subtitle: "HighLevel elegirá el número configurado en la conversación.",
+                        disabledReason: hasPhone ? nil : "Este contacto no tiene teléfono guardado."
+                    )
+                )
+            } else {
+                for (index, phone) in highLevelPhoneNumbers.enumerated() {
+                    options.append(
+                        ComposerChannelOption(
+                            channel: .sms(fromNumber: phone.phoneNumber),
+                            title: "SMS · \(phone.label.isEmpty ? "Número \(index + 1)" : phone.label)",
+                            subtitle: phone.phoneNumber,
+                            disabledReason: hasPhone ? nil : "Este contacto no tiene teléfono guardado."
+                        )
+                    )
+                }
+            }
+        }
+
         options.append(
             ComposerChannelOption(
                 channel: .messenger,
@@ -983,16 +1043,6 @@ final class ConversationViewModel {
                     : "Activa Instagram en Configuración > Meta Ads para responder desde Ristak."
             )
         )
-        if evidence.contains("sms") || evidence.contains("ghl_") {
-            options.append(
-                ComposerChannelOption(
-                    channel: .sms,
-                    title: "SMS",
-                    subtitle: "Responde por SMS vía HighLevel.",
-                    disabledReason: hasPhone ? nil : "Este contacto no tiene teléfono guardado."
-                )
-            )
-        }
         return options
     }
 
@@ -1178,7 +1228,7 @@ final class ConversationViewModel {
             }
             await sendMetaText(text)
 
-        case .sms:
+        case .highLevelWhatsApp, .sms:
             guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
             await sendHighLevel(text: text, drafts: pendingAttachments)
 
@@ -1357,14 +1407,14 @@ final class ConversationViewModel {
     // MARK: Nota de voz
 
     private func sendVoiceNote() async {
-        guard selectedChannel.isWhatsApp || selectedChannel == .sms || selectedChannel.isMetaSocial else {
+        guard selectedChannel.isWhatsApp || selectedChannel.isHighLevel || selectedChannel.isMetaSocial else {
             alert = ConversationAlert(
                 title: "Adjunto no disponible",
                 message: "Este canal acepta texto o audio en este chat."
             )
             return
         }
-        if selectedChannel.isWhatsApp || selectedChannel == .sms {
+        if selectedChannel.isWhatsApp || selectedChannel.isHighLevel {
             guard let phone = contactPhone, !phone.isEmpty else {
                 alert = ConversationAlert(
                     title: "Falta el teléfono",
@@ -1400,7 +1450,9 @@ final class ConversationViewModel {
         }
 
         let externalId = MessageExternalIdFactory.audio()
-        let optimisticTransport = selectedChannel == .sms ? "ghl_sms" : resolveWhatsAppTransport().rawValue
+        let optimisticTransport = selectedChannel.isHighLevel
+            ? (selectedChannel.highLevelChannel == "sms_qr" ? "ghl_sms" : "ghl_whatsapp")
+            : resolveWhatsAppTransport().rawValue
         var optimistic = makeOptimisticMessage(id: externalId, text: "", transport: optimisticTransport)
         optimistic.messageType = "audio"
         optimistic.attachment = ChatAttachment(
@@ -1421,15 +1473,16 @@ final class ConversationViewModel {
                 clientUploadID: "ios-chat-\(voiceDraft.id)",
                 contactID: contactID
             )
-            if selectedChannel == .sms {
+            if selectedChannel.isHighLevel {
                 let result = try await messagingService.sendHighLevelMessage(
                     HighLevelMessageSendRequest(
                         contactId: contactID,
-                        channel: "sms_qr",
+                        channel: selectedChannel.highLevelChannel ?? "sms_qr",
                         audioDataUrl: mediaReference.legacyDataURL,
                         audioUrl: mediaReference.publicURL,
                         audioMediaAssetId: mediaReference.mediaAssetID,
                         durationMs: preview.durationMs,
+                        fromNumber: selectedChannel.highLevelFromNumber,
                         externalId: externalId
                     )
                 )
@@ -1556,7 +1609,9 @@ final class ConversationViewModel {
 
     private func sendHighLevel(text: String, drafts: [ComposerAttachmentDraft], preserveComposer: Bool = false) async {
         let externalId = MessageExternalIdFactory.highLevel()
-        var optimistic = makeOptimisticMessage(id: externalId, text: text, transport: "ghl_sms")
+        let highLevelChannel = selectedChannel.highLevelChannel ?? "sms_qr"
+        let highLevelTransport = highLevelChannel == "sms_qr" ? "ghl_sms" : "ghl_whatsapp"
+        var optimistic = makeOptimisticMessage(id: externalId, text: text, transport: highLevelTransport)
         if let first = drafts.first {
             optimistic.attachment = ChatAttachment(
                 type: attachmentKind(for: first.kind),
@@ -1597,11 +1652,12 @@ final class ConversationViewModel {
             let result = try await messagingService.sendHighLevelMessage(
                 HighLevelMessageSendRequest(
                     contactId: contactID,
-                    channel: "sms_qr",
+                    channel: highLevelChannel,
                     message: text.isEmpty ? nil : text,
                     attachments: uploadedURLs.isEmpty ? nil : uploadedURLs,
                     attachmentMediaAssetIds: uploadedAssetIDs.isEmpty ? nil : uploadedAssetIDs,
                     attachmentDataUrls: legacyAttachments.isEmpty ? nil : legacyAttachments,
+                    fromNumber: selectedChannel.highLevelFromNumber,
                     externalId: externalId
                 )
             )
@@ -2018,7 +2074,7 @@ final class ConversationViewModel {
             )
             return false
         }
-        guard selectedChannel.isWhatsApp || selectedChannel == .sms || (allowMetaSocialAudio && selectedChannel.isMetaSocial) else {
+        guard selectedChannel.isWhatsApp || selectedChannel.isHighLevel || (allowMetaSocialAudio && selectedChannel.isMetaSocial) else {
             alert = ConversationAlert(
                 title: "Adjuntos por WhatsApp",
                 message: "Los adjuntos nativos se envían por WhatsApp API/QR. Cambia el canal a WhatsApp para mandar este archivo."
@@ -2335,30 +2391,43 @@ final class ConversationViewModel {
                 externalId: state.externalId
             )
         } else {
-            // CREACIÓN: WhatsApp API texto (requiere teléfono del contacto y del
-            // número de negocio).
             guard let phone = contactPhone, !phone.isEmpty else {
                 alert = ConversationAlert(title: "Programado", message: "Este contacto necesita teléfono para programar el mensaje.")
                 return false
             }
-            let fromPhone = selectedWhatsAppPhone?.phoneNumber ?? selectedWhatsAppPhone?.displayPhoneNumber
-            guard let fromPhone, !fromPhone.isEmpty else {
-                alert = ConversationAlert(title: "Programado", message: "Elige el WhatsApp del negocio que mandará el mensaje.")
-                return false
+            if selectedChannel.isHighLevel {
+                request = ScheduledMessageUpsertRequest(
+                    id: nil,
+                    contactId: contactID,
+                    provider: "highlevel",
+                    channel: selectedChannel.highLevelChannel,
+                    messageType: "text",
+                    text: text,
+                    toPhone: phone,
+                    fromPhone: selectedChannel.highLevelFromNumber,
+                    scheduledAt: RistakDateParsing.isoString(from: state.date),
+                    externalId: state.externalId
+                )
+            } else {
+                let fromPhone = selectedWhatsAppPhone?.phoneNumber ?? selectedWhatsAppPhone?.displayPhoneNumber
+                guard let fromPhone, !fromPhone.isEmpty else {
+                    alert = ConversationAlert(title: "Programado", message: "Elige el WhatsApp del negocio que mandará el mensaje.")
+                    return false
+                }
+                request = ScheduledMessageUpsertRequest(
+                    id: nil,
+                    contactId: contactID,
+                    provider: "whatsapp_api",
+                    transport: resolveWhatsAppTransport().rawValue,
+                    messageType: "text",
+                    text: text,
+                    toPhone: phone,
+                    fromPhone: fromPhone,
+                    businessPhoneNumberId: selectedWhatsAppPhone?.id,
+                    scheduledAt: RistakDateParsing.isoString(from: state.date),
+                    externalId: state.externalId
+                )
             }
-            request = ScheduledMessageUpsertRequest(
-                id: nil,
-                contactId: contactID,
-                provider: "whatsapp_api",
-                transport: resolveWhatsAppTransport().rawValue,
-                messageType: "text",
-                text: text,
-                toPhone: phone,
-                fromPhone: fromPhone,
-                businessPhoneNumberId: selectedWhatsAppPhone?.id,
-                scheduledAt: RistakDateParsing.isoString(from: state.date),
-                externalId: state.externalId
-            )
         }
 
         do {

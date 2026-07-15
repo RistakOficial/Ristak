@@ -42,6 +42,7 @@ import {
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireAdmin, requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
+import { listHighLevelPhoneNumbers } from '../controllers/highlevelPhoneNumbersController.js'
 
 const router = express.Router()
 
@@ -75,6 +76,7 @@ router.post('/contacts/search', requireModuleAccess('contacts'), searchContacts)
 router.get('/contacts/:id', requireModuleAccess('contacts'), getContactById)
 
 // Conversations
+router.get('/phone-numbers', requireModuleAccess('chat'), listHighLevelPhoneNumbers)
 router.post('/conversations/messages', requireModuleAccess('chat'), sendConversationMessage)
 router.post('/conversations/sync', requireAdmin, requireModuleAccess('chat'), syncConversations)
 

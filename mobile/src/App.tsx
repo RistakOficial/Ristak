@@ -266,6 +266,7 @@ import type {
   DashboardFunnelRow,
   DashboardFunnelScope,
   DashboardMetrics,
+  HighLevelPhoneNumber,
   IntegrationsStatus,
   LicenseStatusResponse,
   OriginDistributionData,
@@ -483,7 +484,7 @@ type CalendarSheetMode = 'calendar' | 'contactPicker' | 'event' | 'appointmentFo
 type AppointmentFormMode = 'create' | 'edit';
 type CommentComposerChannel = 'facebook_comment' | 'instagram_comment';
 type ComposerRouteChannel = NativeMessageChannel | CommentComposerChannel;
-type ComposerChannelRouteValue = ComposerRouteChannel | `whatsapp:${string}`;
+type ComposerChannelRouteValue = ComposerRouteChannel | `whatsapp:${string}` | `highlevel:${string}`;
 type NativeCommentReplyTarget = { messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string };
 type ComposerChannelOption = {
   value: ComposerChannelRouteValue;
@@ -491,6 +492,9 @@ type ComposerChannelOption = {
   label: string;
   description: string;
   kind: ChannelBadgeKind;
+  provider?: 'native' | 'highlevel';
+  highLevelChannel?: 'whatsapp_api' | 'sms_qr';
+  fromNumber?: string;
   phoneNumberId?: string;
   disabledReason?: string;
 };
@@ -18641,7 +18645,10 @@ function getComposerRoutePhoneId(value: ComposerChannelRouteValue) {
 }
 
 function getComposerRouteChannel(value: ComposerChannelRouteValue): ComposerRouteChannel {
-  return isWhatsAppComposerRoute(value) ? 'whatsapp' : value;
+  if (isWhatsAppComposerRoute(value)) return 'whatsapp';
+  if (String(value).startsWith('highlevel:whatsapp')) return 'whatsapp';
+  if (String(value).startsWith('highlevel:sms')) return 'sms';
+  return value as ComposerRouteChannel;
 }
 
 function getPreferredComposerPhoneId(contact: ChatContact) {
@@ -18715,6 +18722,15 @@ function getDefaultComposerRoute(contact: ChatContact, options: ComposerChannelO
     if (commentOption) return commentOption.value;
   }
   const preferredChannel = getDefaultComposerChannel(contact);
+  const lastTransport = String(contact.lastMessageTransport || '').trim().toLowerCase();
+  if (lastTransport.startsWith('ghl_') || lastTransport.includes('highlevel')) {
+    const highLevelOption = options.find((option) => (
+      option.provider === 'highlevel'
+      && option.channel === preferredChannel
+      && !option.disabledReason
+    ));
+    if (highLevelOption) return highLevelOption.value;
+  }
   const preferredPhoneId = getPreferredComposerPhoneId(contact);
   if (preferredChannel === 'whatsapp' && preferredPhoneId) {
     const preferredPhoneOption = options.find((option) => option.channel === 'whatsapp' && option.phoneNumberId === preferredPhoneId && !option.disabledReason);
@@ -18729,6 +18745,7 @@ function getDefaultComposerRoute(contact: ChatContact, options: ComposerChannelO
 function getComposerChannelOptions(
   contact: ChatContact,
   businessPhones: WhatsAppApiPhoneNumber[] = [],
+  highLevelPhoneNumbers: HighLevelPhoneNumber[] = [],
   integrations?: IntegrationsStatus | null,
   latestCommentReplyTarget?: NativeCommentReplyTarget | null,
 ): ComposerChannelOption[] {
@@ -18748,6 +18765,7 @@ function getComposerChannelOptions(
         label: `WhatsApp · ${getBusinessPhoneLabel(phone) || `Número ${index + 1}`}`,
         description: getBusinessPhoneValue(phone) || phone.verified_name || 'Número conectado',
         kind: 'whatsapp',
+        provider: 'native' as const,
       }))
     : [];
   const options: ComposerChannelOption[] = [...whatsappOptions];
@@ -18765,14 +18783,41 @@ function getComposerChannelOptions(
     });
   }
 
-  if (hasPhone && highLevelConnected) {
+  if (highLevelConnected) {
     options.push({
-      value: 'sms',
-      channel: 'sms',
-      label: 'SMS',
-      description: 'Envía por SMS conectado.',
-      kind: 'sms',
+      value: 'highlevel:whatsapp',
+      channel: 'whatsapp',
+      label: 'WhatsApp · HighLevel',
+      description: 'Envía desde la conversación conectada en HighLevel.',
+      kind: 'whatsapp',
+      provider: 'highlevel',
+      highLevelChannel: 'whatsapp_api',
+      disabledReason: hasPhone ? undefined : 'Este contacto no tiene teléfono guardado.',
     });
+
+    const highLevelSmsOptions: ComposerChannelOption[] = highLevelPhoneNumbers.length > 0
+      ? highLevelPhoneNumbers.map((phone, index) => ({
+          value: `highlevel:sms:${phone.id || index}` as ComposerChannelRouteValue,
+          channel: 'sms',
+          label: `SMS · ${phone.label || `Número ${index + 1}`}`,
+          description: phone.phoneNumber,
+          kind: 'sms',
+          provider: 'highlevel',
+          highLevelChannel: 'sms_qr',
+          fromNumber: phone.phoneNumber,
+          disabledReason: hasPhone ? undefined : 'Este contacto no tiene teléfono guardado.',
+        }))
+      : [{
+          value: 'highlevel:sms',
+          channel: 'sms',
+          label: 'SMS · HighLevel',
+          description: 'HighLevel elegirá el número configurado en la conversación.',
+          kind: 'sms',
+          provider: 'highlevel',
+          highLevelChannel: 'sms_qr',
+          disabledReason: hasPhone ? undefined : 'Este contacto no tiene teléfono guardado.',
+        }];
+    options.push(...highLevelSmsOptions);
   }
 
   if (isMessengerContact && messengerConnected) {
@@ -22019,6 +22064,7 @@ function NativeConversationScreen({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSendChannel, setSelectedSendChannel] = useState<ComposerChannelRouteValue>(() => getDefaultComposerChannel(contact));
+  const [highLevelPhoneNumbers, setHighLevelPhoneNumbers] = useState<HighLevelPhoneNumber[]>([]);
   const selectedSendContactIdRef = useRef(contact.id);
   const selectedSendManuallyRef = useRef(false);
   const composerChannelPreferenceSavingRef = useRef(false);
@@ -22656,9 +22702,25 @@ function NativeConversationScreen({
 
   const channelKind = getContactChannelKind(contact);
   const latestEligibleCommentReplyTarget = useMemo(() => getLatestEligibleNativeCommentReplyTarget(messages), [messages]);
+  useEffect(() => {
+    let active = true;
+    if (!isHighLevelConnected(integrationsStatus)) {
+      setHighLevelPhoneNumbers([]);
+      return () => { active = false; };
+    }
+
+    void api.getHighLevelPhoneNumbers()
+      .then((catalog) => {
+        if (active) setHighLevelPhoneNumbers(Array.isArray(catalog.phoneNumbers) ? catalog.phoneNumbers : []);
+      })
+      .catch(() => {
+        if (active) setHighLevelPhoneNumbers([]);
+      });
+    return () => { active = false; };
+  }, [api, integrationsStatus?.highlevel?.connected]);
   const composerChannelOptions = useMemo(
-    () => getComposerChannelOptions(contact, businessPhones, integrationsStatus, latestEligibleCommentReplyTarget),
-    [businessPhones, contact, integrationsStatus, latestEligibleCommentReplyTarget],
+    () => getComposerChannelOptions(contact, businessPhones, highLevelPhoneNumbers, integrationsStatus, latestEligibleCommentReplyTarget),
+    [businessPhones, contact, highLevelPhoneNumbers, integrationsStatus, latestEligibleCommentReplyTarget],
   );
   useEffect(() => {
     const contactChanged = selectedSendContactIdRef.current !== contact.id;
@@ -22695,6 +22757,12 @@ function NativeConversationScreen({
     ? getCommentComposerLabel(selectedCommentReplyTarget.platform)
     : selectedChannelOption?.label || 'Sin canal conectado';
   const selectedRoutePhoneNumberId = selectedChannelOption?.phoneNumberId || getComposerRoutePhoneId(selectedSendChannel);
+  const selectedHighLevelChannel = selectedChannelOption?.provider === 'highlevel'
+    ? selectedChannelOption.highLevelChannel
+    : undefined;
+  const selectedHighLevelFromNumber = selectedChannelOption?.provider === 'highlevel'
+    ? selectedChannelOption.fromNumber
+    : undefined;
   // Resolve the qr/api transport + reply-window state for the currently selected
   // WhatsApp sender, mirroring /movil's resolvedTransport. Shared by every
   // WhatsApp send path (text, media, location) so QR-only numbers route to QR.
@@ -22886,7 +22954,7 @@ function NativeConversationScreen({
         date: sentAt,
         direction: 'outbound',
         text: '',
-        channel: 'whatsapp_api',
+        channel: selectedHighLevelChannel || 'whatsapp_api',
         transport: 'native',
         status: 'enviando',
         pending: true,
@@ -22897,16 +22965,23 @@ function NativeConversationScreen({
       setMessages((current) => mergeNativeChatMessages(current, [optimisticMessage]));
       updateContactPreview('📍 Ubicación', sentAt, 'whatsapp_api');
 
-      const response = await api.sendLocation(
-        contact,
-        locationPayload.latitude,
-        locationPayload.longitude,
-        locationPayload.name,
-        locationPayload.address,
-        selectedRoutePhoneNumberId,
-        resolveWhatsAppSendTransport().transport,
-        intent.externalId,
-      );
+      const response = selectedHighLevelChannel
+        ? await api.sendHighLevelMessage(contact, {
+            channel: selectedHighLevelChannel,
+            message: `${locationPayload.name}\n${locationPayload.url}`,
+            fromNumber: selectedHighLevelFromNumber,
+            externalId: intent.externalId,
+          })
+        : await api.sendLocation(
+            contact,
+            locationPayload.latitude,
+            locationPayload.longitude,
+            locationPayload.name,
+            locationPayload.address,
+            selectedRoutePhoneNumberId,
+            resolveWhatsAppSendTransport().transport,
+            intent.externalId,
+          );
       const localMessageId = getSendResponseLocalMessageId(response);
       const providerMessageId = getSendResponseProviderMessageId(response);
       setMessages((current) => current.map((message) => (
@@ -23030,7 +23105,7 @@ function NativeConversationScreen({
       attachmentsToSend[0]?.kind === 'audio' &&
       (selectedRouteChannel === 'messenger' || selectedRouteChannel === 'instagram')
     );
-    if (attachmentsToSend.length > 0 && selectedRouteChannel !== 'whatsapp' && !canSendNativeMetaAudio) {
+    if (attachmentsToSend.length > 0 && selectedRouteChannel !== 'whatsapp' && !canSendNativeMetaAudio && !selectedHighLevelChannel) {
       Alert.alert('Adjuntos', 'Este canal nativo acepta texto o audio. Cambia a WhatsApp para mandar otros archivos.');
       return;
     }
@@ -23061,7 +23136,7 @@ function NativeConversationScreen({
       : privateCommentReply
         ? 'private'
         : undefined;
-    const sendingWhatsApp = selectedRouteChannel === 'whatsapp';
+    const sendingWhatsApp = selectedRouteChannel === 'whatsapp' && !selectedHighLevelChannel;
     const whatsAppSend = sendingWhatsApp ? resolveWhatsAppSendTransport() : null;
     if (whatsAppSend && !whatsAppSend.replyWindowOpen && !whatsAppSend.apiUnavailable) {
       // Con API operativa, una ventana cerrada exige plantilla oficial aunque
@@ -23087,13 +23162,15 @@ function NativeConversationScreen({
     }
 
     const sentAt = new Date().toISOString();
-    const optimisticChannel = getBackendChannelForComposer(selectedRouteChannel);
+    const optimisticChannel = selectedHighLevelChannel || getBackendChannelForComposer(selectedRouteChannel);
     const replyPayload = replyingToMessage ? getNativeMessageReferencePayload(replyingToMessage) : undefined;
     const sendSignature = JSON.stringify({
       contactId: contact.id,
       text: textToSend,
       attachmentIds: attachmentsToSend.map((attachment) => attachment.id),
       channel: selectedRouteChannel,
+      provider: selectedHighLevelChannel ? 'highlevel' : 'native',
+      fromNumber: selectedHighLevelFromNumber,
       phoneNumberId: selectedRoutePhoneNumberId,
       replyPayload,
       commentReplyMode,
@@ -23180,6 +23257,8 @@ function NativeConversationScreen({
               resolvedWhatsAppTransport,
               selectedRouteChannel,
               replyPayload,
+              selectedHighLevelChannel,
+              selectedHighLevelFromNumber,
             );
             responses.push({ status: 'fulfilled', value: response });
           } catch (reason) {
@@ -23255,15 +23334,22 @@ function NativeConversationScreen({
             commentId: selectedCommentReplyTarget?.commentId,
             externalId,
           })
-          : await api.sendText(
-            contact,
-            textToSend,
-            selectedRouteChannel as NativeMessageChannel,
-            replyPayload,
-            selectedRoutePhoneNumberId,
-            resolvedWhatsAppTransport,
-            externalId,
-          );
+          : selectedHighLevelChannel
+            ? await api.sendHighLevelMessage(contact, {
+                channel: selectedHighLevelChannel,
+                message: textToSend,
+                fromNumber: selectedHighLevelFromNumber,
+                externalId,
+              })
+            : await api.sendText(
+                contact,
+                textToSend,
+                selectedRouteChannel as NativeMessageChannel,
+                replyPayload,
+                selectedRoutePhoneNumberId,
+                resolvedWhatsAppTransport,
+                externalId,
+              );
         const localMessageId = getSendResponseLocalMessageId(response);
         const providerMessageId = getSendResponseProviderMessageId(response);
         setMessages((current) => current.map((message) => (
@@ -23977,7 +24063,7 @@ function NativeConversationScreen({
     // La ventana futura nunca cambia el transporte. Con API disponible exige
     // plantilla; QR sólo queda habilitado si esa API ya no está disponible.
     let scheduledTransport: 'qr' | 'api' | undefined;
-    if (selectedRouteChannel === 'whatsapp') {
+    if (selectedRouteChannel === 'whatsapp' && !selectedHighLevelChannel) {
       const whatsAppSend = resolveWhatsAppSendTransport();
       scheduledTransport = whatsAppSend.transport;
       const lastInbound = getNativeLastReplyWindowInboundTime(messagesRef.current);
@@ -24000,6 +24086,8 @@ function NativeConversationScreen({
         text,
         scheduledAt,
         selectedRouteChannel,
+        selectedHighLevelChannel || '',
+        selectedHighLevelFromNumber || '',
         selectedRoutePhoneNumberId || '',
         scheduledTransport || '',
         editingId || '',
@@ -24008,7 +24096,11 @@ function NativeConversationScreen({
         ? scheduleSendIntentRef.current.scheduledId
         : createNativeMutationId('native-scheduled', target.id));
       if (!editingId) scheduleSendIntentRef.current = { signature, scheduledId };
-      await api.scheduleText(target, text, scheduledAt, selectedRouteChannel as NativeMessageChannel, scheduledId, selectedRoutePhoneNumberId, { transport: scheduledTransport });
+      await api.scheduleText(target, text, scheduledAt, selectedRouteChannel as NativeMessageChannel, scheduledId, selectedRoutePhoneNumberId, {
+        transport: scheduledTransport,
+        highLevelChannel: selectedHighLevelChannel,
+        fromNumber: selectedHighLevelFromNumber,
+      });
       scheduleSendIntentRef.current = null;
       closeSheet();
       setScheduleText('');
@@ -27065,12 +27157,28 @@ async function sendDraftAttachment(
   transport?: 'qr' | 'api',
   channel: ComposerRouteChannel = 'whatsapp',
   reply?: { replyToMessageId?: string; replyToProviderMessageId?: string },
+  highLevelChannel?: 'whatsapp_api' | 'sms_qr',
+  highLevelFromNumber?: string,
 ) {
   const hydrated = await hydrateDraftAttachmentData(attachment);
   const dataUrl = hydrated.dataUrl || '';
   const externalId = `native-attachment-${contact.id}-${attachment.id}`;
   if (attachment.kind === 'audio' && (channel === 'messenger' || channel === 'instagram')) {
     return api.sendMetaSocialAudio(contact, channel, dataUrl, attachment.durationMs, reply, externalId);
+  }
+  if (highLevelChannel) {
+    return api.sendHighLevelMessage(contact, {
+      channel: highLevelChannel,
+      message: caption || undefined,
+      fromNumber: highLevelFromNumber,
+      attachmentDataUrls: [{
+        dataUrl,
+        filename: attachment.name,
+        mimeType: attachment.mimeType,
+        kind: attachment.kind,
+      }],
+      externalId,
+    });
   }
   if (attachment.kind === 'video') return api.sendVideo(contact, dataUrl, caption, phoneNumberId, transport, externalId);
   if (attachment.kind === 'audio') return api.sendAudio(contact, dataUrl, attachment.durationMs, phoneNumberId, transport, externalId);

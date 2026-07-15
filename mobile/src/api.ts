@@ -27,6 +27,7 @@ import type {
   DashboardMetrics,
   DashboardSeriesPoint,
   HighLevelInvoiceResponse,
+  HighLevelPhoneNumberCatalog,
   HighLevelRecordPaymentPayload,
   HighLevelSendInvoiceResponse,
   IntegrationsStatus,
@@ -133,7 +134,7 @@ type MessageReplyPayload = {
 
 type NativeScheduleRoute =
   | { provider: 'whatsapp_api'; transport: 'api' }
-  | { provider: 'highlevel'; channel: 'sms_qr' };
+  | { provider: 'highlevel'; channel: 'whatsapp_api' | 'sms_qr' };
 
 type TransactionQuery = {
   limit?: number;
@@ -889,6 +890,35 @@ export class RistakApiClient {
     });
   }
 
+  sendHighLevelMessage(
+    contact: ChatContact,
+    payload: {
+      channel: 'whatsapp_api' | 'sms_qr';
+      message?: string;
+      fromNumber?: string;
+      attachmentDataUrls?: Array<{
+        dataUrl: string;
+        filename?: string;
+        mimeType?: string;
+        kind?: 'image' | 'video' | 'audio' | 'document';
+      }>;
+      externalId?: string;
+    },
+  ) {
+    return this.request<SendTextResponse>('/highlevel/conversations/messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: contact.id,
+        channel: payload.channel,
+        message: payload.message || undefined,
+        fromNumber: payload.fromNumber || undefined,
+        toNumber: contact.phone || undefined,
+        attachmentDataUrls: payload.attachmentDataUrls?.length ? payload.attachmentDataUrls : undefined,
+        externalId: payload.externalId || createNativeExternalId(`native-highlevel-${payload.channel}`),
+      }),
+    });
+  }
+
   getPaymentLinkDeliveryOptions(contactId: string) {
     return this.request<PaymentLinkDeliveryOptions>(`/contacts/${encodeURIComponent(contactId)}/payment-link-delivery-options`);
   }
@@ -1045,10 +1075,17 @@ export class RistakApiClient {
     channel?: NativeMessageChannel,
     scheduledId?: string,
     phoneNumberId?: string,
-    options: { transport?: 'qr' | 'api'; template?: WhatsAppTemplate } = {},
+    options: {
+      transport?: 'qr' | 'api';
+      template?: WhatsAppTemplate;
+      highLevelChannel?: 'whatsapp_api' | 'sms_qr';
+      fromNumber?: string;
+    } = {},
   ) {
     const externalId = scheduledId || createNativeExternalId('native-scheduled');
-    const route = getNativeScheduleRoute(contact, channel);
+    const route: NativeScheduleRoute = options.highLevelChannel
+      ? { provider: 'highlevel', channel: options.highLevelChannel }
+      : getNativeScheduleRoute(contact, channel);
     // Prefer the caller-computed transport (qr/api resolved from the selected
     // phone + reply window) over the route default, matching /movil scheduling.
     const transport = route.provider === 'whatsapp_api'
@@ -1069,8 +1106,12 @@ export class RistakApiClient {
         templateName: template?.name || undefined,
         templateLanguage: template?.language || undefined,
         toPhone: contact.phone || undefined,
-        fromPhone: contact.lastBusinessPhone || undefined,
-        businessPhoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
+        fromPhone: route.provider === 'highlevel'
+          ? options.fromNumber || undefined
+          : contact.lastBusinessPhone || undefined,
+        businessPhoneNumberId: route.provider === 'whatsapp_api'
+          ? phoneNumberId || contact.lastBusinessPhoneNumberId || undefined
+          : undefined,
         scheduledAt,
         externalId,
       }),
@@ -1286,6 +1327,10 @@ export class RistakApiClient {
 
   getIntegrationsStatus() {
     return this.request<IntegrationsStatus>('/integrations/status');
+  }
+
+  getHighLevelPhoneNumbers() {
+    return this.request<HighLevelPhoneNumberCatalog>('/highlevel/phone-numbers');
   }
 
   getLicenseStatus() {
