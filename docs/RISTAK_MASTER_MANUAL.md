@@ -123,6 +123,13 @@ CONCURRENTLY` y lo reconstruye antes de publicar el ledger. Al agotar los
 intentos la instancia no pasa readiness y sale con error para que el deploy se
 reintente; no sirve tráfico con un esquema ambiguo ni espera locks sin límite.
 
+Los índices de expresión que ordenan timestamps deben funcionar tanto en bases
+históricas convertidas a `TIMESTAMPTZ` como en bases nuevas con `TIMESTAMP`. No se
+fuerza uno de esos dos tipos dentro de `COALESCE`: los cursores PostgreSQL
+`094a/094b` usan un literal UTC sin tipo explícito y sus servicios de lectura
+repiten la misma expresión. Esto evita casts dependientes de `TimeZone` que no son
+`IMMUTABLE`, conserva el plan keyset y se prueba contra ambos esquemas PostgreSQL.
+
 Las normalizaciones históricas no forman parte de la compuerta de login. Semillas
 de teléfonos, contrato neutral de WhatsApp, identidades legacy, fusiones y
 limpieza de etiquetas/campos corren bajo otro candado, en segundo plano y con

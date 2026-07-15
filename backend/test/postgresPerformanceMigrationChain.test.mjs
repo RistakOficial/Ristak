@@ -138,6 +138,19 @@ test('cada CREATE/DROP concurrente 094 vive solo y cada v1 se retira apenas nace
     assert.doesNotMatch(sql, /\bBEGIN\b|\bCOMMIT\b/)
   }
 
+  for (const name of [
+    '094a_contacts_effective_created_cursor.postgres.sql',
+    '094b_report_transactions_effective_at_v2.postgres.sql'
+  ]) {
+    const sql = await readFile(new URL(`../migrations/versioned/${name}`, import.meta.url), 'utf8')
+    assert.match(sql, /'1970-01-01 00:00:00\+00'/)
+    assert.doesNotMatch(
+      sql,
+      /TIMESTAMP\s+'1970-01-01 00:00:00'/,
+      `${name} debe dejar que PostgreSQL resuelva el fallback al tipo real de la columna`
+    )
+  }
+
   const replacementPairs = [
     ['094b_report_transactions_effective_at_v2.postgres.sql', '094ba_drop_report_transactions_effective_at_v1.postgres.sql'],
     ['094d_public_sites_updated_at_v2.postgres.sql', '094da_drop_public_sites_updated_at_v1.postgres.sql'],
@@ -201,14 +214,14 @@ test('la cadena 050/055/070/071/080/081/090/091/092/093/094/100/101 aplica en Po
         cpc DOUBLE PRECISION, cpm DOUBLE PRECISION, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE contacts (
-        id TEXT PRIMARY KEY, attribution_ad_id TEXT, created_at TIMESTAMP,
-        updated_at TIMESTAMP, purchases_count INTEGER, total_paid DOUBLE PRECISION,
-        appointment_date TIMESTAMP, full_name TEXT, email TEXT, phone TEXT, source TEXT,
-        deleted_at TIMESTAMP
+        id TEXT PRIMARY KEY, attribution_ad_id TEXT, created_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ, purchases_count INTEGER, total_paid DOUBLE PRECISION,
+        appointment_date TIMESTAMPTZ, full_name TEXT, email TEXT, phone TEXT, source TEXT,
+        deleted_at TIMESTAMPTZ
       );
       CREATE TABLE payments (
         id TEXT PRIMARY KEY, contact_id TEXT, status TEXT, amount DOUBLE PRECISION,
-        payment_mode TEXT, date TIMESTAMP, created_at TIMESTAMP, updated_at TIMESTAMP
+        payment_mode TEXT, date TIMESTAMPTZ, created_at TIMESTAMPTZ, updated_at TIMESTAMP
       );
       CREATE TABLE appointments (
         id TEXT PRIMARY KEY, contact_id TEXT, calendar_id TEXT, status TEXT,
@@ -841,10 +854,10 @@ test('la cadena 050/055/070/071/080/081/090/091/092/093/094/100/101 aplica en Po
       SELECT id
       FROM contacts
       WHERE (
-        COALESCE(created_at, TIMESTAMP '1970-01-01 00:00:00'),
+        COALESCE(created_at, '1970-01-01 00:00:00+00'),
         id
-      ) < (TIMESTAMP '2100-01-01 00:00:00', 'zzzz')
-      ORDER BY COALESCE(created_at, TIMESTAMP '1970-01-01 00:00:00') DESC, id DESC
+      ) < (TIMESTAMPTZ '2100-01-01 00:00:00+00', 'zzzz')
+      ORDER BY COALESCE(created_at, '1970-01-01 00:00:00+00') DESC, id DESC
       LIMIT 50
     `)
     const reportContactCursorPlanJson = JSON.stringify(reportContactCursorPlan.rows[0]['QUERY PLAN'])
@@ -898,10 +911,10 @@ test('la cadena 050/055/070/071/080/081/090/091/092/093/094/100/101 aplica en Po
       FROM payments
       WHERE COALESCE(payment_mode, 'live') != 'test'
         AND (
-          COALESCE(date, created_at, TIMESTAMP '1970-01-01 00:00:00'),
+          COALESCE(date, created_at, '1970-01-01 00:00:00+00'),
           id
         ) < (CURRENT_TIMESTAMP + INTERVAL '1 day', 'zzzz')
-      ORDER BY COALESCE(date, created_at, TIMESTAMP '1970-01-01 00:00:00') DESC, id DESC
+      ORDER BY COALESCE(date, created_at, '1970-01-01 00:00:00+00') DESC, id DESC
       LIMIT 50
     `)
     assert.match(JSON.stringify(reportTransactionPlan.rows[0]['QUERY PLAN']), /idx_report_transactions_effective_at_id_v2/)

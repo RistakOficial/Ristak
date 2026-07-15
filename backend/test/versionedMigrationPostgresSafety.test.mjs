@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -99,6 +99,101 @@ test('rechaza INDEX CONCURRENTLY mezclado con extension u otra sentencia', () =>
   assert.doesNotThrow(() => assertConcurrentPostgresMigrationIsIsolated(`
     CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_fixture ON fixture(id);
   `, '105c_fixture.postgres.sql'))
+})
+
+test('094a/094b crean cursores inmutables sobre TIMESTAMP y TIMESTAMPTZ', {
+  skip: !connectionString
+}, async () => {
+  const migrationFiles = [
+    '094a_contacts_effective_created_cursor.postgres.sql',
+    '094b_report_transactions_effective_at_v2.postgres.sql'
+  ]
+
+  for (const timestampType of ['TIMESTAMP', 'TIMESTAMPTZ']) {
+    await withIsolatedPostgres(`ristak_cursor_type_${timestampType.toLowerCase()}`, async ({
+      client,
+      directory,
+      database
+    }) => {
+      await client.query(`
+        CREATE TABLE contacts (
+          id TEXT PRIMARY KEY,
+          created_at ${timestampType}
+        );
+        CREATE TABLE payments (
+          id TEXT PRIMARY KEY,
+          payment_mode TEXT,
+          date ${timestampType},
+          created_at ${timestampType}
+        );
+      `)
+
+      for (const file of migrationFiles) {
+        const sql = await readFile(new URL(`../migrations/versioned/${file}`, import.meta.url), 'utf8')
+        await writeFile(join(directory, file), sql)
+      }
+
+      assert.deepEqual(
+        await runVersionedMigrations({
+          database,
+          dialect: 'postgres',
+          directory,
+          postgresDdlPolicy: fastPolicy
+        }),
+        { applied: 2, skipped: 0 }
+      )
+
+      const indexStates = await client.query(`
+        SELECT relation.relname AS index_name, state.indisvalid, state.indisready
+        FROM pg_index state
+        JOIN pg_class relation ON relation.oid = state.indexrelid
+        WHERE relation.relname IN (
+          'idx_contacts_cursor_effective_created_at_id',
+          'idx_report_transactions_effective_at_id_v2'
+        )
+        ORDER BY relation.relname
+      `)
+      assert.equal(indexStates.rows.length, 2)
+      assert.equal(indexStates.rows.every(row => row.indisvalid && row.indisready), true)
+
+      await client.query('SET enable_seqscan TO off')
+      try {
+        const contactPlan = await client.query(`
+          EXPLAIN (FORMAT JSON, COSTS OFF)
+          SELECT id
+          FROM contacts
+          WHERE (COALESCE(created_at, '1970-01-01 00:00:00+00'), id)
+            < ('2100-01-01 00:00:00+00', 'zzzz')
+          ORDER BY COALESCE(created_at, '1970-01-01 00:00:00+00') DESC, id DESC
+          LIMIT 50
+        `)
+        const contactPlanJson = JSON.stringify(contactPlan.rows[0]['QUERY PLAN'])
+        assert.match(contactPlanJson, /idx_contacts_cursor_effective_created_at_id/)
+        assert.doesNotMatch(contactPlanJson, /"Node Type":"Sort"/)
+
+        const transactionPlan = await client.query(`
+          EXPLAIN (FORMAT JSON, COSTS OFF)
+          SELECT id
+          FROM payments
+          WHERE COALESCE(payment_mode, 'live') != 'test'
+            AND (COALESCE(date, created_at, '1970-01-01 00:00:00+00'), id)
+              < ('2100-01-01 00:00:00+00', 'zzzz')
+          ORDER BY COALESCE(date, created_at, '1970-01-01 00:00:00+00') DESC, id DESC
+          LIMIT 50
+        `)
+        const transactionPlanJson = JSON.stringify(transactionPlan.rows[0]['QUERY PLAN'])
+        assert.match(transactionPlanJson, /idx_report_transactions_effective_at_id_v2/)
+        assert.doesNotMatch(transactionPlanJson, /"Node Type":"Sort"/)
+      } finally {
+        await client.query('RESET enable_seqscan')
+      }
+
+      assert.deepEqual(
+        await runVersionedMigrations({ database, dialect: 'postgres', directory }),
+        { applied: 0, skipped: 0 }
+      )
+    })
+  }
 })
 
 test('recupera un indice CONCURRENTLY homonimo indisvalid=false antes de marcar la migracion', {

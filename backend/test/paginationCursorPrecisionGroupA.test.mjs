@@ -21,7 +21,8 @@ test('cursores PostgreSQL del grupo A proyectan microsegundos como texto sin toc
     readFile(campaignContactsUrl, 'utf8')
   ])
 
-  assert.match(reportContacts, /COALESCE\(\$\{alias\}\.created_at, TIMESTAMP '1970-01-01 00:00:00'\)/)
+  assert.match(reportContacts, /COALESCE\(\$\{alias\}\.created_at, '1970-01-01 00:00:00\+00'\)/)
+  assert.doesNotMatch(reportContacts, /created_at, TIMESTAMP '1970-01-01 00:00:00'/)
   assert.match(reportContacts, /contactCursorProjectionExpression[\s\S]{0,180}\(\$\{sortExpression\}\)::text/)
   assert.match(reportContacts, /row\?\.cursor_created_at/)
   assert.match(reportContacts, /created_at,[\s\S]{0,220}AS cursor_created_at/)
@@ -29,7 +30,8 @@ test('cursores PostgreSQL del grupo A proyectan microsegundos como texto sin toc
   assert.match(reportContacts, /ORDER BY \$\{cursorSortExpression\} DESC, c\.id DESC/)
   assert.match(reportContacts, /created_at: row\.created_at/)
 
-  assert.match(reportTransactions, /COALESCE\(\$\{alias\}\.date, \$\{alias\}\.created_at, TIMESTAMP '1970-01-01 00:00:00'\)/)
+  assert.match(reportTransactions, /COALESCE\(\$\{alias\}\.date, \$\{alias\}\.created_at, '1970-01-01 00:00:00\+00'\)/)
+  assert.doesNotMatch(reportTransactions, /created_at, TIMESTAMP '1970-01-01 00:00:00'/)
   assert.match(reportTransactions, /transactionCursorProjectionExpression[\s\S]{0,180}\(\$\{sortExpression\}\)::text/)
   assert.match(reportTransactions, /\$\{transactionCursorProjectionExpression\('p'\)\} AS cursor_at/)
   assert.match(reportTransactions, /\(\$\{effectiveDateSort\}, p\.id\) < \(\?, \?\)/)

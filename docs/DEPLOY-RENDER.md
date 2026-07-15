@@ -84,6 +84,16 @@ un índice inválido. Durante el primer rollout de índices sobre tablas grandes
 normal ver trabajo de I/O en PostgreSQL; la instancia anterior debe seguir
 sirviendo hasta que la nueva quede saludable.
 
+Las instalaciones históricas pueden tener `contacts.created_at`, `payments.date`
+y `payments.created_at` como `TIMESTAMPTZ`, mientras una instalación nueva nace
+con `TIMESTAMP`. Un índice de expresión compartido no debe forzar el fallback con
+`TIMESTAMP '...'` ni con `TIMESTAMPTZ '...'`: ese cast cambia de volatilidad según
+el esquema y PostgreSQL puede rechazarlo por no ser `IMMUTABLE`. Los cursores
+`094a/094b` usan un literal UTC sin tipo explícito para que PostgreSQL lo resuelva
+al tipo real de la columna; el SQL de lectura debe repetir exactamente esa misma
+expresión. La regresión se valida en PostgreSQL real contra ambos tipos antes de
+publicar una imagen.
+
 ## Dominio Y Frontend
 
 Durante el build se crea:
