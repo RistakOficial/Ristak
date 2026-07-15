@@ -3958,6 +3958,52 @@ el link, la asignacion ni la notificacion. La corrida guarda tambien el hash de
 la revision de capacidades. Si el switch aplicable se apaga o cualquier capacidad cambia
 mientras el modelo responde, el servidor revoca la corrida y vuelve a comprobar
 esa revision antes de cada mutacion; una respuesta vieja no puede crear efectos.
+El request completo vive además en `conversational_agent_test_turns`, con una
+identidad única por corrida y `testMessageId`. Antes de consultar a la IA toma un
+claim con lease y fencing token; un heartbeat lo renueva sin retener una conexión
+de PostgreSQL durante la llamada externa. La lease y su vencimiento usan el reloj
+de la base para que dos instancias no discrepen por clock skew. Un retry concurrente consulta el ledger,
+espera al dueño vigente y después recibe el mismo `response_json`, sin ejecutar
+otro agent run ni volver a tocar tools. Si el proceso muere, la lease vence y el
+siguiente dueño recupera el checkpoint bajo un token nuevo. El
+hash durable cubre transcript, configuración efectiva, contacto y revisión de
+capacidades; un segundo hash cubre el request original del cliente y permite
+reproducir una respuesta ya completada aunque después se apague Modo test, sin
+saltarse ownership ni aceptar otro payload. La identidad queda reservada como
+`pending` antes de renovar `effects_json` o el TTL de la corrida: reutilizar el ID
+con otro contenido se rechaza sin mutar autoridad. El resultado crudo
+del preview se guarda antes de materializar cualquier efecto. Si el proceso cae
+después, el siguiente dueño retoma esas mismas acciones y los ledgers de efectos
+recuperan la misma entidad; no se vuelve a pedir una decisión al modelo. La
+respuesta final también se serializa antes de entregar el primer HTTP, por lo que
+un corte de red posterior reproduce exactamente la confirmación ya cerrada.
+Las instalaciones existentes reciben este contrato mediante las migraciones
+versionadas `052a_conversational_agent_test_effect_error_code.sql`,
+`052b_conversational_agent_test_effect_error_retryable.sql` y
+`052c_conversational_agent_test_turns.sql`; no depende de que el bootstrap legacy
+vuelva a correr. Si `response_json` quedó ilegible pero el preview durable existe,
+el fast-path cede al executor para repararlo por CAS sin consultar otra vez a la IA.
+Cuando una cita de prueba se materializa, la oferta y el progreso parcial se
+cierran juntos como `materialized`, sin dejar un estado falso de “falta hora”.
+La oferta aceptada y el `effectId` de la cita canónica son la autoridad final: si
+el progreso quedó viejo o con otro calendario, el mismo commit lo reconcilia al
+horario realmente creado en vez de reintentar para siempre el mismo mismatch.
+Aunque el preview redacte opciones contradictorias, el controller canonicaliza
+el éxito desde el efecto registrado antes de guardar o mostrar la respuesta.
+El cierre local de `effect + offer + progress` hace commit antes de enviar la
+notificación interna/push; un rollback nunca anuncia una cita que el ledger no
+cerró. Los fallos guardan si son reintentables: `processing`, `pending` y
+`failed/retryable` no pueden convertirse en `response_json` terminal. El mismo
+preview se rematerializa con backoff acotado y el `clientRequestId` de la cita
+recupera la entidad canónica si el calendario ya la había creado. Un conflicto de
+slot sólo es terminal después de confirmar que el día quedó restaurado; si esa
+reparación falla, se reintenta en vez de congelar otra vez la pregunta de hora.
+Frontend usa un mutex síncrono compartido entre envío manual y continuación de
+pago. Ante red/5xx reconsulta una vez la misma sesión y `testMessageId`; no limpia
+una corrida cuyo resultado externo todavía sea ambiguo. Mientras ese dueño sigue
+vivo tampoco permite cambiar contacto ni reiniciar. Si expira un adjunto durante
+el HTTP, invalida el render pero conserva el ownership hasta que termine; una
+respuesta vieja no puede entrar después en una conversación reiniciada.
 Un advisory lock de sesion de PostgreSQL, sostenido en una conexion dedicada,
 serializa por agente los cambios de capacidades contra citas, cobros o
 asignaciones externas. No usa una fila con TTL que pueda caducar a mitad de una

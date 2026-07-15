@@ -1,22 +1,29 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 
 import { db } from '../src/config/database.js'
 import {
   beginConversationalAgentTestEffect,
+  buildConversationalAgentTestTurnRequestHash,
   cleanupConversationalAgentTestRun,
   ensureConversationalAgentTestEffectNotification,
   listRecentConversationalAgentTestRuns,
   listConversationalAgentTestEffects,
+  isConversationalAgentTestMaterializationTerminal,
   normalizeConversationalAgentTestEffects,
+  executeConversationalAgentTestTurn,
   prepareConversationalAgentTestRun,
   reconcileConversationalAgentPreviewResult,
   recordConversationalAgentPreviewEffects,
+  replayCompletedConversationalAgentTestTurn,
   setConversationalAgentTestServiceDependenciesForTests
 } from '../src/services/conversationalAgentTestService.js'
-import { setConversationalAgentTestPaymentDependenciesForTests } from '../src/services/conversationalAgentTestPaymentService.js'
+import {
+  createConversationalAgentTestPaymentLink,
+  setConversationalAgentTestPaymentDependenciesForTests
+} from '../src/services/conversationalAgentTestPaymentService.js'
 import {
   lockConversationalTesterConfigOverride,
   testAgent as testAgentController
@@ -41,6 +48,7 @@ import { withConversationalAgentTestMutationLock } from '../src/services/convers
 import { runVersionedMigrations } from '../src/startup/runMigrations.js'
 import {
   CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+  CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
   buildConversationalAppointmentPreviewExecutionId,
   buildConversationalAppointmentPreviewOfferEventId,
   buildConversationalAppointmentPreviewScopeId,
@@ -87,7 +95,322 @@ test('scope y ejecución del preview quedan ligados a usuario, agente, sesión y
   assert.notEqual(firstExecution, secondExecution)
 })
 
+test('el turno test completo serializa carreras, reproduce la respuesta exacta y recupera crashes desde el preview', async () => {
+  const suffix = randomUUID()
+  const runId = `session_turn_${suffix}`
+  const messageId = `message_turn_${suffix}`
+  const runContext = { id: runId, messageId }
+  const requestPayload = {
+    schemaVersion: 1,
+    messages: [{ id: `transcript_${suffix}`, role: 'user', content: 'Sí, confirma las diez.' }],
+    agentId: `agent_${suffix}`,
+    contactId: `contact_${suffix}`,
+    effects: { enabled: true, scheduleAppointment: true }
+  }
+  const requestHash = buildConversationalAgentTestTurnRequestHash(requestPayload)
+  assert.equal(
+    requestHash,
+    buildConversationalAgentTestTurnRequestHash({
+      effects: { scheduleAppointment: true, enabled: true },
+      contactId: `contact_${suffix}`,
+      agentId: `agent_${suffix}`,
+      messages: requestPayload.messages,
+      schemaVersion: 1
+    }),
+    'el hash no depende del orden de llaves'
+  )
+
+  let releasePreview
+  const previewGate = new Promise((resolve) => { releasePreview = resolve })
+  let previewCalls = 0
+  let materializeCalls = 0
+  const createPreview = async () => {
+    previewCalls += 1
+    await previewGate
+    return {
+      reply: 'El modelo dijo algo provisional.',
+      actions: [{ type: 'book_appointment', startTime: '2026-08-12T16:00:00.000Z' }]
+    }
+  }
+  const materializePreview = async () => {
+    materializeCalls += 1
+    return {
+      reply: 'Listo, la cita de prueba quedó confirmada.',
+      replyParts: ['Listo, la cita de prueba quedó confirmada.'],
+      actions: [{ type: 'book_appointment', outcome: { status: 'recorded', materialized: true } }],
+      testRunId: runId,
+      testEffects: [{ id: `effect_${suffix}`, type: 'appointment', status: 'recorded' }]
+    }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO conversational_agent_test_runs (
+         id, agent_id, requested_by_user_id, contact_id, effects_json, status, expires_at
+       ) VALUES (?, ?, ?, ?, ?, 'active', ?)`,
+      [runId, `agent_${suffix}`, `user_${suffix}`, `contact_${suffix}`, '{}', new Date(Date.now() + 60_000).toISOString()]
+    )
+
+    const first = executeConversationalAgentTestTurn({
+      runContext,
+      requestHash,
+      createPreview,
+      materializePreview
+    })
+    while (previewCalls === 0) await new Promise((resolve) => setTimeout(resolve, 5))
+    const contenders = Array.from({ length: 5 }, () => executeConversationalAgentTestTurn({
+      runContext,
+      requestHash,
+      createPreview,
+      materializePreview
+    }))
+    releasePreview()
+    const raced = await Promise.all([first, ...contenders])
+    assert.equal(previewCalls, 1)
+    assert.equal(materializeCalls, 1)
+    raced.forEach((item) => assert.deepEqual(item.response, raced[0].response))
+    assert.equal(raced.filter((item) => item.replayed === false).length, 1)
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM conversational_agent_test_turns WHERE run_id = ? AND message_id = ?',
+      [runId, messageId]
+    )).total), 1)
+
+    const sequentialReplay = await executeConversationalAgentTestTurn({
+      runContext,
+      requestHash,
+      createPreview,
+      materializePreview
+    })
+    assert.equal(sequentialReplay.replayed, true)
+    assert.deepEqual(sequentialReplay.response, raced[0].response)
+    assert.equal(previewCalls, 1)
+    assert.equal(materializeCalls, 1)
+
+    await db.run(
+      `UPDATE conversational_agent_test_turns SET client_request_hash = ?
+       WHERE run_id = ? AND message_id = ?`,
+      [requestHash, runId, messageId]
+    )
+    const earlyReplay = await replayCompletedConversationalAgentTestTurn({
+      testRunId: runId,
+      testMessageId: messageId,
+      requestedByUserId: `user_${suffix}`,
+      clientRequestHash: requestHash
+    })
+    assert.deepEqual(earlyReplay, raced[0].response)
+    await assert.rejects(
+      replayCompletedConversationalAgentTestTurn({
+        testRunId: runId,
+        testMessageId: messageId,
+        requestedByUserId: `user_${suffix}`,
+        clientRequestHash: buildConversationalAgentTestTurnRequestHash({ otro: 'payload' })
+      }),
+      (error) => error?.code === 'test_turn_payload_mismatch'
+    )
+
+    const corruptMessageId = `message_turn_corrupt_${suffix}`
+    const corruptContext = { id: runId, messageId: corruptMessageId }
+    const corruptHash = buildConversationalAgentTestTurnRequestHash({ ...requestPayload, corruptMessageId })
+    const corruptTurnId = `catt_${createHash('sha256')
+      .update(`${runId}\u0000${corruptMessageId}`)
+      .digest('hex')
+      .slice(0, 48)}`
+    await db.run(
+      `INSERT INTO conversational_agent_test_turns (
+         id, run_id, message_id, request_hash, client_request_hash, status,
+         preview_result_json, response_json, attempt_count, completed_at
+       ) VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, 1, CURRENT_TIMESTAMP)`,
+      [
+        corruptTurnId,
+        runId,
+        corruptMessageId,
+        corruptHash,
+        corruptHash,
+        JSON.stringify({ reply: 'Preview durable de respuesta dañada.', actions: [] }),
+        '  {respuesta-incompleta  '
+      ]
+    )
+    assert.equal(await replayCompletedConversationalAgentTestTurn({
+      testRunId: runId,
+      testMessageId: corruptMessageId,
+      requestedByUserId: `user_${suffix}`,
+      clientRequestHash: corruptHash
+    }), null, 'el fast-path deja que el executor repare una respuesta ilegible')
+    let corruptPreviewCalls = 0
+    let corruptMaterializeCalls = 0
+    const corruptRecovered = await executeConversationalAgentTestTurn({
+      runContext: corruptContext,
+      requestHash: corruptHash,
+      createPreview: async () => {
+        corruptPreviewCalls += 1
+        return { reply: 'No debe consultar otra vez la IA.', actions: [] }
+      },
+      materializePreview: async (preview) => {
+        corruptMaterializeCalls += 1
+        assert.equal(preview.reply, 'Preview durable de respuesta dañada.')
+        return { reply: 'Respuesta final reparada desde el preview.', actions: [] }
+      }
+    })
+    assert.equal(corruptRecovered.recovered, true)
+    assert.equal(corruptRecovered.response.reply, 'Respuesta final reparada desde el preview.')
+    assert.equal(corruptPreviewCalls, 0)
+    assert.equal(corruptMaterializeCalls, 1)
+
+    let mismatchedPreviewCalls = 0
+    await assert.rejects(
+      executeConversationalAgentTestTurn({
+        runContext,
+        requestHash: buildConversationalAgentTestTurnRequestHash({ ...requestPayload, messages: [{ role: 'user', content: 'Otro mensaje.' }] }),
+        createPreview: async () => { mismatchedPreviewCalls += 1; return {} },
+        materializePreview
+      }),
+      (error) => error?.code === 'test_turn_payload_mismatch'
+    )
+    assert.equal(mismatchedPreviewCalls, 0)
+
+    const crashMessageId = `message_turn_crash_${suffix}`
+    const crashContext = { id: runId, messageId: crashMessageId }
+    const crashHash = buildConversationalAgentTestTurnRequestHash({ ...requestPayload, crashMessageId })
+    let crashPreviewCalls = 0
+    let crashMaterializeCalls = 0
+    const crashCreatePreview = async () => {
+      crashPreviewCalls += 1
+      return { reply: 'Preview durable', actions: [{ type: 'book_appointment' }] }
+    }
+    const crashMaterialize = async () => {
+      crashMaterializeCalls += 1
+      if (crashMaterializeCalls === 1) throw new Error('caída simulada después del checkpoint')
+      return { reply: 'Respuesta recuperada sin segunda IA', actions: [] }
+    }
+    await assert.rejects(
+      executeConversationalAgentTestTurn({
+        runContext: crashContext,
+        requestHash: crashHash,
+        createPreview: crashCreatePreview,
+        materializePreview: crashMaterialize
+      }),
+      /caída simulada/
+    )
+    const recovered = await executeConversationalAgentTestTurn({
+      runContext: crashContext,
+      requestHash: crashHash,
+      createPreview: crashCreatePreview,
+      materializePreview: crashMaterialize
+    })
+    assert.equal(recovered.recovered, true)
+    assert.equal(recovered.response.reply, 'Respuesta recuperada sin segunda IA')
+    assert.equal(crashPreviewCalls, 1)
+    assert.equal(crashMaterializeCalls, 2)
+    const recoveredRow = await db.get(
+      'SELECT status, attempt_count, preview_result_json FROM conversational_agent_test_turns WHERE run_id = ? AND message_id = ?',
+      [runId, crashMessageId]
+    )
+    assert.equal(recoveredRow.status, 'completed')
+    assert.equal(Number(recoveredRow.attempt_count), 2)
+    assert.ok(recoveredRow.preview_result_json)
+
+    const pendingMessageId = `message_turn_pending_${suffix}`
+    const pendingContext = { id: runId, messageId: pendingMessageId }
+    const pendingHash = buildConversationalAgentTestTurnRequestHash({ ...requestPayload, pendingMessageId })
+    let pendingPreviewCalls = 0
+    let pendingMaterializeCalls = 0
+    const pendingResult = await executeConversationalAgentTestTurn({
+      runContext: pendingContext,
+      requestHash: pendingHash,
+      createPreview: async () => {
+        pendingPreviewCalls += 1
+        return { reply: 'Preview pendiente', actions: [{ type: 'book_appointment' }] }
+      },
+      materializePreview: async () => {
+        pendingMaterializeCalls += 1
+        return {
+          kind: 'conversational_agent_test_turn_materialization',
+          terminal: pendingMaterializeCalls > 1,
+          response: {
+            reply: pendingMaterializeCalls > 1
+              ? 'Listo, la cita de prueba quedó confirmada.'
+              : 'La cita de prueba sigue procesándose.',
+            actions: []
+          }
+        }
+      }
+    })
+    assert.equal(pendingResult.response.reply, 'Listo, la cita de prueba quedó confirmada.')
+    assert.equal(pendingPreviewCalls, 1)
+    assert.equal(pendingMaterializeCalls, 2)
+    assert.equal((await db.get(
+      'SELECT status FROM conversational_agent_test_turns WHERE run_id = ? AND message_id = ?',
+      [runId, pendingMessageId]
+    )).status, 'completed')
+
+    const staleMessageId = `message_turn_stale_${suffix}`
+    const staleContext = { id: runId, messageId: staleMessageId }
+    const staleHash = buildConversationalAgentTestTurnRequestHash({ ...requestPayload, staleMessageId })
+    const staleTurnId = `catt_${createHash('sha256')
+      .update(`${runId}\u0000${staleMessageId}`)
+      .digest('hex')
+      .slice(0, 48)}`
+    await db.run(
+      `INSERT INTO conversational_agent_test_turns (
+         id, run_id, message_id, request_hash, status, preview_result_json,
+         attempt_count, claim_token, lease_until_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'processing', ?, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        staleTurnId,
+        runId,
+        staleMessageId,
+        staleHash,
+        JSON.stringify({ reply: 'Preview de dueño caído', actions: [{ type: 'book_appointment' }] }),
+        `claim_muerto_${suffix}`,
+        new Date(Date.now() - 60_000).toISOString()
+      ]
+    )
+    let stalePreviewCalls = 0
+    let staleMaterializeCalls = 0
+    const reclaimed = await executeConversationalAgentTestTurn({
+      runContext: staleContext,
+      requestHash: staleHash,
+      createPreview: async () => {
+        stalePreviewCalls += 1
+        return { reply: 'No debe volver a consultar la IA.', actions: [] }
+      },
+      materializePreview: async (preview) => {
+        staleMaterializeCalls += 1
+        assert.equal(preview.reply, 'Preview de dueño caído')
+        return { reply: 'Turno retomado desde el checkpoint.', actions: [] }
+      }
+    })
+    assert.equal(reclaimed.recovered, true)
+    assert.equal(reclaimed.response.reply, 'Turno retomado desde el checkpoint.')
+    assert.equal(stalePreviewCalls, 0)
+    assert.equal(staleMaterializeCalls, 1)
+    const reclaimedRow = await db.get(
+      `SELECT status, attempt_count, claim_token, lease_until_at
+       FROM conversational_agent_test_turns WHERE id = ?`,
+      [staleTurnId]
+    )
+    assert.equal(reclaimedRow.status, 'completed')
+    assert.equal(Number(reclaimedRow.attempt_count), 2)
+    assert.equal(reclaimedRow.claim_token, null)
+    assert.equal(reclaimedRow.lease_until_at, null)
+  } finally {
+    releasePreview?.()
+    await db.run('DELETE FROM conversational_agent_test_turns WHERE run_id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => undefined)
+  }
+})
+
 test('la respuesta visible exige efectos terminales y separa agenda, asignación y pago', () => {
+  assert.equal(isConversationalAgentTestMaterializationTerminal([
+    { type: 'appointment', status: 'failed', retryable: true }
+  ]), false, 'un fallo transitorio nunca se cachea como respuesta final')
+  assert.equal(isConversationalAgentTestMaterializationTerminal([
+    { type: 'appointment', status: 'failed', retryable: false }
+  ]), true, 'un fallo de negocio definitivo sí puede cerrar el turno')
+  assert.equal(isConversationalAgentTestMaterializationTerminal([
+    { type: 'appointment', status: 'recorded' }
+  ]), true)
+
   const paymentAction = {
     type: 'collect_payment',
     outcome: { status: 'simulated', paymentUrl: 'https://example.test/sandbox' }
@@ -191,6 +514,30 @@ test('la respuesta visible exige efectos terminales y separa agenda, asignación
   assert.equal(appointmentWon.actions[0].outcome.appointmentMaterialized, true)
   assert.equal(appointmentWon.actions[0].outcome.assignmentMaterialized, false)
   assert.strictEqual(appointmentWon.actions[1], paymentAction)
+
+  const recordedAppointment = reconcileConversationalAgentPreviewResult({
+    result: {
+      reply: 'Tengo horarios de 11:00 a 16:00. ¿Cuál prefieres?',
+      replyParts: ['Tengo horarios de 11:00 a 16:00. ¿Cuál prefieres?'],
+      replyPartDelaysMs: [500],
+      actions: [source.actions[0], { type: 'offer_appointment_options', outcome: { status: 'simulated' } }, paymentAction]
+    },
+    testEffects: [{
+      id: 'effect_appointment_recorded',
+      type: 'appointment',
+      status: 'recorded',
+      entityId: 'appointment_recorded',
+      payload: { safeTestRecord: true, appointmentCreated: true }
+    }]
+  })
+  assert.equal(recordedAppointment.reply, 'Listo, la cita de prueba quedó confirmada.')
+  assert.deepEqual(recordedAppointment.replyParts, [recordedAppointment.reply])
+  assert.deepEqual(recordedAppointment.replyPartDelaysMs, [])
+  assert.doesNotMatch(recordedAppointment.reply, /11:00|16:00/)
+  assert.equal(recordedAppointment.actions[0].outcome.status, 'recorded')
+  assert.equal(recordedAppointment.actions[0].outcome.ok, true)
+  assert.equal(recordedAppointment.actions[0].outcome.materialized, true)
+  assert.strictEqual(recordedAppointment.actions[2], paymentAction)
 
   assert.deepEqual(processing.replyParts, [processing.reply])
   assert.deepEqual(processing.replyPartDelaysMs, [])
@@ -399,7 +746,9 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
         agentId,
         requestedByUserId: userId,
         contactId,
-        effects
+        effects,
+        messages,
+        configOverride: config
       })
       const previewScopeId = buildConversationalAppointmentPreviewScopeId({
         testSessionId: runId,
@@ -442,6 +791,38 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
       { role: 'assistant', content: second.result.reply },
       { role: 'user', content: confirmation }
     ], `message_confirmation_${suffix}`)
+    const reservedTurn = await db.get(
+      `SELECT status, attempt_count, request_hash, client_request_hash
+       FROM conversational_agent_test_turns WHERE run_id = ? AND message_id = ?`,
+      [runId, third.runContext.messageId]
+    )
+    assert.equal(reservedTurn.status, 'pending')
+    assert.equal(Number(reservedTurn.attempt_count), 0)
+    assert.match(reservedTurn.request_hash, /^[a-f0-9]{64}$/)
+    assert.match(reservedTurn.client_request_hash, /^[a-f0-9]{64}$/)
+    const runBeforeMismatch = await db.get(
+      'SELECT effects_json, expires_at, updated_at FROM conversational_agent_test_runs WHERE id = ?',
+      [runId]
+    )
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await assert.rejects(
+      prepareConversationalAgentTestRun({
+        testRunId: runId,
+        testMessageId: third.runContext.messageId,
+        agentId,
+        requestedByUserId: userId,
+        contactId,
+        effects,
+        messages: [{ role: 'user', content: 'Payload distinto con el mismo messageId.' }],
+        configOverride: config
+      }),
+      (error) => error?.code === 'test_turn_payload_mismatch'
+    )
+    const runAfterMismatch = await db.get(
+      'SELECT effects_json, expires_at, updated_at FROM conversational_agent_test_runs WHERE id = ?',
+      [runId]
+    )
+    assert.deepEqual(runAfterMismatch, runBeforeMismatch, 'el payload rechazado no muta autoridad ni TTL de la corrida')
     assert.equal(third.result.actions.filter((action) => action.type === 'book_appointment').length, 1)
     assert.doesNotMatch(third.result.reply, /dime la hora|qué hora|hora otra vez/i)
     const appointmentAction = third.result.actions.find((action) => action.type === 'book_appointment')
@@ -463,6 +844,57 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     assert.equal(abandonedClaim.claimed, true)
     assert.equal(abandonedClaim.effect.status, 'processing')
 
+    // Si el progreso parcial quedó viejo después de aceptar la oferta, la cita
+    // canónica ya creada debe repararlo en el mismo COMMIT. Marcar el mismatch
+    // como retryable sin corregirlo produciría un loop determinístico.
+    const mismatchPreviewScopeId = buildConversationalAppointmentPreviewScopeId({
+      testSessionId: runId,
+      requestedByUserId: userId,
+      agentId
+    })
+    const staleProgressId = `cae_appointment_progress_${createHash('sha256').update([
+      agentId,
+      contactId,
+      'whatsapp',
+      mismatchPreviewScopeId
+    ].join('\u0000')).digest('hex').slice(0, 48)}`
+    const staleProgressDetail = {
+      schemaVersion: 1,
+      agentId,
+      contactId,
+      channel: 'whatsapp',
+      previewScopeId: mismatchPreviewScopeId,
+      calendarId: `calendar_viejo_${suffix}`,
+      selectedCalendar: `calendar_viejo_${suffix}`,
+      purpose: 'book',
+      appointmentId: null,
+      selectedDate: slot.toFormat('yyyy-MM-dd'),
+      selectedTime: '10:00',
+      selectedStartTime: startTime,
+      selectedTimezone: timezone,
+      previouslyShownRanges: [],
+      availabilityCheckedAt: new Date().toISOString(),
+      availabilityVerificationRequired: false,
+      lastError: null,
+      appointmentStatus: 'collecting_time',
+      missingFields: ['time'],
+      sourceExecutionId: third.runContext.executionId,
+      updatedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    }
+    await db.run(
+      `INSERT INTO conversational_agent_events
+        (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        staleProgressId,
+        contactId,
+        agentId,
+        CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
+        JSON.stringify(staleProgressDetail)
+      ]
+    )
+
     // Simula una caída con lease vigente antes de materializar. Al obtener el
     // advisory lock, el replay sabe que ese dueño ya no existe y retoma el mismo
     // request idempotente de inmediato, sin confirmar un processing huérfano.
@@ -482,6 +914,15 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
       'SELECT attempt_count FROM conversational_agent_test_effects WHERE id = ?',
       [materialized[0].id]
     )).attempt_count), 2)
+    const repairedProgress = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [staleProgressId]
+    )).detail_json)
+    assert.equal(repairedProgress.calendarId, calendarId)
+    assert.equal(repairedProgress.selectedCalendar, calendarId)
+    assert.equal(repairedProgress.appointmentStatus, 'materialized')
+    assert.equal(repairedProgress.materializedEffectId, materialized[0].id)
+    assert.equal(repairedProgress.selectedStartTime, startTime)
 
     const controllerReplay = mockResponse()
     await createAppointmentController(realControllerRequest, controllerReplay)
@@ -612,6 +1053,7 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     })
     assert.equal(interruptedCheckpoint[0].status, 'failed')
     assert.equal(interruptedCheckpoint[0].code, 'test_appointment_checkpoint_interrupted')
+    assert.equal(interruptedCheckpoint[0].retryable, false)
     const interruptedVisible = reconcileConversationalAgentPreviewResult({
       result: third.result,
       testEffects: interruptedCheckpoint
@@ -637,6 +1079,7 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     })
     assert.equal(repeatedInterruptedCheckpoint[0].status, 'failed')
     assert.equal(repeatedInterruptedCheckpoint[0].code, 'test_appointment_checkpoint_interrupted')
+    assert.equal(repeatedInterruptedCheckpoint[0].retryable, false)
     const repeatedInterruptedVisible = reconcileConversationalAgentPreviewResult({
       result: third.result,
       testEffects: repeatedInterruptedCheckpoint
@@ -660,6 +1103,17 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
        WHERE client_request_id = ?`,
       [`conv-test:${materialized[0].id}`]
     )
+    // Cada bloque simula una ventana de caída independiente. Reabre sólo el
+    // efecto de prueba como recuperable para que el siguiente controller lea
+    // el nuevo fallo durable; un fallo terminal real no se reabre por sí solo.
+    await db.run(
+      `UPDATE conversational_agent_test_effects
+       SET status = 'failed', error_code = 'test_appointment_creation_failed',
+           error_retryable = 1, last_error = 'ventana de provider simulada',
+           claim_token = NULL, lease_until_at = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [materialized[0].id]
+    )
     forceOriginalProviderFailure = true
     const firstProviderFailure = await recordConversationalAgentPreviewEffects({
       runContext: third.runContext,
@@ -667,6 +1121,7 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     })
     assert.equal(firstProviderFailure[0].status, 'failed')
     assert.equal(firstProviderFailure[0].code, 'test_appointment_provider_sync_failed')
+    assert.equal(firstProviderFailure[0].retryable, false)
     const firstProviderVisible = reconcileConversationalAgentPreviewResult({
       result: third.result,
       testEffects: firstProviderFailure
@@ -682,6 +1137,7 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
     })
     assert.equal(replayedProviderFailure[0].status, 'failed')
     assert.equal(replayedProviderFailure[0].code, 'test_appointment_provider_sync_failed')
+    assert.equal(replayedProviderFailure[0].retryable, false)
     const replayedProviderVisible = reconcileConversationalAgentPreviewResult({
       result: third.result,
       testEffects: replayedProviderFailure
@@ -934,8 +1390,14 @@ test('dos previews del mismo contacto serializan el slot: gana uno y el otro con
     assert.equal(winner.testEffects.length, 1)
     assert.equal(winner.testEffects[0].payload.startTime, slotA.toUTC().toISO())
     assert.match(winner.visible.reply, /cita de prueba quedó confirmada/i)
+    const winnerOfferRow = await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [buildConversationalAppointmentPreviewOfferEventId(winner.offer.previewScopeId)]
+    )
+    assert.equal(JSON.parse(winnerOfferRow.detail_json).status, 'materialized')
     assert.equal(loser.testEffects.length, 1)
     assert.equal(loser.testEffects[0].code, 'test_slot_no_longer_free')
+    assert.equal(loser.testEffects[0].retryable, false)
     assert.equal(loser.testEffects[0].appointmentDateRestored, true, JSON.stringify(loser.testEffects[0]))
     assert.match(loser.visible.reply, /horario ya no está disponible/i)
     assert.match(loser.visible.reply, /conservé el día/i)
@@ -948,6 +1410,17 @@ test('dos previews del mismo contacto serializan el slot: gana uno y el otro con
        WHERE run_id IN (?, ?) AND status = 'failed'`,
       [runAId, runBId]
     )).total), 1)
+    const replayedLoserEffects = await recordConversationalAgentPreviewEffects({
+      runContext: loser.confirmed.runContext,
+      actions: loser.confirmed.ctx.actions
+    })
+    assert.ok(replayedLoserEffects[0]?.id)
+    assert.equal(replayedLoserEffects[0]?.code, 'test_slot_no_longer_free')
+    assert.equal(replayedLoserEffects[0]?.appointmentDateRestored, true)
+    assert.equal(Number((await db.get(
+      'SELECT attempt_count FROM conversational_agent_test_effects WHERE id = ?',
+      [replayedLoserEffects[0].id]
+    )).attempt_count), 1, 'el fallo terminal de disponibilidad no vuelve a materializarse')
 
     const alternateRun = await prepareRun(loser.runId, `message_offer_loser_alternate_${suffix}`)
     const alternateCtx = previewContext({
@@ -1003,6 +1476,17 @@ test('dos previews del mismo contacto serializan el slot: gana uno y el otro con
     assert.equal(alternateEffects.length, 1, JSON.stringify(alternateEffects))
     assert.equal(alternateEffects[0].status, 'recorded')
     assert.equal(alternateEffects[0].payload.startTime, slotB.toUTC().toISO())
+    const alternateProgressRows = await db.all(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE agent_id = ? AND contact_id = ? AND event_type = 'appointment_selection_progress'`,
+      [agentId, contactId]
+    )
+    const alternateProgress = alternateProgressRows
+      .map((row) => JSON.parse(row.detail_json))
+      .find((detail) => detail.previewScopeId === loser.offer.previewScopeId)
+    assert.equal(alternateProgress?.appointmentStatus, 'materialized')
+    assert.deepEqual(alternateProgress?.missingFields, [])
+    assert.equal(alternateProgress?.selectedStartTime, slotB.toUTC().toISO())
 
     const appointments = await db.all(
       `SELECT id, start_time FROM appointments
@@ -1990,6 +2474,21 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
   }
   let userId = ''
   let appointmentEffectId = ''
+  const createSandboxPayment = async (config, options) => {
+    assert.equal(config.mode, 'test')
+    assert.equal(options.forceTestMode, true)
+    const paymentId = `payment_test_${randomUUID()}`
+    const publicPaymentId = `public_test_${randomUUID()}`
+    const paymentUrl = `https://payments.example.test/${publicPaymentId}`
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_method, payment_mode,
+         payment_provider, public_payment_id, payment_url, metadata_json, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'sent', 'stripe', 'test', 'stripe', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId, config.amount, config.currency, publicPaymentId, paymentUrl, JSON.stringify(options.metadata)]
+    )
+    return { payment: { id: paymentId }, publicPaymentId, paymentUrl }
+  }
 
   try {
     await db.run(
@@ -2046,21 +2545,7 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
       }
     })
     setConversationalAgentTestPaymentDependenciesForTests({
-      createPaymentGateLink: async (config, options) => {
-        assert.equal(config.mode, 'test')
-        assert.equal(options.forceTestMode, true)
-        const paymentId = `payment_test_${randomUUID()}`
-        const publicPaymentId = `public_test_${randomUUID()}`
-        const paymentUrl = `https://payments.example.test/${publicPaymentId}`
-        await db.run(
-          `INSERT INTO payments (
-             id, contact_id, amount, currency, status, payment_method, payment_mode,
-             payment_provider, public_payment_id, payment_url, metadata_json, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'sent', 'stripe', 'test', 'stripe', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-          [paymentId, contactId, config.amount, config.currency, publicPaymentId, paymentUrl, JSON.stringify(options.metadata)]
-        )
-        return { payment: { id: paymentId }, publicPaymentId, paymentUrl }
-      }
+      createPaymentGateLink: createSandboxPayment
     })
 
     const effects = {
@@ -2271,6 +2756,84 @@ test('efectos del tester crean artefactos reales de prueba, son idempotentes, re
       requestedByUserId: userId,
       contactId,
       effects
+    })
+    const paymentRequest = {
+      amount: 1200,
+      unitAmount: 1200,
+      quantity: 1,
+      currency,
+      concept: 'Consulta tester · Precio tester',
+      productId,
+      priceId,
+      collectionMethod: 'payment_link',
+      paymentPurpose: '',
+      afterPayment: 'continue'
+    }
+    const abandonedPaymentEffect = await beginConversationalAgentTestEffect({
+      testRunId: runId,
+      testMessageId: paymentMessageId,
+      requestedByUserId: userId,
+      effectType: 'payment',
+      request: paymentRequest
+    })
+    assert.equal(abandonedPaymentEffect.claimed, true)
+
+    let releasePaymentCrash
+    let signalPaymentCreating
+    const paymentCreating = new Promise((resolve) => { signalPaymentCreating = resolve })
+    const paymentCrashGate = new Promise((resolve) => { releasePaymentCrash = resolve })
+    setConversationalAgentTestPaymentDependenciesForTests({
+      createPaymentGateLink: async () => {
+        signalPaymentCreating()
+        await paymentCrashGate
+        throw Object.assign(new Error('crash simulado del dueño anterior'), { code: 'simulated_payment_owner_crash' })
+      }
+    })
+    const abandonedInnerCreation = createConversationalAgentTestPaymentLink({
+      effectId: abandonedPaymentEffect.effect.id,
+      testRunId: runId,
+      agentId,
+      requestedByUserId: userId,
+      contact: {
+        id: contactId,
+        name: 'Contacto elegido',
+        phone: contactPhone,
+        email: ''
+      },
+      paymentGateConfig: {
+        gateway: 'stripe',
+        billingType: 'single',
+        amount: 1200,
+        currency,
+        productName: 'Consulta tester · Precio tester',
+        description: 'Consulta tester · Precio tester',
+        msi: { enabled: false, maxInstallments: 0 }
+      }
+    })
+    await paymentCreating
+    await db.run(
+      `UPDATE conversational_agent_test_effects
+       SET status = 'failed', error_code = 'simulated_outer_crash', error_retryable = 1,
+           claim_token = NULL, lease_until_at = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [abandonedPaymentEffect.effect.id]
+    )
+    const paymentWhileOldOwnerIsCreating = await recordConversationalAgentPreviewEffects({
+      runContext: paymentRun,
+      actions: [stalePaymentAction]
+    })
+    assert.equal(paymentWhileOldOwnerIsCreating[0].status, 'failed')
+    assert.equal(paymentWhileOldOwnerIsCreating[0].code, 'test_payment_creation_in_progress')
+    assert.equal(paymentWhileOldOwnerIsCreating[0].retryable, true)
+    assert.equal(Number((await db.get(
+      'SELECT error_retryable FROM conversational_agent_test_effects WHERE id = ?',
+      [abandonedPaymentEffect.effect.id]
+    )).error_retryable), 1)
+
+    releasePaymentCrash()
+    await assert.rejects(abandonedInnerCreation, /crash simulado/)
+    setConversationalAgentTestPaymentDependenciesForTests({
+      createPaymentGateLink: createSandboxPayment
     })
     const payment = await recordConversationalAgentPreviewEffects({
       runContext: paymentRun,

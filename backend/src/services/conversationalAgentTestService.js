@@ -45,9 +45,48 @@ const TEST_EFFECT_LEASE_MS = 10 * 60 * 1000
 const TEST_NOTIFICATION_STALE_MS = 5 * 60 * 1000
 const TEST_APPOINTMENT_EFFECT_LOCK_WAIT_MS = 20 * 1000
 const TEST_APPOINTMENT_EFFECT_LOCK_RETRY_MS = 50
+const TEST_TURN_LEASE_MS = 60 * 1000
+const TEST_TURN_HEARTBEAT_MS = 10 * 1000
+const TEST_TURN_WAIT_MS = TEST_TURN_LEASE_MS + 15 * 1000
+const TEST_TURN_POLL_MS = 75
+const TEST_TURN_MATERIALIZATION_WAIT_MS = 60 * 1000
 const TEST_APPOINTMENT_PROGRESS_TTL_MS = 24 * 60 * 60 * 1000
 const TEST_SLOT_NO_LONGER_FREE_CODE = 'test_slot_no_longer_free'
 const TEST_APPOINTMENT_SELECTION_EVENT = 'appointment_slot_selection_verified'
+const TEST_TURN_LEASE_VALUE_SQL = process.env.DATABASE_URL
+  ? "CURRENT_TIMESTAMP + INTERVAL '60 seconds'"
+  : "DATETIME(CURRENT_TIMESTAMP, '+60 seconds')"
+const TEST_TURN_LEASE_EXPIRED_SQL = process.env.DATABASE_URL
+  ? 'lease_until_at <= CURRENT_TIMESTAMP'
+  : 'DATETIME(lease_until_at) <= CURRENT_TIMESTAMP'
+const TERMINAL_TEST_EFFECT_FAILURE_CODES = new Set([
+  TEST_SLOT_NO_LONGER_FREE_CODE,
+  'test_appointment_checkpoint_interrupted',
+  'test_appointment_provider_sync_failed'
+])
+const RETRYABLE_TEST_EFFECT_FAILURE_CODES = new Set([
+  'test_effect_claim_lost',
+  'test_appointment_offer_materialize_failed',
+  'test_appointment_offer_materialize_race',
+  'test_appointment_progress_materialize_race',
+  'test_payment_creation_in_progress',
+  'test_payment_creation_race',
+  'test_payment_claim_lost',
+  'SQLITE_BUSY',
+  'SQLITE_LOCKED',
+  'DATABASE_CONNECTION_LOST',
+  'DATABASE_OPERATION_TIMEOUT'
+])
+const RETRYABLE_TEST_EFFECT_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
+const RETRYABLE_TEST_EFFECT_NETWORK_CODES = new Set([
+  'ETIMEDOUT',
+  'ESOCKETTIMEDOUT',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT'
+])
 const TERMINAL_TEST_EFFECT_STATUSES = new Set([
   'recorded',
   'prepared',
@@ -105,6 +144,389 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function nullableBoolean(value) {
+  if (value === null || value === undefined || value === '') return null
+  if (value === true || value === 1 || value === '1') return true
+  if (value === false || value === 0 || value === '0') return false
+  return null
+}
+
+function isRetryableTestEffectError(error) {
+  if (typeof error?.retryable === 'boolean') return error.retryable
+  const code = cleanString(error?.code || error?.cause?.code)
+  if (TERMINAL_TEST_EFFECT_FAILURE_CODES.has(code)) return false
+  if (RETRYABLE_TEST_EFFECT_FAILURE_CODES.has(code) || RETRYABLE_TEST_EFFECT_NETWORK_CODES.has(code.toUpperCase())) {
+    return true
+  }
+  const statusCode = Number(error?.statusCode ?? error?.status)
+  if (RETRYABLE_TEST_EFFECT_HTTP_STATUSES.has(statusCode)) return true
+  if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) return false
+  // Las validaciones de negocio creadas por este servicio siempre traen 4xx.
+  // Un error sin clasificación suele venir de DB/red/proveedor y se conserva
+  // recuperable para no congelar como definitivo un side effect ambiguo.
+  return true
+}
+
+function isTerminalFailedTestEffectRow(effect) {
+  if (cleanString(effect?.status).toLowerCase() !== 'failed') return false
+  const persistedRetryable = nullableBoolean(effect?.error_retryable)
+  if (persistedRetryable !== null) return persistedRetryable === false
+  if (cleanString(effect?.error_code) === TEST_SLOT_NO_LONGER_FREE_CODE) {
+    return parseJson(effect?.payload_json, {}).appointmentDateRestored === true
+  }
+  return false
+}
+
+export function isConversationalAgentTestMaterializationTerminal(testEffects = []) {
+  return !(Array.isArray(testEffects) ? testEffects : []).some((effect) => {
+    const status = cleanString(effect?.status).toLowerCase()
+    if (['processing', 'pending'].includes(status)) return true
+    return status === 'failed' && effect?.retryable === true
+  })
+}
+
+function stableJsonStringify(value) {
+  const ancestors = new WeakSet()
+  const normalize = (current) => {
+    if (!current || typeof current !== 'object') return current
+    if (ancestors.has(current)) {
+      throw testError('La solicitud de prueba contiene una referencia circular.', 400, 'invalid_test_turn_payload')
+    }
+    ancestors.add(current)
+    const normalized = Array.isArray(current)
+      ? current.map((item) => normalize(item))
+      : Object.keys(current).sort().reduce((result, key) => {
+          if (current[key] !== undefined) result[key] = normalize(current[key])
+          return result
+        }, {})
+    ancestors.delete(current)
+    return normalized
+  }
+  return JSON.stringify(normalize(value))
+}
+
+export function buildConversationalAgentTestTurnRequestHash(value = {}) {
+  return sha256(stableJsonStringify(value))
+}
+
+function parseTurnObject(value) {
+  const parsed = parseJson(value, null)
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+}
+
+export async function replayCompletedConversationalAgentTestTurn({
+  testRunId,
+  testMessageId,
+  requestedByUserId,
+  clientRequestHash
+} = {}) {
+  const runId = normalizeIdentifier(testRunId, TEST_RUN_ID_PATTERN, 'La sesión de prueba')
+  const messageId = normalizeIdentifier(testMessageId, TEST_MESSAGE_ID_PATTERN, 'El mensaje de prueba')
+  const normalizedClientHash = cleanString(clientRequestHash).toLowerCase()
+  if (!/^[a-f0-9]{64}$/.test(normalizedClientHash)) {
+    throw testError('La identidad del request de prueba no es válida.', 400, 'invalid_test_turn_hash')
+  }
+  const row = await db.get(
+    `SELECT t.status, t.response_json, t.client_request_hash,
+            r.requested_by_user_id, r.status AS run_status, r.expires_at
+     FROM conversational_agent_test_turns t
+     INNER JOIN conversational_agent_test_runs r ON r.id = t.run_id
+     WHERE t.run_id = ? AND t.message_id = ?`,
+    [runId, messageId]
+  )
+  if (!row) return null
+  if (cleanString(row.requested_by_user_id) !== cleanString(requestedByUserId)) {
+    throw testError('Esta prueba ya no existe o pertenece a otro usuario.', 404, 'test_run_not_found')
+  }
+  if (cleanString(row.run_status).toLowerCase() !== 'active' || Date.parse(row.expires_at || '') <= Date.now()) {
+    return null
+  }
+  const storedClientHash = cleanString(row.client_request_hash).toLowerCase()
+  if (!storedClientHash) return null
+  if (storedClientHash && storedClientHash !== normalizedClientHash) {
+    throw testError(
+      'Este mensaje de prueba ya fue usado con otro contenido. Reinicia la prueba para evitar respuestas cruzadas.',
+      409,
+      'test_turn_payload_mismatch'
+    )
+  }
+  if (cleanString(row.status).toLowerCase() !== 'completed') return null
+  const response = parseTurnObject(row.response_json)
+  // El executor sabe invalidar por CAS una respuesta rota y retomar el preview
+  // durable. El fast-path no debe adelantarse con un 500 que impida llegar a
+  // esa recuperación.
+  if (!response) return null
+  return response
+}
+
+/**
+ * Ejecuta preview, efectos y respuesta como una sola unidad idempotente. El
+ * claim con lease evita dos dueños vivos sin reservar una conexión mientras la
+ * IA responde. preview_result_json permite retomar un proceso muerto sin volver
+ * a consultar al modelo ni cambiar sus acciones.
+ */
+export async function executeConversationalAgentTestTurn({
+  runContext,
+  requestHash,
+  createPreview,
+  materializePreview
+} = {}) {
+  const normalizedRequestHash = cleanString(requestHash).toLowerCase()
+  if (!/^[a-f0-9]{64}$/.test(normalizedRequestHash)) {
+    throw testError('La identidad del contenido de esta prueba no es válida.', 400, 'invalid_test_turn_hash')
+  }
+  if (typeof createPreview !== 'function' || typeof materializePreview !== 'function') {
+    throw testError('El pipeline del turno de prueba está incompleto.', 500, 'invalid_test_turn_pipeline')
+  }
+
+  const runId = normalizeIdentifier(runContext?.id, TEST_RUN_ID_PATTERN, 'La sesión de prueba')
+  const messageId = normalizeIdentifier(runContext?.messageId, TEST_MESSAGE_ID_PATTERN, 'El mensaje de prueba')
+  const turnId = `catt_${sha256(`${runId}\u0000${messageId}`).slice(0, 48)}`
+  const initialClaimToken = randomUUID()
+  const inserted = await db.run(
+    `INSERT INTO conversational_agent_test_turns (
+       id, run_id, message_id, request_hash, status, attempt_count,
+       claim_token, lease_until_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, 'processing', 1, ?, ${TEST_TURN_LEASE_VALUE_SQL}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     ON CONFLICT(id) DO NOTHING`,
+    [turnId, runId, messageId, normalizedRequestHash, initialClaimToken]
+  )
+  let claimToken = mutationCount(inserted) === 1 ? initialClaimToken : ''
+  let row = null
+  const waitDeadline = Date.now() + TEST_TURN_WAIT_MS
+  let claimPollAttempt = 0
+
+  while (!claimToken) {
+    row = await db.get(
+      `SELECT *, CASE WHEN lease_until_at IS NULL OR ${TEST_TURN_LEASE_EXPIRED_SQL}
+         THEN 1 ELSE 0 END AS lease_expired
+       FROM conversational_agent_test_turns WHERE run_id = ? AND message_id = ?`,
+      [runId, messageId]
+    )
+    if (!row || cleanString(row.id) !== turnId) {
+      throw testError('No se pudo recuperar la identidad durable del turno de prueba.', 500, 'test_turn_identity_missing')
+    }
+    if (cleanString(row.request_hash).toLowerCase() !== normalizedRequestHash) {
+      throw testError(
+        'Este mensaje de prueba ya fue usado con otro contenido. Reinicia la prueba para evitar respuestas cruzadas.',
+        409,
+        'test_turn_payload_mismatch'
+      )
+    }
+
+    const status = cleanString(row.status).toLowerCase()
+    if (status === 'completed') {
+      const storedResponse = parseTurnObject(row.response_json)
+      if (storedResponse) return { response: storedResponse, replayed: true, recovered: false }
+      const invalidated = await db.run(
+        `UPDATE conversational_agent_test_turns
+         SET status = 'failed', error_code = 'test_turn_response_corrupt', last_error = ?,
+             claim_token = NULL, lease_until_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'completed' AND request_hash = ?
+           AND COALESCE(response_json, '') = ?`,
+        [
+          'La respuesta final guardada no era legible; se retomará desde el preview durable.',
+          turnId,
+          normalizedRequestHash,
+          row.response_json ?? ''
+        ]
+      )
+      if (mutationCount(invalidated) !== 1) continue
+      row.status = 'failed'
+    }
+
+    const currentStatus = cleanString(row.status).toLowerCase()
+    const leaseExpired = Number(row.lease_expired) === 1 || row.lease_expired === true
+    if (currentStatus === 'pending' || currentStatus === 'failed' || (currentStatus === 'processing' && leaseExpired)) {
+      const nextClaimToken = randomUUID()
+      const claimed = currentStatus === 'pending'
+        ? await db.run(
+            `UPDATE conversational_agent_test_turns
+             SET status = 'processing', claim_token = ?, lease_until_at = ${TEST_TURN_LEASE_VALUE_SQL},
+                 attempt_count = attempt_count + 1, error_code = NULL, last_error = NULL,
+                 completed_at = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND request_hash = ? AND status = 'pending'`,
+            [nextClaimToken, turnId, normalizedRequestHash]
+          )
+        : currentStatus === 'failed'
+        ? await db.run(
+            `UPDATE conversational_agent_test_turns
+             SET status = 'processing', claim_token = ?, lease_until_at = ${TEST_TURN_LEASE_VALUE_SQL},
+                 attempt_count = attempt_count + 1, error_code = NULL, last_error = NULL,
+                 completed_at = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND request_hash = ? AND status = 'failed'`,
+            [nextClaimToken, turnId, normalizedRequestHash]
+          )
+        : await db.run(
+            `UPDATE conversational_agent_test_turns
+             SET claim_token = ?, lease_until_at = ${TEST_TURN_LEASE_VALUE_SQL}, attempt_count = attempt_count + 1,
+                 error_code = NULL, last_error = NULL, completed_at = NULL,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND request_hash = ? AND status = 'processing'
+               AND COALESCE(claim_token, '') = ? AND (lease_until_at IS NULL OR ${TEST_TURN_LEASE_EXPIRED_SQL})`,
+            [nextClaimToken, turnId, normalizedRequestHash, cleanString(row.claim_token)]
+          )
+      if (mutationCount(claimed) === 1) {
+        claimToken = nextClaimToken
+        break
+      }
+      continue
+    }
+    if (currentStatus !== 'processing') {
+      throw testError('El turno de prueba quedó en un estado desconocido.', 500, 'test_turn_state_invalid')
+    }
+    if (Date.now() >= waitDeadline) {
+      throw testError(
+        'Este mismo mensaje de prueba todavía se está procesando. Conserva el mensaje y vuelve a consultar en un momento.',
+        503,
+        'test_turn_processing'
+      )
+    }
+    const pollDelay = Math.min(1_000, Math.round(TEST_TURN_POLL_MS * (1.35 ** claimPollAttempt)))
+    claimPollAttempt += 1
+    await wait(pollDelay + Math.floor(Math.random() * 50))
+  }
+
+  row = await db.get('SELECT * FROM conversational_agent_test_turns WHERE id = ?', [turnId])
+  if (!row || cleanString(row.claim_token) !== claimToken || cleanString(row.status) !== 'processing') {
+    throw testError('Se perdió el dueño antes de iniciar el turno de prueba.', 409, 'test_turn_claim_lost')
+  }
+
+  let heartbeatStopped = false
+  let heartbeatLost = false
+  let heartbeatPromise = null
+  const pulseHeartbeat = async ({ required = false } = {}) => {
+    if (heartbeatStopped || heartbeatLost) {
+      if (required) throw testError('Se perdió el dueño del turno de prueba.', 409, 'test_turn_claim_lost')
+      return false
+    }
+    if (heartbeatPromise) {
+      const activeResult = await heartbeatPromise
+      if (required && !activeResult) {
+        throw testError('No se pudo renovar el dueño del turno de prueba.', 503, 'test_turn_heartbeat_failed')
+      }
+      return activeResult
+    }
+    heartbeatPromise = (async () => {
+      try {
+        const renewed = await db.run(
+          `UPDATE conversational_agent_test_turns
+           SET lease_until_at = ${TEST_TURN_LEASE_VALUE_SQL}, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND request_hash = ? AND status = 'processing' AND claim_token = ?`,
+          [turnId, normalizedRequestHash, claimToken]
+        )
+        if (mutationCount(renewed) !== 1) {
+          heartbeatLost = true
+          return false
+        }
+        return true
+      } catch (error) {
+        if (required) throw error
+        logger.warn(`[Tester agente] No se pudo renovar el turno ${turnId}: ${error.message}`)
+        return false
+      }
+    })()
+    try {
+      const result = await heartbeatPromise
+      if (required && !result) {
+        throw testError('No se pudo renovar el dueño del turno de prueba.', 503, 'test_turn_heartbeat_failed')
+      }
+      return result
+    } finally {
+      heartbeatPromise = null
+    }
+  }
+  const heartbeatTimer = setInterval(() => {
+    void pulseHeartbeat().catch((error) => {
+      logger.warn(`[Tester agente] Falló el heartbeat en segundo plano para ${turnId}: ${error.message}`)
+    })
+  }, TEST_TURN_HEARTBEAT_MS)
+  heartbeatTimer.unref?.()
+
+  let previewResult = parseTurnObject(row.preview_result_json)
+  const recovered = Boolean(previewResult)
+  try {
+    if (!previewResult) {
+      previewResult = await createPreview()
+      const previewJson = JSON.stringify(previewResult)
+      previewResult = parseTurnObject(previewJson)
+      if (!previewResult) {
+        throw testError('La IA no devolvió un preview durable válido.', 502, 'test_turn_preview_invalid')
+      }
+      const checkpointed = await db.run(
+        `UPDATE conversational_agent_test_turns
+         SET preview_result_json = ?, lease_until_at = ${TEST_TURN_LEASE_VALUE_SQL}, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'processing' AND claim_token = ? AND request_hash = ?`,
+        [previewJson, turnId, claimToken, normalizedRequestHash]
+      )
+      if (mutationCount(checkpointed) !== 1) {
+        throw testError('Se perdió el dueño antes de guardar el preview de prueba.', 409, 'test_turn_claim_lost')
+      }
+    }
+
+    const materializationDeadline = Date.now() + TEST_TURN_MATERIALIZATION_WAIT_MS
+    let response = null
+    let materializationPollAttempt = 0
+    while (!response) {
+      await pulseHeartbeat({ required: true })
+      const materialized = await materializePreview(previewResult)
+      const isEnvelope = cleanString(materialized?.kind) === 'conversational_agent_test_turn_materialization'
+      const terminal = !isEnvelope || materialized.terminal === true
+      const candidate = isEnvelope ? materialized.response : materialized
+      if (terminal) {
+        const responseJson = JSON.stringify(candidate)
+        response = parseTurnObject(responseJson)
+        if (!response) {
+          throw testError('El turno no produjo una respuesta final durable.', 502, 'test_turn_response_invalid')
+        }
+        const completed = await db.run(
+          `UPDATE conversational_agent_test_turns
+           SET status = 'completed', response_json = ?, claim_token = NULL, lease_until_at = NULL,
+               error_code = NULL, last_error = NULL, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND status = 'processing' AND claim_token = ? AND request_hash = ?`,
+          [responseJson, turnId, claimToken, normalizedRequestHash]
+        )
+        if (mutationCount(completed) !== 1) {
+          const current = await db.get('SELECT * FROM conversational_agent_test_turns WHERE id = ?', [turnId])
+          const storedResponse = cleanString(current?.status) === 'completed'
+            ? parseTurnObject(current?.response_json)
+            : null
+          if (storedResponse) return { response: storedResponse, replayed: true, recovered }
+          throw testError('Se perdió el dueño antes de cerrar el turno de prueba.', 409, 'test_turn_claim_lost')
+        }
+        return { response, replayed: false, recovered }
+      }
+      if (Date.now() >= materializationDeadline) {
+        throw testError(
+          'El efecto de este mensaje sigue procesándose y aún no tiene un resultado final.',
+          503,
+          'test_turn_effect_processing'
+        )
+      }
+      const retryDelay = Math.min(1_000, Math.round(250 * (1.35 ** materializationPollAttempt)))
+      materializationPollAttempt += 1
+      await wait(retryDelay + Math.floor(Math.random() * 75))
+    }
+  } catch (error) {
+    await db.run(
+      `UPDATE conversational_agent_test_turns
+       SET status = 'failed', claim_token = NULL, lease_until_at = NULL,
+           error_code = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND status = 'processing' AND claim_token = ?`,
+      [
+        cleanString(error?.code).slice(0, 160) || 'test_turn_failed',
+        cleanString(error?.message || error).slice(0, 1200),
+        turnId,
+        claimToken
+      ]
+    ).catch(() => undefined)
+    throw error
+  } finally {
+    heartbeatStopped = true
+    clearInterval(heartbeatTimer)
+  }
+}
+
 export function normalizeConversationalAgentTestEffects(value = {}) {
   const scheduleAppointment = value?.scheduleAppointment === true
   const collectPayment = value?.collectPayment === true
@@ -141,6 +563,11 @@ function publicEffect(row = {}) {
     messageId: row.message_id,
     type: row.effect_type,
     status: row.status,
+    code: cleanString(row.error_code) || null,
+    retryable: nullableBoolean(row.error_retryable),
+    lastError: cleanString(row.last_error) || null,
+    appointmentDateRestored: payload.appointmentDateRestored === true,
+    appointmentDateRestoreError: cleanString(payload.appointmentDateRestoreError) || null,
     summary: cleanString(payload.summary) || null,
     message: cleanString(payload.message) || null,
     notificationStatus: row.notification_status || null,
@@ -183,7 +610,10 @@ export async function prepareConversationalAgentTestRun({
   agentId,
   requestedByUserId,
   contactId,
-  effects
+  effects,
+  messages = [],
+  configOverride = null,
+  clientRequestHash = ''
 } = {}) {
   const normalizedEffects = normalizeConversationalAgentTestEffects(effects)
   if (!normalizedEffects.enabled) return null
@@ -237,34 +667,98 @@ export async function prepareConversationalAgentTestRun({
 
   const effectsJson = JSON.stringify(authoritativeEffects)
   const expiresAt = toIso(Date.now() + TEST_RUN_TTL_MS)
-  await db.run(
-    `INSERT INTO conversational_agent_test_runs (
-       id, agent_id, requested_by_user_id, contact_id, effects_json, status,
-       created_at, updated_at, expires_at
-     ) VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
-     ON CONFLICT(id) DO NOTHING`,
-    [runId, cleanAgentId, cleanUserId, cleanContactId, effectsJson, expiresAt]
-  )
-
-  const run = await db.get('SELECT * FROM conversational_agent_test_runs WHERE id = ?', [runId])
-  if (
-    !run ||
-    cleanString(run.agent_id) !== cleanAgentId ||
-    cleanString(run.requested_by_user_id) !== cleanUserId ||
-    cleanString(run.contact_id) !== cleanContactId
-  ) {
-    throw testError('La identidad de esta prueba cambió. Reiníciala antes de continuar.', 409, 'test_run_identity_mismatch')
+  const requestHash = buildConversationalAgentTestTurnRequestHash({
+    schemaVersion: 1,
+    messages: Array.isArray(messages) ? messages : [],
+    configOverride,
+    agentId: cleanAgentId,
+    contactId: cleanContactId,
+    effects: authoritativeEffects
+  })
+  const normalizedClientRequestHash = cleanString(clientRequestHash).toLowerCase() || requestHash
+  if (!/^[a-f0-9]{64}$/.test(normalizedClientRequestHash)) {
+    throw testError('La identidad del request de prueba no es válida.', 400, 'invalid_test_turn_hash')
   }
-  if (run.status !== 'active') {
-    throw testError('Esta prueba ya no acepta acciones. Reiníciala para continuar.', 409, 'test_run_closed')
-  }
+  const turnId = `catt_${sha256(`${runId}\u0000${messageId}`).slice(0, 48)}`
 
-  await db.run(
-    `UPDATE conversational_agent_test_runs
-     SET effects_json = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND requested_by_user_id = ? AND status = 'active'`,
-    [effectsJson, expiresAt, runId, cleanUserId]
-  )
+  // Reserva primero la identidad inmutable del turno y sólo después renueva la
+  // autoridad de la corrida. Un reuse malicioso/accidental del mismo messageId
+  // con otro payload no puede cambiar effects_json antes de ser rechazado.
+  await db.transaction(async () => {
+    await db.run(
+      `INSERT INTO conversational_agent_test_runs (
+         id, agent_id, requested_by_user_id, contact_id, effects_json, status,
+         created_at, updated_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+       ON CONFLICT(id) DO NOTHING`,
+      [runId, cleanAgentId, cleanUserId, cleanContactId, effectsJson, expiresAt]
+    )
+
+    const run = await db.get(
+      `SELECT * FROM conversational_agent_test_runs WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+      [runId]
+    )
+    if (
+      !run ||
+      cleanString(run.agent_id) !== cleanAgentId ||
+      cleanString(run.requested_by_user_id) !== cleanUserId ||
+      cleanString(run.contact_id) !== cleanContactId
+    ) {
+      throw testError('La identidad de esta prueba cambió. Reiníciala antes de continuar.', 409, 'test_run_identity_mismatch')
+    }
+    if (run.status !== 'active') {
+      throw testError('Esta prueba ya no acepta acciones. Reiníciala para continuar.', 409, 'test_run_closed')
+    }
+
+    await db.run(
+      `INSERT INTO conversational_agent_test_turns (
+         id, run_id, message_id, request_hash, client_request_hash, status, attempt_count,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, 'pending', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(id) DO NOTHING`,
+      [turnId, runId, messageId, requestHash, normalizedClientRequestHash]
+    )
+    const reservedTurn = await db.get(
+      `SELECT id, request_hash, client_request_hash FROM conversational_agent_test_turns
+       WHERE run_id = ? AND message_id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+      [runId, messageId]
+    )
+    if (!reservedTurn || cleanString(reservedTurn.id) !== turnId) {
+      throw testError('No se pudo reservar la identidad durable del turno.', 500, 'test_turn_identity_missing')
+    }
+    if (cleanString(reservedTurn.request_hash).toLowerCase() !== requestHash) {
+      throw testError(
+        'Este mensaje de prueba ya fue usado con otro contenido. Reinicia la prueba para evitar respuestas cruzadas.',
+        409,
+        'test_turn_payload_mismatch'
+      )
+    }
+    const storedClientRequestHash = cleanString(reservedTurn.client_request_hash).toLowerCase()
+    if (storedClientRequestHash && storedClientRequestHash !== normalizedClientRequestHash) {
+      throw testError(
+        'Este mensaje de prueba ya fue usado con otro contenido. Reinicia la prueba para evitar respuestas cruzadas.',
+        409,
+        'test_turn_payload_mismatch'
+      )
+    }
+    if (!storedClientRequestHash) {
+      await db.run(
+        `UPDATE conversational_agent_test_turns SET client_request_hash = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND client_request_hash IS NULL`,
+        [normalizedClientRequestHash, turnId]
+      )
+    }
+
+    const updated = await db.run(
+      `UPDATE conversational_agent_test_runs
+       SET effects_json = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND requested_by_user_id = ? AND status = 'active'`,
+      [effectsJson, expiresAt, runId, cleanUserId]
+    )
+    if (mutationCount(updated) !== 1) {
+      throw testError('La corrida cambió antes de reservar el turno.', 409, 'test_run_closed')
+    }
+  })
 
   return {
     id: runId,
@@ -274,7 +768,9 @@ export async function prepareConversationalAgentTestRun({
     effects: authoritativeEffects,
     requestedByUserId: cleanUserId,
     executionId: `test:${sha256(`${runId}\u0000${messageId}`).slice(0, 48)}`,
-    expiresAt
+    expiresAt,
+    requestHash,
+    clientRequestHash: normalizedClientRequestHash
   }
 }
 
@@ -394,6 +890,9 @@ export async function beginConversationalAgentTestEffect({
   if (TERMINAL_TEST_EFFECT_STATUSES.has(effect.status)) {
     return { claimed: false, reused: true, inProgress: false, effect: publicEffect(effect), run, effects }
   }
+  if (isTerminalFailedTestEffectRow(effect)) {
+    return { claimed: false, reused: true, inProgress: false, effect: publicEffect(effect), run, effects }
+  }
   if (effect.claim_token === claimToken) {
     return { claimed: true, reused: false, inProgress: false, claimToken, effect: publicEffect(effect), run, effects }
   }
@@ -427,7 +926,8 @@ export async function beginConversationalAgentTestEffect({
   const claimed = await db.run(
     `UPDATE conversational_agent_test_effects
      SET status = 'processing', attempt_count = attempt_count + 1,
-         claim_token = ?, lease_until_at = ?, last_error = NULL,
+         claim_token = ?, lease_until_at = ?, last_error = NULL, error_code = NULL,
+         error_retryable = NULL,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND request_hash = ?
        AND (status = 'failed' OR lease_until_at IS NULL OR lease_until_at <= ?
@@ -436,7 +936,14 @@ export async function beginConversationalAgentTestEffect({
   )
   if (mutationCount(claimed) !== 1) {
     effect = await db.get('SELECT * FROM conversational_agent_test_effects WHERE id = ?', [effectId])
-    return { claimed: false, reused: TERMINAL_TEST_EFFECT_STATUSES.has(effect?.status), inProgress: effect?.status === 'processing', effect: publicEffect(effect || {}), run, effects }
+    return {
+      claimed: false,
+      reused: TERMINAL_TEST_EFFECT_STATUSES.has(effect?.status) || isTerminalFailedTestEffectRow(effect),
+      inProgress: effect?.status === 'processing',
+      effect: publicEffect(effect || {}),
+      run,
+      effects
+    }
   }
   effect = await db.get('SELECT * FROM conversational_agent_test_effects WHERE id = ?', [effectId])
   return { claimed: true, reused: false, inProgress: false, claimToken, effect: publicEffect(effect), run, effects }
@@ -447,12 +954,14 @@ export async function completeConversationalAgentTestEffect({
   claimToken,
   status = 'recorded',
   entityId = null,
-  payload = {}
+  payload = {},
+  notify = true
 } = {}) {
   const result = await db.run(
     `UPDATE conversational_agent_test_effects
      SET status = ?, entity_id = ?, payload_json = ?, claim_token = NULL,
-         lease_until_at = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP
+         lease_until_at = NULL, last_error = NULL, error_code = NULL,
+         error_retryable = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND status = 'processing' AND claim_token = ?`,
     [cleanString(status) || 'recorded', cleanString(entityId) || null, JSON.stringify(payload || {}), cleanString(effectId), cleanString(claimToken)]
   )
@@ -462,7 +971,7 @@ export async function completeConversationalAgentTestEffect({
     throw testError('No se pudo cerrar de forma segura el efecto de prueba.', 409, 'test_effect_claim_lost')
   }
   const row = await db.get('SELECT * FROM conversational_agent_test_effects WHERE id = ?', [cleanString(effectId)])
-  if (row?.effect_type !== 'assignment') {
+  if (notify && row?.effect_type !== 'assignment') {
     await dispatchConversationalAgentTestEffectNotification(row).catch((error) => {
       logger.warn(`[Tester agente] No se pudo notificar el efecto ${effectId}: ${error.message}`)
     })
@@ -471,12 +980,29 @@ export async function completeConversationalAgentTestEffect({
 }
 
 export async function failConversationalAgentTestEffect({ effectId, claimToken, error } = {}) {
+  const current = await db.get(
+    'SELECT payload_json FROM conversational_agent_test_effects WHERE id = ? AND status = ? AND claim_token = ?',
+    [cleanString(effectId), 'processing', cleanString(claimToken)]
+  )
+  const payload = {
+    ...parseJson(current?.payload_json, {}),
+    appointmentDateRestored: error?.appointmentDateRestored === true,
+    appointmentDateRestoreError: cleanString(error?.appointmentDateRestoreError) || null
+  }
+  const retryable = isRetryableTestEffectError(error)
   await db.run(
     `UPDATE conversational_agent_test_effects
      SET status = 'failed', claim_token = NULL, lease_until_at = NULL,
-         last_error = ?, updated_at = CURRENT_TIMESTAMP
+         last_error = ?, error_code = ?, error_retryable = ?, payload_json = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND status = 'processing' AND claim_token = ?`,
-    [cleanString(error?.message || error).slice(0, 1200), cleanString(effectId), cleanString(claimToken)]
+    [
+      cleanString(error?.message || error).slice(0, 1200),
+      cleanString(error?.code).slice(0, 160) || null,
+      retryable ? 1 : 0,
+      JSON.stringify(payload),
+      cleanString(effectId),
+      cleanString(claimToken)
+    ]
   )
 }
 
@@ -881,7 +1407,7 @@ async function claimPreviewAppointmentOfferForTestEffect({ runContext, request, 
   )
   const materializationReplay = Boolean(
     baseIdentityMatches &&
-    cleanString(detail.status) === 'materializing' &&
+    ['materializing', 'materialized'].includes(cleanString(detail.status)) &&
     cleanString(detail.materializationEffectId) === cleanString(effectId) &&
     cleanString(detail.materializationExecutionId) === cleanString(runContext?.executionId)
   )
@@ -962,28 +1488,140 @@ async function markPreviewAppointmentOfferMaterialized({ runContext, effectId } 
     agentId: runContext?.agent?.id
   })
   const eventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
-  const row = eventId
-    ? await db.get('SELECT detail_json FROM conversational_agent_events WHERE id = ? AND event_type = ?', [
-        eventId,
-        CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT
-      ])
-    : null
-  const detail = parseJson(row?.detail_json, {})
-  if (
-    cleanString(detail.status) !== 'materializing' ||
-    cleanString(detail.materializationEffectId) !== cleanString(effectId)
-  ) return false
-  const result = await db.run(
-    `UPDATE conversational_agent_events SET detail_json = ?
-     WHERE id = ? AND event_type = ? AND detail_json = ?`,
-    [
-      JSON.stringify({ ...detail, status: 'materialized', materializedAt: toIso() }),
-      eventId,
-      CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
-      row.detail_json
-    ]
-  )
-  return mutationCount(result) === 1
+  if (!eventId) return false
+
+  return db.transaction(async () => {
+    const row = await db.get(
+      `SELECT contact_id, agent_id, detail_json FROM conversational_agent_events
+       WHERE id = ? AND event_type = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+      [eventId, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT]
+    )
+    const detail = parseJson(row?.detail_json, {})
+    const alreadyMaterialized = cleanString(detail.status) === 'materialized' &&
+      cleanString(detail.materializationEffectId) === cleanString(effectId)
+    if (!alreadyMaterialized && (
+      cleanString(detail.status) !== 'materializing' ||
+      cleanString(detail.materializationEffectId) !== cleanString(effectId)
+    )) return false
+
+    const materializedAt = toIso()
+    if (!alreadyMaterialized) {
+      const offerUpdate = await db.run(
+        `UPDATE conversational_agent_events SET detail_json = ?
+         WHERE id = ? AND event_type = ? AND detail_json = ?`,
+        [
+          JSON.stringify({ ...detail, status: 'materialized', materializedAt }),
+          eventId,
+          CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
+          row.detail_json
+        ]
+      )
+      if (mutationCount(offerUpdate) !== 1) {
+        throw testError('La oferta cambió antes de cerrar su materialización.', 409, 'test_appointment_offer_materialize_race')
+      }
+    }
+
+    const progressRows = await db.all(
+      `SELECT id, contact_id, agent_id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+      [row.contact_id, row.agent_id, CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT]
+    )
+    const progress = (progressRows || []).find((candidate) => (
+      cleanString(parseJson(candidate.detail_json, {}).previewScopeId) === previewScopeId
+    ))
+    if (!progress) return true
+    const progressDetail = parseJson(progress.detail_json, {})
+    if (
+      cleanString(progressDetail.appointmentStatus) === 'materialized' &&
+      cleanString(progressDetail.materializedEffectId) === cleanString(effectId) &&
+      cleanString(progressDetail.calendarId) === cleanString(detail.calendarId) &&
+      cleanString(progressDetail.selectedStartTime) === cleanString(detail.startTime)
+    ) return true
+    // A estas alturas la cita canónica ya fue creada con la oferta aceptada y
+    // el effectId idempotente. Si el progreso parcial quedó viejo o apuntando a
+    // otro calendario, volver a fallar jamás converge: cada retry recuperaría
+    // la misma cita y chocaría con el mismo JSON. La oferta materializada es la
+    // autoridad final y repara ese registro dentro del mismo COMMIT.
+    const selectedDate = normalizeDateOnlyInTimezone(detail.startTime, detail.timezone)
+    const progressUpdate = await db.run(
+      `UPDATE conversational_agent_events SET detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [
+        JSON.stringify({
+          ...progressDetail,
+          schemaVersion: 1,
+          agentId: cleanString(row.agent_id),
+          contactId: cleanString(row.contact_id),
+          channel: cleanString(detail.channel).toLowerCase(),
+          previewScopeId,
+          calendarId: cleanString(detail.calendarId),
+          selectedCalendar: cleanString(detail.calendarId),
+          purpose: cleanString(detail.purpose) === 'reschedule' ? 'reschedule' : 'book',
+          appointmentId: cleanString(detail.purpose) === 'reschedule'
+            ? cleanString(detail.appointmentId) || null
+            : null,
+          selectedDate: /^\d{4}-\d{2}-\d{2}$/.test(selectedDate) ? selectedDate : null,
+          selectedTime: null,
+          appointmentStatus: 'materialized',
+          selectedStartTime: cleanString(detail.startTime) || progressDetail.selectedStartTime || null,
+          selectedTimezone: cleanString(detail.timezone) || progressDetail.selectedTimezone || null,
+          previouslyShownRanges: [],
+          availabilityCheckedAt: progressDetail.availabilityCheckedAt || materializedAt,
+          missingFields: [],
+          availabilityVerificationRequired: false,
+          lastError: null,
+          materializedEffectId: cleanString(effectId),
+          materializedAt,
+          sourceExecutionId: cleanString(runContext?.executionId),
+          updatedAt: materializedAt,
+          expiresAt: progressDetail.expiresAt || toIso(Date.now() + TEST_APPOINTMENT_PROGRESS_TTL_MS)
+        }),
+        progress.id,
+        CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
+        progress.detail_json
+      ]
+    )
+    if (mutationCount(progressUpdate) !== 1) {
+      throw testError('El estado progresivo cambió antes de cerrarse.', 409, 'test_appointment_progress_materialize_race')
+    }
+    return true
+  })
+}
+
+async function finalizeConversationalAppointmentTestEffect({
+  runContext,
+  effectId,
+  claimToken,
+  entityId = null,
+  payload
+} = {}) {
+  const completed = await db.transaction(async () => {
+    const effect = await completeConversationalAgentTestEffect({
+      effectId,
+      claimToken,
+      status: 'recorded',
+      entityId,
+      payload,
+      // La notificación puede hacer I/O externo. Debe salir sólo después del
+      // COMMIT que cierra effect + offer + progress, nunca dentro de la tx.
+      notify: false
+    })
+    const offerClosed = await markPreviewAppointmentOfferMaterialized({ runContext, effectId })
+    if (!offerClosed) {
+      throw testError(
+        'No se pudo cerrar la oferta después de materializar la cita de prueba.',
+        409,
+        'test_appointment_offer_materialize_failed'
+      )
+    }
+    return effect
+  })
+
+  await ensureConversationalAgentTestEffectNotification(effectId).catch((error) => {
+    logger.warn(`[Tester agente] La cita quedó cerrada, pero su notificación se reintentará: ${error.message}`)
+  })
+  const refreshed = await db.get('SELECT * FROM conversational_agent_test_effects WHERE id = ?', [effectId])
+  return publicEffect(refreshed || completed || {})
 }
 
 function currencyFractionDigits(currency) {
@@ -1367,7 +2005,10 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
     })
     if (!claim.claimed) {
       if (claim.reused && claim.effect?.id) {
-        if (claim.effect.type !== 'assignment') {
+        if (
+          claim.effect.type !== 'assignment' &&
+          TERMINAL_TEST_EFFECT_STATUSES.has(cleanString(claim.effect.status))
+        ) {
           await ensureConversationalAgentTestEffectNotification(claim.effect.id).catch((error) => {
             logger.warn(`[Tester agente] No se pudo reintentar la notificación ${claim.effect.id}: ${error.message}`)
           })
@@ -1442,22 +2083,21 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
           const humanTargetLabel = cleanString(schedule?.handoffUserName)
             ? `a ${cleanString(schedule.handoffUserName)}`
             : 'al equipo sin asignar una persona'
-          const completed = await completeConversationalAgentTestEffect({
+          const payload = {
+            ...request,
+            contactId: runContext.contact.id,
+            contactName: runContext.contact.full_name || runContext.contact.first_name || 'Contacto de prueba',
+            safeTestRecord: true,
+            appointmentCreated: false,
+            summary: `El horario real sigue libre. La solicitud quedó registrada para entregarse ${humanTargetLabel} y se solicitó la notificación de prueba; no se creó ni prometió una cita.`
+          }
+          return finalizeConversationalAppointmentTestEffect({
+            runContext,
             effectId: claim.effect.id,
             claimToken: claim.claimToken,
-            status: 'recorded',
             entityId: null,
-            payload: {
-              ...request,
-              contactId: runContext.contact.id,
-              contactName: runContext.contact.full_name || runContext.contact.first_name || 'Contacto de prueba',
-              safeTestRecord: true,
-              appointmentCreated: false,
-              summary: `El horario real sigue libre. La solicitud quedó registrada para entregarse ${humanTargetLabel} y se solicitó la notificación de prueba; no se creó ni prometió una cita.`
-            }
+            payload
           })
-          await markPreviewAppointmentOfferMaterialized({ runContext, effectId: claim.effect.id })
-          return completed
         }
 
         const testExpiresAt = toIso(Date.now() + 5 * 60 * 1000)
@@ -1530,29 +2170,28 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         const automationSimulatedActionCount = Number(automationExecution?.booked?.execution?.simulatedActionCount || 0) +
           Number(automationExecution?.status?.execution?.simulatedActionCount || 0)
         const reminderNotificationCount = Number(automationExecution?.reminders?.sentCount || 0)
-        const completed = await completeConversationalAgentTestEffect({
+        const payload = {
+          ...request,
+          contactId: runContext.contact.id,
+          contactName: runContext.contact.full_name || runContext.contact.first_name || 'Contacto de prueba',
+          safeTestRecord: true,
+          appointmentCreated: true,
+          appointmentId: appointment.id,
+          controllerAttempts: controllerExecution.attempts,
+          retried: controllerExecution.retried,
+          testExpiresAt,
+          cleanupDueAt: testExpiresAt,
+          automationExecution,
+          automationPreview: automationExecution,
+          summary: `Cita de prueba creada de verdad. Se enviaron las notificaciones seguras${automationRealActionCount ? ` y ${automationRealActionCount} acción(es) real(es) aislada(s)` : ''}${reminderNotificationCount ? `, incluyendo ${reminderNotificationCount} recordatorio(s) al dueño de la prueba` : ''}${uniqueAutomationNames.length ? `; se recorrieron ${uniqueAutomationNames.length} automatización(es)` : ''}${automationSimulatedActionCount ? ` y ${automationSimulatedActionCount} efecto(s) irreversible(s) quedaron simulados` : ''}. La cita se eliminará automáticamente después de cinco minutos.`
+        }
+        return finalizeConversationalAppointmentTestEffect({
+          runContext,
           effectId: claim.effect.id,
           claimToken: claim.claimToken,
-          status: 'recorded',
           entityId: appointment.id,
-          payload: {
-            ...request,
-            contactId: runContext.contact.id,
-            contactName: runContext.contact.full_name || runContext.contact.first_name || 'Contacto de prueba',
-            safeTestRecord: true,
-            appointmentCreated: true,
-            appointmentId: appointment.id,
-            controllerAttempts: controllerExecution.attempts,
-            retried: controllerExecution.retried,
-            testExpiresAt,
-            cleanupDueAt: testExpiresAt,
-            automationExecution,
-            automationPreview: automationExecution,
-            summary: `Cita de prueba creada de verdad. Se enviaron las notificaciones seguras${automationRealActionCount ? ` y ${automationRealActionCount} acción(es) real(es) aislada(s)` : ''}${reminderNotificationCount ? `, incluyendo ${reminderNotificationCount} recordatorio(s) al dueño de la prueba` : ''}${uniqueAutomationNames.length ? `; se recorrieron ${uniqueAutomationNames.length} automatización(es)` : ''}${automationSimulatedActionCount ? ` y ${automationSimulatedActionCount} efecto(s) irreversible(s) quedaron simulados` : ''}. La cita se eliminará automáticamente después de cinco minutos.`
-          }
+          payload
         })
-        await markPreviewAppointmentOfferMaterialized({ runContext, effectId: claim.effect.id })
-        return completed
       }
 
       capabilitiesConfig = await assertCurrentTestRunAuthority(claim.run, 'payment')
@@ -1649,6 +2288,10 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
           error.appointmentDateRestoreError = cleanString(restoreError?.code || restoreError?.message)
           logger.error(`[Tester agente] No se pudo conservar la fecha después de perder el slot: ${restoreError.message}`)
         }
+        // El conflicto de slot sólo es una salida terminal cuando el progreso
+        // quedó reparado y conserva el día. Si la reparación falló, el mismo
+        // efecto debe volver a intentarla; cachearlo recrearía el loop original.
+        error.retryable = error.appointmentDateRestored !== true
       }
       await failConversationalAgentTestEffect({
         effectId: claim.effect.id,
@@ -1678,6 +2321,7 @@ export async function recordConversationalAgentPreviewEffects({ runContext, acti
       if (recorded) results.push(recorded)
     } catch (error) {
       const effectStillProcessing = cleanString(error?.code) === 'test_mutation_lock_busy'
+      const retryable = effectStillProcessing || isRetryableTestEffectError(error)
       results.push({
         type: effectType,
         // El timeout del contender no cancela al dueño del advisory lock. Puede
@@ -1685,6 +2329,7 @@ export async function recordConversationalAgentPreviewEffects({ runContext, acti
         // un estado final que todavía no conocemos.
         status: effectStillProcessing ? 'processing' : 'failed',
         code: cleanString(error?.code) || 'test_effect_failed',
+        retryable,
         statusCode: Number(error?.statusCode) || 500,
         appointmentDateRestored: error?.appointmentDateRestored === true,
         appointmentDateRestoreError: cleanString(error?.appointmentDateRestoreError) || null,
@@ -1725,7 +2370,7 @@ export function reconcileConversationalAgentPreviewResult({ result, testEffects 
     assignmentEffect?.payload?.assignmentActive === true &&
     Boolean(cleanString(assignmentEffect?.entityId))
   )
-  if (appointmentRecorded && assignmentRecorded) return source
+  const fullyRecorded = appointmentRecorded && assignmentRecorded
 
   const appointmentProcessing = ['processing', 'pending'].includes(appointmentStatus)
   const assignmentProcessing = Boolean(assignmentEffect) && ['processing', 'pending'].includes(assignmentStatus)
@@ -1753,7 +2398,13 @@ export function reconcileConversationalAgentPreviewResult({ result, testEffects 
   )
 
   let reply
-  if (!appointmentRecorded) {
+  if (fullyRecorded) {
+    reply = humanBooking
+      ? (assignmentEffect
+          ? 'Listo, la solicitud de cita de prueba quedó registrada y la asignación temporal quedó preparada.'
+          : 'Listo, la solicitud de cita de prueba quedó registrada para entregarse al equipo.')
+      : 'Listo, la cita de prueba quedó confirmada.'
+  } else if (!appointmentRecorded) {
     reply = appointmentProcessing
       ? 'La cita de prueba sigue procesándose. Todavía no puedo confirmarla; espera un momento y vuelve a intentarlo.'
       : appointmentCleaned
@@ -1806,21 +2457,27 @@ export function reconcileConversationalAgentPreviewResult({ result, testEffects 
       ...action,
       outcome: {
         ...originalOutcome,
-        status: partialSuccess
-          ? 'partial'
-          : (appointmentProcessing || assignmentProcessing ? 'pending' : 'error'),
-        ok: false,
+        status: fullyRecorded
+          ? 'recorded'
+          : partialSuccess
+            ? 'partial'
+            : (appointmentProcessing || assignmentProcessing ? 'pending' : 'error'),
+        ok: fullyRecorded,
         simulated: false,
-        actionCompleted: partialSuccess,
-        materialized: false,
+        actionCompleted: fullyRecorded || partialSuccess,
+        materialized: fullyRecorded,
         appointmentMaterialized: appointmentRecorded,
         assignmentMaterialized: assignmentEffect ? assignmentRecorded : false,
         appointmentEffectStatus: appointmentState,
         assignmentEffectStatus: assignmentState,
-        code: appointmentRecorded ? assignmentCode : appointmentCode,
-        error: !appointmentRecorded
-          ? (cleanString(appointmentEffect?.summary) || reply)
-          : (cleanString(assignmentEffect?.summary) || reply)
+        code: fullyRecorded ? null : (appointmentRecorded ? assignmentCode : appointmentCode),
+        error: fullyRecorded
+          ? null
+          : !appointmentRecorded
+            ? (cleanString(appointmentEffect?.summary) || reply)
+            : (cleanString(assignmentEffect?.summary) || reply),
+        ...(cleanString(appointmentEffect?.id) ? { appointmentEffectId: appointmentEffect.id } : {}),
+        ...(cleanString(appointmentEffect?.entityId) ? { appointmentId: appointmentEffect.entityId } : {})
       }
     }
   })

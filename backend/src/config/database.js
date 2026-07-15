@@ -6705,6 +6705,8 @@ async function initTablesUnlocked() {
         claim_token TEXT,
         lease_until_at DATETIME,
         last_error TEXT,
+        error_code TEXT,
+        error_retryable INTEGER,
         notification_status TEXT NOT NULL DEFAULT 'pending',
         notification_error TEXT,
         notification_sent_at DATETIME,
@@ -6719,6 +6721,30 @@ async function initTablesUnlocked() {
         FOREIGN KEY (run_id) REFERENCES conversational_agent_test_runs(id) ON DELETE CASCADE
       )
     `)
+    // El efecto externo ya tenía identidad durable, pero el turno completo no.
+    // Esta bitácora evita que un retry HTTP vuelva a ejecutar la IA y pise la
+    // respuesta final después de que una cita ya fue materializada.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_test_turns (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        client_request_hash TEXT,
+        status TEXT NOT NULL DEFAULT 'processing',
+        preview_result_json TEXT,
+        response_json TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        claim_token TEXT,
+        lease_until_at DATETIME,
+        error_code TEXT,
+        last_error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        FOREIGN KEY (run_id) REFERENCES conversational_agent_test_runs(id) ON DELETE CASCADE
+      )
+    `)
     await ensureTableColumns('conversational_agent_test_runs', [
       ['expires_at', 'DATETIME'],
       ['cleaned_at', 'DATETIME']
@@ -6728,6 +6754,8 @@ async function initTablesUnlocked() {
       ['claim_token', 'TEXT'],
       ['lease_until_at', 'DATETIME'],
       ['last_error', 'TEXT'],
+      ['error_code', 'TEXT'],
+      ['error_retryable', 'INTEGER'],
       ['notification_status', "TEXT NOT NULL DEFAULT 'pending'"],
       ['notification_error', 'TEXT'],
       ['notification_sent_at', 'DATETIME'],
@@ -6738,12 +6766,25 @@ async function initTablesUnlocked() {
       ['cleanup_error', 'TEXT'],
       ['cleaned_at', 'DATETIME']
     ])
+    await ensureTableColumns('conversational_agent_test_turns', [
+      ['client_request_hash', 'TEXT'],
+      ['preview_result_json', 'TEXT'],
+      ['response_json', 'TEXT'],
+      ['attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
+      ['claim_token', 'TEXT'],
+      ['lease_until_at', 'DATETIME'],
+      ['error_code', 'TEXT'],
+      ['last_error', 'TEXT'],
+      ['completed_at', 'DATETIME']
+    ])
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_runs_user ON conversational_agent_test_runs(requested_by_user_id, updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_runs_agent ON conversational_agent_test_runs(agent_id, updated_at)')
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_test_effect_identity ON conversational_agent_test_effects(run_id, message_id, effect_type)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_effect_run ON conversational_agent_test_effects(run_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_effect_entity ON conversational_agent_test_effects(effect_type, entity_id)')
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_test_effect_run_identity ON conversational_agent_test_effects(id, run_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_test_turn_identity ON conversational_agent_test_turns(run_id, message_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_test_turn_run ON conversational_agent_test_turns(run_id, created_at)')
 
     // Recibos durables de los eventos externos creados por una cita de prueba.
     // Se escriben inmediatamente después de que el proveedor devuelve su ID, de

@@ -2350,7 +2350,8 @@ async function persistNativeAppointmentSelectionProgress({
     'collecting_time',
     'restarted',
     'cancelled',
-    'superseded'
+    'superseded',
+    'materialized'
   ])
   const cleanStatus = allowedStatuses.has(String(status || '').trim())
     ? String(status).trim()
@@ -2442,7 +2443,7 @@ async function persistNativeAppointmentSelectionProgress({
   })
   const currentStatus = String(currentDetail.appointmentStatus || '')
   const currentAvailabilityVerificationRequired = currentDetail.availabilityVerificationRequired === true
-  const knownProgressStatuses = new Set(['browsing', 'collecting_date', 'collecting_time', 'restarted', 'cancelled', 'superseded'])
+  const knownProgressStatuses = new Set(['browsing', 'collecting_date', 'collecting_time', 'restarted', 'cancelled', 'superseded', 'materialized'])
   const currentCollectingShapeIsValid = currentStatus === 'collecting_time'
     ? Boolean(
         currentSelectedDateParsed.isValid &&
@@ -2494,6 +2495,17 @@ async function persistNativeAppointmentSelectionProgress({
     ['browsing', 'collecting_date', 'collecting_time'].includes(cleanStatus) &&
     currentSelectedDate !== String(cleanSelectedDate || '')
   )
+  if (
+    currentIsKnownProgressRecord &&
+    currentPreviewScopeId &&
+    currentStatus === 'materialized' &&
+    cleanStatus !== 'materialized'
+  ) {
+    throw Object.assign(
+      new Error('La cita de esta sesión de prueba ya fue materializada; reinicia el tester antes de abrir otra selección.'),
+      { code: 'appointment_preview_already_materialized' }
+    )
+  }
   if (
     current &&
     (

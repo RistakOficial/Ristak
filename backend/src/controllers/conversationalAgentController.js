@@ -26,12 +26,16 @@ import {
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
 import {
   buildConversationalAgentTestRuntimeEventContext,
+  buildConversationalAgentTestTurnRequestHash,
   cleanupConversationalAgentTestRun,
+  executeConversationalAgentTestTurn,
   getConversationalAgentTestVerifiedPaymentEvidence,
+  isConversationalAgentTestMaterializationTerminal,
   listConversationalAgentTestEffects,
   listRecentConversationalAgentTestRuns,
   normalizeConversationalAgentTestEffects,
   prepareConversationalAgentTestRun,
+  replayCompletedConversationalAgentTestTurn,
   reconcileConversationalAgentPreviewResult,
   recordConversationalAgentPreviewEffects
 } from '../services/conversationalAgentTestService.js'
@@ -336,6 +340,23 @@ export async function testAgent(req, res) {
       if (!agentId) {
         return res.status(400).json({ success: false, error: 'Guarda el agente antes de registrar acciones de prueba.' })
       }
+      const clientRequestHash = buildConversationalAgentTestTurnRequestHash({
+        schemaVersion: 1,
+        messages: req.body?.messages || [],
+        configOverride: req.body?.config || null,
+        agentId,
+        contactId: req.body?.contactId || null,
+        effects: requestedEffects
+      })
+      const completedReplay = await replayCompletedConversationalAgentTestTurn({
+        testRunId: req.body?.testSessionId,
+        testMessageId: req.body?.testMessageId,
+        requestedByUserId: req.user?.userId,
+        clientRequestHash
+      })
+      if (completedReplay) {
+        return res.json({ success: true, data: completedReplay })
+      }
       const persistedAgent = await getConversationalAgent(agentId)
       if (!persistedAgent) {
         return res.status(404).json({ success: false, error: 'El agente de esta prueba ya no existe.' })
@@ -350,16 +371,13 @@ export async function testAgent(req, res) {
         agentId,
         requestedByUserId: req.user?.userId,
         contactId: req.body?.contactId,
-        effects: requestedEffects
+        effects: requestedEffects,
+        messages: req.body?.messages,
+        configOverride,
+        clientRequestHash
       })
     }
 
-    const runtimeEventContext = runContext
-      ? await buildConversationalAgentTestRuntimeEventContext({ runContext })
-      : ''
-    const testVerifiedPaymentEvidence = runContext
-      ? await getConversationalAgentTestVerifiedPaymentEvidence({ runContext })
-      : null
     const previewScopeId = buildConversationalAppointmentPreviewScopeId({
       testSessionId: req.body?.testSessionId,
       requestedByUserId: req.user?.userId,
@@ -369,45 +387,74 @@ export async function testAgent(req, res) {
       previewScopeId,
       testMessageId: req.body?.testMessageId
     })
-    const result = await runConversationalAgentPreview({
-      messages: req.body?.messages,
-      configOverride,
-      agentId: agentId || null,
-      previewContact: runContext?.contact || null,
-      executionId: previewExecutionId,
-      previewScopeId,
-      testVerifiedPaymentEvidence,
-      runtimeEventContext
-    })
-    const testEffects = runContext
-      ? await recordConversationalAgentPreviewEffects({ runContext, actions: result.actions })
-      : []
-    const reconciledResult = runContext
-      ? reconcileConversationalAgentPreviewResult({ result, testEffects })
-      : result
-    const paymentLinks = testEffects
-      .filter((effect) => effect?.type === 'payment' && /^https?:\/\//i.test(effect?.payload?.paymentUrl || ''))
-      .map((effect) => effect.payload.paymentUrl)
-    const uniquePaymentLinks = [...new Set(paymentLinks)]
-    const testPaymentMessages = uniquePaymentLinks.map((url) => `Aquí está el enlace sandbox de esta prueba: ${url}`)
-    const visibleResult = testPaymentMessages.length
-      ? {
-          ...reconciledResult,
-          reply: [reconciledResult.reply, ...testPaymentMessages].filter(Boolean).join('\n\n'),
-          replyParts: [...(Array.isArray(reconciledResult.replyParts) ? reconciledResult.replyParts : [reconciledResult.reply].filter(Boolean)), ...testPaymentMessages],
-          replyPartDelaysMs: [
-            ...(Array.isArray(reconciledResult.replyPartDelaysMs) ? reconciledResult.replyPartDelaysMs : []),
-            ...testPaymentMessages.map(() => 0)
-          ]
+    const createPreview = async () => {
+      const runtimeEventContext = runContext
+        ? await buildConversationalAgentTestRuntimeEventContext({ runContext })
+        : ''
+      const testVerifiedPaymentEvidence = runContext
+        ? await getConversationalAgentTestVerifiedPaymentEvidence({ runContext })
+        : null
+      return runConversationalAgentPreview({
+        messages: req.body?.messages,
+        configOverride,
+        agentId: agentId || null,
+        previewContact: runContext?.contact || null,
+        executionId: previewExecutionId,
+        previewScopeId,
+        testVerifiedPaymentEvidence,
+        runtimeEventContext
+      })
+    }
+    const materializePreview = async (result) => {
+      const testEffects = runContext
+        ? await recordConversationalAgentPreviewEffects({ runContext, actions: result.actions })
+        : []
+      const reconciledResult = runContext
+        ? reconcileConversationalAgentPreviewResult({ result, testEffects })
+        : result
+      const paymentLinks = testEffects
+        .filter((effect) => effect?.type === 'payment' && /^https?:\/\//i.test(effect?.payload?.paymentUrl || ''))
+        .map((effect) => effect.payload.paymentUrl)
+      const uniquePaymentLinks = [...new Set(paymentLinks)]
+      const testPaymentMessages = uniquePaymentLinks.map((url) => `Aquí está el enlace sandbox de esta prueba: ${url}`)
+      const visibleResult = testPaymentMessages.length
+        ? {
+            ...reconciledResult,
+            reply: [reconciledResult.reply, ...testPaymentMessages].filter(Boolean).join('\n\n'),
+            replyParts: [...(Array.isArray(reconciledResult.replyParts) ? reconciledResult.replyParts : [reconciledResult.reply].filter(Boolean)), ...testPaymentMessages],
+            replyPartDelaysMs: [
+              ...(Array.isArray(reconciledResult.replyPartDelaysMs) ? reconciledResult.replyPartDelaysMs : []),
+              ...testPaymentMessages.map(() => 0)
+            ]
+          }
+        : reconciledResult
+      return {
+        kind: 'conversational_agent_test_turn_materialization',
+        terminal: isConversationalAgentTestMaterializationTerminal(testEffects),
+        response: {
+          ...visibleResult,
+          ...(runContext ? { testRunId: runContext.id, testEffects } : {})
         }
-      : reconciledResult
-    res.json({
-      success: true,
-      data: {
-        ...visibleResult,
-        ...(runContext ? { testRunId: runContext.id, testEffects } : {})
       }
-    })
+    }
+
+    const data = runContext
+      ? (await executeConversationalAgentTestTurn({
+          runContext,
+          requestHash: runContext.requestHash || buildConversationalAgentTestTurnRequestHash({
+            schemaVersion: 1,
+            messages: req.body?.messages || [],
+            configOverride,
+            agentId,
+            contactId: runContext.contact?.id || req.body?.contactId || null,
+            effects: runContext.effects
+          }),
+          createPreview,
+          materializePreview
+        })).response
+      : (await materializePreview(await createPreview())).response
+
+    res.json({ success: true, data })
   } catch (error) {
     logger.error('Error en prueba del agente conversacional:', error)
     res.status(error.statusCode || 500).json({
