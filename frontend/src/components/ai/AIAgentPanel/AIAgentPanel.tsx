@@ -2010,13 +2010,13 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
         setSitesCreationMode(null)
         window.dispatchEvent(new CustomEvent(SITES_AI_DRAFT_CREATED_EVENT, {
           detail: result.import
-            ? { site: result.site, import: result.import, reviewMapping: true }
+            ? { site: result.site, import: result.import }
             : result.site
         }))
         showToast(
           'success',
           result.status === 'updated' ? 'HTML actualizado' : 'Borrador creado',
-          'Ya lo abrí con vista previa y revisión de campos.'
+          'Ya lo abrí con vista previa; campos y contenido están en el panel derecho.'
         )
       }
     } catch (error: any) {

@@ -861,6 +861,7 @@ export interface ImportedSiteFieldMapping {
   customFieldSyncTarget?: string
   confidence?: number
   ignored?: boolean
+  present?: boolean
   options?: Array<{ label: string; value: string }>
 }
 
@@ -868,9 +869,20 @@ export interface ImportedSiteFormMapping {
   formId: string
   formSiteId?: string
   formTitle: string
+  pagePath?: string
   purpose?: string
   submitText?: string
+  present?: boolean
   fields: ImportedSiteFieldMapping[]
+}
+
+export interface ImportedSiteFieldMappingPatch {
+  formId: string
+  fieldId: string
+  pagePath?: string
+  destinationType: 'standard' | 'custom' | 'new_custom' | 'ignored'
+  destinationKey?: string
+  customFieldDefinitionId?: string
 }
 
 export interface ImportedSiteCodeFile {
@@ -1323,8 +1335,8 @@ export const sitesService = {
     return apiClient.post<ImportedSiteCreateResult>('/sites/import-html', payload)
   },
 
-  updateImportMapping(siteId: string, formMappings: ImportedSiteFormMapping[]) {
-    return apiClient.put<ImportedSiteImport>(`/sites/${siteId}/import-mapping`, { formMappings })
+  updateImportFieldMapping(siteId: string, patch: ImportedSiteFieldMappingPatch) {
+    return apiClient.patch<ImportedSiteImport>(`/sites/${siteId}/import-mapping`, patch)
   },
 
   getImportMapping(siteId: string) {

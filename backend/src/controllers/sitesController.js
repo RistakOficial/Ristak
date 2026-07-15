@@ -57,8 +57,8 @@ import {
   updateBlock,
   updateSiteFolder,
   updateImportedSiteCodeFiles,
+  updateImportedSiteFieldMapping,
   updateImportedSiteHtmlWithAI,
-  updateImportedSiteFormMappings,
   updateSite
 } from '../services/sitesService.js'
 import {
@@ -666,14 +666,14 @@ export async function getImportedSiteMappingHandler(req, res) {
   }
 }
 
-export async function updateImportedSiteMappingHandler(req, res) {
+export async function updateImportedSiteFieldMappingHandler(req, res) {
   try {
-    const result = await updateImportedSiteFormMappings(req.params.siteId, req.body || {})
+    const result = await updateImportedSiteFieldMapping(req.params.siteId, req.body || {})
     res.json({ success: true, data: result })
   } catch (error) {
-    logger.error(`Error actualizando mapeo de HTML importado: ${error.message}`)
+    logger.error(`Error actualizando campo de HTML importado: ${error.message}`)
     error.status = error.status || 400
-    sendError(res, error, 'Error actualizando mapeo')
+    sendError(res, error, 'Error actualizando campo importado')
   }
 }
 

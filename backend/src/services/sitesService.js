@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import dns from 'node:dns/promises'
 import path from 'node:path'
 import JSZip from 'jszip'
@@ -2117,12 +2118,86 @@ function sanitizeImportedHtml(html = '') {
   }
 }
 
-function getLabelForField(html = '', attrs = {}) {
+function getEnclosingImportedHtmlElement(html = '', startIndex = -1, tagName = '') {
+  const source = String(html || '')
+  const normalizedTag = cleanString(tagName).toLowerCase()
+  if (!source || startIndex < 0 || !normalizedTag) return null
+
+  const tagPattern = new RegExp(`<(/?)${escapeRegExp(normalizedTag)}\\b([^>]*)>`, 'gi')
+  const stack = []
+  let match
+
+  while ((match = tagPattern.exec(source))) {
+    if (match.index >= startIndex) break
+    if (match[1]) {
+      stack.pop()
+      continue
+    }
+    if (/\/\s*>$/.test(match[0])) continue
+    stack.push({ attrsText: match[2] || '', contentStart: tagPattern.lastIndex })
+  }
+
+  const active = stack.at(-1)
+  if (!active) return null
+
+  tagPattern.lastIndex = active.contentStart
+  let depth = 1
+  let contentEnd = source.length
+  while ((match = tagPattern.exec(source))) {
+    depth += match[1] ? -1 : 1
+    if (depth === 0) {
+      contentEnd = match.index
+      break
+    }
+  }
+
+  return {
+    attrs: parseHtmlAttributes(active.attrsText),
+    body: source.slice(active.contentStart, contentEnd)
+  }
+}
+
+function getLabelForField(html = '', attrs = {}, startIndex = -1) {
+  const wrappingLabel = getEnclosingImportedHtmlElement(html, startIndex, 'label')
+  const wrappingText = stripHtmlTags(wrappingLabel?.body || '')
+  if (wrappingText) return wrappingText
+
   const id = cleanString(attrs.id)
   if (id) {
     const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const labelMatch = html.match(new RegExp(`<label\\b[^>]*for=["']?${escapedId}["']?[^>]*>([\\s\\S]*?)<\\/label>`, 'i'))
     if (labelMatch) return stripHtmlTags(labelMatch[1])
+  }
+
+  return ''
+}
+
+function getImportedChoiceGroupLabel(html = '', startIndex = -1) {
+  const fieldset = getEnclosingImportedHtmlElement(html, startIndex, 'fieldset')
+  if (!fieldset) return ''
+
+  const explicitLabel = cleanString(
+    fieldset.attrs['data-rstk-label'] ||
+    fieldset.attrs['data-ristak-label'] ||
+    fieldset.attrs['data-ristack-label'] ||
+    fieldset.attrs['aria-label']
+  )
+  if (explicitLabel) return explicitLabel
+
+  // Only accept a legend from this fieldset. A nested fieldset owns its own
+  // legend and must not rename the outer choice group.
+  const tokenPattern = /<\/?fieldset\b[^>]*>|<legend\b[^>]*>([\s\S]*?)<\/legend>/gi
+  let nestedFieldsetDepth = 0
+  let tokenMatch
+  while ((tokenMatch = tokenPattern.exec(fieldset.body))) {
+    if (tokenMatch[1] !== undefined) {
+      if (nestedFieldsetDepth === 0) {
+        const legend = stripHtmlTags(tokenMatch[1])
+        if (legend) return legend
+      }
+      continue
+    }
+    nestedFieldsetDepth += /^<\//.test(tokenMatch[0]) ? -1 : 1
   }
 
   return ''
@@ -2231,11 +2306,24 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
     const type = tag === 'input' ? cleanString(attrs.type || 'text').toLowerCase() : tag
     if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue
 
+    const stableFieldId = cleanString(attrs['data-rstk-field-id'] || attrs['data-ristack-field-id'] || attrs['data-ristak-field-id'])
     const explicitField = cleanString(attrs['data-rstk-field'] || attrs['data-ristack-field'] || attrs['data-ristak-field'])
     const explicitCustomField = cleanString(attrs['data-rstk-custom-field'] || attrs['data-ristack-custom-field'] || attrs['data-ristak-custom-field'])
-    const sourceName = cleanString(attrs.name || attrs.id || explicitField || explicitCustomField || `field_${formIndex + 1}_${index + 1}`)
-    const fieldId = normalizeImportedFieldKey(sourceName, `field_${formIndex + 1}_${index + 1}`)
-    const label = getLabelForField(formHtml, attrs) || cleanString(attrs['aria-label']) || cleanString(attrs.placeholder) || sourceName
+    const sourceName = cleanString(attrs.name || attrs.id || stableFieldId || explicitField || explicitCustomField || `field_${formIndex + 1}_${index + 1}`)
+    const fieldId = normalizeImportedFieldKey(stableFieldId || sourceName, `field_${formIndex + 1}_${index + 1}`)
+    const isChoiceField = tag === 'input' && ['radio', 'checkbox'].includes(type)
+    const explicitFieldLabel = cleanString(
+      attrs['data-rstk-label'] ||
+      attrs['data-ristak-label'] ||
+      attrs['data-ristack-label'] ||
+      attrs['aria-label']
+    )
+    // The label on an individual radio/checkbox describes that option. The
+    // logical field is named by its enclosing choice group (fieldset), while
+    // option labels continue to be collected independently below.
+    const label = isChoiceField
+      ? getImportedChoiceGroupLabel(formHtml, candidate.index) || sourceName
+      : explicitFieldLabel || getLabelForField(formHtml, attrs, candidate.index) || cleanString(attrs.placeholder) || sourceName
     const options = []
     if (tag === 'select') {
       const optionPattern = /<option\b([^>]*)>([\s\S]*?)<\/option>/gi
@@ -2259,18 +2347,24 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
           const choiceType = cleanString(choiceAttrs.type || 'text').toLowerCase()
           const sameGroup = choiceType === type && cleanString(choiceAttrs.name || choiceAttrs.id) === choiceName
           if (!sameGroup) continue
-          const choiceLabel = getLabelForField(formHtml, choiceAttrs) || cleanString(choiceAttrs['aria-label']) || cleanString(choiceAttrs.value)
+          const choiceLabel = cleanString(
+            choiceAttrs['data-rstk-label'] ||
+            choiceAttrs['data-ristak-label'] ||
+            choiceAttrs['data-ristack-label'] ||
+            choiceAttrs['aria-label']
+          ) || getLabelForField(formHtml, choiceAttrs, choiceMatch.index) || cleanString(choiceAttrs.value)
           const value = cleanString(choiceAttrs.value || choiceLabel)
           if (value || choiceLabel) options.push({ label: choiceLabel || value, value })
         }
       }
     }
 
-    fields.push({
+    const field = {
       id: fieldId,
       sourceName,
       name: cleanString(attrs.name),
       htmlId: cleanString(attrs.id),
+      hasStableFieldId: Boolean(stableFieldId),
       type,
       tag,
       placeholder: cleanString(attrs.placeholder),
@@ -2280,7 +2374,30 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
       explicitCustomField,
       required: getImportedFieldRequiredFromAttrs(attrs),
       options
-    })
+    }
+
+    // Un radio/checkbox con varias opciones es un solo campo lógico. Cada input
+    // comparte data-rstk-field-id (o name en HTML legacy), por lo que exponer
+    // una fila por opción volvería ambigua la identidad y rompería el PATCH.
+    const existingChoiceField = ['radio', 'checkbox'].includes(type)
+      ? fields.find(existing => existing.id === fieldId && existing.type === type)
+      : null
+    if (existingChoiceField) {
+      existingChoiceField.required = Boolean(existingChoiceField.required || field.required)
+      const seenOptions = new Set()
+      existingChoiceField.options = normalizeImportedFieldOptions([
+        ...(existingChoiceField.options || []),
+        ...(field.options || [])
+      ]).filter(option => {
+        const key = `${cleanString(option?.value)}::${cleanString(option?.label)}`
+        if (seenOptions.has(key)) return false
+        seenOptions.add(key)
+        return true
+      })
+      continue
+    }
+
+    fields.push(field)
     index += 1
   }
 
@@ -2292,24 +2409,29 @@ function detectImportedForms(html = '') {
   const formPattern = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi
   let formMatch
   let formIndex = 0
+  let sourceFormIndex = 0
 
   while ((formMatch = formPattern.exec(html))) {
     const attrs = parseHtmlAttributes(formMatch[1] || '')
     const formHtml = formMatch[2] || ''
     const explicitForm = cleanString(attrs['data-rstk-form'] || attrs['data-ristack-form'] || attrs['data-ristak-form'])
-    const importedFormId = cleanString(attrs['data-rstk-form-id'])
+    const importedFormId = cleanString(attrs['data-rstk-form-id'] || attrs['data-ristack-form-id'] || attrs['data-ristak-form-id'])
     const fields = extractImportedFields(formHtml, formIndex)
     const buttonMatch = formHtml.match(/<button\b([^>]*)>([\s\S]*?)<\/button>|<input\b([^>]*type=["']?submit["']?[^>]*)>/i)
     const submitText = buttonMatch
       ? stripHtmlTags(buttonMatch[2] || parseHtmlAttributes(buttonMatch[3] || '').value || 'Enviar')
       : 'Enviar'
-    const title = getNearbyText(html, formMatch.index) || explicitForm || `Formulario ${formIndex + 1}`
+    const title = cleanString(attrs['data-rstk-label'] || attrs['data-ristack-label'] || attrs['data-ristak-label']) ||
+      getNearbyText(html, formMatch.index) || explicitForm || `Formulario ${formIndex + 1}`
 
     if (fields.length) {
       forms.push({
-        id: normalizeImportedFieldKey(explicitForm || importedFormId || attrs.id || attrs.name || `form_${formIndex + 1}`, `form_${formIndex + 1}`),
+        id: normalizeImportedFieldKey(importedFormId || explicitForm || attrs.id || attrs.name || `form_${formIndex + 1}`, `form_${formIndex + 1}`),
         explicitForm,
         importedFormId,
+        hasStableFormId: Boolean(importedFormId),
+        sourceFormIndex,
+        sourceFormOffset: formMatch.index,
         title,
         purpose: 'lead_capture',
         submitText,
@@ -2317,20 +2439,7 @@ function detectImportedForms(html = '') {
       })
       formIndex += 1
     }
-  }
-
-  if (forms.length === 0) {
-    const fields = extractImportedFields(html, 0)
-    if (fields.length) {
-      forms.push({
-        id: 'form_1',
-        explicitForm: '',
-        title: getNearbyText(html, 0) || 'Formulario detectado',
-        purpose: 'lead_capture',
-        submitText: 'Enviar',
-        fields
-      })
-    }
+    sourceFormIndex += 1
   }
 
   return forms
@@ -2355,7 +2464,14 @@ function namespaceImportedPageForms(forms = [], pagePath = '', usedIds = new Set
     const baseId = explicitId
       ? form.id
       : normalizeImportedFieldKey(`${pageKey}_${form.id || `form_${index + 1}`}`, `form_${index + 1}`)
-    const id = ensureUniqueImportedFormId(baseId, usedIds)
+    // Un ID explícito es un contrato del autor. Si está duplicado no se corrige
+    // a escondidas: se conserva para que el panel lo marque ambiguo y el runtime
+    // rechace el submit hasta que el código use IDs únicos. Solo generamos IDs
+    // únicos para formularios legacy que no declararon una identidad estable.
+    const id = explicitId
+      ? normalizeImportedFieldKey(baseId, `form_${index + 1}`)
+      : ensureUniqueImportedFormId(baseId, usedIds)
+    usedIds.add(id)
 
     return {
       ...form,
@@ -2367,16 +2483,33 @@ function namespaceImportedPageForms(forms = [], pagePath = '', usedIds = new Set
 }
 
 function assignImportedFormIds(html = '', forms = []) {
-  let formIndex = 0
-  return String(html || '').replace(/<form\b([^>]*)>/gi, (match, attrsText = '') => {
+  const detectedForms = Array.isArray(forms) ? forms : []
+  const formsByOffset = new Map(detectedForms
+    .filter(form => Number.isInteger(form?.sourceFormOffset) && form.sourceFormOffset >= 0)
+    .map(form => [form.sourceFormOffset, form]))
+  const formsBySourceIndex = new Map(detectedForms
+    .filter(form => Number.isInteger(form?.sourceFormIndex) && form.sourceFormIndex >= 0)
+    .map(form => [form.sourceFormIndex, form]))
+  const hasSourcePositions = formsByOffset.size > 0 || formsBySourceIndex.size > 0
+  let sourceFormIndex = 0
+  let legacyDetectedFormIndex = 0
+
+  return String(html || '').replace(/<form\b([^>]*)>/gi, (match, attrsText = '', offset = -1) => {
     const attrs = parseHtmlAttributes(attrsText)
+    const detectedForm = hasSourcePositions
+      ? formsByOffset.get(offset) || formsBySourceIndex.get(sourceFormIndex) || null
+      : detectedForms[legacyDetectedFormIndex] || null
+    sourceFormIndex += 1
+    if (!hasSourcePositions) legacyDetectedFormIndex += 1
+
+    // Un formulario sin campos guardables no pertenece al arreglo detectado.
+    // Debe quedarse intacto y, sobre todo, no consumir el ID del siguiente form.
+    if (!detectedForm) return match
     if (cleanString(attrs['data-rstk-form-id'])) {
-      formIndex += 1
       return match
     }
 
-    const formId = cleanString(forms[formIndex]?.id)
-    formIndex += 1
+    const formId = cleanString(detectedForm.id)
     if (!formId) return match
 
     return `<form${attrsText} data-rstk-form-id="${escapeHtml(formId)}">`
@@ -3739,12 +3872,19 @@ function inferImportedFieldDestination(field = {}) {
 }
 
 function buildDefaultImportedFormMappings(forms = []) {
+  const formIdCounts = new Map()
+  for (const form of Array.isArray(forms) ? forms : []) {
+    const formId = normalizeImportedFieldKey(form?.id, '')
+    if (formId) formIdCounts.set(formId, (formIdCounts.get(formId) || 0) + 1)
+  }
+
   return forms.map(form => {
     const fields = form.fields.map(field => {
       const inferred = inferImportedFieldDestination(field)
       return {
         fieldId: field.id,
         sourceName: field.sourceName,
+        hasStableFieldId: field.hasStableFieldId === true,
         label: field.label || field.placeholder || field.sourceName,
         type: field.type,
         destinationType: inferred.destinationType === 'custom' ? 'new_custom' : inferred.destinationType,
@@ -3752,6 +3892,7 @@ function buildDefaultImportedFormMappings(forms = []) {
         saveMode: inferred.destinationType === 'standard' ? 'standard' : 'new_custom',
         confidence: inferred.confidence,
         ignored: false,
+        present: true,
         options: field.options || []
       }
     })
@@ -3761,13 +3902,29 @@ function buildDefaultImportedFormMappings(forms = []) {
       !field.ignored
     ))
     const ambiguousPersonNameFields = fields.filter(isImportedAmbiguousMappedPersonNameField)
+    const fieldIdCounts = new Map()
+    for (const field of fields) {
+      const fieldId = importedFieldMappingIdentity(field)
+      if (fieldId) fieldIdCounts.set(fieldId, (fieldIdCounts.get(fieldId) || 0) + 1)
+    }
+    const duplicateFieldIds = new Set(
+      [...fieldIdCounts.entries()].filter(([, count]) => count > 1).map(([fieldId]) => fieldId)
+    )
 
     return {
       formId: form.id,
       formTitle: form.title,
+      pagePath: cleanString(form.pagePath || form.page_path),
+      hasStableFormId: form.hasStableFormId === true,
+      ...(formIdCounts.get(normalizeImportedFieldKey(form.id, '')) > 1 ? { mappingAmbiguous: true } : {}),
+      ...(duplicateFieldIds.size > 0 ? { fieldMappingAmbiguous: true } : {}),
       purpose: form.purpose || 'lead_capture',
       submitText: form.submitText || 'Enviar',
+      present: true,
       fields: fields.map(mappedField => {
+        if (duplicateFieldIds.has(importedFieldMappingIdentity(mappedField))) {
+          return { ...mappedField, mappingAmbiguous: true }
+        }
         const isOnlyAmbiguousPersonName = ambiguousPersonNameFields.length === 1 &&
           ambiguousPersonNameFields[0].fieldId === mappedField.fieldId
 
@@ -3795,77 +3952,197 @@ function countImportedDetectedFields(forms = []) {
 }
 
 function countImportedMappedFields(mappings = []) {
-  return mappings.reduce((total, mapping) => total + (Array.isArray(mapping?.fields) ? mapping.fields.length : 0), 0)
+  return mappings.reduce((total, mapping) => (
+    mapping?.present === false
+      ? total
+      : total + (Array.isArray(mapping?.fields) ? mapping.fields.filter(field => field?.present !== false).length : 0)
+  ), 0)
 }
 
-function findExistingImportedFieldMapping(existingMappings = [], nextForm = {}, nextField = {}) {
-  const normalizedFormId = normalizeImportedFieldKey(nextForm.formId, '')
-  const normalizedFormTitle = normalizeImportedFieldKey(nextForm.formTitle, '')
-  const normalizedFieldId = normalizeImportedFieldKey(nextField.fieldId, '')
-  const normalizedSourceName = normalizeImportedFieldKey(nextField.sourceName, '')
+function importedFormMappingIdentity(mapping = {}) {
+  return [
+    normalizeImportedAssetPath(mapping.pagePath || mapping.page_path || ''),
+    normalizeImportedFieldKey(mapping.formId || mapping.form_id, '')
+  ].join('::')
+}
 
-  const formCandidates = (Array.isArray(existingMappings) ? existingMappings : []).filter(mapping => {
-    const mappingFormId = normalizeImportedFieldKey(mapping?.formId, '')
-    const mappingFormTitle = normalizeImportedFieldKey(mapping?.formTitle, '')
-    return (
-      (normalizedFormId && mappingFormId === normalizedFormId) ||
-      (normalizedFormTitle && mappingFormTitle === normalizedFormTitle)
-    )
-  })
+function importedFormMappingStableId(mapping = {}) {
+  return normalizeImportedFieldKey(mapping.formId || mapping.form_id, '')
+}
 
-  const candidateForms = formCandidates.length ? formCandidates : existingMappings
-  for (const mapping of candidateForms || []) {
-    const fields = Array.isArray(mapping?.fields) ? mapping.fields : []
-    const exact = fields.find(field => (
-      (normalizedFieldId && normalizeImportedFieldKey(field?.fieldId, '') === normalizedFieldId) ||
-      (normalizedSourceName && normalizeImportedFieldKey(field?.sourceName, '') === normalizedSourceName)
-    ))
-    if (exact) return exact
+function isImportedAmbiguousFormMapping(mapping = {}) {
+  return mapping?.mappingAmbiguous === true || mapping?.mapping_ambiguous === true
+}
+
+function importedFieldMappingIdentity(field = {}) {
+  return normalizeImportedFieldKey(field.fieldId || field.field_id || field.sourceName || field.source_name, '')
+}
+
+function isImportedAmbiguousFieldMapping(field = {}) {
+  return field?.mappingAmbiguous === true || field?.mapping_ambiguous === true
+}
+
+function getImportedDuplicateActiveFieldIds(mapping = {}) {
+  const counts = new Map()
+  for (const field of Array.isArray(mapping?.fields) ? mapping.fields : []) {
+    if (field?.present === false) continue
+    const fieldId = importedFieldMappingIdentity(field)
+    if (fieldId) counts.set(fieldId, (counts.get(fieldId) || 0) + 1)
   }
+  return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([fieldId]) => fieldId))
+}
 
-  return null
+function hasImportedAmbiguousFieldMappings(mapping = {}) {
+  return mapping?.fieldMappingAmbiguous === true ||
+    mapping?.field_mapping_ambiguous === true ||
+    getImportedDuplicateActiveFieldIds(mapping).size > 0 ||
+    (Array.isArray(mapping?.fields) && mapping.fields.some(field => (
+      field?.present !== false && isImportedAmbiguousFieldMapping(field)
+    )))
+}
+
+function isImportedRuntimeAmbiguousFormMapping(mapping = {}) {
+  return isImportedAmbiguousFormMapping(mapping) || hasImportedAmbiguousFieldMappings(mapping)
 }
 
 function findExistingImportedFormMapping(existingMappings = [], nextForm = {}) {
-  const normalizedFormId = normalizeImportedFieldKey(nextForm.formId, '')
-  const normalizedFormTitle = normalizeImportedFieldKey(nextForm.formTitle, '')
+  const normalizedFormId = importedFormMappingStableId(nextForm)
+  if (!normalizedFormId) return null
 
-  return (Array.isArray(existingMappings) ? existingMappings : []).find(mapping => {
-    const mappingFormId = normalizeImportedFieldKey(mapping?.formId, '')
-    const mappingFormTitle = normalizeImportedFieldKey(mapping?.formTitle, '')
-    return (
-      (normalizedFormId && mappingFormId === normalizedFormId) ||
-      (normalizedFormTitle && mappingFormTitle === normalizedFormTitle)
-    )
-  }) || null
+  // data-rstk-form-id es único para todo el sitio. pagePath describe dónde se
+  // detectó el formulario, pero no forma parte de su identidad persistente: si
+  // la IA mueve el mismo formulario de archivo, conserva sus asociaciones.
+  // Los placeholders ambiguos nunca pueden convertirse en la fuente canónica.
+  const candidates = (Array.isArray(existingMappings) ? existingMappings : []).filter(mapping => (
+    !isImportedAmbiguousFormMapping(mapping) &&
+    importedFormMappingStableId(mapping) === normalizedFormId
+  ))
+  if (candidates.length === 1) return candidates[0]
+
+  // Recuperación defensiva para datos antiguos que permitían el mismo ID por
+  // página: si el path actual identifica uno solo, úsalo y elimina los demás en
+  // el siguiente merge. Si tampoco es inequívoco, no copies datos a ciegas.
+  const nextIdentity = importedFormMappingIdentity(nextForm)
+  const exactMatches = candidates.filter(mapping => importedFormMappingIdentity(mapping) === nextIdentity)
+  return exactMatches.length === 1 ? exactMatches[0] : null
+}
+
+function findExistingImportedFieldMapping(existingMappings = [], nextForm = {}, nextField = {}) {
+  const existingForm = findExistingImportedFormMapping(existingMappings, nextForm)
+  if (!existingForm) return null
+  const normalizedFieldId = normalizeImportedFieldKey(nextField.fieldId, '')
+  const normalizedSourceName = normalizeImportedFieldKey(nextField.sourceName, '')
+  const fields = Array.isArray(existingForm.fields) ? existingForm.fields : []
+  const exactIdMatches = fields.filter(field => (
+    !isImportedAmbiguousFieldMapping(field) &&
+    normalizedFieldId && normalizeImportedFieldKey(field?.fieldId, '') === normalizedFieldId
+  ))
+  if (exactIdMatches.length === 1) return exactIdMatches[0]
+
+  // sourceName solo existe como puente para imports legacy. Si cualquiera de
+  // los lados declaró data-rstk-field-id, cambiar ese ID significa crear una
+  // identidad nueva aunque el atributo name siga igual.
+  if (nextField?.hasStableFieldId === true) return null
+  const sourceMatches = fields.filter(field => (
+    !isImportedAmbiguousFieldMapping(field) &&
+    field?.hasStableFieldId !== true &&
+    normalizedSourceName && normalizeImportedFieldKey(field?.sourceName, '') === normalizedSourceName
+  ))
+  return sourceMatches.length === 1 ? sourceMatches[0] : null
 }
 
 function mergeImportedFormMappings(existingMappings = [], nextMappings = []) {
-  return (Array.isArray(nextMappings) ? nextMappings : []).map(nextForm => {
+  const existing = Array.isArray(existingMappings) ? existingMappings : []
+  const nextFormIdCounts = new Map()
+  for (const mapping of Array.isArray(nextMappings) ? nextMappings : []) {
+    const formId = importedFormMappingStableId(mapping)
+    if (formId) nextFormIdCounts.set(formId, (nextFormIdCounts.get(formId) || 0) + 1)
+  }
+  const ambiguousFormIds = new Set(
+    [...nextFormIdCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([formId]) => formId)
+  )
+
+  const next = (Array.isArray(nextMappings) ? nextMappings : []).map(nextForm => {
+    const stableFormId = importedFormMappingStableId(nextForm)
+    if (ambiguousFormIds.has(stableFormId)) {
+      // Dos zonas con el mismo ID se muestran para que el usuario las corrija,
+      // pero ninguna hereda asociaciones ni un source form. La versión canónica
+      // anterior se conserva abajo como tombstone y reaparece al resolver el ID.
+      return {
+        ...nextForm,
+        mappingAmbiguous: true,
+        formSiteId: undefined,
+        present: true,
+        fields: (Array.isArray(nextForm?.fields) ? nextForm.fields : [])
+          .map(field => ({ ...field, present: true }))
+      }
+    }
+
     const existingForm = findExistingImportedFormMapping(existingMappings, nextForm)
     const formSiteId = cleanString(existingForm?.formSiteId || existingForm?.form_site_id || nextForm?.formSiteId || nextForm?.form_site_id)
+    const duplicateFieldIds = getImportedDuplicateActiveFieldIds(nextForm)
+    const nextFieldIdentities = new Set((nextForm.fields || []).map(importedFieldMappingIdentity).filter(Boolean))
+    const dormantFields = (Array.isArray(existingForm?.fields) ? existingForm.fields : [])
+      .filter(field => (
+        !isImportedAmbiguousFieldMapping(field) && (
+          !nextFieldIdentities.has(importedFieldMappingIdentity(field)) ||
+          duplicateFieldIds.has(importedFieldMappingIdentity(field))
+        )
+      ))
+      .map(field => ({ ...field, mappingAmbiguous: undefined, present: false }))
 
     return {
       ...nextForm,
+      mappingAmbiguous: undefined,
+      fieldMappingAmbiguous: duplicateFieldIds.size > 0 ? true : undefined,
       ...(formSiteId ? { formSiteId } : {}),
+      present: true,
       fields: (Array.isArray(nextForm?.fields) ? nextForm.fields : []).map(nextField => {
+        if (duplicateFieldIds.has(importedFieldMappingIdentity(nextField))) {
+          return { ...nextField, mappingAmbiguous: true, present: true }
+        }
         const existingField = findExistingImportedFieldMapping(existingMappings, nextForm, nextField)
-        if (!existingField) return nextField
+        if (!existingField) return { ...nextField, mappingAmbiguous: undefined, present: true }
 
         return {
           ...nextField,
+          mappingAmbiguous: undefined,
+          present: true,
           destinationType: existingField.destinationType || nextField.destinationType,
           destinationKey: existingField.destinationKey || nextField.destinationKey,
           saveMode: existingField.saveMode || nextField.saveMode,
           ignored: Boolean(existingField.ignored || existingField.destinationType === 'ignored'),
           confidence: Number(existingField.confidence || nextField.confidence || 0) || nextField.confidence,
+          customFieldDefinitionId: existingField.customFieldDefinitionId || existingField.custom_field_definition_id || nextField.customFieldDefinitionId,
+          customFieldKey: existingField.customFieldKey || existingField.custom_field_key || nextField.customFieldKey,
+          customFieldLabel: existingField.customFieldLabel || existingField.custom_field_label || nextField.customFieldLabel,
+          customFieldDataType: existingField.customFieldDataType || existingField.custom_field_data_type || nextField.customFieldDataType,
+          customFieldSyncTarget: existingField.customFieldSyncTarget || existingField.custom_field_sync_target || nextField.customFieldSyncTarget,
           options: Array.isArray(nextField.options) && nextField.options.length
             ? nextField.options
             : existingField.options || []
         }
-      })
+      }).concat(dormantFields)
     }
   })
+
+  const nextFormIds = new Set(next.map(importedFormMappingStableId).filter(Boolean))
+  const dormantForms = existing
+    .filter(mapping => {
+      if (isImportedAmbiguousFormMapping(mapping)) return false
+      const stableFormId = importedFormMappingStableId(mapping)
+      return stableFormId && (!nextFormIds.has(stableFormId) || ambiguousFormIds.has(stableFormId))
+    })
+    .map(mapping => ({
+      ...mapping,
+      mappingAmbiguous: undefined,
+      present: false,
+      fields: (Array.isArray(mapping.fields) ? mapping.fields : []).map(field => ({ ...field, present: false }))
+    }))
+
+  return [...next, ...dormantForms]
 }
 
 function getImportedFormMappingSourceSiteId(mapping = {}) {
@@ -4055,24 +4332,49 @@ async function syncImportedSourceFormBlocks(formSiteId, blocks = [], context = {
 async function syncImportedFormSourceSites({ site, imported, detectedForms = [], mappings = [] } = {}) {
   if (!site || !imported) return Array.isArray(mappings) ? mappings : []
 
+  const activeFormIdCounts = new Map()
+  for (const mapping of Array.isArray(mappings) ? mappings : []) {
+    if (mapping?.present === false) continue
+    const formId = importedFormMappingStableId(mapping)
+    if (formId) activeFormIdCounts.set(formId, (activeFormIdCounts.get(formId) || 0) + 1)
+  }
+
   const nextMappings = []
   for (const mapping of Array.isArray(mappings) ? mappings : []) {
-    const fields = Array.isArray(mapping?.fields) ? mapping.fields : []
+    if (mapping?.present === false) {
+      nextMappings.push(mapping)
+      continue
+    }
+
+    const stableFormId = importedFormMappingStableId(mapping)
+    if (isImportedRuntimeAmbiguousFormMapping(mapping) || activeFormIdCounts.get(stableFormId) !== 1) {
+      nextMappings.push(mapping)
+      continue
+    }
+
+    const fields = Array.isArray(mapping?.fields)
+      ? mapping.fields.filter(field => field?.present !== false)
+      : []
     if (!cleanString(mapping?.formId) || fields.length === 0) {
       nextMappings.push(mapping)
       continue
     }
 
-    const detectedForm = findImportedDetectedFormForMapping(detectedForms, mapping) || {}
-    const name = getImportedSourceFormName(site, mapping, detectedForm)
-    let formSiteId = getImportedFormMappingSourceSiteId(mapping)
+    const activeMapping = {
+      ...mapping,
+      fields
+    }
+
+    const detectedForm = findImportedDetectedFormForMapping(detectedForms, activeMapping) || {}
+    const name = getImportedSourceFormName(site, activeMapping, detectedForm)
+    let formSiteId = getImportedFormMappingSourceSiteId(activeMapping)
     let sourceForm = formSiteId
       ? await getSite(formSiteId, { includeBlocks: true, includeSubmissions: false }).catch(() => null)
       : null
     const theme = buildImportedSourceFormTheme({
       sourceSite: site,
       existingSite: sourceForm,
-      mapping,
+      mapping: activeMapping,
       detectedForm
     })
 
@@ -4102,12 +4404,12 @@ async function syncImportedFormSourceSites({ site, imported, detectedForms = [],
       formSiteId,
       site,
       imported,
-      mapping,
+      mapping: activeMapping,
       detectedForm
     })
     await syncImportedSourceFormBlocks(formSiteId, sourceBlocks, {
       sourceSiteId: site.id,
-      sourceFormId: mapping.formId
+      sourceFormId: activeMapping.formId
     })
 
     nextMappings.push({
@@ -4117,6 +4419,26 @@ async function syncImportedFormSourceSites({ site, imported, detectedForms = [],
   }
 
   return nextMappings
+}
+
+function mergeImportedFormSourceIds(currentMappings = [], syncedMappings = []) {
+  const syncedByIdentity = new Map()
+  for (const mapping of Array.isArray(syncedMappings) ? syncedMappings : []) {
+    if (mapping?.present === false || isImportedRuntimeAmbiguousFormMapping(mapping)) continue
+    const identity = importedFormMappingIdentity(mapping)
+    const formSiteId = getImportedFormMappingSourceSiteId(mapping)
+    if (!identity || !formSiteId) continue
+    const matches = syncedByIdentity.get(identity) || []
+    matches.push(formSiteId)
+    syncedByIdentity.set(identity, matches)
+  }
+
+  return (Array.isArray(currentMappings) ? currentMappings : []).map(mapping => {
+    if (mapping?.present === false || isImportedRuntimeAmbiguousFormMapping(mapping)) return mapping
+    const matches = syncedByIdentity.get(importedFormMappingIdentity(mapping)) || []
+    const uniqueIds = [...new Set(matches.filter(Boolean))]
+    return uniqueIds.length === 1 ? { ...mapping, formSiteId: uniqueIds[0] } : mapping
+  })
 }
 
 async function syncAndPersistImportedFormSourceSites(siteId) {
@@ -4134,20 +4456,66 @@ async function syncAndPersistImportedFormSourceSites(siteId) {
     mappings: imported.formMappings
   })
 
-  await db.run(`
-    UPDATE public_site_imports SET
-      form_mappings_json = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE site_id = ?
-  `, [
-    jsonString(syncedMappings),
-    siteId
-  ])
+  // El sync crea/actualiza formularios relacionados fuera de la transacción.
+  // Al persistir, releemos la fila bloqueada y mezclamos únicamente formSiteId;
+  // nunca reescribimos rutas de campos desde un snapshot potencialmente viejo.
+  const persistedMappings = await db.transaction(async tx => {
+    const lockSuffix = databaseDialect === 'postgres' ? ' FOR UPDATE' : ''
+    const row = await tx.get(`
+      SELECT form_mappings_json
+      FROM public_site_imports
+      WHERE site_id = ?${lockSuffix}
+    `, [siteId])
+    if (!row) return syncedMappings
+    const latestMappings = parseJson(row.form_mappings_json, [])
+    const mergedMappings = mergeImportedFormSourceIds(latestMappings, syncedMappings)
+    await tx.run(`
+      UPDATE public_site_imports SET
+        form_mappings_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ?
+    `, [jsonString(mergedMappings), siteId])
+    return mergedMappings
+  })
 
   return {
     ...imported,
-    formMappings: syncedMappings
+    formMappings: persistedMappings
   }
+}
+
+const importedSiteMutationLockContext = new AsyncLocalStorage()
+
+async function withImportedSiteMutationLock(siteId, operation) {
+  const normalizedSiteId = cleanString(siteId)
+  const parentScope = importedSiteMutationLockContext.getStore()
+  if (parentScope?.active === true && parentScope.siteIds?.has(normalizedSiteId)) {
+    return operation()
+  }
+
+  const lockName = `sites:imported-html:${normalizedSiteId}`
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      return await db.withAdvisoryLock(lockName, async () => {
+        const scope = {
+          active: true,
+          siteIds: new Set(parentScope?.active === true ? parentScope.siteIds : [])
+        }
+        scope.siteIds.add(normalizedSiteId)
+        try {
+          return await importedSiteMutationLockContext.run(scope, operation)
+        } finally {
+          // Un trabajo desprendido puede heredar AsyncLocalStorage. Marcar el
+          // scope como cerrado evita que confunda ese contexto con un lock vivo.
+          scope.active = false
+        }
+      })
+    } catch (error) {
+      if (error?.code !== 'DATABASE_ADVISORY_LOCK_BUSY' || attempt === 119) throw error
+      await new Promise(resolve => setTimeout(resolve, Math.min(25 + (attempt * 5), 150)))
+    }
+  }
+  throw new Error('No se pudo reservar la importacion HTML para guardar cambios')
 }
 
 function getSocialProfileDefaults(site = {}, platform = 'facebook') {
@@ -6745,14 +7113,15 @@ Contrato de código cerrado y contenido:
 
 Convenciones de formularios para Ristak:
 - Estas convenciones aplican a formularios HTML propios; si usas data-rstk-native-element="form", no crees un <form> propio para esa zona.
-- Cada formulario debe tener data-rstk-form="lead_capture" y method="post".
-- Cada campo debe tener id, name, label visible y autocomplete cuando aplique.
+- Cada conjunto debe vivir en un elemento <form> real con data-rstk-form-id semantico, estable y unico en TODO el sitio, incluso entre paginas; agrega data-rstk-label para el nombre visible del grupo. Ejemplo: <form data-rstk-form-id="contacto-lead" data-rstk-label="Formulario de contacto" data-rstk-form="lead_capture" method="post">.
+- Cada campo logico debe tener data-rstk-field-id estable y unico dentro de su formulario, ademas de id, name, label visible y autocomplete cuando aplique. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas las opciones comparten data-rstk-field-id y name.
+- Cambiar copy, clases, estilos, orden o name/id NO cambia data-rstk-form-id ni data-rstk-field-id. Cambiar uno de esos IDs crea una asociacion nueva; conservarlo recupera la anterior aunque el elemento haya desaparecido temporalmente.
 - Agrega data-rstk-field y data-ristak-field en campos estandar para que Ristak los entienda.
 - Campos estandar permitidos: full_name, first_name, last_name, phone, email, message.
 - Para campos personalizados usa data-rstk-custom-field y data-ristak-field con una llave clara.
 - Campos personalizados útiles: treatment_interest, service_interest, preferred_date, preferred_time, appointment_reason, budget, branch, notes, company_name, job_title, city, state, postal_code.
-- Ejemplo de nombre: <input id="full_name" name="full_name" data-rstk-field="full_name" data-ristak-field="full_name" autocomplete="name" required>
-- Ejemplo de tratamiento: <select id="treatment_interest" name="treatment_interest" data-rstk-custom-field="treatment_interest" data-ristak-field="treatment_interest" required>.
+- Ejemplo de nombre: <input data-rstk-field-id="nombre-contacto" id="full_name" name="full_name" data-rstk-field="full_name" data-ristak-field="full_name" autocomplete="name" required>
+- Ejemplo de tratamiento: <select data-rstk-field-id="tratamiento-interes" id="treatment_interest" name="treatment_interest" data-rstk-custom-field="treatment_interest" data-ristak-field="treatment_interest" required>.
 - Si hay teléfono, usa type="tel", name="phone", data-rstk-field="phone", autocomplete="tel".
 - Si hay email, usa type="email", name="email", data-rstk-field="email", autocomplete="email".
 
@@ -6830,7 +7199,7 @@ Modo edición:
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
 - Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 - En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
@@ -11102,39 +11471,96 @@ async function listImportedSiteCodeFiles(siteId, imported = {}) {
   return [...files, ...orderedAssetFiles]
 }
 
-export async function getImportedSiteBySiteId(siteId) {
-  const row = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
-  if (!row) return null
-  let detectedForms = parseJson(row.detected_forms_json, [])
-  let formMappings = parseJson(row.form_mappings_json, [])
-  let htmlOriginal = row.html_original || ''
-  let htmlSanitized = row.html_sanitized || ''
+function getImportedSiteMappingAutoUpgrade(row = {}, { allowConfirmedHtml = '' } = {}) {
+  const htmlSanitized = row.html_sanitized || ''
   const status = row.status || 'mapping_pending'
+  const canUpgrade = status === 'mapping_pending' || (
+    Boolean(allowConfirmedHtml) && htmlSanitized === allowConfirmedHtml
+  )
+  if (!canUpgrade || !htmlSanitized) return null
 
-  if (status === 'mapping_pending' && htmlSanitized) {
-    const redetectedForms = detectImportedForms(htmlSanitized)
-    const storedFieldCount = Math.max(
-      countImportedDetectedFields(detectedForms),
-      countImportedMappedFields(formMappings)
+  const detectedForms = parseJson(row.detected_forms_json, [])
+  const formMappings = parseJson(row.form_mappings_json, [])
+  const redetectedForms = detectImportedForms(htmlSanitized)
+  const storedFieldCount = Math.max(
+    countImportedDetectedFields(detectedForms),
+    countImportedMappedFields(formMappings)
+  )
+  if (countImportedDetectedFields(redetectedForms) <= storedFieldCount) return null
+
+  return {
+    detectedForms: redetectedForms,
+    formMappings: mergeImportedFormMappings(
+      formMappings,
+      buildDefaultImportedFormMappings(redetectedForms)
     )
-    const redetectedFieldCount = countImportedDetectedFields(redetectedForms)
-
-    if (redetectedFieldCount > storedFieldCount) {
-      detectedForms = redetectedForms
-      formMappings = mergeImportedFormMappings(formMappings, buildDefaultImportedFormMappings(redetectedForms))
-      await db.run(`
-        UPDATE public_site_imports SET
-          detected_forms_json = ?,
-          form_mappings_json = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE site_id = ?
-      `, [
-        jsonString(detectedForms),
-        jsonString(formMappings),
-        siteId
-      ])
-    }
   }
+}
+
+async function autoUpgradeImportedSiteMapping(siteId, initialRow) {
+  const intendedHtml = initialRow?.html_sanitized || ''
+  return withImportedSiteMutationLock(siteId, async () => {
+    const latestRow = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
+    if (!latestRow) return null
+
+    // Si un PATCH ganó el lock después de nuestra primera lectura, conserva ese
+    // mapeo y agrega únicamente los campos faltantes del mismo HTML. Si el código
+    // ya cambió, sólo el estado mapping_pending autoriza redetectar la versión nueva.
+    const upgrade = getImportedSiteMappingAutoUpgrade(latestRow, {
+      allowConfirmedHtml: intendedHtml
+    })
+    if (!upgrade) return latestRow
+
+    const detectedFormsJson = jsonString(upgrade.detectedForms)
+    const formMappingsJson = jsonString(upgrade.formMappings)
+    const result = await db.run(`
+      UPDATE public_site_imports SET
+        detected_forms_json = ?,
+        form_mappings_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ?
+        AND COALESCE(status, 'mapping_pending') = ?
+        AND COALESCE(html_sanitized, '') = ?
+        AND COALESCE(detected_forms_json, '') = ?
+        AND COALESCE(form_mappings_json, '') = ?
+    `, [
+      detectedFormsJson,
+      formMappingsJson,
+      siteId,
+      latestRow.status || 'mapping_pending',
+      latestRow.html_sanitized || '',
+      latestRow.detected_forms_json || '',
+      latestRow.form_mappings_json || ''
+    ])
+
+    if (Number(result?.changes || 0) !== 1) {
+      // Cualquier escritor histórico que aún no use el advisory lock gana por
+      // CAS; esta lectura jamás debe volver a colocar su snapshot encima.
+      return db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
+    }
+
+    return {
+      ...latestRow,
+      detected_forms_json: detectedFormsJson,
+      form_mappings_json: formMappingsJson
+    }
+  })
+}
+
+export async function getImportedSiteBySiteId(siteId) {
+  let row = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
+  if (!row) return null
+
+  if (getImportedSiteMappingAutoUpgrade(row)) {
+    row = await autoUpgradeImportedSiteMapping(siteId, row)
+    if (!row) return null
+  }
+
+  const detectedForms = parseJson(row.detected_forms_json, [])
+  const formMappings = parseJson(row.form_mappings_json, [])
+  const htmlOriginal = row.html_original || ''
+  const htmlSanitized = row.html_sanitized || ''
+  const status = row.status || 'mapping_pending'
 
   const imported = {
     id: row.id,
@@ -11724,35 +12150,195 @@ export async function createImportedSiteFromHtml(input = {}) {
   }
 }
 
-export async function updateImportedSiteFormMappings(siteId, input = {}) {
-  const current = await getImportedSiteBySiteId(siteId)
-  if (!current) {
-    const error = new Error('Importacion no encontrada')
-    error.status = 404
+function cleanImportedFieldRoutePatch(currentField = {}, input = {}, definition = null) {
+  const destinationType = cleanString(input.destinationType || input.destination_type).toLowerCase()
+
+  if (destinationType === 'standard') {
+    const destinationKey = normalizeImportedFieldKey(input.destinationKey || input.destination_key, '')
+    if (!IMPORTED_FORM_STANDARD_FIELDS.has(destinationKey)) {
+      const error = new Error('El dato de contacto seleccionado no es valido')
+      error.status = 400
+      throw error
+    }
+    return {
+      ...currentField,
+      destinationType: 'standard',
+      destinationKey,
+      saveMode: 'standard',
+      ignored: false,
+      present: true,
+      customFieldDefinitionId: undefined,
+      customFieldKey: undefined,
+      customFieldLabel: undefined,
+      customFieldDataType: undefined,
+      customFieldSyncTarget: undefined
+    }
+  }
+
+  if (destinationType === 'ignored') {
+    return {
+      ...currentField,
+      destinationType: 'ignored',
+      saveMode: 'ignored',
+      ignored: true,
+      present: true,
+      customFieldDefinitionId: undefined,
+      customFieldKey: undefined,
+      customFieldLabel: undefined,
+      customFieldDataType: undefined,
+      customFieldSyncTarget: undefined
+    }
+  }
+
+  if (destinationType === 'custom') {
+    if (!definition) {
+      const error = new Error('El campo personalizado seleccionado ya no existe')
+      error.status = 404
+      throw error
+    }
+    return {
+      ...currentField,
+      destinationType: 'custom',
+      destinationKey: definition.field_key,
+      saveMode: 'custom',
+      ignored: false,
+      present: true,
+      customFieldDefinitionId: definition.id,
+      customFieldKey: definition.field_key,
+      customFieldLabel: definition.label,
+      customFieldDataType: definition.data_type || 'text',
+      customFieldSyncTarget: definition.sync_target || 'local'
+    }
+  }
+
+  if (destinationType === 'new_custom') {
+    const destinationKey = normalizeImportedFieldKey(
+      input.destinationKey || input.destination_key || currentField.destinationKey || currentField.sourceName || currentField.fieldId,
+      ''
+    )
+    if (!destinationKey) {
+      const error = new Error('La clave del campo personalizado es obligatoria')
+      error.status = 400
+      throw error
+    }
+    return {
+      ...currentField,
+      destinationType: 'new_custom',
+      destinationKey,
+      saveMode: 'new_custom',
+      ignored: false,
+      present: true,
+      customFieldDefinitionId: undefined,
+      customFieldKey: destinationKey,
+      customFieldLabel: cleanString(currentField.label) || destinationKey,
+      customFieldDataType: cleanString(currentField.customFieldDataType || currentField.type) || 'text',
+      customFieldSyncTarget: 'local'
+    }
+  }
+
+  const error = new Error('El destino del campo no es valido')
+  error.status = 400
+  throw error
+}
+
+async function updateImportedSiteFieldMappingUnlocked(siteId, input = {}) {
+  const formId = normalizeImportedFieldKey(input.formId || input.form_id, '')
+  const fieldId = normalizeImportedFieldKey(input.fieldId || input.field_id, '')
+  const hasPagePath = Object.prototype.hasOwnProperty.call(input, 'pagePath') ||
+    Object.prototype.hasOwnProperty.call(input, 'page_path')
+  const pagePath = normalizeImportedAssetPath(input.pagePath || input.page_path || '')
+
+  if (!formId || !fieldId) {
+    const error = new Error('Formulario y campo son obligatorios')
+    error.status = 400
     throw error
   }
 
-  const mappings = Array.isArray(input.formMappings)
-    ? input.formMappings
-    : Array.isArray(input.form_mappings)
-      ? input.form_mappings
-      : current.formMappings
+  await db.transaction(async tx => {
+    const lockSuffix = databaseDialect === 'postgres' ? ' FOR UPDATE' : ''
+    const row = await tx.get(`
+      SELECT form_mappings_json
+      FROM public_site_imports
+      WHERE site_id = ?${lockSuffix}
+    `, [siteId])
+    if (!row) {
+      const error = new Error('Importacion no encontrada')
+      error.status = 404
+      throw error
+    }
 
-  await db.run(`
-    UPDATE public_site_imports SET
-      form_mappings_json = ?,
-      status = 'mapping_confirmed',
-      updated_at = CURRENT_TIMESTAMP
-    WHERE site_id = ?
-  `, [
-    jsonString(mappings),
-    siteId
-  ])
+    const mappings = parseJson(row.form_mappings_json, [])
+    const formMatches = (Array.isArray(mappings) ? mappings : []).filter(mapping => (
+      mapping?.present !== false &&
+      importedFormMappingStableId(mapping) === formId
+    ))
+    if (formMatches.length !== 1) {
+      const error = new Error('El formulario ya no existe o su identificador es ambiguo')
+      error.status = 409
+      throw error
+    }
+
+    const form = formMatches[0]
+    if (isImportedRuntimeAmbiguousFormMapping(form)) {
+      const error = new Error('El formulario contiene identificadores de campo ambiguos')
+      error.status = 409
+      throw error
+    }
+    const mappingPath = normalizeImportedAssetPath(form?.pagePath || form?.page_path || '')
+    if (hasPagePath && mappingPath !== pagePath) {
+      const error = new Error('El formulario ya no existe en la página indicada')
+      error.status = 409
+      throw error
+    }
+    const fieldMatches = (Array.isArray(form.fields) ? form.fields : []).filter(field => (
+      field?.present !== false && importedFieldMappingIdentity(field) === fieldId
+    ))
+    if (fieldMatches.length !== 1) {
+      const error = new Error('El campo ya no existe o su identificador es ambiguo')
+      error.status = 409
+      throw error
+    }
+
+    const destinationType = cleanString(input.destinationType || input.destination_type).toLowerCase()
+    let definition = null
+    if (destinationType === 'custom') {
+      const definitionId = cleanString(input.customFieldDefinitionId || input.custom_field_definition_id)
+      if (!definitionId) {
+        const error = new Error('Elige un campo personalizado guardado')
+        error.status = 400
+        throw error
+      }
+      definition = await tx.get(`
+        SELECT id, field_key, label, data_type, sync_target
+        FROM contact_custom_field_definitions
+        WHERE id = ? AND archived = 0
+        LIMIT 1
+      `, [definitionId])
+    }
+
+    const nextField = cleanImportedFieldRoutePatch(fieldMatches[0], input, definition)
+    form.fields = form.fields.map(field => field === fieldMatches[0] ? nextField : field)
+
+    await tx.run(`
+      UPDATE public_site_imports SET
+        form_mappings_json = ?,
+        status = 'mapping_confirmed',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ?
+    `, [jsonString(mappings), siteId])
+  })
 
   return syncAndPersistImportedFormSourceSites(siteId)
 }
 
-async function replaceImportedSiteHtml(siteId, input = {}) {
+export async function updateImportedSiteFieldMapping(siteId, input = {}) {
+  return withImportedSiteMutationLock(
+    siteId,
+    () => updateImportedSiteFieldMappingUnlocked(siteId, input)
+  )
+}
+
+async function replaceImportedSiteHtmlUnlocked(siteId, input = {}) {
   const currentImport = await getImportedSiteBySiteId(siteId)
   if (!currentImport) {
     const error = new Error('Importacion no encontrada')
@@ -11895,7 +12481,14 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
   }
 }
 
-export async function updateImportedSiteEditableContent(siteId, input = {}) {
+async function replaceImportedSiteHtml(siteId, input = {}) {
+  return withImportedSiteMutationLock(
+    siteId,
+    () => replaceImportedSiteHtmlUnlocked(siteId, input)
+  )
+}
+
+async function updateImportedSiteEditableContentUnlocked(siteId, input = {}) {
   const currentImport = await getImportedSiteBySiteId(siteId)
   if (!currentImport) {
     const error = new Error('Importacion no encontrada')
@@ -12020,7 +12613,14 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
   }
 }
 
-export async function updateImportedSiteCodeFiles(siteId, input = {}) {
+export async function updateImportedSiteEditableContent(siteId, input = {}) {
+  return withImportedSiteMutationLock(
+    siteId,
+    () => updateImportedSiteEditableContentUnlocked(siteId, input)
+  )
+}
+
+async function updateImportedSiteCodeFilesUnlocked(siteId, input = {}) {
   const currentImport = await getImportedSiteBySiteId(siteId)
   if (!currentImport) {
     const error = new Error('Importacion no encontrada')
@@ -12247,6 +12847,13 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
     import: await getImportedSiteBySiteId(siteId)
   }
+}
+
+export async function updateImportedSiteCodeFiles(siteId, input = {}) {
+  return withImportedSiteMutationLock(
+    siteId,
+    () => updateImportedSiteCodeFilesUnlocked(siteId, input)
+  )
 }
 
 export async function createSiteWithAIHtml(input = {}) {
@@ -23345,7 +23952,20 @@ function isImportedHtmlSite(site = {}) {
 }
 
 function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNEL_PAGE_ID } = {}) {
-  const mappings = Array.isArray(imported?.formMappings) ? imported.formMappings : []
+  // Los tombstones viven en DB para recuperar asociaciones cuando el código
+  // reaparece, pero jamás se publican al navegador ni participan en submits.
+  const mappings = Array.isArray(imported?.formMappings)
+    ? imported.formMappings
+      .filter(mapping => (
+        mapping?.present !== false && !isImportedRuntimeAmbiguousFormMapping(mapping)
+      ))
+      .map(mapping => ({
+        ...mapping,
+        fields: Array.isArray(mapping?.fields)
+          ? mapping.fields.filter(field => field?.present !== false)
+          : []
+      }))
+    : []
 
   return `
   <script>
@@ -23370,25 +23990,43 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         } catch (_) {}
         return Object.assign({}, stored, current);
       };
+      const getStableFieldId = (field) => (
+        field.getAttribute('data-rstk-field-id') ||
+        field.getAttribute('data-ristak-field-id') ||
+        field.getAttribute('data-ristack-field-id') ||
+        ''
+      );
       const getFieldKey = (field, fallback) => (
-        field.getAttribute('data-ristack-field') ||
-        field.getAttribute('data-ristak-field') ||
+        getStableFieldId(field) ||
         field.getAttribute('name') ||
         field.getAttribute('id') ||
+        field.getAttribute('data-rstk-field') ||
+        field.getAttribute('data-ristak-field') ||
+        field.getAttribute('data-ristack-field') ||
         fallback
       );
+      const getChoiceFields = (field, form, type) => {
+        const stableFieldId = getStableFieldId(field);
+        if (stableFieldId) {
+          return Array.from(form.querySelectorAll('input')).filter(item => (
+            String(item.type || '').toLowerCase() === type &&
+            getStableFieldId(item) === stableFieldId
+          ));
+        }
+        const name = field.getAttribute('name');
+        if (!name) return [field];
+        return Array.from(form.querySelectorAll('[name="' + cssEscape(name) + '"]'))
+          .filter(item => String(item.type || '').toLowerCase() === type);
+      };
       const readFieldValue = (field, form) => {
         const type = String(field.type || '').toLowerCase();
         if (type === 'checkbox') {
-          const name = field.getAttribute('name');
-          if (!name) return field.checked ? (field.value || 'true') : '';
-          return Array.from(form.querySelectorAll('[name="' + cssEscape(name) + '"]'))
+          return getChoiceFields(field, form, type)
             .filter(item => item.checked)
             .map(item => item.value || 'true');
         }
         if (type === 'radio') {
-          const name = field.getAttribute('name');
-          const checked = name ? form.querySelector('[name="' + cssEscape(name) + '"]:checked') : (field.checked ? field : null);
+          const checked = getChoiceFields(field, form, type).find(item => item.checked) || null;
           return checked ? checked.value : '';
         }
         if (field.tagName === 'SELECT' && field.multiple) {
@@ -23520,9 +24158,12 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         return keys.length ? data : null;
       };
       const resolveFormId = (form, index) => (
-        form.getAttribute('data-ristack-form') ||
-        form.getAttribute('data-ristak-form') ||
         form.getAttribute('data-rstk-form-id') ||
+        form.getAttribute('data-ristak-form-id') ||
+        form.getAttribute('data-ristack-form-id') ||
+        form.getAttribute('data-rstk-form') ||
+        form.getAttribute('data-ristak-form') ||
+        form.getAttribute('data-ristack-form') ||
         form.getAttribute('id') ||
         form.getAttribute('name') ||
         (FORMS[index] && FORMS[index].formId) ||
@@ -29391,20 +30032,28 @@ function normalizeImportedRawFields(rawFields = {}) {
   }, {})
 }
 
-function getImportedFormMapping(imported, formId) {
-  const mappings = Array.isArray(imported?.formMappings) ? imported.formMappings : []
+function getImportedFormMapping(imported, formId, { allowSingleLegacyFallback = false } = {}) {
+  const mappings = Array.isArray(imported?.formMappings)
+    ? imported.formMappings.filter(mapping => (
+      mapping?.present !== false && !isImportedRuntimeAmbiguousFormMapping(mapping)
+    ))
+    : []
   if (!mappings.length) return null
 
   const requested = normalizeImportedFieldKey(formId, '')
-  return mappings.find(mapping => normalizeImportedFieldKey(mapping.formId, '') === requested) || mappings[0]
+  const matches = mappings.filter(mapping => normalizeImportedFieldKey(mapping.formId, '') === requested)
+  if (matches.length === 1) return matches[0]
+  if (allowSingleLegacyFallback && mappings.length === 1) return mappings[0]
+  return null
 }
 
 function getImportedRawFieldValue(rawFields = {}, mapping = {}) {
-  const directKeys = [
-    mapping.sourceName,
-    mapping.fieldId,
-    mapping.destinationKey
-  ].map(cleanString).filter(Boolean)
+  // En el contrato moderno el ID estable es también la llave del payload. No
+  // aceptamos name/destinationKey como alias porque permitiría que dos campos
+  // distintos con el mismo name se pisen o que un raw key evada su asociación.
+  const directKeys = mapping?.hasStableFieldId === true
+    ? [mapping.fieldId].map(cleanString).filter(Boolean)
+    : [mapping.sourceName, mapping.fieldId, mapping.destinationKey].map(cleanString).filter(Boolean)
 
   for (const key of directKeys) {
     if (Object.prototype.hasOwnProperty.call(rawFields, key)) {
@@ -29487,8 +30136,8 @@ function addImportedCustomField(customFields, field = {}, value, context = {}) {
   })
 }
 
-function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
-  const formMapping = getImportedFormMapping(imported, formId)
+function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allowSingleLegacyFallback = false }) {
+  const formMapping = getImportedFormMapping(imported, formId, { allowSingleLegacyFallback })
   const mappedFields = {
     standard: {},
     custom: {},
@@ -29497,6 +30146,10 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
   const derivedFields = {}
   const customFields = []
   const consumedRawKeys = new Set()
+  const acceptedRawFields = {}
+  const allFormFields = Array.isArray(formMapping?.fields) ? formMapping.fields : []
+  const hasStableMappingContract = formMapping?.hasStableFormId === true ||
+    allFormFields.some(field => field?.hasStableFieldId === true)
   const context = {
     importId: imported?.id || '',
     siteId: site.id,
@@ -29505,11 +30158,19 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
     originalFilename: imported?.originalFilename || ''
   }
 
-  for (const field of Array.isArray(formMapping?.fields) ? formMapping.fields : []) {
+  // Una llave de un campo removido no puede reaparecer como campo inferido. Se
+  // reconoce como tombstone y se descarta antes de procesar compatibilidad legacy.
+  for (const field of allFormFields.filter(item => item?.present === false)) {
+    const { key: rawKey } = getImportedRawFieldValue(rawFields, field)
+    if (rawKey) consumedRawKeys.add(rawKey)
+  }
+
+  for (const field of allFormFields.filter(item => item?.present !== false)) {
     const { key: rawKey, value } = getImportedRawFieldValue(rawFields, field)
     if (!rawKey || isEmptyImportedValue(value)) continue
 
     consumedRawKeys.add(rawKey)
+    acceptedRawFields[rawKey] = value
     const destinationType = field.ignored ? 'ignored' : cleanString(field.destinationType || field.saveMode || 'custom')
     const destinationKey = normalizeImportedFieldKey(field.destinationKey || field.sourceName || rawKey, 'custom_field')
 
@@ -29529,6 +30190,11 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
 
   for (const [rawKey, value] of Object.entries(rawFields)) {
     if (consumedRawKeys.has(rawKey) || isEmptyImportedValue(value)) continue
+    // Formularios con IDs estables son allowlist estricta: solo viajan las
+    // llaves detectadas y mapeadas. El fallback existe únicamente para HTML
+    // legacy que todavía no tiene data-rstk-form-id/data-rstk-field-id.
+    if (hasStableMappingContract) continue
+    acceptedRawFields[rawKey] = value
     const key = normalizeImportedFieldKey(rawKey, 'custom_field')
     const fallbackField = {
       destinationKey: key,
@@ -29573,7 +30239,7 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
 
   return {
     formMapping,
-    rawFields,
+    rawFields: hasStableMappingContract ? acceptedRawFields : rawFields,
     mappedFields,
     derivedFields,
     customFields
@@ -29627,14 +30293,24 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     throw error
   }
 
-  const importedFormId = cleanString(body.importedFormId || body.imported_form_id || body.formId || body.form_id || 'form_1')
+  const submittedFormId = cleanString(body.importedFormId || body.imported_form_id || body.formId || body.form_id)
+  const importedFormId = submittedFormId || 'form_1'
   const rawFields = normalizeImportedRawFields(body.rawFields || body.raw_fields || body.responses || {})
   const layers = buildImportedSubmissionLayers({
     site,
     imported,
     formId: importedFormId,
-    rawFields
+    rawFields,
+    allowSingleLegacyFallback: !submittedFormId
   })
+  const activeFormMappings = Array.isArray(imported.formMappings)
+    ? imported.formMappings.filter(mapping => mapping?.present !== false)
+    : []
+  if (!layers.formMapping) {
+    const error = new Error('El formulario enviado no coincide con una zona HTML configurada')
+    error.status = 400
+    throw error
+  }
   const standard = layers.mappedFields.standard || {}
   const derived = layers.derivedFields || {}
   const contactNameFields = normalizeContactNameFields({

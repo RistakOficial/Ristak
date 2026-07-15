@@ -49,10 +49,12 @@ test('imported HTML code files are listed and saved through the code editor endp
   }
 })
 
-test('removing the last HTML form also clears stale detected fields and mappings', async () => {
+test('removing the last HTML form keeps its stable mapping dormant for a future reappearance', async () => {
   const {
     createImportedSiteFromHtml,
     deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml,
     updateImportedSiteCodeFiles
   } = await import('../src/services/sitesService.js')
 
@@ -72,7 +74,18 @@ test('removing the last HTML form also clears stale detected fields and mappings
       files: [{ path: '', content: '<!doctype html><html><body><main><h1>Sin formulario</h1></main></body></html>' }]
     })
     assert.deepEqual(updated.import.detectedForms, [])
-    assert.deepEqual(updated.import.formMappings, [])
+    assert.equal(updated.import.formMappings.length, 1)
+    assert.equal(updated.import.formMappings[0].formId, 'lead_capture')
+    assert.equal(updated.import.formMappings[0].present, false)
+    assert.ok(updated.import.formMappings[0].fields.length > 0)
+    assert.ok(updated.import.formMappings[0].fields.every(field => field.present === false))
+
+    const rendered = await renderPublicSiteHtml(await getSitePreview(siteId), {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    assert.doesNotMatch(rendered, /"formId":"lead_capture"/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
@@ -507,6 +520,11 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /primero declara la zona en el HTML/)
   assert.match(instructions, /data-rstk-native-element="video"/)
   assert.match(instructions, /Un video HTML propio queda opaco/)
+  assert.match(instructions, /elemento <form> real/)
+  assert.match(instructions, /data-rstk-form-id semantico, estable y unico en TODO el sitio/)
+  assert.match(instructions, /data-rstk-field-id estable y unico dentro de su formulario/)
+  assert.match(instructions, /<fieldset><legend>Pregunta<\/legend>/)
+  assert.match(instructions, /Cambiar copy, clases, estilos, orden o name\/id NO cambia data-rstk-form-id ni data-rstk-field-id/)
   assert.doesNotMatch(instructions, /data-rstk-editable="true"/)
   assert.match(instructions, /action="disqualify"/)
   assert.match(instructions, /disqualifyOutcome="specific_page"/)

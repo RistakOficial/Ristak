@@ -3901,10 +3901,24 @@ arranca con estado "Mantener oculto", el render importado marca el target con
 parpadeos entre preview y sitio publicado.
 
 En el editor HTML importado, el Panel de contenido ocupa el inspector derecho y
-administra los slots multimedia, formularios, calendarios, pagos y videos que el
-codigo ya contiene. No aparecen popovers sobre textos, imagenes, botones, campos
-o secciones, ni controles para insertar elementos nuevos en el HTML. Imagenes,
-fondos, audio y descargables se asocian desde su fila detectada. Para un video
+administra en una sola vista todo lo que el codigo de la pagina activa ya
+contiene. El listado se calcula por pagina, no con totales de todo el sitio, y
+muestra por separado cada imagen, fondo, audio, descargable, formulario HTML,
+calendario, pago y video detectado. No existe un limite de un elemento por tipo:
+dos formularios, varias imagenes, varios videos o varios descargables aparecen
+como filas independientes y se asocian desde ahi. Los campos se agrupan debajo
+del formulario HTML real al que pertenecen, de modo que dos formularios con un
+campo `email` no comparten accidentalmente la misma ruta de datos. No aparecen
+popovers sobre textos, imagenes, botones, campos o secciones, ni controles para
+insertar elementos nuevos en el HTML.
+
+La vista general del panel resuelve las asociaciones simples directamente en
+cada fila. Los elementos con configuracion avanzada, como video, calendario o
+pago, muestran un engrane. Al abrirlo, el mismo inspector derecho cambia a la
+configuracion de ese elemento; arriba aparece una flecha con `Volver`, que
+regresa al mapeo general de la pagina y conserva el elemento desde el que se
+entro. No se abre otra ventana ni se mezcla la configuracion avanzada con todas
+las filas del resumen. Para un video
 premium y personalizable, el HTML debe reservar
 `<div data-rstk-native-element="video" data-rstk-native-id="video-01" data-rstk-label="Video principal"></div>`;
 usar un `<video>` HTML propio lo deja bajo control del codigo y no sustituye el
@@ -3920,7 +3934,13 @@ de pagina mientras cargaba. Los slots nativos y las acciones de video se resuelv
 compartan accidentalmente un formulario, calendario, pago, video o target con el
 mismo identificador. IDs duplicados dentro de una misma pagina nunca montan dos
 veces el mismo bloque: el preview muestra un diagnostico y publicado omite el
-duplicado. El inspector derecho guarda automaticamente cambios validos
+duplicado. Antes de persistir siquiera el HTML, Guardar, Publicar, Preview y las
+asociaciones directas ejecutan el mismo preflight sobre todos los borradores
+efectivos del sitio: detienen la operacion si existe un `data-rstk-form-id`
+repetido globalmente, un `data-rstk-field-id` repetido dentro de su formulario o
+un `data-rstk-native-id` repetido dentro de la pagina. Asi la UI no puede avisar
+del error despues de haber dejado codigo ambiguo en un sitio publicado. El
+inspector derecho guarda automaticamente cambios validos
 de video, calendario y pago con bajo ruido, y el boton de guardado manual sigue
 mostrando validaciones cuando falta una configuracion obligatoria. Para pagos,
 ese preview usa un snapshot temporal de la
@@ -3975,19 +3995,64 @@ copiable incluye el contrato de calificacion por opcion, los tres destinos de
 descarte y `data-rstk-conversion-condition="qualified_only"`; tambien prohibe
 disparar Pixel/CAPI manualmente antes del veredicto de Ristak.
 
-La revision de "Ruta de datos" de HTML importado debe permitir dos salidas para
-campos personalizados: mapear a un campo guardado del catalogo o declarar un
-campo nuevo con clave interna (`destinationType/saveMode = new_custom`) cuando
-no existe todavia. El usuario no debe quedar bloqueado por no tener campos
-personalizados creados antes de importar. Los titulos visibles de formularios
-detectados tambien deben ignorar snippets tecnicos de Ristak (`data-rstk-*`,
-acciones `open_popup/close_popup`, JSON de acciones de boton) y caer al titulo
-humano cercano o a `Formulario N`, para no mostrar atributos internos en el
-modal ni en formularios fuente.
-Si el HTML importado solo usa elementos nativos de Ristak o no tiene campos de
-formulario propios detectados, la revision de "Ruta de datos" no debe abrirse:
-no hay campos HTML que enrutar y el formulario nativo se configura desde su
-inspector correspondiente.
+El mapeo de campos HTML vive exclusivamente en el Panel de contenido; se elimina
+el modal separado de revision o "Ruta de datos". Cada formulario personalizado
+debe ser un elemento real `<form>` con una identidad estable, por ejemplo
+`<form data-rstk-form-id="landing-contacto" data-rstk-label="Formulario de contacto">`.
+`data-rstk-form-id` debe ser no vacio, estable y unico en todo el sitio, incluso
+entre paginas; `data-rstk-label` aporta el nombre humano que muestra el panel.
+No se debe usar un `div` vecino como sustituto del conjunto, dejar campos fuera
+de un `<form>` ni repartir los campos de un mismo formulario entre wrappers
+distintos. El panel avisa y bloquea asociaciones ambiguas cuando detecta IDs
+duplicados. Si una reescritura introduce temporalmente dos formularios con el
+mismo ID, ninguno hereda a ciegas la configuracion del otro: la asociacion
+canonica anterior queda dormida y se restaura cuando el ID vuelve a ser unico.
+Mientras exista la ambiguedad tampoco se crea ni sobrescribe el formulario
+fuente de Ristak, y guardar/publicar debe detenerse hasta corregirla.
+
+Cada campo logico guardable dentro de ese `<form>` debe declarar un
+`data-rstk-field-id` estable y unico dentro del formulario, ademas de conservar
+su `name` o `id` normal para el submit. Las opciones radio o checkbox que forman
+un solo campo se agrupan en un `fieldset` con `legend` (o una etiqueta accesible
+equivalente) y comparten esa identidad logica; otro campo distinto no puede
+reutilizarla en el mismo formulario. Desde la fila de cada campo el usuario
+elige un dato estandar del contacto, un campo personalizado existente, crear un
+campo personalizado nuevo (`destinationType/saveMode = new_custom`) o no
+guardarlo. Por eso no hace falta crear previamente todo el catalogo ni salir del
+panel. Los titulos detectados deben ignorar snippets tecnicos de Ristak
+(`data-rstk-*`, acciones `open_popup/close_popup` y JSON de botones) y usar
+`data-rstk-label`, un titulo humano cercano o `Formulario N` como respaldo.
+Si una reescritura duplica temporalmente el ID estable de dos campos distintos,
+el formulario completo entra en cuarentena: ninguno de esos campos sincroniza
+el formulario fuente, el PATCH se rechaza y el runtime publico no consume el
+payload ambiguo. El mapping canonico anterior queda dormido y vuelve a activarse
+automaticamente cuando el ID vuelve a ser unico; no se obliga al usuario a
+configurarlo otra vez.
+
+En el sitio publicado, `data-rstk-field-id` es tambien la llave estable del
+payload capturado. Por eso dos campos distintos pueden conservar el mismo
+atributo `name` sin pisarse. En formularios con el contrato estable, el backend
+acepta solamente campos detectados: una llave arbitraria o la llave de un campo
+ausente no se infiere como dato de contacto ni crea un campo personalizado. El
+fallback por `name` se conserva solo para HTML legacy sin IDs estables.
+
+Cada cambio se guarda por campo mediante `PATCH /api/sites/:siteId/import-mapping`
+con identidad exacta y exclusion por sitio; ya no existe un `PUT` que reemplace
+el arreglo completo y pueda pisar asociaciones guardadas desde otra sesion.
+
+La identidad persistente de una asociacion es `formId + fieldId`;
+`pagePath` registra en que archivo se detecto y protege el PATCH contra una
+pagina equivocada, pero no cambia la identidad. Como `formId` es globalmente
+unico, mover el mismo formulario a otra pagina sin cambiar sus IDs conserva el
+mapeo.
+Editar copy, clases, estilos, orden o estructura alrededor de esos elementos no
+borra el mapeo mientras se conserven los IDs. Si una reescritura del HTML retira
+temporalmente un formulario o campo, Ristak conserva su asociacion como ausente
+y la restaura cuando reaparece con la misma identidad; cambiar un ID significa
+de forma intencional crear otro elemento que debe asociarse de nuevo. Si la
+pagina solo contiene slots nativos o no tiene campos HTML propios, el panel
+simplemente no muestra grupos de campos y cada slot nativo se configura desde su
+fila o su engrane correspondiente.
 
 En landings en modo embudo, los bloques nuevos que ejecutan una accion posterior
 al evento (`calendario embebido`, `formulario embebido` y `pago`) nacen apuntando

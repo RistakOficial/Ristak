@@ -50,7 +50,7 @@ import {
   updateImportedSiteCodeFilesHandler,
   updateImportedSiteEditableContentHandler,
   updateImportedSiteHtmlWithAIHandler,
-  updateImportedSiteMappingHandler,
+  updateImportedSiteFieldMappingHandler,
   updateSiteHandler,
   saveSiteContentAssetHandler,
   verifySitesPublicDomainByIdHandler,
@@ -150,7 +150,7 @@ router.post('/:siteId/preview-session', createPreviewSessionHandler)
 router.post('/:siteId/ai-edit-html', updateImportedSiteHtmlWithAIHandler)
 router.patch('/:siteId/import-content', requirePaymentsForSitePaymentFeature, updateImportedSiteEditableContentHandler)
 router.patch('/:siteId/import-code', requirePaymentsForSitePaymentFeature, updateImportedSiteCodeFilesHandler)
-router.put('/:siteId/import-mapping', requirePaymentsForSitePaymentFeature, updateImportedSiteMappingHandler)
+router.patch('/:siteId/import-mapping', requirePaymentsForSitePaymentFeature, updateImportedSiteFieldMappingHandler)
 router.post('/:siteId/verify-domain', verifySiteDomainHandler)
 router.post('/:siteId/blocks', requirePaymentsForSitePaymentFeature, createBlockHandler)
 router.post('/:siteId/blocks/restore', restoreBlocksHandler)

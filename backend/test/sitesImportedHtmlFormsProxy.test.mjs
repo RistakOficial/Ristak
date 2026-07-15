@@ -9,7 +9,9 @@ import {
   getSite,
   getSitesTrackingSummary,
   listSites,
+  renderPublicSiteHtml,
   updateImportedSiteCodeFiles,
+  updateImportedSiteFieldMapping,
   updateSite
 } from '../src/services/sitesService.js'
 
@@ -24,6 +26,12 @@ function getSourceQuestionBlocks(site) {
   return (site.blocks || [])
     .filter(block => block.settings?.pageId === 'page-1')
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
+}
+
+async function deleteSites(siteIds = []) {
+  for (const siteId of new Set(siteIds.filter(Boolean))) {
+    await deleteSite(siteId).catch(() => undefined)
+  }
 }
 
 test('imported HTML forms materialize Forms-page source forms and route submissions to them', async () => {
@@ -201,5 +209,312 @@ test('imported HTML form titles ignore nearby Ristak technical snippets', async 
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
+  }
+})
+
+test('imported HTML rejects explicit unknown or dormant form ids instead of routing to another form', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  let siteId = ''
+  let sourceFormId = ''
+
+  const request = {
+    headers: { host: 'example.test', 'user-agent': 'node-test' },
+    hostname: 'example.test',
+    path: '/',
+    ip: '127.0.0.1',
+    socket: { remoteAddress: '127.0.0.1' }
+  }
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    const created = await createImportedSiteFromHtml({
+      filename: 'form-id-estricto.html',
+      name: `Form ID estricto ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="lead-principal">
+          <input name="email" type="email" data-rstk-field-id="correo">
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormId = created.import.formMappings[0].formSiteId || ''
+    request.path = `/${created.site.slug}`
+
+    await updateSite(siteId, {
+      status: 'published',
+      siteType: 'landing_page',
+      theme: created.site.theme
+    })
+
+    await assert.rejects(
+      () => createSubmissionFromRequest(request, {
+        siteId,
+        importedFormId: 'otro-formulario',
+        rawFields: { email: `wrong-${suffix}@example.test` }
+      }),
+      error => error?.status === 400
+    )
+
+    await updateImportedSiteCodeFiles(siteId, {
+      files: [{ path: '', content: '<!doctype html><html><body><h1>Sin formulario</h1></body></html>' }]
+    })
+
+    await assert.rejects(
+      () => createSubmissionFromRequest(request, {
+        siteId,
+        importedFormId: 'lead-principal',
+        rawFields: { email: `dormant-${suffix}@example.test` }
+      }),
+      error => error?.status === 400
+    )
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE email IN (?, ?)', [
+      `wrong-${suffix}@example.test`,
+      `dormant-${suffix}@example.test`
+    ]).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain || '')
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified || '')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt || '')
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error || '')
+  }
+})
+
+test('stable field ids separate repeated names and drop removed or arbitrary raw keys', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const email = `stable-fields-${suffix}@example.test`
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  let siteId = ''
+  const sourceFormIds = []
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    const created = await createImportedSiteFromHtml({
+      filename: 'stable-field-payload.html',
+      name: `Stable payload ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="lead-estable">
+          <label>Email <input name="contact_value" data-rstk-field-id="email-value"></label>
+          <label>Teléfono <input name="contact_value" data-rstk-field-id="phone-value"></label>
+          <label>Temporal <input name="removed_value" data-rstk-field-id="removed-value"></label>
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    await updateImportedSiteFieldMapping(siteId, {
+      pagePath: '', formId: 'lead_estable', fieldId: 'email_value',
+      destinationType: 'standard', destinationKey: 'email'
+    })
+    await updateImportedSiteFieldMapping(siteId, {
+      pagePath: '', formId: 'lead_estable', fieldId: 'phone_value',
+      destinationType: 'standard', destinationKey: 'phone'
+    })
+
+    const current = await updateImportedSiteCodeFiles(siteId, {
+      files: [{
+        path: '',
+        content: `<!doctype html><html><body>
+          <form data-rstk-form-id="lead-estable">
+            <label>Email <input name="contact_value" data-rstk-field-id="email-value"></label>
+            <label>Teléfono <input name="contact_value" data-rstk-field-id="phone-value"></label>
+            <button type="submit">Enviar</button>
+          </form>
+        </body></html>`
+      }]
+    })
+    sourceFormIds.push(...current.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    await updateSite(siteId, {
+      status: 'published',
+      siteType: 'landing_page',
+      theme: created.site.theme
+    })
+    const rendered = await renderPublicSiteHtml({ ...created.site, status: 'published' }, {
+      pageId: 'page-1', trackingEnabled: false, preview: false
+    })
+    assert.match(rendered, /const getFieldKey = \(field, fallback\) => \(\s*getStableFieldId\(field\) \|\|\s*field\.getAttribute\('name'\)/)
+    assert.match(rendered, /getChoiceFields\(field, form, type\)/)
+
+    const result = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${created.site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId,
+        importedFormId: 'lead-estable',
+        rawFields: {
+          'email-value': email,
+          'phone-value': '+526561234567',
+          'removed-value': 'no debe revivir',
+          contact_value: 'no debe pisar campos estables',
+          arbitrary_admin_key: 'no debe crearse'
+        }
+      }
+    )
+
+    assert.equal(result.contactEmail, email)
+    const submission = await db.get(
+      'SELECT raw_fields_json, mapped_fields_json FROM public_site_submissions WHERE id = ?',
+      [result.submissionId]
+    )
+    assert.deepEqual(JSON.parse(submission.raw_fields_json), {
+      'email-value': email,
+      'phone-value': '+526561234567'
+    })
+    const mapped = JSON.parse(submission.mapped_fields_json)
+    assert.deepEqual(mapped.standard, { email, phone: '+526561234567' })
+    assert.deepEqual(mapped.custom, {})
+    assert.deepEqual(mapped.ignored, {})
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await deleteSites(sourceFormIds)
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain || '')
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified || '')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt || '')
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error || '')
+  }
+})
+
+test('public imported submit keeps stable radio scalar and checkbox array values', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const interestsKey = `intereses_grupo_${suffix}`.toLowerCase()
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  let siteId = ''
+  const sourceFormIds = []
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    const created = await createImportedSiteFromHtml({
+      filename: 'grupos-estables-submit.html',
+      name: `Submit grupos estables ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="preferencias-contacto" data-rstk-label="Preferencias">
+          <fieldset>
+            <legend>Plan</legend>
+            <label><input type="radio" name="plan" value="starter" data-rstk-field-id="plan-elegido"> Starter</label>
+            <label><input type="radio" name="plan" value="pro" data-rstk-field-id="plan-elegido"> Pro</label>
+          </fieldset>
+          <fieldset>
+            <legend>Intereses</legend>
+            <label><input type="checkbox" name="intereses" value="ventas" data-rstk-field-id="intereses-seleccionados"> Ventas</label>
+            <label><input type="checkbox" name="intereses" value="soporte" data-rstk-field-id="intereses-seleccionados"> Soporte</label>
+          </fieldset>
+          <button type="submit">Guardar preferencias</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    const detectedForm = created.import.formMappings.find(mapping => mapping.formId === 'preferencias_contacto')
+    assert.equal(detectedForm.fields.filter(field => field.present !== false).length, 2)
+    assert.deepEqual(
+      detectedForm.fields.map(field => [field.fieldId, field.type, field.options.map(option => option.value)]),
+      [
+        ['plan_elegido', 'radio', ['starter', 'pro']],
+        ['intereses_seleccionados', 'checkbox', ['ventas', 'soporte']]
+      ]
+    )
+
+    await updateImportedSiteFieldMapping(siteId, {
+      pagePath: '',
+      formId: 'preferencias_contacto',
+      fieldId: 'plan_elegido',
+      destinationType: 'standard',
+      destinationKey: 'message'
+    })
+    await updateImportedSiteFieldMapping(siteId, {
+      pagePath: '',
+      formId: 'preferencias_contacto',
+      fieldId: 'intereses_seleccionados',
+      destinationType: 'new_custom',
+      destinationKey: interestsKey
+    })
+
+    await updateSite(siteId, {
+      status: 'published',
+      siteType: 'landing_page',
+      theme: created.site.theme
+    })
+
+    const result = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${created.site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId,
+        importedFormId: 'preferencias-contacto',
+        rawFields: {
+          'plan-elegido': 'pro',
+          'intereses-seleccionados': ['ventas', 'soporte']
+        }
+      }
+    )
+
+    const submission = await db.get(
+      'SELECT form_site_id, raw_fields_json, mapped_fields_json FROM public_site_submissions WHERE id = ?',
+      [result.submissionId]
+    )
+    assert.ok(submission.form_site_id)
+    assert.deepEqual(JSON.parse(submission.raw_fields_json), {
+      'plan-elegido': 'pro',
+      'intereses-seleccionados': ['ventas', 'soporte']
+    })
+    const mapped = JSON.parse(submission.mapped_fields_json)
+    assert.deepEqual(mapped.standard, { message: 'pro' })
+    assert.deepEqual(mapped.custom, { [interestsKey]: ['ventas', 'soporte'] })
+    assert.deepEqual(mapped.ignored, {})
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await deleteSites(sourceFormIds)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain || '')
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified || '')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt || '')
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error || '')
   }
 })

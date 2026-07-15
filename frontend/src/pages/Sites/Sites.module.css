@@ -1953,68 +1953,6 @@
   font-weight: 680;
 }
 
-.importedFieldRouteBox {
-  display: grid;
-  gap: 10px;
-  border-top: 1px solid rgba(148, 163, 184, 0.16);
-  padding-top: 12px;
-}
-
-.importedFieldRouteHeader {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 9px;
-  align-items: center;
-}
-
-.importedFieldRouteHeader svg {
-  width: 30px;
-  height: 30px;
-  padding: 7px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--color-text-secondary);
-}
-
-.importedFieldRouteHeader span,
-.importedFieldRouteHeader strong {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.importedFieldRouteHeader span {
-  color: var(--color-text-tertiary);
-  font-size: 0.72rem;
-  font-weight: 820;
-  text-transform: uppercase;
-}
-
-.importedFieldRouteHeader strong {
-  color: var(--color-text-primary);
-  font-size: 0.84rem;
-  font-weight: 760;
-}
-
-.importedFieldRouteHint {
-  margin: 0;
-  color: var(--color-text-tertiary);
-  font-size: 0.78rem;
-  font-weight: 680;
-  line-height: 1.45;
-}
-
-.importedFieldRouteActions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .importedFormFieldsBox {
   display: grid;
   gap: 10px;
@@ -2201,6 +2139,62 @@
   color: var(--neg);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.importedContentDetailHeader {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.importedContentDetailHeader > [data-btn] {
+  justify-self: start;
+}
+
+.importedFormMappingGroups,
+.importedFieldMappingList {
+  min-width: 0;
+  display: grid;
+}
+
+.importedFormMappingGroup {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding-block: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.importedFormMappingGroup:first-child {
+  border-top: 0;
+}
+
+.importedFormMappingGroupHeader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.importedFieldMappingRow {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 10px;
+  align-items: center;
+  padding-block: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.importedFieldMappingSelect {
+  grid-column: 1 / -1;
+  min-width: 0;
+  width: 100%;
 }
 
 .importedNativeElementControls .formEmbedToolbarControls,
@@ -4071,234 +4065,6 @@
   }
 }
 
-.importReviewOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-index-modal);
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background: var(--modal-backdrop-bg);
-  backdrop-filter: var(--modal-backdrop-filter);
-  -webkit-backdrop-filter: var(--modal-backdrop-filter);
-}
-
-.importReviewDialog {
-  width: min(1040px, 100%);
-  max-height: min(760px, calc(100dvh - 40px));
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-card);
-  background: var(--modal-surface-bg);
-  color: var(--text);
-  box-shadow: var(--modal-shadow);
-}
-
-/* The security note is optional; flex keeps the list as the only stretching
-   row so its scroll works with any combination of children. */
-.importReviewDialog > * {
-  flex: 0 0 auto;
-}
-
-.importReviewDialog > .importReviewForms {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.importReviewHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 24px 26px 18px;
-  border-bottom: 1px solid var(--border);
-}
-
-.importReviewHeader span {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--text-mute);
-  font-size: 0.82rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.importReviewHeader h2 {
-  margin: 0;
-  color: var(--text);
-  font-size: clamp(1.35rem, 2vw, 1.9rem);
-  letter-spacing: 0;
-}
-
-.importReviewHeader p {
-  margin: 8px 0 0;
-  color: var(--text-dim);
-}
-
-.importReviewClose {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.importReviewClose:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.importSecurityNote {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 16px 26px 0;
-  padding: 10px 12px;
-  border: 1px solid var(--warn);
-  border-radius: var(--radius-ctl);
-  background: var(--warn-soft);
-  color: var(--warn);
-  font-size: 0.9rem;
-}
-
-.importReviewForms {
-  min-height: 0;
-  overflow: auto;
-  padding: 18px 26px 20px;
-}
-
-.importEmptyFields {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 20px 0;
-  color: var(--text-dim);
-}
-
-.importFormSection + .importFormSection {
-  margin-top: 22px;
-  padding-top: 22px;
-  border-top: 1px solid var(--border);
-}
-
-.importFormHeader {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 12px;
-}
-
-.importFormHeader strong {
-  font-size: 1rem;
-}
-
-.importFormHeader span {
-  color: var(--text-mute);
-  font-size: 0.88rem;
-}
-
-.importFieldList {
-  display: grid;
-  gap: 10px;
-}
-
-.importFieldRow {
-  display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr) minmax(190px, 1fr);
-  gap: 12px;
-  align-items: end;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.importFieldSource {
-  min-width: 0;
-}
-
-.importFieldSource strong {
-  display: block;
-  overflow: hidden;
-  color: var(--text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.importFieldSource span {
-  display: block;
-  margin-top: 4px;
-  overflow: hidden;
-  color: var(--text-mute);
-  font-size: 0.82rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.importFieldRow label {
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-}
-
-.importFieldRow label > span {
-  color: var(--text-mute);
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.importFieldRow select,
-.importFieldRow input {
-  width: 100%;
-  min-height: 38px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
-
-.importFieldRow input {
-  padding: 0 11px;
-}
-
-.importFieldRow select {
-  padding: 0 10px;
-}
-
-.importFieldRow input:disabled {
-  background: var(--surface-2);
-  color: var(--text-mute);
-}
-
-.importReviewFooter {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 18px 26px 24px;
-  border-top: 1px solid var(--border);
-}
-
-.importFieldCustomRoute {
-  min-width: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.importFieldRow select:focus,
-.importFieldRow input:focus {
-  border-color: var(--accent);
-  outline: none;
-  box-shadow: var(--ristak-focus-ring);
-}
-
 @media (max-width: 1120px) {
   .importedEditorPanel {
     grid-template-columns: 1fr;
@@ -4476,32 +4242,6 @@
     grid-template-columns: 1fr 1fr;
   }
 
-  .importReviewOverlay {
-    padding: 0;
-  }
-
-  .importReviewDialog {
-    width: 100%;
-    height: 100dvh;
-    max-height: none;
-    border-radius: 0;
-  }
-
-  .importReviewHeader,
-  .importReviewForms,
-  .importReviewFooter {
-    padding-left: 18px;
-    padding-right: 18px;
-  }
-
-  .importFieldRow {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
-  .importReviewFooter {
-    flex-direction: column-reverse;
-  }
 }
 
 .container {

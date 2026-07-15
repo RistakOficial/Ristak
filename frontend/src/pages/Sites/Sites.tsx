@@ -375,11 +375,6 @@ interface LeadRow extends SiteSubmission {
   siteName: string
 }
 
-interface ImportReviewState {
-  site: PublicSite
-  importData: ImportedSiteImport
-}
-
 type SitesAICreationModalState = {
   siteKind: SitesAICreationKind
   editSite?: PublicSite | null
@@ -1883,14 +1878,22 @@ type ImportedNativeElementSaveRequest = {
   slot: ImportedNativeElementSlot
   options: Required<ImportedNativeElementSaveOptions>
 }
-type ImportedCodeSaveOptions = {
-  skipNativeQueueWait?: boolean
-}
 type ImportedNativeElementFlushOptions = {
   allowDuringGlobalSave?: boolean
   htmlAlreadySaved?: boolean
 }
 type ImportedNativeElementSaveFlusher = (options?: ImportedNativeElementFlushOptions) => Promise<boolean>
+type ImportedEditorPreflightResult = {
+  valid: boolean
+  title?: string
+  message?: string
+}
+type ImportedEditorPreflight = () => ImportedEditorPreflightResult
+type ImportedEditorSaveQueueKind = 'native' | 'mapping'
+type ImportedEditorSaveQueueEntry = {
+  kind: ImportedEditorSaveQueueKind
+  queue: Promise<boolean>
+}
 
 const normalizeImportedNativeElementSaveOptions = (
   options: ImportedNativeElementSaveOptions = {}
@@ -2415,7 +2418,9 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Devuelve siempre el documento o los documentos HTML completos. Los cambios posteriores se hacen reemplazando el código completo, manualmente o con IA.
 - Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
 - Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
-- Formularios HTML propios: usa <form data-rstk-form-id="lead-form"> y campos con name, id, data-rstk-edit-type="form_field", data-rstk-label y placeholder.
+- Formularios HTML propios: cada conjunto vive en un <form data-rstk-form-id="contacto-lead" data-rstk-label="Formulario de contacto"> real. data-rstk-form-id debe ser semántico, estable y único en TODO el sitio, incluso si hay varias páginas o varios formularios.
+- Cada campo lógico debe declarar data-rstk-field-id estable y único dentro de su formulario, además de name e id. Ejemplo: <input data-rstk-field-id="correo-contacto" id="correo" name="email" type="email">. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas sus opciones comparten data-rstk-field-id y name.
+- Cambiar copy, clases, estilos, orden o name/id no cambia data-rstk-form-id ni data-rstk-field-id. Cambiar uno de esos IDs crea una asociación nueva; conservarlo recupera el mapeo anterior aunque el elemento haya desaparecido temporalmente.
 - Orden de páginas: si entregas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.
 - Elementos nativos Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment|video" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario, pago o video real desde el editor.
 - Solo se aceptan estos elementos nativos: formularios, calendarios, pagos y videos. No uses data-rstk-native-element para otros widgets.
@@ -7498,28 +7503,11 @@ const hasImportedFormSubmitSurface = (importData?: ImportedSiteImport | null) =>
   if (!importData) return false
   if (Array.isArray(importData.detectedForms) && importData.detectedForms.length > 0) return true
   return Array.isArray(importData.formMappings) && importData.formMappings.some(mapping => (
-    Array.isArray(mapping.fields) && mapping.fields.some(field => field.destinationType !== 'ignored' && field.ignored !== true)
+    mapping.present !== false &&
+    Array.isArray(mapping.fields) &&
+    mapping.fields.some(field => field.present !== false && field.destinationType !== 'ignored' && field.ignored !== true)
   ))
 }
-
-const hasImportedMappingFields = (mappings?: ImportedSiteFormMapping[] | null) => (
-  Array.isArray(mappings) && mappings.some(mapping => (
-    Array.isArray(mapping.fields) && mapping.fields.length > 0
-  ))
-)
-
-const hasImportedDataRouteFields = (importData?: ImportedSiteImport | null) => (
-  Boolean(importData) && hasImportedMappingFields(importData?.formMappings)
-)
-
-const buildImportReviewState = (
-  site: PublicSite,
-  importData?: ImportedSiteImport | null
-): ImportReviewState | null => (
-  importData && hasImportedDataRouteFields(importData)
-    ? { site, importData }
-    : null
-)
 
 const hasFormSubmitMetaSurface = (
   site?: PublicSite | null,
@@ -8871,14 +8859,11 @@ export const Sites: React.FC = () => {
   const [librarySettingsSeoOpen, setLibrarySettingsSeoOpen] = useState(false)
   const [librarySettingsHeaderOpen, setLibrarySettingsHeaderOpen] = useState(false)
   const [pendingImportSiteType, setPendingImportSiteType] = useState<SiteType>('landing_page')
-  const [importReview, setImportReview] = useState<ImportReviewState | null>(null)
   const [selectedImportData, setSelectedImportData] = useState<ImportedSiteImport | null>(null)
   const [importedCodeDrafts, setImportedCodeDrafts] = useState<Record<string, string>>({})
   const [aiCreationModal, setAiCreationModal] = useState<SitesAICreationModalState>(null)
   const [aiEditorGeneration, setAiEditorGeneration] = useState<AIEditorGenerationState>(null)
   const [importedPreviewContexts, setImportedPreviewContexts] = useState<Record<string, SitesAIPreviewVisualContext>>({})
-  const [loadingImportData, setLoadingImportData] = useState(false)
-  const [savingImportMapping, setSavingImportMapping] = useState(false)
   const [editorHistoryState, setEditorHistoryState] = useState({ undo: 0, redo: 0, busy: false })
   const selectedSiteRef = useRef<PublicSite | null>(null)
   const siteDetailRequestsRef = useRef(new Map<string, Promise<PublicSite>>())
@@ -8930,15 +8915,26 @@ export const Sites: React.FC = () => {
   const pendingEmbeddedFormDeletedBlockIdsRef = useRef<Map<string, Set<string>>>(new Map())
   const savingPendingEditorRef = useRef(false)
   const editorSaveQueueTailRef = useRef<Promise<boolean>>(Promise.resolve(true))
-  const importedNativeSaveQueuesRef = useRef<Record<string, Promise<boolean>>>({})
+  const importedCodePersistenceQueueTailRef = useRef<Promise<boolean>>(Promise.resolve(true))
+  const importedEditorSaveQueuesRef = useRef<Record<string, ImportedEditorSaveQueueEntry[]>>({})
   const importedNativeSaveFlushersRef = useRef<Record<string, ImportedNativeElementSaveFlusher>>({})
+  const importedEditorPreflightsRef = useRef<Record<string, ImportedEditorPreflight>>({})
+  const pendingImportedNativeDraftSiteIdsRef = useRef<Set<string>>(new Set())
 
-  const registerImportedNativeSaveQueue = useCallback((siteId: string, queue: Promise<boolean>) => {
-    importedNativeSaveQueuesRef.current[siteId] = queue
+  const registerImportedNativeSaveQueue = useCallback((
+    siteId: string,
+    queue: Promise<boolean>,
+    kind: ImportedEditorSaveQueueKind = 'native'
+  ) => {
+    const entry: ImportedEditorSaveQueueEntry = { kind, queue }
+    importedEditorSaveQueuesRef.current[siteId] = [
+      ...(importedEditorSaveQueuesRef.current[siteId] || []),
+      entry
+    ]
     const clearQueue = () => {
-      if (importedNativeSaveQueuesRef.current[siteId] === queue) {
-        delete importedNativeSaveQueuesRef.current[siteId]
-      }
+      const remaining = (importedEditorSaveQueuesRef.current[siteId] || []).filter(candidate => candidate !== entry)
+      if (remaining.length) importedEditorSaveQueuesRef.current[siteId] = remaining
+      else delete importedEditorSaveQueuesRef.current[siteId]
     }
     void queue.then(clearQueue, clearQueue)
   }, [])
@@ -8948,6 +8944,18 @@ export const Sites: React.FC = () => {
   const registerImportedNativeSaveFlusher = useCallback((siteId: string, flusher: ImportedNativeElementSaveFlusher | null) => {
     if (flusher) importedNativeSaveFlushersRef.current[siteId] = flusher
     else delete importedNativeSaveFlushersRef.current[siteId]
+  }, [])
+
+  const registerImportedEditorPreflight = useCallback((siteId: string, preflight: ImportedEditorPreflight | null) => {
+    if (preflight) importedEditorPreflightsRef.current[siteId] = preflight
+    else delete importedEditorPreflightsRef.current[siteId]
+  }, [])
+
+  const handleImportedNativeDraftDirtyChange = useCallback((siteId: string, dirty: boolean) => {
+    if (dirty) pendingImportedNativeDraftSiteIdsRef.current.add(siteId)
+    else pendingImportedNativeDraftSiteIdsRef.current.delete(siteId)
+    if (selectedSiteRef.current?.id !== siteId) return
+    setHasUnsavedChanges(hasPendingEditorSaveWork(siteId))
   }, [])
 
   function syncEditorHistoryState() {
@@ -9204,6 +9212,7 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     setImportedCodeDrafts({})
     pendingImportedCodeDraftsRef.current.clear()
+    pendingImportedNativeDraftSiteIdsRef.current.clear()
   }, [selectedSite?.id])
 
   useEffect(() => {
@@ -9225,20 +9234,15 @@ export const Sites: React.FC = () => {
 
     if (!site || !isImportedHtmlSite(site)) {
       setSelectedImportData(null)
-      setLoadingImportData(false)
       return
     }
 
-    setLoadingImportData(true)
     sitesService.getImportMapping(site.id)
       .then((importData) => {
         if (!cancelled) setSelectedImportData(importData)
       })
       .catch(() => {
         if (!cancelled) setSelectedImportData(null)
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingImportData(false)
       })
 
     return () => {
@@ -9837,7 +9841,6 @@ export const Sites: React.FC = () => {
     silent?: boolean
     statusOverride?: PublicSite['status']
     forceSite?: boolean
-    skipNativeQueueWait?: boolean
   }
 
   function resetPendingEditorSaveQueue() {
@@ -9847,8 +9850,20 @@ export const Sites: React.FC = () => {
     pendingBlockSaveIdsRef.current.clear()
     pendingBlockOrderScopesRef.current.clear()
     pendingImportedCodeDraftsRef.current.clear()
+    pendingImportedNativeDraftSiteIdsRef.current.clear()
     pendingEmbeddedFormSourceDraftsRef.current.clear()
     pendingEmbeddedFormDeletedBlockIdsRef.current.clear()
+  }
+
+  function hasPendingEditorSaveWork(siteId = selectedSiteRef.current?.id || '') {
+    return pendingSiteSaveRef.current ||
+      pendingCreatedBlockIdsRef.current.size > 0 ||
+      pendingDeletedBlockIdsRef.current.size > 0 ||
+      pendingBlockSaveIdsRef.current.size > 0 ||
+      pendingBlockOrderScopesRef.current.size > 0 ||
+      pendingImportedCodeDraftsRef.current.size > 0 ||
+      pendingEmbeddedFormSourceDraftsRef.current.size > 0 ||
+      Boolean(siteId && pendingImportedNativeDraftSiteIdsRef.current.has(siteId))
   }
 
   function clearEditorDirtyState() {
@@ -10242,18 +10257,95 @@ export const Sites: React.FC = () => {
     return nextSite
   }
 
+  function persistPendingImportedCodeDrafts(
+    siteId: string,
+    requiredPath = '',
+    options: { requireAll?: boolean; notifyPreflight?: boolean } = {}
+  ) {
+    const normalizedRequiredPath = getImportedCodeFilePathFromKey(getImportedCodeFileKey(requiredPath))
+    const queuedSave = importedCodePersistenceQueueTailRef.current
+      .catch(() => false)
+      .then(async () => {
+        const siteToSave = selectedSiteRef.current
+        if (!siteToSave || siteToSave.id !== siteId) return false
+        if (!validateImportedEditorPreflight(siteId, options.notifyPreflight !== false)) return false
+
+        const pendingEntries = [...pendingImportedCodeDraftsRef.current.entries()]
+        const snapshot = options.requireAll
+          ? pendingEntries
+          : pendingEntries.filter(([path]) => path === normalizedRequiredPath)
+        if (!snapshot.length) {
+          return options.requireAll
+            ? pendingImportedCodeDraftsRef.current.size === 0
+            : !pendingImportedCodeDraftsRef.current.has(normalizedRequiredPath)
+        }
+
+        let result: ImportedSiteCreateResult
+        try {
+          result = await sitesService.updateImportedCodeFiles(siteId, {
+            files: snapshot.map(([path, content]) => ({ path, content }))
+          })
+        } catch (error) {
+          if (selectedSiteRef.current?.id === siteId) {
+            showToast('error', 'No se guardó el HTML', error instanceof Error ? error.message : 'Revisa el código e intenta otra vez.')
+          }
+          return false
+        }
+
+        if (selectedSiteRef.current?.id !== siteId) return false
+
+        for (const [path, content] of snapshot) {
+          if (pendingImportedCodeDraftsRef.current.get(path) === content) {
+            pendingImportedCodeDraftsRef.current.delete(path)
+          }
+        }
+        setImportedCodeDrafts(current => {
+          if (selectedSiteRef.current?.id !== siteId) return current
+          const next = { ...current }
+          for (const [path, content] of snapshot) {
+            const key = getImportedCodeFileKey(path)
+            if (next[key] === content) delete next[key]
+          }
+          return next
+        })
+        setSelectedImportData(result.import)
+        if (!syncImportedMutationSite(result.site, snapshot.map(([path]) => path))) return false
+        setHasUnsavedChanges(hasPendingEditorSaveWork(siteId))
+
+        return options.requireAll
+          ? pendingImportedCodeDraftsRef.current.size === 0
+          : !pendingImportedCodeDraftsRef.current.has(normalizedRequiredPath)
+      })
+    importedCodePersistenceQueueTailRef.current = queuedSave
+    return queuedSave
+  }
+
   async function performPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
     let siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave) return false
+    if (!validateImportedEditorPreflight(siteToSave.id, true)) return false
     savingPendingEditorRef.current = true
     setSaving(true)
 
     try {
-      const activeNativeQueue = importedNativeSaveQueuesRef.current[siteToSave.id]
-      // A native slot may call this flush to persist newly detected HTML while it
-      // is already inside the registered queue. That origin must not await itself.
-      if (activeNativeQueue && !options.skipNativeQueueWait) {
-        await activeNativeQueue.catch(() => false)
+      const activeSaveQueues = [...(importedEditorSaveQueuesRef.current[siteToSave.id] || [])]
+      let activeNativeQueuesSaved = true
+      // A detected element or field mapping may call this flush to persist newly
+      // detected HTML while it is already inside a registered queue. That origin
+      // must not await itself.
+      if (activeSaveQueues.length) {
+        const queueResults = await Promise.all(activeSaveQueues.map(async entry => ({
+          kind: entry.kind,
+          saved: Boolean(await entry.queue.catch(() => false))
+        })))
+        const failedMapping = queueResults.some(result => result.kind === 'mapping' && !result.saved)
+        activeNativeQueuesSaved = queueResults
+          .filter(result => result.kind === 'native')
+          .every(result => result.saved)
+        if (failedMapping) {
+          showToast('error', 'No se guardó el mapeo', 'No se guardará ni publicará el sitio hasta que la asociación pendiente termine correctamente.')
+          return false
+        }
         const currentSite = selectedSiteRef.current
         if (!currentSite || currentSite.id !== siteToSave.id) return false
         siteToSave = currentSite
@@ -10264,34 +10356,31 @@ export const Sites: React.FC = () => {
         return false
       }
 
-      const importedCodeFilesToSaveFirst = [...pendingImportedCodeDraftsRef.current.entries()]
-        .map(([path, content]) => ({ path, content }))
-      if (importedCodeFilesToSaveFirst.length) {
-        const result = await sitesService.updateImportedCodeFiles(siteToSave.id, {
-          files: importedCodeFilesToSaveFirst
-        })
-        siteToSave = normalizeSiteForEditor(result.site)
-        pendingImportedCodeDraftsRef.current.clear()
-        setSelectedImportData(result.import)
-        setImportedCodeDrafts({})
-        syncSelectedSite(siteToSave)
-      }
+      const importedCodeSaved = await persistPendingImportedCodeDrafts(siteToSave.id, '', {
+        requireAll: true,
+        notifyPreflight: false
+      })
+      if (!importedCodeSaved) return false
+      const siteAfterCodeSave = selectedSiteRef.current
+      if (!siteAfterCodeSave || siteAfterCodeSave.id !== siteToSave.id) return false
+      siteToSave = siteAfterCodeSave
 
-      if (!options.skipNativeQueueWait) {
-        const flushNativeSaves = importedNativeSaveFlushersRef.current[siteToSave.id]
-        if (flushNativeSaves) {
-          const nativeSaved = await flushNativeSaves({
-            allowDuringGlobalSave: true,
-            htmlAlreadySaved: true
-          })
-          if (!nativeSaved) {
-            showToast('warning', 'Falta guardar contenido', 'Revisa la configuración del elemento detectado antes de guardar o publicar.')
-            return false
-          }
-          const currentSite = selectedSiteRef.current
-          if (!currentSite || currentSite.id !== siteToSave.id) return false
-          siteToSave = currentSite
+      const flushNativeSaves = importedNativeSaveFlushersRef.current[siteToSave.id]
+      if (flushNativeSaves) {
+        const nativeSaved = await flushNativeSaves({
+          allowDuringGlobalSave: true,
+          htmlAlreadySaved: true
+        })
+        if (!nativeSaved) {
+          showToast('warning', 'Falta guardar contenido', 'Revisa la configuración del elemento detectado antes de guardar o publicar.')
+          return false
         }
+        const currentSite = selectedSiteRef.current
+        if (!currentSite || currentSite.id !== siteToSave.id) return false
+        siteToSave = currentSite
+      } else if (!activeNativeQueuesSaved) {
+        showToast('warning', 'Falta guardar contenido', 'Un elemento detectado no terminó de guardarse. Inténtalo otra vez antes de publicar.')
+        return false
       }
 
       try {
@@ -10314,11 +10403,10 @@ export const Sites: React.FC = () => {
         !pendingDeletedBlockIdsRef.current.has(blockId)
       )
       const orderScopeKeys = [...pendingBlockOrderScopesRef.current]
-      const importedCodeFilesToSave = [...pendingImportedCodeDraftsRef.current.entries()].map(([path, content]) => ({ path, content }))
       const embeddedFormSourceDraftsToSave = pendingEmbeddedFormSourceDraftsRef.current.size
       const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
 
-      if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length && !importedCodeFilesToSave.length && !embeddedFormSourceDraftsToSave) {
+      if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length && !embeddedFormSourceDraftsToSave) {
         clearEditorDirtyState()
         return true
       }
@@ -10361,18 +10449,38 @@ export const Sites: React.FC = () => {
         site = await sitesService.reorderBlocks(siteToSave.id, orderedIds, pageId)
       }
 
-      if (importedCodeFilesToSave.length) {
-        const result = await sitesService.updateImportedCodeFiles(siteToSave.id, {
-          files: importedCodeFilesToSave
-        })
-        site = normalizeSiteForEditor(result.site)
-        setSelectedImportData(result.import)
-        setImportedCodeDrafts({})
-      }
-
       if (embeddedFormSourceDraftsToSave) {
         await persistEmbeddedFormSourceDrafts()
       }
+
+      syncSelectedSite(site)
+
+      // Drain anything that appeared while the global save was awaiting network
+      // work. The snapshot-aware queue leaves newer drafts intact, so never clear
+      // the dirty refs until both HTML and native drafts are genuinely empty.
+      const finalCodeSaved = await persistPendingImportedCodeDrafts(siteToSave.id, '', {
+        requireAll: true,
+        notifyPreflight: false
+      })
+      if (!finalCodeSaved) return false
+      if (flushNativeSaves) {
+        const finalNativeSaved = await flushNativeSaves({
+          allowDuringGlobalSave: true,
+          htmlAlreadySaved: true
+        })
+        if (!finalNativeSaved) return false
+      }
+      if (
+        pendingImportedCodeDraftsRef.current.size > 0 ||
+        pendingImportedNativeDraftSiteIdsRef.current.has(siteToSave.id)
+      ) {
+        showToast('warning', 'Quedaron cambios pendientes', 'Se detectó una edición nueva mientras se guardaba. Intenta guardar otra vez.')
+        return false
+      }
+
+      const finalCurrentSite = selectedSiteRef.current
+      if (!finalCurrentSite || finalCurrentSite.id !== siteToSave.id) return false
+      site = finalCurrentSite
 
       syncSelectedSite(site)
       clearEditorDirtyState()
@@ -10502,7 +10610,7 @@ export const Sites: React.FC = () => {
 
   useEffect(() => {
     const handleAIDraftCreated = (event: Event) => {
-      const detail = (event as CustomEvent<PublicSite | { site?: PublicSite; import?: ImportedSiteImport; reviewMapping?: boolean }>).detail
+      const detail = (event as CustomEvent<PublicSite | { site?: PublicSite; import?: ImportedSiteImport }>).detail
       const wrappedDetail = Boolean(detail && typeof detail === 'object' && 'site' in detail)
       const rawSite = wrappedDetail ? (detail as { site?: PublicSite }).site : detail as PublicSite | undefined
       if (!rawSite?.id) return
@@ -10525,9 +10633,6 @@ export const Sites: React.FC = () => {
       }))
       if (importData?.siteId) {
         setSelectedImportData(importData)
-        if (wrappedDetail && (detail as { reviewMapping?: boolean }).reviewMapping) {
-          setImportReview(buildImportReviewState(site, importData))
-        }
       }
     }
 
@@ -11688,6 +11793,60 @@ export const Sites: React.FC = () => {
     upsertSiteInEditorList(nextSite)
   }
 
+  function validateImportedEditorPreflight(siteId: string, notify = false) {
+    const result = importedEditorPreflightsRef.current[siteId]?.() || { valid: true }
+    if (!result.valid && notify) {
+      showToast(
+        'error',
+        result.title || 'Corrige los IDs del HTML',
+        result.message || 'Hay elementos ambiguos en el código. Corrígelos antes de guardar o publicar.'
+      )
+    }
+    return result.valid
+  }
+
+  function syncImportedMutationSite(site: PublicSite, savedPaths: string[] = []) {
+    const normalizedSite = normalizeSiteForEditor(site)
+    const currentSite = selectedSiteRef.current
+    if (!currentSite || currentSite.id !== normalizedSite.id) return null
+
+    const preserveLocalSiteChanges = pendingSiteSaveRef.current
+    const currentBlocks = Array.isArray(currentSite.blocks) ? currentSite.blocks : normalizedSite.blocks
+    let nextSite: PublicSite = preserveLocalSiteChanges
+      ? {
+        ...normalizedSite,
+        ...currentSite,
+        theme: {
+          ...(normalizedSite.theme || {}),
+          ...(currentSite.theme || {})
+        },
+        blocks: currentBlocks,
+        updatedAt: normalizedSite.updatedAt
+      }
+      : {
+        ...normalizedSite,
+        blocks: currentBlocks
+      }
+
+    if (savedPaths.some(path => getImportedCodeFilePathFromKey(getImportedCodeFileKey(path)) === IMPORTED_POPUP_CODE_PATH)) {
+      const serverTheme = normalizedSite.theme || {}
+      nextSite = {
+        ...nextSite,
+        theme: {
+          ...(nextSite.theme || {}),
+          importedPopupHtml: serverTheme.importedPopupHtml,
+          popupEnabled: serverTheme.popupEnabled
+        }
+      }
+    }
+
+    selectedSiteRef.current = nextSite
+    setSelectedSite(nextSite)
+    setSelectedBlockId(current => nextSite.blocks?.some(block => block.id === current) || isEditorSurfaceSelection(current) ? current : '')
+    upsertSiteInEditorList(nextSite)
+    return nextSite
+  }
+
   const syncLibrarySettingsSite = (site: PublicSite) => {
     const normalizedSite = normalizeSiteForEditor(site)
     librarySettingsSiteRef.current = normalizedSite
@@ -12724,7 +12883,6 @@ export const Sites: React.FC = () => {
     completedAIGenerationRedirectRef.current = null
     setCreating(true)
     setAiCreationModal(null)
-    setImportReview(null)
     setSelectedImportData(null)
     setSelectedBlockId('')
     setActivePageId(pendingPageId)
@@ -12782,8 +12940,6 @@ export const Sites: React.FC = () => {
       setCreateFlow('closed')
       clearEditorDirtyState()
       setSelectedImportData(result.import)
-      const importReviewState = buildImportReviewState(normalizedSite, result.import)
-      setImportReview(importReviewState)
       setAiCreationModal(null)
       pendingAIGenerationSiteRef.current = null
       setAiEditorGeneration(null)
@@ -12791,9 +12947,7 @@ export const Sites: React.FC = () => {
       showToast(
         'success',
         editSite ? 'Página actualizada con IA' : 'Página creada con IA',
-        importReviewState
-          ? 'Ristak ya revisó el HTML. Confirma la ruta de datos antes de publicar.'
-          : 'Ristak importó el HTML. No hay campos propios de formulario para enrutar.'
+        'Ristak detectó el contenido y los campos. Puedes asociarlos directamente desde el panel derecho.'
       )
       return null
     } catch (error) {
@@ -12838,7 +12992,6 @@ export const Sites: React.FC = () => {
       setCreateFlow('closed')
       clearEditorDirtyState()
       setSelectedImportData(result.import)
-      setImportReview(buildImportReviewState(site, result.import))
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
@@ -12885,8 +13038,6 @@ export const Sites: React.FC = () => {
       setCreateFlow('closed')
       clearEditorDirtyState()
       setSelectedImportData(result.import)
-      const importReviewState = buildImportReviewState(site, result.import)
-      setImportReview(importReviewState)
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
@@ -12896,9 +13047,7 @@ export const Sites: React.FC = () => {
       showToast(
         'success',
         'HTML importado',
-        importReviewState
-          ? 'Revisa los campos detectados antes de publicar.'
-          : 'No hay campos propios de formulario para enrutar; si usas elementos nativos, configúralos desde el inspector.'
+        'Ristak detectó el contenido y los campos. Puedes asociarlos directamente desde el panel derecho.'
       )
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo importar el HTML')
@@ -12907,51 +13056,16 @@ export const Sites: React.FC = () => {
     }
   }
 
-  const handleConfirmImportMapping = async (formMappings: ImportedSiteFormMapping[]) => {
-    if (!importReview) return
-    setSavingImportMapping(true)
-    try {
-      const importData = await sitesService.updateImportMapping(importReview.site.id, formMappings)
-      setSelectedImportData(importData)
-      const refreshedSite = await loadSiteDetail(importReview.site.id)
-      upsertSiteInEditorList(refreshedSite)
-      setImportReview(null)
-      showToast('success', 'Ruta de datos guardada', 'Ristak ya sabe donde guardar cada dato de este HTML.')
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar el mapeo')
-    } finally {
-      setSavingImportMapping(false)
-    }
-  }
-
-  const handleOpenImportMappingEditor = async (site: PublicSite) => {
-    if (!isImportedHtmlSite(site)) return
-
-    setLoadingImportData(true)
-    try {
-      const importData = await sitesService.getImportMapping(site.id)
-      setSelectedImportData(importData)
-      const importReviewState = buildImportReviewState(site, importData)
-      setImportReview(importReviewState)
-      if (!importReviewState) {
-        showToast('info', 'Sin campos para enrutar', 'Este HTML no tiene campos propios de formulario. Si usa formulario nativo, configúralo desde el inspector.')
-      }
-    } catch (error) {
-      showToast('error', 'No se pudo abrir la ruta de datos', error instanceof Error ? error.message : 'Inténtalo otra vez.')
-    } finally {
-      setLoadingImportData(false)
-    }
-  }
-
   const handleImportedContentUpdated = (result: ImportedSiteCreateResult) => {
-    const normalizedSite = normalizeSiteForEditor(result.site)
-    upsertSiteInEditorList(normalizedSite)
-    selectedSiteRef.current = normalizedSite
-    setSelectedSite(normalizedSite)
+    if (selectedSiteRef.current?.id !== result.site.id) return
+    if (!syncImportedMutationSite(result.site)) return
     setSelectedImportData(result.import)
-    setImportedCodeDrafts({})
-    pendingImportedCodeDraftsRef.current.clear()
   }
+
+  const handleImportedMappingUpdated = useCallback((siteId: string, importData: ImportedSiteImport) => {
+    if (selectedSiteRef.current?.id !== siteId || importData.siteId !== siteId) return
+    setSelectedImportData(importData)
+  }, [])
 
   const handleSaveSite = async (statusOverride?: PublicSite['status'], options: { silent?: boolean } = {}) => {
     const siteToSave = selectedSiteRef.current || selectedSite
@@ -12963,11 +13077,6 @@ export const Sites: React.FC = () => {
       forceSite: !options.silent || Boolean(statusOverride)
     })
   }
-
-  const handleSaveImportedCodeDrafts = (options: ImportedCodeSaveOptions = {}) => flushPendingEditorSaves({
-    silent: true,
-    skipNativeQueueWait: options.skipNativeQueueWait
-  })
 
   const handleOpenLiveEditorSite = () => {
     if (!editorSite || !isPublicSiteLive(editorSite, domainConfig)) return
@@ -12991,7 +13100,11 @@ export const Sites: React.FC = () => {
 
     writePreviewLoadingPage(previewWindow)
     try {
-      await flushPendingEditorSaves({ silent: true })
+      const saved = await flushPendingEditorSaves({ silent: true })
+      if (!saved) {
+        previewWindow.close()
+        return
+      }
       const previewSite = selectedSiteRef.current || editorSite
       const session = await sitesService.createPreviewSession(
         previewSite.id,
@@ -15379,22 +15492,22 @@ export const Sites: React.FC = () => {
                   codeEditorOpen={true}
                   codeDrafts={importedCodeDrafts}
                   popupCodeActive={popupSurfaceSelected}
-                  loadingImportData={loadingImportData}
                   onSelectPage={selectEditorPage}
                   onCodeDraftChange={handleImportedCodeDraftChange}
                   onPreview={handlePreviewSite}
                   onPublish={() => handleSaveSite('published')}
-                  onEditFields={() => void handleOpenImportMappingEditor(editorSite)}
                   onPreviewContextChange={handleImportedPreviewContextChange}
                   onContentUpdated={handleImportedContentUpdated}
-                  onImportMappingUpdated={setSelectedImportData}
+                  onImportMappingUpdated={handleImportedMappingUpdated}
                   onUpdateRoute={handleUpdateLibraryRoute}
                   onPatchSite={updateSelectedSite}
                   onSyncSavedSite={syncSavedSiteBlocks}
                   onSaveSite={() => handleSaveSite(undefined, { silent: true })}
-                  onSaveCodeDrafts={handleSaveImportedCodeDrafts}
+                  onEnsureCodeSaved={(filePath) => persistPendingImportedCodeDrafts(editorSite.id, filePath)}
                   onNativeSaveQueue={registerImportedNativeSaveQueue}
                   onNativeSaveFlusher={registerImportedNativeSaveFlusher}
+                  onEditorPreflight={registerImportedEditorPreflight}
+                  onNativeDraftDirtyChange={handleImportedNativeDraftDirtyChange}
                   onRequestForms={requestFormsCatalog}
                   onRequestCalendars={requestCalendarsCatalog}
                   isGlobalSaveActive={isGlobalEditorSaveActive}
@@ -15779,15 +15892,6 @@ export const Sites: React.FC = () => {
             <span className="rstkPaletteFloatingPreviewIcon">{blockIcons[palettePreviewBlock.blockType]}</span>
             <span>{blockLabels[palettePreviewBlock.blockType] || palettePreviewBlock.label}</span>
           </div>
-        )}
-        {importReview && (
-          <ImportedHtmlReviewModal
-            review={importReview}
-            saving={savingImportMapping}
-            customFields={customFields}
-            onClose={() => setImportReview(null)}
-            onConfirm={handleConfirmImportMapping}
-          />
         )}
       </div>
     </div>
@@ -17225,32 +17329,6 @@ type ImportedFormFieldEditorState = {
   placeholder: string
   required: boolean
   options: ImportedFormFieldOption[]
-}
-
-type ImportedSelectedFieldRouteContext = {
-  editId: string
-  label: string
-  placeholder: string
-  fieldName: string
-  fieldHtmlId: string
-  inputType: string
-  tagName: string
-}
-
-type ImportedSelectedFieldRouteMatch = {
-  formIndex: number
-  fieldIndex: number
-  field: ImportedSiteFieldMapping
-}
-
-type ImportedSelectedFieldRouteDraft = {
-  destinationType: ImportedSiteFieldMapping['destinationType']
-  destinationKey: string
-  customFieldDefinitionId?: string
-  customFieldKey?: string
-  customFieldLabel?: string
-  customFieldDataType?: string
-  customFieldSyncTarget?: string
 }
 
 const importedEditableSelector = [
@@ -18746,7 +18824,7 @@ const findImportedVideoActionTargetElement = (doc: Document, targetId: string): 
 
 const getImportedChoiceLabel = (input: HTMLInputElement, doc: Document) => {
   const id = input.getAttribute('id') || ''
-  const explicitLabel = input.getAttribute('aria-label') || input.getAttribute('data-rstk-label') || input.getAttribute('data-ristak-label')
+  const explicitLabel = input.getAttribute('aria-label') || input.getAttribute('data-rstk-label') || input.getAttribute('data-ristak-label') || input.getAttribute('data-ristack-label')
   if (explicitLabel) return explicitLabel.trim()
   const wrappingLabel = input.closest('label')
   if (wrappingLabel?.textContent?.trim()) return wrappingLabel.textContent.replace(/\s+/g, ' ').trim()
@@ -18755,6 +18833,45 @@ const getImportedChoiceLabel = (input: HTMLInputElement, doc: Document) => {
     if (label?.textContent?.trim()) return label.textContent.replace(/\s+/g, ' ').trim()
   }
   return input.getAttribute('value') || input.getAttribute('name') || 'Opción'
+}
+
+const getImportedChoiceGroupLabel = (input: HTMLInputElement, doc: Document) => {
+  const roleGroup = input.closest<HTMLElement>('[role="radiogroup"], [role="group"]')
+  const fieldset = input.closest<HTMLFieldSetElement>('fieldset')
+  const containers = [roleGroup, fieldset].filter((container, index, all): container is HTMLElement => (
+    Boolean(container) && all.indexOf(container) === index
+  ))
+
+  for (const container of containers) {
+    const explicitLabel = String(
+      container.getAttribute('data-rstk-label') ||
+      container.getAttribute('data-ristak-label') ||
+      container.getAttribute('data-ristack-label') ||
+      ''
+    ).trim()
+    if (explicitLabel) return explicitLabel
+
+    const labelledBy = String(container.getAttribute('aria-labelledby') || '').trim()
+    if (labelledBy) {
+      const referencedText = labelledBy
+        .split(/\s+/)
+        .map(id => doc.getElementById(id)?.textContent?.replace(/\s+/g, ' ').trim() || '')
+        .filter(Boolean)
+        .join(' ')
+      if (referencedText) return referencedText
+    }
+
+    const ariaLabel = String(container.getAttribute('aria-label') || '').trim()
+    if (ariaLabel) return ariaLabel
+
+    if (container.tagName.toLowerCase() === 'fieldset') {
+      const legend = Array.from(container.children).find(child => child.tagName.toLowerCase() === 'legend')
+      const legendText = legend?.textContent?.replace(/\s+/g, ' ').trim() || ''
+      if (legendText) return legendText
+    }
+  }
+
+  return ''
 }
 
 const getImportedChoiceInputFromTarget = (target: Element, doc: Document) => {
@@ -19544,6 +19661,9 @@ const applyImportedCodeElementPatch = (
 // --- Side-panel summary of the form fields detected on the current page ---
 interface ImportedPanelFormField {
   key: string
+  formId: string
+  fieldId: string
+  stable: boolean
   kind: 'choice' | 'field'
   label: string
   typeLabel: string
@@ -19552,6 +19672,14 @@ interface ImportedPanelFormField {
   fieldName: string
   inputType: string
   tagName: 'input' | 'textarea' | 'select'
+}
+
+interface ImportedPanelFormGroup {
+  key: string
+  formId: string
+  label: string
+  stable: boolean
+  fields: ImportedPanelFormField[]
 }
 
 const importedPanelFieldTypeLabels: Record<string, string> = {
@@ -19582,65 +19710,133 @@ const readImportedChoiceGroupHasDisqualify = (input: HTMLInputElement, doc: Docu
   return groupInputs.some(item => readImportedOptionActions(item).some(action => importedDisqualifyActions.has(action.action)))
 }
 
-const collectImportedPanelFormFields = (doc: Document): ImportedPanelFormField[] => {
-  const result: ImportedPanelFormField[] = []
-  const seenChoiceGroups = new Set<string>()
-  const elements = Array.from(doc.querySelectorAll<HTMLElement>('input, textarea, select'))
+const getImportedPanelStableFieldId = (element: Element) => String(
+  element.getAttribute('data-rstk-field-id') ||
+  element.getAttribute('data-ristak-field-id') ||
+  element.getAttribute('data-ristack-field-id') ||
+  element.getAttribute('name') ||
+  element.getAttribute('id') ||
+  element.getAttribute('data-rstk-field') ||
+  element.getAttribute('data-ristak-field') ||
+  element.getAttribute('data-ristack-field') ||
+  ''
+).trim()
 
-  for (const element of elements) {
-    const tagName = element.tagName.toLowerCase() as ImportedPanelFormField['tagName']
-    const inputType = tagName === 'input' ? (element.getAttribute('type') || 'text').toLowerCase() : tagName
-    if (['hidden', 'submit', 'button', 'reset', 'image', 'file'].includes(inputType)) continue
-    const fieldName = element.getAttribute('name') || element.getAttribute('id') || ''
+const collectImportedPanelFormGroups = (doc: Document): ImportedPanelFormGroup[] => {
+  const explicitForms = Array.from(doc.querySelectorAll<HTMLFormElement>('form'))
+  const roots: Array<{ element: ParentNode; formElement: HTMLFormElement; index: number }> = explicitForms
+    .map((element, index) => ({ element, formElement: element, index }))
 
-    if (['radio', 'checkbox'].includes(inputType)) {
-      const groupKey = `${inputType}:${fieldName}`
-      if (fieldName && seenChoiceGroups.has(groupKey)) continue
-      if (fieldName) seenChoiceGroups.add(groupKey)
-      const input = element as HTMLInputElement
+  return roots.map(({ element, formElement, index }) => {
+    const declaredFormId = String(
+      formElement?.getAttribute('data-rstk-form-id') ||
+      formElement?.getAttribute('data-ristak-form-id') ||
+      formElement?.getAttribute('data-ristack-form-id') ||
+      ''
+    ).trim()
+    const formId = declaredFormId || formElement?.id || formElement?.getAttribute('name') || `form_${index + 1}`
+    const label = String(
+      formElement?.getAttribute('data-rstk-label') ||
+      formElement?.getAttribute('data-ristak-label') ||
+      formElement?.getAttribute('data-ristack-label') ||
+      formElement?.getAttribute('aria-label') ||
+      ''
+    ).trim() || `Formulario ${index + 1}`
+    const result: ImportedPanelFormField[] = []
+    const seenChoiceGroups = new Set<string>()
+    const elements = Array.from(element.querySelectorAll<HTMLElement>('input, textarea, select'))
+
+    for (const fieldElement of elements) {
+      const tagName = fieldElement.tagName.toLowerCase() as ImportedPanelFormField['tagName']
+      const inputType = tagName === 'input' ? (fieldElement.getAttribute('type') || 'text').toLowerCase() : tagName
+      if (['hidden', 'submit', 'button', 'reset', 'image', 'file'].includes(inputType)) continue
+      const declaredFieldId = String(
+        fieldElement.getAttribute('data-rstk-field-id') ||
+        fieldElement.getAttribute('data-ristak-field-id') ||
+        fieldElement.getAttribute('data-ristack-field-id') ||
+        ''
+      ).trim()
+      const fieldId = getImportedPanelStableFieldId(fieldElement) || `field_${result.length + 1}`
+      const fieldName = fieldElement.getAttribute('name') || fieldElement.getAttribute('id') || fieldId
+
+      if (['radio', 'checkbox'].includes(inputType)) {
+        const groupKey = `${inputType}:${fieldId}`
+        if (seenChoiceGroups.has(groupKey)) continue
+        seenChoiceGroups.add(groupKey)
+        const input = fieldElement as HTMLInputElement
+        result.push({
+          key: `${formId}:${groupKey}`,
+          formId,
+          fieldId,
+          stable: Boolean(declaredFieldId),
+          kind: 'choice',
+          label: getImportedChoiceGroupLabel(input, doc) || fieldName || 'Opciones',
+          typeLabel: importedPanelFieldTypeLabels[inputType],
+          optionsCount: readImportedFormFieldOptions(input, doc).length,
+          hasDisqualify: readImportedChoiceGroupHasDisqualify(input, doc),
+          fieldName,
+          inputType,
+          tagName: 'input'
+        })
+        continue
+      }
+
+      const input = fieldElement as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      const fieldOptions = tagName === 'select' ? readImportedFormFieldOptions(input, doc) : []
       result.push({
-        key: `${groupKey}:${result.length}`,
-        kind: 'choice',
-        label: fieldName || getImportedChoiceLabel(input, doc) || 'Opciones',
-        typeLabel: importedPanelFieldTypeLabels[inputType],
-        optionsCount: readImportedFormFieldOptions(input, doc).length,
-        hasDisqualify: readImportedChoiceGroupHasDisqualify(input, doc),
+        key: `${formId}:${fieldId}`,
+        formId,
+        fieldId,
+        stable: Boolean(declaredFieldId),
+        kind: 'field',
+        label: getImportedFormFieldLabel(input, doc),
+        typeLabel: importedPanelFieldTypeLabels[inputType] || 'Campo',
+        optionsCount: fieldOptions.length,
+        hasDisqualify: fieldOptions.some(option => (option.actions || []).some(action => importedDisqualifyActions.has(action.action))),
         fieldName,
         inputType,
-        tagName: 'input'
+        tagName
       })
-      continue
     }
 
-    const fieldElement = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    const fieldOptions = tagName === 'select' ? readImportedFormFieldOptions(fieldElement, doc) : []
-    result.push({
-      key: `${tagName}:${fieldName}:${result.length}`,
-      kind: 'field',
-      label: getImportedFormFieldLabel(fieldElement, doc),
-      typeLabel: importedPanelFieldTypeLabels[inputType] || 'Campo',
-      optionsCount: fieldOptions.length,
-      hasDisqualify: fieldOptions.some(option => (option.actions || []).some(action => importedDisqualifyActions.has(action.action))),
-      fieldName,
-      inputType,
-      tagName
-    })
-  }
-
-  return result.slice(0, 40)
+    return {
+      key: formId,
+      formId,
+      label,
+      stable: Boolean(declaredFormId),
+      fields: result
+    }
+  }).filter(group => group.fields.length > 0)
 }
 
+const collectImportedPanelFormFields = (doc: Document): ImportedPanelFormField[] => (
+  collectImportedPanelFormGroups(doc).flatMap(group => group.fields)
+)
+
+const countImportedUngroupedFormFields = (doc: Document) => (
+  Array.from(doc.querySelectorAll<HTMLElement>('input, textarea, select')).filter(element => {
+    if (element.closest('form')) return false
+    const tagName = element.tagName.toLowerCase()
+    const type = tagName === 'input' ? (element.getAttribute('type') || 'text').toLowerCase() : tagName
+    return !['hidden', 'submit', 'button', 'reset', 'image', 'file'].includes(type)
+  }).length
+)
+
 const findImportedPanelFieldElement = (field: ImportedPanelFormField, doc: Document): HTMLElement | null => {
+  const safeFormId = escapeImportedSelectorValue(field.formId)
+  const formRoot = doc.querySelector<HTMLElement>(
+    `form[data-rstk-form-id="${safeFormId}"], form[data-ristak-form-id="${safeFormId}"], form[data-ristack-form-id="${safeFormId}"], form#${escapeImportedCssValue(field.formId)}`
+  ) || doc
   const safeName = escapeImportedSelectorValue(field.fieldName)
   if (field.kind === 'choice') {
     return field.fieldName
-      ? doc.querySelector<HTMLElement>(`input[type="${field.inputType}"][name="${safeName}"], input[type="${field.inputType}"][id="${safeName}"]`)
-      : doc.querySelector<HTMLElement>(`input[type="${field.inputType}"]`)
+      ? formRoot.querySelector<HTMLElement>(`input[type="${field.inputType}"][name="${safeName}"], input[type="${field.inputType}"][id="${safeName}"]`)
+      : formRoot.querySelector<HTMLElement>(`input[type="${field.inputType}"]`)
   }
   if (field.fieldName) {
-    return doc.querySelector<HTMLElement>(`${field.tagName}[name="${safeName}"], ${field.tagName}[id="${safeName}"]`)
+    return formRoot.querySelector<HTMLElement>(`${field.tagName}[name="${safeName}"], ${field.tagName}[id="${safeName}"]`)
   }
-  return doc.querySelector<HTMLElement>(field.tagName)
+  return formRoot.querySelector<HTMLElement>(field.tagName)
 }
 
 const importedAIRegionCandidateSelector = [
@@ -20669,22 +20865,22 @@ const ImportedHtmlEditorPanel: React.FC<{
   codeEditorOpen: boolean
   codeDrafts: Record<string, string>
   popupCodeActive: boolean
-  loadingImportData: boolean
   onSelectPage: (pageId: string) => void
   onCodeDraftChange: (filePath: string, content: string, originalContent: string) => void
   onPreview: () => void
   onPublish: () => void
-  onEditFields: () => void
   onPreviewContextChange: (siteId: string, context: SitesAIPreviewVisualContext) => void
   onContentUpdated: (result: ImportedSiteCreateResult) => void
-  onImportMappingUpdated: (importData: ImportedSiteImport) => void
+  onImportMappingUpdated: (siteId: string, importData: ImportedSiteImport) => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
   onPatchSite: (patch: Partial<PublicSite>) => void
   onSyncSavedSite: (site: PublicSite) => void
   onSaveSite: () => void | Promise<void>
-  onSaveCodeDrafts: (options?: ImportedCodeSaveOptions) => Promise<boolean>
-  onNativeSaveQueue: (siteId: string, queue: Promise<boolean>) => void
+  onEnsureCodeSaved: (filePath: string) => Promise<boolean>
+  onNativeSaveQueue: (siteId: string, queue: Promise<boolean>, kind?: ImportedEditorSaveQueueKind) => void
   onNativeSaveFlusher: (siteId: string, flusher: ImportedNativeElementSaveFlusher | null) => void
+  onEditorPreflight: (siteId: string, preflight: ImportedEditorPreflight | null) => void
+  onNativeDraftDirtyChange: (siteId: string, dirty: boolean) => void
   onRequestForms: () => void
   onRequestCalendars: () => void
   isGlobalSaveActive: () => boolean
@@ -20705,18 +20901,18 @@ const ImportedHtmlEditorPanel: React.FC<{
   codeEditorOpen,
   codeDrafts,
   popupCodeActive,
-  loadingImportData,
   onCodeDraftChange,
-  onEditFields,
   onPreviewContextChange,
   onContentUpdated,
   onImportMappingUpdated,
   onPatchSite,
   onSyncSavedSite,
   onSaveSite,
-  onSaveCodeDrafts,
+  onEnsureCodeSaved,
   onNativeSaveQueue,
   onNativeSaveFlusher,
+  onEditorPreflight,
+  onNativeDraftDirtyChange,
   onRequestForms,
   onRequestCalendars,
   isGlobalSaveActive,
@@ -20761,8 +20957,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [panelFormFields, setPanelFormFields] = useState<ImportedPanelFormField[]>([])
   const [contentSaving, setContentSaving] = useState(false)
   const [contentError, setContentError] = useState('')
-  const [selectedFieldRouteDraft, setSelectedFieldRouteDraft] = useState<ImportedSelectedFieldRouteDraft | null>(null)
-  const [selectedFieldRouteSaving, setSelectedFieldRouteSaving] = useState(false)
   const [importedEditorCustomFields, setImportedEditorCustomFields] = useState<CustomFieldDefinition[]>(customFields)
   const [importedEditorCustomFieldFolders, setImportedEditorCustomFieldFolders] = useState<CustomFieldFolder[]>(customFieldFolders)
   const [codeEditorWidth, setCodeEditorWidth] = useState(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
@@ -20783,21 +20977,27 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [contentAssetsError, setContentAssetsError] = useState('')
   const [contentAssetPickerKind, setContentAssetPickerKind] = useState<SitesMediaPickerKind | null>(null)
   const [contentAssetPickerSlotKey, setContentAssetPickerSlotKey] = useState('')
-  const [selectedContentAssetSlotKey, setSelectedContentAssetSlotKey] = useState('')
   const [contentAssetsRevision, setContentAssetsRevision] = useState(0)
   const [selectedImportedNativeElementKey, setSelectedImportedNativeElementKey] = useState('')
+  const importedNativeElementTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const importedNativeElementBackButtonRef = useRef<HTMLButtonElement | null>(null)
+  const importedFieldMappingQueueRef = useRef<Promise<boolean>>(Promise.resolve(true))
+  const importedFieldMappingPendingCountsRef = useRef<Record<string, number>>({})
+  const [importedFieldMappingPendingKeys, setImportedFieldMappingPendingKeys] = useState<Set<string>>(() => new Set())
+  const [importedFieldMappingOverrides, setImportedFieldMappingOverrides] = useState<Record<string, string>>({})
   const [importedVideoFormGateActiveBlockId, setImportedVideoFormGateActiveBlockId] = useState('')
   const [importedVideoFormGateActiveElement, setImportedVideoFormGateActiveElement] = useState<EmbeddedFormActiveElement>('field')
   const [importedNativeElementDrafts, setImportedNativeElementDrafts] = useState<Record<string, Record<string, unknown>>>({})
   const [importedNativeElementSavingKey, setImportedNativeElementSavingKey] = useState('')
   const importedNativeElementDraftsRef = useRef<Record<string, Record<string, unknown>>>({})
+  const importedNativeElementDraftSlotsRef = useRef<Record<string, ImportedNativeElementSlot>>({})
   const importedNativeElementDraftVersionsRef = useRef<Record<string, number>>({})
   const importedNativeElementAutosaveTimersRef = useRef<Record<string, number>>({})
   const importedNativeElementScheduledSavesRef = useRef<Record<string, ImportedNativeElementSaveRequest>>({})
   const importedNativeElementPendingSavesRef = useRef<Record<string, ImportedNativeElementSaveRequest>>({})
   const importedNativeElementSaveQueuesRef = useRef<Record<string, Promise<boolean>>>({})
   const importedNativeElementDeferredSavesRef = useRef<Record<string, ImportedNativeElementSaveRequest>>({})
-  const importedCodeSaveInFlightRef = useRef<Promise<boolean> | null>(null)
+  const importedCodeSaveInFlightRef = useRef<{ path: string; promise: Promise<boolean> } | null>(null)
   const importedNativeElementMountedRef = useRef(true)
   const importedNativeElementGlobalSaveActiveRef = useRef(saving)
   const importedNativeElementGlobalSaveWasActiveRef = useRef(saving)
@@ -20833,6 +21033,34 @@ const ImportedHtmlEditorPanel: React.FC<{
       role: 'main_html'
     }]
   }, [activeImportedPage?.id, activeImportedPage?.title, importData])
+  const effectiveImportedHtmlFiles = useMemo(() => {
+    const filesByKey = new Map<string, { path: string; label: string; html: string }>()
+    codeFiles
+      .filter(file => file.language === 'html')
+      .forEach(file => {
+        const key = getImportedCodeFileKey(file.path)
+        filesByKey.set(key, {
+          path: getImportedCodeFilePathFromKey(key),
+          label: file.label || file.pageTitle || file.path || 'HTML principal',
+          html: codeDrafts[key] ?? file.content
+        })
+      })
+
+    const popupKey = getImportedCodeFileKey(IMPORTED_POPUP_CODE_PATH)
+    const popupDeclared = filesByKey.has(popupKey) ||
+      Object.prototype.hasOwnProperty.call(codeDrafts, popupKey) ||
+      Boolean(getThemeString(site.theme, 'importedPopupHtml')) ||
+      popupCodeActive
+    if (popupDeclared && !filesByKey.has(popupKey)) {
+      filesByKey.set(popupKey, {
+        path: IMPORTED_POPUP_CODE_PATH,
+        label: popupCodeFile.label,
+        html: codeDrafts[popupKey] ?? popupCodeFile.content
+      })
+    }
+
+    return [...filesByKey.values()]
+  }, [codeDrafts, codeFiles, popupCodeActive, popupCodeFile, site.theme])
   const activePageCodeFile = useMemo(() => {
     const byPageId = codeFiles.find(file => file.pageId && file.pageId === activeImportedPage?.id)
     if (byPageId) return byPageId
@@ -20851,17 +21079,20 @@ const ImportedHtmlEditorPanel: React.FC<{
   const activeCodeValue = activeCodeFile ? codeDrafts[activeCodeKey] ?? activeCodeFile.content : ''
   const activeCodeDirty = Boolean(activeCodeKey && Object.prototype.hasOwnProperty.call(codeDrafts, activeCodeKey))
   const activeCodeDirtyRef = useRef(activeCodeDirty)
-  const onSaveCodeDraftsRef = useRef(onSaveCodeDrafts)
+  const activeCodeFilePathRef = useRef(activeCodeFile?.path || '')
+  const onEnsureCodeSavedRef = useRef(onEnsureCodeSaved)
   activeCodeDirtyRef.current = activeCodeDirty
-  onSaveCodeDraftsRef.current = onSaveCodeDrafts
-  const ensureDetectedHtmlSaved = useCallback(async (options: ImportedCodeSaveOptions = {}) => {
-    if (!activeCodeDirtyRef.current) return true
-    if (!importedCodeSaveInFlightRef.current) {
-      importedCodeSaveInFlightRef.current = onSaveCodeDraftsRef.current(options).finally(() => {
-        importedCodeSaveInFlightRef.current = null
+  activeCodeFilePathRef.current = activeCodeFile?.path || ''
+  onEnsureCodeSavedRef.current = onEnsureCodeSaved
+  const ensureDetectedHtmlSaved = useCallback(async () => {
+    const path = activeCodeFilePathRef.current
+    if (!importedCodeSaveInFlightRef.current || importedCodeSaveInFlightRef.current.path !== path) {
+      const promise = onEnsureCodeSavedRef.current(path).finally(() => {
+        if (importedCodeSaveInFlightRef.current?.promise === promise) importedCodeSaveInFlightRef.current = null
       })
+      importedCodeSaveInFlightRef.current = { path, promise }
     }
-    const saved = await importedCodeSaveInFlightRef.current
+    const saved = await importedCodeSaveInFlightRef.current.promise
     if (saved) activeCodeDirtyRef.current = false
     return saved
   }, [])
@@ -20888,21 +21119,170 @@ const ImportedHtmlEditorPanel: React.FC<{
       key: `${pageId}:${slot.key}`
     }))
   }, [activeImportedPage?.id, activePageId, importedNativeElementDetectionHtml])
-  const detectedImportedFieldCount = useMemo(() => {
-    if (!importedNativeElementDetectionHtml || typeof DOMParser === 'undefined') return 0
+  const detectedImportedFormGroups = useMemo<ImportedPanelFormGroup[]>(() => {
+    if (!importedNativeElementDetectionHtml || typeof DOMParser === 'undefined') return []
     try {
       const doc = new DOMParser().parseFromString(importedNativeElementDetectionHtml, 'text/html')
-      return collectImportedPanelFormFields(doc).length
+      return collectImportedPanelFormGroups(doc)
+    } catch {
+      return []
+    }
+  }, [importedNativeElementDetectionHtml])
+  const detectedImportedUngroupedFieldCount = useMemo(() => {
+    if (!importedNativeElementDetectionHtml || typeof DOMParser === 'undefined') return 0
+    try {
+      return countImportedUngroupedFormFields(
+        new DOMParser().parseFromString(importedNativeElementDetectionHtml, 'text/html')
+      )
     } catch {
       return 0
     }
   }, [importedNativeElementDetectionHtml])
+  const detectedImportedFieldCount = useMemo(
+    () => detectedImportedFormGroups.reduce((total, group) => total + group.fields.length, 0),
+    [detectedImportedFormGroups]
+  )
+  const activeImportedFormMappings = useMemo(() => {
+    const mappings = Array.isArray(importData?.formMappings)
+      ? importData.formMappings
+      : []
+    const activePath = String(activeCodeFile?.path || '').trim()
+    const detectedIds = new Set(detectedImportedFormGroups.map(group => normalizeImportedDestinationKey(group.formId, '')))
+    return mappings.filter(mapping => {
+      const mappingPath = String(mapping.pagePath || '').trim()
+      if (mapping.pagePath !== undefined) return mappingPath === activePath
+      return detectedIds.has(normalizeImportedDestinationKey(mapping.formId, ''))
+    })
+  }, [activeCodeFile?.path, detectedImportedFormGroups, importData?.formMappings])
+  const importedPanelFormMappings = useMemo<ImportedSiteFormMapping[]>(() => (
+    detectedImportedFormGroups.map(group => {
+      const normalizedFormId = normalizeImportedDestinationKey(group.formId, '')
+      const matchingMappings = activeImportedFormMappings.filter(candidate => (
+        normalizeImportedDestinationKey(candidate.formId, '') === normalizedFormId
+      ))
+      const mapping = matchingMappings.find(candidate => candidate.present !== false) || matchingMappings[0]
+      return {
+        ...(mapping || {}),
+        formId: mapping?.formId || group.formId,
+        formTitle: mapping?.formTitle || group.label,
+        pagePath: mapping?.pagePath ?? activeCodeFile?.path ?? '',
+        present: true,
+        fields: group.fields.map(detectedField => {
+          const normalizedFieldId = normalizeImportedDestinationKey(detectedField.fieldId || detectedField.fieldName, '')
+          const matchingFields = mapping?.fields?.filter(candidate => (
+            normalizeImportedDestinationKey(candidate.fieldId || candidate.sourceName, '') === normalizedFieldId
+          )) || []
+          const mappedField = matchingFields.find(candidate => candidate.present !== false) || matchingFields[0]
+          return mappedField ? {
+            ...mappedField,
+            present: true
+          } : {
+            fieldId: detectedField.fieldId,
+            sourceName: detectedField.fieldName || detectedField.fieldId,
+            label: detectedField.label,
+            type: detectedField.inputType,
+            destinationType: 'new_custom',
+            destinationKey: normalizeImportedDestinationKey(detectedField.fieldId || detectedField.fieldName || detectedField.label, 'campo_personalizado'),
+            saveMode: 'new_custom',
+            ignored: false,
+            present: true,
+            options: []
+          }
+        })
+      }
+    })
+  ), [activeCodeFile?.path, activeImportedFormMappings, detectedImportedFormGroups])
+  const importedEditorIdentityDiagnostics = useMemo(() => {
+    const formCounts = new Map<string, number>()
+    const duplicateFieldIds = new Set<string>()
+    const duplicateNativeElementIds = new Set<string>()
+
+    effectiveImportedHtmlFiles.forEach(file => {
+      if (!file.html || typeof DOMParser === 'undefined') return
+      try {
+        const doc = new DOMParser().parseFromString(file.html, 'text/html')
+        Array.from(doc.querySelectorAll<HTMLFormElement>('form')).forEach((form, formIndex) => {
+          const declaredFormId = String(
+            form.getAttribute('data-rstk-form-id') ||
+            form.getAttribute('data-ristak-form-id') ||
+            form.getAttribute('data-ristack-form-id') ||
+            ''
+          ).trim()
+          const formId = declaredFormId || form.id || form.getAttribute('name') || `form_${formIndex + 1}`
+          const normalizedFormId = normalizeImportedDestinationKey(formId, '')
+          if (declaredFormId && normalizedFormId) {
+            formCounts.set(normalizedFormId, (formCounts.get(normalizedFormId) || 0) + 1)
+          }
+          const fieldCounts = new Map<string, number>()
+          const seenChoiceInstances = new Set<string>()
+          Array.from(form.querySelectorAll<HTMLElement>('input, textarea, select')).forEach((field, fieldIndex) => {
+            const tagName = field.tagName.toLowerCase()
+            const inputType = tagName === 'input' ? (field.getAttribute('type') || 'text').toLowerCase() : tagName
+            if (['hidden', 'submit', 'button', 'reset', 'image', 'file'].includes(inputType)) return
+            const fieldId = getImportedPanelStableFieldId(field) || `field_${fieldIndex + 1}`
+            const normalizedFieldId = normalizeImportedDestinationKey(fieldId, '')
+            if (inputType === 'radio' || inputType === 'checkbox') {
+              const choiceName = field.getAttribute('name') || field.getAttribute('id') || `choice_${fieldIndex + 1}`
+              const choiceInstance = `${inputType}:${normalizedFieldId}:${normalizeImportedDestinationKey(choiceName, '')}`
+              if (seenChoiceInstances.has(choiceInstance)) return
+              seenChoiceInstances.add(choiceInstance)
+            }
+            if (normalizedFieldId) fieldCounts.set(normalizedFieldId, (fieldCounts.get(normalizedFieldId) || 0) + 1)
+          })
+          fieldCounts.forEach((count, fieldId) => {
+            if (count > 1) duplicateFieldIds.add(`${file.label} · ${formId} · ${fieldId}`)
+          })
+        })
+        detectImportedNativeElementDuplicateIds(file.html).forEach(id => {
+          duplicateNativeElementIds.add(`${file.label} · ${id}`)
+        })
+      } catch {
+        // Diagnostics are best-effort; the backend still sanitizes and validates.
+      }
+    })
+
+    return {
+      duplicateFormIds: [...formCounts.entries()].filter(([, count]) => count > 1).map(([id]) => id),
+      duplicateFieldIds: [...duplicateFieldIds],
+      duplicateNativeElementIds: [...duplicateNativeElementIds]
+    }
+  }, [effectiveImportedHtmlFiles])
+  const importedDuplicateFormIds = importedEditorIdentityDiagnostics.duplicateFormIds
+  const importedEditorPreflight = useCallback<ImportedEditorPreflight>(() => {
+    const details = [
+      importedEditorIdentityDiagnostics.duplicateFormIds.length
+        ? `Formularios duplicados: ${importedEditorIdentityDiagnostics.duplicateFormIds.slice(0, 4).join(', ')}.`
+        : '',
+      importedEditorIdentityDiagnostics.duplicateFieldIds.length
+        ? `Campos duplicados: ${importedEditorIdentityDiagnostics.duplicateFieldIds.slice(0, 3).join(', ')}.`
+        : '',
+      importedEditorIdentityDiagnostics.duplicateNativeElementIds.length
+        ? `Zonas Ristak duplicadas: ${importedEditorIdentityDiagnostics.duplicateNativeElementIds.slice(0, 3).join(', ')}.`
+        : ''
+    ].filter(Boolean)
+    return details.length
+      ? {
+        valid: false,
+        title: 'Corrige los IDs del HTML',
+        message: `${details.join(' ')} Cada elemento necesita una clave estable y sin ambigüedad antes de guardar o publicar.`
+      }
+      : { valid: true }
+  }, [importedEditorIdentityDiagnostics])
+  useEffect(() => {
+    onEditorPreflight(site.id, importedEditorPreflight)
+    return () => onEditorPreflight(site.id, null)
+  }, [importedEditorPreflight, onEditorPreflight, site.id])
   const importedNativeElementDuplicateIds = useMemo(
     () => detectImportedNativeElementDuplicateIds(importedNativeElementDetectionHtml),
     [importedNativeElementDetectionHtml]
   )
   const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || null
-  const selectedContentAssetSlot = importedContentAssetSlots.find(slot => slot.key === selectedContentAssetSlotKey) || null
+
+  useEffect(() => {
+    if (!selectedImportedNativeElementSlot) return
+    const frame = window.requestAnimationFrame(() => importedNativeElementBackButtonRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [selectedImportedNativeElementSlot?.key])
 
   useEffect(() => {
     if (selectedImportedNativeElementSlot?.type === 'form') onRequestForms()
@@ -20974,6 +21354,96 @@ const ImportedHtmlEditorPanel: React.FC<{
       })
     ].join('\n')
   }, [contentAssets, importedContentAssetSlots])
+
+  const queueImportedFieldMappingChange = useCallback((
+    form: ImportedSiteFormMapping,
+    field: ImportedSiteFieldMapping,
+    selection: string
+  ) => {
+    const activePath = String(form.pagePath ?? activeCodeFile?.path ?? '').trim()
+    const routeKey = `${activePath}:${form.formId}:${field.fieldId}`
+    importedFieldMappingPendingCountsRef.current[routeKey] = (importedFieldMappingPendingCountsRef.current[routeKey] || 0) + 1
+    setImportedFieldMappingPendingKeys(current => new Set(current).add(routeKey))
+    setImportedFieldMappingOverrides(current => ({ ...current, [routeKey]: selection }))
+
+    const run = async () => {
+      try {
+        // Esta operación ya vive dentro de la cola nativa registrada para el
+        // sitio. El guardado previo del HTML no debe esperar esa misma cola o
+        // terminaría bloqueándose a sí mismo antes de enviar el PATCH.
+        if (!await ensureDetectedHtmlSaved()) {
+          throw new Error('Primero guarda el HTML para registrar esta asociación.')
+        }
+        const freshImport = await sitesService.getImportMapping(site.id)
+        const normalizedFormId = normalizeImportedDestinationKey(form.formId, '')
+        const formMatches = (freshImport.formMappings || []).filter(candidate => {
+          if (candidate.present === false) return false
+          if (normalizeImportedDestinationKey(candidate.formId, '') !== normalizedFormId) return false
+          const candidatePath = String(candidate.pagePath || '').trim()
+          return candidate.pagePath === undefined || candidatePath === activePath
+        })
+        if (formMatches.length !== 1) throw new Error('Este formulario cambió en el código. Revisa su data-rstk-form-id y vuelve a intentarlo.')
+        const freshForm = formMatches[0]
+        const normalizedFieldId = normalizeImportedDestinationKey(field.fieldId || field.sourceName, '')
+        const fieldMatches = (freshForm.fields || []).filter(candidate => (
+          candidate.present !== false &&
+          normalizeImportedDestinationKey(candidate.fieldId || candidate.sourceName, '') === normalizedFieldId
+        ))
+        if (fieldMatches.length !== 1) throw new Error('Este campo cambió en el código. Conserva su data-rstk-field-id o name para mantener la asociación.')
+
+        if (!selection || selection.startsWith('missing_custom:')) throw new Error('Elige una asociación válida para este campo.')
+        const patch = selection === 'ignored'
+          ? { destinationType: 'ignored' as const }
+          : selection.startsWith('standard:')
+            ? { destinationType: 'standard' as const, destinationKey: selection.slice('standard:'.length) }
+            : selection.startsWith('custom:')
+              ? { destinationType: 'custom' as const, customFieldDefinitionId: selection.slice('custom:'.length) }
+              : selection.startsWith('new_custom:')
+                ? { destinationType: 'new_custom' as const, destinationKey: selection.slice('new_custom:'.length) }
+                : (() => { throw new Error('La asociación seleccionada no es válida.') })()
+        const updatedImport = await sitesService.updateImportFieldMapping(site.id, {
+          formId: freshForm.formId,
+          fieldId: fieldMatches[0].fieldId,
+          pagePath: freshForm.pagePath ?? activePath,
+          ...patch
+        })
+        onImportMappingUpdated(site.id, updatedImport)
+        setImportedFieldMappingOverrides(current => {
+          if (current[routeKey] !== selection) return current
+          const next = { ...current }
+          delete next[routeKey]
+          return next
+        })
+        return true
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'No se pudo guardar la asociación del campo.'
+        setContentError(message)
+        showToast('error', 'No se pudo asociar el campo', message)
+        setImportedFieldMappingOverrides(current => {
+          if (current[routeKey] !== selection) return current
+          const next = { ...current }
+          delete next[routeKey]
+          return next
+        })
+        return false
+      } finally {
+        const remaining = Math.max(0, (importedFieldMappingPendingCountsRef.current[routeKey] || 1) - 1)
+        if (remaining) importedFieldMappingPendingCountsRef.current[routeKey] = remaining
+        else delete importedFieldMappingPendingCountsRef.current[routeKey]
+        setImportedFieldMappingPendingKeys(current => {
+          if (remaining) return current
+          const next = new Set(current)
+          next.delete(routeKey)
+          return next
+        })
+      }
+    }
+
+    const queued = importedFieldMappingQueueRef.current.catch(() => false).then(run)
+    importedFieldMappingQueueRef.current = queued
+    onNativeSaveQueue(site.id, queued, 'mapping')
+  }, [activeCodeFile?.path, ensureDetectedHtmlSaved, onImportMappingUpdated, onNativeSaveQueue, showToast, site.id])
+
   const guardedEditorPreviewHtml = useMemo(
     () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
     [editorPreviewHtml]
@@ -21026,16 +21496,6 @@ const ImportedHtmlEditorPanel: React.FC<{
       setSelectedImportedNativeElementKey('')
     }
   }, [importedNativeElementSlots, selectedImportedNativeElementKey])
-
-  useEffect(() => {
-    if (!importedContentAssetSlots.length) {
-      if (selectedContentAssetSlotKey) setSelectedContentAssetSlotKey('')
-      return
-    }
-    if (selectedContentAssetSlotKey && !importedContentAssetSlots.some(slot => slot.key === selectedContentAssetSlotKey)) {
-      setSelectedContentAssetSlotKey('')
-    }
-  }, [importedContentAssetSlots, selectedContentAssetSlotKey])
 
   const getImportedNativeElementDefaultSettingsForSlot = useCallback((slot: ImportedNativeElementSlot) => {
     const blockType = importedNativeElementBlockTypes[slot.type]
@@ -21115,8 +21575,10 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
     }
     importedNativeElementDraftsRef.current = nextDrafts
+    importedNativeElementDraftSlotsRef.current[slot.key] = slot
     setImportedNativeElementDrafts(nextDrafts)
-  }, [])
+    onNativeDraftDirtyChange(site.id, true)
+  }, [onNativeDraftDirtyChange, site.id])
 
   const validateImportedNativeElementSlotSettings = useCallback((slot: ImportedNativeElementSlot, settings: Record<string, unknown>) => {
     if (slot.type === 'form' && !getEmbeddedFormSourceId({ settings } as SiteBlock)) {
@@ -21176,7 +21638,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (notify && !silentValidation) showToast('warning', 'Falta configuración', validationError)
       return false
     }
-    if (!skipHtmlSave && !await ensureDetectedHtmlSaved({ skipNativeQueueWait: true })) {
+    if (!skipHtmlSave && !await ensureDetectedHtmlSaved()) {
       if (globalSaveIsActive()) deferUntilGlobalSaveFinishes()
       return false
     }
@@ -21211,15 +21673,14 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (!importedNativeElementMountedRef.current || normalized.id !== expectedSiteId || site.id !== expectedSiteId) return true
       importedNativeElementSiteRef.current = normalized
       onSyncSavedSite(normalized)
-      if (clearDraft) {
-        setImportedNativeElementDrafts(current => {
-          if ((importedNativeElementDraftVersionsRef.current[slot.key] || 0) !== draftVersion) return current
-          const next = { ...current }
-          delete next[slot.key]
-          delete importedNativeElementDraftVersionsRef.current[slot.key]
-          importedNativeElementDraftsRef.current = next
-          return next
-        })
+      if (clearDraft && (importedNativeElementDraftVersionsRef.current[slot.key] || 0) === draftVersion) {
+        const nextDrafts = { ...importedNativeElementDraftsRef.current }
+        delete nextDrafts[slot.key]
+        delete importedNativeElementDraftVersionsRef.current[slot.key]
+        delete importedNativeElementDraftSlotsRef.current[slot.key]
+        importedNativeElementDraftsRef.current = nextDrafts
+        setImportedNativeElementDrafts(nextDrafts)
+        onNativeDraftDirtyChange(site.id, Object.keys(nextDrafts).length > 0)
       }
       if (refreshPreview) {
         const previewPageId = slot.pageId || activeImportedPageIdRef.current
@@ -21252,7 +21713,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     } finally {
       if (showSaving) setImportedNativeElementSavingKey('')
     }
-  }, [activeImportedPage?.id, activePageId, ensureDetectedHtmlSaved, getImportedNativeElementDraftSettings, isGlobalSaveActive, onSyncSavedSite, showToast, site, validateImportedNativeElementSlotSettings])
+  }, [activeImportedPage?.id, activePageId, ensureDetectedHtmlSaved, getImportedNativeElementDraftSettings, isGlobalSaveActive, onNativeDraftDirtyChange, onSyncSavedSite, showToast, site, validateImportedNativeElementSlotSettings])
 
   const saveImportedNativeElementSlot = useCallback((
     slot: ImportedNativeElementSlot,
@@ -21291,7 +21752,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
     })
     importedNativeElementSaveQueuesRef.current[queueKey] = queue
-    onNativeSaveQueue(queueKey, queue)
+    onNativeSaveQueue(queueKey, queue, 'native')
     return queue
   }, [onNativeSaveQueue, performImportedNativeElementSlotSave, site.id])
 
@@ -21325,6 +21786,12 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [saveImportedNativeElementSlot])
 
   const flushImportedNativeElementSaves = useCallback<ImportedNativeElementSaveFlusher>(async (options = {}) => {
+    if (
+      importedEditorIdentityDiagnostics.duplicateFormIds.length ||
+      importedEditorIdentityDiagnostics.duplicateFieldIds.length ||
+      importedEditorIdentityDiagnostics.duplicateNativeElementIds.length
+    ) return false
+
     const requests = new Map<string, ImportedNativeElementSaveRequest>()
     const addRequest = (request: ImportedNativeElementSaveRequest) => {
       const current = requests.get(request.slot.key)
@@ -21347,7 +21814,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     importedNativeElementDeferredSavesRef.current = {}
     Object.keys(importedNativeElementDraftsRef.current).forEach(slotKey => {
       if (requests.has(slotKey)) return
-      const slot = importedNativeElementSlots.find(item => item.key === slotKey)
+      const slot = importedNativeElementSlots.find(item => item.key === slotKey) || importedNativeElementDraftSlotsRef.current[slotKey]
       if (!slot) return
       addRequest({
         slot,
@@ -21379,7 +21846,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       saveImportedNativeElementSlot(request.slot, mergeImportedNativeElementSaveOptions(request.options, flushOptions))
     )))
     return results.every(Boolean)
-  }, [importedNativeElementSlots, saveImportedNativeElementSlot, site.id])
+  }, [importedEditorIdentityDiagnostics, importedNativeElementSlots, saveImportedNativeElementSlot, site.id])
 
   useEffect(() => {
     onNativeSaveFlusher(site.id, flushImportedNativeElementSaves)
@@ -21393,7 +21860,9 @@ const ImportedHtmlEditorPanel: React.FC<{
     importedNativeElementScheduledSavesRef.current = {}
     importedNativeElementPendingSavesRef.current = {}
     importedNativeElementDeferredSavesRef.current = {}
-  }, [])
+    importedNativeElementDraftSlotsRef.current = {}
+    onNativeDraftDirtyChange(site.id, false)
+  }, [onNativeDraftDirtyChange, site.id])
 
   useEffect(() => {
     const saveWasActive = importedNativeElementGlobalSaveWasActiveRef.current
@@ -21443,46 +21912,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [customFields.length])
 
   const activeImportedCustomFields = useMemo(() => getImportedActiveCustomFields(importedEditorCustomFields), [importedEditorCustomFields])
-  const selectedFieldRouteContext = useMemo<ImportedSelectedFieldRouteContext | null>(() => {
-    if (fieldEditor) {
-      return {
-        editId: fieldEditor.selection.editId,
-        label: fieldEditor.label,
-        placeholder: fieldEditor.placeholder,
-        fieldName: fieldEditor.selection.fieldName,
-        fieldHtmlId: fieldEditor.selection.fieldHtmlId,
-        inputType: fieldEditor.selection.inputType,
-        tagName: fieldEditor.selection.tagName
-      }
-    }
-
-    if (codeElementEditor?.mode === 'field') {
-      return {
-        editId: codeElementEditor.editId,
-        label: codeElementEditor.label,
-        placeholder: codeElementEditor.placeholder || '',
-        fieldName: codeElementEditor.fieldName || '',
-        fieldHtmlId: codeElementEditor.fieldHtmlId || '',
-        inputType: codeElementEditor.fieldInputType || codeElementEditor.tagName,
-        tagName: codeElementEditor.tagName
-      }
-    }
-
-    return null
-  }, [codeElementEditor, fieldEditor])
-  const selectedFieldRouteContextKey = buildImportedSelectedFieldRouteContextKey(selectedFieldRouteContext)
-  const selectedFieldRouteMatch = useMemo(
-    () => findImportedFieldRouteMatch(importData?.formMappings, selectedFieldRouteContext),
-    [importData?.formMappings, selectedFieldRouteContextKey]
-  )
-
-  useEffect(() => {
-    if (!selectedFieldRouteContext) {
-      setSelectedFieldRouteDraft(null)
-      return
-    }
-    setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(selectedFieldRouteMatch, selectedFieldRouteContext))
-  }, [selectedFieldRouteContext, selectedFieldRouteContextKey, selectedFieldRouteMatch])
   const appendAIRegionPromptText = useCallback((text: string) => {
     setAiRegionPrompt(current => appendDictatedText(current, text))
   }, [])
@@ -22010,7 +22439,6 @@ const ImportedHtmlEditorPanel: React.FC<{
     setChoiceEditor(null)
     setFieldEditor(null)
     setSelectedImportedNativeElementKey('')
-    setSelectedContentAssetSlotKey('')
   }, [clearImportedVideoActionHover])
 
   const selectImportedNativeElementFromPreviewTarget = useCallback((
@@ -22021,7 +22449,6 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!match) return false
 
     setSelectedImportedNativeElementKey(match.slot.key)
-    setSelectedContentAssetSlotKey('')
     setInlineEditor(null)
     setButtonEditor(null)
     setVideoEditor(null)
@@ -22135,6 +22562,10 @@ const ImportedHtmlEditorPanel: React.FC<{
       setContentError('Escribe el nuevo contenido antes de guardar.')
       return false
     }
+    if (!await ensureDetectedHtmlSaved()) {
+      setContentError('Corrige y guarda el HTML antes de editar este elemento.')
+      return false
+    }
 
     setContentSaving(true)
     setContentError('')
@@ -22158,138 +22589,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     } finally {
       setContentSaving(false)
     }
-  }, [activeImportedPage?.id, clearInlineSelection, loadInlinePreview, onContentUpdated, showToast, site.id])
-
-  const saveSelectedFieldRoute = useCallback(async () => {
-    if (!selectedFieldRouteContext || !selectedFieldRouteDraft) return
-    if (!importData) {
-      setContentError('Todavía no se cargó la ruta de datos de este HTML. Intenta recargar la página.')
-      return
-    }
-
-    const draftDestinationType = selectedFieldRouteDraft.destinationType
-    const selectedExistingCustomField = draftDestinationType !== 'standard' && draftDestinationType !== 'ignored'
-      ? findImportedCustomFieldDefinitionForDraft(activeImportedCustomFields, selectedFieldRouteDraft)
-      : null
-    const destinationKey = draftDestinationType === 'standard'
-      ? selectedFieldRouteDraft.destinationKey
-      : selectedExistingCustomField
-        ? selectedExistingCustomField.fieldKey || selectedExistingCustomField.key
-        : normalizeImportedDestinationKey(selectedFieldRouteDraft.destinationKey, getImportedFieldRouteDefaultKey(selectedFieldRouteContext))
-
-    if (draftDestinationType !== 'ignored' && !destinationKey) {
-      setContentError('Elige a dónde se guarda este campo.')
-      return
-    }
-
-    const nextMappings = cloneImportedFormMappings(importData.formMappings || [])
-    if (!nextMappings.length) {
-      nextMappings.push({
-        formId: `form-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}`,
-        formTitle: activeImportedPage?.title || 'Formulario',
-        fields: []
-      })
-    }
-
-    let routeMatch = findImportedFieldRouteMatch(nextMappings, selectedFieldRouteContext)
-    if (!routeMatch) {
-      const targetForm = nextMappings[0]
-      if (!targetForm) {
-        setContentError('No pude preparar el formulario para guardar esta ruta.')
-        return
-      }
-      const sourceName = selectedFieldRouteContext.fieldName ||
-        selectedFieldRouteContext.fieldHtmlId ||
-        selectedFieldRouteContext.editId ||
-        getImportedFieldRouteDefaultKey(selectedFieldRouteContext)
-      const label = selectedFieldRouteContext.label || selectedFieldRouteContext.placeholder || sourceName
-      const addedField: ImportedSiteFieldMapping = {
-        fieldId: selectedFieldRouteContext.editId || sourceName,
-        sourceName,
-        label,
-        type: selectedFieldRouteContext.inputType || selectedFieldRouteContext.tagName || 'text',
-        destinationType: 'custom',
-        destinationKey: getImportedFieldRouteDefaultKey(selectedFieldRouteContext),
-        saveMode: 'custom',
-        ignored: false,
-        options: []
-      }
-      targetForm.fields.push(addedField)
-      routeMatch = {
-        formIndex: 0,
-        fieldIndex: targetForm.fields.length - 1,
-        field: addedField
-      }
-    }
-
-    const matchedForm = nextMappings[routeMatch.formIndex]
-    const currentField = matchedForm?.fields[routeMatch.fieldIndex]
-    if (!matchedForm || !currentField) {
-      setContentError('No pude encontrar ese campo para guardar su ruta.')
-      return
-    }
-    const nextField: ImportedSiteFieldMapping = draftDestinationType === 'ignored'
-      ? {
-        ...currentField,
-        ...clearImportedCustomFieldPatch,
-        destinationType: 'ignored',
-        saveMode: 'ignored',
-        ignored: true,
-        destinationKey: currentField.destinationKey || destinationKey
-      }
-      : draftDestinationType === 'standard'
-        ? {
-          ...currentField,
-          ...clearImportedCustomFieldPatch,
-          destinationType: 'standard',
-          saveMode: 'standard',
-          ignored: false,
-          destinationKey: destinationKey || inferImportedStandardKey(currentField)
-        }
-        : selectedExistingCustomField
-          ? {
-            ...currentField,
-            ...buildExistingImportedCustomFieldPatch(selectedExistingCustomField)
-          }
-          : {
-          ...currentField,
-          ...clearImportedCustomFieldPatch,
-          destinationType: 'new_custom',
-          saveMode: 'new_custom',
-          ignored: false,
-          destinationKey,
-          customFieldKey: destinationKey,
-          customFieldLabel: selectedFieldRouteContext.label || currentField.label || destinationKey,
-          customFieldDataType: currentField.customFieldDataType || 'text',
-          customFieldSyncTarget: currentField.customFieldSyncTarget || 'local'
-        }
-
-    matchedForm.fields[routeMatch.fieldIndex] = nextField
-
-    setSelectedFieldRouteSaving(true)
-    setContentError('')
-    try {
-      const updatedImportData = await sitesService.updateImportMapping(site.id, nextMappings)
-      onImportMappingUpdated(updatedImportData)
-      const updatedMatch = findImportedFieldRouteMatch(updatedImportData.formMappings, selectedFieldRouteContext)
-      setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(updatedMatch, selectedFieldRouteContext))
-      showToast('success', 'Ruta de campo guardada', 'Este campo ya apunta al dato correcto.')
-    } catch (error) {
-      setContentError(error instanceof Error ? error.message : 'No se pudo guardar la ruta de este campo.')
-    } finally {
-      setSelectedFieldRouteSaving(false)
-    }
-  }, [
-    activeImportedPage?.id,
-    activeImportedPage?.title,
-    activeImportedCustomFields,
-    importData,
-    onImportMappingUpdated,
-    selectedFieldRouteContext,
-    selectedFieldRouteDraft,
-    showToast,
-    site.id
-  ])
+  }, [activeImportedPage?.id, clearInlineSelection, ensureDetectedHtmlSaved, loadInlinePreview, onContentUpdated, showToast, site.id])
 
   const startAIRegionMode = useCallback(() => {
     closeImportedNativeElementInspector()
@@ -22389,6 +22689,10 @@ const ImportedHtmlEditorPanel: React.FC<{
         ? 'Escribe que quieres que cambie la IA en esa zona.'
         : 'Escribe que quieres que cambie la IA en la página.'
       )
+      return
+    }
+    if (!await ensureDetectedHtmlSaved()) {
+      setAiRegionError('Corrige y guarda el HTML antes de pedir esta modificación.')
       return
     }
 
@@ -23353,6 +23657,10 @@ const ImportedHtmlEditorPanel: React.FC<{
       setContentError('Pega una URL o embed de video antes de guardar.')
       return false
     }
+    if (!await ensureDetectedHtmlSaved()) {
+      setContentError('Corrige y guarda el HTML antes de editar este video.')
+      return false
+    }
 
     const nextSettings = cleanImportedVideoSettings(editor.settings, cleanValue)
     setContentSaving(true)
@@ -23378,7 +23686,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     } finally {
       setContentSaving(false)
     }
-  }, [activeImportedPage?.id, clearInlineSelection, loadInlinePreview, onContentUpdated, showToast, site.id])
+  }, [activeImportedPage?.id, clearInlineSelection, ensureDetectedHtmlSaved, loadInlinePreview, onContentUpdated, showToast, site.id])
 
   const handleInlineImageFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -23754,190 +24062,6 @@ const ImportedHtmlEditorPanel: React.FC<{
     createdAt: '',
     updatedAt: ''
   } : null
-  const selectedRouteCustomField = selectedFieldRouteDraft && selectedFieldRouteDraft.destinationType !== 'standard' && selectedFieldRouteDraft.destinationType !== 'ignored'
-    ? findImportedCustomFieldDefinitionForDraft(activeImportedCustomFields, selectedFieldRouteDraft)
-    : null
-  const selectedRouteCustomFieldId = selectedFieldRouteDraft?.customFieldDefinitionId || selectedRouteCustomField?.definitionId || ''
-  const selectedFieldRouteNeedsCustomSelection = Boolean(
-    selectedFieldRouteDraft &&
-    selectedFieldRouteDraft.destinationType !== 'standard' &&
-    selectedFieldRouteDraft.destinationType !== 'ignored' &&
-    activeImportedCustomFields.length &&
-    !selectedRouteCustomField
-  )
-  const selectedFieldRoutePanel = selectedFieldRouteContext && selectedFieldRouteDraft ? (
-    <div className={styles.importedFieldRouteBox}>
-      <div className={styles.importedFieldRouteHeader}>
-        <Link2 size={15} />
-        <div>
-          <span>Ruta de datos</span>
-          <strong>{selectedFieldRouteMatch ? 'Campo detectado' : 'Campo nuevo detectado'}</strong>
-        </div>
-      </div>
-      <label className={styles.importedActionField}>
-        <span>Guardar como</span>
-        <CustomSelect
-          value={selectedFieldRouteDraft.destinationType === 'new_custom' ? 'custom' : selectedFieldRouteDraft.destinationType}
-          disabled={selectedFieldRouteSaving || saving || contentSaving}
-          portal
-          onChange={(event) => {
-            const destinationType = event.target.value as ImportedSiteFieldMapping['destinationType']
-            setSelectedFieldRouteDraft(current => {
-              if (!current) return current
-              if (destinationType === 'standard') {
-                return {
-                  destinationType: 'standard',
-                  destinationKey: selectedFieldRouteMatch?.field ? inferImportedStandardKey(selectedFieldRouteMatch.field) : 'full_name'
-                }
-              }
-              if (destinationType === 'ignored') {
-                return {
-                  destinationType: 'ignored',
-                  destinationKey: current.destinationKey
-                }
-              }
-              const matchedCustomField = selectedFieldRouteMatch?.field
-                ? findImportedCustomFieldDefinition(activeImportedCustomFields, selectedFieldRouteMatch.field)
-                : null
-              const defaultCustomField = matchedCustomField || selectedRouteCustomField || activeImportedCustomFields[0]
-              if (defaultCustomField) {
-                return {
-                  destinationType: 'custom',
-                  destinationKey: defaultCustomField.fieldKey || defaultCustomField.key,
-                  customFieldDefinitionId: defaultCustomField.definitionId,
-                  customFieldKey: defaultCustomField.fieldKey || defaultCustomField.key,
-                  customFieldLabel: defaultCustomField.label || defaultCustomField.name || defaultCustomField.fieldKey || defaultCustomField.key,
-                  customFieldDataType: defaultCustomField.dataType || 'text',
-                  customFieldSyncTarget: defaultCustomField.syncTarget || 'local'
-                }
-              }
-              return {
-                destinationType: 'custom',
-                destinationKey: current.destinationKey || getImportedFieldRouteDefaultKey(selectedFieldRouteContext)
-              }
-            })
-          }}
-        >
-          <option value="standard">Dato del contacto</option>
-          <option value="custom">Campo personalizado</option>
-          <option value="ignored">No guardar</option>
-        </CustomSelect>
-      </label>
-      {selectedFieldRouteDraft.destinationType === 'standard' ? (
-        <label className={styles.importedActionField}>
-          <span>Dato del contacto</span>
-          <CustomSelect
-            value={selectedFieldRouteDraft.destinationKey || 'full_name'}
-            disabled={selectedFieldRouteSaving || saving || contentSaving}
-            portal
-            onChange={(event) => setSelectedFieldRouteDraft(current => current ? {
-              ...current,
-              destinationType: 'standard',
-              destinationKey: event.target.value
-            } : current)}
-          >
-            {importedStandardFieldOptions.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </CustomSelect>
-        </label>
-      ) : selectedFieldRouteDraft.destinationType === 'ignored' ? (
-        <p className={styles.importedFieldRouteHint}>
-          Este campo no se guardará cuando el visitante envíe el formulario.
-        </p>
-      ) : (
-        <>
-          <label className={styles.importedActionField}>
-            <span>Campo personalizado</span>
-            <CustomSelect
-              value={selectedRouteCustomFieldId}
-              disabled={selectedFieldRouteSaving || saving || contentSaving || !activeImportedCustomFields.length}
-              portal
-              onChange={(event) => {
-                const customField = activeImportedCustomFields.find(item => item.definitionId === event.target.value)
-                if (!customField) return
-                setSelectedFieldRouteDraft(current => current ? {
-                  ...current,
-                  destinationType: 'custom',
-                  destinationKey: customField.fieldKey || customField.key,
-                  customFieldDefinitionId: customField.definitionId,
-                  customFieldKey: customField.fieldKey || customField.key,
-                  customFieldLabel: customField.label || customField.name || customField.fieldKey || customField.key,
-                  customFieldDataType: customField.dataType || 'text',
-                  customFieldSyncTarget: customField.syncTarget || 'local'
-                } : current)
-              }}
-            >
-              <option value="" disabled>
-                {activeImportedCustomFields.length ? 'Elige un campo guardado' : 'No hay campos personalizados'}
-              </option>
-              {selectedRouteCustomFieldId && !selectedRouteCustomField && (
-                <option value={selectedRouteCustomFieldId}>{selectedFieldRouteDraft.customFieldLabel || selectedFieldRouteDraft.destinationKey || 'Campo guardado'}</option>
-              )}
-              {activeImportedCustomFields.map(customField => (
-                <option key={customField.definitionId} value={customField.definitionId}>
-                  {customField.label || customField.name || customField.fieldKey}
-                </option>
-              ))}
-            </CustomSelect>
-          </label>
-          {activeImportedCustomFields.length ? (
-            <p className={styles.importedFieldRouteHint}>
-              {selectedRouteCustomField
-                ? `Se guardará en ${selectedRouteCustomField.label || selectedRouteCustomField.name || selectedRouteCustomField.fieldKey}.`
-                : 'Elige el campo personalizado exacto donde se guardará esta respuesta.'}
-            </p>
-          ) : (
-            <p className={styles.importedFieldRouteHint}>
-              No hay campos personalizados guardados. Usa una clave nueva para esta respuesta.
-            </p>
-          )}
-          {!activeImportedCustomFields.length && (
-            <label className={styles.importedActionField}>
-              <span>Clave del campo personalizado</span>
-              <input
-                value={selectedFieldRouteDraft.destinationKey}
-                disabled={selectedFieldRouteSaving || saving || contentSaving}
-                placeholder="ej. presupuesto_estimado"
-                name="rstk-imported-field-route-custom-key"
-                {...importedEditorNoAutocompleteAttrs}
-                onChange={(event) => setSelectedFieldRouteDraft(current => current ? {
-                  ...current,
-                  destinationType: 'custom',
-                  destinationKey: event.target.value,
-                  customFieldDefinitionId: '',
-                  customFieldKey: event.target.value,
-                  customFieldLabel: ''
-                } : current)}
-              />
-            </label>
-          )}
-        </>
-      )}
-      <div className={styles.importedFieldRouteActions}>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(selectedFieldRouteMatch, selectedFieldRouteContext))}
-          disabled={selectedFieldRouteSaving || saving || contentSaving}
-        >
-          Restablecer
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => void saveSelectedFieldRoute()}
-          disabled={selectedFieldRouteSaving || saving || contentSaving || selectedFieldRouteNeedsCustomSelection || (selectedFieldRouteDraft.destinationType !== 'ignored' && !selectedFieldRouteDraft.destinationKey.trim())}
-          loading={selectedFieldRouteSaving}
-        >
-          <Save size={14} />
-          Guardar ruta
-        </Button>
-      </div>
-    </div>
-  ) : null
-
   const codeElementEditorPanel = codeElementEditor ? (
     <div className={styles.importedButtonActionBox}>
       <div className={styles.importedButtonActionHeader}>
@@ -24032,7 +24156,6 @@ const ImportedHtmlEditorPanel: React.FC<{
               onPatch={patchCodeElementOption}
             />
           )}
-          {selectedFieldRoutePanel}
         </>
       )}
 
@@ -24887,12 +25010,25 @@ const ImportedHtmlEditorPanel: React.FC<{
       setContentAssetPickerKind(getContentSlotPickerKind(slot.kind))
     }
 
-    const mappedFieldCount = (importData?.formMappings || []).reduce((total, form) => total + form.fields.length, 0)
-    const visibleFieldCount = Math.max(mappedFieldCount, detectedImportedFieldCount)
+    const visibleFieldCount = detectedImportedFieldCount
 
-    const openDetectedFieldMapping = async () => {
-      if (!await ensureDetectedHtmlSaved()) return
-      onEditFields()
+    const getPanelFieldRouteValue = (field: ImportedSiteFieldMapping) => {
+      if (field.ignored || field.destinationType === 'ignored' || field.saveMode === 'ignored') return 'ignored'
+      if (field.destinationType === 'standard' || field.saveMode === 'standard') {
+        return `standard:${field.destinationKey || inferImportedStandardKey(field)}`
+      }
+      const selectedCustomField = findImportedCustomFieldDefinition(activeImportedCustomFields, field)
+      if (selectedCustomField) return `custom:${selectedCustomField.definitionId}`
+      if ((field.destinationType === 'custom' || field.saveMode === 'custom') && field.customFieldDefinitionId) {
+        return `missing_custom:${field.customFieldDefinitionId}`
+      }
+      return `new_custom:${field.customFieldKey || field.destinationKey || normalizeImportedDestinationKey(field.sourceName || field.fieldId, 'campo_personalizado')}`
+    }
+
+    const closeNativeElementDetail = () => {
+      const previousKey = selectedSlot?.key || ''
+      setSelectedImportedNativeElementKey('')
+      window.requestAnimationFrame(() => importedNativeElementTriggerRefs.current[previousKey]?.focus())
     }
 
     const patchSelectedVideoSettings = (patch: Record<string, unknown>) => {
@@ -24930,18 +25066,33 @@ const ImportedHtmlEditorPanel: React.FC<{
 
     return (
       <div className={styles.importedFormFieldsBox}>
-        <div className={styles.importedButtonActionHeader}>
-          <SlidersHorizontal size={17} />
-          <div>
-            <span>Panel de contenido</span>
-            <strong>Multimedia y elementos inteligentes</strong>
+        {selectedSlot && draftBlock ? (
+          <div className={styles.importedContentDetailHeader}>
+            <Button ref={importedNativeElementBackButtonRef} type="button" variant="ghost" size="sm" onClick={closeNativeElementDetail} leftIcon={<ArrowLeft size={14} />}>
+              Volver
+            </Button>
+            <div className={styles.importedButtonActionHeader}>
+              {renderSlotIcon(selectedSlot.type)}
+              <div>
+                <span>{importedNativeElementTypeLabels[selectedSlot.type]}</span>
+                <strong>{selectedSlot.label}</strong>
+              </div>
+            </div>
           </div>
-        </div>
-        <p className={styles.importedFormFieldsHint}>
-          El código define las zonas. Aquí solo asocias su contenido y configuras los elementos reales de Ristak.
-        </p>
+        ) : (
+          <>
+            <div className={styles.importedButtonActionHeader}>
+              <SlidersHorizontal size={17} />
+              <div>
+                <span>Elementos de esta página</span>
+                <strong>{activeImportedPage?.title || 'Página actual'}</strong>
+              </div>
+            </div>
+            <p className={styles.importedFormFieldsHint}>
+              El código declara cada zona. Aquí asocias archivos, campos y elementos de Ristak sin volver a tocar el HTML.
+            </p>
 
-        <section className={styles.importedContentHubSection}>
+            <section className={styles.importedContentHubSection}>
           <div className={styles.importedContentHubSectionHeader}>
             <div>
               <span>Contenido detectado</span>
@@ -24955,144 +25106,220 @@ const ImportedHtmlEditorPanel: React.FC<{
           {!contentAssetsLoading && !importedContentAssetSlots.length && (
             <p className={styles.importedFormFieldsHint}>Esta página no declara imágenes, fondos, audios o descargables asociables. Cuando el código incluya una clave Ristak, aparecerá aquí automáticamente.</p>
           )}
-          <div className={styles.importedFormFieldsList}>
+          <div className={styles.importedContentAssetList}>
             {importedContentAssetSlots.map(slot => {
               const binding = contentAssets.find(asset => asset.assetKey === slot.assetKey)
               const bindingCompatible = isImportedContentAssetBindingCompatible(slot, binding)
-              const isSelected = selectedContentAssetSlot?.key === slot.key
+              const currentFileName = binding?.mediaAsset ? getMediaPickerAssetName(binding.mediaAsset) : binding?.label || ''
               return (
-                <button
-                  key={slot.key}
-                  type="button"
-                  className={`${styles.importedFormFieldRow} ${isSelected ? styles.importedNativeElementRowActive : ''}`}
-                  onClick={() => {
-                    setSelectedContentAssetSlotKey(slot.key)
-                    setSelectedImportedNativeElementKey('')
-                  }}
-                  disabled={contentAssetsUploading}
-                  aria-pressed={isSelected}
-                >
-                  {renderContentSlotIcon(slot.kind)}
+                <div key={slot.key} className={styles.importedContentAssetRow}>
+                  <span className={styles.importedContentAssetIcon}>{renderContentSlotIcon(slot.kind)}</span>
                   <span className={styles.importedFormFieldRowMain}>
                     <strong>{slot.label}</strong>
-                    <small>{importedContentAssetKindLabels[slot.kind]} · {slot.assetKey}{slot.occurrences > 1 ? ` · ${slot.occurrences} usos` : ''}</small>
+                    <small>{currentFileName || `${importedContentAssetKindLabels[slot.kind]} · ${slot.assetKey}`}{slot.occurrences > 1 ? ` · ${slot.occurrences} usos` : ''}</small>
                   </span>
-                  <span className={styles.importedFormFieldBadge}>{bindingCompatible ? 'Asociado' : binding ? 'Reasociar' : 'Pendiente'}</span>
-                </button>
-              )
-            })}
-          </div>
-
-          {selectedContentAssetSlot && (() => {
-            const binding = contentAssets.find(asset => asset.assetKey === selectedContentAssetSlot.assetKey)
-            const bindingCompatible = isImportedContentAssetBindingCompatible(selectedContentAssetSlot, binding)
-            const currentFileName = binding?.mediaAsset ? getMediaPickerAssetName(binding.mediaAsset) : binding?.label || ''
-            return (
-              <div className={styles.importedNativeElementControls}>
-                <div className={styles.importedButtonActionHeader}>
-                  {renderContentSlotIcon(selectedContentAssetSlot.kind)}
-                  <div>
-                    <span>{importedContentAssetKindLabels[selectedContentAssetSlot.kind]}</span>
-                    <strong>{selectedContentAssetSlot.label}</strong>
-                  </div>
-                </div>
-                <span className={styles.importedFormFieldRowMain}>
-                  <strong>{currentFileName || 'Sin archivo asociado'}</strong>
-                  <small>Clave estable: {selectedContentAssetSlot.assetKey}</small>
-                </span>
-                {binding && !bindingCompatible && (
-                  <p className={styles.importedContentHubError}>El tipo de esta zona cambió y el archivo anterior ya no sirve aquí. Elige uno compatible para volver a asociarla.</p>
-                )}
-                {selectedContentAssetSlot.kind === 'video' && (
-                  <p className={styles.importedFormFieldsHint}>Este es un video HTML compatible. Para editar reproductor, botón de play, colores y acciones usa un slot nativo de video.</p>
-                )}
-                <div className={styles.importedButtonActionFooter}>
+                  <Badge variant={bindingCompatible ? 'success' : binding ? 'warning' : 'neutral'}>
+                    {bindingCompatible ? 'Asociado' : binding ? 'Reasociar' : 'Pendiente'}
+                  </Badge>
                   <Button
                     type="button"
+                    variant="ghost"
                     size="sm"
-                    onClick={() => void openContentAssetPicker(selectedContentAssetSlot)}
+                    iconOnly
+                    onClick={() => void openContentAssetPicker(slot)}
                     disabled={saving || contentAssetsUploading}
+                    aria-label={`${binding ? 'Reemplazar' : 'Elegir'} archivo para ${slot.label}`}
+                    title={binding ? 'Reemplazar archivo' : 'Elegir de Media'}
                   >
                     {binding ? <RefreshCw size={14} /> : <Upload size={14} />}
-                    {binding ? 'Reemplazar archivo' : 'Elegir de Media'}
                   </Button>
                   {binding && (
-                    <Button type="button" size="sm" variant="secondary" onClick={() => requestRemoveContentAssetBinding(binding, selectedContentAssetSlot)} disabled={contentAssetsUploading}>
-                      <Unlink2 size={14} /> Quitar asociación
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      onClick={() => requestRemoveContentAssetBinding(binding, slot)}
+                      disabled={contentAssetsUploading}
+                      aria-label={`Quitar asociación de ${slot.label}`}
+                      title="Quitar asociación"
+                    >
+                      <Unlink2 size={14} />
                     </Button>
                   )}
                 </div>
-              </div>
-            )
-          })()}
+              )
+            })}
+          </div>
         </section>
 
-        {visibleFieldCount > 0 && (
+        {(visibleFieldCount > 0 || detectedImportedUngroupedFieldCount > 0 || importedDuplicateFormIds.length > 0) && (
           <section className={styles.importedContentHubSection}>
             <div className={styles.importedContentHubSectionHeader}>
               <div>
                 <span>Campos detectados</span>
-                <strong>{visibleFieldCount} {visibleFieldCount === 1 ? 'campo asociable' : 'campos asociables'}</strong>
+                <strong>{importedPanelFormMappings.length} {importedPanelFormMappings.length === 1 ? 'formulario' : 'formularios'} · {visibleFieldCount} {visibleFieldCount === 1 ? 'campo' : 'campos'}</strong>
               </div>
             </div>
-            <p className={styles.importedFormFieldsHint}>Asocia cada dato del HTML a un dato del contacto o a un campo personalizado.</p>
-            <Button type="button" size="sm" variant="secondary" onClick={() => void openDetectedFieldMapping()} disabled={loadingImportData || saving} loading={loadingImportData}>
-              <ListChecks size={14} /> Asociar campos
-            </Button>
+            <p className={styles.importedFormFieldsHint}>Cada formulario es un grupo independiente. Elige directamente dónde se guarda cada respuesta.</p>
+            {detectedImportedUngroupedFieldCount > 0 && (
+              <p className={styles.importedContentHubError}>
+                {detectedImportedUngroupedFieldCount} {detectedImportedUngroupedFieldCount === 1 ? 'campo está' : 'campos están'} fuera de un &lt;form&gt;. Colócalos dentro de su formulario para que Ristak identifique el conjunto correcto.
+              </p>
+            )}
+            {importedDuplicateFormIds.length > 0 && (
+              <p className={styles.importedContentHubError}>IDs de formulario duplicados: {importedDuplicateFormIds.join(', ')}. Cada data-rstk-form-id debe ser único en todo el sitio.</p>
+            )}
+            {detectedImportedFormGroups.some(group => !group.stable) && (
+              <p className={styles.importedContentHubError}>Hay formularios sin data-rstk-form-id. Ristak puede detectarlos, pero necesitan una clave estable para conservar asociaciones al cambiar el código.</p>
+            )}
+            {detectedImportedFormGroups.some(group => group.fields.some(field => !field.stable)) && (
+              <p className={styles.importedContentHubError}>Hay campos sin data-rstk-field-id. Pueden mapearse por name, pero una clave estable evita perder la asociación al reescribir el HTML.</p>
+            )}
+            <div className={styles.importedFormMappingGroups}>
+              {importedPanelFormMappings.map((form, formIndex) => {
+                const detectedGroup = detectedImportedFormGroups[formIndex]
+                const normalizedFormId = normalizeImportedDestinationKey(form.formId, '')
+                const duplicateFormId = importedDuplicateFormIds.includes(normalizedFormId)
+                const fieldIdCounts = new Map<string, number>()
+                form.fields.forEach(field => {
+                  const id = normalizeImportedDestinationKey(field.fieldId || field.sourceName, '')
+                  if (id) fieldIdCounts.set(id, (fieldIdCounts.get(id) || 0) + 1)
+                })
+                const duplicateFieldIds = new Set(
+                  [...fieldIdCounts.entries()].filter(([, count]) => count > 1).map(([id]) => id)
+                )
+                return (
+                  <section key={`${form.pagePath || ''}:${form.formId}:${formIndex}`} className={styles.importedFormMappingGroup}>
+                    <div className={styles.importedFormMappingGroupHeader}>
+                      <span className={styles.importedContentAssetIcon}><FormInput size={13} /></span>
+                      <span className={styles.importedFormFieldRowMain}>
+                        <strong>{form.formTitle || detectedGroup?.label || `Formulario ${formIndex + 1}`}</strong>
+                        <small>{form.formId} · {form.fields.length} {form.fields.length === 1 ? 'campo' : 'campos'}</small>
+                      </span>
+                      <Badge variant={duplicateFormId || !detectedGroup?.stable ? 'warning' : 'neutral'}>
+                        {duplicateFormId ? 'ID duplicado' : detectedGroup?.stable ? 'Detectado' : 'Sin ID estable'}
+                      </Badge>
+                    </div>
+                    {duplicateFieldIds.size > 0 && (
+                      <p className={styles.importedContentHubError}>Campos con data-rstk-field-id duplicado: {[...duplicateFieldIds].join(', ')}.</p>
+                    )}
+                    <div className={styles.importedFieldMappingList}>
+                      {form.fields.map((field, fieldIndex) => {
+                        const routeKey = `${String(form.pagePath || '').trim()}:${form.formId}:${field.fieldId}`
+                        const matchingStoredForms = activeImportedFormMappings.filter(candidate => normalizeImportedDestinationKey(candidate.formId, '') === normalizeImportedDestinationKey(form.formId, ''))
+                        const storedForm = matchingStoredForms.find(candidate => candidate.present !== false) || matchingStoredForms[0]
+                        const matchingStoredFields = storedForm?.fields?.filter(candidate => normalizeImportedDestinationKey(candidate.fieldId || candidate.sourceName, '') === normalizeImportedDestinationKey(field.fieldId || field.sourceName, '')) || []
+                        const storedField = matchingStoredFields.find(candidate => candidate.present !== false) || matchingStoredFields[0]
+                        const selectedCustomField = findImportedCustomFieldDefinition(activeImportedCustomFields, field)
+                        const missingCustomField = Boolean((field.destinationType === 'custom' || field.saveMode === 'custom') && field.customFieldDefinitionId && !selectedCustomField)
+                        const currentValue = importedFieldMappingOverrides[routeKey] || getPanelFieldRouteValue(field)
+                        const newCustomValue = currentValue.startsWith('new_custom:') ? currentValue : `new_custom:${field.customFieldKey || field.destinationKey || normalizeImportedDestinationKey(field.sourceName || field.fieldId, 'campo_personalizado')}`
+                        const pending = importedFieldMappingPendingKeys.has(routeKey)
+                        const duplicateFieldId = duplicateFieldIds.has(normalizeImportedDestinationKey(field.fieldId || field.sourceName, ''))
+                        const detectedField = detectedGroup?.fields.find(candidate => (
+                          normalizeImportedDestinationKey(candidate.fieldId, '') === normalizeImportedDestinationKey(field.fieldId || field.sourceName, '')
+                        ))
+                        const missingStableFieldId = detectedField?.stable === false
+                        return (
+                          <div key={`${field.fieldId}:${fieldIndex}`} className={styles.importedFieldMappingRow}>
+                            <span className={styles.importedFormFieldRowMain}>
+                              <strong>{field.label || field.sourceName || field.fieldId}</strong>
+                              <small>{field.sourceName || field.fieldId} · {importedPanelFieldTypeLabels[field.type] || field.type || 'Campo'}</small>
+                            </span>
+                            <CustomSelect
+                              value={currentValue}
+                              className={styles.importedFieldMappingSelect}
+                              portal
+                              disabled={saving || duplicateFormId || duplicateFieldId}
+                              aria-label={`Guardar ${field.label || field.sourceName || field.fieldId} como`}
+                              onChange={(event) => queueImportedFieldMappingChange(form, field, event.target.value)}
+                            >
+                              {missingCustomField && (
+                                <option value={currentValue} disabled>Reasociar · {field.customFieldLabel || field.destinationKey}</option>
+                              )}
+                              <optgroup label="Dato del contacto">
+                                {importedStandardFieldOptions.map(option => (
+                                  <option key={option.value} value={`standard:${option.value}`}>{option.label}</option>
+                                ))}
+                              </optgroup>
+                              {activeImportedCustomFields.length > 0 && (
+                                <optgroup label="Campo personalizado">
+                                  {activeImportedCustomFields.map(customField => (
+                                    <option key={customField.definitionId} value={`custom:${customField.definitionId}`}>
+                                      {customField.label || customField.name || customField.fieldKey}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              <optgroup label="Campo nuevo">
+                                <option value={newCustomValue}>Crear · {field.label || field.destinationKey || field.fieldId}</option>
+                              </optgroup>
+                              <option value="ignored">No guardar</option>
+                            </CustomSelect>
+                            <Badge variant={pending ? 'info' : duplicateFormId || duplicateFieldId || missingCustomField || missingStableFieldId ? 'warning' : storedField ? 'success' : 'neutral'}>
+                              {pending ? 'Guardando' : duplicateFormId || duplicateFieldId ? 'Corrige el ID' : missingCustomField ? 'Reasociar' : missingStableFieldId ? 'Sin ID estable' : storedField ? 'Asociado' : 'Pendiente'}
+                            </Badge>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </section>
+                )
+              })}
+            </div>
           </section>
         )}
 
-        <div className={styles.importedContentHubSectionHeader}>
-          <div>
-            <span>Elementos Ristak detectados</span>
-            <strong>{importedNativeElementSlots.length} {importedNativeElementSlots.length === 1 ? 'zona' : 'zonas'}</strong>
+        <section className={styles.importedContentHubSection}>
+          <div className={styles.importedContentHubSectionHeader}>
+            <div>
+              <span>Elementos Ristak detectados</span>
+              <strong>{importedNativeElementSlots.length} {importedNativeElementSlots.length === 1 ? 'zona' : 'zonas'}</strong>
+            </div>
           </div>
-        </div>
-        {!importedNativeElementSlots.length && (
-          <p className={styles.importedFormFieldsHint}>Esta página no declara formularios, calendarios, pagos o videos nativos.</p>
+          {!importedNativeElementSlots.length && (
+            <p className={styles.importedFormFieldsHint}>Esta página no declara formularios, calendarios, pagos o videos nativos.</p>
+          )}
+          {importedNativeElementDuplicateIds.length > 0 && (
+            <p className={styles.importedContentHubError}>
+              IDs duplicados: {importedNativeElementDuplicateIds.join(', ')}. Cada zona necesita un ID único en esta página.
+            </p>
+          )}
+          <div className={styles.importedContentAssetList}>
+            {importedNativeElementSlots.map(slot => {
+              const block = findImportedNativeElementBlock(nativeElementBlocks, slot)
+              return (
+                <div key={slot.key} className={styles.importedContentAssetRow}>
+                  <span className={styles.importedContentAssetIcon}>{renderSlotIcon(slot.type)}</span>
+                  <span className={styles.importedFormFieldRowMain}>
+                    <strong>{slot.label}</strong>
+                    <small>{importedNativeElementTypeLabels[slot.type]} · {slot.id}{slot.type === 'calendar' && slot.renderMode === 'custom' ? ' · frontend propio' : ''}</small>
+                  </span>
+                  <Badge variant={block ? 'success' : 'neutral'}>{block ? 'Configurado' : 'Pendiente'}</Badge>
+                  <Button
+                    ref={(node) => { importedNativeElementTriggerRefs.current[slot.key] = node }}
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    onClick={() => setSelectedImportedNativeElementKey(slot.key)}
+                    disabled={Boolean(importedNativeElementSavingKey)}
+                    aria-label={`Configurar ${slot.label}`}
+                    title={`Configurar ${slot.label}`}
+                  >
+                    <Settings2 size={14} />
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+          </>
         )}
-        {importedNativeElementDuplicateIds.length > 0 && (
-          <p className={styles.importedContentHubError}>
-            IDs duplicados: {importedNativeElementDuplicateIds.join(', ')}. Cada zona necesita un ID único en esta página.
-          </p>
-        )}
-        <div className={styles.importedFormFieldsList}>
-          {importedNativeElementSlots.map(slot => {
-            const block = findImportedNativeElementBlock(nativeElementBlocks, slot)
-            const isSelected = selectedSlot?.key === slot.key
-            return (
-              <button
-                key={slot.key}
-                type="button"
-                className={`${styles.importedFormFieldRow} ${isSelected ? styles.importedNativeElementRowActive : ''}`}
-                onClick={() => {
-                  setSelectedImportedNativeElementKey(slot.key)
-                  setSelectedContentAssetSlotKey('')
-                }}
-                disabled={Boolean(importedNativeElementSavingKey)}
-                aria-pressed={isSelected}
-              >
-                {renderSlotIcon(slot.type)}
-                <span className={styles.importedFormFieldRowMain}>
-                  <strong>{slot.label}</strong>
-                  <small>{importedNativeElementTypeLabels[slot.type]} · {slot.id}{slot.type === 'calendar' && slot.renderMode === 'custom' ? ' · frontend propio' : ''}</small>
-                </span>
-                <span className={styles.importedFormFieldBadge}>{block ? 'Configurado' : 'Pendiente'}</span>
-              </button>
-            )
-          })}
-        </div>
 
         {selectedSlot && draftBlock && (
           <div className={styles.importedNativeElementControls}>
-            <div className={styles.importedButtonActionHeader}>
-              {renderSlotIcon(selectedSlot.type)}
-              <div>
-                <span>{importedNativeElementTypeLabels[selectedSlot.type]}</span>
-                <strong>{selectedSlot.label}</strong>
-              </div>
-            </div>
-
             {selectedSlot.type === 'form' && (
               <>
                 <FormEmbedToolbarControls
@@ -25936,8 +26163,6 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>Campo obligatorio</span>
             </label>
 
-            {selectedFieldRoutePanel}
-
             {fieldEditorHasOptions && (
               <ImportedFieldOptionsEditor
                 title="Opciones del campo"
@@ -25972,13 +26197,6 @@ const ImportedHtmlEditorPanel: React.FC<{
             )}
           </div>
         )}
-
-        <div className={styles.importedSidePanelActions}>
-          <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
-            {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
-            Editar ruta de datos
-          </Button>
-        </div>
       </aside>
 
       <input
@@ -26123,80 +26341,6 @@ const normalizeImportedDestinationKey = (value: string, fallback: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '') || 'campo_personalizado'
-
-const IMPORTED_CREATE_CUSTOM_FIELD_VALUE = '__rstk_new_custom_field__'
-
-const importedCustomFieldDataTypes = new Set<CustomFieldDataType>([
-  'text',
-  'textarea',
-  'radio',
-  'dropdown',
-  'checkboxes',
-  'number',
-  'currency',
-  'date',
-  'email',
-  'phone',
-  'select',
-  'multiselect'
-])
-
-const normalizeImportedCustomFieldDataType = (field: ImportedSiteFieldMapping): CustomFieldDataType => {
-  const rawType = normalizeImportedDestinationKey(
-    field.customFieldDataType || field.type || '',
-    'text'
-  )
-  if (importedCustomFieldDataTypes.has(rawType as CustomFieldDataType)) return rawType as CustomFieldDataType
-  if (rawType === 'tel') return 'phone'
-  if (rawType === 'checkbox') return 'checkboxes'
-  if (rawType === 'radio') return 'radio'
-  return 'text'
-}
-
-const getImportedNewCustomFieldKey = (field: ImportedSiteFieldMapping) => (
-  normalizeImportedDestinationKey(
-    field.customFieldKey || field.destinationKey || field.sourceName || field.label || field.fieldId,
-    'campo_personalizado'
-  )
-)
-
-const buildNewImportedCustomFieldPatch = (
-  field: ImportedSiteFieldMapping,
-  key = getImportedNewCustomFieldKey(field)
-): Partial<ImportedSiteFieldMapping> => {
-  const destinationKey = normalizeImportedDestinationKey(key, getImportedNewCustomFieldKey(field))
-  return {
-    ...clearImportedCustomFieldPatch,
-    destinationType: 'new_custom',
-    ignored: false,
-    saveMode: 'new_custom',
-    destinationKey,
-    customFieldKey: destinationKey,
-    customFieldLabel: field.customFieldLabel || field.label || field.sourceName || destinationKey,
-    customFieldDataType: normalizeImportedCustomFieldDataType(field),
-    customFieldSyncTarget: field.customFieldSyncTarget || 'local'
-  }
-}
-
-const isImportedTechnicalReviewTitle = (value = '') => {
-  const text = String(value || '').trim()
-  if (!text) return false
-  if (/\bdata-(?:rstk|ristak|ristack)-/i.test(text)) return true
-  if (/\b(?:open_popup|close_popup|buttonUrl|appointment_start_time|dataLayer)\b/i.test(text)) return true
-  return /[{[\]"'=]/.test(text) && /\b(?:action|button|popup|rstk|ristak)\b/i.test(text)
-}
-
-const getImportedReviewTitleSuffix = (title = '') => {
-  const match = String(title || '').match(/\s-\s([^<>]*\.(?:html?|xhtml))$/i)
-  return match?.[1]?.trim() || ''
-}
-
-const getImportedReviewFormTitle = (form: ImportedSiteFormMapping, index: number) => {
-  const title = String(form.formTitle || '').trim()
-  if (title && !isImportedTechnicalReviewTitle(title)) return title
-  const suffix = getImportedReviewTitleSuffix(title)
-  return suffix ? `Formulario ${index + 1} - ${suffix}` : `Formulario ${index + 1}`
-}
 
 const importedStandardFieldAliases: Record<string, string[]> = {
   email: [
@@ -26355,12 +26499,6 @@ const inferImportedStandardKey = (field: ImportedSiteFieldMapping) => {
   return 'full_name'
 }
 
-const cloneImportedFormMappings = (mappings: ImportedSiteFormMapping[]) =>
-  mappings.map(form => ({
-    ...form,
-    fields: form.fields.map(field => ({ ...field }))
-  }))
-
 const getImportedActiveCustomFields = (customFields: CustomFieldDefinition[]) =>
   customFields
     .filter(field => !field.archived && !isSystemCustomFieldDefinition(field))
@@ -26369,127 +26507,6 @@ const getImportedActiveCustomFields = (customFields: CustomFieldDefinition[]) =>
       if (folderCompare !== 0) return folderCompare
       return (a.label || a.fieldKey || a.key).localeCompare(b.label || b.fieldKey || b.key)
     })
-
-const getImportedFieldRouteType = (field: ImportedSiteFieldMapping): ImportedSiteFieldMapping['destinationType'] => {
-  if (field.ignored || field.destinationType === 'ignored' || field.saveMode === 'ignored') return 'ignored'
-  if (field.destinationType === 'standard' || field.saveMode === 'standard') return 'standard'
-  if (field.destinationType === 'custom' || field.saveMode === 'custom' || field.destinationType === 'new_custom' || field.saveMode === 'new_custom') return 'custom'
-  return 'custom'
-}
-
-const buildImportedSelectedFieldRouteContextKey = (context: ImportedSelectedFieldRouteContext | null) => (
-  context
-    ? [
-      context.editId,
-      context.fieldName,
-      context.fieldHtmlId,
-      context.label,
-      context.placeholder,
-      context.inputType,
-      context.tagName
-    ].join('|')
-    : ''
-)
-
-const getImportedFieldRouteTokens = (context: ImportedSelectedFieldRouteContext | null) => {
-  if (!context) return []
-  return [
-    context.editId,
-    context.fieldName,
-    context.fieldHtmlId,
-    context.label,
-    context.placeholder
-  ]
-    .map(value => normalizeImportedDestinationKey(value || '', ''))
-    .filter(Boolean)
-}
-
-const getImportedMappingTokens = (field: ImportedSiteFieldMapping) => (
-  [
-    field.fieldId,
-    field.sourceName,
-    field.label,
-    field.destinationKey,
-    field.customFieldKey,
-    field.customFieldLabel
-  ]
-    .map(value => normalizeImportedDestinationKey(value || '', ''))
-    .filter(Boolean)
-)
-
-const findImportedFieldRouteMatch = (
-  formMappings: ImportedSiteFormMapping[] | undefined,
-  context: ImportedSelectedFieldRouteContext | null
-): ImportedSelectedFieldRouteMatch | null => {
-  const routeTokens = getImportedFieldRouteTokens(context)
-  if (!formMappings?.length || !routeTokens.length) return null
-
-  let bestMatch: ImportedSelectedFieldRouteMatch | null = null
-  let bestScore = 0
-
-  formMappings.forEach((form, formIndex) => {
-    form.fields.forEach((field, fieldIndex) => {
-      const mappingTokens = getImportedMappingTokens(field)
-      if (!mappingTokens.length) return
-      let score = 0
-      routeTokens.forEach(token => {
-        if (!token) return
-        if (mappingTokens.includes(token)) {
-          score += 4
-          return
-        }
-        if (mappingTokens.some(mappingToken => mappingToken.includes(token) || token.includes(mappingToken))) {
-          score += 1
-        }
-      })
-
-      if (context?.inputType && field.type && normalizeImportedDestinationKey(field.type, '') === normalizeImportedDestinationKey(context.inputType, '')) {
-        score += 1
-      }
-
-      if (score > bestScore) {
-        bestScore = score
-        bestMatch = { formIndex, fieldIndex, field }
-      }
-    })
-  })
-
-  return bestScore > 0 ? bestMatch : null
-}
-
-const getImportedFieldRouteDefaultKey = (context: ImportedSelectedFieldRouteContext | null) => (
-  normalizeImportedDestinationKey(
-    context?.fieldName || context?.fieldHtmlId || context?.label || context?.placeholder || '',
-    'campo_personalizado'
-  )
-)
-
-const buildImportedSelectedFieldRouteDraft = (
-  match: ImportedSelectedFieldRouteMatch | null,
-  context: ImportedSelectedFieldRouteContext | null
-): ImportedSelectedFieldRouteDraft => {
-  if (!match) {
-    return {
-      destinationType: 'custom',
-      destinationKey: getImportedFieldRouteDefaultKey(context)
-    }
-  }
-
-  const destinationType = getImportedFieldRouteType(match.field)
-  return {
-    destinationType,
-    destinationKey: destinationType === 'standard'
-      ? match.field.destinationKey || inferImportedStandardKey(match.field)
-      : destinationType === 'custom'
-        ? match.field.customFieldKey || match.field.destinationKey || getImportedFieldRouteDefaultKey(context)
-        : match.field.destinationKey || getImportedFieldRouteDefaultKey(context),
-    customFieldDefinitionId: match.field.customFieldDefinitionId || '',
-    customFieldKey: match.field.customFieldKey || '',
-    customFieldLabel: match.field.customFieldLabel || '',
-    customFieldDataType: match.field.customFieldDataType || '',
-    customFieldSyncTarget: match.field.customFieldSyncTarget || ''
-  }
-}
 
 const findImportedCustomFieldDefinition = (
   customFields: CustomFieldDefinition[],
@@ -26501,259 +26518,6 @@ const findImportedCustomFieldDefinition = (
     (definitionId && customField.definitionId === definitionId) ||
     (customKey && normalizeImportedDestinationKey(customField.fieldKey || customField.key, '') === customKey)
   )) || null
-}
-
-const findImportedCustomFieldDefinitionForDraft = (
-  customFields: CustomFieldDefinition[],
-  draft: ImportedSelectedFieldRouteDraft
-) => {
-  const definitionId = draft.customFieldDefinitionId || ''
-  const customKey = normalizeImportedDestinationKey(draft.customFieldKey || draft.destinationKey || '', '')
-  return customFields.find(customField => (
-    (definitionId && customField.definitionId === definitionId) ||
-    (customKey && normalizeImportedDestinationKey(customField.fieldKey || customField.key, '') === customKey)
-  )) || null
-}
-
-const buildExistingImportedCustomFieldPatch = (field: CustomFieldDefinition): Partial<ImportedSiteFieldMapping> => ({
-  destinationType: 'custom',
-  ignored: false,
-  saveMode: 'custom',
-  destinationKey: field.fieldKey || field.key,
-  customFieldDefinitionId: field.definitionId,
-  customFieldKey: field.fieldKey || field.key,
-  customFieldLabel: field.label || field.name || field.fieldKey || field.key,
-  customFieldDataType: field.dataType || 'text',
-  customFieldSyncTarget: field.syncTarget || 'local'
-})
-
-const clearImportedCustomFieldPatch: Partial<ImportedSiteFieldMapping> = {
-  customFieldDefinitionId: '',
-  customFieldKey: '',
-  customFieldLabel: '',
-  customFieldDataType: '',
-  customFieldSyncTarget: ''
-}
-
-const ImportedHtmlReviewModal: React.FC<{
-  review: ImportReviewState
-  saving: boolean
-  customFields: CustomFieldDefinition[]
-  onClose: () => void
-  onConfirm: (formMappings: ImportedSiteFormMapping[]) => void
-}> = ({ review, saving, customFields, onClose, onConfirm }) => {
-  const [draft, setDraft] = useState<ImportedSiteFormMapping[]>(() => cloneImportedFormMappings(review.importData.formMappings || []))
-  const activeCustomFields = useMemo(() => getImportedActiveCustomFields(customFields), [customFields])
-
-  useEffect(() => {
-    setDraft(cloneImportedFormMappings(review.importData.formMappings || []))
-  }, [review.importData])
-
-  const patchField = (formIndex: number, fieldIndex: number, patch: Partial<ImportedSiteFieldMapping>) => {
-    setDraft(current => current.map((form, currentFormIndex) => {
-      if (currentFormIndex !== formIndex) return form
-      return {
-        ...form,
-        fields: form.fields.map((field, currentFieldIndex) => (
-          currentFieldIndex === fieldIndex ? { ...field, ...patch } : field
-        ))
-      }
-    }))
-  }
-
-  const customRouteNeedsSelection = (field: ImportedSiteFieldMapping) => (
-    getImportedFieldRouteType(field) === 'custom' &&
-    !findImportedCustomFieldDefinition(activeCustomFields, field) &&
-    !String(field.customFieldKey || field.destinationKey || '').trim()
-  )
-
-  const hasUnresolvedCustomRoutes = draft.some(form => form.fields.some(customRouteNeedsSelection))
-
-  const normalizeDraftForConfirm = () => draft.map((form, formIndex) => ({
-    ...form,
-    formTitle: getImportedReviewFormTitle(form, formIndex),
-    fields: form.fields.map(field => {
-      if (getImportedFieldRouteType(field) !== 'custom') return field
-      const selectedField = findImportedCustomFieldDefinition(activeCustomFields, field)
-      if (selectedField) return { ...field, ...buildExistingImportedCustomFieldPatch(selectedField) }
-      return { ...field, ...buildNewImportedCustomFieldPatch(field) }
-    })
-  }))
-
-  const updateDestinationType = (formIndex: number, fieldIndex: number, field: ImportedSiteFieldMapping, destinationType: ImportedSiteFieldMapping['destinationType']) => {
-    if (destinationType === 'standard') {
-      patchField(formIndex, fieldIndex, {
-        ...clearImportedCustomFieldPatch,
-        destinationType,
-        ignored: false,
-        saveMode: destinationType,
-        destinationKey: inferImportedStandardKey(field)
-      })
-      return
-    }
-
-    if (destinationType === 'custom') {
-      const selectedField = findImportedCustomFieldDefinition(activeCustomFields, field) || activeCustomFields[0]
-      if (selectedField) {
-        patchField(formIndex, fieldIndex, buildExistingImportedCustomFieldPatch(selectedField))
-        return
-      }
-      patchField(formIndex, fieldIndex, buildNewImportedCustomFieldPatch(field))
-      return
-    }
-
-    patchField(formIndex, fieldIndex, {
-      ...clearImportedCustomFieldPatch,
-      destinationType: 'ignored',
-      ignored: true,
-      saveMode: 'ignored',
-      destinationKey: field.destinationKey
-    })
-  }
-
-  return (
-    <div className={styles.importReviewOverlay} role="dialog" aria-modal="true" aria-labelledby="import-review-title" data-overlay>
-      <div className={styles.importReviewDialog}>
-        <header className={styles.importReviewHeader}>
-          <div>
-            <span>Ruta de datos</span>
-            <h2 id="import-review-title">Enruta los campos del formulario</h2>
-            <p>Ristak ya lo hace automático; aquí puedes ajustar dónde se guarda cada dato de {review.importData.originalFilename || review.site.name}.</p>
-          </div>
-          <button type="button" className={styles.importReviewClose} onClick={onClose} aria-label="Cerrar">
-            <X size={18} />
-          </button>
-        </header>
-
-        {review.importData.securityReport?.length > 0 && (
-          <div className={styles.importSecurityNote}>
-            <AlertTriangle size={16} />
-            <span>Se limpiaron partes inseguras del archivo antes de publicarlo.</span>
-          </div>
-        )}
-
-        <div className={styles.importReviewForms}>
-          {draft.length === 0 ? (
-            <div className={styles.importEmptyFields}>
-              <CheckCircle2 size={20} />
-              <p>No encontramos formularios en este HTML. Puedes previsualizarlo y publicarlo como página informativa.</p>
-            </div>
-          ) : draft.map((form, formIndex) => (
-            <section key={form.formId || formIndex} className={styles.importFormSection}>
-              <div className={styles.importFormHeader}>
-                <strong>{getImportedReviewFormTitle(form, formIndex)}</strong>
-                <span>{form.fields.length} campos detectados</span>
-              </div>
-              <div className={styles.importFieldList}>
-                {form.fields.map((field, fieldIndex) => {
-                  const destinationType = getImportedFieldRouteType(field)
-                  const selectedCustomField = destinationType === 'custom'
-                    ? findImportedCustomFieldDefinition(activeCustomFields, field)
-                    : null
-                  const selectedCustomFieldId = field.customFieldDefinitionId || selectedCustomField?.definitionId || ''
-                  const customFieldSelectValue = selectedCustomField ? selectedCustomFieldId : IMPORTED_CREATE_CUSTOM_FIELD_VALUE
-                  const showNewCustomFieldInput = destinationType === 'custom' && !selectedCustomField
-                  return (
-                    <div key={`${field.fieldId}-${fieldIndex}`} className={styles.importFieldRow}>
-                      <div className={styles.importFieldSource}>
-                        <strong>{field.label || field.sourceName || `Campo ${fieldIndex + 1}`}</strong>
-                        <span>{field.sourceName || field.fieldId}</span>
-                      </div>
-                      <label>
-                        <span>Guardar como</span>
-                        <CustomSelect
-                          value={destinationType}
-                          onChange={(event) => updateDestinationType(
-                            formIndex,
-                            fieldIndex,
-                            field,
-                            event.target.value as ImportedSiteFieldMapping['destinationType']
-                          )}
-                        >
-                          <option value="standard">Dato del contacto</option>
-                          <option value="custom">Campo personalizado</option>
-                          <option value="ignored">No guardar</option>
-                        </CustomSelect>
-                      </label>
-                      {destinationType === 'standard' ? (
-                        <label>
-                          <span>Dato</span>
-                          <CustomSelect
-                            value={field.destinationKey || inferImportedStandardKey(field)}
-                            onChange={(event) => patchField(formIndex, fieldIndex, {
-                              destinationKey: event.target.value,
-                              ignored: false
-                            })}
-                          >
-                            {importedStandardFieldOptions.map(option => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </CustomSelect>
-                        </label>
-                      ) : destinationType === 'custom' ? (
-                        <div className={styles.importFieldCustomRoute}>
-                          <label>
-                            <span>Campo personalizado</span>
-                            <CustomSelect
-                              value={customFieldSelectValue}
-                              portal
-                              onChange={(event) => {
-                                if (event.target.value === IMPORTED_CREATE_CUSTOM_FIELD_VALUE) {
-                                  patchField(formIndex, fieldIndex, buildNewImportedCustomFieldPatch(field))
-                                  return
-                                }
-                                const customField = activeCustomFields.find(item => item.definitionId === event.target.value)
-                                if (!customField) return
-                                patchField(formIndex, fieldIndex, buildExistingImportedCustomFieldPatch(customField))
-                              }}
-                            >
-                              <option value={IMPORTED_CREATE_CUSTOM_FIELD_VALUE}>Crear campo nuevo</option>
-                              {activeCustomFields.map(customField => (
-                                <option key={customField.definitionId} value={customField.definitionId}>
-                                  {customField.label || customField.name || customField.fieldKey}
-                                </option>
-                              ))}
-                            </CustomSelect>
-                          </label>
-                          {showNewCustomFieldInput && (
-                            <label>
-                              <span>Nombre interno</span>
-                              <input
-                                value={getImportedNewCustomFieldKey(field)}
-                                placeholder="ej. presupuesto_estimado"
-                                name={`rstk-imported-new-custom-field-${formIndex}-${fieldIndex}`}
-                                {...importedEditorNoAutocompleteAttrs}
-                                onChange={(event) => patchField(formIndex, fieldIndex, buildNewImportedCustomFieldPatch(field, event.target.value))}
-                              />
-                            </label>
-                          )}
-                        </div>
-                      ) : (
-                        <label>
-                          <span>Dato</span>
-                          <input value="No se guarda" disabled readOnly />
-                        </label>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-
-        <footer className={styles.importReviewFooter}>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Cerrar
-          </Button>
-          <Button onClick={() => onConfirm(normalizeDraftForConfirm())} loading={saving} disabled={hasUnresolvedCustomRoutes}>
-            <Check size={15} />
-            {hasUnresolvedCustomRoutes ? 'Completa campos nuevos' : 'Guardar ruta de datos'}
-          </Button>
-        </footer>
-      </div>
-    </div>
-  )
 }
 
 interface SitesLibraryPanelProps {
